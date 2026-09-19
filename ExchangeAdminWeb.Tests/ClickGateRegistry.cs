@@ -37,6 +37,7 @@ public static class ClickGateRegistry
         IntuneDevices,
         GroupManagement,
         M365GroupManagement,
+        ConferenceRooms,
     };
 
     /// <summary>
@@ -49,11 +50,10 @@ public static class ClickGateRegistry
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             // Approved for conversion, in the order of docs/ClickGatingAudit-Plan.md Revision 1.
-            // Pages 1 to 7 of 9 - DhcpAuthorization.razor, NamedLocations.razor,
+            // Pages 1 to 8 of 9 - DhcpAuthorization.razor, NamedLocations.razor,
             // MailboxPermissions.razor, CalendarPermissions.razor, IntuneDevices.razor,
-            // GroupManagement.razor and M365GroupManagement.razor - are converted and live in
-            // Pages above.
-            ["ConferenceRooms.razor"] = "tier 1, page 8 of 9",
+            // GroupManagement.razor, M365GroupManagement.razor and ConferenceRooms.razor - are
+            // converted and live in Pages above.
             ["SelfServiceGroups.razor"] = "tier 1, page 9 of 9; needs view-scoped predicates",
 
             // Prerequisite fixes (slice 1), converted after their flags are made safe.
@@ -3263,6 +3263,655 @@ public static class ClickGateRegistry
                 + "was reachable from the keyboard as well as the mouse",
                 GatedTwinButtonLine: 60),
         ],
+
+        HarmlessKeyboardPaths = [],
+    };
+
+    /// <summary>
+    /// Conference Rooms: tier 1, page 8 of 9, converted 2026-09-19 under
+    /// docs/ClickGatingAudit-Plan.md Revision 1.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>TWO SCOPES, ONE PREDICATE - and the one predicate is the finding, not a shortfall.</b>
+    /// Revision 1 falsification 4 named this page as one of the two where a single page-wide
+    /// predicate is provably wrong, and that half is confirmed against the file: the Bulk Jobs panel
+    /// is driven by BulkJobService.JobChanged, whose handler OnJobChanged calls RefreshJobs off the
+    /// runner's thread and replaces activeJobs, recentJobs, finderJob, typeJob, finderRows and
+    /// typeRows at moments no click produced and while IsBusy is false. The form predicate has no
+    /// authority there. What the file ALSO shows, and what the plan did not predict, is that the
+    /// second scope has nothing to build a predicate OUT of: its three handlers - ToggleJobDetails,
+    /// CancelJob and RemoveJob - are synchronous, await nothing and raise no flag, so there is no
+    /// in-flight state for a predicate to read. A predicate cannot gate work a server-side callback
+    /// initiates, because OnJobChanged is not a click. Registering a second PredicateScope would
+    /// mean inventing a member that is always false: it would need a flag with no setter (failing
+    /// <see cref="ClickGateTests.EveryRegisteredFlagIsLoweredInAFinally"/>) or no flags at all, and
+    /// either way the next reader would read a decoration as a gate. So the jobs scope is recorded
+    /// as four <see cref="ExemptControl"/> entries plus this paragraph, and its refusal is identity,
+    /// not busyness.
+    /// </para>
+    /// <para>
+    /// <b>What each scope may and may not speak for.</b> IsBusy (isLoading, isCsvProcessing) speaks
+    /// for the Room Finder tab, the Room Type tab and every control on them: twenty-three DOM-synced
+    /// controls and the four operation buttons. It may not speak for the Bulk Jobs panel in either
+    /// direction - it is never raised by anything the panel does, and it is never true because of
+    /// what the panel's data is doing. The jobs scope may not be spoken for by any gate: the only
+    /// thing that protects it is that each control acts on an identity it was rendered with.
+    /// ToggleJobDetails and CancelJob are safe as found, because both take job.Id and neither reads
+    /// a collection the callback replaces - the callback only swaps data, and a cancel or an expand
+    /// addressed by id means the same thing whichever snapshot of the list is current. RemoveJob was
+    /// not: it took job.Id and then looked the row back up in the live recentJobs to build its audit
+    /// record. That is the shape the brief predicted - a control acting on a row the callback has
+    /// since replaced - and it was reachable, because recentJobs is a windowed read as well as a
+    /// replaced one, so a job finishing elsewhere can push the operator's row out of the window
+    /// between the render and the click. The lookup then missed while DeleteJob still succeeded by
+    /// id, and a durable record was destroyed with an audit row carrying no ticket and no old
+    /// values. The fix is not a gate and could not have been: the control now takes the rendered
+    /// BulkJob, so what the operator saw is what gets audited.
+    /// </para>
+    /// <para>
+    /// <b>That last hazard is NOT enforced by this registry, and the gap is worth naming rather than
+    /// papering over.</b> <see cref="PageGateEntry.PostAwaitLiveReads"/> is the field for "a value
+    /// another control can change while this handler is suspended", and
+    /// <see cref="ClickGateTests.NoHandlerReadsARegisteredFieldLiveAfterItsFirstAwait"/> asserts it
+    /// by requiring a first await and scanning below it. RemoveJob has no await at all - it cannot,
+    /// the whole point is that the staleness is between render and click rather than across a
+    /// suspension - so registering the obligation there fails the assertion's own "no longer awaits
+    /// anything" check instead of protecting anything. The paragraph above is therefore prose, and
+    /// prose is unenforced: a future edit reverting RemoveJob to take an id and re-look-up the row
+    /// would pass this whole suite. The page's own comment on the method carries the same warning,
+    /// which is two unenforced copies rather than one enforced one.
+    /// </para>
+    /// <para>
+    /// <b>Exemptions are ten of fourteen buttons, which is high and is deliberate.</b>
+    /// Get-ClickGateAudit.ps1 reports 14 buttons, 10 ungated, 2 flags and ZERO stuck flags on this
+    /// page as of the conversion, and its ungated line list - 48, 51, 54, 145, 332, 452, 508, 511,
+    /// 572, 575 - is exactly the ten registered below, checked line for line rather than by count.
+    /// Three are tab switches, two serve compile-time constants, one dismisses a banner and four are
+    /// the jobs panel. The zero stuck flags is also verified rather than inherited: result is the
+    /// banner model and has the shape that made operationResult a reported false positive on
+    /// DhcpAuthorization and NamedLocations - a nullable raised and nulled in one awaiting method
+    /// with the clear outside the finally - but it escapes the detector because this page never
+    /// assigns it from a bare token. Every assignment is a `new RoomOperationResult { ... }` or an
+    /// `await`, and Get-ClickGateAudit.ps1:209 counts only the bare-token form as a raise. So there
+    /// is no ScannerFalsePositive to register here, and if one of those assignments is ever
+    /// refactored into a local this page will grow one.
+    /// </para>
+    /// <para>
+    /// <b>Twenty PostAwaitLiveReads, and five obligations the assertion cannot hold.</b> The census
+    /// found both single-room handlers reading their whole form LIVE after several awaits - and
+    /// reading it twice, once for the write and again, later, for the audit row, so the record of
+    /// what was applied could disagree with what was applied. typeRemovePerms is the sharp one: it
+    /// decides whether every existing calendar permission on the room is deleted first, so a
+    /// checkbox toggled during the ServiceNow round trip turned a non-destructive Set Type into a
+    /// destructive one nobody confirmed. Both CSV handlers re-read their ticket field LIVE in the
+    /// catch, because the local was declared inside the try and out of scope there - the same defect
+    /// falsification 6 names on NamedLocations, here on a field bound with @bind:event="oninput".
+    /// The five that cannot be registered are SetupSingleRoom's city, building, capacity, floor and
+    /// timezone. They ARE captured at entry and the handler reads only the locals; what stops the
+    /// registration is that the old-value audit dictionary, which is necessarily built after the
+    /// GetRoomInfoAsync await, uses those five words as its key literals, and the live-read matcher
+    /// is textual - ["city"] matches a whole-word read of city. Registering them would fail on a
+    /// string literal rather than on a read. Extracting that dictionary into a helper purely to move
+    /// the literals out of the method body was considered and rejected on the precedent recorded on
+    /// ReadOf: deforming readable code to satisfy a text matcher is the matcher's problem. So those
+    /// five are correct in the page and unenforced by this entry, and this sentence is the only
+    /// record of it.
+    /// </para>
+    /// <para>
+    /// <b>No keyboard paths at all, censused by hand and not inherited.</b> The page has no
+    /// @onkeydown, @onkeyup or @onkeypress, no @onsubmit, no @onchange and no &lt;form&gt; element,
+    /// so there is no Enter path to manufacture by gating a button without its input and none left
+    /// open by gating neither. Both lists below are empty and the forward direction of
+    /// <see cref="ClickGateTests.EveryKeyboardPathIsRegisteredOrRecordedHarmless"/> is what keeps
+    /// that true. The two RecipientAutocomplete instances at 70 and 260 carry the component's own
+    /// Enter path, which commit 3c21270 closed inside the component for all eight call sites; this
+    /// page passes Disabled and registers both, and nothing here reaches into a component.
+    /// </para>
+    /// </remarks>
+    private static PageGateEntry ConferenceRooms => new()
+    {
+        Page = "ConferenceRooms.razor",
+        ExpectedLineCount = 1536,
+
+        Predicates =
+        [
+            new PredicateScope("IsBusy",
+                ["isLoading", "isCsvProcessing"],
+                AppliesWhen:
+                "the FORM scope only: the Room Finder tab, the Room Type tab, and the twenty-three "
+                + "DOM-synced controls and four operation buttons on them. Explicitly NOT the Bulk "
+                + "Jobs panel, which is a second scope with no busy state of its own - see the "
+                + "remarks on this entry, which are the only record of that scope"),
+        ],
+
+        // Empty, and verified rather than assumed: Get-ClickGateAudit.ps1 reports zero stuck flags
+        // here. The remarks explain why result escapes the detector that catches the identical
+        // banner field on two other converted pages, and what would make it start being reported.
+        ScannerFalsePositives = [],
+
+        // The hand census the brief asked for. The plan predicted "two parallel staged triples";
+        // the triples are real - (finderPreview, finderApplied, finderCsvData) and (typePreview,
+        // typeApplied, typeCsvData) - and they are six of forty. Precedent: page 5 predicted seven
+        // and found twelve, page 7 predicted three and found twenty-two.
+        //
+        // Four groups, and the last two are this page's own: the tab/session state that would
+        // deaden the page permanently, the two form sets, the staged CSV triples, and the JOBS VIEW
+        // - collections and nullables that a background callback writes. That last group is the one
+        // a reader of this page is most likely to get wrong, because "a bulk job is running" reads
+        // like "the page is busy" and is not: folding activeJobs or finderJob into IsBusy would
+        // disable the whole form for the life of any job, and would do it from a callback, so the
+        // form would go dead mid-typing with no click involved.
+        ExcludedFields =
+        [
+            new ExcludedField("authChecked", "the whole page body; 24-34 returns early while unset",
+                "means 'authorization has been resolved', and it is set true once and never "
+                + "cleared. In IsBusy the page would be permanently and irrecoverably dead from the "
+                + "first render onward"),
+            new ExcludedField("activeTab", "the tab strip at 46-58 and all three tab bodies",
+                "which tab is open is a view selection, not an operation; it is always set"),
+            new ExcludedField("result", "the shared result banner at 432-456",
+                "the banner's model. It is non-null for the whole time an outcome is on screen, so "
+                + "folding it in would deaden the page after every operation until the operator "
+                + "dismissed it - and the dismiss at 452 is the one control that would still work"),
+            new ExcludedField("authSnapshot", "nothing; it is stamped onto submitted jobs",
+                "the off-circuit authorization capture, set once in OnInitializedAsync and never "
+                + "nulled. A nullable that is only ever raised is the inverse of an in-flight flag"),
+            new ExcludedField("_disposed", "nothing; it suppresses render after teardown",
+                "set true in Dispose and never cleared. A mechanical 'OR the bools together' pass "
+                + "would sweep it up and it means the opposite of busy"),
+
+            // Room Finder form. Every one of these renders into a control that IsBusy already
+            // disables, so folding any of them in disables the field the operator is typing into.
+            new ExcludedField("roomEmail", "the RecipientAutocomplete at 70 and Setup Room at 125",
+                "a form value. It is also the Setup Room button's own emptiness clause, which is "
+                + "OR-ed with IsBusy and must never be folded into it"),
+            new ExcludedField("city", "the input at 75", "a form value, not an operation"),
+            new ExcludedField("countryOrRegion", "the input at 79", "a form value"),
+            new ExcludedField("state", "the input at 85", "a form value"),
+            new ExcludedField("building", "the input at 89",
+                "a form value; it also decides the room list, which is a write target and not a "
+                + "busy condition"),
+            new ExcludedField("capacity", "the number input at 96", "a form value"),
+            new ExcludedField("floor", "the input at 100", "a form value"),
+            new ExcludedField("floorLabel", "the input at 104", "a form value"),
+            new ExcludedField("displayDevice", "the input at 110", "a form value"),
+            new ExcludedField("videoDevice", "the input at 114", "a form value"),
+            new ExcludedField("timezone", "the TimezonePicker at 119", "a form value"),
+            new ExcludedField("ticketNumber", "the input at 123 and Setup Room at 125",
+                "the ticket the change is recorded against; the button's second emptiness clause"),
+
+            // Room Type form. typeRemovePerms is the one to watch: it is a bool, so folding it in
+            // COMPILES and looks plausible, and it would disable the entire Room Type form - Set
+            // Type included - at the exact moment the operator ticks the destructive option.
+            new ExcludedField("typeRoomEmail", "the RecipientAutocomplete at 260 and Set Type at 312",
+                "a form value, and the Set Type button's own emptiness clause"),
+            new ExcludedField("selectedRoomType", "the select at 264 and Set Type at 312",
+                "which room type is chosen; also the button's second emptiness clause, and what "
+                + "decides whether the Site select at 278 renders at all"),
+            new ExcludedField("typeSite", "the select at 278", "a form value"),
+            new ExcludedField("typeTimezone", "the TimezonePicker at 286", "a form value"),
+            new ExcludedField("typeArbiter", "the input at 290", "a form value"),
+            new ExcludedField("typeRemovePerms", "the checkbox at 293 and the warning at 302-307",
+                "a BOOL form value that reads like a flag. It means 'the operator has asked for the "
+                + "destructive variant', not 'the page is working'. In IsBusy, ticking it would "
+                + "disable the whole Room Type form including the Set Type button beside it, so the "
+                + "destructive variant could never be executed and the page would look broken"),
+            new ExcludedField("typeTicketNumber", "the input at 310 and Set Type at 312",
+                "the ticket; the button's third emptiness clause"),
+
+            // The two staged CSV triples. These are the ExcludedFields the field exists for: the
+            // Apply button and the preview table render ONLY while the triple is set, so folding
+            // any of the six in disables Apply at the only moment it is ever shown - the Migration
+            // regression a review caught before code, in its exact form, twice over.
+            new ExcludedField("csvFinderTicket", "the input at 140 and Apply Changes at 158",
+                "the bulk ticket; also Apply's own emptiness clause and the reason for the warning "
+                + "at 152-157"),
+            new ExcludedField("finderPreview", "the Apply block at 147-163 and the preview at 170-221",
+                "holds the parsed rows awaiting approval. Both render only while Count > 0, so "
+                + "folding it into IsBusy would disable Apply Changes at the only moment it renders "
+                + "and no Finder CSV could ever be applied again"),
+            new ExcludedField("finderApplied", "the same Apply block and preview, negated",
+                "means 'this parse has already been submitted', which is a staged marker and the "
+                + "opposite of in flight: it is set AFTER the job is enqueued and stays set"),
+            new ExcludedField("finderCsvData", "nothing directly; it is the payload Apply submits",
+                "the parsed rows themselves, index-aligned with finderPreview. A payload, not an "
+                + "operation"),
+            new ExcludedField("csvTypeTicket", "the input at 327 and Apply Changes at 339",
+                "the bulk ticket; also Apply's own emptiness clause"),
+            new ExcludedField("typePreview", "the Apply block at 334-344 and the preview at 351-402",
+                "the Room Type half of the same shape as finderPreview, with the same consequence"),
+            new ExcludedField("typeApplied", "the same Apply block and preview, negated",
+                "as finderApplied"),
+            new ExcludedField("typeCsvData", "nothing directly; it is the payload Apply submits",
+                "as finderCsvData"),
+
+            // The jobs view. Written by RefreshJobs, which OnJobChanged calls from the runner's
+            // thread. Anything here in IsBusy is a gate driven by a background callback.
+            new ExcludedField("activeJobs", "the Bulk Jobs tab badge at 55 and the table at 488-557",
+                "server-side jobs that are queued or running. 'A bulk job is running' is NOT 'this "
+                + "circuit is busy': the job survives the tab. Folding activeJobs.Count into IsBusy "
+                + "would disable the entire form for the life of every job, would do it from a "
+                + "callback rather than from a click, and would grey the form out under an operator "
+                + "mid-keystroke"),
+            new ExcludedField("recentJobs", "the finished-job rows at 558-622",
+                "finished jobs, kept for 30 days. Same mistake as activeJobs and more obviously "
+                + "wrong - these jobs are over"),
+            new ExcludedField("finderJob", "the live results card at 224-247",
+                "the active-or-most-recent Finder job. A nullable written by a background callback, "
+                + "which is the most convincing wrong answer on this page: 'finderJob is not null' "
+                + "reads exactly like an in-flight signal and is a view selection"),
+            new ExcludedField("typeJob", "the live results card at 405-428", "as finderJob"),
+            new ExcludedField("finderRows", "the same card at 224-247",
+                "per-row results streamed from the runner; replaced wholesale on every job event"),
+            new ExcludedField("typeRows", "the same card at 405-428", "as finderRows"),
+            new ExcludedField("detailsJobId", "the expanded detail row at 516-556 and 581-621",
+                "which job's rows are expanded. A nullable raised and nulled in one method, which "
+                + "is most of the stuck-flag shape, and it is a selection. In IsBusy the page would "
+                + "die whenever a detail row was open - including the Details button itself, so it "
+                + "could never be closed again"),
+            new ExcludedField("detailsRows", "the same expanded detail row",
+                "the fetched rows for the expanded job; replaced on expand and on collapse"),
+        ],
+
+        // Ten of fourteen, matching Get-ClickGateAudit.ps1's ungated line list exactly. Four
+        // categories: three tab switches, two constant downloads, one banner dismiss, and the four
+        // Bulk Jobs controls that belong to the second scope.
+        ExemptControls =
+        [
+            new ExemptControl(48, "@onclick='() => activeTab = \"finder\"'",
+                "a view switch. Every control on the destination tab carries the gate, so nothing "
+                + "can be executed from the new tab while the page is busy; gating it would instead "
+                + "trap the operator on whichever tab a long CSV parse started from, unable to "
+                + "watch the other one's preview or results",
+                ConditionThatKeepsItTrue:
+                "the handler stays a bare assignment to activeTab. The moment a tab switch loads "
+                + "anything it is an operation and belongs behind IsBusy"),
+
+            new ExemptControl(51, "@onclick='() => activeTab = \"type\"'",
+                "the same view switch on the Room Type tab, on the same reasoning",
+                ConditionThatKeepsItTrue:
+                "as 48: the handler stays a bare assignment to activeTab"),
+
+            new ExemptControl(54, "@onclick='() => activeTab = \"jobs\"'",
+                "the same view switch, and the one that must NOT be gated even if the other two "
+                + "ever are. Cancel at 511 is the only way to stop a running server-side job, and "
+                + "it lives behind this tab: gating the tab on the form predicate would strand a "
+                + "runaway bulk job - one that keeps writing to Exchange after the browser is "
+                + "closed - with no way to cancel it for the whole of an unrelated CSV parse. The "
+                + "registry has no BecauseOfControl field to tie those two together, so the tie is "
+                + "this sentence plus the exemption registered at 511: if Cancel is removed or "
+                + "moved, EveryRegisteredExemptionStillPointsAtARealControl fails and someone "
+                + "re-reads this",
+                ConditionThatKeepsItTrue:
+                "Cancel stays behind this tab and stays clickable. If job cancellation ever moves "
+                + "somewhere reachable without this tab, re-derive the exemption rather than "
+                + "keeping it"),
+
+            new ExemptControl(145, "@onclick=\"DownloadFinderSampleCsv\"",
+                "serves a compile-time constant. The handler builds a string literal, base64s it "
+                + "and hands it to the downloadFile interop; it reads no page state and touches no "
+                + "in-flight operation, so a click during a parse is definitively executed",
+                ConditionThatKeepsItTrue:
+                "DownloadFinderSampleCsv must keep building its content from string literals only. "
+                + "The moment it reads finderPreview, or calls into Exchange to build a real "
+                + "sample, it is an operation and belongs behind IsBusy"),
+
+            new ExemptControl(332, "@onclick=\"DownloadTypeSampleCsv\"",
+                "the Room Type half of the same constant download",
+                ConditionThatKeepsItTrue:
+                "as 145: DownloadTypeSampleCsv must keep building its content from string literals"),
+
+            new ExemptControl(452, "@onclick=\"() => result = null\"",
+                "dismisses the shared result banner. Gating it on IsBusy would trap the previous "
+                + "operation's message on screen for the whole of the next one, the same reason "
+                + "Migration's dismiss at 442 and DhcpAuthorization's at 40 are exempt. No handler "
+                + "on this page READS result - every one of them only assigns it, from a `new "
+                + "RoomOperationResult` or from an await - so a dismiss landing mid-flight cannot "
+                + "produce the NullReferenceException that made DhcpAuthorization's dismiss a live "
+                + "defect, and this exemption needs no prerequisite",
+                ConditionThatKeepsItTrue:
+                "no handler starts reading result back. The moment one does - result.Success after "
+                + "an await is the shape - this control can null it under them, and the exemption "
+                + "needs a PostAwaitLiveRead and a PrerequisiteBeforeExemptionHolds before it holds "
+                + "again"),
+
+            // The jobs scope. Line is the only key for 508 and 572: the two Details buttons were
+            // byte-identical, same label and same handler in two different loops, which is exactly
+            // the case ExemptControl.Snippet exists for and exactly the case a snippet could not
+            // disambiguate. They now carry distinct titles, so the snippet is a real key again.
+            new ExemptControl(508, "title=\"Show or hide the rows of this active job\"",
+                "expands or collapses one ACTIVE job's rows. A view toggle keyed by job.Id: it "
+                + "reads no collection the background callback replaces, and an id means the same "
+                + "job whichever snapshot of the list is current. It must stay clickable during a "
+                + "form operation - submitting a CSV is precisely when the operator needs to watch "
+                + "the job it created",
+                ConditionThatKeepsItTrue:
+                "ToggleJobDetails keeps taking an id and keeps reading nothing but BulkJobs.GetRows"),
+
+            new ExemptControl(511, "@onclick=\"() => CancelJob(job.Id)\"",
+                "cancels or dequeues a running server-side job, and it belongs to the jobs scope, "
+                + "not the form scope. The form predicate has no authority over it in either "
+                + "direction: nothing the panel does raises IsBusy, and nothing IsBusy describes is "
+                + "happening to this job. Gating it on IsBusy would make a runaway bulk job - which "
+                + "keeps writing to Exchange after the browser is closed - uncancellable for the "
+                + "whole of an unrelated CSV parse. CancelJob takes job.Id and calls straight "
+                + "through, so the callback swapping the list under it changes nothing",
+                ConditionThatKeepsItTrue:
+                "CancelJob keeps taking an id and keeps making no read of activeJobs. If it ever "
+                + "needs the row, it must take the rendered BulkJob the way RemoveJob now does"),
+
+            new ExemptControl(572, "title=\"Show or hide the rows of this finished job\"",
+                "the FINISHED-job half of the same view toggle, in the second loop. Textually "
+                + "identical to 508 until the titles were added; see the note above this group",
+                ConditionThatKeepsItTrue:
+                "as 508"),
+
+            new ExemptControl(575, "@onclick=\"() => RemoveJob(job)\"",
+                "hard-deletes one finished job record, and it is the control that taught this page "
+                + "its lesson. It is exempt from IsBusy for the jobs-scope reason - tidying the job "
+                + "list has nothing to do with a form operation, and gating it would only stop the "
+                + "operator doing housekeeping while a CSV parses - but exempt is not the same as "
+                + "safe, and this one was not safe. It passed job.Id and then looked the row back "
+                + "up in the LIVE recentJobs to build its audit record; recentJobs is both replaced "
+                + "by the background callback and a windowed read, so a job finishing elsewhere "
+                + "could push the operator's row out from under the click. The lookup missed, the "
+                + "delete went through by id anyway, and a durable record was destroyed with an "
+                + "audit row carrying no ticket and no old values. It now takes the rendered "
+                + "BulkJob. No gate could have closed that - the staleness is between render and "
+                + "click - and no assertion in this suite holds it either; see the remarks",
+                ConditionThatKeepsItTrue:
+                "RemoveJob keeps taking the rendered BulkJob and never looks a row up in "
+                + "recentJobs, activeJobs or any other collection RefreshJobs replaces"),
+        ],
+
+        // Verified by hand census against the file, not inherited: every one of the fourteen
+        // @onclick attributes on this page is on a <button>. No anchor, no div/span/td handler, no
+        // @onchange, no @onsubmit and no <form>. Get-ClickGateAudit.ps1 agrees (OtherClick: 0).
+        NonButtonTargets = [],
+
+        // Twenty-three, censused by hand and cross-checked against the scanner's two-flag report.
+        // All twenty-three were gated on the bare isLoading flag before this conversion and now
+        // name the predicate. The four child components are the ones NonButtonTargets could never
+        // have covered - ClickGateSource locates @onclick only - and two of them, the
+        // RecipientAutocomplete pair, are the instances the page-3 entry predicted would land here.
+        DomSyncedControls =
+        [
+            new DomSyncedControl(70, "@bind-Value=\"roomEmail\"", "RecipientAutocomplete",
+                "Disabled=\"@IsBusy\""),
+            new DomSyncedControl(75, "@bind=\"city\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(79, "@bind=\"countryOrRegion\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(85, "@bind=\"state\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(89, "@bind=\"building\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(96, "@bind=\"capacity\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(100, "@bind=\"floor\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(104, "@bind=\"floorLabel\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(110, "@bind=\"displayDevice\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(114, "@bind=\"videoDevice\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(119, "@bind-Value=\"timezone\"", "TimezonePicker",
+                "Disabled=\"@IsBusy\""),
+            new DomSyncedControl(123, "@bind=\"ticketNumber\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(140, "@bind=\"csvFinderTicket\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(144, "OnChange=\"HandleFinderCsvUpload\"", "InputFile",
+                "disabled=\"@IsBusy\""),
+            new DomSyncedControl(260, "@bind-Value=\"typeRoomEmail\"", "RecipientAutocomplete",
+                "Disabled=\"@IsBusy\""),
+            new DomSyncedControl(264, "@bind=\"selectedRoomType\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(278, "@bind=\"typeSite\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(286, "@bind-Value=\"typeTimezone\"", "TimezonePicker",
+                "Disabled=\"@IsBusy\""),
+            new DomSyncedControl(290, "@bind=\"typeArbiter\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(293, "@bind=\"typeRemovePerms\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(310, "@bind=\"typeTicketNumber\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(327, "@bind=\"csvTypeTicket\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(331, "OnChange=\"HandleTypeCsvUpload\"", "InputFile",
+                "disabled=\"@IsBusy\""),
+        ],
+
+        UngatedDomSyncedControls = [],
+
+        // Six, and the first is the one that matters: RefreshJobs is called by both CSV Apply
+        // handlers while they are still busy, AND by a background callback where a busy flag is
+        // meaningless. The other five are the shared helpers every busy handler calls; each is
+        // listed because a guard there is silent by construction - the caller reports success and
+        // the side effect simply did not happen.
+        ForbiddenGuardSites =
+        [
+            new ForbiddenGuardSite("RefreshJobs", ["ApplyFinderCsv", "ApplyTypeCsv", "RemoveJob"],
+                "Both Apply handlers call it immediately after enqueueing, while isLoading and "
+                + "isCsvProcessing are still true, so IsBusy is true at that call. A guard here "
+                + "makes the confirming refresh a silent no-op: the banner says the job was "
+                + "submitted while the Bulk Jobs tab shows no such job, and the operator submits it "
+                + "again. Worse, OnJobChanged calls this from the runner's thread on every job "
+                + "event, where IsBusy describes nothing relevant - a guard would freeze the live "
+                + "jobs view for the whole of any form operation and leave a running job's progress "
+                + "silently stale."),
+
+            new ForbiddenGuardSite("ReauthorizeAsync",
+                ["SetupSingleRoom", "ApplyFinderCsv", "SetSingleRoomType", "ApplyTypeCsv"],
+                "Every mutating handler calls it after raising isLoading. It returns bool and the "
+                + "callers treat false as a denial, so a busy guard here would make every operation "
+                + "on the page report 'Authorization denied.' and stop - a refusal wearing the "
+                + "wrong reason, which is worse than no refusal because the operator escalates it."),
+
+            new ForbiddenGuardSite("EnqueueConferenceRoomJob", ["ApplyFinderCsv", "ApplyTypeCsv"],
+                "Called by both Apply handlers while busy. It is the only thing that submits a "
+                + "bulk job; a guard here would leave both handlers reporting 'Submitted N room(s) "
+                + "as a background job' with nothing enqueued."),
+
+            new ForbiddenGuardSite("AuditFinderAction",
+                ["SetupSingleRoom", "HandleFinderCsvUpload", "ApplyFinderCsv"],
+                "Every caller is busy at the call. A guard here silently drops the audit record "
+                + "for every Room Finder action, including the failures - and the Constitution "
+                + "makes the audit non-negotiable, so a no-op that reports nothing is the worst "
+                + "available outcome."),
+
+            new ForbiddenGuardSite("AuditTypeAction",
+                ["SetSingleRoomType", "HandleTypeCsvUpload", "ApplyTypeCsv"],
+                "As AuditFinderAction, on the Room Type half."),
+
+            new ForbiddenGuardSite("NotifyRoomAdminAsync", ["SetupSingleRoom", "SetSingleRoomType"],
+                "Both single-room handlers call it while busy, on both the success and the failure "
+                + "path. It is the mandatory admin notification (Constitution, Notifications); a "
+                + "guard here would silently stop every room write being notified while the "
+                + "handler still reported success."),
+        ],
+
+        // No handler on this page carries a busy guard, and none should: every refusal is in
+        // markup, on a control the disabled attribute reaches. Nothing to pin here.
+        ExactlyOneGuard = [],
+
+        // The four gated buttons, each with the emptiness clauses IsBusy is OR-ed in front of and
+        // must never replace. Two of the six clauses are the SOLE enforcement of their condition -
+        // neither SetupSingleRoom nor SetSingleRoomType checks its room address anywhere - which is
+        // the IntuneDevices 403 shape, and the reason a mechanical rewrite to the bare predicate
+        // would be a live defect rather than a tidy-up.
+        AnnotatedControls =
+        [
+            new AnnotatedControl(125, "@onclick=\"SetupSingleRoom\"",
+                [
+                    "string.IsNullOrWhiteSpace(roomEmail)",
+                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                ],
+                RendersOnlyWhen:
+                "always, while the Room Finder tab is open. The roomEmail clause IS the only "
+                + "enforcement: SetupSingleRoom never checks the address, it just trims it and "
+                + "hands it to the protected-principal gate and then to Set-Place. The ticket "
+                + "clause is belt and braces - ServiceNow validation would reject an empty ticket - "
+                + "but it is still a precondition and not a busy condition"),
+
+            new AnnotatedControl(158, "@onclick=\"ApplyFinderCsv\"",
+                ["string.IsNullOrWhiteSpace(csvFinderTicket)"],
+                RendersOnlyWhen:
+                "only while finderPreview.Count > 0 && !finderApplied - the staged triple. That "
+                + "reachability is the whole reason finderPreview and finderApplied are registered "
+                + "ExcludedFields: fold either into IsBusy and this button is disabled at the only "
+                + "moment it renders. The clause is re-checked by ServiceNow validation, and the "
+                + "warning panel at 152-157 explains it to the operator in prose"),
+
+            new AnnotatedControl(312, "@onclick=\"SetSingleRoomType\"",
+                [
+                    "string.IsNullOrWhiteSpace(typeRoomEmail)",
+                    "string.IsNullOrWhiteSpace(selectedRoomType)",
+                    "string.IsNullOrWhiteSpace(typeTicketNumber)",
+                ],
+                RendersOnlyWhen:
+                "always, while the Room Type tab is open. typeRoomEmail is the sole enforcement, as "
+                + "roomEmail is at 125. selectedRoomType is re-checked by the Enum.TryParse below "
+                + "the awaits, so that one is belt and braces"),
+
+            new AnnotatedControl(339, "@onclick=\"ApplyTypeCsv\"",
+                ["string.IsNullOrWhiteSpace(csvTypeTicket)"],
+                RendersOnlyWhen:
+                "only while typePreview.Count > 0 && !typeApplied - the second staged triple, same "
+                + "shape as 158"),
+        ],
+
+        SpinnerExpressions =
+        [
+            // Two distinct conditions, each written twice (127 and 314; 160 and 341), one pair per
+            // tab. Neither is the predicate and neither may be collapsed into it: the single-room
+            // spinner suppresses itself during a CSV apply because the Apply button beside it is
+            // already showing one, and the CSV spinner is on isCsvProcessing alone so a single-room
+            // setup does not put a spinner on Apply Changes. Containment cannot tell the two copies
+            // apart, so deleting exactly one of a pair passes this - the line numbers here are the
+            // only record that there are two of each.
+            "@if (isLoading && !isCsvProcessing)",
+            "@if (isCsvProcessing)",
+        ],
+
+        // Twenty obligations. Falsification 6 for this page, and the larger half of the fix: the
+        // gate narrows these windows and only the locals close them. Five more exist in the page
+        // and cannot be written here - SetupSingleRoom's city, building, capacity, floor and
+        // timezone - because the old-value audit dictionary uses those five words as key literals
+        // after the await and the matcher is textual. See the remarks; that is prose and unenforced.
+        PostAwaitLiveReads =
+        [
+            new PostAwaitLiveRead("SetupSingleRoom", "roomEmail", "email",
+                SnapshotShape.CapturedAtEntry,
+                "the room whose metadata is written, audited and emailed. It was already captured, "
+                + "but BELOW await Task.Yield(), which is a real yield back to the message loop - "
+                + "so a suggestion click or a keystroke queued behind the click could retarget the "
+                + "Set-Place write before the capture ran"),
+
+            new PostAwaitLiveRead("SetupSingleRoom", "ticketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the ticket validated against ServiceNow must be the ticket recorded in the audit "
+                + "row and the admin email. Captured above the yield for the same reason as "
+                + "roomEmail"),
+
+            new PostAwaitLiveRead("SetupSingleRoom", "countryOrRegion", "country",
+                SnapshotShape.CapturedAtEntry,
+                "written to the room's Place metadata. Read live it was read TWICE - once for the "
+                + "write and again, later, for the audit row's new values - so the record of what "
+                + "was applied could disagree with what was applied"),
+
+            new PostAwaitLiveRead("SetupSingleRoom", "state", "stateName",
+                SnapshotShape.CapturedAtEntry,
+                "as countryOrRegion: written to Place metadata and recorded in the same audit row"),
+
+            new PostAwaitLiveRead("SetupSingleRoom", "floorLabel", "floorText",
+                SnapshotShape.CapturedAtEntry,
+                "as countryOrRegion"),
+
+            new PostAwaitLiveRead("SetupSingleRoom", "displayDevice", "display",
+                SnapshotShape.CapturedAtEntry,
+                "as countryOrRegion"),
+
+            new PostAwaitLiveRead("SetupSingleRoom", "videoDevice", "video",
+                SnapshotShape.CapturedAtEntry,
+                "as countryOrRegion"),
+
+            new PostAwaitLiveRead("SetSingleRoomType", "typeRoomEmail", "email",
+                SnapshotShape.CapturedAtEntry,
+                "the room whose type, mail tip, booking policy and calendar permissions are "
+                + "rewritten. Captured above await Task.Yield() rather than below it"),
+
+            new PostAwaitLiveRead("SetSingleRoomType", "typeTicketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the ticket validated must be the ticket recorded"),
+
+            new PostAwaitLiveRead("SetSingleRoomType", "selectedRoomType", "typeName",
+                SnapshotShape.CapturedAtEntry,
+                "which template is applied. It was read live three times after the awaits - to "
+                + "parse the enum, to decide whether the Site value is used, and again for the "
+                + "audit row - so a select changed during the ServiceNow round trip could have the "
+                + "page parse one type, site-qualify a second and record a third"),
+
+            new PostAwaitLiveRead("SetSingleRoomType", "typeTimezone", "tz",
+                SnapshotShape.CapturedAtEntry,
+                "the room's working-hours timezone, written and then audited from two separate "
+                + "live reads"),
+
+            new PostAwaitLiveRead("SetSingleRoomType", "typeSite", "site",
+                SnapshotShape.CapturedAtEntry,
+                "which site's admin group arbitrates a Restricted room. Read live it could be taken "
+                + "from a select the operator changed after the click was accepted"),
+
+            new PostAwaitLiveRead("SetSingleRoomType", "typeArbiter", "arbiter",
+                SnapshotShape.CapturedAtEntry,
+                "the group that approves bookings. A keystroke landing in the round trip would "
+                + "hand approval rights to a different group than the one on screen"),
+
+            new PostAwaitLiveRead("SetSingleRoomType", "typeRemovePerms", "removePerms",
+                SnapshotShape.CapturedAtEntry,
+                "THE destructive one on this page. It decides whether every existing calendar "
+                + "permission on the room is deleted before the new ones are applied - the page "
+                + "renders a red warning for it at 302-307. Read live after four awaits, a checkbox "
+                + "toggled during the ServiceNow round trip turned a non-destructive Set Type into "
+                + "a destructive one the operator never confirmed, or the reverse; and the audit "
+                + "row read it a fifth time, after the write, so it could record the answer that "
+                + "was not used"),
+
+            new PostAwaitLiveRead("ApplyFinderCsv", "csvFinderTicket", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the bulk ticket, and the defect falsification 6 names by name. The catch re-read "
+                + "the LIVE field - csvFinderTicket.Trim() - because the old local was declared "
+                + "inside the try and out of scope there, so on any failure the audit row recorded "
+                + "whatever was in an oninput-bound box at that moment rather than the ticket "
+                + "validated against ServiceNow. The capture is now above the try as well as above "
+                + "the first await, which is what puts it in scope for the catch"),
+
+            new PostAwaitLiveRead("ApplyFinderCsv", "finderCsvData", "csvRows",
+                SnapshotShape.CapturedAtEntry,
+                "the parsed rows this click submits as a durable server-side job. "
+                + "HandleFinderCsvUpload REPLACES the list (finderCsvData = new()) at its own "
+                + "entry, so a file chosen in the round trip before the InputFile's disabled "
+                + "attribute reaches the browser would have this handler enqueue rows from a parse "
+                + "the operator never previewed - or, mid-parse, an emptied list reported as 'No "
+                + "resolvable rooms to submit'"),
+
+            new PostAwaitLiveRead("ApplyFinderCsv", "finderPreview", "previewRows",
+                SnapshotShape.CapturedAtEntry,
+                "the index-aligned approval list that decides WHICH of those rows are submitted. It "
+                + "is replaced by the same handler on the same path, and the two lists must be the "
+                + "matched pair the operator approved - a mismatch submits rows by index against "
+                + "another parse's resolution flags"),
+
+            new PostAwaitLiveRead("ApplyTypeCsv", "csvTypeTicket", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the same live-read-in-the-catch defect on the Room Type bulk path"),
+
+            new PostAwaitLiveRead("ApplyTypeCsv", "typeCsvData", "csvRows",
+                SnapshotShape.CapturedAtEntry,
+                "as finderCsvData, and this is the payload that rewrites calendar permissions in "
+                + "bulk"),
+
+            new PostAwaitLiveRead("ApplyTypeCsv", "typePreview", "previewRows",
+                SnapshotShape.CapturedAtEntry,
+                "as finderPreview"),
+        ],
+
+        // No raise on this page sits near an early return: all six busy handlers raise as their
+        // first statement above the try, and none has a guard above the raise.
+        RaiseMustFollowEarlyReturn = [],
+
+        // Censused by hand against the file: this page has no @onkeydown, @onkeyup or @onkeypress,
+        // no @onsubmit, no @onchange and no <form>, so there is no key press that reaches an
+        // operation and none that reaches nothing either. Both lists are empty, and the forward
+        // direction of EveryKeyboardPathIsRegisteredOrRecordedHarmless is what keeps that true: a
+        // handler added here later fails the suite and names itself.
+        KeyboardPaths = [],
 
         HarmlessKeyboardPaths = [],
     };

@@ -67,63 +67,63 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Room Email</label>
-                            <RecipientAutocomplete @bind-Value="roomEmail" Placeholder="room@company.com" Disabled="@isLoading" />
+                            <RecipientAutocomplete @bind-Value="roomEmail" Placeholder="room@company.com" Disabled="@IsBusy" />
                         </div>
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-semibold">City</label>
-                                <input type="text" class="form-control" @bind="city" placeholder="City" disabled="@isLoading" />
+                                <input type="text" class="form-control" @bind="city" placeholder="City" disabled="@IsBusy" />
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-semibold">Country</label>
-                                <input type="text" class="form-control" @bind="countryOrRegion" placeholder="USA" disabled="@isLoading" />
+                                <input type="text" class="form-control" @bind="countryOrRegion" placeholder="USA" disabled="@IsBusy" />
                             </div>
                         </div>
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-semibold">State</label>
-                                <input type="text" class="form-control" @bind="state" placeholder="MA" disabled="@isLoading" />
+                                <input type="text" class="form-control" @bind="state" placeholder="MA" disabled="@IsBusy" />
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-semibold">Building</label>
-                                <input type="text" class="form-control" @bind="building" placeholder="Building name" disabled="@isLoading" />
+                                <input type="text" class="form-control" @bind="building" placeholder="Building name" disabled="@IsBusy" />
                                 <small class="form-text text-muted">Determines the room list (<em>&lt;Building&gt; Conference Rooms</em>). Leave blank to skip room-list assignment.</small>
                             </div>
                         </div>
                         <div class="row">
                             <div class="col-md-4 mb-3">
                                 <label class="form-label fw-semibold">Capacity</label>
-                                <input type="number" class="form-control" @bind="capacity" min="1" disabled="@isLoading" />
+                                <input type="number" class="form-control" @bind="capacity" min="1" disabled="@IsBusy" />
                             </div>
                             <div class="col-md-4 mb-3">
                                 <label class="form-label fw-semibold">Floor</label>
-                                <input type="text" class="form-control" @bind="floor" placeholder="Floor" disabled="@isLoading" />
+                                <input type="text" class="form-control" @bind="floor" placeholder="Floor" disabled="@IsBusy" />
                             </div>
                             <div class="col-md-4 mb-3">
                                 <label class="form-label fw-semibold">Floor Label</label>
-                                <input type="text" class="form-control" @bind="floorLabel" placeholder="Second Floor" disabled="@isLoading" />
+                                <input type="text" class="form-control" @bind="floorLabel" placeholder="Second Floor" disabled="@IsBusy" />
                             </div>
                         </div>
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-semibold">Display Device</label>
-                                <input type="text" class="form-control" @bind="displayDevice" placeholder="TV" disabled="@isLoading" />
+                                <input type="text" class="form-control" @bind="displayDevice" placeholder="TV" disabled="@IsBusy" />
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-semibold">Video Device</label>
-                                <input type="text" class="form-control" @bind="videoDevice" placeholder="Polycom" disabled="@isLoading" />
+                                <input type="text" class="form-control" @bind="videoDevice" placeholder="Polycom" disabled="@IsBusy" />
                             </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Time Zone</label>
-                            <TimezonePicker @bind-Value="timezone" Disabled="@isLoading" />
+                            <TimezonePicker @bind-Value="timezone" Disabled="@IsBusy" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
                         </div>
                         <button class="btn btn-primary" @onclick="SetupSingleRoom"
-                                disabled="@(isLoading || string.IsNullOrWhiteSpace(roomEmail) || string.IsNullOrWhiteSpace(ticketNumber))">
+                                disabled="@(IsBusy || string.IsNullOrWhiteSpace(roomEmail) || string.IsNullOrWhiteSpace(ticketNumber))">
                             @if (isLoading && !isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Setup Room
                         </button>
@@ -137,11 +137,11 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="csvFinderTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
+                            <input type="text" class="form-control" @bind="csvFinderTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label">CSV File</label>
-                            <InputFile OnChange="HandleFinderCsvUpload" accept=".csv" disabled="@isLoading" />
+                            <InputFile OnChange="HandleFinderCsvUpload" accept=".csv" disabled="@IsBusy" />
                             <button type="button" class="btn btn-outline-secondary btn-sm mt-1" @onclick="DownloadFinderSampleCsv">Sample CSV</button>
                         </div>
                         @if (finderPreview.Count > 0 && !finderApplied)
@@ -156,7 +156,7 @@
                                 </div>
                             }
                             <button class="btn btn-success" @onclick="ApplyFinderCsv"
-                                    disabled="@(isLoading || string.IsNullOrWhiteSpace(csvFinderTicket))">
+                                    disabled="@(IsBusy || string.IsNullOrWhiteSpace(csvFinderTicket))">
                                 @if (isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                 Apply Changes
                             </button>
@@ -257,11 +257,11 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Room Email</label>
-                            <RecipientAutocomplete @bind-Value="typeRoomEmail" Placeholder="room@company.com" Disabled="@isLoading" />
+                            <RecipientAutocomplete @bind-Value="typeRoomEmail" Placeholder="room@company.com" Disabled="@IsBusy" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Room Type</label>
-                            <select class="form-select" @bind="selectedRoomType" disabled="@isLoading">
+                            <select class="form-select" @bind="selectedRoomType" disabled="@IsBusy">
                                 <option value="">-- Select --</option>
                                 <option value="Standard">Standard — open booking, visible to all</option>
                                 <option value="Video">Video — open booking with video equipment</option>
@@ -275,7 +275,7 @@
                         {
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Site</label>
-                                <select class="form-select" @bind="typeSite" disabled="@isLoading">
+                                <select class="form-select" @bind="typeSite" disabled="@IsBusy">
                                     <option value="none">Default</option>
                                     <option value="ADGT">ADGT</option>
                                 </select>
@@ -283,14 +283,14 @@
                         }
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Time Zone</label>
-                            <TimezonePicker @bind-Value="typeTimezone" Disabled="@isLoading" />
+                            <TimezonePicker @bind-Value="typeTimezone" Disabled="@IsBusy" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Arbiter Group</label>
-                            <input type="text" class="form-control" @bind="typeArbiter" placeholder="ConfSiteAdmins (default)" disabled="@isLoading" />
+                            <input type="text" class="form-control" @bind="typeArbiter" placeholder="ConfSiteAdmins (default)" disabled="@IsBusy" />
                         </div>
                         <div class="form-check mb-3">
-                            <input type="checkbox" class="form-check-input" id="removePerms" @bind="typeRemovePerms" disabled="@isLoading" />
+                            <input type="checkbox" class="form-check-input" id="removePerms" @bind="typeRemovePerms" disabled="@IsBusy" />
                             <label class="form-check-label" for="removePerms">Remove existing calendar permissions</label>
                         </div>
                         @if (selectedRoomType == "CEO")
@@ -307,10 +307,10 @@
                         }
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="typeTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
+                            <input type="text" class="form-control" @bind="typeTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
                         </div>
                         <button class="btn btn-primary" @onclick="SetSingleRoomType"
-                                disabled="@(isLoading || string.IsNullOrWhiteSpace(typeRoomEmail) || string.IsNullOrWhiteSpace(selectedRoomType) || string.IsNullOrWhiteSpace(typeTicketNumber))">
+                                disabled="@(IsBusy || string.IsNullOrWhiteSpace(typeRoomEmail) || string.IsNullOrWhiteSpace(selectedRoomType) || string.IsNullOrWhiteSpace(typeTicketNumber))">
                             @if (isLoading && !isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Set Type
                         </button>
@@ -324,11 +324,11 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="csvTypeTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
+                            <input type="text" class="form-control" @bind="csvTypeTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label">CSV File</label>
-                            <InputFile OnChange="HandleTypeCsvUpload" accept=".csv" disabled="@isLoading" />
+                            <InputFile OnChange="HandleTypeCsvUpload" accept=".csv" disabled="@IsBusy" />
                             <button type="button" class="btn btn-outline-secondary btn-sm mt-1" @onclick="DownloadTypeSampleCsv">Sample CSV</button>
                         </div>
                         @if (typePreview.Count > 0 && !typeApplied)
@@ -337,7 +337,7 @@
                                 <strong>@typePreview.Count room(s)</strong> parsed. Review the preview below, then click Apply.
                             </div>
                             <button class="btn btn-success" @onclick="ApplyTypeCsv"
-                                    disabled="@(isLoading || string.IsNullOrWhiteSpace(csvTypeTicket))">
+                                    disabled="@(IsBusy || string.IsNullOrWhiteSpace(csvTypeTicket))">
                                 @if (isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                 Apply Changes
                             </button>
@@ -505,7 +505,7 @@
                                     <td><small class="text-warning">@job.PartialCount</small></td>
                                     <td><small class="text-danger">@job.FailedCount</small></td>
                                     <td class="text-nowrap">
-                                        <button class="btn btn-outline-secondary btn-sm me-1" @onclick="() => ToggleJobDetails(job.Id)">
+                                        <button class="btn btn-outline-secondary btn-sm me-1" title="Show or hide the rows of this active job" @onclick="() => ToggleJobDetails(job.Id)">
                                             @(detailsJobId == job.Id ? "Hide" : "Details")
                                         </button>
                                         <button class="btn btn-outline-danger btn-sm" @onclick="() => CancelJob(job.Id)">
@@ -569,10 +569,10 @@
                                     <td><small class="text-warning">@job.PartialCount</small></td>
                                     <td><small class="text-danger">@job.FailedCount</small></td>
                                     <td class="text-nowrap">
-                                        <button class="btn btn-outline-secondary btn-sm me-1" @onclick="() => ToggleJobDetails(job.Id)">
+                                        <button class="btn btn-outline-secondary btn-sm me-1" title="Show or hide the rows of this finished job" @onclick="() => ToggleJobDetails(job.Id)">
                                             @(detailsJobId == job.Id ? "Hide" : "Details")
                                         </button>
-                                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveJob(job.Id)"
+                                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveJob(job)"
                                                 title="Remove this job from the list for everyone. The audit record is kept.">
                                             Remove
                                         </button>
@@ -634,6 +634,22 @@
     private bool authChecked;
     private bool isLoading;
     private bool isCsvProcessing;
+
+    // The FORM scope's busy predicate, and the only busy predicate this page has: the Room Finder
+    // tab, the Room Type tab, and every control on them.
+    //
+    // It deliberately does NOT speak for the Bulk Jobs panel. That panel's collections are replaced
+    // by RefreshJobs from BulkJobService.JobChanged (OnJobChanged), off the runner's thread, at
+    // moments no click produced and while this predicate is false; and its three handlers
+    // (ToggleJobDetails, CancelJob, RemoveJob) are synchronous and raise nothing, so there is no
+    // in-flight state there for a predicate to read. A predicate cannot gate work a server-side
+    // callback initiates. The panel's controls are registered exempt in ClickGateRegistry with the
+    // refusal each one actually needs, and the hazard there is row identity, not busyness: a
+    // control must act on the row that was rendered, never on a lookup into a collection the
+    // callback may have swapped since. Gating the Bulk Jobs tab itself would be actively harmful -
+    // Cancel is the only way to stop a running server-side job and it lives behind that tab.
+    private bool IsBusy => isLoading || isCsvProcessing;
+
     private string activeTab = "finder";
 
     // Single room finder fields
@@ -809,18 +825,25 @@
     // jobs database, which is what makes a hard delete acceptable: who cleared what survives the
     // row. Audit failure must not make a completed removal look failed, hence the same
     // catch-and-log shape as the other audit helpers on this page.
-    private void RemoveJob(string jobId)
+    // Takes the RENDERED row, not its id. recentJobs is replaced wholesale by RefreshJobs, which
+    // OnJobChanged calls off the runner's thread at any moment and with no click involved, and it is
+    // itself a windowed read, so looking the job up by id here read a collection that could have
+    // been swapped between the render that drew this button and the click that pressed it. When the
+    // lookup missed, DeleteJob still went through by id and the audit row recorded a successful
+    // hard delete of a durable record with no ticket and no old values. Taking the row closes it:
+    // what the operator saw is what gets audited, and a gate could not have helped - the staleness
+    // is between render and click, not across an await inside this method.
+    private void RemoveJob(ExchangeAdminWeb.Services.Jobs.BulkJob job)
     {
-        var job = recentJobs.FirstOrDefault(j => j.Id == jobId);
         var removed = BulkJobs.DeleteJob(
-            ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName, jobId);
+            ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName, job.Id);
 
         try
         {
             Audit.LogConferenceRoomAction(
                 currentUser, clientIpAddress, "ConferenceRooms_RemoveBulkJob",
-                target: jobId, success: removed, ticketNumber: job?.Ticket ?? "",
-                oldValues: job is null ? null : new Dictionary<string, object?>
+                target: job.Id, success: removed, ticketNumber: job.Ticket ?? "",
+                oldValues: new Dictionary<string, object?>
                 {
                     ["JobType"] = job.JobType,
                     ["Status"] = job.Status.ToString(),
@@ -866,12 +889,39 @@
 
     private async Task SetupSingleRoom()
     {
+        // Captured at handler entry, ABOVE the first await, and never read live again. The inputs
+        // carry disabled="@IsBusy", but the browser's copy of that attribute is one round trip
+        // stale, so a keystroke landing between the click and the render could otherwise retarget
+        // the Set-Place write. Worse than retargeting it: the write read these fields at one moment
+        // and the audit row read them AGAIN after the write await, so the record of what was
+        // applied could disagree with what was applied. email and ticket were already captured, but
+        // BELOW await Task.Yield(), which is a real yield back to the message loop.
+        var email = roomEmail.Trim();
+        var ticket = ticketNumber.Trim();
+        var cityName = city.Trim();
+        var country = countryOrRegion.Trim();
+        var stateName = state.Trim();
+        var buildingName = building.Trim();
+        var seats = capacity;
+        var floorName = floor.Trim();
+        var floorText = floorLabel.Trim();
+        var display = displayDevice.Trim();
+        var video = videoDevice.Trim();
+        var tz = timezone.Trim();
+
+        // Built here rather than after the write, for the same reason and to the same end: "new
+        // values" means the values the operator submitted, so it is built from the one snapshot the
+        // write is also built from and the two cannot drift apart.
+        var newValues = new Dictionary<string, object?>
+        {
+            ["city"] = cityName, ["building"] = buildingName, ["capacity"] = seats,
+            ["floor"] = floorName, ["floorLabel"] = floorText, ["timezone"] = tz,
+            ["countryOrRegion"] = country, ["state"] = stateName
+        };
+
         isLoading = true;
         result = null;
         await Task.Yield();
-
-        var email = roomEmail.Trim();
-        var ticket = ticketNumber.Trim();
 
         try
         {
@@ -910,18 +960,12 @@
                     using var op = OpTrace.BeginOperation("ConferenceRooms", "SetMetadata", currentUser, clientIpAddress, email, ticket);
 
                     var r = await RoomService.SetRoomMetadataAndListAsync(
-                        email, city.Trim(), building.Trim(), capacity,
-                        floor.Trim(), floorLabel.Trim(), displayDevice.Trim(), videoDevice.Trim(),
-                        countryOrRegion.Trim(), state.Trim(), timezone.Trim());
+                        email, cityName, buildingName, seats,
+                        floorName, floorText, display, video,
+                        country, stateName, tz);
 
                     op.Complete(r.Success, r.Message);
 
-                    var newValues = new Dictionary<string, object?>
-                    {
-                        ["city"] = city, ["building"] = building, ["capacity"] = capacity,
-                        ["floor"] = floor, ["floorLabel"] = floorLabel, ["timezone"] = timezone,
-                        ["countryOrRegion"] = countryOrRegion, ["state"] = state
-                    };
                     AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced);
                     await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message);
                     return r;
@@ -1061,6 +1105,18 @@
     // re-checks the captured auth snapshot and the protected-principal gate per row.
     private async Task ApplyFinderCsv()
     {
+        // Captured at handler entry, above the first await AND above the try, because the catch has
+        // to be able to read them: as a local inside the try, ticket is out of scope in the catch,
+        // which is exactly why the catch used to re-read csvFinderTicket live. The ticket validated
+        // against ServiceNow and the ticket written into the audit row were two separate reads of a
+        // field bound with @bind:event="oninput". csvRows and previewRows are the same obligation on
+        // the payload: HandleFinderCsvUpload REPLACES both lists, so a file picked in the round trip
+        // before the disabled attribute reaches the browser could otherwise be submitted against a
+        // preview nobody approved, or against an emptied one.
+        var ticket = csvFinderTicket.Trim();
+        var csvRows = finderCsvData;
+        var previewRows = finderPreview;
+
         isLoading = true;
         isCsvProcessing = true;
         result = null;
@@ -1068,7 +1124,6 @@
 
         try
         {
-            var ticket = csvFinderTicket.Trim();
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
@@ -1079,10 +1134,10 @@
             if (!await ReauthorizeAsync()) return;
 
             // Submit only rows that resolved in the preview (same guard the old inline loop applied).
-            var rows = finderCsvData
-                .Where((_, i) => i < finderPreview.Count && finderPreview[i].RoomResolved)
+            var rows = csvRows
+                .Where((_, i) => i < previewRows.Count && previewRows[i].RoomResolved)
                 .ToList();
-            var skipped = finderCsvData.Count - rows.Count;
+            var skipped = csvRows.Count - rows.Count;
 
             if (rows.Count == 0)
             {
@@ -1111,7 +1166,7 @@
         catch (Exception ex)
         {
             result = new RoomOperationResult { Success = false, Message = ex.Message };
-            AuditFinderAction("(bulk)", false, csvFinderTicket.Trim(), ex.Message);
+            AuditFinderAction("(bulk)", false, ticket, ex.Message);
         }
         finally { isLoading = false; isCsvProcessing = false; }
     }
@@ -1122,12 +1177,24 @@
 
     private async Task SetSingleRoomType()
     {
+        // Captured at handler entry, ABOVE the first await, and never read live again; see
+        // SetupSingleRoom for why the disabled attribute alone cannot close this. removePerms is
+        // the sharp one on this handler: it decides whether every existing calendar permission on
+        // the room is deleted before the new ones are applied. Read live, a checkbox toggled during
+        // the ServiceNow round trip turned a non-destructive Set Type into a destructive one that
+        // the operator never confirmed - and the audit row was read later still, so it could have
+        // recorded either answer.
+        var email = typeRoomEmail.Trim();
+        var ticket = typeTicketNumber.Trim();
+        var typeName = selectedRoomType;
+        var tz = typeTimezone.Trim();
+        var site = typeSite;
+        var arbiter = typeArbiter.Trim();
+        var removePerms = typeRemovePerms;
+
         isLoading = true;
         result = null;
         await Task.Yield();
-
-        var email = typeRoomEmail.Trim();
-        var ticket = typeTicketNumber.Trim();
 
         try
         {
@@ -1140,9 +1207,9 @@
             }
             if (!await ReauthorizeAsync()) return;
 
-            if (!Enum.TryParse<RoomType>(selectedRoomType, out var roomType))
+            if (!Enum.TryParse<RoomType>(typeName, out var roomType))
             {
-                result = new RoomOperationResult { Email = email, Success = false, Message = $"Invalid room type: {selectedRoomType}" };
+                result = new RoomOperationResult { Email = email, Success = false, Message = $"Invalid room type: {typeName}" };
                 return;
             }
 
@@ -1158,16 +1225,16 @@
                 onAllowed: async serviced =>
                 {
                     using var op = OpTrace.BeginOperation("ConferenceRooms", "SetType", currentUser, clientIpAddress, email, ticket);
-                    var r = await RoomService.SetRoomTypeAsync(email, roomType, typeTimezone.Trim(),
-                        selectedRoomType == "Restricted" ? typeSite : "none",
-                        string.IsNullOrWhiteSpace(typeArbiter) ? null : typeArbiter.Trim(),
-                        typeRemovePerms);
+                    var r = await RoomService.SetRoomTypeAsync(email, roomType, tz,
+                        typeName == "Restricted" ? site : "none",
+                        string.IsNullOrWhiteSpace(arbiter) ? null : arbiter,
+                        removePerms);
                     op.Complete(r.Success, r.Message);
 
                     var newValues = new Dictionary<string, object?>
                     {
-                        ["roomType"] = selectedRoomType, ["timezone"] = typeTimezone,
-                        ["site"] = typeSite, ["removePerms"] = typeRemovePerms
+                        ["roomType"] = typeName, ["timezone"] = tz,
+                        ["site"] = site, ["removePerms"] = removePerms
                     };
                     AuditTypeAction(email, r.Success, ticket, r.Success ? null : r.Message, newValues: newValues, servicedAuditDetail: serviced);
                     await NotifyRoomAdminAsync("ConferenceRooms_SetType", email, r.Success, ticket, r.Message);
@@ -1286,6 +1353,13 @@
     // Type and Finder paths.
     private async Task ApplyTypeCsv()
     {
+        // The same three captures as ApplyFinderCsv, for the same three reasons: the catch needs the
+        // ticket in scope so it stops re-reading the live field, and HandleTypeCsvUpload replaces
+        // both payload lists.
+        var ticket = csvTypeTicket.Trim();
+        var csvRows = typeCsvData;
+        var previewRows = typePreview;
+
         isLoading = true;
         isCsvProcessing = true;
         result = null;
@@ -1293,7 +1367,6 @@
 
         try
         {
-            var ticket = csvTypeTicket.Trim();
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
@@ -1303,10 +1376,10 @@
             }
             if (!await ReauthorizeAsync()) return;
 
-            var rows = typeCsvData
-                .Where((_, i) => i < typePreview.Count && typePreview[i].RoomResolved)
+            var rows = csvRows
+                .Where((_, i) => i < previewRows.Count && previewRows[i].RoomResolved)
                 .ToList();
-            var skipped = typeCsvData.Count - rows.Count;
+            var skipped = csvRows.Count - rows.Count;
 
             if (rows.Count == 0)
             {
@@ -1335,7 +1408,7 @@
         catch (Exception ex)
         {
             result = new RoomOperationResult { Success = false, Message = ex.Message };
-            AuditTypeAction("(bulk)", false, csvTypeTicket.Trim(), ex.Message);
+            AuditTypeAction("(bulk)", false, ticket, ex.Message);
         }
         finally { isLoading = false; isCsvProcessing = false; }
     }
