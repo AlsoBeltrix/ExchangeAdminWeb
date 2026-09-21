@@ -4488,33 +4488,32 @@ public static class ClickGateRegistry
 
     /// <summary>
     /// Defender for Endpoint Devices: registered at birth, with the page's slice (S2 of
-    /// docs/DefenderEndpointDevices-Plan.md), rather than converted afterwards.
+    /// docs/DefenderEndpointDevices-Plan.md), and re-censused by hand against the file for
+    /// Revision 3's filter rebuild.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// One of the smallest entries in this file, and that is a property of the page rather than of
-    /// the bookkeeping. The module reads and exports and mutates nothing, so there are two
-    /// operations - the listing and the export - under one page-wide predicate; there is no
-    /// staged-confirmation state, so nothing belongs in ExcludedFields; there is no banner to
-    /// dismiss and no per-row action that outlives a load, so no control needs an exemption; and
-    /// every click target is a &lt;button&gt;, so NonButtonTargets is empty. Censused by hand
-    /// against the file rather than inherited from the plan.
+    /// The module reads and exports and mutates nothing, so there are two operations - the listing
+    /// and the export - under one page-wide predicate; there is no staged-confirmation state, so
+    /// nothing belongs in ExcludedFields; there is no banner to dismiss and no per-row action that
+    /// outlives a load, so no control needs an exemption; and every click target is a
+    /// &lt;button&gt;, so NonButtonTargets is empty.
     /// </para>
     /// <para>
     /// S3 added the export and with it isDownloadingCsv, the second member of IsBusy. It carries
     /// both obligations a CSV button on a page-wide predicate attracts: an AnnotatedControl, because
     /// the empty-set clause in its gate is a precondition that a mechanical rewrite to the bare
     /// predicate would delete, and a RaiseAfterEarlyReturn, because the raise must stay below the
-    /// empty-set return that no finally covers. The button is registered at 172, INSIDE the complete
+    /// empty-set return that no finally covers. The button is registered INSIDE the complete
     /// branch: a refusal renders no table and offers no export, which is the page's half of T3 and
     /// is why no exemption or ungated entry exists for a refusal-state control - there is no such
     /// control.
     /// </para>
     /// <para>
-    /// No keyboard handler of any kind: the filter card carries a select and a checkbox, neither of
-    /// which has an @onkeydown, and there is no free-text box for Enter to submit. KeyboardPaths and
-    /// HarmlessKeyboardPaths are therefore both empty, and the forward direction of
-    /// <see cref="ClickGateTests.EveryKeyboardPathIsRegisteredOrRecordedHarmless"/> is what keeps
+    /// No keyboard handler of any kind: the filter card carries selects, text boxes and date boxes,
+    /// none with an @onkeydown, and there is no control on which Enter submits anything.
+    /// KeyboardPaths and HarmlessKeyboardPaths are therefore both empty, and the forward direction
+    /// of <see cref="ClickGateTests.EveryKeyboardPathIsRegisteredOrRecordedHarmless"/> is what keeps
     /// that true if one arrives later.
     /// </para>
     /// <para>
@@ -4527,17 +4526,24 @@ public static class ClickGateRegistry
     /// deferred load starts in OnAfterRenderAsync on that same render.
     /// </para>
     /// <para>
-    /// The two filters are the whole of PostAwaitLiveReads. Both are operator-writable and the
-    /// browser's copy of a disabled attribute is one round trip stale, so a change landing in the
-    /// gap between the click and the render would otherwise let the audit record name one filter
-    /// set while the service was asked for another - the CapturedAtEntry shape, exactly as
-    /// DhcpAuthorization's three form fields.
+    /// <b>PostAwaitLiveReads has ONE entry for twelve controls, and that is the point.</b> Revision
+    /// 3 replaced two filter fields with twelve, every one of them operator-writable and every one
+    /// of them in the stale-attribute window. Registering twelve obligations would be twelve
+    /// chances to miss one. Instead the page holds a single <c>form</c> object and LoadAsync
+    /// captures <c>var filters = form.ToFilters()</c> above its first await, so a live read of ANY
+    /// control after the await is a read of <c>form</c> and fails this entry.
+    /// </para>
+    /// <para>
+    /// Clear is a second button and consults the same predicate. It is deliberately not exempt: it
+    /// writes to the very fields LoadAsync has snapshotted, so leaving it clickable during a load
+    /// would let an operator change the form under a run whose audit record names the old values -
+    /// harmless to the data, confusing on the screen, and exactly the shape the ruling outlaws.
     /// </para>
     /// </remarks>
     private static PageGateEntry DefenderEndpointDevices => new()
     {
         Page = "DefenderEndpointDevices.razor",
-        ExpectedLineCount = 612,
+        ExpectedLineCount = 857,
 
         Predicates =
         [
@@ -4550,15 +4556,25 @@ public static class ClickGateRegistry
 
         DomSyncedControls =
         [
-            new DomSyncedControl(66, "@bind=\"onboardingStatus\"", "select", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(76, "@bind=\"windowsOnly\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(58, "@bind=\"form.DeviceNameStartsWith\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(70, "@bind=\"form.OnboardingStatus\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(85, "@bind=\"form.Platform\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(100, "@bind=\"form.HealthStatus\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(113, "@bind=\"form.RiskScore\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(126, "@bind=\"form.ExposureLevel\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(140, "@bind=\"form.MachineGroup\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(148, "@bind=\"form.MachineTag\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(157, "@bind=\"form.LastSeenFrom\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(166, "@bind=\"form.LastSeenTo\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(175, "@bind=\"form.FirstSeenFrom\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(184, "@bind=\"form.FirstSeenTo\"", "input", "disabled=\"@IsBusy\""),
         ],
 
         UngatedDomSyncedControls = [],
 
         AnnotatedControls =
         [
-            new AnnotatedControl(172, "@onclick=\"DownloadCsvAsync\"",
+            new AnnotatedControl(275, "@onclick=\"DownloadCsvAsync\"",
                 ["ExportableDevices.Count == 0"],
                 RendersOnlyWhen:
                 "only inside the complete branch - a refusal renders no table and offers no export "
@@ -4570,18 +4586,13 @@ public static class ClickGateRegistry
 
         PostAwaitLiveReads =
         [
-            new PostAwaitLiveRead("LoadAsync", "onboardingStatus", "status",
+            new PostAwaitLiveRead("LoadAsync", "form", "filters",
                 SnapshotShape.CapturedAtEntry,
-                "the onboarding status the operator saw when the click was accepted is the filter "
-                + "that must be sent AND the filter the audit record names. Read live after the "
-                + "await, a change landing in the stale-attribute window would desync the audit row "
-                + "from the request that produced the list on screen"),
-
-            new PostAwaitLiveRead("LoadAsync", "windowsOnly", "windows",
-                SnapshotShape.CapturedAtEntry,
-                "same obligation on the other filter. The Windows rule is applied to the fetched "
-                + "set, so reading it live would let the rendered list be narrowed by one value "
-                + "while the audit record claims another"),
+                "the twelve filter controls the operator saw when the click was accepted are the "
+                + "filters that must be sent AND the filters the audit record names. Read live "
+                + "after the await - and one read of one property of this object is enough - a "
+                + "change landing in the stale-attribute window would desync the audit row from "
+                + "the request that produced the list on screen"),
         ],
 
         RaiseMustFollowEarlyReturn =

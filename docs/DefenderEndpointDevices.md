@@ -1,7 +1,7 @@
 # Defender for Endpoint Devices Module
 
 Module ID: `DefenderEndpointDevices` | Route: `/defender-endpoint-devices` |
-Category: Infrastructure | Version: 1.0.0
+Category: Infrastructure | Version: 1.1.0
 
 Design record, including every source URL and the review history:
 `docs/DefenderEndpointDevices-Plan.md`.
@@ -10,8 +10,8 @@ Design record, including every source URL and the review history:
 
 List and export Microsoft Defender for Endpoint devices - including the devices Defender has
 discovered on the network that **can be onboarded and are not**, which is the report this module
-was built for. The page defaults to exactly that view: onboarding status "can be onboarded",
-Windows devices only. Both filters are operator-changeable.
+was built for. The page defaults to onboarding status "can be onboarded" and any platform; every
+filter is operator-changeable.
 
 Intended operators: the IT operations and endpoint team closing onboarding gaps, plus whoever is
 accountable for sensor coverage. This is an onboarding-gap report, not a security-investigation
@@ -93,7 +93,7 @@ Configured at `/module-config/DefenderEndpointDevices`.
 | Field | Label | Required | Default | What it does |
 |---|---|---|---|---|
 | `GraphDelineaSecretId` | Graph App Delinea Secret ID | Yes | none | The numeric Secret Server ID of this module's own secret. Until it is set the module reports itself unconfigured in words and makes no call at all. |
-| `MaxDevices` | Maximum Devices | No | `20000` | Safety ceiling on one run. If more devices match than this, the module **refuses** the report rather than returning part of it. An absent, unparseable or non-positive value falls back to 20000. |
+| `MaxDevices` | Maximum Devices | No | `100000` | Safety ceiling on one run - how many devices this server will hold in memory for one operator. If more devices match the server-side filters than this, the module **refuses** the report rather than returning part of it. An absent, unparseable or non-positive value falls back to 100000. |
 | `IncludeDiscoverySources` | Include Discovery Sources | No | `true` | Whether the advanced hunting query runs. Turn it **off** on a deployment whose registration does not hold `ThreatHunting.Read.All`. Blank means on (the declared default); a present-but-unparseable value reads as **off**, which is the fail-closed direction - off is the value that does not call a permission the registration may not hold. |
 
 The field is called `GraphDelineaSecretId` even though the primary API is not Graph:
@@ -224,47 +224,102 @@ constrained by this module's code. That is the honest trade for the discovery-so
   configuration, not a module defect.
 - **Retention.** Devices last seen before the tenant's configured retention window are not returned.
 
+## Filters - which ones the API applies, and which ones this app applies
+
+The portal's device filters are all here. Which side each one runs on is a fact about the API, not
+a preference: Learn's List machines page names the properties `$filter` accepts on this collection
+(`computerDnsName`, `id`, `version`, `deviceValue`, `aadDeviceId`, `machineTags`, `lastSeen`,
+`exposureLevel`, `onboardingStatus`, `lastIpAddress`, `healthStatus`, `osPlatform`, `riskScore`,
+`rbacGroupId`), and anything not on that list cannot be pushed to the service.
+
+| Filter on the page | Side | Clause sent, or why none is |
+|---|---|---|
+| Device name starts with | server | `startswith(computerDnsName,'...')` - a prefix, not a substring |
+| Onboarding status | server | `onboardingStatus eq '...'`, using the API literal (`CanBeOnboarded`), not the portal label |
+| Platform, one value | server | `osPlatform eq '...'` |
+| Platform, **Any Windows** | client | No `osPlatform` value means "any Windows", and `startswith` is documented for `computerDnsName` only. A guessed clause the service accepts while matching nothing looks exactly like an empty inventory |
+| Health status | server | `healthStatus eq '...'` |
+| Risk score | server | `riskScore eq '...'` |
+| Exposure level | server | `exposureLevel eq '...'` |
+| Last seen from / before | server | `lastSeen ge ...` / `lastSeen lt ...`. Also the bounds of the partition below, so it makes the run cheaper as well as narrower |
+| Machine tag | client | A tag filter is a collection query (`machineTags/any(...)`) with no worked example for this endpoint |
+| Machine group | client | The filterable property is `rbacGroupId`, a numeric id. The name the portal shows, `rbacGroupName`, is not filterable |
+| First seen from / before | client | `firstSeen` is absent from the filterable list - the one timestamp on the machine resource that is not |
+
+Client-side filters are labelled `(after fetch)` on the page. They narrow what is **shown** and
+never what is **fetched**, so they cannot rescue a run that refuses on the ceiling. Date bounds are
+local, and every "before" bound is exclusive. A device with no `firstSeen` value is excluded once
+either First seen bound is set.
+
+There is no "Windows devices only" checkbox. Platform is a dropdown like the others and defaults
+to Any.
+
 ## The report is complete, or it refuses - there is no quiet partial
 
 The owner asked to list and export *all* devices, so this module treats a shortened list as a defect
-rather than a feature. A run renders a table only on a **positive proof of exhaustion**:
+rather than a feature. A run renders a table only on a **positive proof of exhaustion**.
 
-- **P1** - the request asked for `$top = N`, fewer than N rows came back, and there was no
-  `@odata.nextLink`. Complete.
-- **P2** - every continuation was an `@odata.nextLink` followed as an absolute URL, and the final
-  response carried none and was short in the P1 sense. Complete.
+**There is no continuation cursor on this endpoint.** The live run of 2026-09-21 established it:
+`GET /api/machines` returns at most 10,000 rows and carries no `@odata.nextLink`. A tenant larger
+than that therefore cannot be listed by asking once, so the module divides the **question**:
 
-Everything else **refuses**. What the operator sees in a refusal: a red banner headed *"This report
-was refused, not truncated"*, the specific reason, **no table and no export button**, and a sentence
-saying the run could not prove it had seen every matching device.
+- The inventory is partitioned on `lastSeen` into parts that are disjoint and together exhaustive,
+  and each part is asked for on its own.
+- A part that comes back under the cap has proved itself complete (**P1** - it asked for `$top = N`,
+  fewer than N rows came back, and there was no continuation link). **P2**, a cursor chain whose
+  final response was short and cursor-free, still applies if the service ever starts issuing one.
+- A part that comes back **at** the cap has proved nothing, and is split in two and asked again.
+  The split point is the median of the timestamps that response returned, restricted to values
+  strictly inside the part, so both halves are strictly narrower and the division terminates.
+- The answer is the union of the parts that proved themselves. Rows from a part that came back at
+  the cap are not in it - a child part re-reads them.
+
+**Devices with no Last seen value.** A null satisfies neither `ge` nor `lt`, so intervals alone
+would miss them. While the inventory needs no dividing the single request carries no `lastSeen`
+clause at all and they are already in it. As soon as it has to be divided, a separate request asks
+`lastSeen eq null` - unless the operator set a Last seen window, in which case those devices are
+outside what was asked for.
+
+**Parts are read oldest first.** A device that reports in mid-run moves forward in `lastSeen`, so
+reading low parts first means it can only move into a part not yet read.
+
+The results header reports the shape of the run: `N device(s)`, then `M fetched in R request(s).
+Ceiling C.` A request count above one means the inventory had to be divided. The range count was on
+screen in an earlier draft and was cut: it is an implementation detail, and the review of
+2026-09-21 ruled it out of the operator's way.
+
+Everything else **refuses**: a red banner headed *"No device list."*, the reason, and no table and
+no export button.
 
 | Refusal | Why it is not rendered |
 |---|---|
-| More devices match than `MaxDevices` (default 20000). The banner names the ceiling and says to raise it in Module Config or narrow the filters | The report would be incomplete. The request asks for `min(MaxDevices + 1, 10000)` rows, so one extra row settles the ceiling in a single round trip |
-| The API returned **exactly** the number of rows the request asked for and gave **no** continuation link | "Exactly N devices exist" and "the first N of more" produce byte-identical responses. There is no way to tell them apart, so the module does not guess. If `MaxDevices` is at or above the API's documented maximum of 10000 per request, the message says a set that large cannot be proved complete in one request |
-| Any request in the chain failed (401, 403, 400, 429, 5xx, a timeout, or a 404 **after** the first page) | A failed read must never fall through to an empty table |
+| More devices match the server-side filters than `MaxDevices` (default 100000). The message names the ceiling, the filters that would reduce the fetch, and the ones that would not | The report would be incomplete. The request asks for `min(MaxDevices + 1, 10000)` rows, so one extra row settles the ceiling in a single round trip |
+| A part came back at the cap and cannot be divided - every device in it shares one Last seen timestamp, or none has one | "Exactly N devices exist" and "the first N of more" produce byte-identical responses, and there is no point inside the range to divide at |
+| More devices have **no** Last seen timestamp than one request returns | That part has no time axis to divide on. The message says to set a Last seen window, which takes those devices out of the question |
+| The API rejected `lastSeen eq null` with a 400 | That request is the only way to reach devices with no Last seen value, so without it the list could silently miss them. Same operator action: set a Last seen window |
+| Any request failed (401, 403, 400, 429, 5xx, a timeout, or a 404 **after** the first request of a part) | A failed read must never fall through to an empty table |
 | A 2xx whose body carried no device collection | An unreadable response is not an empty inventory |
-| Still receiving continuation links after 100 requests in one run | The endpoint documents 100 calls per minute; an unbounded loop against a paged API is how a read module becomes an outage. A run stopped early has not proved exhaustion |
+| 250 requests issued in one run with parts still unresolved | The endpoint documents 100 calls a minute and 1,500 an hour. A partition that terminates but does not converge has to stop, and a run stopped early has not proved exhaustion |
 
 Two things that are **not** refusals:
 
-- **`404` on the very first request is the documented empty result** for this collection ("if there
-  are no recent machines, you see 404 Not Found"). It renders as "no devices matched". This inverts
-  the usual rule in this repo; a 404 partway through a cursor chain is a broken chain and refuses.
-- The Windows-only rule is applied **after** paging, client-side, never during it. `osPlatform`
-  carries `Windows10`, `Windows11` and the server variants as separate values, so there is no single
-  server-side "Windows" filter to ask for. Filtering while accumulating would make a full page of
-  non-Windows rows look short and turn the ambiguous case into a false proof of exhaustion.
+- **`404` on the first request of a part is the documented empty result** for this collection ("if
+  there are no recent machines, you see 404 Not Found"). A part covering a slice of time with no
+  devices in it is an ordinary outcome of dividing the inventory. This inverts the usual rule in
+  this repo; a 404 partway through a cursor chain is a broken chain and refuses.
+- The client-side filters are applied **after** the whole partition, never during it. Filtering
+  while accumulating would make a full response of non-matching rows look short and turn the
+  ambiguous case into a false proof of exhaustion.
 
 `$skip` paging is deliberately not used, and this is worth knowing before anyone adds it:
 de-duplication removes overlaps but **cannot detect a gap**, a short page is exactly what a moved
-window produces, and this collection documents no `$orderby`. Reintroducing `$skip` needs a cited
-source that it is stable for this endpoint.
+window produces, and this collection documents no `$orderby`. The partition needs none of that - it
+depends on no ordering at all.
 
 **Counts will differ from some portal views, and that is expected.** Microsoft's own caveat: the
 onboarding *recommendation* and the "devices to onboard" dashboard widget exclude ephemeral and
 guest devices, and the API, UI, export and advanced hunting interfaces are powered by separate
-backends with different update frequencies. The page says so above the filters.
+backends with different update frequencies. This is documented here rather than on the page.
 
 ## `(unavailable)` versus blank in the discovery-sources columns
 
@@ -357,11 +412,11 @@ principal would be the device's primary user.
 Category `DefenderEndpointDevices`:
 
 - `DefenderEndpointDevices_List` - lookup audit on **every** listing, success or failure. The target
-  string is the filters as captured when the click was accepted
-  (`onboardingStatus=<value>, windowsOnly=<true|false>`), and the record carries `Outcome`,
-  `Devices`, `DistinctDevices`, `Requests` and `Ceiling`. **A refusal is audited as a FAILED lookup
-  carrying its refusal reason** - not as a successful read of zero devices, which would be the
-  blanket-success shape.
+  string is the filters as captured when the click was accepted (`onboardingStatus=<value>` plus
+  every filter that was set, each prefixed with the API property it maps to), and the record
+  carries `Outcome`, `Devices`, `DistinctDevices`, `Requests`, `Ranges` and `Ceiling`. **A refusal
+  is audited as a FAILED lookup carrying its refusal reason** - not as a successful read of zero
+  devices, which would be the blanket-success shape.
 - `ExportCsv` - module audit on each download, with the row count.
 
 Audit-write failures are caught and logged separately; they never change the listing or the export
@@ -393,19 +448,18 @@ call on the read path and nothing else.
 | The result cannot be proved complete (ceiling, full page with no cursor, the 100-request stop) | Refusal in words. No table, no export button |
 | Hunting query 403, 429, 401, timeout, malformed, the switch off, or a send that never got an answer | The device list stands; the five enrichment columns read `(unavailable)` with the reason named above the table. Never blank, never a page-wide failure. This holds for an **exception** on the hunting side too - a Secret Server read that fails or a refused sign-in greys the columns rather than clearing the page |
 | `IncludeDiscoverySources` present but unparseable | Treated as **off** - the value that does not call a permission the registration may not hold. The module config page renders an unparseable Boolean as an unchecked box, so this keeps the switch and the screen in agreement |
-| `MaxDevices` absent, unparseable or non-positive | Falls back to the declared default of 20000 |
+| `MaxDevices` absent, unparseable or non-positive | Falls back to the declared default of 100000 |
 | A continuation link pointing at a different host, or at plain HTTP | Refused **before a token is acquired**. The absolute-URL path exists to follow a link out of a response body, and following an arbitrary host would hand this registration's bearer token to whatever that body named |
 | Operator in no assigned group, or the module disabled | Direct URL denied by policy, re-checked in `OnInitializedAsync` |
 
-## Not confirmed against the live service - R1 has not run
+## Not confirmed against the live service - R1 is only partly answered
 
-**No part of this module has ever made a live call to either API.** R1 is the plan's live
-reconnaissance gate; it needs the app registration created, the Delinea record populated and the
-Secret ID entered on a dev deploy, and none of that has happened. Every unit test in the suite runs
-against a stub HTTP handler.
+**The module has made one live run, on 2026-09-21. It answered R1(f) and R1(g) and nothing else:**
+the run refused before it could show a device, so no field, no casing and no filter behaviour was
+observed. Every unit test in the suite runs against a stub HTTP handler.
 
-Each item below has a conservative fallback already in the code, so the module is not *waiting* on
-the answer - but these are the behaviours nobody has yet seen work:
+The items below still have a conservative fallback in the code, so the module is not *waiting* on
+the answers - but these are the behaviours nobody has yet seen work:
 
 - **(a) Whether `GET /api/machines` returns `CanBeOnboarded` devices at all.** This is the assumption
   the whole module rests on, inferred from three Microsoft documents rather than stated by one. If it
@@ -415,8 +469,8 @@ the answer - but these are the behaviours nobody has yet seen work:
 - **(b)** The JSON casing of `onboardingStatus` as returned, and whether `$filter` accepts either
   casing. Microsoft's own pages are inconsistent about it. Deserialization here is case-insensitive
   either way.
-- **(c)** The distinct `osPlatform` values actually present, which is what the client-side
-  `StartsWith("Windows")` rule matches against.
+- **(c)** The distinct `osPlatform` values actually present, which is what the client-side "Any
+  Windows" prefix rule matches against, and which of them the Platform dropdown should list.
 - **(d)** Whether `startswith(osPlatform,'Windows')` is accepted server-side. Undocumented, so it is
   not used; the client-side rule is correct either way.
 - **(e) Whether `ipAddresses` is populated on list responses - and the `IpAddresses` and
@@ -428,15 +482,13 @@ the answer - but these are the behaviours nobody has yet seen work:
   **The undo, if it comes back empty:** remove `IpAddresses` and `MacAddresses` from `BuildCsv`'s
   header and projection, and from `ExpectedHeader` and the indices in
   `DefenderEndpointDevicesCsvTests`, and record it as Revision 8 in the plan.
-- **(f)** How close this tenant's device count runs to the `MaxDevices` ceiling, and therefore
-  whether the default needs raising before anyone relies on the report. The failure mode is a visible
-  refusal rather than a silent short list, so this is tuning, not risk.
-- **(g) The paging contract - whether this endpoint emits `@odata.nextLink` at all.** Not documented
-  anywhere. The shipped code is *reactive*, not speculative: it reads the cursor out of the response
-  body, stops when there is none, follows one only when the service emitted it, and refuses the
-  ambiguous middle. Both pre-decided branches are one piece of code dispatching on what actually came
-  back. What running R1(g) adds is the observed page size, which turns the request budget from an
-  unknown into a number.
+- **(f) ANSWERED, 2026-09-21: the tenant exceeds the old ceiling.** The first live load matched more
+  than 40,000 devices against a default of 20,000. The default is now 100,000.
+- **(g) ANSWERED, 2026-09-21: this endpoint emits no `@odata.nextLink` at all.** The first live load
+  returned exactly the 10,000 rows it asked for and carried no continuation link. There is no cursor
+  to follow, which is why the module divides the inventory into Last seen ranges instead of paging;
+  see "The report is complete, or it refuses". The cursor-following code is kept because it costs
+  one branch and is the only correct thing to do if the service ever starts issuing one.
 - **(h) Whether `DiscoverySources` arrives as a JSON string or a JSON array.** No Microsoft page
   settles it. **Both shapes are parsed** and joined with the house separator, so the column is
   correct either way. It is called out because reading only the string shape would have silently
@@ -462,10 +514,13 @@ Run it after the first dev deploy that follows the app registration being create
 1. With `GraphDelineaSecretId` unset, the module reports itself unavailable in words - not as an
    empty table.
 2. Set the Secret ID. The device list loads and the module version renders beside the heading.
-3. The default view is Windows devices with onboarding status "can be onboarded". The count is
+3. The default view is every platform with onboarding status "can be onboarded". The count is
    plausible against the Defender portal's own **Onboarding status: Can be onboarded** filter - a
-   difference against the *onboarding recommendation widget* is expected, not a defect.
-4. Clear the "Windows devices only" toggle: non-Windows discovered devices appear.
+   difference against the *onboarding recommendation widget* is expected, not a defect. On a tenant
+   larger than 10,000 matching devices the header reports more than one Last seen range, which is
+   the partition doing its work.
+4. Set Platform to **Any Windows**: non-Windows discovered devices disappear. Set it to
+   **Windows11**: the request itself narrows, and the range count usually drops with it.
 5. Switch the onboarding-status filter to onboarded: onboarded machines appear, with healthy sensor
    states.
 6. Spot-check one device against its portal page: FQDN, OS, last IP, MAC, first and last seen.

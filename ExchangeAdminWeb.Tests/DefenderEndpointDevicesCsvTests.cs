@@ -446,7 +446,8 @@ public class DefenderEndpointDevicesCsvTests
         // table's closing tag is near its end. Both are read out of the file, so if either moves
         // the bracket has to be re-derived by hand rather than drifting.
         var completeBranchOpens = text.IndexOf(
-            "@if (result.DiscoveryEnrichment != DefenderDiscoveryEnrichmentState.Succeeded)",
+            "@if (result.Devices.Count > 0 && result.DiscoveryEnrichment != "
+            + "DefenderDiscoveryEnrichmentState.Succeeded)",
             StringComparison.Ordinal);
         var completeBranchTable = text.IndexOf("</table>", StringComparison.Ordinal);
         Assert.True(completeBranchOpens > refusalBranch && completeBranchTable > completeBranchOpens,

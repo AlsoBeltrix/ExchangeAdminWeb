@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace ExchangeAdminWeb.Models;
 
 /// <summary>
@@ -111,8 +113,9 @@ public enum DefenderDeviceListOutcome
 {
     /// <summary>
     /// Positive proof of exhaustion - P1 (one request, short, no continuation cursor) or P2 (a
-    /// cursor chain whose final response was short and cursor-free). The only value that may be
-    /// rendered as a device list.
+    /// cursor chain whose final response was short and cursor-free) for EVERY part of the Last seen
+    /// partition, where the parts are disjoint and together cover every device. The only value that
+    /// may be rendered as a device list.
     /// </summary>
     Complete,
 
@@ -120,9 +123,11 @@ public enum DefenderDeviceListOutcome
     CeilingExceeded,
 
     /// <summary>
-    /// A response returned exactly the $top it asked for and carried no continuation cursor. That
-    /// is byte-identical whether exactly that many devices exist or the service capped the request,
-    /// so completeness is unprovable and the run refuses rather than guessing.
+    /// A part of the inventory returned exactly the $top it asked for and carried no continuation
+    /// cursor - byte-identical whether exactly that many devices exist or the service capped the
+    /// request - and the run could not resolve it: either that part cannot be divided any further
+    /// on the Last seen axis, or the run exhausted its request budget before every part was proved
+    /// complete. Completeness is unprovable either way, so the run refuses rather than guessing.
     /// </summary>
     IncompletePaging,
 
@@ -226,48 +231,40 @@ public static class DefenderDiscoveryReasons
 {
     /// <summary>The Include Discovery Sources config switch is off.</summary>
     public const string SwitchedOff =
-        "Include Discovery Sources is turned off in this module's configuration, so the advanced "
-        + "hunting query that supplies these columns was not run. Turn it on in Module Config once "
-        + "the app registration holds ThreatHunting.Read.All on Microsoft Graph.";
+        "Include Discovery Sources is turned off in Module Config. Turn it on once the app "
+        + "registration holds ThreatHunting.Read.All on Microsoft Graph.";
 
     /// <summary>The module's own credentials could not be built, so nothing was called.</summary>
     public const string CredentialsUnavailable =
-        "This module's app credentials could not be built, so the advanced hunting query that "
-        + "supplies these columns was not run.";
+        "App credentials could not be built. Check Graph App Delinea Secret ID in "
+        + "Module Config.";
 
     /// <summary>No devices matched, so there was nothing to enrich.</summary>
-    public const string NoDevices =
-        "No devices matched these filters, so there was nothing to enrich and the advanced hunting "
-        + "query was not run.";
+    public const string NoDevices = "No devices matched, so there was nothing to enrich.";
 
     /// <summary>The device listing itself refused, so enrichment was never reached.</summary>
-    public const string ListRefused =
-        "The device list did not complete, so no enrichment was attempted.";
+    public const string ListRefused = "The device list did not complete.";
 
     /// <summary>A 2xx whose body carried no readable results collection.</summary>
     public const string MalformedResponse =
-        "Microsoft Graph answered the advanced hunting query with a response this module could not "
-        + "read - it carried no results collection - so these columns are empty for this run. The "
-        + "device list itself is unaffected.";
+        "Microsoft Graph returned an advanced hunting response with no results collection. Load "
+        + "again; report it if it keeps happening.";
 
     /// <summary>403: the permission was never granted, or consent was never given for it.</summary>
     public const string Forbidden =
-        "Microsoft Graph refused the advanced hunting query (403 Forbidden). The app registration "
-        + "does not hold the ThreatHunting.Read.All application permission on Microsoft Graph, or "
-        + "nobody has granted admin consent for it - that consent has to come from a Privileged "
-        + "Role Administrator or a Global Administrator. The device list itself is unaffected.";
+        "Microsoft Graph refused the advanced hunting query (403 Forbidden). Grant the app "
+        + "registration ThreatHunting.Read.All on Microsoft Graph, with admin consent from a "
+        + "Privileged Role Administrator or a Global Administrator.";
 
     /// <summary>429: the tenant's advanced hunting CPU quota is exhausted.</summary>
     public const string Throttled =
-        "Microsoft Graph throttled the advanced hunting query (429 Too Many Requests), which on "
-        + "this endpoint means the tenant's advanced hunting CPU quota is currently exhausted. "
-        + "Nothing is misconfigured - wait and load again. The device list itself is unaffected.";
+        "Microsoft Graph throttled the advanced hunting query (429 Too Many Requests): the tenant's "
+        + "advanced hunting quota is exhausted. Wait, then load again.";
 
     /// <summary>A client-side timeout, which arrives as an exception and not as a status.</summary>
     public const string TimedOut =
-        "The advanced hunting query did not finish before the request timed out, so these columns "
-        + "are empty for this run. The device list itself is unaffected. Load again, and narrow the "
-        + "filters if it keeps happening.";
+        "The advanced hunting query timed out. Load again, and narrow the filters if it keeps "
+        + "happening.";
 
     /// <summary>
     /// The request threw before any status came back - a sign-in that was refused, a transport
@@ -280,20 +277,17 @@ public static class DefenderDiscoveryReasons
     /// and means the DEVICE LIST failed, which is the one thing this reason promises did not happen.
     /// </remarks>
     public const string SendFailed =
-        "The advanced hunting query could not be sent to Microsoft Graph - the request failed before "
-        + "any answer came back, which means either that the sign-in for this module's app "
-        + "registration was refused or that this server cannot reach Microsoft Graph. These columns "
-        + "are empty for this run. The device list itself is unaffected.";
+        "The advanced hunting query never reached Microsoft Graph. Check that the app registration "
+        + "can sign in and that this server can reach graph.microsoft.com.";
 
     /// <summary>401: the credentials themselves were rejected.</summary>
     public const string Unauthorized =
-        "Microsoft Graph rejected this module's credentials for the advanced hunting query (401 "
-        + "Unauthorized). Check that the client secret in the module's Secret Server record has not "
-        + "expired. The device list itself is unaffected.";
+        "Microsoft Graph rejected the credentials for the advanced hunting query (401 Unauthorized). "
+        + "Check that the client secret in the Secret Server record has not expired.";
 }
 
 /// <summary>
-/// The outcome of one device listing run (docs/DefenderEndpointDevices-Plan.md S1).
+/// The outcome of one device listing run (docs/DefenderEndpointDevices-Plan.md S1, Revision 3).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -314,20 +308,33 @@ public sealed class DefenderDeviceListResult
     public DefenderDeviceListOutcome Outcome { get; private init; }
 
     /// <summary>
-    /// The devices to show, after the client-side Windows rule. Always empty unless
+    /// The devices to show, after the client-side filters. Always empty unless
     /// <see cref="Outcome"/> is <see cref="DefenderDeviceListOutcome.Complete"/>.
     /// </summary>
     public IReadOnlyList<DefenderDevice> Devices { get; private init; } = [];
 
     /// <summary>
     /// Distinct devices the API returned across the whole run, de-duplicated on device id and
-    /// counted BEFORE the client-side Windows rule. This is the number the ceiling is measured
-    /// against, because the fetch is what has to be bounded.
+    /// counted BEFORE the client-side filters. This is the number the ceiling is measured against,
+    /// because the fetch is what has to be bounded.
     /// </summary>
     public int DistinctCount { get; private init; }
 
     /// <summary>How many HTTP requests the run issued, including the one that refused.</summary>
     public int PagesFetched { get; private init; }
+
+    /// <summary>
+    /// How many parts of the Last seen partition were proved complete
+    /// (docs/DefenderEndpointDevices-Plan.md Revision 3). One on a small inventory that needed no
+    /// dividing; one per leaf part, plus the no-Last-seen part, on a large one. Zero on a refusal
+    /// that never proved a part.
+    /// </summary>
+    /// <remarks>
+    /// Reported to the operator rather than kept internal, because it is the only visible evidence
+    /// that the partition ran at all: a run that says "48112 devices in 17 requests across 9 Last
+    /// seen ranges" has demonstrably not answered out of one capped request.
+    /// </remarks>
+    public int RangesCompleted { get; private init; }
 
     /// <summary>True when the run refused because more devices matched than <see cref="Ceiling"/>.</summary>
     public bool CeilingExceeded => Outcome == DefenderDeviceListOutcome.CeilingExceeded;
@@ -351,6 +358,7 @@ public sealed class DefenderDeviceListResult
         IReadOnlyList<DefenderDevice> devices,
         int distinctCount,
         int pagesFetched,
+        int rangesCompleted,
         int ceiling,
         DefenderDiscoveryEnrichmentState enrichment,
         string enrichmentReason) => new()
@@ -359,6 +367,7 @@ public sealed class DefenderDeviceListResult
             Devices = devices,
             DistinctCount = distinctCount,
             PagesFetched = pagesFetched,
+            RangesCompleted = rangesCompleted,
             Ceiling = ceiling,
             DiscoveryEnrichment = enrichment,
             DiscoveryEnrichmentReason = enrichmentReason
@@ -373,6 +382,7 @@ public sealed class DefenderDeviceListResult
         string reason,
         int distinctCount,
         int pagesFetched,
+        int rangesCompleted,
         int ceiling)
     {
         if (outcome == DefenderDeviceListOutcome.Complete)
@@ -384,6 +394,7 @@ public sealed class DefenderDeviceListResult
             Devices = [],
             DistinctCount = distinctCount,
             PagesFetched = pagesFetched,
+            RangesCompleted = rangesCompleted,
             Ceiling = ceiling,
             RefusalReason = reason,
             DiscoveryEnrichment = DefenderDiscoveryEnrichmentState.NotAttempted,
@@ -393,24 +404,108 @@ public sealed class DefenderDeviceListResult
 }
 
 /// <summary>
-/// The operator-changeable filters for one listing run (docs/DefenderEndpointDevices-Plan.md S2
-/// renders the controls; S1 owns their meaning).
+/// One part of the Last seen partition: a half-open interval from <see cref="From"/> up to but not
+/// including <see cref="To"/>, with either end optionally unbounded - or the part holding the
+/// devices that carry no Last seen value at all
+/// (docs/DefenderEndpointDevices-Plan.md Revision 3).
 /// </summary>
-/// <param name="OnboardingStatus">
-/// The API literal, NOT the portal label: the portal shows "Can be onboarded" and the REST value is
-/// <c>CanBeOnboarded</c>; sending the portal spelling matches nothing. Empty means no server-side
-/// onboarding filter at all. Whatever arrives here is escaped as an OData string literal (T6.1).
-/// </param>
-/// <param name="WindowsOnly">
-/// Applied CLIENT-side as an ordinal case-insensitive StartsWith("Windows") on osPlatform, because
-/// osPlatform carries Windows10, Windows11 and the server variants as separate values, so
-/// <c>osPlatform eq 'Windows'</c> matches nothing. Whether <c>startswith</c> works server-side on
-/// this property is undocumented and is R1(d)'s question; the client-side rule is correct either
-/// way (T6.3).
-/// </param>
-public sealed record DefenderDeviceFilters(
-    string OnboardingStatus = DefenderDeviceFilters.CanBeOnboarded,
-    bool WindowsOnly = true)
+/// <remarks>
+/// <para>
+/// <b>Why this is a type rather than a pair of nullable dates.</b> The three shapes are not
+/// interchangeable and the difference between them is the whole correctness argument. An unbounded
+/// end means "no clause at all on that side", which is how the partition covers timestamps older
+/// than anything retained and newer than anything yet written, without naming an epoch or a
+/// horizon. And the no-Last-seen part is NOT an interval: null satisfies neither <c>ge</c> nor
+/// <c>lt</c>, so a partition assembled only from intervals silently omits every device whose
+/// lastSeen is absent. Making that part a distinct, constructible state is what stops it being
+/// forgotten.
+/// </para>
+/// <para>
+/// Half-open, always. The low child of a split ends EXCLUSIVE at the split point and the high child
+/// starts INCLUSIVE at it, so two children exactly cover their parent with no overlap and - the
+/// part that matters - no gap. A device whose lastSeen is exactly the split point belongs to the
+/// high child and to nothing else.
+/// </para>
+/// </remarks>
+public readonly record struct DefenderLastSeenRange
+{
+    private DefenderLastSeenRange(DateTimeOffset? from, DateTimeOffset? to, bool isNullBucket)
+    {
+        From = from;
+        To = to;
+        IsNullBucket = isNullBucket;
+    }
+
+    /// <summary>Inclusive lower bound, or null for no lower bound at all.</summary>
+    public DateTimeOffset? From { get; }
+
+    /// <summary>Exclusive upper bound, or null for no upper bound at all.</summary>
+    public DateTimeOffset? To { get; }
+
+    /// <summary>
+    /// True for the part that asks for devices with no lastSeen value. Mutually exclusive with
+    /// every interval part, and never produced by a split.
+    /// </summary>
+    public bool IsNullBucket { get; }
+
+    /// <summary>An interval part. Either or both ends may be null, meaning unbounded on that side.</summary>
+    public static DefenderLastSeenRange Between(DateTimeOffset? from, DateTimeOffset? to) =>
+        new(from, to, isNullBucket: false);
+
+    /// <summary>The part holding devices whose lastSeen is absent or null.</summary>
+    public static DefenderLastSeenRange NoLastSeen() => new(null, null, isNullBucket: true);
+
+    /// <summary>The part in words, so a refusal can name which part of the inventory defeated it.</summary>
+    public string Describe()
+    {
+        if (IsNullBucket)
+            return "devices with no Last seen timestamp";
+
+        if (From == null && To == null)
+            return "all devices";
+
+        if (To == null)
+            return $"Last seen from {Format(From!.Value)} UTC";
+
+        if (From == null)
+            return $"Last seen before {Format(To.Value)} UTC";
+
+        return $"Last seen {Format(From.Value)} to {Format(To.Value)} UTC";
+    }
+
+    private static string Format(DateTimeOffset value) =>
+        value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+}
+
+/// <summary>
+/// The operator-changeable filters for one listing run (docs/DefenderEndpointDevices-Plan.md
+/// Revision 3; S2 renders the controls, S1 owns their meaning).
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Every property here is either server-side or client-side, and which one it is is a fact about
+/// the API rather than a preference.</b> Learn's List machines page names the properties
+/// <c>$filter</c> accepts on this collection: computerDnsName, id, version, deviceValue,
+/// aadDeviceId, machineTags, lastSeen, exposureLevel, onboardingStatus, lastIpAddress, healthStatus,
+/// osPlatform, riskScore, rbacGroupId. Anything not on that list cannot be pushed to the service,
+/// and pretending otherwise is how a filter that looks server-side quietly fetches the whole tenant.
+/// </para>
+/// <list type="table">
+///   <item><term>Server-side</term><description><see cref="OnboardingStatus"/>,
+///   <see cref="OsPlatform"/>, <see cref="HealthStatus"/>, <see cref="RiskScore"/>,
+///   <see cref="ExposureLevel"/>, <see cref="DeviceNameStartsWith"/>, <see cref="LastSeenFrom"/>,
+///   <see cref="LastSeenTo"/>.</description></item>
+///   <item><term>Client-side</term><description><see cref="OsPlatformPrefix"/>,
+///   <see cref="MachineTag"/>, <see cref="MachineGroup"/>, <see cref="FirstSeenFrom"/>,
+///   <see cref="FirstSeenTo"/> - each carrying the reason on its own member.</description></item>
+/// </list>
+/// <para>
+/// A client-side filter narrows what is SHOWN and never what is FETCHED, so it cannot rescue a run
+/// that is refusing on the ceiling. The refusal text says so in as many words, because "Narrow the
+/// filters" was useless advice the one time the module gave it.
+/// </para>
+/// </remarks>
+public sealed record DefenderDeviceFilters
 {
     /// <summary>
     /// The API literal for the state the portal labels "Can be onboarded" - verified from the
@@ -419,6 +514,97 @@ public sealed record DefenderDeviceFilters(
     /// </summary>
     public const string CanBeOnboarded = "CanBeOnboarded";
 
-    /// <summary>The osPlatform prefix the Windows rule matches. Not a filter value - a prefix.</summary>
+    /// <summary>
+    /// The osPlatform prefix the "Any Windows" platform choice matches. Not a filter value - a
+    /// prefix, and applied client-side. See <see cref="OsPlatformPrefix"/>.
+    /// </summary>
     public const string WindowsPlatformPrefix = "Windows";
+
+    /// <summary>
+    /// SERVER-SIDE. The API literal, NOT the portal label: the portal shows "Can be onboarded" and
+    /// the REST value is <c>CanBeOnboarded</c>; sending the portal spelling matches nothing. Empty
+    /// means no onboarding clause at all. Escaped as an OData string literal (T6.1).
+    /// </summary>
+    public string OnboardingStatus { get; init; } = CanBeOnboarded;
+
+    /// <summary>
+    /// SERVER-SIDE, exact. One osPlatform value - Windows10, Windows11, WindowsServer2019, Linux,
+    /// macOS and so on - compared with <c>eq</c>. Empty means no platform clause.
+    /// </summary>
+    public string OsPlatform { get; init; } = "";
+
+    /// <summary>
+    /// CLIENT-SIDE, prefix. There is no single osPlatform value meaning "any Windows": the property
+    /// carries Windows10, Windows11 and each server edition as separate values, so
+    /// <c>osPlatform eq 'Windows'</c> matches nothing. <c>startswith</c> is documented on this
+    /// collection for computerDnsName and for no other property, so pushing
+    /// <c>startswith(osPlatform,'Windows')</c> to the service would be a guess - and a guess the
+    /// service answers 200 to while matching nothing is indistinguishable from an empty inventory.
+    /// Applied here instead, over the complete set, where it is correct whatever the service would
+    /// have done with it.
+    /// </summary>
+    public string OsPlatformPrefix { get; init; } = "";
+
+    /// <summary>SERVER-SIDE. Active, Inactive, ImpairedCommunication, NoSensorData,
+    /// NoSensorDataImpairedCommunication, Unknown. Empty means no clause.</summary>
+    public string HealthStatus { get; init; } = "";
+
+    /// <summary>SERVER-SIDE. None, Informational, Low, Medium, High. Empty means no clause.</summary>
+    public string RiskScore { get; init; } = "";
+
+    /// <summary>SERVER-SIDE. None, Low, Medium, High. Empty means no clause.</summary>
+    public string ExposureLevel { get; init; } = "";
+
+    /// <summary>
+    /// SERVER-SIDE, <c>startswith(computerDnsName, ...)</c> - the one function Learn documents by
+    /// worked example on this collection. A prefix and not a substring: typing the middle of a name
+    /// finds nothing, and the page says so beside the box.
+    /// </summary>
+    public string DeviceNameStartsWith { get; init; } = "";
+
+    /// <summary>
+    /// CLIENT-SIDE, case-insensitive substring over the device's tags. machineTags does appear in
+    /// Learn's filterable list for this collection, but a tag filter is a collection query
+    /// (<c>machineTags/any(...)</c>) and no worked example of one exists for this endpoint; a
+    /// server-side guess fails silently as an empty result rather than loudly as an error, which is
+    /// the worst failure shape this module has.
+    /// </summary>
+    public string MachineTag { get; init; } = "";
+
+    /// <summary>
+    /// CLIENT-SIDE, case-insensitive substring over rbacGroupName. The filterable property is
+    /// <c>rbacGroupId</c>, a numeric id; the name an operator knows, and the one the portal shows,
+    /// is <c>rbacGroupName</c>, which is not filterable. Matching the name the operator typed is
+    /// worth one client-side pass; asking them for a group id is not.
+    /// </summary>
+    public string MachineGroup { get; init; } = "";
+
+    /// <summary>
+    /// SERVER-SIDE, <c>lastSeen ge</c>. Also the lower bound of the partition's root part, so an
+    /// operator who sets it makes the run cheaper as well as narrower.
+    /// </summary>
+    public DateTimeOffset? LastSeenFrom { get; init; }
+
+    /// <summary>SERVER-SIDE, <c>lastSeen lt</c>. Exclusive, and the partition's root upper bound.</summary>
+    public DateTimeOffset? LastSeenTo { get; init; }
+
+    /// <summary>
+    /// CLIENT-SIDE. firstSeen is absent from Learn's filterable list for this collection - the one
+    /// timestamp on the machine resource that is not filterable - so it can only be applied to the
+    /// set after it arrives. A device with no firstSeen value is excluded once either bound is set.
+    /// </summary>
+    public DateTimeOffset? FirstSeenFrom { get; init; }
+
+    /// <summary>CLIENT-SIDE, exclusive upper bound. Same reason as <see cref="FirstSeenFrom"/>.</summary>
+    public DateTimeOffset? FirstSeenTo { get; init; }
+
+    /// <summary>Whether the operator bounded Last seen themselves.</summary>
+    /// <remarks>
+    /// Load-bearing, and not a convenience. When it is true every request already carries a lastSeen
+    /// clause, so devices with NO lastSeen value are outside what the operator asked for and the
+    /// no-Last-seen part of the partition must not be fetched. When it is false the report claims to
+    /// cover every device, and that part MUST be fetched or the union silently misses them - the
+    /// failure the whole partition design exists to prevent.
+    /// </remarks>
+    public bool HasLastSeenBound => LastSeenFrom.HasValue || LastSeenTo.HasValue;
 }

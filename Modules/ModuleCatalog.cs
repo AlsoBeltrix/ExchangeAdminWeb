@@ -757,7 +757,12 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Infrastructure,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.0",
+            // 1.1.0: the listing divides the inventory into Last seen ranges and asks for each one,
+            // so a tenant with more devices than the API's 10,000-row per-request cap can be listed
+            // at all (docs/DefenderEndpointDevices-Plan.md Revision 3, R1(g)); the two hardcoded
+            // filters are replaced by the machine record's real fields, and the default ceiling
+            // rises from 20000 to 100000.
+            Version = "1.1.0",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",
@@ -769,8 +774,8 @@ public sealed class ModuleCatalog
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID",
                     "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields. The app registration needs BOTH Machine.Read.All on WindowsDefenderATP and ThreatHunting.Read.All on Microsoft Graph. The second was optional while discovery sources were; the owner confirmed on 2026-09-21 that they are wanted, so it is not. Consenting the Graph one requires a Privileged Role Administrator or Global Administrator."),
                 new("MaxDevices", "Maximum Devices",
-                    "Safety ceiling on one run. The module pages the API until the matching set is complete; if more devices match than this, it REFUSES the report rather than returning a partial one. Defaults to 20000. Raise it, or narrow the filters.",
-                    Required: false, DefaultValue: "20000"),
+                    "Safety ceiling on one run - how many devices this server will hold in memory for one operator. The module divides the inventory into Last seen ranges until every part is provably complete; if more devices match the server-side filters than this, it REFUSES the report rather than returning a partial one. Defaults to 100000. Raise it, or narrow the filters the API applies.",
+                    Required: false, DefaultValue: "100000"),
                 new("IncludeDiscoverySources", "Include Discovery Sources",
                     "Run the advanced hunting query that supplies the discovery sources, device type, vendor and model columns. Turn off when the app registration does not hold ThreatHunting.Read.All.",
                     Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean)

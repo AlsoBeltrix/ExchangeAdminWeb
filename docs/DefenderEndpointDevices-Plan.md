@@ -1,6 +1,6 @@
 # Defender for Endpoint Devices Module - Plan
 
-Status: Implemented, unproven against the live service (2026-09-21). S1-S5 have all landed; the live reconnaissance pass R1 has NOT run and the manual acceptance checklist has NOT been performed, because the app registration described under "What the owner must create", its two consents and the Delinea secret are still the owner's to create - no code here has ever spoken to Microsoft. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
+Status: In progress (2026-09-21). S1-S5 landed; the owner then ran the module against the live service and it refused, which answered R1(g) (no continuation cursor - see Revision 3) and R1(f) (the tenant exceeds the old 20000 ceiling) and forced the fetch and filter rebuild recorded in Revision 3. R1 (a), (b), (c), (d) and (e) have NOT been answered and the manual acceptance checklist has NOT been performed. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
 
 Owner request, verbatim from the queue:
 
@@ -1613,3 +1613,352 @@ the two new tests account for it exactly; `dotnet format ExchangeAdminWeb.slnx -
 The app registration, the two consents, the Delinea secret and its Secret ID, then R1 on dev -
 including R1(e) and the `DiscoverySources` serialisation question - and the manual acceptance
 checklist. Q2, Q3, Q4 and Q5 remain unanswered.
+
+## Revision 3 - the live run, and the rebuild it forced, 2026-09-21
+
+The owner created the app registration, granted and consented both permissions, created the
+Delinea secret, entered the Secret ID, deployed to dev and clicked Load. The module authenticated,
+reached the real service, and refused with an empty page:
+
+> The Defender for Endpoint API returned exactly the 10000 devices this request asked for and gave
+> no continuation link... No devices are shown and no export is offered... Narrow the filters.
+
+Owner, verbatim: *"we have well over 40000 devices. we need this to work in our environment. I
+will not approve any code that limits what this can do."* And: *"anything that is obtainable via
+Microsoft's portal needs to be obtainable here. No compromises."*
+
+The refusal was correct - the run genuinely could not prove it had seen every device - and useless.
+"Narrow the filters" named an action the operator could not take, because the only server-side
+filter on the page was one dropdown.
+
+### The two R1 questions this run answered
+
+**R1(g) - the paging contract. ANSWERED: there is no cursor.** `GET /api/machines` returned exactly
+the 10,000 rows the request asked for and carried no `@odata.nextLink`. The endpoint has no
+continuation token. The branch R1(g) decided in advance was "the module stays single-request", and
+that branch is now known to be **unusable on a real tenant**: a single request can return at most
+10,000 rows against an inventory of more than 40,000, so the single-request design can never
+produce a provable answer here. R1(g) recorded the fact; this revision replaces the design that
+fact invalidates.
+
+**R1(f) - does the result set approach `MaxDevices`? ANSWERED: it exceeds it.** The descriptor's
+default of 20,000 was below the size of the tenant, so even with paging solved the first load would
+have refused on the ceiling. The default is raised to 100,000, which is what the ceiling was always
+for - a runaway stop on what one operator's circuit will hold in memory, not a statement about how
+many devices may exist.
+
+The remaining R1 questions - (a), (b), (c), (d), (e) - are **still unanswered**. Nothing in this
+revision depends on any of them: (c) and (d) are why the "Any Windows" platform choice stays
+client-side, and (b) is why the parser still reads properties case-insensitively.
+
+### The design: partition the QUESTION, not the answer
+
+Paging divides an answer the service has already computed; with no cursor there is nothing to
+divide. So the module divides the question instead.
+
+The inventory is partitioned on `lastSeen` into parts that are **disjoint** and together
+**exhaustive**. Each part is asked for on its own. A part that comes back under the cap has proved
+itself complete by the unchanged P1 rule. A part that comes back AT the cap has proved nothing, and
+is split in two and asked again. The answer is the union of the parts that proved themselves.
+
+Why this is a proof where `$skip` was not - the argument Revision 2's Finding A rejected `$skip`
+on, and the reason this is not the same shape:
+
+- Nothing depends on the service's ordering. Each part carries its own server-side predicate;
+  two sibling parts are `lastSeen lt X` and `lastSeen ge X` for one literal X. No device satisfies
+  both. No device with a `lastSeen` value satisfies neither.
+- Nothing depends on a stable window. Each part is an independent question with a fixed answer set.
+- Each part proves its own completeness positively, by P1: it asked for N and got fewer than N,
+  with no continuation link. There is no "we probably saw everything".
+- **The refusal machinery is unchanged.** A part that cannot be divided, a run that exhausts its
+  request budget, a failed request, or a breached ceiling all refuse and carry zero devices. What
+  changed is that the common case no longer reaches any of them.
+
+**`lastSeen` is filterable with range operators, and that is documented rather than assumed.**
+Learn's List machines page names `lastSeen` in the `$filter` list for this collection, and the
+OData samples page carries a worked range example on this exact endpoint:
+`GET /api/machines?$filter=lastSeen gt 2018-08-01Z`. The literal is emitted unquoted, in UTC, at
+the tick precision the service's own samples use.
+
+**The devices with no `lastSeen`.** A null satisfies neither `ge` nor `lt`, so a partition built
+only from intervals silently omits them - the exact failure this design exists to prevent. Two
+things stop it:
+
+1. While the root part needs no dividing it carries **no `lastSeen` clause at all**, so those
+   devices are in the one request like everyone else. A small tenant costs one request and the
+   question never arises.
+2. The moment the root has to be split, a separate part asking `lastSeen eq null` is queued -
+   **unless the operator set a Last seen window**, in which case devices with no Last seen value
+   are outside what they asked for and adding them would answer a different question.
+
+`lastSeen eq null` is core OData v4 and this is an OData v4 surface, but unlike `lastSeen gt` it
+has no worked example on this collection. If the service rejects it with a 400, the run **refuses**
+and the refusal names the one action that makes the question answerable: set a Last seen window, at
+which point the null case is no longer part of what was asked.
+
+**Parts are visited in ascending time order.** A device that reports in mid-run moves FORWARD in
+`lastSeen`, so visiting low parts first means it can only move into a part not yet read. The stack
+is pushed high-then-low so the low child pops first; the no-`lastSeen` part is pushed last so it
+pops first of all, and a device that acquires its first `lastSeen` mid-run lands in the final,
+unbounded-above part. This rests on `lastSeen` being non-decreasing for a device, which is what
+"last seen" means - not on anything about this environment.
+
+**Termination, and the budget.** The split point is the median of the timestamps the ambiguous
+response actually returned, restricted to values STRICTLY INSIDE the part. Strictly-inside is the
+whole termination argument: both children are strictly narrower than the parent, widths are whole
+numbers of ticks, so the recursion cannot descend forever. A part with no eligible value cannot be
+divided and refuses. The split point comes from the data rather than from arithmetic on the clock
+because bisecting wall-clock time between an epoch and now would spend a dozen requests walking
+down to the few days most devices were last seen in; the data lands the split in the middle of the
+population. Balance is not guaranteed - the returned rows are an arbitrary subset - but correctness
+never depended on balance, only the request count does.
+
+`MaxRequestsPerRun` rises from 100 to **250**. 100 was chosen for a design that issued one request.
+A balanced division of a 100,000-device tenant at 10,000 rows a part is 16 leaves, so 31 requests
+plus the no-`lastSeen` part; 250 leaves roughly eight times that headroom for an unbalanced
+division while staying a sixth of the endpoint's documented 1,500 calls an hour. It is a STOP for a
+partition that terminates but does not converge, not a promise: the endpoint's other documented
+limit, 100 calls a minute, is enforced by the service as a 429, which already refuses with its own
+operator action.
+
+**Rows from an ambiguous part are not in the answer.** They are counted against the ceiling - they
+are real devices that matched - but only keys from parts that proved themselves are promoted into
+the union. Nothing is lost, because a child part re-reads them; what is gained is that the answer
+is by construction the union of parts that each proved themselves, and a partition whose two
+children do not meet loses the boundary device visibly instead of having it already in hand from
+the parent.
+
+### Filtering - portal parity
+
+The two hardcoded filters are replaced by the machine record's real fields. Which side each one
+runs on is a fact about the API, taken from Learn's List machines page, which names the properties
+`$filter` accepts on this collection: `computerDnsName`, `id`, `version`, `deviceValue`,
+`aadDeviceId`, `machineTags`, `lastSeen`, `exposureLevel`, `onboardingStatus`, `lastIpAddress`,
+`healthStatus`, `osPlatform`, `riskScore`, `rbacGroupId`.
+
+| Filter | Side | Clause, or why not |
+| --- | --- | --- |
+| Device name starts with | server | `startswith(computerDnsName,'...')` - the one function with a worked example on this collection |
+| Onboarding status | server | `onboardingStatus eq '...'` |
+| Platform (one value) | server | `osPlatform eq '...'` |
+| Platform - Any Windows | **client** | No `osPlatform` value means "any Windows". `startswith` is documented for `computerDnsName` and no other property, and a guessed clause the service accepts while matching nothing is indistinguishable from an empty inventory. R1(d) would settle it; it has not run. |
+| Health status | server | `healthStatus eq '...'` |
+| Risk score | server | `riskScore eq '...'` |
+| Exposure level | server | `exposureLevel eq '...'` |
+| Last seen from / before | server | `lastSeen ge ...` / `lastSeen lt ...`, and the partition's root bounds |
+| Machine tag | **client** | `machineTags` is in the filterable list, but a tag filter is a collection query (`machineTags/any(...)`) with no worked example here |
+| Machine group | **client** | The filterable property is `rbacGroupId`, a numeric id. The name the operator knows, and the portal shows, is `rbacGroupName`, which is not filterable |
+| First seen from / before | **client** | `firstSeen` is absent from the filterable list - the one timestamp on the machine resource that is not |
+
+A client-side filter narrows what is SHOWN and never what is FETCHED. The ceiling refusal says so
+in as many words, because sending an operator to narrow a filter that cannot reduce the fetch is a
+loop with no exit.
+
+The **Windows-devices-only checkbox is gone**, at the owner's instruction. Platform is now one
+dropdown among the others and defaults to Any.
+
+### UI
+
+The filter card is a three-per-row Bootstrap grid of labelled controls with the two buttons (Clear,
+Load devices) in the last cell, and one help line under the whole card rather than a grey paragraph
+beside one control. Client-side filters are marked `(after fetch)` inline in their own labels, so
+nothing shoves the layout. No new CSS.
+
+The results header now reports the partition: `N device(s)`, then `M fetched in R request(s).
+Ceiling C.` The request count is the visible evidence that the partition ran: above one means the
+inventory had to be divided. The range count was in this header until the codex round of
+2026-09-21, which read it as implementation detail on screen; it is still carried on the result
+type and still asserted by the partition tests.
+
+### On-screen wording
+
+Owner ruling, 2026-09-21, applied to every user-facing string this module owns: **state what
+happened and what to do, nothing else.** No design rationale, no self-reference ("this module must
+never", "the run could not prove"), no restating the situation twice, no reassurance. The rationale
+lives here and in the code comments, where the people who need it look. The distinctness
+requirement on the failure reasons is unchanged and still enforced by
+`EveryEnrichmentReasonIsADifferentSentence`; the reasons are simply shorter.
+
+The page banner is one line. The refusal banner is a heading and the reason. The detail panel's
+paragraph about Active Directory domains is gone - the row is labelled "DNS domain (derived)",
+which was the whole of the point.
+
+### Versioning
+
+Module `1.0.0` -> `1.1.0` in `Modules/ModuleCatalog.cs`. **No base app bump**:
+`ExchangeAdminWeb.csproj` is byte-identical, verified by `git diff` rather than assumed. Nothing
+outside `Models/DefenderDeviceModels.cs`, `Services/DefenderEndpointDeviceService.cs`,
+`Components/Pages/DefenderEndpointDevices.razor`, this module's catalog entry and its tests was
+touched, apart from this plan and `docs/DefenderEndpointDevices.md`.
+
+### What a real run costs now
+
+A "Windows, can be onboarded" load on a tenant of 40,000+ devices, with the default 10,000-row cap.
+
+The cost is driven by the RATIO of matching devices to the per-request cap, not by the device count,
+because each part is divided until it fits under the cap. **Measured, not estimated**: the
+43-device fixture against a 10-row cap - a ratio of 4.3, the same ratio 43,000 devices have against
+the real 10,000-row cap - costs **12 requests**: one root, one for the no-`lastSeen` part, and ten
+across the tree that divides it. A tenant at twice that ratio adds roughly one level, not twice the
+requests.
+
+Against the endpoint's documented 100 calls a minute, a run of that size is one sixth of one
+minute's allowance, and the hard stop at 250 is eight times the worst division the fixture
+produced.
+
+The "Any Windows" choice does not reduce the fetch, so it costs the same as no platform filter;
+choosing an exact platform (`Windows11`) does reduce it, and proportionally.
+
+### Guard proof
+
+| Probe | Mutation | Test that failed |
+| --- | --- | --- |
+| P1 | `lastSeen ge` -> `lastSeen gt` in the high child's clause | `MoreDevicesThanOneRequestCanReturn_AreAllListedByDividingOnLastSeen`, `TwoSiblingPartsMeetExactly_WithNoGapAndNoDeviceInBoth` |
+| P2 | never queue the `lastSeen eq null` part | `TheDevicesWithNoLastSeen_AreFetchedByATheirOwnRequestOnceTheRootIsDivided` |
+| P3 | queue the `lastSeen eq null` part even when the operator set a window | `AnOperatorSuppliedLastSeenWindow_IsTheRootRangeAndSuppressesTheNoLastSeenRequest` |
+| P4 | drop the strictly-inside test in `ChooseSplit` | `ASplitPointIsAlwaysStrictlyInsideItsRange`, `ARangeWithNothingToDivideOn_CannotBeSplit` |
+| P5 | push the high child last, reversing the visit order | `ThePartitionVisitsItsPartsInAscendingTimeOrder` |
+| P6 | treat the no-`lastSeen` part's 400 as an empty part | `AServiceThatRejectsTheNoLastSeenFilter_RefusesAndNamesTheWindowToSet` |
+| P7 | send `machineTags/any(t: t eq '...')` server-side | `TheClientSideFiltersNeverReachTheQuery` |
+| P8 | a device with no `firstSeen` passes a `firstSeen` bound | `ADeviceWithNoFirstSeenFailsAFirstSeenBoundRatherThanPassingIt` |
+
+Every restore was a file copy followed by `touch` and a SHA256 comparison against the pre-mutation
+hash - no `git checkout --` at any point.
+
+P3's mutation is "push the no-`lastSeen` part unconditionally beside the root", because simply
+flipping `HasLastSeenBound` changes nothing: that flag is only read inside the split branch, and
+the window fixture completes in one request without splitting.
+
+### Verification
+
+`dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental` 0 errors / 23 warnings;
+`dotnet test ExchangeAdminWeb.slnx` 2946 passed / 0 failed / 3 skipped, +21 on the 2925 baseline
+and the twenty-one new tests account for it exactly; `dotnet format ExchangeAdminWeb.slnx
+--verify-no-changes --no-restore` exit 0; `git diff --check HEAD` exit 0;
+`tools/Test-AsciiOnly.ps1` exit 0.
+
+### Still outstanding
+
+R1 (a), (b), (c), (d) and (e), and the manual acceptance checklist. Q2, Q3, Q4 and Q5 remain
+unanswered. The design above has been proved against a stub that evaluates the filter it is given;
+it has not been run against the live service since the change.
+
+## Revision 4 - codex review of the rebuild, 2026-09-21
+
+Harness: codex-cli 0.154.0, `codex exec --json -s read-only`, model
+`@azure-openai-eus2-global/gpt-5.5-dzs` at `model_reasoning_effort=xhigh`. Prompt
+`.agents/review/q8-scale.prompt.txt`, verdict `.agents/review/q8-scale.result.json`. Capability
+proof passed. Reviewed the uncommitted working tree against HEAD `1ddafab`.
+
+**Verdict: unsound - 1 MEDIUM, 4 LOW. No CRITICAL and no HIGH.**
+
+What it cleared explicitly, which is worth as much as the findings and does not get re-litigated:
+sibling parts emit `lastSeen lt` and `lastSeen ge`, so they are disjoint and meet exactly; a null
+`lastSeen` is covered on the unsplit root and by the one explicit null part after a split, and an
+operator-supplied window suppresses that part correctly; rows from an ambiguous parent are counted
+against the ceiling but not promoted into the answer; only a `Complete` result renders or exports
+rows. Termination is fail-closed rather than unbounded - `ChooseSplit` returns only timestamps
+strictly inside the range, and a capped part whose rows share one timestamp or carry none refuses.
+The server/client filter split is applied in the right order, and the ceiling refusal matches it.
+It also confirmed that `MoreDevicesThanOneRequestCanReturn_AreAllListedByDividingOnLastSeen` does
+fail a partition that misses a dated or an undated device, so the miss-a-device case is covered.
+
+### F1 (MEDIUM) - user-facing text still editorialised in six places
+
+The owner's ruling of 2026-09-21 is that every string states what happened and what to do, and
+nothing else. The rebuild applied it to the refusals and the banner and missed these.
+
+| Was | Now |
+|---|---|
+| `This module's app credentials could not be built...` | `App credentials could not be built...` |
+| `...the sign-in for this module's app registration succeeds...` | `...the app registration can sign in...` |
+| `Microsoft Graph rejected this module's credentials... the module's Secret Server record` | `Microsoft Graph rejected the credentials... the Secret Server record` |
+| `The Defender for Endpoint API rejected this module's credentials... the module's Secret Server record` | `...rejected the credentials... the Secret Server record` |
+| Two-line grey helper paragraph under the filter card | One line |
+| `M fetched in R request(s) across P Last seen range(s). Ceiling C.` | `M fetched in R request(s). Ceiling C.` |
+
+The range count is gone from the header: it is the partition's implementation detail, and an
+operator does not act on it. A request count above one already says the inventory had to be
+divided. `RangesCompleted` stays on the result type and stays asserted by the partition tests,
+which is where it is load-bearing.
+
+### F2 (LOW) - the enrichment warning fired for rows that do not exist
+
+A complete run matching zero devices rendered "...read '(unavailable)' for every device here" above
+an empty table. The warning is now guarded on `result.Devices.Count > 0`; a run that matched nothing
+says so in the header and says nothing else.
+
+**Honest limitation.** The guard that bites here is the CSV export-position test's textual anchor
+(M4 below), not a behavioural one. There is no render harness for this page, so no test asserts
+that the warning is absent at zero devices - only that the branch condition is the string the test
+expects. Removing the Count clause fails the suite; rewriting it to something equally wrong that
+kept the same text would not, and nothing on this page can currently close that.
+
+### F3 (LOW) - the ceiling-refusal test asserted four of seven server-side names
+
+`TheCeilingRefusalNamesTheFiltersThatCannotReduceTheFetch` checked onboarding status, platform,
+health status and risk score, while the production string also names exposure level, device name
+and the Last seen window. A regression dropping one of those three would send an operator away from
+a filter that would in fact have reduced the fetch - the exact loop this refusal was rewritten to
+break - and the test would not have noticed. All seven are now asserted.
+
+### F4 (LOW) - a budget test whose floor and ceiling were both 250
+
+`MaxRequestsPerRun >= 250` and `MaxRequestsPerRun <= 1500 / 6` are the same number, so the test
+pinned the constant to itself while its name claimed headroom. Both bounds are now derived and
+neither evaluates to 250: the floor is ten times the cost of a balanced division of a ceiling-sized
+tenant (`2 * leaves - 1`, plus the no-`lastSeen` part - 200 at today's constants), and the ceiling
+is a fifth of the endpoint's documented 1,500 calls an hour (300), so one run cannot eat the
+tenant's hour and four more operators can still run in it.
+
+### F5 (LOW) - the accumulation-order guard covered one client-side filter of four
+
+`TheClientSideFiltersAreAppliedAfterThePartitionAndNeverDuringIt` exercised only the Any Windows
+prefix. An implementation that got the prefix right and applied the machine tag, the machine group
+or a First seen bound inside the page reader has exactly the same defect - a full response of
+non-matching rows reads as short, which is a false proof of exhaustion - and the test cleared it.
+It is now `EveryClientSideFilterIsAppliedAfterThePartitionAndNeverDuringIt`, a Theory over all four.
+The `Page` test helper gained an `extra` parameter so a fixture row can carry `machineTags`,
+`rbacGroupName` or `firstSeen`. Only the platform case sets a non-matching `osPlatform`; the other
+three leave the rows as Windows, so the exclusion is provably the filter under test and not the
+prefix.
+
+### Guard proof - 4 probes, each attributable
+
+| Probe | Mutation | Test that failed |
+|---|---|---|
+| M1 | filter the page through `MatchesClientSideFilters` before `rows.AddRange(page)` | `EveryClientSideFilterIsAppliedAfterThePartitionAndNeverDuringIt`, all 4 cases |
+| M2 | drop exposure level, device name and the Last seen window from `CeilingRefusal` | `TheCeilingRefusalNamesTheFiltersThatCannotReduceTheFetch` |
+| M3 | `MaxRequestsPerRun` 250 -> 100 | `TheRequestBudgetLeavesRoomForAPartitionedRunAndStaysUnderTheHourlyLimit` |
+| M4 | drop `result.Devices.Count > 0 &&` from the enrichment warning | `DefenderEndpointDevices_OffersNoExportFromTheRefusalBranch` |
+
+M1 is the finding-5 probe and it fails all four Theory cases, which is the point: each of the four
+client-side filters is guarded on its own, not by proxy through the platform prefix. Every restore
+was `Copy-Item` plus an explicit `LastWriteTime` touch - a preserved mtime makes MSBuild skip the
+rebuild and the next run tests the mutated binary - followed by a SHA256 compare against the
+pre-mutation hash, which the probe script throws on. Both files match.
+
+One in-flight break to record rather than hide: the F2 guard changed the exact line
+`DefenderEndpointDevicesCsvTests.DefenderEndpointDevices_OffersNoExportFromTheRefusalBranch` uses to
+locate the start of the complete branch, so that test failed on the first run after the fix. The
+anchor was repointed to the new condition, not weakened - it still brackets the export button
+between the first element of the complete branch and the device table's closing tag.
+
+### What was not re-dispatched
+
+Per `.agents/decisions.md` 2026-08-31, reviewer verification rounds are CRITICAL-only and each needs
+an explicit owner go. None of these five is CRITICAL, so all five close on the guard proof above
+rather than on a second codex round.
+
+### Verification after the five fixes
+
+`dotnet build ExchangeAdminWeb.slnx -c Release` 0 errors / 23 warnings; `dotnet test
+ExchangeAdminWeb.slnx` **2949 passed / 0 failed / 3 skipped**, +3 on the 2946 of Revision 3 and the
+three are accounted for exactly by the one-Fact ordering test becoming a four-case Theory;
+`dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0; `git diff --check
+HEAD` exit 0; `tools/Test-AsciiOnly.ps1` exit 0.
+
+### Still outstanding
+
+Unchanged by this round. R1 (a), (b), (c), (d) and (e), and the manual acceptance checklist. Q2,
+Q3, Q4 and Q5 remain unanswered. Nothing here has been run against the live service.

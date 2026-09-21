@@ -161,7 +161,7 @@ public class ModuleCatalogTests
         // not reachable, which is what makes landing it before the live reconnaissance safe.
         Assert.False(module.EnabledByDefault);
         Assert.False(module.IsSystemModule);
-        Assert.Equal("1.0.0", module.Version);
+        Assert.Equal("1.1.0", module.Version);
     }
 
     [Fact]
@@ -199,7 +199,10 @@ public class ModuleCatalogTests
 
         var maxDevices = module.ConfigFields.Single(f => f.Key == DefenderEndpointDeviceService.MaxDevicesConfigKey);
         Assert.False(maxDevices.Required);
-        Assert.Equal("20000", maxDevices.DefaultValue);
+        // The default must stay above what one request can return: 20000 read as a big number and
+        // was in fact below the size of a real tenant, so the first live load refused on the ceiling.
+        Assert.Equal("100000", maxDevices.DefaultValue);
+        Assert.True(int.Parse(maxDevices.DefaultValue!) == DefenderEndpointDeviceService.DefaultMaxDevices);
 
         var discovery = module.ConfigFields.Single(f => f.Key == "IncludeDiscoverySources");
         Assert.False(discovery.Required);

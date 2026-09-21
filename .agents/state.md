@@ -16,16 +16,41 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   `.agents/push-policy.md` and the Token Budget one-slice-one-session rule. 32 commits, both
   remotes level, every gate green at every commit. Per-item outcome:
   - **Queue 9, click-gating: TIER 1 IS COMPLETE, all nine pages.** See the entry below.
-  - **Queue 8, Defender for Endpoint - COMPLETE AND REVIEWED. The owner made it P1 on 2026-09-21
-    and it is finished.** `docs/DefenderEndpointDevices-Plan.md`, `Status: Implemented, unproven
-    against the live service`. All five slices landed: S1 `4835942` (API client, models, service,
-    paging), S2 `a4facc6` (descriptor, page, three config fields), S4 `8f2aa37` (discovery-sources
+  - **Queue 8, Defender for Endpoint - REBUILT FOR SCALE after the first live run returned nothing.
+    Module `1.1.0`.** `docs/DefenderEndpointDevices-Plan.md`, `Status: Implemented, unproven against
+    the live service`. Five slices landed first: S1 `4835942` (API client, models, service, paging),
+    S2 `a4facc6` (descriptor, page, three config fields), S4 `8f2aa37` (discovery-sources
     enrichment), S3 `d4993f6` (CSV export, 27 columns), S5 `bb37bc9` (`docs/DefenderEndpointDevices.md`
-    and the README section). Suite **2925 passed / 0 failed / 3 skipped**. Module `1.0.0`, **no base
-    app bump** - `ExchangeAdminWeb.csproj` is byte-identical across every slice, verified by diff
-    rather than assumed.
-    **Codex reviewed the finished module: round 1 `unsound` with two findings, round 2 `sound` with
-    none** (`95668c5` closed them; `.agents/review/q8-module*.result.json`). Round 1 **cleared the two
+    and the README section). **Then the dev deploy proved the design could not work here.**
+    `GET /api/machines` returned exactly 10,000 rows and **no `@odata.nextLink`** - R1(g) answered
+    empirically, there is no cursor on this endpoint - and the tenant holds over 40,000 devices, so
+    the module refused and showed nothing. R1(f) answered the same way: the 20,000 ceiling was below
+    the size of a real tenant.
+    **The rebuild divides the QUESTION instead of paging the answer.** The inventory is partitioned
+    on `lastSeen` into disjoint, exhaustive ranges; a part that returns under the cap has proved
+    itself, a part that returns AT the cap has proved nothing and is split in two and asked again,
+    and the answer is the union of the parts that proved themselves. Devices with no `lastSeen`
+    satisfy neither bound, so they ride the undivided root request and get an explicit
+    `lastSeen eq null` part the moment the root splits. Cost is driven by the ratio of matching
+    devices to the cap, not by the device count: a 4.3x ratio measures at 12 requests against a
+    250-request budget. Ceiling default 20,000 -> 100,000.
+    **The two hardcoded filters are gone and the portal's set is in.** Device name prefix, onboarding
+    status, platform, health status, risk score, exposure level and the Last seen window go to the
+    API as `$filter`; machine tag, machine group, First seen and "any Windows" cannot be expressed
+    against this collection and are applied after the fetch, labelled `(after fetch)` on the page and
+    named in the ceiling refusal as filters that will NOT make the fetch smaller. The
+    Windows-devices-only checkbox and its grey paragraph are gone; Platform is a dropdown defaulting
+    to Any.
+    **Every user-facing string states what happened and what to do** - owner ruling 2026-09-21, after
+    the refusal text was called AI garbage. No design rationale, no self-reference, no repetition.
+    Suite **2949 passed / 0 failed / 3 skipped**. Module `1.0.0` -> `1.1.0`, **no base app bump** -
+    `ExchangeAdminWeb.csproj` byte-identical, verified by diff rather than assumed.
+    **Codex reviewed the rebuild** (`.agents/review/q8-scale.result.json`): `unsound`, 1 MEDIUM and
+    4 LOW, **no CRITICAL and no HIGH**. It cleared the completeness argument, termination and the
+    filter ordering outright. All five closed on the coder-side guard proof (4 probes, Revision 4),
+    which is the CRITICAL-only rule from `.agents/decisions.md` 2026-08-31, not a shortcut.
+    **Codex also reviewed the pre-rebuild module: round 1 `unsound` with two findings, round 2 `sound`
+    with none** (`95668c5` closed them; `.agents/review/q8-module*.result.json`). Round 1 **cleared the two
     properties the design exists to hold** - no path renders or exports a short device list as
     complete, and no page or CSV blank can mean a failed enrichment run.
     The HIGH finding is worth remembering: **the call site's own comment convicted the code.** It
@@ -41,9 +66,13 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
     cannot consent Graph app roles), create the Delinea record with fields named exactly `Tenant ID`,
     `Application ID`, `Client Secret` and no checkout workflow, enter its Secret ID on the module's
     config page, enable the module (it ships disabled) and grant the section-access group.
-    **Then two gates that have never run:** R1, the live reconnaissance pass - no code here has ever
-    spoken to Microsoft - and the manual acceptance checklist. R1's open items and the fallback that
-    shipped for each are listed in the module doc; the two that matter are whether `ipAddresses` comes
+    **Then two gates that have never run:** R1 (a)-(e), the rest of the live reconnaissance pass, and
+    the manual acceptance checklist. R1(f) and R1(g) are answered - the run of 2026-09-21 established
+    the 10,000-row cap, the absent cursor and the tenant size - but no device row has ever been
+    rendered, so no field name, casing or filter behaviour has been observed. `lastSeen eq null` is
+    the one clause in the rebuild with no worked example on this collection: the code fails closed and
+    names the action if the service rejects it, but that has not been seen either. R1's open items and
+    the fallback that shipped for each are listed in the module doc; the two that matter are whether `ipAddresses` comes
     back populated (the IP and MAC columns shipped ahead of that answer, Revision 7 carries the undo)
     and whether `DiscoverySources` arrives as a JSON string or an array (both shapes handled,
     Revision 6). Plan questions Q2-Q5 remain unanswered and the shipped behaviour in each case is the

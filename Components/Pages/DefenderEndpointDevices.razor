@@ -26,16 +26,11 @@
 }
 
 <div class="container-fluid">
+    @* One line. What the module can do to Defender, how counts compare with the portal widget and
+       why a refusal refuses are all in docs/DefenderEndpointDevices.md, which is where someone
+       looking for them will look - not on screen on every load. *@
     <div class="alert alert-info py-2 mb-3">
-        <small>
-            Read-only. Every listing is written to the audit log. This module changes nothing in
-            Defender: it cannot onboard, isolate, scan or offboard a device, and the app
-            registration behind it holds no permission that could.
-            A run either returns the COMPLETE set of devices matching the filters below or it
-            refuses in words - it never shows a shortened list that looks whole.
-            Counts here can differ from the Defender portal's onboarding recommendation widget,
-            which excludes ephemeral and guest devices; that is expected, not a fault.
-        </small>
+        <small>Read-only. Every load and every export is written to the audit log.</small>
     </div>
     <h1 class="mb-4">Defender for Endpoint Devices<ModuleVersion /></h1>
 
@@ -49,41 +44,153 @@
     {
         <div class="alert alert-danger">
             Defender for Endpoint Devices is not configured. Set Graph App Delinea Secret ID in
-            Module Config. No device data can be read until it is set.
+            Module Config.
         </div>
         return;
     }
 
     <div class="card mb-3">
+        <div class="card-header py-2"><strong>Filters</strong></div>
         <div class="card-body">
-            <div class="row g-2 align-items-end">
+            <div class="row g-3">
                 <div class="col-md-4">
-                    <label class="form-label mb-1" for="onboardingStatus">Onboarding status</label>
+                    <label class="form-label" for="deviceName">Device name starts with</label>
+                    <input id="deviceName"
+                           class="form-control"
+                           @bind="form.DeviceNameStartsWith"
+                           disabled="@IsBusy"
+                           placeholder="Start of the name" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="onboardingStatus">Onboarding status</label>
                     @* The API literals, NOT the portal labels: the portal shows "Can be onboarded"
                        and the REST value is CanBeOnboarded, and sending the portal spelling matches
                        nothing. The option text is the portal's wording so an operator recognises it;
                        the value is what reaches the filter. *@
-                    <select id="onboardingStatus" class="form-select" @bind="onboardingStatus" disabled="@IsBusy">
+                    <select id="onboardingStatus"
+                            class="form-select"
+                            @bind="form.OnboardingStatus"
+                            disabled="@IsBusy">
+                        <option value="">Any</option>
                         <option value="@DefenderDeviceFilters.CanBeOnboarded">Can be onboarded</option>
                         <option value="onboarded">Onboarded</option>
                         <option value="Unsupported">Unsupported</option>
                         <option value="InsufficientInfo">Insufficient info</option>
-                        <option value="">Any onboarding status</option>
                     </select>
                 </div>
                 <div class="col-md-4">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="windowsOnly" @bind="windowsOnly" disabled="@IsBusy" />
-                        <label class="form-check-label" for="windowsOnly">Windows devices only</label>
-                    </div>
-                    <div class="form-text">
-                        Applied after the fetch, not by the service: osPlatform carries Windows10,
-                        Windows11 and the server variants as separate values, so there is no single
-                        server-side "Windows" filter to ask for.
-                    </div>
+                    <label class="form-label" for="platform">Platform</label>
+                    @* One value is the client-side one and it is marked in its own option text, so
+                       the label above stays the same height as every other label in the row. *@
+                    <select id="platform"
+                            class="form-select"
+                            @bind="form.Platform"
+                            disabled="@IsBusy">
+                        <option value="">Any</option>
+                        <option value="@AnyWindows">Any Windows (after fetch)</option>
+                        @foreach (var platform in PlatformValues)
+                        {
+                            <option value="@platform">@platform</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="col-md-4">
+                    <label class="form-label" for="healthStatus">Health status</label>
+                    <select id="healthStatus"
+                            class="form-select"
+                            @bind="form.HealthStatus"
+                            disabled="@IsBusy">
+                        <option value="">Any</option>
+                        @foreach (var health in HealthStatusValues)
+                        {
+                            <option value="@health">@health</option>
+                        }
+                    </select>
                 </div>
                 <div class="col-md-4">
-                    <button class="btn btn-primary w-100" @onclick="LoadAsync" disabled="@IsBusy">
+                    <label class="form-label" for="riskScore">Risk score</label>
+                    <select id="riskScore"
+                            class="form-select"
+                            @bind="form.RiskScore"
+                            disabled="@IsBusy">
+                        <option value="">Any</option>
+                        @foreach (var risk in RiskScoreValues)
+                        {
+                            <option value="@risk">@risk</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="exposureLevel">Exposure level</label>
+                    <select id="exposureLevel"
+                            class="form-select"
+                            @bind="form.ExposureLevel"
+                            disabled="@IsBusy">
+                        <option value="">Any</option>
+                        @foreach (var exposure in ExposureLevelValues)
+                        {
+                            <option value="@exposure">@exposure</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="col-md-4">
+                    <label class="form-label" for="machineGroup">Machine group <span class="text-muted">(after fetch)</span></label>
+                    <input id="machineGroup"
+                           class="form-control"
+                           @bind="form.MachineGroup"
+                           disabled="@IsBusy"
+                           placeholder="Any part of the group name" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="machineTag">Machine tag <span class="text-muted">(after fetch)</span></label>
+                    <input id="machineTag"
+                           class="form-control"
+                           @bind="form.MachineTag"
+                           disabled="@IsBusy"
+                           placeholder="Any part of a tag" />
+                </div>
+
+                <div class="col-md-2">
+                    <label class="form-label" for="lastSeenFrom">Last seen from</label>
+                    <input id="lastSeenFrom"
+                           type="date"
+                           class="form-control"
+                           @bind="form.LastSeenFrom"
+                           @bind:format="yyyy-MM-dd"
+                           disabled="@IsBusy" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label" for="lastSeenTo">Last seen before</label>
+                    <input id="lastSeenTo"
+                           type="date"
+                           class="form-control"
+                           @bind="form.LastSeenTo"
+                           @bind:format="yyyy-MM-dd"
+                           disabled="@IsBusy" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label" for="firstSeenFrom">First seen from <span class="text-muted">(after fetch)</span></label>
+                    <input id="firstSeenFrom"
+                           type="date"
+                           class="form-control"
+                           @bind="form.FirstSeenFrom"
+                           @bind:format="yyyy-MM-dd"
+                           disabled="@IsBusy" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label" for="firstSeenTo">First seen before <span class="text-muted">(after fetch)</span></label>
+                    <input id="firstSeenTo"
+                           type="date"
+                           class="form-control"
+                           @bind="form.FirstSeenTo"
+                           @bind:format="yyyy-MM-dd"
+                           disabled="@IsBusy" />
+                </div>
+                <div class="col-md-8 d-flex align-items-end justify-content-md-end gap-2">
+                    <button class="btn btn-outline-secondary" @onclick="ClearFilters" disabled="@IsBusy">Clear</button>
+                    <button class="btn btn-primary" @onclick="LoadAsync" disabled="@IsBusy">
                         @if (IsBusy)
                         {
                             <span class="spinner-border spinner-border-sm me-1"></span>
@@ -91,6 +198,9 @@
                         Load devices
                     </button>
                 </div>
+            </div>
+            <div class="form-text mt-3">
+                Dates are local and every "before" bound is exclusive. A filter marked "(after fetch)" narrows what is shown, not what is retrieved.
             </div>
         </div>
     </div>
@@ -102,7 +212,7 @@
     @if (loadError != null)
     {
         <div class="alert alert-danger">
-            <strong>Could not read the Defender for Endpoint device inventory.</strong>
+            <strong>Could not read the device inventory.</strong>
             <div class="mt-1"><small>@loadError</small></div>
         </div>
     }
@@ -114,37 +224,31 @@
            every raise of it has to sit inside a try whose finally lowers it again. *@
         <div class="alert alert-info d-flex align-items-center">
             <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-            <span>Reading the Defender for Endpoint device inventory...</span>
+            <span>Reading the device inventory...</span>
         </div>
     }
     else if (result.Outcome != DefenderDeviceListOutcome.Complete)
     {
         <div class="alert alert-danger">
-            <strong>This report was refused, not truncated.</strong>
+            <strong>No device list.</strong>
             <div class="mt-1">@result.RefusalReason</div>
-            <div class="mt-1">
-                <small>
-                    No devices are listed and nothing can be exported from this state. The run could
-                    not prove it had seen every matching device, and a partial list that looks whole
-                    is the one result this module must never produce.
-                </small>
-            </div>
         </div>
     }
     else
     {
-        @* The SAME warning S2 shipped, moved above the table and extended to all five columns. An
-           empty cell must never be how an operator learns that half the report did not execute
-           (Known Failure Class 2), and a warning underneath a long table is read after the columns
-           it explains, if at all. There is deliberately only one of these on the page. *@
-        @if (result.DiscoveryEnrichment != DefenderDiscoveryEnrichmentState.Succeeded)
+        @* Above the table and covering all five columns. An empty cell must never be how an
+           operator learns that half the report did not execute (Known Failure Class 2), and a
+           warning underneath a long table is read after the columns it explains, if at all. There
+           is deliberately only one of these on the page. The Count guard is not cosmetic: with no
+           rows the warning would name columns that are not on screen, so a run that matched nothing
+           says so in the header and says nothing else. *@
+        @if (result.Devices.Count > 0 && result.DiscoveryEnrichment != DefenderDiscoveryEnrichmentState.Succeeded)
         {
             <div class="alert alert-warning py-2">
                 <small>
                     <strong>
                         Discovery sources, device type, device category, vendor and model read
-                        "@DefenderEndpointDeviceService.EnrichmentUnavailable" for every device in
-                        this run.
+                        "@DefenderEndpointDeviceService.EnrichmentUnavailable" for every device here.
                     </strong>
                     @result.DiscoveryEnrichmentReason
                 </small>
@@ -157,8 +261,7 @@
                     <strong>@result.Devices.Count device(s)</strong>
                     <span class="text-muted ms-2">
                         <small>
-                            @result.DistinctCount distinct device(s) returned by the API in
-                            @result.PagesFetched request(s), against a ceiling of @result.Ceiling.
+                            @result.DistinctCount fetched in @result.PagesFetched request(s). Ceiling @result.Ceiling.
                         </small>
                     </span>
                 </div>
@@ -176,11 +279,12 @@
                     <thead>
                         <tr>
                             <th>Device name</th>
-                            <th>DNS domain</th>
                             <th>OS</th>
                             <th>Onboarding status</th>
                             <th>Health</th>
-                            <th>Last IP</th>
+                            <th>Risk</th>
+                            <th>Exposure</th>
+                            <th>Machine group</th>
                             <th>Last seen</th>
                             <th>Discovery sources</th>
                             <th></th>
@@ -191,11 +295,12 @@
                         {
                             <tr>
                                 <td>@Display(device.ComputerDnsName)</td>
-                                <td>@Display(device.DnsDomain)</td>
                                 <td>@device.OsPlatform @device.OsVersion</td>
                                 <td>@Display(device.OnboardingStatus)</td>
                                 <td>@Display(device.HealthStatus)</td>
-                                <td>@Display(device.LastIpAddress)</td>
+                                <td>@Display(device.RiskScore)</td>
+                                <td>@Display(device.ExposureLevel)</td>
+                                <td>@Display(device.MachineGroup)</td>
                                 <td class="text-nowrap">@FormatTime(device.LastSeen)</td>
                                 <td>@EnrichmentCell(device.DiscoverySources)</td>
                                 <td>
@@ -211,35 +316,26 @@
                             @if (expandedDevices.Contains(device.Id))
                             {
                                 <tr>
-                                    <td colspan="9" class="bg-light">
+                                    <td colspan="10" class="bg-light">
                                         <dl class="row mb-0 small">
                                             <dt class="col-sm-3">Device id</dt><dd class="col-sm-9">@Display(device.Id)</dd>
                                             <dt class="col-sm-3">Fully qualified name</dt><dd class="col-sm-9">@Display(device.ComputerDnsName)</dd>
                                             <dt class="col-sm-3">DNS domain (derived)</dt><dd class="col-sm-9">@Display(device.DnsDomain)</dd>
                                             <dt class="col-sm-3">OS build / architecture</dt><dd class="col-sm-9">@Display(device.OsBuild) / @Display(device.OsArchitecture)</dd>
+                                            <dt class="col-sm-3">Last IP</dt><dd class="col-sm-9">@Display(device.LastIpAddress)</dd>
                                             <dt class="col-sm-3">Last external IP</dt><dd class="col-sm-9">@Display(device.LastExternalIpAddress)</dd>
                                             <dt class="col-sm-3">IP addresses</dt><dd class="col-sm-9">@Display(IpList(device))</dd>
                                             <dt class="col-sm-3">MAC addresses</dt><dd class="col-sm-9">@Display(MacList(device))</dd>
                                             <dt class="col-sm-3">First seen</dt><dd class="col-sm-9">@FormatTime(device.FirstSeen)</dd>
-                                            <dt class="col-sm-3">Risk score</dt><dd class="col-sm-9">@Display(device.RiskScore)</dd>
-                                            <dt class="col-sm-3">Exposure level</dt><dd class="col-sm-9">@Display(device.ExposureLevel)</dd>
                                             <dt class="col-sm-3">Device value</dt><dd class="col-sm-9">@Display(device.DeviceValue)</dd>
                                             <dt class="col-sm-3">Machine tags</dt><dd class="col-sm-9">@Display(string.Join("; ", device.MachineTags))</dd>
-                                            <dt class="col-sm-3">Machine group</dt><dd class="col-sm-9">@Display(device.MachineGroup)</dd>
                                             <dt class="col-sm-3">Entra ID joined</dt><dd class="col-sm-9">@(device.IsAadJoined ? "Yes" : "No")</dd>
                                             <dt class="col-sm-3">Entra ID device id</dt><dd class="col-sm-9">@Display(device.AadDeviceId)</dd>
-                                            <dt class="col-sm-3">Discovery sources</dt><dd class="col-sm-9">@EnrichmentCell(device.DiscoverySources)</dd>
                                             <dt class="col-sm-3">Device type</dt><dd class="col-sm-9">@EnrichmentCell(device.DeviceType)</dd>
                                             <dt class="col-sm-3">Device category</dt><dd class="col-sm-9">@EnrichmentCell(device.DeviceCategory)</dd>
                                             <dt class="col-sm-3">Vendor</dt><dd class="col-sm-9">@EnrichmentCell(device.Vendor)</dd>
                                             <dt class="col-sm-3">Model</dt><dd class="col-sm-9">@EnrichmentCell(device.Model)</dd>
                                         </dl>
-                                        <div class="form-text mt-2">
-                                            There is no Active Directory domain or OU here, and that is not a gap in
-                                            this panel: the Defender machine resource exposes no domain at all, and a
-                                            device that is not onboarded has no sensor to report one. The DNS domain
-                                            above is derived from the fully qualified name.
-                                        </div>
                                     </td>
                                 </tr>
                             }
@@ -283,16 +379,58 @@
     private DefenderDeviceListResult? result;
 
     /// <summary>
-    /// The onboarding-status filter, as the API literal rather than the portal label. Operator
-    /// writable, which is why LoadAsync snapshots it before its first await.
+    /// Every operator-writable filter control, in one object.
     /// </summary>
-    private string onboardingStatus = DefenderDeviceFilters.CanBeOnboarded;
-
-    /// <summary>Operator-writable Windows-only rule, snapshotted alongside onboardingStatus.</summary>
-    private bool windowsOnly = true;
+    /// <remarks>
+    /// One field rather than twelve, and that is a gating decision rather than a tidiness one.
+    /// LoadAsync must not read any of these back after its first await - the browser's copy of a
+    /// disabled attribute is one round trip stale, so a value changed in that window would let the
+    /// audit record name one filter set while the service was asked for another. With twelve fields
+    /// that is twelve obligations to register and twelve chances to miss one; with one field it is
+    /// a single capture, <c>var filters = form.ToFilters()</c>, above the first await, and any read
+    /// of any control after it fails the suite.
+    /// </remarks>
+    private readonly FilterForm form = new();
 
     /// <summary>Device ids whose detail panel is open. Cleared on every load.</summary>
     private readonly HashSet<string> expandedDevices = [];
+
+    /// <summary>
+    /// The Platform dropdown's value for "any Windows". Not an osPlatform value and deliberately
+    /// not one that could ever become one - it maps to the client-side prefix rule, while every
+    /// other choice maps to a server-side <c>osPlatform eq</c>.
+    /// </summary>
+    private const string AnyWindows = "*Windows";
+
+    /// <summary>
+    /// The osPlatform values offered as exact, server-side choices.
+    /// </summary>
+    /// <remarks>
+    /// A list rather than a discovered set, because the module never fetches the whole inventory to
+    /// find out what platforms exist - that is the request this rebuild was done to avoid. An
+    /// operator whose tenant has a value not listed here uses Any, or Any Windows, and filters the
+    /// result; nothing is hidden by the list being short.
+    /// </remarks>
+    private static readonly string[] PlatformValues =
+    [
+        "Windows11", "Windows10", "Windows8.1", "Windows8", "Windows7",
+        "WindowsServer2025", "WindowsServer2022", "WindowsServer2019", "WindowsServer2016",
+        "WindowsServer2012R2", "WindowsServer2008R2",
+        "Linux", "macOS", "iOS", "Android", "Other"
+    ];
+
+    /// <summary>The healthStatus enumeration from the machine resource.</summary>
+    private static readonly string[] HealthStatusValues =
+    [
+        "Active", "Inactive", "ImpairedCommunication", "NoSensorData",
+        "NoSensorDataImpairedCommunication", "Unknown"
+    ];
+
+    /// <summary>The riskScore enumeration from the machine resource.</summary>
+    private static readonly string[] RiskScoreValues = ["None", "Informational", "Low", "Medium", "High"];
+
+    /// <summary>The exposureLevel enumeration from the machine resource.</summary>
+    private static readonly string[] ExposureLevelValues = ["None", "Low", "Medium", "High"];
 
     /// <summary>
     /// The page-wide busy predicate. Two flags, and the second one is here rather than gating its
@@ -314,6 +452,73 @@
     /// </remarks>
     private IReadOnlyList<DefenderDevice> ExportableDevices =>
         result is { Outcome: DefenderDeviceListOutcome.Complete } complete ? complete.Devices : [];
+
+    /// <summary>
+    /// The filter controls as the service's filter record.
+    /// </summary>
+    /// <remarks>
+    /// The Platform dropdown is the one control that does not map one-to-one: its
+    /// <see cref="AnyWindows"/> value becomes the CLIENT-SIDE prefix rule and every other value
+    /// becomes the SERVER-SIDE exact match, and exactly one of the two is ever set. That split is
+    /// here, at the single point where the form becomes a request, rather than in the service where
+    /// it would have to be guessed at from a string.
+    /// </remarks>
+    private sealed class FilterForm
+    {
+        public string DeviceNameStartsWith { get; set; } = "";
+        public string OnboardingStatus { get; set; } = DefenderDeviceFilters.CanBeOnboarded;
+        public string Platform { get; set; } = "";
+        public string HealthStatus { get; set; } = "";
+        public string RiskScore { get; set; } = "";
+        public string ExposureLevel { get; set; } = "";
+        public string MachineGroup { get; set; } = "";
+        public string MachineTag { get; set; } = "";
+        public DateTime? LastSeenFrom { get; set; }
+        public DateTime? LastSeenTo { get; set; }
+        public DateTime? FirstSeenFrom { get; set; }
+        public DateTime? FirstSeenTo { get; set; }
+
+        public DefenderDeviceFilters ToFilters() => new()
+        {
+            OnboardingStatus = OnboardingStatus,
+            OsPlatform = Platform == AnyWindows ? "" : Platform,
+            OsPlatformPrefix = Platform == AnyWindows ? DefenderDeviceFilters.WindowsPlatformPrefix : "",
+            HealthStatus = HealthStatus,
+            RiskScore = RiskScore,
+            ExposureLevel = ExposureLevel,
+            DeviceNameStartsWith = DeviceNameStartsWith,
+            MachineTag = MachineTag,
+            MachineGroup = MachineGroup,
+            LastSeenFrom = AsOffset(LastSeenFrom),
+            LastSeenTo = AsOffset(LastSeenTo),
+            FirstSeenFrom = AsOffset(FirstSeenFrom),
+            FirstSeenTo = AsOffset(FirstSeenTo)
+        };
+
+        public void Clear()
+        {
+            DeviceNameStartsWith = "";
+            OnboardingStatus = DefenderDeviceFilters.CanBeOnboarded;
+            Platform = "";
+            HealthStatus = "";
+            RiskScore = "";
+            ExposureLevel = "";
+            MachineGroup = "";
+            MachineTag = "";
+            LastSeenFrom = null;
+            LastSeenTo = null;
+            FirstSeenFrom = null;
+            FirstSeenTo = null;
+        }
+
+        /// <summary>
+        /// A date the operator typed, read as local midnight. The table shows local time, so a
+        /// window typed here and a timestamp read off the screen mean the same thing; the service
+        /// converts to UTC when it writes the OData literal.
+        /// </summary>
+        private static DateTimeOffset? AsOffset(DateTime? value) =>
+            value.HasValue ? new DateTimeOffset(DateTime.SpecifyKind(value.Value.Date, DateTimeKind.Unspecified)) : null;
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -350,12 +555,11 @@
 
     private async Task LoadAsync()
     {
-        // Both filters are operator-writable and the browser's copy of a disabled attribute is one
-        // round trip stale, so the values the operator saw when the click was accepted are captured
-        // here, above the try and above every await. Reading them back afterwards would let the
-        // audit record name one filter set while the service was asked for another.
-        var status = onboardingStatus;
-        var windows = windowsOnly;
+        // Every filter is operator-writable and the browser's copy of a disabled attribute is one
+        // round trip stale, so the whole form is turned into a request HERE, above the try and above
+        // every await. Reading any control back afterwards would let the audit record name one
+        // filter set while the service was asked for another.
+        var filters = form.ToFilters();
 
         isLoading = true;
         loadError = null;
@@ -363,7 +567,7 @@
         {
             await Task.Yield();
 
-            var loaded = await DeviceService.ListDevicesAsync(new DefenderDeviceFilters(status, windows));
+            var loaded = await DeviceService.ListDevicesAsync(filters);
             result = loaded;
             expandedDevices.Clear();
 
@@ -371,7 +575,7 @@
             // read of zero devices, and recording it as one would be the blanket-success shape.
             var complete = loaded.Outcome == DefenderDeviceListOutcome.Complete;
             SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress,
-                "DefenderEndpointDevices_List", DescribeFilters(status, windows), complete,
+                "DefenderEndpointDevices_List", DescribeFilters(filters), complete,
                 complete ? null : loaded.RefusalReason,
                 extra: new Dictionary<string, object?>
                 {
@@ -379,6 +583,7 @@
                     ["Devices"] = loaded.Devices.Count,
                     ["DistinctDevices"] = loaded.DistinctCount,
                     ["Requests"] = loaded.PagesFetched,
+                    ["Ranges"] = loaded.RangesCompleted,
                     ["Ceiling"] = loaded.Ceiling
                 }));
         }
@@ -391,7 +596,7 @@
             Logger.LogError(ex, "Failed to list Defender for Endpoint devices.");
 
             SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress,
-                "DefenderEndpointDevices_List", DescribeFilters(status, windows), false, ex.Message));
+                "DefenderEndpointDevices_List", DescribeFilters(filters), false, ex.Message));
         }
         finally
         {
@@ -402,6 +607,12 @@
             StateHasChanged();
         }
     }
+
+    /// <summary>
+    /// Returns every control to its starting value. It does not load: clearing a filter set and
+    /// firing a full-tenant fetch off one click is not what the button says it does.
+    /// </summary>
+    private void ClearFilters() => form.Clear();
 
     private void ToggleDetail(string deviceId)
     {
@@ -538,11 +749,45 @@
         }
     }
 
-    /// <summary>The filters as one audit-target string, from the values captured at entry.</summary>
-    private static string DescribeFilters(string status, bool windowsFilter) =>
-        "onboardingStatus="
-        + (string.IsNullOrWhiteSpace(status) ? "(any)" : status)
-        + ", windowsOnly=" + (windowsFilter ? "true" : "false");
+    /// <summary>
+    /// The filters as one audit-target string, built from the SNAPSHOT rather than from the form,
+    /// so the record names the filter set the service was actually asked for.
+    /// </summary>
+    /// <remarks>
+    /// Only filters that are set are listed, and each is prefixed with the API property it maps to,
+    /// so an audit row can be compared against a request. Onboarding status is always listed
+    /// because "(any)" is a meaningful answer for it - it is the one filter with a non-empty
+    /// default.
+    /// </remarks>
+    private static string DescribeFilters(DefenderDeviceFilters filters)
+    {
+        var parts = new List<string>
+        {
+            "onboardingStatus="
+            + (string.IsNullOrWhiteSpace(filters.OnboardingStatus) ? "(any)" : filters.OnboardingStatus)
+        };
+
+        Add(parts, "computerDnsName^", filters.DeviceNameStartsWith);
+        Add(parts, "osPlatform", filters.OsPlatform);
+        Add(parts, "osPlatform^", filters.OsPlatformPrefix);
+        Add(parts, "healthStatus", filters.HealthStatus);
+        Add(parts, "riskScore", filters.RiskScore);
+        Add(parts, "exposureLevel", filters.ExposureLevel);
+        Add(parts, "machineGroup~", filters.MachineGroup);
+        Add(parts, "machineTag~", filters.MachineTag);
+        Add(parts, "lastSeen>=", FormatUtc(filters.LastSeenFrom));
+        Add(parts, "lastSeen<", FormatUtc(filters.LastSeenTo));
+        Add(parts, "firstSeen>=", FormatUtc(filters.FirstSeenFrom));
+        Add(parts, "firstSeen<", FormatUtc(filters.FirstSeenTo));
+
+        return string.Join(", ", parts);
+    }
+
+    private static void Add(List<string> parts, string name, string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            parts.Add($"{name}={value}");
+    }
 
     /// <summary>A dash rather than an empty cell, so a blank never reads as a value.</summary>
     private static string Display(string? value) =>
@@ -588,7 +833,7 @@
         value?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-";
 
     /// <summary>
-    /// The CSV's two timestamp columns. They are NAMED FirstSeenUtc and LastSeenUtc, so they are
+    /// The CSV's two timestamp columns, and the audit record's four. They are NAMED Utc, so they are
     /// written in UTC whatever the server's zone - unlike the table, which shows local time to the
     /// operator reading it. "u" is the sortable universal format and always formats with the
     /// invariant culture, so an exported file does not change shape with the host's locale.
