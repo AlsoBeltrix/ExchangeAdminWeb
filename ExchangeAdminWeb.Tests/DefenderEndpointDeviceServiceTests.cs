@@ -29,19 +29,33 @@ public class DefenderEndpointDeviceServiceTests
         public List<Func<HttpResponseMessage>> Responses { get; } = [];
         public List<string> RequestUrls { get; } = [];
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        /// <summary>The method of each recorded request, so "it POSTed" is asserted and not assumed.</summary>
+        public List<string> RequestMethods { get; } = [];
+
+        /// <summary>
+        /// Each recorded request's body exactly as it went on the wire. The S4 query-text assertions
+        /// read the KQL off the wire rather than off the constant: a test that only compared the
+        /// constant to itself would pass against an implementation that posted something else.
+        /// </summary>
+        public List<string> RequestBodies { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri!.Host == "login.microsoftonline.com")
-                return Task.FromResult(Json(HttpStatusCode.OK, """{"access_token":"test-token","expires_in":3600}"""));
+                return Json(HttpStatusCode.OK, """{"access_token":"test-token","expires_in":3600}""");
 
             var index = RequestUrls.Count;
             RequestUrls.Add(request.RequestUri.OriginalString);
+            RequestMethods.Add(request.Method.Method);
+            RequestBodies.Add(request.Content == null
+                ? ""
+                : await request.Content.ReadAsStringAsync(cancellationToken));
 
             var responder = Responses.Count == 0
                 ? () => Json(HttpStatusCode.OK, """{"value":[]}""")
                 : Responses[Math.Min(index, Responses.Count - 1)];
 
-            return Task.FromResult(responder());
+            return responder();
         }
 
         public static HttpResponseMessage Json(HttpStatusCode status, string body) =>
@@ -640,16 +654,533 @@ public class DefenderEndpointDeviceServiceTests
     }
 
     [Fact]
-    public async Task S1NeverAttemptsDiscoverySourceEnrichment()
+    public async Task NoHuntingCredentials_IsNotAttemptedAndNamesThatRatherThanBlanking()
     {
-        // The hunting query is S4 and is conditional on the owner granting ThreatHunting.Read.All.
-        // The five enrichment columns must never read as merely blank.
+        // The five enrichment columns must never read as merely blank, whatever stopped them.
+        // Cheapest broken implementation that still passes an "it is NotAttempted" assertion alone:
+        // returning NotAttempted with an EMPTY reason, which is exactly the blank-cell failure this
+        // slice exists to prevent - defeated by pinning the exact constant.
         var (service, handler) = CreateService(maxDevices: "50");
         handler.Responses.Add(() => Ok(Page(1)));
 
         var result = await service.ListDevicesAsync();
 
         Assert.Equal(DefenderDiscoveryEnrichmentState.NotAttempted, result.DiscoveryEnrichment);
-        Assert.NotEqual("", result.DiscoveryEnrichmentReason);
+        Assert.Equal(DefenderDiscoveryReasons.CredentialsUnavailable, result.DiscoveryEnrichmentReason);
+    }
+
+    // ================ S4: discovery-sources enrichment ==========================================
+    //
+    // The whole slice rests on one distinction: a blank enrichment cell on a SUCCEEDED run means
+    // that device genuinely has no value, and a blank on any other state means no device has one
+    // and half the report did not execute. Every test below protects one side of that line, or one
+    // of the reasons an operator needs in order to act.
+
+    /// <summary>
+    /// The two-client shape T1 describes: ONE app registration and one secret, two instances of the
+    /// same module-local client, two hosts, two audiences. Each gets its own stub so a hunting
+    /// response can never satisfy an inventory request by accident.
+    /// </summary>
+    private static (DefenderEndpointDeviceService Service, StubHandler Devices, StubHandler Hunting) CreateEnrichedService(
+        string? maxDevices = "50",
+        string? includeDiscoverySources = null)
+    {
+        var deviceHandler = new StubHandler();
+        var huntingHandler = new StubHandler();
+
+        var inventory = new DefenderApiClient(
+            "tenant", "client", "secret",
+            DefenderApiClient.DefenderBaseUrl,
+            DefenderApiClient.DefenderTokenScope,
+            new HttpClient(deviceHandler));
+
+        var hunting = new DefenderApiClient(
+            "tenant", "client", "secret",
+            DefenderApiClient.GraphBaseUrl,
+            DefenderApiClient.GraphTokenScope,
+            new HttpClient(huntingHandler));
+
+        var service = new DefenderEndpointDeviceService(
+            () => Task.FromResult<DefenderApiClient?>(inventory),
+            maxDevices,
+            () => Task.FromResult<DefenderApiClient?>(hunting),
+            includeDiscoverySources);
+
+        return (service, deviceHandler, huntingHandler);
+    }
+
+    /// <summary>A Graph runHuntingQuery response body wrapping the given row literals.</summary>
+    private static string HuntingResults(params string[] rows) =>
+        "{\"schema\":[{\"Name\":\"DeviceId\",\"Type\":\"String\"}],\"results\":["
+        + string.Join(",", rows) + "]}";
+
+    private static string HuntingRow(
+        string deviceId,
+        string sources = "MDE",
+        string type = "Workstation",
+        string category = "Endpoint",
+        string vendor = "Contoso",
+        string model = "X1") =>
+        $"{{\"DeviceId\":\"{deviceId}\",\"DiscoverySources\":\"{sources}\",\"DeviceType\":\"{type}\","
+        + $"\"DeviceCategory\":\"{category}\",\"Vendor\":\"{vendor}\",\"Model\":\"{model}\"}}";
+
+    /// <summary>Lists one device and answers the hunting call with the given responder.</summary>
+    private static async Task<DefenderDeviceListResult> RunWithHuntingResponse(Func<HttpResponseMessage> responder)
+    {
+        var (service, devices, hunting) = CreateEnrichedService();
+        devices.Responses.Add(() => Ok(Page(1)));
+        hunting.Responses.Add(responder);
+        return await service.ListDevicesAsync();
+    }
+
+    // ---- the merge ------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task SuccessfulHuntingQuery_MergesAllFiveColumnsOntoTheMatchingDevices()
+    {
+        // Cheapest broken implementation that still passes: none of the usual ones. Hard-coding a
+        // value fails because ten differently-named values are asserted across two devices. Never
+        // calling the hunting client fails because the columns would be empty and the state would
+        // not be Succeeded. Merging by list POSITION rather than by DeviceId fails because the
+        // hunting rows are deliberately supplied in the opposite order to the device rows.
+        var (service, devices, hunting) = CreateEnrichedService();
+        devices.Responses.Add(() => Ok(Page(2)));
+        hunting.Responses.Add(() => Ok(HuntingResults(
+            HuntingRow("m2", "Defender for IoT", "Server", "Infrastructure", "Fabrikam", "R720"),
+            HuntingRow("m1", "MDE", "Workstation", "Endpoint", "Contoso", "X1"))));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Succeeded, result.DiscoveryEnrichment);
+        Assert.Equal("", result.DiscoveryEnrichmentReason);
+
+        var first = result.Devices.Single(device => device.Id == "m1");
+        Assert.Equal("MDE", first.DiscoverySources);
+        Assert.Equal("Workstation", first.DeviceType);
+        Assert.Equal("Endpoint", first.DeviceCategory);
+        Assert.Equal("Contoso", first.Vendor);
+        Assert.Equal("X1", first.Model);
+
+        var second = result.Devices.Single(device => device.Id == "m2");
+        Assert.Equal("Defender for IoT", second.DiscoverySources);
+        Assert.Equal("Server", second.DeviceType);
+        Assert.Equal("Infrastructure", second.DeviceCategory);
+        Assert.Equal("Fabrikam", second.Vendor);
+        Assert.Equal("R720", second.Model);
+    }
+
+    [Fact]
+    public async Task ADeviceWithNoHuntingRow_KeepsItsRowAndOnlyItsOwnColumnsAreEmpty()
+    {
+        // The run SUCCEEDED, so a blank on this device means it genuinely has no DeviceInfo record,
+        // and it must render as a dash rather than "(unavailable)", which would claim the query
+        // failed. Cheapest broken implementation that still passes: dropping devices the hunting
+        // result did not mention - defeated by asserting both devices are still listed.
+        var (service, devices, hunting) = CreateEnrichedService();
+        devices.Responses.Add(() => Ok(Page(2)));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(2, result.Devices.Count);
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Succeeded, result.DiscoveryEnrichment);
+        Assert.Equal("MDE", result.Devices.Single(device => device.Id == "m1").DiscoverySources);
+
+        var unmatched = result.Devices.Single(device => device.Id == "m2");
+        Assert.Equal("", unmatched.DiscoverySources);
+        Assert.Equal("", unmatched.Vendor);
+        Assert.Equal(
+            "-",
+            DefenderEndpointDeviceService.DescribeEnrichmentCell(result.DiscoveryEnrichment, unmatched.DiscoverySources));
+    }
+
+    [Fact]
+    public async Task AHuntingRowForADeviceTheInventoryNeverListed_IsDroppedAndNeverInjected()
+    {
+        // DeviceInfo answers for the whole tenant over 30 days, so it returns rows for devices the
+        // machines API did not list - filtered out by the onboarding-status filter, outside this
+        // registration's scope, or simply gone. Inventing a device row out of hunting data would
+        // put a machine on an inventory report that the inventory API never returned. Cheapest
+        // broken implementation that still passes the merge test above: iterating the hunting rows
+        // and upserting into the device list - defeated by the count and by the explicit id check.
+        var (service, devices, hunting) = CreateEnrichedService();
+        devices.Responses.Add(() => Ok(Page(1)));
+        hunting.Responses.Add(() => Ok(HuntingResults(
+            HuntingRow("m1"),
+            HuntingRow("ghost-42", "Defender for IoT", "Printer", "Peripheral", "Fabrikam", "P1"))));
+
+        var result = await service.ListDevicesAsync();
+
+        var only = Assert.Single(result.Devices);
+        Assert.Equal("m1", only.Id);
+        Assert.DoesNotContain(result.Devices, device => device.Id == "ghost-42");
+        Assert.Equal(1, result.DistinctCount);
+    }
+
+    [Fact]
+    public async Task DiscoverySourcesArrivingAsAJsonArray_IsJoinedRatherThanBlanked()
+    {
+        // DiscoverySources is multi-valued and the hunting API is not consistent about whether such
+        // a column serialises as a JSON array or as a string holding one. Reading only the string
+        // shape would silently blank the one column the owner actually asked for. Cheapest broken
+        // implementation that still passes an "it is not empty" assertion: emitting the raw JSON
+        // text - defeated by asserting the joined form and the absence of brackets and quotes.
+        var (service, devices, hunting) = CreateEnrichedService();
+        devices.Responses.Add(() => Ok(Page(1)));
+        hunting.Responses.Add(() => Ok(
+            "{\"results\":[{\"DeviceId\":\"m1\","
+            + "\"DiscoverySources\":[\"MDE\",\"Microsoft Defender for IoT\"],"
+            + "\"DeviceType\":\"Workstation\",\"DeviceCategory\":null,"
+            + "\"Vendor\":\"Contoso\",\"Model\":\"X1\"}]}"));
+
+        var result = await service.ListDevicesAsync();
+
+        var device = Assert.Single(result.Devices);
+        Assert.Equal("MDE; Microsoft Defender for IoT", device.DiscoverySources);
+        Assert.DoesNotContain("[", device.DiscoverySources);
+        Assert.DoesNotContain("\"", device.DiscoverySources);
+        // A null column is a blank on a succeeded run, not a parse failure.
+        Assert.Equal("", device.DeviceCategory);
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Succeeded, result.DiscoveryEnrichment);
+    }
+
+    // ---- the call itself: T1's shape and T7's query text ----------------------------------------
+
+    [Fact]
+    public async Task TheHuntingCallIsOnePostToRunHuntingQueryOnTheGraphHostCarryingTheConstantKql()
+    {
+        // Pins T1's shape off the WIRE rather than off the source. Cheapest broken implementation
+        // that still passes the merge test above: any request at all that happens to return the
+        // right JSON - defeated here by the host, the path, the method and the body. And one query
+        // per refresh, never one per device: the single-request assertion is the rate-limit promise.
+        var (service, devices, hunting) = CreateEnrichedService();
+        devices.Responses.Add(() => Ok(Page(3)));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"), HuntingRow("m2"), HuntingRow("m3"))));
+
+        await service.ListDevicesAsync();
+
+        Assert.Equal("https://graph.microsoft.com/v1.0/security/runHuntingQuery", Assert.Single(hunting.RequestUrls));
+        Assert.Equal("POST", Assert.Single(hunting.RequestMethods));
+
+        var body = Assert.Single(hunting.RequestBodies);
+        Assert.Contains("\"Query\"", body);
+        Assert.Contains(DefenderEndpointDeviceService.HuntingQuery, body);
+    }
+
+    [Fact]
+    public void TheHuntingQueryNamesDeviceInfoAndNoOtherHuntingTable()
+    {
+        // ThreatHunting.Read.All is scoped to the WHOLE hunting schema - mail, identity, process
+        // events, everything - so the permission cannot enforce the narrowing and the query text is
+        // the only thing that does. Cheapest broken implementation that still passes an "it contains
+        // DeviceInfo" assertion on its own: appending a union or a join over another table -
+        // defeated by the operator checks and by the table sweep.
+        var query = DefenderEndpointDeviceService.HuntingQuery;
+
+        Assert.StartsWith("DeviceInfo", query);
+        Assert.DoesNotContain("union", query, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("join", query, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("externaldata", query, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var table in new[]
+        {
+            "DeviceNetworkInfo", "DeviceProcessEvents", "DeviceNetworkEvents", "DeviceFileEvents",
+            "DeviceRegistryEvents", "DeviceLogonEvents", "DeviceImageLoadEvents", "DeviceEvents",
+            "DeviceFileCertificateInfo", "DeviceTvmSoftwareInventory", "DeviceTvmSoftwareVulnerabilities",
+            "AlertInfo", "AlertEvidence", "IdentityInfo", "IdentityLogonEvents", "IdentityQueryEvents",
+            "IdentityDirectoryEvents", "EmailEvents", "EmailAttachmentInfo", "EmailUrlInfo",
+            "EmailPostDeliveryEvents", "UrlClickEvents", "CloudAppEvents", "BehaviorInfo",
+            "BehaviorEntities", "ExposureGraphNodes", "ExposureGraphEdges"
+        })
+        {
+            Assert.DoesNotContain(table, query, StringComparison.Ordinal);
+        }
+
+        // And the sweep is looking at a real query rather than passing on an empty string.
+        Assert.Contains("| project DeviceId, DiscoverySources, DeviceType, DeviceCategory, Vendor, Model", query);
+        Assert.Contains("isempty(MergedToDeviceId)", query);
+        Assert.Contains("arg_max(Timestamp, *) by DeviceId", query);
+    }
+
+    // ---- the named failures, each one a different operator action -------------------------------
+
+    [Fact]
+    public async Task HuntingForbidden_NamesTheUnconsentedThreatHuntingPermissionAndNothingElse()
+    {
+        // A 403 here is not the device list's 403 and does not have the device list's causes. The
+        // operator action is a consent grant by a Privileged Role Administrator or a Global
+        // Administrator. Cheapest broken implementation that still passes an "it says Forbidden"
+        // assertion: reusing the device-list 403 text, which names Machine.Read.All and a token
+        // audience - defeated by the permission name and by the two DoesNotContain assertions.
+        var result = await RunWithHuntingResponse(() => StubHandler.Json(
+            HttpStatusCode.Forbidden,
+            "{\"error\":{\"code\":\"Forbidden\",\"message\":\"Insufficient privileges\"}}"));
+
+        // The device list is untouched. A failed enrichment must never take the page down.
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.Single(result.Devices);
+
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Failed, result.DiscoveryEnrichment);
+        Assert.Contains("ThreatHunting.Read.All", result.DiscoveryEnrichmentReason);
+        Assert.Contains("admin consent", result.DiscoveryEnrichmentReason);
+        Assert.Contains("Insufficient privileges", result.DiscoveryEnrichmentReason);
+        Assert.DoesNotContain("Machine.Read.All", result.DiscoveryEnrichmentReason);
+        Assert.DoesNotContain("quota", result.DiscoveryEnrichmentReason);
+
+        Assert.Equal(
+            DefenderEndpointDeviceService.EnrichmentUnavailable,
+            DefenderEndpointDeviceService.DescribeEnrichmentCell(result.DiscoveryEnrichment, ""));
+    }
+
+    [Fact]
+    public async Task HuntingThrottled_NamesTheQuotaAndNotThePermission()
+    {
+        // 429 means nothing is misconfigured and there is nothing to grant - the action is to wait.
+        // Cheapest broken implementation that still passes: one shared "the query failed" string -
+        // defeated here and by EveryEnrichmentReasonIsADifferentSentence together.
+        var result = await RunWithHuntingResponse(() => StubHandler.Json(HttpStatusCode.TooManyRequests, ""));
+
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.Single(result.Devices);
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Failed, result.DiscoveryEnrichment);
+        Assert.Contains("quota", result.DiscoveryEnrichmentReason);
+        Assert.Contains("429", result.DiscoveryEnrichmentReason);
+        Assert.DoesNotContain("ThreatHunting.Read.All", result.DiscoveryEnrichmentReason);
+        Assert.DoesNotContain("timed out", result.DiscoveryEnrichmentReason);
+    }
+
+    [Fact]
+    public async Task HuntingTimeout_IsNamedATimeoutAndNotAQuotaOrAPermission()
+    {
+        // A client-side timeout arrives as TaskCanceledException, not as a status code, so without
+        // the client's explicit mapping it would escape as an unhandled exception and take the whole
+        // page down instead of greying five columns. Cheapest broken implementation that still
+        // passes: letting it fall into the generic branch - defeated by the exact-constant
+        // assertion and by the distinctness test.
+        var result = await RunWithHuntingResponse(() => throw new TaskCanceledException("timeout", new TimeoutException()));
+
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.Single(result.Devices);
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Failed, result.DiscoveryEnrichment);
+        Assert.Equal(DefenderDiscoveryReasons.TimedOut, result.DiscoveryEnrichmentReason);
+        Assert.Contains("timed out", result.DiscoveryEnrichmentReason);
+        Assert.DoesNotContain("quota", result.DiscoveryEnrichmentReason);
+        Assert.DoesNotContain("ThreatHunting.Read.All", result.DiscoveryEnrichmentReason);
+    }
+
+    [Fact]
+    public async Task AHuntingResponseWithNoResultsCollection_FailsAndDoesNotReadAsAnEmptyResult()
+    {
+        // A 200 whose body is not a hunting result is a FAILED enrichment, not an enrichment that
+        // found nothing. Cheapest broken implementation that still passes the merge test: treating
+        // "no results array" as zero rows and reporting Succeeded - defeated by the state assertion,
+        // which is what stops every column reading as a legitimate blank.
+        var result = await RunWithHuntingResponse(() => Ok("{\"schema\":[],\"unexpected\":true}"));
+
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.Single(result.Devices);
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Failed, result.DiscoveryEnrichment);
+        Assert.Equal(DefenderDiscoveryReasons.MalformedResponse, result.DiscoveryEnrichmentReason);
+    }
+
+    [Fact]
+    public async Task AHuntingResponseThatIsNotJsonAtAll_ReadsAsMalformedAndNotAsRejected()
+    {
+        // The other door into the same state: the client refuses to parse the body, so the status is
+        // still 200 and the document is null. "Rejected the query (200 OK)" would be nonsense.
+        var result = await RunWithHuntingResponse(() => Ok("<html>not json</html>"));
+
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Failed, result.DiscoveryEnrichment);
+        Assert.StartsWith(DefenderDiscoveryReasons.MalformedResponse, result.DiscoveryEnrichmentReason);
+        Assert.DoesNotContain("200 OK", result.DiscoveryEnrichmentReason);
+        // And the raw body is never echoed back to the operator.
+        Assert.DoesNotContain("<html>", result.DiscoveryEnrichmentReason);
+    }
+
+    [Fact]
+    public async Task IncludeDiscoverySourcesOff_NeverCallsGraphAtAllAndSaysWhy()
+    {
+        // Cheapest broken implementation that still passes a reason-only assertion: calling Graph
+        // anyway and discarding the answer. Defeated by asserting the hunting stub saw ZERO
+        // requests - the switch exists so a deployment whose registration does not hold the grant
+        // stops firing a request that 403s on every single page load.
+        var (service, devices, hunting) = CreateEnrichedService(includeDiscoverySources: "false");
+        devices.Responses.Add(() => Ok(Page(1)));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Empty(hunting.RequestUrls);
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.Equal(DefenderDiscoveryEnrichmentState.NotAttempted, result.DiscoveryEnrichment);
+        Assert.Equal(DefenderDiscoveryReasons.SwitchedOff, result.DiscoveryEnrichmentReason);
+        Assert.Equal("", Assert.Single(result.Devices).DiscoverySources);
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("   ", true)]
+    [InlineData("true", true)]
+    [InlineData("True", true)]
+    [InlineData("false", false)]
+    [InlineData("False", false)]
+    [InlineData("yes", false)]
+    [InlineData("1", false)]
+    public void IncludeDiscoverySources_DefaultsOnAndReadsAnUnparseableValueAsOff(string? configured, bool expected)
+    {
+        // Absent is the descriptor's documented default of ON. A non-blank value that will not parse
+        // reads as OFF, because the module config page renders an unparseable Boolean as an
+        // UNCHECKED box - defaulting it to ON would make the switch and the screen disagree - and
+        // because OFF is the direction that does not call a permission the registration may not
+        // hold. Cheapest broken implementation that still passes an on/off pair: bool.TryParse with
+        // a TRUE fallback - defeated by the "yes" and "1" rows.
+        var service = new DefenderEndpointDeviceService(
+            () => Task.FromResult<DefenderApiClient?>(null),
+            maxDevicesOverride: null,
+            huntingClientFactory: null,
+            includeDiscoverySourcesOverride: configured);
+
+        Assert.Equal(expected, service.IncludeDiscoverySources);
+    }
+
+    [Fact]
+    public async Task AnEmptyDeviceList_DoesNotRunTheHuntingQueryAndSaysSo()
+    {
+        // Nothing to enrich, so nothing is asked of Graph - and the reason says that rather than
+        // implying a failure. The devices here exist but are all filtered out client-side, which is
+        // the case a "did the API return any rows?" check would get wrong.
+        var (service, devices, hunting) = CreateEnrichedService();
+        devices.Responses.Add(() => Ok(Page(2, osPlatform: "Linux")));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+
+        var result = await service.ListDevicesAsync(new DefenderDeviceFilters(WindowsOnly: true));
+
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.Empty(result.Devices);
+        Assert.Empty(hunting.RequestUrls);
+        Assert.Equal(DefenderDiscoveryEnrichmentState.NotAttempted, result.DiscoveryEnrichment);
+        Assert.Equal(DefenderDiscoveryReasons.NoDevices, result.DiscoveryEnrichmentReason);
+    }
+
+    [Fact]
+    public async Task ARefusedListing_NeverRunsTheHuntingQuery()
+    {
+        // A refusal carries zero devices by construction, so there is nothing to enrich, and
+        // spending a tenant's hunting quota on a report that will not be shown is pure waste.
+        var (service, devices, hunting) = CreateEnrichedService(maxDevices: "1");
+        devices.Responses.Add(() => Ok(Page(2)));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDeviceListOutcome.CeilingExceeded, result.Outcome);
+        Assert.Empty(hunting.RequestUrls);
+        Assert.Equal(DefenderDiscoveryReasons.ListRefused, result.DiscoveryEnrichmentReason);
+    }
+
+    // ---- the collapse test: no two reasons may say the same thing -------------------------------
+
+    [Fact]
+    public async Task EveryEnrichmentReasonIsADifferentSentence()
+    {
+        // The plan's explicit requirement, and the reason all of these strings exist rather than one
+        // "discovery sources unavailable". An operator looking at a column of "(unavailable)" has to
+        // be able to tell "nobody consented the permission" from "we hit a quota" from "it timed
+        // out" from "you turned it off" - four different problems needing four different actions.
+        //
+        // Cheapest broken implementation that still passes every other test in this file: one shared
+        // failure string for the whole enrichment. This is the test that forbids it, and collapsing
+        // any two of the constants below fails it outright.
+        var reasons = new List<string>
+        {
+            // The four that never reach Graph.
+            DefenderDiscoveryReasons.SwitchedOff,
+            DefenderDiscoveryReasons.CredentialsUnavailable,
+            DefenderDiscoveryReasons.NoDevices,
+            DefenderDiscoveryReasons.ListRefused
+        };
+
+        // The seven that come back off the wire, collected by actually running them rather than by
+        // reading the constants - so a describer that stopped consulting them is caught here too.
+        foreach (var responder in new Func<HttpResponseMessage>[]
+        {
+            () => StubHandler.Json(HttpStatusCode.Forbidden, ""),
+            () => StubHandler.Json(HttpStatusCode.TooManyRequests, ""),
+            () => throw new TaskCanceledException("timeout", new TimeoutException()),
+            () => Ok("{\"schema\":[]}"),
+            () => StubHandler.Json(HttpStatusCode.Unauthorized, ""),
+            () => StubHandler.Json(HttpStatusCode.ServiceUnavailable, ""),
+            () => StubHandler.Json(HttpStatusCode.BadRequest, "")
+        })
+        {
+            var result = await RunWithHuntingResponse(responder);
+
+            Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+            Assert.Single(result.Devices);
+            Assert.Equal(DefenderDiscoveryEnrichmentState.Failed, result.DiscoveryEnrichment);
+            reasons.Add(result.DiscoveryEnrichmentReason);
+        }
+
+        Assert.Equal(11, reasons.Count);
+        Assert.Equal(reasons.Count, reasons.Distinct(StringComparer.Ordinal).Count());
+        Assert.DoesNotContain("", reasons);
+
+        // None of them is the DEVICE list's own failure text: that one names a different permission
+        // and a different token audience, and pointing an operator at it here would send them to
+        // check something that is demonstrably working.
+        Assert.DoesNotContain(reasons, reason => reason.Contains("Machine.Read.All", StringComparison.Ordinal));
+        Assert.DoesNotContain(reasons, reason => reason.Contains("api.securitycenter", StringComparison.Ordinal));
+    }
+
+    // ---- the cell: the state decides, never the value -------------------------------------------
+
+    [Theory]
+    [InlineData(DefenderDiscoveryEnrichmentState.Succeeded, "MDE", "MDE")]
+    [InlineData(DefenderDiscoveryEnrichmentState.Succeeded, "", "-")]
+    [InlineData(DefenderDiscoveryEnrichmentState.Succeeded, null, "-")]
+    [InlineData(DefenderDiscoveryEnrichmentState.NotAttempted, "", "(unavailable)")]
+    [InlineData(DefenderDiscoveryEnrichmentState.NotAttempted, "MDE", "(unavailable)")]
+    [InlineData(DefenderDiscoveryEnrichmentState.Failed, "", "(unavailable)")]
+    [InlineData(DefenderDiscoveryEnrichmentState.Failed, "MDE", "(unavailable)")]
+    public void AnEnrichmentCellReadsUnavailableUnlessTheQueryActuallyRan(
+        DefenderDiscoveryEnrichmentState state,
+        string? value,
+        string expected)
+    {
+        // The line the whole slice rests on. Cheapest broken implementation that still passes the
+        // two Succeeded rows: rendering the value with a dash fallback - defeated by every
+        // non-Succeeded row, because a blank cell is exactly how Known Failure Class 2 hides a
+        // half-executed report. The "MDE" rows on the failed states pin that the STATE decides and
+        // that a stale value cannot override it.
+        Assert.Equal(expected, DefenderEndpointDeviceService.DescribeEnrichmentCell(state, value));
+    }
+
+    [Fact]
+    public void TheUnavailableMarkerIsNeitherBlankNorTheOrdinaryEmptyDash()
+    {
+        // A dash is what a genuinely empty value renders as, so the unavailable marker must not be
+        // one, or the two cases this slice exists to separate would look identical on screen.
+        Assert.Equal("(unavailable)", DefenderEndpointDeviceService.EnrichmentUnavailable);
+        Assert.NotEqual("-", DefenderEndpointDeviceService.EnrichmentUnavailable);
+        Assert.NotEqual("", DefenderEndpointDeviceService.EnrichmentUnavailable);
+    }
+
+    // ---- the enrichment carrier's own invariants -------------------------------------------------
+
+    [Fact]
+    public void AFailedOrNotAttemptedEnrichmentCarriesNoRowsAndASucceededOneCarriesNoReason()
+    {
+        // There must be no value of this type that both claims a failure and offers data to merge,
+        // and none that populates columns while telling the operator they are unavailable.
+        Assert.Empty(DefenderDiscoveryEnrichment.Failed("boom").Rows);
+        Assert.Empty(DefenderDiscoveryEnrichment.NotAttempted("off").Rows);
+        Assert.Equal("boom", DefenderDiscoveryEnrichment.Failed("boom").Reason);
+
+        var succeeded = DefenderDiscoveryEnrichment.Succeeded(
+            new Dictionary<string, DefenderDeviceDiscovery> { ["m1"] = new() { Vendor = "Contoso" } });
+
+        Assert.Equal("", succeeded.Reason);
+        Assert.Equal("Contoso", succeeded.Rows["m1"].Vendor);
     }
 }

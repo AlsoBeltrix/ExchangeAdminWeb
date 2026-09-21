@@ -141,6 +141,18 @@ try
             client.Timeout = TimeSpan.FromSeconds(30);
         });
 
+    // The SECOND client for the same module (docs/DefenderEndpointDevices-Plan.md S4, T7), and not a
+    // duplicate of the one above: the advanced hunting query runs against Microsoft Graph, and Graph
+    // allows a single hunting request up to three minutes of its own. Reusing either 30-second
+    // client would cancel legitimate work and report it as an intermittent, load-dependent timeout
+    // that looks like a service fault. Four minutes sits above Graph's own ceiling, so the service's
+    // answer wins and a client-side timeout means something has genuinely hung.
+    builder.Services.AddHttpClient(DefenderEndpointDeviceService.HuntingHttpClientName)
+        .ConfigureHttpClient(client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(4);
+        });
+
     builder.Services.AddSingleton<ModuleConfigService>();
     builder.Services.AddSingleton<ModuleCredentialService>();
     builder.Services.AddSingleton<ModuleAdminService>();

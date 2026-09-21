@@ -132,6 +132,24 @@
     }
     else
     {
+        @* The SAME warning S2 shipped, moved above the table and extended to all five columns. An
+           empty cell must never be how an operator learns that half the report did not execute
+           (Known Failure Class 2), and a warning underneath a long table is read after the columns
+           it explains, if at all. There is deliberately only one of these on the page. *@
+        @if (result.DiscoveryEnrichment != DefenderDiscoveryEnrichmentState.Succeeded)
+        {
+            <div class="alert alert-warning py-2">
+                <small>
+                    <strong>
+                        Discovery sources, device type, device category, vendor and model read
+                        "@DefenderEndpointDeviceService.EnrichmentUnavailable" for every device in
+                        this run.
+                    </strong>
+                    @result.DiscoveryEnrichmentReason
+                </small>
+            </div>
+        }
+
         <div class="card">
             <div class="card-header">
                 <strong>@result.Devices.Count device(s)</strong>
@@ -153,6 +171,7 @@
                             <th>Health</th>
                             <th>Last IP</th>
                             <th>Last seen</th>
+                            <th>Discovery sources</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -167,6 +186,7 @@
                                 <td>@Display(device.HealthStatus)</td>
                                 <td>@Display(device.LastIpAddress)</td>
                                 <td class="text-nowrap">@FormatTime(device.LastSeen)</td>
+                                <td>@EnrichmentCell(device.DiscoverySources)</td>
                                 <td>
                                     @* Renders the row the LIST already returned. It never calls
                                        get-machine-by-id: Learn documents only Machine.ReadWrite.All
@@ -180,7 +200,7 @@
                             @if (expandedDevices.Contains(device.Id))
                             {
                                 <tr>
-                                    <td colspan="8" class="bg-light">
+                                    <td colspan="9" class="bg-light">
                                         <dl class="row mb-0 small">
                                             <dt class="col-sm-3">Device id</dt><dd class="col-sm-9">@Display(device.Id)</dd>
                                             <dt class="col-sm-3">Fully qualified name</dt><dd class="col-sm-9">@Display(device.ComputerDnsName)</dd>
@@ -197,6 +217,11 @@
                                             <dt class="col-sm-3">Machine group</dt><dd class="col-sm-9">@Display(device.MachineGroup)</dd>
                                             <dt class="col-sm-3">Entra ID joined</dt><dd class="col-sm-9">@(device.IsAadJoined ? "Yes" : "No")</dd>
                                             <dt class="col-sm-3">Entra ID device id</dt><dd class="col-sm-9">@Display(device.AadDeviceId)</dd>
+                                            <dt class="col-sm-3">Discovery sources</dt><dd class="col-sm-9">@EnrichmentCell(device.DiscoverySources)</dd>
+                                            <dt class="col-sm-3">Device type</dt><dd class="col-sm-9">@EnrichmentCell(device.DeviceType)</dd>
+                                            <dt class="col-sm-3">Device category</dt><dd class="col-sm-9">@EnrichmentCell(device.DeviceCategory)</dd>
+                                            <dt class="col-sm-3">Vendor</dt><dd class="col-sm-9">@EnrichmentCell(device.Vendor)</dd>
+                                            <dt class="col-sm-3">Model</dt><dd class="col-sm-9">@EnrichmentCell(device.Model)</dd>
                                         </dl>
                                         <div class="form-text mt-2">
                                             There is no Active Directory domain or OU here, and that is not a gap in
@@ -212,17 +237,6 @@
                 </table>
             </div>
         </div>
-
-        @* An empty cell must never be how an operator learns that half the report did not run. *@
-        @if (result.DiscoveryEnrichment != DefenderDiscoveryEnrichmentState.Succeeded)
-        {
-            <div class="alert alert-warning mt-3 py-2">
-                <small>
-                    <strong>Discovery sources, device type, vendor and model are not shown for this run.</strong>
-                    @result.DiscoveryEnrichmentReason
-                </small>
-            </div>
-        }
     }
 </div>
 
@@ -383,6 +397,21 @@
     /// <summary>A dash rather than an empty cell, so a blank never reads as a value.</summary>
     private static string Display(string? value) =>
         string.IsNullOrWhiteSpace(value) ? "-" : value;
+
+    /// <summary>
+    /// One discovery-source cell. Routed through the service rather than answered here, so the page
+    /// cannot invent its own reading of a blank.
+    /// </summary>
+    /// <remarks>
+    /// A blank on a SUCCEEDED run means this device genuinely has no value - Learn says Vendor and
+    /// Model are populated only when device discovery found enough - and a blank on any other state
+    /// means no device has one and the hunting query never ran or failed. Those two cannot be told
+    /// apart at the cell, so the run state decides. result is null only before the first load, when
+    /// no table is rendered at all; NotAttempted is the honest reading of that state either way.
+    /// </remarks>
+    private string EnrichmentCell(string? value) =>
+        DefenderEndpointDeviceService.DescribeEnrichmentCell(
+            result?.DiscoveryEnrichment ?? DefenderDiscoveryEnrichmentState.NotAttempted, value);
 
     private static string FormatTime(DateTimeOffset? value) =>
         value?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-";

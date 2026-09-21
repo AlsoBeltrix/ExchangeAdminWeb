@@ -53,6 +53,40 @@ public sealed class DefenderDevice
     public string AadDeviceId { get; set; } = "";
 
     /// <summary>
+    /// Products or services that have seen or reported this device - the portal's "discovery
+    /// sources" column. NOT from the machines API: it comes from the advanced hunting DeviceInfo
+    /// table and is merged in by device id after the listing completes (S4).
+    /// </summary>
+    /// <remarks>
+    /// <b>An empty value here means two different things and the caller must not conflate them.</b>
+    /// Either the hunting query ran and this device had no DeviceInfo row, or the hunting query
+    /// never ran or failed and NO device has a value. The second case is a half-executed report and
+    /// must read "(unavailable)" rather than blank, which is why the answer lives on the RESULT
+    /// (<see cref="DefenderDeviceListResult.DiscoveryEnrichment"/>) and not on the device: a
+    /// per-device blank cannot tell them apart, and Known Failure Class 2 in
+    /// .agents/repo-guidance.md is exactly the shape where a blank cell reports a failed run.
+    /// </remarks>
+    public string DiscoverySources { get; set; } = "";
+
+    /// <summary>DeviceInfo.DeviceType, merged in by S4. See <see cref="DiscoverySources"/> for what
+    /// an empty value does and does not mean.</summary>
+    public string DeviceType { get; set; } = "";
+
+    /// <summary>DeviceInfo.DeviceCategory, merged in by S4.</summary>
+    public string DeviceCategory { get; set; } = "";
+
+    /// <summary>
+    /// DeviceInfo.Vendor, merged in by S4. Learn flags this as populated "only available if device
+    /// discovery finds enough information about this attribute", so blanks are expected even on a
+    /// wholly successful run.
+    /// </summary>
+    public string Vendor { get; set; } = "";
+
+    /// <summary>DeviceInfo.Model, merged in by S4. Same "expect blanks" caveat as
+    /// <see cref="Vendor"/>.</summary>
+    public string Model { get; set; } = "";
+
+    /// <summary>
     /// The DNS suffix of <see cref="ComputerDnsName"/> - everything after the first dot, empty when
     /// there is no dot. Derived, never read from the API: the machine resource has no domain
     /// property. Environment-neutral by construction (repo-guidance invariant 7) - no suffix is
@@ -97,12 +131,38 @@ public enum DefenderDeviceListOutcome
 }
 
 /// <summary>
-/// Whether the discovery-source enrichment columns hold real data. Slice S1 never runs the hunting
-/// query, so it always reports <see cref="NotAttempted"/>; S4 sets the other two.
+/// One row of the advanced hunting DeviceInfo projection (S4) - the five enrichment values for one
+/// device, keyed outside this type by its DeviceId.
 /// </summary>
+/// <remarks>
+/// A type of its own rather than a partly filled <see cref="DefenderDevice"/>, because a hunting row
+/// is NOT a device: rows arrive for devices the machines API never listed, and those are dropped
+/// rather than injected. Keeping the two shapes distinct is what makes that a compile-time fact
+/// instead of a review comment.
+/// </remarks>
+public sealed class DefenderDeviceDiscovery
+{
+    public string DiscoverySources { get; set; } = "";
+    public string DeviceType { get; set; } = "";
+    public string DeviceCategory { get; set; } = "";
+    public string Vendor { get; set; } = "";
+    public string Model { get; set; } = "";
+}
+
+/// <summary>
+/// Whether the discovery-source enrichment columns hold real data.
+/// </summary>
+/// <remarks>
+/// The distinction this enum exists for: <see cref="Succeeded"/> with an empty cell means that
+/// device genuinely has no value, and anything else means NO device has one and the cell must read
+/// "(unavailable)". A boolean could not carry that, and a blank cell cannot report a failed run.
+/// </remarks>
 public enum DefenderDiscoveryEnrichmentState
 {
-    /// <summary>The hunting query did not run - switched off, or not implemented in this slice.</summary>
+    /// <summary>
+    /// The hunting query did not run - the Include Discovery Sources switch is off, the module's
+    /// credentials were unavailable, no devices matched, or the listing itself refused.
+    /// </summary>
     NotAttempted,
 
     /// <summary>The hunting query ran and its columns are populated.</summary>
@@ -110,6 +170,110 @@ public enum DefenderDiscoveryEnrichmentState
 
     /// <summary>The hunting query was attempted and failed; the reason names which failure.</summary>
     Failed
+}
+
+/// <summary>
+/// The outcome of one advanced hunting enrichment attempt: its state, the reason when there is one,
+/// and the rows it produced keyed by device id.
+/// </summary>
+/// <remarks>
+/// The factories are the invariant. A non-succeeded enrichment carries ZERO rows, and a succeeded
+/// one carries an EMPTY reason - so there is no value of this type that both claims a failure and
+/// offers data to merge, and none that populates columns while telling the operator they are
+/// unavailable.
+/// </remarks>
+public sealed class DefenderDiscoveryEnrichment
+{
+    public DefenderDiscoveryEnrichmentState State { get; private init; }
+
+    /// <summary>Why the columns read "(unavailable)". Empty when <see cref="State"/> is Succeeded.</summary>
+    public string Reason { get; private init; } = "";
+
+    /// <summary>The hunting rows by device id. Always empty unless <see cref="State"/> is Succeeded.</summary>
+    public IReadOnlyDictionary<string, DefenderDeviceDiscovery> Rows { get; private init; }
+        = new Dictionary<string, DefenderDeviceDiscovery>();
+
+    public static DefenderDiscoveryEnrichment Succeeded(IReadOnlyDictionary<string, DefenderDeviceDiscovery> rows) =>
+        new() { State = DefenderDiscoveryEnrichmentState.Succeeded, Reason = "", Rows = rows };
+
+    public static DefenderDiscoveryEnrichment NotAttempted(string reason) =>
+        new() { State = DefenderDiscoveryEnrichmentState.NotAttempted, Reason = reason };
+
+    public static DefenderDiscoveryEnrichment Failed(string reason) =>
+        new() { State = DefenderDiscoveryEnrichmentState.Failed, Reason = reason };
+}
+
+/// <summary>
+/// Why the five discovery-source columns read "(unavailable)" for a run
+/// (docs/DefenderEndpointDevices-Plan.md T7, S4).
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Every string here is a different sentence naming a different operator action, and
+/// DefenderEndpointDeviceServiceTests pins that no two of them collapse.</b> "Not available" tells
+/// an operator nothing. "Nobody consented the permission", "the tenant's hunting quota is
+/// exhausted" and "the query timed out" are three different problems with three different
+/// responses, and an operator looking at a column of "(unavailable)" has to be able to tell which
+/// one they have.
+/// </para>
+/// <para>
+/// They live on the model rather than on the service because the refusal factory below uses one of
+/// them and the service uses the rest; one copy of each string is the only way the two cannot drift
+/// apart.
+/// </para>
+/// </remarks>
+public static class DefenderDiscoveryReasons
+{
+    /// <summary>The Include Discovery Sources config switch is off.</summary>
+    public const string SwitchedOff =
+        "Include Discovery Sources is turned off in this module's configuration, so the advanced "
+        + "hunting query that supplies these columns was not run. Turn it on in Module Config once "
+        + "the app registration holds ThreatHunting.Read.All on Microsoft Graph.";
+
+    /// <summary>The module's own credentials could not be built, so nothing was called.</summary>
+    public const string CredentialsUnavailable =
+        "This module's app credentials could not be built, so the advanced hunting query that "
+        + "supplies these columns was not run.";
+
+    /// <summary>No devices matched, so there was nothing to enrich.</summary>
+    public const string NoDevices =
+        "No devices matched these filters, so there was nothing to enrich and the advanced hunting "
+        + "query was not run.";
+
+    /// <summary>The device listing itself refused, so enrichment was never reached.</summary>
+    public const string ListRefused =
+        "The device list did not complete, so no enrichment was attempted.";
+
+    /// <summary>A 2xx whose body carried no readable results collection.</summary>
+    public const string MalformedResponse =
+        "Microsoft Graph answered the advanced hunting query with a response this module could not "
+        + "read - it carried no results collection - so these columns are empty for this run. The "
+        + "device list itself is unaffected.";
+
+    /// <summary>403: the permission was never granted, or consent was never given for it.</summary>
+    public const string Forbidden =
+        "Microsoft Graph refused the advanced hunting query (403 Forbidden). The app registration "
+        + "does not hold the ThreatHunting.Read.All application permission on Microsoft Graph, or "
+        + "nobody has granted admin consent for it - that consent has to come from a Privileged "
+        + "Role Administrator or a Global Administrator. The device list itself is unaffected.";
+
+    /// <summary>429: the tenant's advanced hunting CPU quota is exhausted.</summary>
+    public const string Throttled =
+        "Microsoft Graph throttled the advanced hunting query (429 Too Many Requests), which on "
+        + "this endpoint means the tenant's advanced hunting CPU quota is currently exhausted. "
+        + "Nothing is misconfigured - wait and load again. The device list itself is unaffected.";
+
+    /// <summary>A client-side timeout, which arrives as an exception and not as a status.</summary>
+    public const string TimedOut =
+        "The advanced hunting query did not finish before the request timed out, so these columns "
+        + "are empty for this run. The device list itself is unaffected. Load again, and narrow the "
+        + "filters if it keeps happening.";
+
+    /// <summary>401: the credentials themselves were rejected.</summary>
+    public const string Unauthorized =
+        "Microsoft Graph rejected this module's credentials for the advanced hunting query (401 "
+        + "Unauthorized). Check that the client secret in the module's Secret Server record has not "
+        + "expired. The device list itself is unaffected.";
 }
 
 /// <summary>
@@ -207,7 +371,7 @@ public sealed class DefenderDeviceListResult
             Ceiling = ceiling,
             RefusalReason = reason,
             DiscoveryEnrichment = DefenderDiscoveryEnrichmentState.NotAttempted,
-            DiscoveryEnrichmentReason = "The device list did not complete, so no enrichment was attempted."
+            DiscoveryEnrichmentReason = DefenderDiscoveryReasons.ListRefused
         };
     }
 }

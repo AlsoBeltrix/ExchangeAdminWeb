@@ -1375,3 +1375,34 @@ contributed-package layout, which an in-repo module slice does not produce.
 
 **Still outstanding, all of it the owner's:** the app registration itself, the two consents, the
 Delinea secret and its Secret ID, then R1 on dev - and Q2, Q3, Q4 and Q5 remain unanswered.
+# Revision 6 - S4 implemented, 2026-09-21
+
+Discovery sources shipped. Three corrections and one flagged unknown, all found by implementing it.
+
+**The enrichment warning belongs ABOVE the table and S2 shipped it below.** The Field mapping
+section says "the page says why above the table"; S4 moved it. Recorded so it is not helpfully
+moved back.
+
+**A 200 with an unreadable body is a second door into the malformed state.** The plan anticipated
+malformed only as "no results collection". Without the extra branch the operator reads "Microsoft
+Graph rejected the advanced hunting query (200 OK)", which is a contradiction in one sentence.
+Tested both ways.
+
+**Eleven distinct reason strings, not the eight the plan enumerated** - the code has three more
+doors: credentials unavailable, no devices to enrich, and a listing that refused. All eleven live
+in one type so the model's refusal factory and the service cannot drift apart, and the distinctness
+test runs seven of them through the real service rather than asserting over constants. It also
+asserts **no reason names `Machine.Read.All` or `api.securitycenter`** - those belong to the device
+list's own 403, and borrowing that text would send an operator to check a permission that is
+demonstrably working.
+
+**Unverified and R1-class: whether `DiscoverySources` serialises as a JSON string or a JSON array.**
+No Learn page settles it and WebSearch is blocked in this environment. Both shapes are handled and
+joined with the house separator, so the module is correct either way - but **reading only the string
+shape would silently blank the one column senior leadership asked for**, which is why it is called
+out rather than left to the merge code. Add it to R1's list if that gate is still open.
+
+**One judgement call, stated plainly:** the hunting call reads the Delinea secret a second time
+within a run rather than sharing the listing's read. The service is a singleton, so sharing would
+mean holding a credential in a field - which is how a rotated client secret keeps failing until the
+app pool recycles. The cost is one extra Secret Server round trip per run.

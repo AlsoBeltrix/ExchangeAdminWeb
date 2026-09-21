@@ -29,16 +29,63 @@ public sealed class DefenderEndpointDeviceService
     private readonly DelineaService? _delineaService;
     private readonly IHttpClientFactory? _httpClientFactory;
     private readonly Func<Task<DefenderApiClient?>> _apiClientFactory;
+    private readonly Func<Task<DefenderApiClient?>> _huntingClientFactory;
     private readonly string? _maxDevicesOverride;
+    private readonly string? _includeDiscoverySourcesOverride;
 
     internal const string ModuleId = "DefenderEndpointDevices";
     internal const string SecretIdConfigKey = "GraphDelineaSecretId";
     internal const string MaxDevicesConfigKey = "MaxDevices";
+    internal const string IncludeDiscoverySourcesConfigKey = "IncludeDiscoverySources";
 
     /// <summary>The named HttpClient this module's inventory calls use.</summary>
     public const string HttpClientName = "DefenderEndpoint";
 
+    /// <summary>
+    /// The named HttpClient the advanced hunting call uses - a SECOND registration, and deliberate
+    /// (T7). The inventory client times out at 30 seconds, which is right for a machines page and
+    /// wrong for a hunting query: Graph allows a single hunting request up to three minutes of its
+    /// own, so a 30-second client would cancel legitimate work and surface it as an intermittent,
+    /// load-dependent "timeout" that reads like a service fault. This one is set above Graph's own
+    /// ceiling so the service's answer wins and a client-side timeout means something has genuinely
+    /// hung.
+    /// </summary>
+    public const string HuntingHttpClientName = "DefenderEndpointHunting";
+
     internal const string MachinesEndpoint = "/api/machines";
+
+    /// <summary>
+    /// The Graph advanced hunting endpoint. Relative on purpose - it is resolved against the HUNTING
+    /// client's base URL (graph.microsoft.com/v1.0), not the Defender host.
+    /// </summary>
+    internal const string HuntingEndpoint = "/security/runHuntingQuery";
+
+    /// <summary>
+    /// The advanced hunting query. A CONSTANT in source: no operator input is interpolated into KQL,
+    /// ever, and there is no code path that builds this string from anything.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ThreatHunting.Read.All is scoped to the WHOLE hunting schema - mail, identity, process events,
+    /// everything - and the only thing keeping this module inside DeviceInfo is this string. That is
+    /// why a test asserts it names DeviceInfo and no other table: the permission cannot enforce the
+    /// narrowing, so the query text has to.
+    /// </para>
+    /// <para>
+    /// isempty(MergedToDeviceId) is not decoration. Without it, merged and invalidated duplicate
+    /// records come back and one physical device appears twice; arg_max(Timestamp, *) takes the
+    /// latest state row per device.
+    /// </para>
+    /// </remarks>
+    internal const string HuntingQuery =
+        "DeviceInfo | summarize arg_max(Timestamp, *) by DeviceId | where isempty(MergedToDeviceId)"
+        + " | project DeviceId, DiscoverySources, DeviceType, DeviceCategory, Vendor, Model";
+
+    /// <summary>
+    /// What an enrichment cell shows when the hunting query did not run or failed. Never a blank: an
+    /// empty cell must not be how an operator learns that half the report did not execute.
+    /// </summary>
+    public const string EnrichmentUnavailable = "(unavailable)";
 
     /// <summary>Documented maximum page size and maximum $top for the machines collection.</summary>
     internal const int MaxTop = 10000;
@@ -55,8 +102,6 @@ public sealed class DefenderEndpointDeviceService
     /// </summary>
     internal const int MaxRequestsPerRun = 100;
 
-    private const string EnrichmentNotAttempted = "Discovery sources were not collected for this run.";
-
     public DefenderEndpointDeviceService(
         ModuleConfigService moduleConfig,
         DelineaService delineaService,
@@ -66,19 +111,29 @@ public sealed class DefenderEndpointDeviceService
         _delineaService = delineaService;
         _httpClientFactory = httpClientFactory;
         _apiClientFactory = GetApiClientAsync;
+        _huntingClientFactory = GetHuntingClientAsync;
     }
 
     /// <summary>
-    /// Test seam, the same shape as ServiceHealthService's: drives the paging, completion and
-    /// parsing logic against a canned DefenderApiClient with no live Secret Server call. Does not
-    /// change the public DI constructor or its Program.cs registration.
+    /// Test seam, the same shape as ServiceHealthService's: drives the paging, completion, parsing
+    /// and enrichment logic against canned DefenderApiClients with no live Secret Server call. Does
+    /// not change the public DI constructor or its Program.cs registration.
     /// </summary>
+    /// <param name="huntingClientFactory">
+    /// Defaults to a factory returning null, which is NOT a quiet success: the enrichment reports
+    /// NotAttempted with <see cref="DefenderDiscoveryReasons.CredentialsUnavailable"/>, so a test
+    /// that forgot to supply one sees an explicit reason rather than a silently empty column.
+    /// </param>
     internal DefenderEndpointDeviceService(
         Func<Task<DefenderApiClient?>> apiClientFactory,
-        string? maxDevicesOverride = null)
+        string? maxDevicesOverride = null,
+        Func<Task<DefenderApiClient?>>? huntingClientFactory = null,
+        string? includeDiscoverySourcesOverride = null)
     {
         _apiClientFactory = apiClientFactory;
         _maxDevicesOverride = maxDevicesOverride;
+        _huntingClientFactory = huntingClientFactory ?? (() => Task.FromResult<DefenderApiClient?>(null));
+        _includeDiscoverySourcesOverride = includeDiscoverySourcesOverride;
     }
 
     /// <summary>
@@ -86,7 +141,30 @@ public sealed class DefenderEndpointDeviceService
     /// ServiceHealthService.GetGraphClientAsync, reading DefenderEndpointDevices /
     /// GraphDelineaSecretId and never another module's configuration.
     /// </summary>
-    private async Task<DefenderApiClient?> GetApiClientAsync()
+    private async Task<DefenderApiClient?> GetApiClientAsync() =>
+        await BuildClientAsync(
+            DefenderApiClient.DefenderBaseUrl,
+            DefenderApiClient.DefenderTokenScope,
+            HttpClientName);
+
+    /// <summary>
+    /// Builds the GRAPH-host client for the advanced hunting query, from the SAME Delinea secret and
+    /// the same app registration - one client id and secret, two audiences (T1).
+    /// </summary>
+    /// <remarks>
+    /// This reads the secret a second time within a run rather than sharing one read with
+    /// <see cref="GetApiClientAsync"/>. That is deliberate: this service is a singleton, so a shared
+    /// credential would have to live in a field, and a cached secret on a singleton is how a rotated
+    /// client secret keeps failing until the app pool recycles. Two reads of a cached-token Secret
+    /// Server client, once per operator click, is the cheaper side of that trade.
+    /// </remarks>
+    private async Task<DefenderApiClient?> GetHuntingClientAsync() =>
+        await BuildClientAsync(
+            DefenderApiClient.GraphBaseUrl,
+            DefenderApiClient.GraphTokenScope,
+            HuntingHttpClientName);
+
+    private async Task<DefenderApiClient?> BuildClientAsync(string baseUrl, string tokenScope, string httpClientName)
     {
         if (_moduleConfig == null || _delineaService == null || _httpClientFactory == null)
             return null;
@@ -113,9 +191,34 @@ public sealed class DefenderEndpointDeviceService
             tenantId,
             clientId,
             clientSecret,
-            DefenderApiClient.DefenderBaseUrl,
-            DefenderApiClient.DefenderTokenScope,
-            _httpClientFactory.CreateClient(HttpClientName));
+            baseUrl,
+            tokenScope,
+            _httpClientFactory.CreateClient(httpClientName));
+    }
+
+    /// <summary>
+    /// Whether the advanced hunting query runs at all - the IncludeDiscoverySources config switch.
+    /// </summary>
+    /// <remarks>
+    /// Absent or blank is the descriptor's documented default of ON, not a mistype. A non-blank
+    /// value that will not parse reads as OFF, following the precedent in
+    /// <see cref="UsageTelemetryService"/>: the module config page renders an unparseable Boolean as
+    /// an UNCHECKED box, so defaulting it to ON would make the switch and the screen that shows it
+    /// disagree. OFF is also the fail-closed direction here - it is the value that does not call a
+    /// permission the registration may not hold.
+    /// </remarks>
+    internal bool IncludeDiscoverySources
+    {
+        get
+        {
+            var configured = _includeDiscoverySourcesOverride
+                ?? _moduleConfig?.GetValue(ModuleId, IncludeDiscoverySourcesConfigKey);
+
+            if (string.IsNullOrWhiteSpace(configured))
+                return true;
+
+            return bool.TryParse(configured, out var enabled) && enabled;
+        }
     }
 
     public bool IsAvailable
@@ -195,7 +298,7 @@ public sealed class DefenderEndpointDeviceService
                 if (pages == 1 && !result.TimedOut && result.StatusCode == HttpStatusCode.NotFound)
                     return DefenderDeviceListResult.CompleteRun(
                         [], 0, pages, ceiling,
-                        DefenderDiscoveryEnrichmentState.NotAttempted, EnrichmentNotAttempted);
+                        DefenderDiscoveryEnrichmentState.NotAttempted, DefenderDiscoveryReasons.NoDevices);
 
                 return DefenderDeviceListResult.Refusal(
                     DefenderDeviceListOutcome.RequestFailed,
@@ -283,14 +386,226 @@ public sealed class DefenderEndpointDeviceService
             .ThenBy(device => device.Id, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        // The enrichment runs ONLY after the listing has proved itself complete, and its failure is
+        // independent of the listing's success: a 403, a 429 or a timeout here leaves every device
+        // row above fully rendered and turns five columns into "(unavailable)" with a reason. It
+        // must never take the page down, and it must never leave those columns merely blank.
+        var enrichment = devices.Count == 0
+            ? DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.NoDevices)
+            : await GetDiscoveryEnrichmentAsync();
+
+        ApplyEnrichment(devices, enrichment);
+
         return DefenderDeviceListResult.CompleteRun(
             devices,
             distinctCount,
             pages,
             ceiling,
-            DefenderDiscoveryEnrichmentState.NotAttempted,
-            EnrichmentNotAttempted);
+            enrichment.State,
+            enrichment.Reason);
     }
+
+    /// <summary>
+    /// Runs the advanced hunting query once for the whole run and returns its rows keyed by device
+    /// id, or a NAMED reason why they are not available (T7).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This goes through the module-local client's PostWithStatusAsync, never
+    /// GraphTokenClient.PostAsync.</b> That method is GraphTokenClient.cs:109-126 and line 122 is
+    /// <c>if (!response.IsSuccessStatusCode) return null;</c> - it discards the status code and the
+    /// body, so a 403 for an un-consented permission, a 429 for an exhausted quota and a 500 are all
+    /// the same value. Over it, the distinct reasons below would be unimplementable and the 403 and
+    /// 429 tests could not be written at all. That is the whole reason this module has a client of
+    /// its own (T1).
+    /// </para>
+    /// <para>
+    /// One query per refresh, never one per device. Graph's hunting quotas - 30 days of data,
+    /// 100,000 rows, at least 45 calls per minute per tenant, a 50 MB result cap - none of which
+    /// bite at one query per page load, all of which would bite at one per device.
+    /// </para>
+    /// </remarks>
+    internal async Task<DefenderDiscoveryEnrichment> GetDiscoveryEnrichmentAsync()
+    {
+        if (!IncludeDiscoverySources)
+            return DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.SwitchedOff);
+
+        var client = await _huntingClientFactory();
+        if (client == null)
+            return DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.CredentialsUnavailable);
+
+        var response = await client.PostWithStatusAsync(HuntingEndpoint, new { Query = HuntingQuery });
+
+        if (response.Document == null)
+            return DefenderDiscoveryEnrichment.Failed(DescribeEnrichmentFailure(response));
+
+        using var document = response.Document;
+
+        return TryReadHuntingResults(document, out var rows)
+            ? DefenderDiscoveryEnrichment.Succeeded(rows)
+            : DefenderDiscoveryEnrichment.Failed(DefenderDiscoveryReasons.MalformedResponse);
+    }
+
+    /// <summary>
+    /// Copies the hunting values onto the devices that are ON THE LIST, and only those.
+    /// </summary>
+    /// <remarks>
+    /// <b>A hunting row is not a device.</b> DeviceInfo answers for the whole tenant over 30 days,
+    /// so it returns rows for devices the machines API did not list - filtered out by the operator's
+    /// onboarding-status filter, out of scope for this registration, or simply gone. Those rows are
+    /// DROPPED, never injected: this method iterates the devices and looks rows up, never the other
+    /// way round, so a row with no device cannot become one. Inventing a device row out of hunting
+    /// data would put a machine on an inventory report that the inventory API never returned.
+    /// </remarks>
+    private static void ApplyEnrichment(List<DefenderDevice> devices, DefenderDiscoveryEnrichment enrichment)
+    {
+        if (enrichment.State != DefenderDiscoveryEnrichmentState.Succeeded)
+            return;
+
+        foreach (var device in devices)
+        {
+            if (string.IsNullOrWhiteSpace(device.Id) || !enrichment.Rows.TryGetValue(device.Id, out var row))
+                continue;
+
+            device.DiscoverySources = row.DiscoverySources;
+            device.DeviceType = row.DeviceType;
+            device.DeviceCategory = row.DeviceCategory;
+            device.Vendor = row.Vendor;
+            device.Model = row.Model;
+        }
+    }
+
+    /// <summary>
+    /// Reads the hunting response into rows keyed by DeviceId. False means the body was not a
+    /// hunting result at all, which is a FAILED enrichment and not an empty one.
+    /// </summary>
+    private static bool TryReadHuntingResults(
+        JsonDocument document,
+        out Dictionary<string, DefenderDeviceDiscovery> rows)
+    {
+        rows = new Dictionary<string, DefenderDeviceDiscovery>(StringComparer.OrdinalIgnoreCase);
+
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+            return false;
+
+        if (!TryGetProperty(root, "results", out var results) || results.ValueKind != JsonValueKind.Array)
+            return false;
+
+        foreach (var entry in results.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.Object)
+                continue;
+
+            var deviceId = GetString(entry, "DeviceId");
+            if (string.IsNullOrWhiteSpace(deviceId))
+                continue;
+
+            // arg_max by DeviceId means the service already collapsed duplicates; last-wins here is
+            // insurance, not a completeness argument, exactly as the device de-duplication is.
+            rows[deviceId] = new DefenderDeviceDiscovery
+            {
+                DiscoverySources = GetFlexibleString(entry, "DiscoverySources"),
+                DeviceType = GetFlexibleString(entry, "DeviceType"),
+                DeviceCategory = GetFlexibleString(entry, "DeviceCategory"),
+                Vendor = GetFlexibleString(entry, "Vendor"),
+                Model = GetFlexibleString(entry, "Model")
+            };
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// A hunting column value as display text, whatever JSON shape it arrives in.
+    /// </summary>
+    /// <remarks>
+    /// DiscoverySources is a multi-valued column and the hunting API is not consistent about whether
+    /// such a column serialises as a JSON array or as a string holding one, so both are handled and
+    /// arrays are joined with "; " - the same separator the rest of this module uses for multi-value
+    /// cells. Reading only the string shape would silently blank the one column the owner actually
+    /// asked for, which is the failure this whole slice exists to prevent.
+    /// </remarks>
+    private static string GetFlexibleString(JsonElement item, string name)
+    {
+        if (!TryGetProperty(item, name, out var value))
+            return "";
+
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.String:
+                return value.GetString() ?? "";
+
+            case JsonValueKind.Number:
+                return value.GetRawText();
+
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                return value.GetRawText();
+
+            case JsonValueKind.Array:
+                return string.Join("; ", value.EnumerateArray()
+                    .Select(element => element.ValueKind == JsonValueKind.String
+                        ? element.GetString() ?? ""
+                        : element.GetRawText())
+                    .Where(text => !string.IsNullOrWhiteSpace(text)));
+
+            default:
+                return "";
+        }
+    }
+
+    /// <summary>
+    /// Turns a failed hunting call into a reason an operator can act on. Every branch is a DIFFERENT
+    /// sentence, because "discovery sources are unavailable" leaves an operator with no idea whether
+    /// to chase a consent grant, wait out a quota, or retry.
+    /// </summary>
+    internal static string DescribeEnrichmentFailure(DefenderApiResult result)
+    {
+        if (result.TimedOut)
+            return DefenderDiscoveryReasons.TimedOut;
+
+        var status = result.StatusCode;
+        var detail = string.IsNullOrWhiteSpace(result.SafeError) ? "" : $" Microsoft Graph said: {result.SafeError}";
+
+        if (status == HttpStatusCode.Forbidden)
+            return DefenderDiscoveryReasons.Forbidden + detail;
+
+        if (status == HttpStatusCode.TooManyRequests)
+            return DefenderDiscoveryReasons.Throttled + detail;
+
+        if (status == HttpStatusCode.Unauthorized)
+            return DefenderDiscoveryReasons.Unauthorized + detail;
+
+        // A 2xx that produced no document means the body was there and unreadable - the client
+        // already refused to parse it. "Rejected the query (200 OK)" would be nonsense; this is the
+        // malformed case arriving by a different door.
+        if ((int)status >= 200 && (int)status <= 299)
+            return DefenderDiscoveryReasons.MalformedResponse + detail;
+
+        if ((int)status >= 500)
+            return $"Microsoft Graph was unavailable for the advanced hunting query ({(int)status} {status}), so "
+                + "these columns are empty for this run. The device list itself is unaffected. Retry." + detail;
+
+        return $"Microsoft Graph rejected the advanced hunting query ({(int)status} {status}), so these columns "
+            + "are empty for this run. The device list itself is unaffected." + detail;
+    }
+
+    /// <summary>
+    /// What one enrichment cell shows: the value when the query succeeded, "(unavailable)" when it
+    /// did not.
+    /// </summary>
+    /// <remarks>
+    /// The whole point of routing every enrichment cell through one function. A blank on a
+    /// SUCCEEDED run means this device genuinely has no value for that column - Learn says Vendor
+    /// and Model are populated only when discovery found enough - while a blank on any other state
+    /// means no device has one and half the report did not execute. Those two are indistinguishable
+    /// at the cell, so the run state decides, not the value.
+    /// </remarks>
+    public static string DescribeEnrichmentCell(DefenderDiscoveryEnrichmentState state, string? value) =>
+        state != DefenderDiscoveryEnrichmentState.Succeeded
+            ? EnrichmentUnavailable
+            : string.IsNullOrWhiteSpace(value) ? "-" : value;
 
     /// <summary>
     /// "All Windows devices" has no single filter value: osPlatform carries Windows10, Windows11 and
