@@ -1295,3 +1295,83 @@ droppable on the owner's question 1 and they would be dead code.
 
 Everything downstream still needs the owner: the app registration, question 1, and R1(g) - which
 cannot run before the registration exists, as Revision 3 upheld.
+
+# Revision 5 - S2 implemented, and the R1(g) tension resolved, 2026-09-21
+
+S2 landed: the descriptor, `Components/Pages/DefenderEndpointDevices.razor`, the catalog-count and
+alias assertions, four house-style descriptor facts, and a click-gating registry entry written with
+the page rather than bolted on afterwards. Two owner answers arrived with the slice and both change
+what was written above.
+
+**Owner answer to Q6: the display name is "Defender for Endpoint Devices".** Shipped verbatim, with
+route `defender-endpoint-devices` and section-access alias `DefenderEndpointDevices`. Q6 is closed.
+
+**Owner answer to Q1: discovery sources ARE wanted - a direct request from senior leadership.** So
+`ThreatHunting.Read.All` will be granted, consent must be done by a Privileged Role Administrator or
+a Global Administrator (see "Admin consent"), and **S4 is no longer droppable**. The consequence for
+this slice: `IncludeDiscoverySources` ships in S2 as the descriptor's third config field, and the
+`GraphDelineaSecretId` description names both `Machine.Read.All` on WindowsDefenderATP and
+`ThreatHunting.Read.All` on Microsoft Graph. Deferring the switch was correct only while S4 might
+never exist; that reasoning is superseded and the field is live now, so the operator can turn the
+enrichment off on a deployment whose registration does not yet hold the grant. Q1 is closed.
+
+**The Revision 4 tension is moot - but NOT for the reason Revision 4 proposed.** Revision 4 offered
+`EnabledByDefault = false` as the likely resolution: cursor-following becomes reachable in S2, one
+slice before the R1(g) gate meant to authorise it, and shipping the module disabled would mean
+"reachable" only means "reachable by the owner on dev". **That cannot be what resolves it, because
+`EnabledByDefault = false` is already required independently** - the Constitution's optional-module
+rule mandates it and `tools/validate-module-package.ps1:202` raises CAT004 when a descriptor omits
+it. A property the module was going to carry anyway resolves nothing; it would have been the same
+with or without the tension.
+
+**The real answer is that the shipped paging is reactive, not speculative.**
+`DefenderEndpointDeviceService` reads `@odata.nextLink` out of the response body
+(`TryReadPage`, `DefenderEndpointDeviceService.cs:384-385`), stops when it is absent
+(`:233`) and follows it only when the service emitted one (`:267`). There is no code that
+*assumes* a cursor exists and no request that would be issued on a guess. R1(g)'s two pre-decided
+branches are therefore not two implementations of which one is unproven: they are one piece of code
+dispatching on what actually came back. The no-cursor branch is the `:233` exit, the cursor branch
+is the `:267` exit, and the ambiguous state between them - a full page with no cursor - exits
+through the same refusal the ceiling uses. So "no multi-page behaviour ships that R1(g) has not
+observed" is satisfied by construction: the multi-page path cannot execute unless the service has
+already demonstrated the contract in the response that triggers it. R1(g) remains worth running -
+it records the observed page size, which is what turns the request budget in T3 from an unknown
+into a number - but it is no longer a gate on correctness.
+
+Reachability is separately gated by three independent owner acts, none of which this slice
+performs: enabling the module in Admin Settings, granting a group the `DefenderEndpointDevices`
+section-access alias, and entering the Secret ID on the module's own config page. That is defence
+in depth, not the argument; the argument is the paragraph above.
+
+**Click gating: registered, not deferred.** The page is in `ClickGateRegistry.Pages` rather than
+`NotYetConverted`, which was cheap because the page was designed for it: one operation, one
+in-flight flag (`isLoading`), one page-wide predicate (`IsBusy`), no staged-confirmation state, no
+banner to dismiss, every click target a `<button>`, and no keyboard handler at all - so
+`ExcludedFields`, `ExemptControls`, `NonButtonTargets`, `KeyboardPaths` and `HarmlessKeyboardPaths`
+are all legitimately empty and the two hardest assertion families are vacuous rather than waived.
+Two DOM-synced controls (the onboarding-status `<select>` and the Windows-only checkbox) are
+registered with their verbatim `disabled="@IsBusy"` attributes, and both filters are registered as
+`CapturedAtEntry` snapshot obligations.
+
+**One deviation from the S2 sketch, and the reason for it.** The sketch had `OnInitializedAsync`
+end with `isLoading = DeviceService.IsAvailable;` so the first paint shows a spinner - the shape
+`ServiceHealth.razor:340-341` uses. That shape cannot be registered: `isLoading` is the page's
+in-flight flag, and `ClickGateTests.EveryRegisteredFlagIsLoweredInAFinally` and
+`SingleFlightHandlersRaiseAFlagBeforeTheirFirstAwait` both require every raise of a registered flag
+to sit inside a try whose finally lowers it, before that handler's first await.
+`OnInitializedAsync` has neither. ServiceHealth gets away with it only because it is listed in
+`NotYetConverted` and nothing checks it; here it would be a stuck-flag raise, and under a page-wide
+predicate a stuck flag does not grey one button, it deadens the page. The first-render spinner is
+therefore keyed on `result == null` instead, which costs nothing: the deferred load starts from
+`OnAfterRenderAsync` on that same render, and the branch strictly contains the sketch's
+`isLoading && result == null` condition.
+
+**Confirmed against the plan and unchanged by this slice:** module `1.0.0`, and **no base app
+version bump** - `ExchangeAdminWeb.csproj` stays at 2.21.1 / 2.21.1.0. `Program.cs` was already
+complete from S1 (the named `HttpClient` and the singleton registration) and was not touched.
+`Services/GraphTokenClient.cs` was not touched. `tools/validate-module-package.ps1` was NOT run
+against this change and must not be reported as passing: it requires `-PackagePath` and validates a
+contributed-package layout, which an in-repo module slice does not produce.
+
+**Still outstanding, all of it the owner's:** the app registration itself, the two consents, the
+Delinea secret and its Secret ID, then R1 on dev - and Q2, Q3, Q4 and Q5 remain unanswered.

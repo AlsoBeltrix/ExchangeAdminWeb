@@ -1,0 +1,401 @@
+@page "/defender-endpoint-devices"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "DefenderEndpointDevices")]
+@rendermode InteractiveServer
+@inject DefenderEndpointDeviceService DeviceService
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<DefenderEndpointDevices> Logger
+
+<PageTitle>Defender for Endpoint Devices</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>
+            Read-only. Every listing is written to the audit log. This module changes nothing in
+            Defender: it cannot onboard, isolate, scan or offboard a device, and the app
+            registration behind it holds no permission that could.
+            A run either returns the COMPLETE set of devices matching the filters below or it
+            refuses in words - it never shows a shortened list that looks whole.
+            Counts here can differ from the Defender portal's onboarding recommendation widget,
+            which excludes ephemeral and guest devices; that is expected, not a fault.
+        </small>
+    </div>
+    <h1 class="mb-4">Defender for Endpoint Devices<ModuleVersion /></h1>
+
+    @* The unconfigured gate returns, so every control below it is unreachable while the Secret ID
+       is unset. That is deliberate and is the reason this block sits above the filter card rather
+       than beside the results: with no credential there must be no button that could start a call.
+       DefenderEndpointDeviceService.ListDevicesAsync THROWS on an unset Secret ID rather than
+       returning an empty result, so an ungated control here would render a stack-trace message as
+       the answer. OnAfterRenderAsync carries the same check for the same reason. *@
+    @if (!DeviceService.IsAvailable)
+    {
+        <div class="alert alert-danger">
+            Defender for Endpoint Devices is not configured. Set Graph App Delinea Secret ID in
+            Module Config. No device data can be read until it is set.
+        </div>
+        return;
+    }
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label mb-1" for="onboardingStatus">Onboarding status</label>
+                    @* The API literals, NOT the portal labels: the portal shows "Can be onboarded"
+                       and the REST value is CanBeOnboarded, and sending the portal spelling matches
+                       nothing. The option text is the portal's wording so an operator recognises it;
+                       the value is what reaches the filter. *@
+                    <select id="onboardingStatus" class="form-select" @bind="onboardingStatus" disabled="@IsBusy">
+                        <option value="@DefenderDeviceFilters.CanBeOnboarded">Can be onboarded</option>
+                        <option value="onboarded">Onboarded</option>
+                        <option value="Unsupported">Unsupported</option>
+                        <option value="InsufficientInfo">Insufficient info</option>
+                        <option value="">Any onboarding status</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="windowsOnly" @bind="windowsOnly" disabled="@IsBusy" />
+                        <label class="form-check-label" for="windowsOnly">Windows devices only</label>
+                    </div>
+                    <div class="form-text">
+                        Applied after the fetch, not by the service: osPlatform carries Windows10,
+                        Windows11 and the server variants as separate values, so there is no single
+                        server-side "Windows" filter to ask for.
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <button class="btn btn-primary w-100" @onclick="LoadAsync" disabled="@IsBusy">
+                        @if (IsBusy)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Load devices
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* Branch order is load-bearing. A failed read must never fall through to the empty-table
+       branch, and a refusal must never fall through to the table branch: a refusal carries zero
+       devices by construction, so rendering it as a table would show an empty list as the answer to
+       a question that was never answered. *@
+    @if (loadError != null)
+    {
+        <div class="alert alert-danger">
+            <strong>Could not read the Defender for Endpoint device inventory.</strong>
+            <div class="mt-1"><small>@loadError</small></div>
+        </div>
+    }
+    else if (result == null)
+    {
+        @* The first load runs from OnAfterRenderAsync, so there is a render in which nothing has
+           been asked for yet. Keyed on the absence of a result rather than on isLoading because
+           isLoading cannot be raised in OnInitializedAsync: it is the page's in-flight flag and
+           every raise of it has to sit inside a try whose finally lowers it again. *@
+        <div class="alert alert-info d-flex align-items-center">
+            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+            <span>Reading the Defender for Endpoint device inventory...</span>
+        </div>
+    }
+    else if (result.Outcome != DefenderDeviceListOutcome.Complete)
+    {
+        <div class="alert alert-danger">
+            <strong>This report was refused, not truncated.</strong>
+            <div class="mt-1">@result.RefusalReason</div>
+            <div class="mt-1">
+                <small>
+                    No devices are listed and nothing can be exported from this state. The run could
+                    not prove it had seen every matching device, and a partial list that looks whole
+                    is the one result this module must never produce.
+                </small>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="card-header">
+                <strong>@result.Devices.Count device(s)</strong>
+                <span class="text-muted ms-2">
+                    <small>
+                        @result.DistinctCount distinct device(s) returned by the API in
+                        @result.PagesFetched request(s), against a ceiling of @result.Ceiling.
+                    </small>
+                </span>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <thead>
+                        <tr>
+                            <th>Device name</th>
+                            <th>DNS domain</th>
+                            <th>OS</th>
+                            <th>Onboarding status</th>
+                            <th>Health</th>
+                            <th>Last IP</th>
+                            <th>Last seen</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var device in result.Devices)
+                        {
+                            <tr>
+                                <td>@Display(device.ComputerDnsName)</td>
+                                <td>@Display(device.DnsDomain)</td>
+                                <td>@device.OsPlatform @device.OsVersion</td>
+                                <td>@Display(device.OnboardingStatus)</td>
+                                <td>@Display(device.HealthStatus)</td>
+                                <td>@Display(device.LastIpAddress)</td>
+                                <td class="text-nowrap">@FormatTime(device.LastSeen)</td>
+                                <td>
+                                    @* Renders the row the LIST already returned. It never calls
+                                       get-machine-by-id: Learn documents only Machine.ReadWrite.All
+                                       for that endpoint, and this module's registration must never
+                                       hold a write scope. *@
+                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleDetail(device.Id)" disabled="@IsBusy">
+                                        @(expandedDevices.Contains(device.Id) ? "Hide detail" : "Detail")
+                                    </button>
+                                </td>
+                            </tr>
+                            @if (expandedDevices.Contains(device.Id))
+                            {
+                                <tr>
+                                    <td colspan="8" class="bg-light">
+                                        <dl class="row mb-0 small">
+                                            <dt class="col-sm-3">Device id</dt><dd class="col-sm-9">@Display(device.Id)</dd>
+                                            <dt class="col-sm-3">Fully qualified name</dt><dd class="col-sm-9">@Display(device.ComputerDnsName)</dd>
+                                            <dt class="col-sm-3">DNS domain (derived)</dt><dd class="col-sm-9">@Display(device.DnsDomain)</dd>
+                                            <dt class="col-sm-3">OS build / architecture</dt><dd class="col-sm-9">@Display(device.OsBuild) / @Display(device.OsArchitecture)</dd>
+                                            <dt class="col-sm-3">Last external IP</dt><dd class="col-sm-9">@Display(device.LastExternalIpAddress)</dd>
+                                            <dt class="col-sm-3">IP addresses</dt><dd class="col-sm-9">@Display(IpList(device))</dd>
+                                            <dt class="col-sm-3">MAC addresses</dt><dd class="col-sm-9">@Display(MacList(device))</dd>
+                                            <dt class="col-sm-3">First seen</dt><dd class="col-sm-9">@FormatTime(device.FirstSeen)</dd>
+                                            <dt class="col-sm-3">Risk score</dt><dd class="col-sm-9">@Display(device.RiskScore)</dd>
+                                            <dt class="col-sm-3">Exposure level</dt><dd class="col-sm-9">@Display(device.ExposureLevel)</dd>
+                                            <dt class="col-sm-3">Device value</dt><dd class="col-sm-9">@Display(device.DeviceValue)</dd>
+                                            <dt class="col-sm-3">Machine tags</dt><dd class="col-sm-9">@Display(string.Join("; ", device.MachineTags))</dd>
+                                            <dt class="col-sm-3">Machine group</dt><dd class="col-sm-9">@Display(device.MachineGroup)</dd>
+                                            <dt class="col-sm-3">Entra ID joined</dt><dd class="col-sm-9">@(device.IsAadJoined ? "Yes" : "No")</dd>
+                                            <dt class="col-sm-3">Entra ID device id</dt><dd class="col-sm-9">@Display(device.AadDeviceId)</dd>
+                                        </dl>
+                                        <div class="form-text mt-2">
+                                            There is no Active Directory domain or OU here, and that is not a gap in
+                                            this panel: the Defender machine resource exposes no domain at all, and a
+                                            device that is not onboarded has no sensor to report one. The DNS domain
+                                            above is derived from the fully qualified name.
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        @* An empty cell must never be how an operator learns that half the report did not run. *@
+        @if (result.DiscoveryEnrichment != DefenderDiscoveryEnrichmentState.Succeeded)
+        {
+            <div class="alert alert-warning mt-3 py-2">
+                <small>
+                    <strong>Discovery sources, device type, vendor and model are not shown for this run.</strong>
+                    @result.DiscoveryEnrichmentReason
+                </small>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private bool authChecked;
+
+    /// <summary>
+    /// The page's only in-flight flag, and therefore the whole of <see cref="IsBusy"/>. Raised in
+    /// LoadAsync alone, immediately above the try whose finally lowers it again - deliberately NOT
+    /// in OnInitializedAsync, where there is no try to protect it and a raise would be the
+    /// stuck-flag shape that deadens every control on the page.
+    /// </summary>
+    private bool isLoading;
+
+    /// <summary>
+    /// Guards the deferred first load against a second OnAfterRenderAsync. Not a busy signal and
+    /// deliberately not part of IsBusy: it stays true for the life of the circuit, so folding it in
+    /// would disable the page permanently after the first load.
+    /// </summary>
+    private bool loadStarted;
+
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private string? loadError;
+    private DefenderDeviceListResult? result;
+
+    /// <summary>
+    /// The onboarding-status filter, as the API literal rather than the portal label. Operator
+    /// writable, which is why LoadAsync snapshots it before its first await.
+    /// </summary>
+    private string onboardingStatus = DefenderDeviceFilters.CanBeOnboarded;
+
+    /// <summary>Operator-writable Windows-only rule, snapshotted alongside onboardingStatus.</summary>
+    private bool windowsOnly = true;
+
+    /// <summary>Device ids whose detail panel is open. Cleared on every load.</summary>
+    private readonly HashSet<string> expandedDevices = [];
+
+    /// <summary>
+    /// The page-wide busy predicate. One flag today because the page performs exactly one
+    /// operation; a second long-running call adds its flag HERE rather than gating its own button,
+    /// or every other control stays live for the whole of it.
+    /// </summary>
+    private bool IsBusy => isLoading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "DefenderEndpointDevices");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+
+        authChecked = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // authChecked is part of the guard, not decoration: the denied path leaves it false while
+        // NavigateTo is in flight, and an unauthorized visitor must not trigger an API call on the
+        // way out. IsAvailable is the second half - ListDevicesAsync throws on an unset Secret ID,
+        // so an unconfigured module must not reach it at all.
+        if (!firstRender || loadStarted || !authChecked || !DeviceService.IsAvailable)
+            return;
+
+        loadStarted = true;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        // Both filters are operator-writable and the browser's copy of a disabled attribute is one
+        // round trip stale, so the values the operator saw when the click was accepted are captured
+        // here, above the try and above every await. Reading them back afterwards would let the
+        // audit record name one filter set while the service was asked for another.
+        var status = onboardingStatus;
+        var windows = windowsOnly;
+
+        isLoading = true;
+        loadError = null;
+        try
+        {
+            await Task.Yield();
+
+            var loaded = await DeviceService.ListDevicesAsync(new DefenderDeviceFilters(status, windows));
+            result = loaded;
+            expandedDevices.Clear();
+
+            // A refusal is audited as a FAILED lookup carrying its reason. It is not a successful
+            // read of zero devices, and recording it as one would be the blanket-success shape.
+            var complete = loaded.Outcome == DefenderDeviceListOutcome.Complete;
+            SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress,
+                "DefenderEndpointDevices_List", DescribeFilters(status, windows), complete,
+                complete ? null : loaded.RefusalReason,
+                extra: new Dictionary<string, object?>
+                {
+                    ["Outcome"] = loaded.Outcome.ToString(),
+                    ["Devices"] = loaded.Devices.Count,
+                    ["DistinctDevices"] = loaded.DistinctCount,
+                    ["Requests"] = loaded.PagesFetched,
+                    ["Ceiling"] = loaded.Ceiling
+                }));
+        }
+        catch (Exception ex)
+        {
+            // The previous run's table is retracted with the error, not left on screen beside it: a
+            // stale list rendered next to a failure message reads as the answer to the new request.
+            result = null;
+            loadError = ex.Message;
+            Logger.LogError(ex, "Failed to list Defender for Endpoint devices.");
+
+            SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress,
+                "DefenderEndpointDevices_List", DescribeFilters(status, windows), false, ex.Message));
+        }
+        finally
+        {
+            isLoading = false;
+            // The initial load runs from OnAfterRenderAsync, after which Blazor does NOT
+            // auto-render. Without this the spinner stays up and the Load button stays disabled
+            // even though the data has arrived. Harmless on the button-click path.
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleDetail(string deviceId)
+    {
+        if (!expandedDevices.Remove(deviceId))
+            expandedDevices.Add(deviceId);
+    }
+
+    private void SafeAudit(Action write)
+    {
+        try
+        {
+            write();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to write Defender for Endpoint Devices audit record.");
+        }
+    }
+
+    /// <summary>The filters as one audit-target string, from the values captured at entry.</summary>
+    private static string DescribeFilters(string status, bool windowsFilter) =>
+        "onboardingStatus="
+        + (string.IsNullOrWhiteSpace(status) ? "(any)" : status)
+        + ", windowsOnly=" + (windowsFilter ? "true" : "false");
+
+    /// <summary>A dash rather than an empty cell, so a blank never reads as a value.</summary>
+    private static string Display(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "-" : value;
+
+    private static string FormatTime(DateTimeOffset? value) =>
+        value?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-";
+
+    private static string IpList(DefenderDevice device) =>
+        string.Join("; ", device.IpAddresses
+            .Select(entry => entry.IpAddress)
+            .Where(address => !string.IsNullOrWhiteSpace(address))
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+
+    private static string MacList(DefenderDevice device) =>
+        string.Join("; ", device.IpAddresses
+            .Select(entry => entry.MacAddress)
+            .Where(address => !string.IsNullOrWhiteSpace(address))
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+}

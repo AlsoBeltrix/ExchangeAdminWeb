@@ -1,5 +1,6 @@
 using ExchangeAdminWeb.Authorization;
 using ExchangeAdminWeb.Modules;
+using ExchangeAdminWeb.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Infrastructure;
 using System.Reflection;
@@ -14,7 +15,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(28, _catalog.GetAll().Count); // 28 modules (27 operational + 1 config-only)
+        Assert.Equal(29, _catalog.GetAll().Count); // 29 modules (28 operational + 1 config-only)
     }
 
     [Fact]
@@ -147,6 +148,63 @@ public class ModuleCatalogTests
         var module = _catalog.GetById("ServiceHealth")!;
         var field = Assert.Single(module.ConfigFields);
         Assert.Equal("GraphDelineaSecretId", field.Key);
+    }
+
+    [Fact]
+    public void Catalog_HasDefenderEndpointDevicesModule()
+    {
+        var module = _catalog.GetById("DefenderEndpointDevices");
+        Assert.NotNull(module);
+        Assert.Equal("defender-endpoint-devices", module!.Route);
+        Assert.Equal("Infrastructure", module.Category);
+        // Optional module, per the Constitution's optional-module rule: it ships configurable but
+        // not reachable, which is what makes landing it before the live reconnaissance safe.
+        Assert.False(module.EnabledByDefault);
+        Assert.False(module.IsSystemModule);
+        Assert.Equal("1.0.0", module.Version);
+    }
+
+    [Fact]
+    public void Catalog_DefenderEndpointDevices_MainPermissionIsFailClosed()
+    {
+        // Device inventory carrying IP and MAC addresses, exposure levels and a map of which
+        // machines have no sensor is not address-book data, so the 2026-06-30 open-by-default
+        // classification does not transfer (docs/DefenderEndpointDevices-Plan.md, descriptor notes).
+        var module = _catalog.GetById("DefenderEndpointDevices")!;
+        Assert.Equal("DefenderEndpointDevices", module.MainPermission.PolicyAlias);
+        Assert.True(module.MainPermission.FailClosed);
+    }
+
+    [Fact]
+    public void Catalog_DefenderEndpointDevices_HasNoGranularPermissions()
+    {
+        // The module reads and exports and mutates nothing, so there is no second tier to grant.
+        // A granular permission appearing here later means a device ACTION was added - which needs
+        // a wider app-registration grant and its own plan, not a quiet descriptor edit.
+        var module = _catalog.GetById("DefenderEndpointDevices")!;
+        Assert.Empty(module.GranularPermissions);
+    }
+
+    [Fact]
+    public void Catalog_DefenderEndpointDevices_DeclaresItsThreeConfigFields()
+    {
+        // Pinned by key, type and default rather than by count alone: MaxDevices is read at run
+        // time by DefenderEndpointDeviceService.ClampMaxDevices, so renaming it here silently
+        // reverts every deployment to the built-in ceiling.
+        var module = _catalog.GetById("DefenderEndpointDevices")!;
+        Assert.Equal(3, module.ConfigFields.Count);
+
+        var secret = module.ConfigFields.Single(f => f.Key == "GraphDelineaSecretId");
+        Assert.True(secret.Required);
+
+        var maxDevices = module.ConfigFields.Single(f => f.Key == DefenderEndpointDeviceService.MaxDevicesConfigKey);
+        Assert.False(maxDevices.Required);
+        Assert.Equal("20000", maxDevices.DefaultValue);
+
+        var discovery = module.ConfigFields.Single(f => f.Key == "IncludeDiscoverySources");
+        Assert.False(discovery.Required);
+        Assert.Equal(ConfigFieldType.Boolean, discovery.FieldType);
+        Assert.Equal("true", discovery.DefaultValue);
     }
 
     [Fact]
@@ -308,7 +366,8 @@ public class ModuleCatalogTests
         Assert.Contains("IntuneDevicesPrivileged", aliases);
         Assert.Contains("IntuneDevicesEntraDelete", aliases);
         Assert.Contains("ServiceHealth", aliases);
-        Assert.Equal(41, aliases.Count);
+        Assert.Contains("DefenderEndpointDevices", aliases);
+        Assert.Equal(42, aliases.Count);
     }
 
     [Fact]
@@ -443,6 +502,7 @@ public class ModuleCatalogTests
             "BitLockerRecovery",
             "IntuneDevices", "IntuneDevicesDelete", "IntuneDevicesPrivileged", "IntuneDevicesEntraDelete",
             "ServiceHealth",
+            "DefenderEndpointDevices",
             "LicensingUpdates",
             "ADAttributeEditor", "ADAttributeEditorLevel1", "ADAttributeEditorLevel2", "ADAttributeEditorLevel3",
             "AdminSettings",

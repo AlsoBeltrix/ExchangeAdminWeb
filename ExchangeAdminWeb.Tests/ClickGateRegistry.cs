@@ -35,6 +35,7 @@ public static class ClickGateRegistry
         MailboxPermissions,
         CalendarPermissions,
         IntuneDevices,
+        DefenderEndpointDevices,
         GroupManagement,
         M365GroupManagement,
         ConferenceRooms,
@@ -4482,6 +4483,86 @@ public static class ClickGateRegistry
         // keyboard handler of any kind. The forward direction of
         // EveryKeyboardPathIsRegisteredOrRecordedHarmless is what keeps that true - a handler added
         // here later fails the suite and names itself.
+        HarmlessKeyboardPaths = [],
+    };
+
+    /// <summary>
+    /// Defender for Endpoint Devices: registered at birth, with the page's slice (S2 of
+    /// docs/DefenderEndpointDevices-Plan.md), rather than converted afterwards.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The smallest entry in this file, and that is a property of the page rather than of the
+    /// bookkeeping. The module reads and exports and mutates nothing, so there is exactly one
+    /// operation, one in-flight flag and one predicate; there is no staged-confirmation state, so
+    /// nothing belongs in ExcludedFields; there is no banner to dismiss and no per-row action, so
+    /// no control needs an exemption; and every click target is a &lt;button&gt;, so NonButtonTargets
+    /// is empty. Censused by hand against the file rather than inherited from the plan.
+    /// </para>
+    /// <para>
+    /// No keyboard handler of any kind: the filter card carries a select and a checkbox, neither of
+    /// which has an @onkeydown, and there is no free-text box for Enter to submit. KeyboardPaths and
+    /// HarmlessKeyboardPaths are therefore both empty, and the forward direction of
+    /// <see cref="ClickGateTests.EveryKeyboardPathIsRegisteredOrRecordedHarmless"/> is what keeps
+    /// that true if one arrives later.
+    /// </para>
+    /// <para>
+    /// isLoading is raised in LoadAsync alone, deliberately NOT in OnInitializedAsync the way
+    /// ServiceHealth.razor raises its own flag. ServiceHealth is unconverted so nothing checks it;
+    /// here that shape would be a raise with no try behind it, which is the stuck-flag defect
+    /// <see cref="ClickGateTests.EveryRegisteredFlagIsLoweredInAFinally"/> exists for - and with a
+    /// page-wide predicate a stuck flag does not grey one button, it deadens the page. The first
+    /// render's spinner is keyed on <c>result == null</c> instead, which costs nothing because the
+    /// deferred load starts in OnAfterRenderAsync on that same render.
+    /// </para>
+    /// <para>
+    /// The two filters are the whole of PostAwaitLiveReads. Both are operator-writable and the
+    /// browser's copy of a disabled attribute is one round trip stale, so a change landing in the
+    /// gap between the click and the render would otherwise let the audit record name one filter
+    /// set while the service was asked for another - the CapturedAtEntry shape, exactly as
+    /// DhcpAuthorization's three form fields.
+    /// </para>
+    /// </remarks>
+    private static PageGateEntry DefenderEndpointDevices => new()
+    {
+        Page = "DefenderEndpointDevices.razor",
+        ExpectedLineCount = 401,
+
+        Predicates =
+        [
+            new PredicateScope("IsBusy",
+                ["isLoading"],
+                AppliesWhen: "the whole page"),
+        ],
+
+        NonButtonTargets = [],
+
+        DomSyncedControls =
+        [
+            new DomSyncedControl(65, "@bind=\"onboardingStatus\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(75, "@bind=\"windowsOnly\"", "input", "disabled=\"@IsBusy\""),
+        ],
+
+        UngatedDomSyncedControls = [],
+
+        PostAwaitLiveReads =
+        [
+            new PostAwaitLiveRead("LoadAsync", "onboardingStatus", "status",
+                SnapshotShape.CapturedAtEntry,
+                "the onboarding status the operator saw when the click was accepted is the filter "
+                + "that must be sent AND the filter the audit record names. Read live after the "
+                + "await, a change landing in the stale-attribute window would desync the audit row "
+                + "from the request that produced the list on screen"),
+
+            new PostAwaitLiveRead("LoadAsync", "windowsOnly", "windows",
+                SnapshotShape.CapturedAtEntry,
+                "same obligation on the other filter. The Windows rule is applied to the fetched "
+                + "set, so reading it live would let the rendered list be narrowed by one value "
+                + "while the audit record claims another"),
+        ],
+
+        KeyboardPaths = [],
+
         HarmlessKeyboardPaths = [],
     };
 }

@@ -745,6 +745,39 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "DefenderEndpointDevices",
+            DisplayName = "Defender for Endpoint Devices",
+            Description = "List and export Microsoft Defender for Endpoint devices, including devices discovered on the network that can be onboarded but are not.",
+            Route = "defender-endpoint-devices",
+            // Reused deliberately, same reason as IntuneDevices below and BitLockerRecovery above:
+            // no device or shield icon class exists in wwwroot/app.css today and
+            // tools/validate-module-package.ps1 rejects an icon class it cannot find. Adding one is
+            // a separate change.
+            IconCss = "bi bi-gear-fill-nav-menu",
+            Category = ModuleCategories.Infrastructure,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            Version = "1.0.0",
+            // One permission, no granular tier: the module reads and exports and mutates nothing.
+            MainPermission = new(
+                "Access",
+                "DefenderEndpointDevices",
+                "Open the module and view or export the Defender for Endpoint device inventory, including network-discovered devices that are not onboarded, with their IP and MAC addresses, operating system and risk level. Read-only - grants no ability to change anything in Defender.",
+                FailClosed: true),
+            GranularPermissions = [],
+            ConfigFields = [
+                new("GraphDelineaSecretId", "Graph App Delinea Secret ID",
+                    "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields (the app registration needs Machine.Read.All on WindowsDefenderATP, plus ThreatHunting.Read.All on Microsoft Graph if discovery sources are wanted)"),
+                new("MaxDevices", "Maximum Devices",
+                    "Safety ceiling on one run. The module pages the API until the matching set is complete; if more devices match than this, it REFUSES the report rather than returning a partial one. Defaults to 20000. Raise it, or narrow the filters.",
+                    Required: false, DefaultValue: "20000"),
+                new("IncludeDiscoverySources", "Include Discovery Sources",
+                    "Run the advanced hunting query that supplies the discovery sources, device type, vendor and model columns. Turn off when the app registration does not hold ThreatHunting.Read.All.",
+                    Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean)
+            ]
+        },
+        new()
+        {
             Id = "IntuneDevices",
             DisplayName = "Intune Devices",
             Description = "Search Intune managed devices, view device detail, and delete, retire or wipe a device.",
