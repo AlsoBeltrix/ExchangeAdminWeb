@@ -5,6 +5,47 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-21 - Queue 6: the owner OVERRULED the do-not-containerize recommendation
+
+Status: Active. Supersedes the verdict in `docs/Containerization-Feasibility.md`, which stands as
+the record of the analysis but no longer as the recommendation.
+
+Verbatim: *"we need to containerize the app and it needs to work. fix."* The recommendation against
+it was put to the owner first, with its blocker named, and they reaffirmed. **That is their call and
+it is now the requirement.** Do not re-litigate it; the feasibility document's job from here is to
+supply the constraints, not the conclusion.
+
+**What the analysis established that still binds, regardless of the verdict:**
+
+1. **The Delinea bootstrap credential is the blocker, and it is a code change.** The app's own API
+   username and key for Delinea live in **Windows Credential Manager**, a per-user store
+   (`Services/CredentialManagerService.cs` uses the WinRT `PasswordVault`;
+   `Services/DelineaService.LoadCredentials` reads it at construction and fails closed when empty).
+   A container has no user profile to read it from, and baking it into an image would ship a
+   credential, which the Constitution's credential-isolation rule forbids. **The fix is a provider
+   seam**: read the bootstrap credential from an environment variable or a mounted secret file,
+   keeping Credential Manager as the fallback so the existing IIS deployment is untouched. This is
+   also why the csproj carries an OS-versioned TFM and why both deploy scripts set
+   `loadUserProfile`.
+2. **Windows containers, not Linux** - `System.DirectoryServices` and the hosted Exchange Online
+   PowerShell module force it, independently of the credential change.
+3. **Windows Authentication needs a gMSA and a credential spec**, and containerised means Kestrel
+   rather than IIS, which means **Negotiate and therefore SPNs registered in the forest**.
+   `deploy.ps1:381` currently removes the Negotiate provider specifically to force NTLM and avoid
+   SPN registration; Kestrel cannot reproduce that, so the SPN work the present deployment was
+   designed to avoid becomes mandatory. **This needs the owner's AD team and is not ours to do.**
+4. **The shared SQLite config database guard would falsely PASS.** `ConfigStorePath.cs:38-43`
+   refuses a UNC path because SQLite locking is unreliable over SMB - but SMB global mapping
+   presents the share as a drive letter, so the guard accepts it while the hazard is unchanged.
+5. **`config/exchangeadmin-jobs.db`, `-usage.db` and `logs/` land in container scratch space**,
+   which is discarded on stop.
+
+**Still unanswered and it changes the design:** where "elsewhere" is. A container in the same forest
+with a gMSA can do the whole job; one with no line of sight to on-prem AD and Exchange cannot do the
+AD, on-prem Exchange or DHCP work at all - that is a property of the network, not a design choice.
+The plan proceeds on **same forest, gMSA-joined** as the default because it is the only shape in
+which the app's features work, and says so explicitly rather than assuming it silently.
+
 ### 2026-09-21 - Owner answers on queue items 4, 5 and 8
 
 Status: Active. Settled in conversation on 2026-09-21, in the owner's own words where quoted.
