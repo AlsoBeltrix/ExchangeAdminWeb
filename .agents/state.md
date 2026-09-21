@@ -16,29 +16,38 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   `.agents/push-policy.md` and the Token Budget one-slice-one-session rule. 32 commits, both
   remotes level, every gate green at every commit. Per-item outcome:
   - **Queue 9, click-gating: TIER 1 IS COMPLETE, all nine pages.** See the entry below.
-  - **Queue 8, Defender for Endpoint** - `docs/DefenderEndpointDevices-Plan.md`, codex consensus
-    after three rounds, `Status: Draft`. **SLICE S1 IS IMPLEMENTED** (`4835942`): the module-local
-    API client, the device service, the paging completion rule and 59 tests. It is call-free by
-    design - no descriptor, no page, no route, nothing user-reachable - which is exactly why it
-    could ship without the owner. `Program.cs` is the only shared file touched and the plan
-    pre-clears it as additive module registration, so no base app bump.
-    **S2 is blocked on open question 6, and it is a one-word answer:** the display name sets the
-    nav label, the **route** and the **section-access alias**, so it is not cosmetic and it is the
-    owner's to pick. S2 creates the config page, so until it exists there is nowhere to enter the
-    Secret ID even once the registration is made - answering Q6 unblocks the most.
-    **Revision 4 of the plan records a tension S1 surfaced:** R1(g) says no multi-page behaviour
-    ships that it has not observed, but that gate sits between S2 and S3 while S2 ships a reachable
-    page. Proposed resolution, not a ruling: S2 ships `EnabledByDefault = false`.
-    **Still blocked on the owner:** the app registration is theirs to create, and open question 1
-    decides whether slice S4 exists at all.
-    Microsoft Graph has NO Defender device-inventory resource, so this uses the WindowsDefenderATP
-    API. `Machine.Read.All` alone covers the device list; **discovery sources additionally need
-    `ThreatHunting.Read.All`, which is tenant-wide - it reads every advanced-hunting table - and
-    needs a Privileged Role Administrator to consent.** "Can be onboarded" is the portal label;
-    the API literal is `CanBeOnboarded`. **AD domain and OU membership are NOT obtainable** - the
-    machines resource has no domain property, only the FQDN.
-  - **Queue 4, trace vs header-analysis permissions** - `docs/MessageTracePermissionSplit-Plan.md`,
-    **codex consensus after three rounds**, `Status: Draft`. Blocked on the owner's question 1:
+  - **Queue 8, Defender for Endpoint - COMPLETE AND REVIEWED. The owner made it P1 on 2026-09-21
+    and it is finished.** `docs/DefenderEndpointDevices-Plan.md`, `Status: Implemented, unproven
+    against the live service`. All five slices landed: S1 `4835942` (API client, models, service,
+    paging), S2 `a4facc6` (descriptor, page, three config fields), S4 `8f2aa37` (discovery-sources
+    enrichment), S3 `d4993f6` (CSV export, 27 columns), S5 `bb37bc9` (`docs/DefenderEndpointDevices.md`
+    and the README section). Suite **2925 passed / 0 failed / 3 skipped**. Module `1.0.0`, **no base
+    app bump** - `ExchangeAdminWeb.csproj` is byte-identical across every slice, verified by diff
+    rather than assumed.
+    **Codex reviewed the finished module: round 1 `unsound` with two findings, round 2 `sound` with
+    none** (`95668c5` closed them; `.agents/review/q8-module*.result.json`). Round 1 **cleared the two
+    properties the design exists to hold** - no path renders or exports a short device list as
+    complete, and no page or CSV blank can mean a failed enrichment run.
+    The HIGH finding is worth remembering: **the call site's own comment convicted the code.** It
+    said enrichment failure "must never take the page down"; the method handled a null client and a
+    status-bearing result and nothing else, while the credential read throws three ways and the token
+    request throws on any non-success - so a *completed* inventory was replaced by a page-wide
+    failure. Fixed with two narrow try blocks filtered to five named types, deliberately **not** a
+    blanket catch: the merge code sits outside them, because a bug that greys five columns and blames
+    Microsoft is a bug nobody finds.
+    **Still the owner's, and nothing in the code can substitute:** create the app registration, obtain
+    BOTH consents (`Machine.Read.All` on WindowsDefenderATP; `ThreatHunting.Read.All` on Graph, which
+    needs a **Privileged Role Administrator or Global Administrator** - an Application Administrator
+    cannot consent Graph app roles), create the Delinea record with fields named exactly `Tenant ID`,
+    `Application ID`, `Client Secret` and no checkout workflow, enter its Secret ID on the module's
+    config page, enable the module (it ships disabled) and grant the section-access group.
+    **Then two gates that have never run:** R1, the live reconnaissance pass - no code here has ever
+    spoken to Microsoft - and the manual acceptance checklist. R1's open items and the fallback that
+    shipped for each are listed in the module doc; the two that matter are whether `ipAddresses` comes
+    back populated (the IP and MAC columns shipped ahead of that answer, Revision 7 carries the undo)
+    and whether `DiscoverySources` arrives as a JSON string or an array (both shapes handled,
+    Revision 6). Plan questions Q2-Q5 remain unanswered and the shipped behaviour in each case is the
+    plan's proposal, not a ruling.
     copy today's `MessageTrace` groups onto the new alias, or re-grant deliberately. **Deploy
     hazard, stated first in the plan on purpose:** a new fail-closed alias denies EVERY operator
     including the owner until a group is stored against it, and the alias cannot be granted before
