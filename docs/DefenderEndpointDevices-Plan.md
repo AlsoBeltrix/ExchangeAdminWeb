@@ -1406,3 +1406,96 @@ out rather than left to the merge code. Add it to R1's list if that gate is stil
 within a run rather than sharing the listing's read. The service is a singleton, so sharing would
 mean holding a credential in a field - which is how a rotated client secret keeps failing until the
 app pool recycles. The cost is one extra Secret Server round trip per run.
+
+# Revision 7 - S3 implemented, and the R1(e) decision taken without R1, 2026-09-21
+
+The CSV export shipped. **S3 ran BEFORE R1**, which the plan gates it behind, and the rest of this
+section is the record of why that was safe and of the one decision it forced.
+
+**Only R1(e) touches S3, and its answer was pre-empted deliberately.** R1's other questions are
+about the listing - whether `CanBeOnboarded` devices come back at all, the casing of
+`onboardingStatus`, the `osPlatform` values present, server-side `startswith`, how close this
+tenant runs to the ceiling, and the paging contract. Not one of them changes a column. R1(e) does:
+it asks whether `ipAddresses` is populated on list responses, and the plan says that if it is not,
+`IpAddresses` and `MacAddresses` leave the CSV before S3 writes it.
+
+**Decision taken with the slice, recorded here so it does not read as an oversight: both columns
+are IN.** It was not the owner's call and is not presented as one - it is the implementing slice's,
+and R1(e) can still overturn it. The reasoning is asymmetric cost. If R1(e) comes back empty,
+removing two columns from the header list and two cells from the projection is a five-line revision
+with a test to update. If they had been
+left out and R1(e) comes back populated, the module would have shipped, been documented in S5, and
+been used - without the MAC addresses that are the only way to identify a discovered device that
+has no name yet, and which the machines API hands over for free alongside the IPs it was asked for.
+The columns are written from `ipAddresses[].ipAddress` and distinct `ipAddresses[].macAddress`, and
+an absent collection parses to empty rather than throwing (S1), so the empty answer costs two blank
+columns until someone deletes them. **If R1(e) comes back empty, delete `IpAddresses` and
+`MacAddresses` from `BuildCsv`'s header and projection and from `ExpectedHeader` and the indices in
+`DefenderEndpointDevicesCsvTests`, and record it as Revision 8.**
+
+**Twenty-seven columns, in the plan's order, unchanged from the "CSV export" table.** The header is
+asserted verbatim in `DefenderEndpointDevicesCsvTests.ExpectedHeader` rather than derived from the
+code, so a column moved in the page has to be moved by a human who can check it against this file.
+
+**`BuildCsv` takes a second argument the plan's bullet did not name, and it is load-bearing.** The
+bullet says "a `static internal` method taking the row list". It takes the row list AND the run's
+`DefenderDiscoveryEnrichmentState`, because the five enrichment columns cannot be rendered from a
+device: an empty `DiscoverySources` means "this device has no value" on a succeeded run and "NO
+device has one, the query never ran or failed" on any other, and only the RUN knows which. That is
+the same reason Revision 6 put the state on the result rather than on the device. Passing it in is
+also what lets the two readings be proven apart by a test with no page instance.
+
+**How a non-succeeded enrichment reads in the file, and the one way it deviates from the screen.**
+Any state but `Succeeded` writes `(unavailable)` into all five columns, from
+`DefenderEndpointDeviceService.EnrichmentUnavailable` - the same constant the page uses, so the file
+and the screen cannot describe the same run differently, and a test asserts the CSV cell equals
+`DescribeEnrichmentCell`'s output for the same state. The deviation: on a **succeeded** run a
+genuinely empty value is written blank, where the screen shows "-". `CsvExport` neutralises a
+leading `-` into `'-` (`Services/CsvExport.cs:50`), so the screen's placeholder would reach a
+spreadsheet as a literal apostrophe-dash, and it would be the only column in the file carrying a
+placeholder at all. Nothing is lost: once `(unavailable)` owns the failed-run meaning, a blank can
+only mean the run worked and that device had no value. The direction that matters - a blank
+standing in for a run that never executed - cannot happen.
+
+**Two formatting decisions the plan's table did not specify.** The timestamp columns are NAMED
+`FirstSeenUtc` and `LastSeenUtc`, so they are written in UTC with the `u` format - sortable, and
+always invariant-culture, so an exported file does not change shape with the host's locale. The
+table above them deliberately still shows local time, because that is what the operator reading the
+screen wants. `IsAadJoined` renders lowercase `true`/`false`, matching `NamedLocations.BuildCsv`.
+
+**The export is offered from the complete branch and nowhere else, and that is now asserted.** A
+refusal carries zero devices by construction, so an export offered from that state would write a
+header-only file - indistinguishable from "no devices matched" to whoever opens it, and the refusal
+banner that explained it does not travel with the file.
+`DefenderEndpointDevices_OffersNoExportFromTheRefusalBranch` brackets the single button between the
+first element of the complete branch and the device table's closing tag, which is a span entirely
+inside that branch; an anchor below the branch alone would also be satisfied by a button placed
+after the whole if/else chain. Honest limitation, stated as everywhere else in this file: that is
+textual position in the markup, not a render.
+
+**Click gating, updated with the slice rather than after it.** `isDownloadingCsv` is the second
+member of `IsBusy`. The button carries two registry obligations a CSV control on a page-wide
+predicate attracts: an `AnnotatedControl` at line 172, because `ExportableDevices.Count == 0` is a
+precondition a mechanical rewrite to the bare predicate would delete, and a `RaiseAfterEarlyReturn`,
+because the raise must stay below the empty-set return that no `finally` covers - on a page-wide
+predicate that raise would not grey one button, it would deaden the page. `ExpectedLineCount` moved
+430 -> 612 and the two `DomSyncedControls` moved 65/75 -> 66/76, because the page gained
+`@inject IJSRuntime JS` above them.
+
+**Two stale line references in this file, found by following them.** S3's bullet cites
+`DhcpAuthorization.razor:174` as the `BuildCsv` pattern; it is at **187**. The "CSV export" section
+cites `BlockedSenders.razor:236-256` for the download-and-audit shape; that method now runs
+**230-256**. Both patterns are still correct - only the coordinates drifted. Recorded rather than
+silently corrected, because this file is the thing being read by the next slice.
+
+**Confirmed against the plan and unchanged by this slice:** module `1.0.0` in
+`Modules/ModuleCatalog.cs:760`, and **no base app version bump** - `ExchangeAdminWeb.csproj` is
+byte-identical (`git diff --stat` empty) and stays at 2.21.1 / 2.21.1.0. `Program.cs`,
+`Services/GraphTokenClient.cs`, `Services/DefenderEndpointDeviceService.cs`,
+`Services/DefenderApiClient.cs` and `Models/DefenderDeviceModels.cs` were all untouched: S3 is the
+page, its tests, and the click-gate registry entry.
+
+**Still outstanding, all of it the owner's:** the app registration, the two consents, the Delinea
+secret and its Secret ID, then R1 on dev - including R1(e) above and the `DiscoverySources`
+serialisation question Revision 6 added. S5 (documentation and the README section) is the only slice
+left, and it is not this one's: S3 was the last code slice.

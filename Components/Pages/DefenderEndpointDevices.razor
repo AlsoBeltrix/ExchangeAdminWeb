@@ -9,6 +9,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ILogger<DefenderEndpointDevices> Logger
+@inject IJSRuntime JS
 
 <PageTitle>Defender for Endpoint Devices</PageTitle>
 
@@ -151,14 +152,24 @@
         }
 
         <div class="card">
-            <div class="card-header">
-                <strong>@result.Devices.Count device(s)</strong>
-                <span class="text-muted ms-2">
-                    <small>
-                        @result.DistinctCount distinct device(s) returned by the API in
-                        @result.PagesFetched request(s), against a ceiling of @result.Ceiling.
-                    </small>
-                </span>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>@result.Devices.Count device(s)</strong>
+                    <span class="text-muted ms-2">
+                        <small>
+                            @result.DistinctCount distinct device(s) returned by the API in
+                            @result.PagesFetched request(s), against a ceiling of @result.Ceiling.
+                        </small>
+                    </span>
+                </div>
+                @* The export button lives INSIDE the complete branch and nowhere else, which is the
+                   whole of how the page keeps the promise the result type makes. A refusal carries
+                   zero devices by construction, so a button rendered above this branch would offer
+                   a header-only file as the answer to a question that was never answered - and a
+                   CSV leaves the app, where the refusal banner that would have explained it does
+                   not travel with it. The Count clause is a precondition, not a busy condition: it
+                   is OR-ed in front of the predicate and must never be replaced by it. *@
+                <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadCsvAsync" disabled="@(IsBusy || ExportableDevices.Count == 0)">Download CSV</button>
             </div>
             <div class="card-body p-0">
                 <table class="table table-sm mb-0">
@@ -252,6 +263,14 @@
     private bool isLoading;
 
     /// <summary>
+    /// In flight for the whole of one CSV export, and a member of <see cref="IsBusy"/> for the same
+    /// reason isLoading is: a load landing while the file is being served would replace the rows
+    /// under the audit record. Raised BELOW DownloadCsvAsync's empty-set return - see the comment
+    /// there - because an early return leaves no finally behind it.
+    /// </summary>
+    private bool isDownloadingCsv;
+
+    /// <summary>
     /// Guards the deferred first load against a second OnAfterRenderAsync. Not a busy signal and
     /// deliberately not part of IsBusy: it stays true for the life of the circuit, so folding it in
     /// would disable the page permanently after the first load.
@@ -276,11 +295,25 @@
     private readonly HashSet<string> expandedDevices = [];
 
     /// <summary>
-    /// The page-wide busy predicate. One flag today because the page performs exactly one
-    /// operation; a second long-running call adds its flag HERE rather than gating its own button,
-    /// or every other control stays live for the whole of it.
+    /// The page-wide busy predicate. Two flags, and the second one is here rather than gating its
+    /// own button for the reason the ruling gives: a control left live during someone else's
+    /// operation can be clicked, accepted, and then applied to state that has been replaced
+    /// underneath it. A third long-running call adds its flag HERE too.
     /// </summary>
-    private bool IsBusy => isLoading;
+    private bool IsBusy => isLoading || isDownloadingCsv;
+
+    /// <summary>
+    /// The rows the export may write - the complete set, or nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// Re-derived from the OUTCOME rather than taken from <c>result.Devices</c>, although the result
+    /// type already guarantees a refusal carries zero devices. The guarantee lives in a factory one
+    /// file away; this expression is what makes "a refusal exports nothing" true at the point of
+    /// use, and it is what the button's own Count clause reads, so the control that is offered and
+    /// the rows that are written cannot come apart.
+    /// </remarks>
+    private IReadOnlyList<DefenderDevice> ExportableDevices =>
+        result is { Outcome: DefenderDeviceListOutcome.Complete } complete ? complete.Devices : [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -376,6 +409,123 @@
             expandedDevices.Add(deviceId);
     }
 
+    /// <summary>
+    /// The CSV projection - the twenty-seven columns of docs/DefenderEndpointDevices-Plan.md
+    /// "CSV export", in that order. Static and argument-fed so tests call it without a page
+    /// instance (DhcpAuthorization.razor's BuildCsv is the pattern), and over
+    /// <see cref="CsvExport.Write"/> so quoting and spreadsheet-formula neutralisation stay the
+    /// shared writer's job rather than being re-implemented here.
+    /// </summary>
+    /// <param name="rows">
+    /// The devices to write. By construction the COMPLETE matching set: the only caller is
+    /// <see cref="ExportableDevices"/>, and a run that could not prove it had seen every matching
+    /// device refuses and carries none. There is no truncation marker because there is no truncated
+    /// state to mark.
+    /// </param>
+    /// <param name="enrichment">
+    /// The run's enrichment state, passed in rather than read off the devices because it cannot be
+    /// read off them. An empty DiscoverySources means "this device has no value" on a succeeded run
+    /// and "NO device has one, the hunting query never ran or failed" on any other, and only the RUN
+    /// knows which. A blank cell reporting a failed run is Known Failure Class 2 in
+    /// .agents/repo-guidance.md; taking the state as an argument is what lets a test prove the two
+    /// readings apart without a page.
+    /// </param>
+    internal static string BuildCsv(
+        IReadOnlyList<DefenderDevice> rows,
+        DefenderDiscoveryEnrichmentState enrichment)
+    {
+        var header = new List<string>
+        {
+            "DeviceId", "ComputerDnsName", "DnsDomain", "OnboardingStatus",
+            "OsPlatform", "OsVersion", "OsBuild", "OsArchitecture", "HealthStatus",
+            "LastIpAddress", "LastExternalIpAddress", "IpAddresses", "MacAddresses",
+            "FirstSeenUtc", "LastSeenUtc", "RiskScore", "ExposureLevel", "DeviceValue",
+            "MachineTags", "MachineGroup", "IsAadJoined", "AadDeviceId",
+            "DiscoverySources", "DeviceType", "DeviceCategory", "Vendor", "Model",
+        };
+
+        var csvRows = rows.Select(device => (IReadOnlyList<string>)new List<string>
+        {
+            device.Id,
+            device.ComputerDnsName,
+            device.DnsDomain,
+            device.OnboardingStatus,
+            device.OsPlatform,
+            device.OsVersion,
+            device.OsBuild,
+            device.OsArchitecture,
+            device.HealthStatus,
+            device.LastIpAddress,
+            device.LastExternalIpAddress,
+            IpList(device),
+            MacList(device),
+            FormatUtc(device.FirstSeen),
+            FormatUtc(device.LastSeen),
+            device.RiskScore,
+            device.ExposureLevel,
+            device.DeviceValue,
+            string.Join("; ", device.MachineTags),
+            device.MachineGroup,
+            device.IsAadJoined ? "true" : "false",
+            device.AadDeviceId,
+            ExportEnrichmentCell(enrichment, device.DiscoverySources),
+            ExportEnrichmentCell(enrichment, device.DeviceType),
+            ExportEnrichmentCell(enrichment, device.DeviceCategory),
+            ExportEnrichmentCell(enrichment, device.Vendor),
+            ExportEnrichmentCell(enrichment, device.Model),
+        });
+
+        return CsvExport.Write(header, csvRows);
+    }
+
+    /// <summary>
+    /// Serves the rows currently on screen as a timestamped CSV and audits the export.
+    /// </summary>
+    private async Task DownloadCsvAsync()
+    {
+        // Guard first, snapshot second, raise third, and every step of that order is load-bearing.
+        //
+        // The raise sits BELOW the empty-set return because the return leaves no finally behind it,
+        // and isDownloadingCsv is a member of IsBusy: a raise above the guard would not grey one
+        // button, it would deaden every control on the page for the life of the circuit, the first
+        // time anyone clicked Download CSV with nothing to export.
+        //
+        // The rows and the enrichment state are captured into locals because LoadAsync REPLACES
+        // result wholesale rather than mutating it. Without the capture, a load landing while the
+        // interop await is in flight would put a different row count in the audit record than the
+        // file the operator actually received, and could flip the enrichment state between the
+        // cells that were written and the cells the operator is told to expect.
+        var rows = ExportableDevices;
+        if (rows.Count == 0)
+            return;
+
+        var enrichment = result?.DiscoveryEnrichment ?? DefenderDiscoveryEnrichmentState.NotAttempted;
+
+        isDownloadingCsv = true;
+        await Task.Yield();
+
+        try
+        {
+            var csv = BuildCsv(rows, enrichment);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+            var base64 = Convert.ToBase64String(bytes);
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            await JS.InvokeVoidAsync("downloadFile",
+                $"DefenderEndpointDevices_{timestamp}.csv", "text/csv", base64);
+
+            // The bytes are already on their way to the browser by the time this runs, so an audit
+            // failure must not be allowed to fail the export: the operator HAS the file, and
+            // throwing here would report a completed disclosure as a failed one. SafeAudit logs it
+            // instead, which is the same bargain the listing path makes.
+            SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv",
+                "DefenderEndpointDevices", $"{rows.Count} rows", true));
+        }
+        finally
+        {
+            isDownloadingCsv = false;
+        }
+    }
+
     private void SafeAudit(Action write)
     {
         try
@@ -413,8 +563,40 @@
         DefenderEndpointDeviceService.DescribeEnrichmentCell(
             result?.DiscoveryEnrichment ?? DefenderDiscoveryEnrichmentState.NotAttempted, value);
 
+    /// <summary>
+    /// One discovery-source cell as the CSV writes it: the same rule the page's
+    /// <see cref="EnrichmentCell"/> applies - anything but a succeeded run reads "(unavailable)" -
+    /// and the same constant, so the file and the screen can never say different things about the
+    /// same run.
+    /// </summary>
+    /// <remarks>
+    /// It differs from the screen's renderer in exactly one respect, deliberately: a genuinely
+    /// empty value on a SUCCEEDED run is written as an empty cell rather than the screen's "-".
+    /// CsvExport neutralises a leading '-' into "'-", so the screen's placeholder would reach a
+    /// spreadsheet as a literal apostrophe-dash, and it would be the only column in the file
+    /// carrying a placeholder at all - every other blank here is written blank. Nothing is lost by
+    /// that, because once "(unavailable)" owns the failed-run meaning an empty cell can only mean
+    /// the run worked and this device had no value. What must NOT happen is the other way round: a
+    /// blank standing in for a run that never executed.
+    /// </remarks>
+    private static string ExportEnrichmentCell(DefenderDiscoveryEnrichmentState state, string value) =>
+        state == DefenderDiscoveryEnrichmentState.Succeeded
+            ? value
+            : DefenderEndpointDeviceService.EnrichmentUnavailable;
+
     private static string FormatTime(DateTimeOffset? value) =>
         value?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-";
+
+    /// <summary>
+    /// The CSV's two timestamp columns. They are NAMED FirstSeenUtc and LastSeenUtc, so they are
+    /// written in UTC whatever the server's zone - unlike the table, which shows local time to the
+    /// operator reading it. "u" is the sortable universal format and always formats with the
+    /// invariant culture, so an exported file does not change shape with the host's locale.
+    /// Absent is written blank rather than with the table's dash: every other blank in this file is
+    /// blank, and a placeholder in a timestamp column parses as data.
+    /// </summary>
+    private static string FormatUtc(DateTimeOffset? value) =>
+        value?.ToUniversalTime().ToString("u") ?? "";
 
     private static string IpList(DefenderDevice device) =>
         string.Join("; ", device.IpAddresses

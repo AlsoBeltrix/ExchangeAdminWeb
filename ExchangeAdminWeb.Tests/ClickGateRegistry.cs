@@ -4492,12 +4492,23 @@ public static class ClickGateRegistry
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The smallest entry in this file, and that is a property of the page rather than of the
-    /// bookkeeping. The module reads and exports and mutates nothing, so there is exactly one
-    /// operation, one in-flight flag and one predicate; there is no staged-confirmation state, so
-    /// nothing belongs in ExcludedFields; there is no banner to dismiss and no per-row action, so
-    /// no control needs an exemption; and every click target is a &lt;button&gt;, so NonButtonTargets
-    /// is empty. Censused by hand against the file rather than inherited from the plan.
+    /// One of the smallest entries in this file, and that is a property of the page rather than of
+    /// the bookkeeping. The module reads and exports and mutates nothing, so there are two
+    /// operations - the listing and the export - under one page-wide predicate; there is no
+    /// staged-confirmation state, so nothing belongs in ExcludedFields; there is no banner to
+    /// dismiss and no per-row action that outlives a load, so no control needs an exemption; and
+    /// every click target is a &lt;button&gt;, so NonButtonTargets is empty. Censused by hand
+    /// against the file rather than inherited from the plan.
+    /// </para>
+    /// <para>
+    /// S3 added the export and with it isDownloadingCsv, the second member of IsBusy. It carries
+    /// both obligations a CSV button on a page-wide predicate attracts: an AnnotatedControl, because
+    /// the empty-set clause in its gate is a precondition that a mechanical rewrite to the bare
+    /// predicate would delete, and a RaiseAfterEarlyReturn, because the raise must stay below the
+    /// empty-set return that no finally covers. The button is registered at 172, INSIDE the complete
+    /// branch: a refusal renders no table and offers no export, which is the page's half of T3 and
+    /// is why no exemption or ungated entry exists for a refusal-state control - there is no such
+    /// control.
     /// </para>
     /// <para>
     /// No keyboard handler of any kind: the filter card carries a select and a checkbox, neither of
@@ -4526,12 +4537,12 @@ public static class ClickGateRegistry
     private static PageGateEntry DefenderEndpointDevices => new()
     {
         Page = "DefenderEndpointDevices.razor",
-        ExpectedLineCount = 430,
+        ExpectedLineCount = 612,
 
         Predicates =
         [
             new PredicateScope("IsBusy",
-                ["isLoading"],
+                ["isLoading", "isDownloadingCsv"],
                 AppliesWhen: "the whole page"),
         ],
 
@@ -4539,11 +4550,23 @@ public static class ClickGateRegistry
 
         DomSyncedControls =
         [
-            new DomSyncedControl(65, "@bind=\"onboardingStatus\"", "select", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(75, "@bind=\"windowsOnly\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(66, "@bind=\"onboardingStatus\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(76, "@bind=\"windowsOnly\"", "input", "disabled=\"@IsBusy\""),
         ],
 
         UngatedDomSyncedControls = [],
+
+        AnnotatedControls =
+        [
+            new AnnotatedControl(172, "@onclick=\"DownloadCsvAsync\"",
+                ["ExportableDevices.Count == 0"],
+                RendersOnlyWhen:
+                "only inside the complete branch - a refusal renders no table and offers no export "
+                + "at all, which is the page's half of T3 and the reason the clause below is about "
+                + "an EMPTY complete run rather than about refusals. It is a precondition and not a "
+                + "busy condition: a mechanical rewrite to the bare predicate would offer a "
+                + "header-only file, and a CSV leaves the app without the screen that explained it"),
+        ],
 
         PostAwaitLiveReads =
         [
@@ -4559,6 +4582,15 @@ public static class ClickGateRegistry
                 "same obligation on the other filter. The Windows rule is applied to the fetched "
                 + "set, so reading it live would let the rendered list be narrowed by one value "
                 + "while the audit record claims another"),
+        ],
+
+        RaiseMustFollowEarlyReturn =
+        [
+            new RaiseAfterEarlyReturn("DownloadCsvAsync", "isDownloadingCsv", "rows.Count == 0",
+                "the early return leaves no finally behind it, so a raise above the guard is never "
+                + "lowered. isDownloadingCsv is a member of IsBusy, so it would not grey one button "
+                + "- it would deaden every control on this page, permanently, the first time anyone "
+                + "hit Download CSV on a complete run that matched no devices."),
         ],
 
         KeyboardPaths = [],
