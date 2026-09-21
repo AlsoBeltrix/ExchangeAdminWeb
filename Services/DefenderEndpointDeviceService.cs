@@ -430,21 +430,92 @@ public sealed class DefenderEndpointDeviceService
         if (!IncludeDiscoverySources)
             return DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.SwitchedOff);
 
-        var client = await _huntingClientFactory();
+        DefenderApiClient? client;
+        try
+        {
+            client = await _huntingClientFactory();
+        }
+        catch (Exception ex) when (IsHuntingSideFailure(ex))
+        {
+            // BuildClientAsync throws three ways - no Secret ID configured, the secret unreadable,
+            // the fields incomplete - and the Secret Server call it makes can fail on its own. None
+            // of those is a fact about the device list, which has ALREADY completed by the time this
+            // runs. The reason is the fixed constant and never ex.Message: those messages name a
+            // Secret ID and a Secret Server condition, and this string is rendered to an operator.
+            return DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.CredentialsUnavailable);
+        }
+
         if (client == null)
             return DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.CredentialsUnavailable);
 
-        var response = await client.PostWithStatusAsync(HuntingEndpoint, new { Query = HuntingQuery });
+        DefenderApiResult response;
+        try
+        {
+            response = await client.PostWithStatusAsync(HuntingEndpoint, new { Query = HuntingQuery });
+        }
+        catch (Exception ex) when (IsHuntingSideFailure(ex))
+        {
+            // PostWithStatusAsync turns a STATUS into a result, but a request that never received a
+            // status still throws: DefenderApiClient.cs throws on a token request that came back
+            // non-2xx, and its send catches only TaskCanceledException, so a transport failure or an
+            // unreadable token body escapes it. Fixed constant again - the token exception carries a
+            // status and a transport exception can carry a host name and a certificate subject.
+            return DefenderDiscoveryEnrichment.Failed(DefenderDiscoveryReasons.SendFailed);
+        }
 
         if (response.Document == null)
             return DefenderDiscoveryEnrichment.Failed(DescribeEnrichmentFailure(response));
 
         using var document = response.Document;
 
+        // Deliberately OUTSIDE both catches. Reading the response and building the row dictionary is
+        // this module's own code, not the hunting side: a NullReferenceException or a duplicate-key
+        // ArgumentException in there is a BUG, and a bug that greys five columns and says "the
+        // request failed" is a bug nobody ever finds. Only the two calls that leave this process are
+        // wrapped, and each is wrapped alone so the two reasons cannot borrow each other's sentence.
         return TryReadHuntingResults(document, out var rows)
             ? DefenderDiscoveryEnrichment.Succeeded(rows)
             : DefenderDiscoveryEnrichment.Failed(DefenderDiscoveryReasons.MalformedResponse);
     }
+
+    /// <summary>
+    /// The exception types a hunting-side failure actually arrives as, and nothing wider.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Not <c>catch (Exception)</c>.</b> A blanket catch around the enrichment would also swallow
+    /// a defect in this module's own parsing and merging code and report it to the operator as a
+    /// Graph failure - the reason for the filter, and the reason the read of the response body sits
+    /// outside both try blocks. Anything not on this list still escapes and still takes the page
+    /// down, which is what an unexpected exception should do.
+    /// </para>
+    /// <para>
+    /// Each entry is a path that exists today, not a defensive guess:
+    /// <list type="bullet">
+    ///   <item><description><see cref="InvalidOperationException"/> - BuildClientAsync's three
+    ///   credential throws, and DefenderApiClient's throw on a token request that came back
+    ///   non-2xx.</description></item>
+    ///   <item><description><see cref="HttpRequestException"/> - DNS, connect and TLS failures,
+    ///   which HttpClient throws and the client's own send does not catch.</description></item>
+    ///   <item><description><see cref="JsonException"/> - a token response body that is not JSON;
+    ///   the hunting response body's parse is already guarded inside the client.</description></item>
+    ///   <item><description><see cref="KeyNotFoundException"/> - a 200 token response carrying no
+    ///   access_token property.</description></item>
+    ///   <item><description><see cref="TaskCanceledException"/> - an HttpClient timeout on the
+    ///   Secret Server read. On the POST side the client already converts one into the TimedOut
+    ///   reason, so this entry only bites on the factory.</description></item>
+    /// </list>
+    /// Catching TaskCanceledException is safe here only because no CancellationToken is plumbed
+    /// through this call chain, so it cannot be a caller's cancellation being swallowed. If one is
+    /// ever added, this entry has to be revisited.
+    /// </para>
+    /// </remarks>
+    private static bool IsHuntingSideFailure(Exception ex) =>
+        ex is InvalidOperationException
+            or HttpRequestException
+            or JsonException
+            or KeyNotFoundException
+            or TaskCanceledException;
 
     /// <summary>
     /// Copies the hunting values onto the devices that are ON THE LIST, and only those.

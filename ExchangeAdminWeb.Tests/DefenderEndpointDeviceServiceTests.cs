@@ -1,5 +1,9 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
+using System.Text.Json;
+using CsvHelper;
+using ExchangeAdminWeb.Components.Pages;
 using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Services;
 
@@ -39,10 +43,19 @@ public class DefenderEndpointDeviceServiceTests
         /// </summary>
         public List<string> RequestBodies { get; } = [];
 
+        /// <summary>
+        /// How the token endpoint answers. Null is the canned success every other test relies on;
+        /// a test that needs the SIGN-IN itself to fail replaces it. Token requests are deliberately
+        /// not recorded in RequestUrls - every existing assertion counts API calls, and a recorded
+        /// token request would shift each of those counts by one.
+        /// </summary>
+        public Func<HttpResponseMessage>? TokenResponder { get; set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri!.Host == "login.microsoftonline.com")
-                return Json(HttpStatusCode.OK, """{"access_token":"test-token","expires_in":3600}""");
+                return TokenResponder?.Invoke()
+                    ?? Json(HttpStatusCode.OK, """{"access_token":"test-token","expires_in":3600}""");
 
             var index = RequestUrls.Count;
             RequestUrls.Add(request.RequestUri.OriginalString);
@@ -853,6 +866,14 @@ public class DefenderEndpointDeviceServiceTests
         // that still passes the merge test above: any request at all that happens to return the
         // right JSON - defeated here by the host, the path, the method and the body. And one query
         // per refresh, never one per device: the single-request assertion is the rate-limit promise.
+        //
+        // The BODY assertions are parsed, not substring-matched, and that is the point of this test
+        // rather than a tidiness preference. ThreatHunting.Read.All is scoped to the whole hunting
+        // schema, so the permission cannot narrow this module to DeviceInfo and the request body is
+        // the only boundary there is. Cheapest broken implementation that a "the body contains the
+        // constant" assertion would still pass: posting broader KQL as the real Query and parking
+        // the safe constant in a second property, or appending a union to it - the first is defeated
+        // by the exact equality on the root Query value, the second by the property sweep below.
         var (service, devices, hunting) = CreateEnrichedService();
         devices.Responses.Add(() => Ok(Page(3)));
         hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"), HuntingRow("m2"), HuntingRow("m3"))));
@@ -863,8 +884,23 @@ public class DefenderEndpointDeviceServiceTests
         Assert.Equal("POST", Assert.Single(hunting.RequestMethods));
 
         var body = Assert.Single(hunting.RequestBodies);
-        Assert.Contains("\"Query\"", body);
-        Assert.Contains(DefenderEndpointDeviceService.HuntingQuery, body);
+        using var posted = JsonDocument.Parse(body);
+        var root = posted.RootElement;
+
+        Assert.Equal(JsonValueKind.Object, root.ValueKind);
+        Assert.Equal(DefenderEndpointDeviceService.HuntingQuery, root.GetProperty("Query").GetString());
+
+        // No escape hatch. The named threat first, because its failure message says what happened:
+        // a SECOND query-bearing property, with the safe constant parked in the one this test reads.
+        Assert.DoesNotContain(
+            root.EnumerateObject(),
+            other => !string.Equals(other.Name, "Query", StringComparison.Ordinal)
+                && other.Name.Contains("query", StringComparison.OrdinalIgnoreCase));
+
+        // Then the catch-all, which is strictly stronger and is not redundant: runHuntingQuery also
+        // accepts Timespan, so "no second property at all" forbids widening the request by any
+        // sibling field, not only by one with "query" in its name.
+        Assert.Equal("Query", Assert.Single(root.EnumerateObject().ToList()).Name);
     }
 
     [Fact]
@@ -966,6 +1002,151 @@ public class DefenderEndpointDeviceServiceTests
         Assert.Contains("timed out", result.DiscoveryEnrichmentReason);
         Assert.DoesNotContain("quota", result.DiscoveryEnrichmentReason);
         Assert.DoesNotContain("ThreatHunting.Read.All", result.DiscoveryEnrichmentReason);
+    }
+
+    // ---- the throws: a hunting-side exception must not take a COMPLETED list down ----------------
+    //
+    // Enrichment runs only after the inventory has proved itself complete, so every failure here is
+    // by construction a failure of the second half of a run whose first half already succeeded. The
+    // page's catch turns any escaping exception into a page-wide failure and no table, which is the
+    // exact outcome the service comment at the call site forbids.
+
+    /// <summary>
+    /// Every enrichment column, on the SCREEN and in the EXPORT, reads "(unavailable)". Asserted
+    /// through the page's own projector rather than restated here, so the file and the screen cannot
+    /// describe the same run differently - and asserted at all because a blank cell is how Known
+    /// Failure Class 2 hides a half-executed report.
+    /// </summary>
+    private static void AssertEveryEnrichmentColumnReadsUnavailable(DefenderDeviceListResult result)
+    {
+        var unavailable = DefenderEndpointDeviceService.EnrichmentUnavailable;
+
+        Assert.NotEmpty(result.Devices);
+
+        foreach (var device in result.Devices)
+        {
+            foreach (var value in new[]
+            {
+                device.DiscoverySources, device.DeviceType, device.DeviceCategory,
+                device.Vendor, device.Model
+            })
+            {
+                Assert.Equal(
+                    unavailable,
+                    DefenderEndpointDeviceService.DescribeEnrichmentCell(result.DiscoveryEnrichment, value));
+            }
+        }
+
+        var csv = DefenderEndpointDevices.BuildCsv(result.Devices, result.DiscoveryEnrichment);
+        using var reader = new StringReader(csv);
+        using var parser = new CsvReader(reader, CultureInfo.InvariantCulture);
+
+        Assert.True(parser.Read(), "the CSV carried no header row");
+
+        foreach (var _ in result.Devices)
+        {
+            Assert.True(parser.Read(), "the CSV carried fewer data rows than the run had devices");
+
+            // Columns 22-26 are the five enrichment columns of the plan's "CSV export" table.
+            for (var column = 22; column <= 26; column++)
+                Assert.Equal(unavailable, parser.GetField(column));
+        }
+    }
+
+    /// <summary>
+    /// A service whose inventory answers normally and whose hunting client comes from the given
+    /// factory - the seam the two throw tests need and CreateEnrichedService does not offer.
+    /// </summary>
+    private static DefenderEndpointDeviceService ServiceWithHuntingFactory(
+        StubHandler deviceHandler,
+        Func<Task<DefenderApiClient?>> huntingFactory)
+    {
+        var inventory = new DefenderApiClient(
+            "tenant", "client", "secret",
+            DefenderApiClient.DefenderBaseUrl,
+            DefenderApiClient.DefenderTokenScope,
+            new HttpClient(deviceHandler));
+
+        return new DefenderEndpointDeviceService(
+            () => Task.FromResult<DefenderApiClient?>(inventory),
+            "50",
+            huntingFactory,
+            null);
+    }
+
+    [Fact]
+    public async Task AHuntingClientFactoryThatThrows_LeavesTheCompletedListStandingAndSaysWhyInFixedWords()
+    {
+        // BuildClientAsync throws three ways - no Secret ID configured, the secret unreadable, the
+        // fields incomplete - and the Secret Server read it makes can fail on its own. Cheapest
+        // broken implementation that still passes: catching the exception and returning
+        // DefenderDiscoveryEnrichment.Failed(ex.Message). Defeated three times over - by the
+        // exact-constant assertion, by the two DoesNotContain assertions that are the sanitization
+        // half, and by the state assertion, because nothing was sent so this is NotAttempted and not
+        // Failed. Removing the catch entirely fails at the await: the exception escapes
+        // ListDevicesAsync and no assertion is reached.
+        var devices = new StubHandler();
+        devices.Responses.Add(() => Ok(Page(1)));
+
+        var service = ServiceWithHuntingFactory(
+            devices,
+            () => throw new InvalidOperationException(
+                "Cannot retrieve the Defender for Endpoint Devices app secret 4242 from Secret Server. "
+                + "Verify this is the correct Secret ID and that the Delinea SDK client can view it."));
+
+        var result = await service.ListDevicesAsync();
+
+        // The half that already succeeded is untouched.
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.Equal("m1", Assert.Single(result.Devices).Id);
+        Assert.Equal("", result.RefusalReason);
+
+        Assert.Equal(DefenderDiscoveryEnrichmentState.NotAttempted, result.DiscoveryEnrichment);
+        Assert.Equal(DefenderDiscoveryReasons.CredentialsUnavailable, result.DiscoveryEnrichmentReason);
+
+        // Nothing out of the exception reaches the operator: not the Secret ID, not the condition.
+        Assert.DoesNotContain("4242", result.DiscoveryEnrichmentReason);
+        Assert.DoesNotContain("Secret Server", result.DiscoveryEnrichmentReason);
+
+        AssertEveryEnrichmentColumnReadsUnavailable(result);
+    }
+
+    [Fact]
+    public async Task AHuntingTokenRequestThatFails_LeavesTheCompletedListStandingAndSaysWhyInFixedWords()
+    {
+        // DefenderApiClient throws InvalidOperationException when the sign-in comes back non-2xx,
+        // and its send catches only TaskCanceledException - so this escapes PostWithStatusAsync with
+        // no status for DescribeEnrichmentFailure to read. Cheapest broken implementation that still
+        // passes: catching it and reusing the Unauthorized reason, which names a 401 that did not
+        // happen and sends the operator to check a client secret that may be fine. Defeated by the
+        // exact-constant assertion. Removing the catch fails at the await, as above.
+        //
+        // The sign-in body deliberately carries an error code and a correlation id, because that is
+        // precisely what DefenderApiClient refuses to echo and what ex.Message could otherwise leak
+        // into a rendered page.
+        var (service, devices, hunting) = CreateEnrichedService();
+        devices.Responses.Add(() => Ok(Page(1)));
+        hunting.TokenResponder = () => StubHandler.Json(
+            HttpStatusCode.BadRequest,
+            "{\"error\":\"invalid_client\",\"correlation_id\":\"00000000-1111-2222-3333-444444444444\"}");
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.Equal("m1", Assert.Single(result.Devices).Id);
+        Assert.Equal("", result.RefusalReason);
+
+        // It never got as far as a hunting request, so there is no status - which is what separates
+        // this reason from every other failed one.
+        Assert.Empty(hunting.RequestUrls);
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Failed, result.DiscoveryEnrichment);
+        Assert.Equal(DefenderDiscoveryReasons.SendFailed, result.DiscoveryEnrichmentReason);
+
+        Assert.DoesNotContain("invalid_client", result.DiscoveryEnrichmentReason);
+        Assert.DoesNotContain("1111-2222-3333", result.DiscoveryEnrichmentReason);
+        Assert.DoesNotContain("BadRequest", result.DiscoveryEnrichmentReason);
+
+        AssertEveryEnrichmentColumnReadsUnavailable(result);
     }
 
     [Fact]
@@ -1098,7 +1279,13 @@ public class DefenderEndpointDeviceServiceTests
             DefenderDiscoveryReasons.SwitchedOff,
             DefenderDiscoveryReasons.CredentialsUnavailable,
             DefenderDiscoveryReasons.NoDevices,
-            DefenderDiscoveryReasons.ListRefused
+            DefenderDiscoveryReasons.ListRefused,
+
+            // And the one that reached for Graph and never got a status back. It cannot be produced
+            // by a responder here, because a responder IS a response; the two throw tests above run
+            // it for real and each asserts this exact constant, which is where its "collected by
+            // running it" evidence lives.
+            DefenderDiscoveryReasons.SendFailed
         };
 
         // The seven that come back off the wire, collected by actually running them rather than by
@@ -1122,7 +1309,7 @@ public class DefenderEndpointDeviceServiceTests
             reasons.Add(result.DiscoveryEnrichmentReason);
         }
 
-        Assert.Equal(11, reasons.Count);
+        Assert.Equal(12, reasons.Count);
         Assert.Equal(reasons.Count, reasons.Distinct(StringComparer.Ordinal).Count());
         Assert.DoesNotContain("", reasons);
 

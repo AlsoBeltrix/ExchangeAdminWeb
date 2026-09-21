@@ -1,8 +1,6 @@
 # Defender for Endpoint Devices Module - Plan
 
-Status: Draft (2026-09-18). Nothing is approved and no code exists. **The app registration
-described under "What the owner must create" blocks every slice below**: creating it is the
-owner's job, not this repo's, and the first live call cannot happen without it.
+Status: Implemented, unproven against the live service (2026-09-21). S1-S5 have all landed; the live reconnaissance pass R1 has NOT run and the manual acceptance checklist has NOT been performed, because the app registration described under "What the owner must create", its two consents and the Delinea secret are still the owner's to create - no code here has ever spoken to Microsoft. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
 
 Owner request, verbatim from the queue:
 
@@ -1499,3 +1497,119 @@ page, its tests, and the click-gate registry entry.
 secret and its Secret ID, then R1 on dev - including R1(e) above and the `DiscoverySources`
 serialisation question Revision 6 added. S5 (documentation and the README section) is the only slice
 left, and it is not this one's: S3 was the last code slice.
+
+# Revision 8 - codex review of the finished module, 2026-09-21
+
+Reviewer: codex, `@azure-openai-eus2-global/gpt-5.5-dzs`, effort xhigh, against `bb37bc9`, with the
+suite at 2923 passed / 0 failed / 3 skipped. Capability proof passed. Verdict **unsound**, two
+findings, both fixed here. Full result in `.agents/review/q8-module.result.json`.
+
+**What it cleared, and that is the half that mattered.** No path renders or exports a short device
+list as complete, and no page or CSV blank can mean a failed enrichment run - T3 and T7's central
+promises hold, and neither was re-litigated here. The defect was narrower and lay entirely on the
+enrichment side of a run whose first half had already succeeded.
+
+## Finding 1 (HIGH), verified and fixed - a hunting-side exception took a COMPLETED list down
+
+`GetDiscoveryEnrichmentAsync` handled a null client and a status-bearing `DefenderApiResult` and
+nothing else, and two throw paths reached it. `BuildClientAsync` throws `InvalidOperationException`
+three ways for a missing, unreadable or incomplete Delinea secret. `DefenderApiClient` throws when
+the token request comes back non-2xx, and its send catches only `TaskCanceledException`, so a
+transport failure or an unreadable token body escapes it too. Either one reached the page's own
+catch, which sets `result = null` - so a device list that had already PROVED itself complete was
+replaced by a page-wide failure and no table.
+
+**The call site's own comment convicted the code.** It reads "its failure is independent of the
+listing's success ... It must never take the page down, and it must never leave those columns
+merely blank." That was the contract; the code did not honour it. The reviewer is right and the
+finding is accepted without qualification.
+
+**The fix: two narrow try blocks, one per call that leaves this process.** The factory call and the
+POST are wrapped separately, so each converts into its own reason and neither can borrow the
+other's sentence. A factory throw is `NotAttempted` with the existing `CredentialsUnavailable` -
+nothing was sent, which is exactly what that constant already says. A POST throw is `Failed` with a
+new constant. Both reasons are FIXED strings, never `ex.Message`: the credential messages name a
+Secret ID and a Secret Server condition and the token message names a sign-in status, and
+`DefenderApiClient` already refuses to echo an auth body for precisely that reason.
+
+**What is caught, and what deliberately is not.** The catches are
+`catch (Exception ex) when (IsHuntingSideFailure(ex))`, and that predicate names five types:
+`InvalidOperationException`, `HttpRequestException`, `JsonException`, `KeyNotFoundException` and
+`TaskCanceledException`. Each is a path that exists today, not a defensive guess - the doc comment
+on the predicate records which code throws which. **A blanket `catch (Exception)` was rejected**: it
+would also swallow a defect in this module's own parsing and merging and report it to the operator
+as a Graph failure, and a bug that greys five columns and blames Microsoft is a bug nobody ever
+finds. For the same reason the read of the response body - `TryReadHuntingResults` and the
+`MalformedResponse` branch - sits OUTSIDE both try blocks. Anything not on the list still escapes
+and still takes the page down, which is what an unexpected exception should do.
+
+`TaskCanceledException` is on the list only because no `CancellationToken` is plumbed through this
+call chain, so it cannot be a caller's cancellation being swallowed; the predicate's remarks say so,
+and say to revisit that entry if one is ever added. On the POST side the client already converts a
+cancellation into the `TimedOut` reason, so that entry bites only on the Secret Server read.
+
+**One new reason constant, `DefenderDiscoveryReasons.SendFailed`, because none of the nine fitted.**
+The existing reasons are either not-attempted states or answers off the wire; this is the case where
+the module reached for Graph and got no status at all, so there is nothing for
+`DescribeEnrichmentFailure` to read. Reusing `Unauthorized` would name a 401 that did not happen and
+send the operator to check a client secret that may be fine; reusing `TimedOut` would name a timeout
+that did not happen. It is called `SendFailed` and NOT `RequestFailed` on purpose:
+`DefenderDeviceListOutcome.RequestFailed` already owns that word in this module and means the DEVICE
+LIST failed, which is the one thing this reason promises did not happen.
+`EveryEnrichmentReasonIsADifferentSentence` now collects twelve reasons rather than eleven and stays
+green; collapsing the new one onto `TimedOut` fails it (probe M6).
+
+## Finding 2 (MEDIUM), fixed - the query guard proved the safe text appeared, not that it ran
+
+`ThreatHunting.Read.All` is scoped to the whole hunting schema, so the permission cannot narrow this
+module to `DeviceInfo` and the request body is the only boundary there is. The guard asserted only
+that the body CONTAINED `"Query"` and CONTAINED the constant, which a broken implementation could
+satisfy while posting broader KQL as the real `Query`, or by appending to it.
+
+The body is now parsed as JSON and the root `Query` property must EQUAL
+`DefenderEndpointDeviceService.HuntingQuery` exactly. Two further assertions close the escape hatch:
+no second property whose name contains "query" in any casing, and - strictly stronger, and not
+redundant, because `runHuntingQuery` also accepts `Timespan` - no second property at all. Three
+mutations prove the three halves independently (M3, M4, M5), and the first of them, appending
+`| union DeviceNetworkEvents` to the posted query, PASSES the assertions this revision replaced.
+
+## What was deliberately not changed
+
+- **The page.** `Components/Pages/DefenderEndpointDevices.razor` is untouched. Its catch is correct
+  for what it is - a listing failure should clear the result - and the defect was that enrichment
+  exceptions were reaching it at all. Fixing it there would have been fixing the symptom one layer
+  too late, and would have required the page to distinguish two failure sources it cannot see.
+- **The version.** Module stays `1.0.0`, no base app bump; `ExchangeAdminWeb.csproj` is
+  byte-identical (`git diff` empty) at 2.21.1 / 2.21.1.0.
+- **`Services/DefenderApiClient.cs`.** Widening its catch was considered and rejected: it is the
+  layer that must NOT decide what a failure means to an operator, and turning its throws into
+  results would have changed behaviour for the inventory call as well - the one call that SHOULD
+  take the page down when it fails.
+
+## Guard proof - six probes, each attributable to one test
+
+| Probe | Mutation | Test that failed |
+| --- | --- | --- |
+| M1 | remove the factory catch | `AHuntingClientFactoryThatThrows_LeavesTheCompletedListStandingAndSaysWhyInFixedWords` |
+| M2 | remove the POST catch | `AHuntingTokenRequestThatFails_LeavesTheCompletedListStandingAndSaysWhyInFixedWords` |
+| M3 | append `\| union DeviceNetworkEvents` to the posted query | `TheHuntingCallIsOnePostToRunHuntingQueryOnTheGraphHostCarryingTheConstantKql` |
+| M4 | add a second `QueryOverride` property carrying the wider KQL | same |
+| M5 | add a `Timespan` property beside a correct `Query` | same |
+| M6 | collapse `SendFailed` onto `TimedOut` | `EveryEnrichmentReasonIsADifferentSentence` |
+
+Every probe failed exactly one test with 91 of 92 still passing, so each is attributable. Every
+restore was a file copy followed by `touch` and a SHA256 comparison against the pre-mutation hash -
+no `git checkout --` at any point.
+
+## Verification
+
+`dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental` 0 errors / 23 warnings;
+`dotnet test ExchangeAdminWeb.slnx` 2925 passed / 0 failed / 3 skipped, +2 on the 2923 baseline and
+the two new tests account for it exactly; `dotnet format ExchangeAdminWeb.slnx --verify-no-changes
+--no-restore` exit 0; `git diff --check HEAD` exit 0; `tools/Test-AsciiOnly.ps1` exit 0.
+
+## Still outstanding, all of it the owner's, and unchanged by this revision
+
+The app registration, the two consents, the Delinea secret and its Secret ID, then R1 on dev -
+including R1(e) and the `DiscoverySources` serialisation question - and the manual acceptance
+checklist. Q2, Q3, Q4 and Q5 remain unanswered.

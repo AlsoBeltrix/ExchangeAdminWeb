@@ -269,6 +269,22 @@ public static class DefenderDiscoveryReasons
         + "are empty for this run. The device list itself is unaffected. Load again, and narrow the "
         + "filters if it keeps happening.";
 
+    /// <summary>
+    /// The request threw before any status came back - a sign-in that was refused, a transport
+    /// failure, or a token response that could not be read. There is no status to name, which is
+    /// exactly what separates this from <see cref="Unauthorized"/> and the 5xx text.
+    /// </summary>
+    /// <remarks>
+    /// Named SendFailed and deliberately NOT RequestFailed:
+    /// <see cref="DefenderDeviceListOutcome.RequestFailed"/> already owns that word in this module
+    /// and means the DEVICE LIST failed, which is the one thing this reason promises did not happen.
+    /// </remarks>
+    public const string SendFailed =
+        "The advanced hunting query could not be sent to Microsoft Graph - the request failed before "
+        + "any answer came back, which means either that the sign-in for this module's app "
+        + "registration was refused or that this server cannot reach Microsoft Graph. These columns "
+        + "are empty for this run. The device list itself is unaffected.";
+
     /// <summary>401: the credentials themselves were rejected.</summary>
     public const string Unauthorized =
         "Microsoft Graph rejected this module's credentials for the advanced hunting query (401 "

@@ -303,6 +303,7 @@ know whether to chase a consent grant, wait out a quota, or retry:
 | Timeout | The query did not finish before the request timed out |
 | A 2xx with an unreadable body | Graph answered with something the module could not read - no results collection |
 | 5xx, or any other status | Graph was unavailable, or rejected the query, with the status named |
+| No status came back at all | The query could not be sent - the sign-in for the app registration was refused, or this server cannot reach Graph. There is no status to name, which is what separates this from the 401 and 5xx rows |
 | Credentials could not be built | The module's app credentials were unavailable, so the query never ran |
 | No devices matched | Nothing to enrich; the query was not run |
 | The listing refused | Enrichment was never reached |
@@ -390,7 +391,7 @@ call on the read path and nothing else.
 | Device list 429, 5xx, timeout, or an unreadable body | Named failure. No table, no export |
 | Device list 404 on the first request | The documented **empty** result: "no devices matched". A 404 later in a chain refuses |
 | The result cannot be proved complete (ceiling, full page with no cursor, the 100-request stop) | Refusal in words. No table, no export button |
-| Hunting query 403, 429, 401, timeout, malformed, or the switch off | The device list stands; the five enrichment columns read `(unavailable)` with the reason named above the table. Never blank, never a page-wide failure |
+| Hunting query 403, 429, 401, timeout, malformed, the switch off, or a send that never got an answer | The device list stands; the five enrichment columns read `(unavailable)` with the reason named above the table. Never blank, never a page-wide failure. This holds for an **exception** on the hunting side too - a Secret Server read that fails or a refused sign-in greys the columns rather than clearing the page |
 | `IncludeDiscoverySources` present but unparseable | Treated as **off** - the value that does not call a permission the registration may not hold. The module config page renders an unparseable Boolean as an unchecked box, so this keeps the switch and the screen in agreement |
 | `MaxDevices` absent, unparseable or non-positive | Falls back to the declared default of 20000 |
 | A continuation link pointing at a different host, or at plain HTTP | Refused **before a token is acquired**. The absolute-URL path exists to follow a link out of a response body, and following an arbitrary host would hand this registration's bearer token to whatever that body named |
