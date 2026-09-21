@@ -5,6 +5,43 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-21 - Owner answers on queue items 4, 5 and 8
+
+Status: Active. Settled in conversation on 2026-09-21, in the owner's own words where quoted.
+
+**Queue 5, other tenants/domains - ONE other tenant, credentials in Delinea.** Verbatim: *"there's
+one other tenant. creds for that tenant will live in delinea."* So the zero-work reading is
+falsified: this is the separate-tenant case, not extra accepted domains on the existing tenant.
+`docs/MessageTraceMultiTenant-Plan.md` is the live plan.
+**A consequence the owner should be told if it turns out wrong:** the existing tenant does NOT
+authenticate through Delinea - it uses a certificate from the host's `LocalMachine\My` store plus
+AppId/Organization from module config, and `MessageTrace`'s existing `DelineaSecretId` is the
+*on-prem* credential only. Tenant 2 is therefore being designed around a **client secret held in
+Delinea**, which is the natural fit for Delinea and which Exchange Online accepts. That reading was
+stated to the owner as an assumption rather than asked as a question, because it is the obvious one;
+if they meant a certificate, the design changes and the plan must be revised.
+
+**Queue 8, Defender for Endpoint - display name is "Defender for Endpoint Devices"** (open question
+6). Not cosmetic: it sets the nav label, the route `defender-endpoint-devices` and the
+section-access alias `DefenderEndpointDevices`. Shipped in S2.
+
+**Queue 8 - discovery sources ARE wanted** (open question 1). Verbatim: *"that was the literal
+request from my boss's boss."* The cost was put to the owner plainly first - `ThreatHunting.Read.All`
+is tenant-wide, reads every advanced-hunting table including email, identity and cloud app, and
+needs a Privileged Role Administrator or Global Administrator to consent rather than the
+Application Administrator the device permission needs - and the owner reaffirmed. **So slice S4 is
+no longer droppable**, the `IncludeDiscoverySources` config field ships in S2 rather than being
+deferred as dead config, and the app registration needs BOTH permissions.
+
+**Queue 4, message trace vs header analysis - RE-GRANT DELIBERATELY, do not copy the existing
+group across** (open question 1 of that plan). The owner chose the safer option with its cost
+stated: **nobody can trace until the owner adds them to the new `MessageTraceSearch` group, and
+that is an outage from the moment the enforcement slice deploys.** The plan's three-commit shape
+with a mandatory deploy boundary is therefore load-bearing, not ceremony - slice 1 declares the
+alias inert, the owner configures the group, and only then does the enforcement slice land.
+Recovery from a mistimed deploy needs a **global** admin, not a module admin, because the
+section-access save handler re-checks `AdminSettings` specifically.
+
 ### 2026-09-18 - Weekend backlog run: plans self-approve after codex consensus, and pushes are standing
 
 Status: Active for the 2026-09-18 weekend backlog run only. Scopes down to the standing
