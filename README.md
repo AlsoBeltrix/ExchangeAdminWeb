@@ -430,6 +430,40 @@ View and unblock Exchange Online accounts blocked from sending mail for outbound
 - **Requires:** Exchange Online connection (no module-specific Delinea secret)
 - Section access key: `BlockedSenders` (granular: `BlockedSendersUnblock`)
 
+### Defender for Endpoint Devices (`/defender-endpoint-devices`)
+
+List and export Microsoft Defender for Endpoint devices, including the devices Defender has
+discovered on the network that **can be onboarded and are not**. Read-only: the module cannot
+onboard, isolate, scan or offboard anything, and the app registration behind it holds no
+permission that could. Disabled by default and fail-closed.
+
+- Filters on onboarding status (defaults to "can be onboarded") and a Windows-only toggle. The
+  Windows rule is applied client-side after the fetch: `osPlatform` carries `Windows10`,
+  `Windows11` and the server variants as separate values, so there is no single server-side
+  "Windows" filter to ask for
+- **A run returns the complete matching set or it refuses in words.** No table and no export
+  button when completeness cannot be proved: more devices match than `MaxDevices` (default
+  20000), the API returned exactly the page it was asked for with no continuation link, or any
+  request in the chain failed. A partial CSV that looks whole is the one output this module must
+  never produce. A `404` on the first request is the documented **empty** inventory, not a failure
+- Discovery sources, device type, category, vendor and model come from a second call: one constant
+  `DeviceInfo` advanced hunting query on Microsoft Graph. Its failure never takes the page down --
+  those five columns read `(unavailable)` with the reason named above the table, never merely
+  blank
+- The detail panel renders from the row the list already returned. The module never calls
+  get-machine-by-id, which Microsoft documents only under `Machine.ReadWrite.All`
+- Results can be downloaded as CSV (27 columns: device identity and DNS name, OS, health,
+  IP and MAC addresses, first/last seen in UTC, risk and exposure, machine tags and group, Entra
+  join state, and the five discovery columns), audited with the row count
+- **Requires:** a module-specific Delinea secret holding `Tenant ID`, `Application ID` and
+  `Client Secret` for an app registration with `Machine.Read.All` on **WindowsDefenderATP** and,
+  for discovery sources, `ThreatHunting.Read.All` on **Microsoft Graph**. Both need admin consent,
+  and the Graph one must be consented by a Privileged Role Administrator or Global Administrator.
+  No redirect URI; a client secret, not a certificate
+- Section access key: `DefenderEndpointDevices`
+- Full operator and maintainer notes, including the app-registration steps and the manual
+  validation checklist that has not yet been run: `docs/DefenderEndpointDevices.md`
+
 ### Security & Compliance
 - **Windows Authentication** — Seamless SSO with Active Directory
 - **Group-based Authorization** — Restrict access to specific AD groups per module

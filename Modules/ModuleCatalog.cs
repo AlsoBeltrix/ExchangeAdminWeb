@@ -767,7 +767,7 @@ public sealed class ModuleCatalog
             GranularPermissions = [],
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID",
-                    "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields (the app registration needs Machine.Read.All on WindowsDefenderATP, plus ThreatHunting.Read.All on Microsoft Graph if discovery sources are wanted)"),
+                    "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields. The app registration needs BOTH Machine.Read.All on WindowsDefenderATP and ThreatHunting.Read.All on Microsoft Graph. The second was optional while discovery sources were; the owner confirmed on 2026-09-21 that they are wanted, so it is not. Consenting the Graph one requires a Privileged Role Administrator or Global Administrator."),
                 new("MaxDevices", "Maximum Devices",
                     "Safety ceiling on one run. The module pages the API until the matching set is complete; if more devices match than this, it REFUSES the report rather than returning a partial one. Defaults to 20000. Raise it, or narrow the filters.",
                     Required: false, DefaultValue: "20000"),
