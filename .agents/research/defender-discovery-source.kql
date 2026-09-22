@@ -1,0 +1,71 @@
+// Run in https://security.microsoft.com -> Hunting -> Advanced hunting.
+// Paste ONE query at a time into the query box, press Run query, copy the results back.
+//
+// Purpose: find out whether Defender advanced hunting can say WHICH onboarded machine
+// discovered a device. The module currently shows DiscoverySources, which names the
+// Microsoft product that saw the device, not the machine that found it. Nothing below
+// changes anything - these are all reads.
+
+
+// ---- 1. Every column DeviceInfo actually has -------------------------------------------------
+// Looking for anything like DiscoveredBy, OnboardedBy, SeenBy, ReportId, or a device-name
+// column that is NOT the device the row is about.
+DeviceInfo
+| getschema
+| project ColumnName, ColumnType
+| order by ColumnName asc
+
+
+// ---- 2. What DiscoverySources actually contains, on devices that have it ---------------------
+// Confirms the shape and confirms it is a product name and a date, not a machine.
+DeviceInfo
+| where isnotempty(DiscoverySources)
+| summarize arg_max(Timestamp, *) by DeviceId
+| project DeviceName, OnboardingStatus, DiscoverySources, DeviceType, Vendor, Model
+| take 10
+
+
+// ---- 3. Every column DeviceNetworkInfo has ---------------------------------------------------
+// This is the table that records what an onboarded sensor observed on the network, so if the
+// discovering machine is recorded anywhere, this is the likeliest place.
+DeviceNetworkInfo
+| getschema
+| project ColumnName, ColumnType
+| order by ColumnName asc
+
+
+// ---- 4. How far back the data actually goes --------------------------------------------------
+// The module's blanks are almost certainly this: hunting retention is short, and most of the
+// devices in the inventory were last seen months ago. This prints the real window.
+DeviceInfo
+| summarize Oldest = min(Timestamp), Newest = max(Timestamp), Rows = count()
+
+
+// =============================================================================================
+// Added after query 1 came back. DeviceInfo has 52 columns and NONE is named DiscoveredBy.
+// The only candidate for "which machine found this device" is HostDeviceId. These two test it.
+// =============================================================================================
+
+
+// ---- 5. Does HostDeviceId get populated, and does it resolve to a real machine name? ---------
+// If this returns rows where OnboardingStatus is "Can be onboarded" and HostName is a real
+// workstation, then HostDeviceId IS the discovering machine and the module can show it.
+// If HostName comes back empty everywhere, HostDeviceId is something else and this is a dead end.
+let hosts =
+    DeviceInfo
+    | summarize arg_max(Timestamp, *) by DeviceId
+    | project HostId = DeviceId, HostName = DeviceName;
+DeviceInfo
+| summarize arg_max(Timestamp, *) by DeviceId
+| where isnotempty(HostDeviceId)
+| join kind=leftouter hosts on $left.HostDeviceId == $right.HostId
+| project DeviceName, OnboardingStatus, DiscoverySources, HostDeviceId, HostName
+| take 20
+
+
+// ---- 6. How many devices have it at all, split by onboarding status --------------------------
+// Tells us whether this is usable for the whole inventory or only a handful of devices.
+DeviceInfo
+| summarize arg_max(Timestamp, *) by DeviceId
+| summarize Devices = count(), WithHostDeviceId = countif(isnotempty(HostDeviceId))
+    by OnboardingStatus

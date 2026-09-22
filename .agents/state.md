@@ -7,6 +7,49 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
+- **QUEUE 8 (Defender for Endpoint) IS PARKED BY THE OWNER, 2026-09-22, waiting on an updated
+  requirements document from the stakeholder. Do not resume it until that arrives.** Commit
+  `43a944e` is landed locally and **NOT PUSHED** - the owner was asked and parked the work before
+  answering, so the ask stands.
+  **Two defects are open against the shipped module and neither is fixed:**
+  1. *The page is unusable at tenant scale.* It renders every device row, so the Blazor circuit
+     dies ("Rejoining the server...") and nothing can be scrolled. The owner rejected virtualised
+     scrolling outright - "not a solution in ANY way" - on the ground that 40,000 rows behind one
+     scrollbar is useless however it is rendered. **The unanswered fork, put to the owner and not
+     yet resolved: make browsing filter-first and paged (portal-style, 50 at a time) and leave the
+     complete partitioned fetch for CSV export only.** Do not implement either shape without a go.
+  2. *Discovery sources is the wrong data and mostly blank.* The stakeholder needs **which local
+     machine discovered a new device**. The column shows which Microsoft product saw it and when.
+  **What the live hunting queries settled on 2026-09-22** (`.agents/research/defender-discovery-source.kql`,
+  results run by the owner in the Defender portal - these are measured, not inferred):
+  - **Advanced hunting retention is exactly 30 days.** `DeviceInfo` spans 2026-08-23 to 2026-09-22,
+    31,594,567 rows. That is the whole reason most discovery cells are blank: the inventory holds
+    devices last seen in March through August, and there is no hunting row left to join to. No code
+    change widens this.
+  - **`HostDeviceId` is a dead end.** Populated on **1 device out of 113,102**, and that one row
+    points at itself. It is not a discovery relationship.
+  - **`DeviceNetworkInfo` carries nothing either** - adapters, IPs, MACs, no discovering device.
+  - **`DeviceInfo` has 52 columns and none is a "discovered by".** Full schema in the CSV the owner
+    ran; the candidate list is exhausted.
+  - **The tenant holds 113,102 devices in `DeviceInfo`** (50,835 onboarded, 12,902 can be onboarded,
+    30,637 insufficient info, 18,728 unsupported) - materially more than the 40,000 the rebuild was
+    sized against. The partition handles it; the 100,000 ceiling does not.
+  **The one open question, asked and unanswered:** does the Defender portal itself show a
+  discovering or onboarded machine on a "Can be onboarded" device's page? If it does, the data is
+  obtainable and the route needs finding. If it does not, the requirement cannot be met as written
+  and the stakeholder's document has to change. Ask this before doing anything else on queue 8.
+
+- **NEXT AGREED ITEM: queue 4, break out permissions for message trace vs header analysis.**
+  Picked 2026-09-22 when the owner parked queue 8 and said "pick and handoff". Reasons it was
+  chosen over 2, 5 and 6: it is self-contained, needs no new credential or app registration, has
+  no blocked decision in front of it, and `.agents/state.md` already named it "the obvious
+  alternative" when item 7 was taken. Item 2 is blocked on a decision about a second status
+  source; item 5 has no defined scope or credential model; item 6 is large and touches the deploy
+  pipeline and the shared-config-DB invariant. **Nothing has been started on it - no plan exists
+  yet.** First action: read `Modules/ModuleCatalog.cs` for the current message-trace descriptor and
+  its single policy alias, then draft `docs/MessageTracePermissions-Plan.md` and put it to the
+  owner. Do not implement before the plan is approved.
+
 - **THE WEEKEND BACKLOG RUN IS AT ITS END STATE (2026-09-18 to 2026-09-19); tier 1 is complete
   and only owner-blocked work remains. Read
   `.agents/decisions.md` 2026-09-18 "Weekend backlog run" for the authority it ran under - that
