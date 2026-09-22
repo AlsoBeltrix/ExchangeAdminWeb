@@ -136,11 +136,29 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   can clear per reset - **explicitly NOT a module config field**, which is how this app would
   otherwise reach for it. Maps to `forceChangePasswordNextSignIn` on the Graph `passwordProfile`,
   the same PATCH that sets the password, so it costs nothing extra at the service.
-  **NEXT ACTION, in order:** (1) a read-only coverage survey of employeeId across the in-scope
-  cloud accounts, measured against the owner's own 100% bar - "already updated" is a reported
-  action, not a rate, and a partial result is a fresh owner decision rather than a reason to fall
-  back to typing; (2) revise the plan around items 10 and 11 and re-put D4; (3) owner approval.
-  The old survey tooling was deleted at `a56f41f` and would have to be rebuilt or recovered.
+  **THE SURVEY TOOLING IS BUILT AND COMMITTED: `80d9f4b`. IT HAS NOT BEEN RUN - THE OWNER RUNS
+  IT.** `tools/Get-CloudAccountEmployeeIdCoverage.ps1` (read-only; Graph + AD; writes one CSV;
+  supports `-PlanOnly`), the pure decision logic in `tools/CloudAccountEmployeeIdMatch.psm1`, and
+  31 Pester tests in `tests/ps/CloudAccountEmployeeIdMatch.Tests.ps1`. Suite 188/0 across 9 files
+  (was 140 across 8); PSScriptAnalyzer 0 errors; guard proof two mutations, each caught.
+  **It answers a different question from "is the field populated".** Outcomes: `Resolved`,
+  `NoEmployeeId`, `NoDirectoryMatch`, `Ambiguous`, `MatchedOwnerDisabled`, `MatchedNoMailbox`,
+  `Unavailable`. **Read `Ambiguous` first** - a duplicate employeeId means the module would pick an
+  owner it cannot justify, and mailing a password on that guess is worse than not matching.
+  `Unavailable` is deliberately never folded into a negative: "found nothing" and "could not look"
+  must not add up together.
+  **Two deliberate departures from the app's own directory code, both recorded in the script:** the
+  forest search is fail-CLOSED (a local-domain fallback cannot see a cross-domain duplicate, so it
+  would under-report `Ambiguous` and look cleaner for it), and each single match is re-read from
+  the domain derived from its own DN, because the global catalog's partial attribute set can make a
+  present mailbox look absent.
+  The old derivation tooling (`80419d7`) was NOT the basis for this: it implemented name matching,
+  which is the approach that failed, and it named three domains, which the 2026-09-11 neutrality
+  ruling forbids.
+  **NEXT ACTION, in order:** (1) owner runs the survey and hands back the summary; (2) revise the
+  plan around items 10 and 11 against that number and re-put D4; (3) owner approval; (4) implement.
+  A result short of 100% is a fresh owner decision, not a gap to route around with a fallback to
+  operator-typed destinations.
   **Worth stating when this is picked up, because it cuts toward doing the work:** a derived
   destination restores the security property the current design knowingly traded away. Today's
   design lets an operator type their own address and receive another user's password; only the
