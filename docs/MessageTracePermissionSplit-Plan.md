@@ -1,11 +1,14 @@
 # Message Analysis: separate the trace-search grant from header analysis
 
-Status: Draft, **Revision 2** after two codex review rounds, each returning `unsound` - four
-findings then two. All six were verified against the source and accepted, one of the last two with
-a scoped implementation variance that is stated explicitly; the changes are folded in below and
-both review records are the last two sections of this document. Queue item 4, in the owner's words:
-"Break out permissions for message trace vs header analysis." Drafted 2026-09-18 against `337e07b`,
-revised the same day against `155eaf7` and then `c3b4239`, reading the working tree (which carries another agent's in-flight
+Status: Draft, **Revision 3 - codex consensus reached**, after three codex review rounds:
+`unsound` with four findings, `unsound` with two, then `sound_with_changes` with one. All seven
+were verified against the source and accepted, one of the round-2 pair with a scoped
+implementation variance that is stated explicitly and that round 3 upheld; the changes are folded
+in below and all three review records are the last three sections of this document. **Consensus is
+not owner approval** - questions 3 to 7 are still open, and the plan body implements the
+recommended answer to each, so approving it as written answers them. Queue item 4, in the owner's
+words: "Break out permissions for message trace vs header analysis." Drafted 2026-09-18 against
+`337e07b`, revised the same day against `155eaf7`, `c3b4239` and `5e69dd9`, reading the working tree (which carries another agent's in-flight
 `ToggleDetail` change and a `MessageTrace` module version already at 1.4.2). Line numbers below
 are as of that working tree; every claim also names the method or the exact string it rests on, so
 a shifted line number does not invalidate it.
