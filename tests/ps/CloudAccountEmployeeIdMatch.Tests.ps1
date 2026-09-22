@@ -298,6 +298,18 @@ Describe 'ConvertTo-UpnList' {
         ConvertTo-UpnList -Lines $csv | Should -Be @('a@x.test', 'b@x.test')
     }
 
+    It 'reads a CloudUPN column, which is what the existing employeeId true-up files use' {
+        # So original_corrected.csv and its siblings can be passed in unchanged. Re-shaping a list
+        # of privileged accounts by hand is a step where one can be dropped or mistyped.
+        $csv = @('"CloudUPN","OwnerADUPN","EmployeeId"', '"a@x.test","owner@y.test","0001"')
+        ConvertTo-UpnList -Lines $csv | Should -Be @('a@x.test')
+    }
+
+    It 'prefers the UPN column even when other columns also end in Name' {
+        $csv = @('DisplayName,CloudUPN', 'Jo,a@x.test')
+        ConvertTo-UpnList -Lines $csv | Should -Be @('a@x.test')
+    }
+
     It 'strips quotes from a quoted CSV export' {
         $csv = @('"DisplayName","UserPrincipalName"', '"Jo","a@x.test"')
         ConvertTo-UpnList -Lines $csv | Should -Be @('a@x.test')

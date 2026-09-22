@@ -167,10 +167,13 @@ function ConvertTo-UpnList {
     # A CSV export is the likeliest shape for a list pulled out of a portal, so accept it: find
     # the UserPrincipalName column by header and take that field. Anything else is treated as a
     # plain list, which is what a hand-written file looks like.
+    # CloudUPN is accepted alongside UserPrincipalName because that is the column the existing
+    # employeeId true-up work already uses, so its output files can be fed straight in without
+    # being re-shaped by hand - and a hand-reshaped list is a list someone can mistype.
     $header = $cleaned[0]
-    if ($header -match '(?i)userprincipalname') {
+    if ($header -match '(?i)userprincipalname|cloudupn') {
         $columns = $header.Split(',') | ForEach-Object { $_.Trim().Trim('"') }
-        $index = [array]::FindIndex($columns, [Predicate[string]] { param($c) $c -match '(?i)^userprincipalname$' })
+        $index = [array]::FindIndex($columns, [Predicate[string]] { param($c) $c -match '(?i)^(userprincipalname|cloudupn)$' })
         if ($index -ge 0) {
             $values = foreach ($row in $cleaned[1..($cleaned.Count - 1)]) {
                 $fields = $row.Split(',')
