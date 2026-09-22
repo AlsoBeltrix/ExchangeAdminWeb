@@ -49,11 +49,21 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   `docs/MessageTracePermissionSplit-Plan.md`, `Status: Draft`, codex consensus after three rounds
   (`155eaf7`, `c3b4239`, `5e69dd9`, `995b673`), drafted during the weekend run - the claim that
   nothing had been started was wrong and is corrected here 2026-09-22.** No code has been written.
-  **Questions 1 and 2 of the plan are ANSWERED** - `.agents/decisions.md` 2026-09-21: re-grant
-  deliberately rather than copy the existing group across, and the alias is `MessageTraceSearch`.
-  Questions 3 to 7 are open, and the plan body already implements the recommended answer to each,
-  so approving the plan as written answers them. First action: put that approval to the owner. Do
-  not implement before the plan is approved.
+  **ALL SEVEN of the plan's open questions are now settled and the plan body matches.** 1 and 2 by
+  the owner 2026-09-21 (re-grant deliberately, alias `MessageTraceSearch`); 4 by the owner
+  2026-09-22 (**hide** the Trace Search tab, overruling the plan's disabled-tab recommendation);
+  3, 5, 6 and 7 as coder-side calls the same day, because a rule or a precedent already decided
+  each - reports route and CSV export both move behind the granular, module version takes the
+  MINOR position per the Migration button gate precedent, and the Roslyn harness improvement stays
+  out of this work stream. Rulings are in `.agents/decisions.md`; the plan's Open questions section
+  records each with its reasoning.
+  **The hide ruling did real design work, not cosmetics:** `MessageTrace.razor:878` switches to the
+  trace tab in code from the header-analysis handoff and can run the trace outright, so removing
+  the tab button leaves that route open. Section 4 now requires the handoff control hidden, the
+  switch refused and `RunTrace` gated server-side regardless.
+  **The only thing left before code is the owner's go.** Nothing else is pending and no question is
+  being held back. Implementation is three commits with a mandatory deploy boundary between slice 1
+  (inert declaration) and the enforcement slice; slice 1 changes nobody's access.
 
 - **THE WEEKEND BACKLOG RUN IS AT ITS END STATE (2026-09-18 to 2026-09-19); tier 1 is complete
   and only owner-blocked work remains. Read
@@ -126,8 +136,8 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
     Revision 6). Plan questions Q2-Q5 remain unanswered and the shipped behaviour in each case is the
     plan's proposal, not a ruling.
   - **Queue 4, trace vs header-analysis permissions** - `docs/MessageTracePermissionSplit-Plan.md`,
-    **codex consensus after three rounds**, `Status: Draft`. Questions 1 and 2 answered
-    2026-09-21 - re-grant deliberately, alias `MessageTraceSearch`. **Deploy
+    **codex consensus after three rounds**, `Status: Draft`. All seven open questions settled by
+    2026-09-22; waiting only on the owner's go to implement. **Deploy
     hazard, stated first in the plan on purpose:** a new fail-closed alias denies EVERY operator
     including the owner until a group is stored against it, and the alias cannot be granted before
     the descriptor deploys - hence three commits with a mandatory deploy boundary. Recovery needs
