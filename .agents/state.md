@@ -164,6 +164,26 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   The old derivation tooling (`80419d7`) was NOT the basis for this: it implemented name matching,
   which is the approach that failed, and it named three domains, which the 2026-09-11 neutrality
   ruling forbids.
+  **THE OWNER'S OWN TRUE-UP DATA ALREADY ANSWERS PART OF THIS, AND THE ANSWER IS NOT 100%.**
+  `D:\source\scripts\Entra\CloudAdminEmployeeIdTrueUp` (outside this repo; counts read 2026-09-22,
+  no identities copied here). Of **149** privileged accounts in `priv_accounts_update.csv`:
+  - **8 could not be mapped at all** - `corrected-unresolved.csv`, every one "No AD account with
+    sAMAccountName '...'". They have no on-premises owner to derive.
+  - **141 were mapped** (`original_corrected.csv`, `CloudUPN,OwnerADUPN,EmployeeId`), of which
+    `employeeid-current.csv` shows **111 set and matching, 30 not found**.
+  - **28 of those 30 are in a SECOND TENANT** - their UPNs end `@analogfed.onmicrosoft.us`, not
+    `@analog.onmicrosoft.com`. They are not missing; the run was not pointed at that tenant. **This
+    is queue 5's subject** (`.agents/decisions.md` 2026-09-21: *"there's one other tenant. creds
+    for that tenant will live in delinea."*), so items 10 and 5 are now entangled: a quarter of the
+    privileged population the stakeholder cares about lives where this module cannot reach.
+  - The remaining **2 are genuinely absent** from the commercial tenant.
+  So: **111 of 113 attempted in the commercial tenant (98.2%), 111 of 149 overall (74.5%)** -
+  against a bar the owner set at 100%.
+  **What the true-up did NOT measure, and what the survey is still for:** whether each employeeId
+  resolves to exactly ONE live directory user WITH A MAILBOX. The true-up validated the owner UPN
+  and id **against a single domain only** (its README: "AD validation runs once per CSV row, only
+  against ad.analog.com"), so a duplicate employeeId elsewhere in the forest was never visible, and
+  mailbox presence was never checked. Those are exactly `Ambiguous` and `MatchedNoMailbox`.
   **NEXT ACTION, in order:** (1) owner runs the survey and hands back the summary; (2) revise the
   plan around items 10 and 11 against that number and re-put D4; (3) owner approval; (4) implement.
   A result short of 100% is a fresh owner decision, not a gap to route around with a fallback to
