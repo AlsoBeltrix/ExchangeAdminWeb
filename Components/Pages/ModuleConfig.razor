@@ -175,10 +175,22 @@
                 {
                     var capturedAlias = alias;
                     var aliasGroups = accessState.TryGetValue(capturedAlias, out var ag) ? ag : new List<string>();
+                    @* A module may name its permissions for the administrator granting them; most
+                       do not, and those still head their row with the alias exactly as before. *@
+                    var aliasLabel = PermissionLabelFor(capturedAlias);
+                    var aliasLabelDiffers = !string.Equals(aliasLabel, capturedAlias, StringComparison.Ordinal);
 
                     <div class="mb-3">
                         <div class="d-flex align-items-baseline gap-2 mb-1">
-                            <strong style="font-size: 0.8rem;">@capturedAlias</strong>
+                            <strong style="font-size: 0.8rem;">@aliasLabel</strong>
+                            @* The alias stays visible whenever a label replaces it as the heading:
+                               it is the section-access storage key, and it is what the denial log
+                               line and any support conversation will name. Dropping it would leave
+                               an administrator unable to connect this row to either. *@
+                            @if (aliasLabelDiffers)
+                            {
+                                <code class="text-muted" style="font-size: 0.68rem;">@capturedAlias</code>
+                            }
                             <span class="text-muted" style="font-size: 0.72rem;">@aliasGroups.Count group(s)</span>
                         </div>
                         @* The alias alone told an admin nothing about what they were approving
@@ -763,6 +775,33 @@
     /// (it renders in its own section, with its own warning), so an empty string is the correct
     /// answer for an alias with no descriptor rather than a placeholder that reads as a permission.
     /// </remarks>
+    /// <summary>
+    /// The heading for one policy alias on the Access tab: the descriptor's display name when it
+    /// declares one, otherwise the alias itself.
+    /// </summary>
+    /// <remarks>
+    /// Same lookup shape and same fallback reasoning as <see cref="PermissionDescriptionFor"/>:
+    /// read from the descriptor so the heading cannot drift from the catalog, and answer with the
+    /// alias for anything that does not resolve. The servicer key never reaches this method - it
+    /// renders in its own section below - and returning the alias for it would be correct anyway,
+    /// which is why this cannot produce a blank heading.
+    /// </remarks>
+    private string PermissionLabelFor(string alias)
+    {
+        if (module == null) return alias;
+
+        if (string.Equals(module.MainPermission.PolicyAlias, alias, StringComparison.OrdinalIgnoreCase))
+            return module.MainPermission.DisplayName ?? alias;
+
+        foreach (var gp in module.GranularPermissions)
+        {
+            if (string.Equals(gp.PolicyAlias, alias, StringComparison.OrdinalIgnoreCase))
+                return gp.DisplayName ?? alias;
+        }
+
+        return alias;
+    }
+
     private string PermissionDescriptionFor(string alias)
     {
         if (module == null) return string.Empty;

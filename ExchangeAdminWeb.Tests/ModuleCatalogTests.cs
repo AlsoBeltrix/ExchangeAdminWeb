@@ -246,6 +246,40 @@ public class ModuleCatalogTests
     }
 
     [Fact]
+    public void Catalog_MessageTrace_PermissionsAreLabelledForTheAdministratorGrantingThem()
+    {
+        // The Access tab used to head both rows with the raw alias, so the choice an administrator
+        // was making read as "MessageTrace" versus "MessageTraceSearch" - which names neither
+        // capability. What is actually being granted is header analysis versus trace search
+        // (owner ruling 2026-09-22).
+        //
+        // The aliases themselves are deliberately NOT renamed and must not be: each is the
+        // section-access storage key, and the store is fail-closed, so renaming one orphans every
+        // group granted against it and denies them rather than failing open.
+        var module = _catalog.GetById("MessageTrace")!;
+        var granular = Assert.Single(module.GranularPermissions);
+
+        Assert.Equal("Header Analysis", module.MainPermission.DisplayName);
+        Assert.Equal("Trace Search", granular.DisplayName);
+
+        Assert.Equal("MessageTrace", module.MainPermission.PolicyAlias);
+        Assert.Equal("MessageTraceSearch", granular.PolicyAlias);
+    }
+
+    [Fact]
+    public void Catalog_PermissionDisplayNameIsOptionalAndDefaultsToNull()
+    {
+        // The Access tab falls back to the alias when a permission declares no display name, which
+        // is how every module other than MessageTrace still renders. If this ever defaults to
+        // something non-null, those modules silently change heading, so the default is pinned
+        // here rather than left to the record declaration.
+        var module = _catalog.GetById("MailboxPermissions")!;
+
+        Assert.Null(module.MainPermission.DisplayName);
+        Assert.All(module.GranularPermissions, gp => Assert.Null(gp.DisplayName));
+    }
+
+    [Fact]
     public void Catalog_MessageTrace_PolicyAliasesAreConfigurable()
     {
         // The alias has to reach the Module Config Access tab, which builds its list from here:

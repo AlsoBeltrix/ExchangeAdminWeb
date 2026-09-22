@@ -276,17 +276,24 @@ public sealed class ModuleCatalog
             // when it did not (review finding mtps-1, 2026-09-22). They now state the unenforced
             // state; the enforcement slice replaces them with the final wording in the same
             // commit that makes the gates consult the alias.
-            Version = "1.5.1",
+            // 1.5.2: the Access tab headed both grants with the raw alias, so the distinction read
+            // as "MessageTrace" versus "MessageTraceSearch" when what is being granted is header
+            // analysis versus trace (owner ruling 2026-09-22). They now head as Header Analysis
+            // and Trace Search, with the alias still beside each - it is the storage key and the
+            // name in the denial log.
+            Version = "1.5.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
                 "MessageTrace",
                 "Open the module, analyse message headers, AND search message traces. NOT YET SPLIT: the Search permission below is declared but nothing enforces it, so this permission still grants trace search and the reading of any user's mail metadata. Do not grant it to anyone who should be limited to header analysis until the split is enforced.",
-                FailClosed: true),
+                FailClosed: true,
+                DisplayName: "Header Analysis"),
             GranularPermissions = [
                 new("Search", "MessageTraceSearch",
                     "Will grant message trace search: reading any user's senders, recipients, subjects, delivery status, message IDs and IP addresses across Exchange Online and the on-premises transport logs, the per-message delivery trail, and the detail exports built from it. NOT YET ENFORCED: granting this today gives nobody anything and withholding it blocks nobody. Grant it now to the groups that should keep trace search once enforcement lands.",
-                    FailClosed: true)
+                    FailClosed: true,
+                    DisplayName: "Trace Search")
             ],
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by message tracking", Required: false)
