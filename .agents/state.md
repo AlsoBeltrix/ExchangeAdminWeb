@@ -92,24 +92,20 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   **The corrected text is NOT on the dev instance - `db092e8` has not been deployed.** Until it is,
   the Access tab still shows the false copy.
 
-- **THE ACCESS TAB LABELS ARE THE OWNER'S NEXT NAMED CHANGE, 2026-09-22, NOT YET IMPLEMENTED.**
-  Verbatim: *"the access names are stupid. 'MessageTrace' vs 'MessageTraceSearch'? trace is what
-  we're gating. header analysis vs trace. name them more clearly in the UI."*
-  **UI only. The policy alias is the storage key and must not change:** section access is stored
-  per alias and the store is fail-closed, so renaming `MessageTrace` would orphan the two grants
-  the owner just saved and deny everyone. `Components/Pages/ModuleConfig.razor:181` renders
-  `<strong>@capturedAlias</strong>` - the raw alias - as each grant's heading.
-  **Why the existing `Name` field cannot simply be displayed:** `ModulePermission.Name`
-  (`Modules/ModulePermission.cs:8`) is a slot label, not a display name - **29 of the 29 main
-  permissions are named "Access"**, so showing it would replace one unhelpful heading with
-  another.
-  **Proposed shape, not yet approved or built:** add an optional `DisplayName` to
-  `ModulePermission` defaulting to null; render `DisplayName ?? alias` as the heading with the
-  alias kept beside it in muted text, because the alias is what appears in logs and in the
-  fail-closed denial message; set it on `MessageTrace` only - "Header Analysis" and "Trace Search".
-  Every other module renders exactly as it does today. Touches shared infrastructure
-  (`ModulePermission.cs`, `ModuleConfig.razor`) AND one module, so **both** version bumps fire.
-  Constitution "Planning Rules" puts UI polish outside the written-plan requirement.
+- **ACCESS TAB LABELS: DONE, `bdd01a8`, NOT DEPLOYED.** Owner ruling 2026-09-22: *"the access names
+  are stupid. 'MessageTrace' vs 'MessageTraceSearch'? trace is what we're gating. header analysis
+  vs trace. name them more clearly in the UI."* `ModulePermission` gained an optional `DisplayName`
+  defaulting to null; `Components/Pages/ModuleConfig.razor` heads each grant with it and keeps the
+  alias beside it in muted text. `MessageTrace` declares "Header Analysis" and "Trace Search";
+  every other module declares none and renders exactly as before, pinned by its own test.
+  **The aliases were NOT renamed and must not be** - each is the section-access storage key and the
+  store is fail-closed, so a rename orphans the groups granted against it and denies them rather
+  than failing open. The alias stays on screen for the same reason it stays in the code: it is what
+  the denial log line names.
+  Both bumps fired per the Constitution's two rules: base app `2.21.1` -> `2.22.0` (shared record
+  and config page), module `1.5.1` -> `1.5.2`. Suite 2954/0/3; two mutations, each failing only its
+  own test. Constitution "Planning Rules" puts UI polish outside the written-plan requirement, so
+  no plan was written.
 
 - **QUEUE ITEM 10 CONTRADICTS A MEASURED RESULT AND A RECORDED OWNER RULING. Put to the owner
   2026-09-22, unanswered.** The item reads: *"Update O365 password change module to match on
