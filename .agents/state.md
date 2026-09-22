@@ -80,6 +80,17 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   narrower than module access by one group, which is the whole point of the split.
   Remaining work is slices 2, 3 and 4 (four commits total, not three as an earlier version of this
   entry said). **Nothing enforces yet** - slices 3 and 4 are what make these grants bite.
+  **SLICE 1 WAS REVIEWED AND ONE DEFECT WAS FOUND AND FIXED: `db092e8`, module `1.5.0` -> `1.5.1`.**
+  codex / `@azure-openai-eus2-global/gpt-5.5-dzs` / xhigh / standard over `9d97e4b^..9d97e4b`,
+  verdict `unsound`, one MEDIUM, no CRITICAL and no HIGH; record `.agents/review/findings/mtps-1.md`.
+  **It cleared the property slice 1 exists to hold** - the alias is declared and no runtime check
+  consults it - so inertness is confirmed rather than asserted. The defect was the admin-facing
+  copy: both Access-tab descriptions described the FINISHED split while every gate still accepts
+  the parent policy, so the page told the owner that `ExchangeWebPerms`, holding the parent alias
+  alone, cannot search traces. It can. Fixed with transitional wording plus a tripwire test that
+  fails until slice 3 flips it; the plan gained step 11a to make that flip a numbered step.
+  **The corrected text is NOT on the dev instance - `db092e8` has not been deployed.** Until it is,
+  the Access tab still shows the false copy.
 
 - **THE ACCESS TAB LABELS ARE THE OWNER'S NEXT NAMED CHANGE, 2026-09-22, NOT YET IMPLEMENTED.**
   Verbatim: *"the access names are stupid. 'MessageTrace' vs 'MessageTraceSearch'? trace is what
