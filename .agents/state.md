@@ -72,13 +72,33 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   descriptor and all four tests failed for four distinct reasons, then restored with the mtime
   touch. **The slice is inert: nothing outside `ModuleCatalog.cs` consults the alias, so nobody's
   access changes.**
-  **BLOCKED ON THE OWNER, and slice 2 must not start first:** deploy this, then grant a
-  section-access group against `MessageTraceSearch` on the Module Config Access tab. That needs a
-  GLOBAL admin, not a module admin - the section-access save handler re-checks `AdminSettings`. The
-  alias cannot be granted before the descriptor deploys, which is why the boundary exists.
+  **THE MANDATORY OWNER STEP IS DONE, 2026-09-22 - slice 2 is unblocked.** The owner deployed slice
+  1 (the Access tab shows `v1.5.0`) and saved the grants, evidenced by a screenshot of the Module
+  Config Access tab: `MessageTrace` holds 2 groups (`ANALOG\ExchangeWebAdmins`,
+  `ANALOG\ExchangeWebPerms`), `MessageTraceSearch` holds 1 (`ANALOG\ExchangeWebAdmins`). That is
+  the deliberate re-grant the owner's 2026-09-21 ruling called for, not a copy: trace search is
+  narrower than module access by one group, which is the whole point of the split.
   Remaining work is slices 2, 3 and 4 (four commits total, not three as an earlier version of this
-  entry said). Per the owner's 2026-09-21 ruling the grant is a DELIBERATE re-grant, not a copy of
-  today's `MessageTrace` groups, so trace search stays dark for everyone until the owner grants it.
+  entry said). **Nothing enforces yet** - slices 3 and 4 are what make these grants bite.
+
+- **THE ACCESS TAB LABELS ARE THE OWNER'S NEXT NAMED CHANGE, 2026-09-22, NOT YET IMPLEMENTED.**
+  Verbatim: *"the access names are stupid. 'MessageTrace' vs 'MessageTraceSearch'? trace is what
+  we're gating. header analysis vs trace. name them more clearly in the UI."*
+  **UI only. The policy alias is the storage key and must not change:** section access is stored
+  per alias and the store is fail-closed, so renaming `MessageTrace` would orphan the two grants
+  the owner just saved and deny everyone. `Components/Pages/ModuleConfig.razor:181` renders
+  `<strong>@capturedAlias</strong>` - the raw alias - as each grant's heading.
+  **Why the existing `Name` field cannot simply be displayed:** `ModulePermission.Name`
+  (`Modules/ModulePermission.cs:8`) is a slot label, not a display name - **29 of the 29 main
+  permissions are named "Access"**, so showing it would replace one unhelpful heading with
+  another.
+  **Proposed shape, not yet approved or built:** add an optional `DisplayName` to
+  `ModulePermission` defaulting to null; render `DisplayName ?? alias` as the heading with the
+  alias kept beside it in muted text, because the alias is what appears in logs and in the
+  fail-closed denial message; set it on `MessageTrace` only - "Header Analysis" and "Trace Search".
+  Every other module renders exactly as it does today. Touches shared infrastructure
+  (`ModulePermission.cs`, `ModuleConfig.razor`) AND one module, so **both** version bumps fire.
+  Constitution "Planning Rules" puts UI polish outside the written-plan requirement.
 
 - **QUEUE ITEM 10 CONTRADICTS A MEASURED RESULT AND A RECORDED OWNER RULING. Put to the owner
   2026-09-22, unanswered.** The item reads: *"Update O365 password change module to match on
@@ -95,9 +115,22 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
      refused by the owner in the same ruling, which ended matching outright: *"if we cannot get a
      100% working match, then matching is off the table."* The operator-types-the-destination
      design exists because of that ruling.
-  **The question put to the owner:** have the cloud accounts been stamped with employeeId since, or
-  is the owner now willing to have them stamped? Re-measuring needs the owner's go because the hold
-  bars the query. **Do not query Graph or AD for this until that go is given.**
+  **ANSWERED BY THE OWNER 2026-09-22: the accounts are stamped.** Verbatim: *"yes, already updated
+  the accounts in-scope."* So the 0-of-172 measurement of 2026-09-11 is **superseded by a change to
+  the directory, not by a re-reading of the old data** - the blocker was the data, and the owner
+  fixed the data. Matching on employeeId is now possible in principle.
+  **What is still NOT authorized.** The 2026-09-14 hold on `CloudPasswordReset` has not been lifted:
+  it bars any implementation slice, any revision of `docs/CloudPasswordReset-Plan.md` beyond
+  recording the hold, and any Graph or AD query in service of the module. The owner said "look at
+  item 10", which is reconnaissance, not a go. **Do not query Graph or AD, and do not revise that
+  plan, until the owner lifts the hold.**
+  **What a resumption would have to re-open, so it is not lost:** the plan is written around the
+  operator typing the destination, which is the design the 0% measurement forced. Matching changes
+  that back, which revives D4 - whether the separate `CloudPasswordResetReveal` permission still
+  fences anything - and the plan's own note says D4 must be put again before S5. A coverage
+  measurement against the newly stamped accounts is the first slice, because "already updated" is
+  the owner's report of an action, not yet a measured match rate, and the 2026-09-11 ruling set the
+  bar at 100%.
   **Worth stating when this is picked up, because it cuts toward doing the work:** a derived
   destination restores the security property the current design knowingly traded away. Today's
   design lets an operator type their own address and receive another user's password; only the
