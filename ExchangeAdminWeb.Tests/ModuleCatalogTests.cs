@@ -211,6 +211,30 @@ public class ModuleCatalogTests
     }
 
     [Fact]
+    public void Catalog_MessageTrace_HasFailClosedSearchGranular()
+    {
+        // The module is one page with two capabilities of very different reach: header analysis
+        // parses bytes the operator already holds, while trace search reads any user's mail
+        // metadata across Exchange Online and the on-premises transport logs. Only the second
+        // sits behind this grant (docs/MessageTracePermissionSplit-Plan.md).
+        var module = _catalog.GetById("MessageTrace")!;
+        var granular = Assert.Single(module.GranularPermissions);
+        Assert.Equal("Search", granular.Name);
+        Assert.Equal("MessageTraceSearch", granular.PolicyAlias);
+        Assert.True(granular.FailClosed);
+    }
+
+    [Fact]
+    public void Catalog_MessageTrace_PolicyAliasesAreConfigurable()
+    {
+        // The alias has to reach the Module Config Access tab, which builds its list from here:
+        // until it does, no group can be granted the new permission at all.
+        var aliases = _catalog.GetConfigurablePolicyAliases();
+        Assert.Contains("MessageTrace", aliases);
+        Assert.Contains("MessageTraceSearch", aliases);
+    }
+
+    [Fact]
     public void Catalog_IntuneDevices_CarriesNoNotificationOrEntraDefaultConfigFields()
     {
         // Owner ruling 2026-09-02 (.agents/decisions.md, superseding D2's config half): whether to
@@ -370,7 +394,8 @@ public class ModuleCatalogTests
         Assert.Contains("IntuneDevicesEntraDelete", aliases);
         Assert.Contains("ServiceHealth", aliases);
         Assert.Contains("DefenderEndpointDevices", aliases);
-        Assert.Equal(42, aliases.Count);
+        Assert.Contains("MessageTraceSearch", aliases);
+        Assert.Equal(43, aliases.Count);
     }
 
     [Fact]
@@ -487,7 +512,7 @@ public class ModuleCatalogTests
             "CalendarPermissions", "CalendarPermissionsOnPrem",
             "MigrationCheck", "MigrationCreate", "MigrationManage",
             "DelegationReport",
-            "MessageTrace",
+            "MessageTrace", "MessageTraceSearch",
             "RecipientLookup",
             "OutOfOffice",
             "BlockedSenders", "BlockedSendersUnblock",

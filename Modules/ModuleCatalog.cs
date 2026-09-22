@@ -266,13 +266,23 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.4.2",
+            // 1.5.0: searching message traces becomes its own Search grant, so opening the module
+            // and analysing headers no longer carries the right to read other people's mail
+            // (docs/MessageTracePermissionSplit-Plan.md, 2026-09-22). Declared only, for now:
+            // nothing consults the new alias until the enforcement slice ships, and the owner
+            // grants a group against it in between.
+            Version = "1.5.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
                 "MessageTrace",
-                "Open the module and trace any user's mail, reading senders, recipients, subjects, headers and transport log detail.",
+                "Open the module and analyse message headers pasted in or uploaded as a file; the analysis is local and reads nothing from Exchange. Searching message traces needs the separate Search permission.",
                 FailClosed: true),
+            GranularPermissions = [
+                new("Search", "MessageTraceSearch",
+                    "Search message traces and read any user's mail metadata across Exchange Online and the on-premises transport logs: senders, recipients, subjects, delivery status, message IDs and IP addresses, plus the per-message delivery trail and the detail exports built from it.",
+                    FailClosed: true)
+            ],
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by message tracking", Required: false)
             ]
