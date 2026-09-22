@@ -1004,13 +1004,22 @@ Needs a dev deploy. Nothing in this repo reaches the rendered page.
 
 ## Open questions
 
-Each answerable in one line.
+Each answerable in one line. **Questions 1 and 2 were ANSWERED by the owner on 2026-09-21;
+the ruling is in `.agents/decisions.md`, "Owner answers on queue items 4, 5 and 8", which is
+the canonical record. 3 to 7 remain open.**
 
-1. Should the group(s) currently granted `MessageTrace` be copied onto `MessageTraceSearch` so
-   today's operators keep trace search, or should trace be re-granted deliberately, group by
-   group, as a fresh decision? (This plan assumes the owner decides at checklist step 1 and does
-   not seed anything in code.)
-2. Alias name: `MessageTraceSearch` (recommended) or `MessageTraceTrace`?
+1. **ANSWERED 2026-09-21: RE-GRANT DELIBERATELY - do not copy the existing group across.** Nobody
+   can trace until the owner adds them to the new group, and that is an outage from the moment the
+   enforcement slice deploys; the owner accepted that cost with it stated. The three-commit shape
+   with a mandatory deploy boundary is therefore load-bearing, not ceremony. This plan seeds
+   nothing in code either way, so no step below changes; checklist step 1 is now a deliberate
+   re-grant rather than a copy.
+   *(Original question: should the group(s) currently granted `MessageTrace` be copied onto
+   `MessageTraceSearch` so today's operators keep trace search, or should trace be re-granted
+   deliberately, group by group, as a fresh decision?)*
+2. **ANSWERED 2026-09-21: `MessageTraceSearch`.** The same ruling names the alias in the owner's
+   accepted text, which is the recommended option; `MessageTraceTrace` is dropped.
+   *(Original question: alias name - `MessageTraceSearch` (recommended) or `MessageTraceTrace`?)*
 3. Confirm `/message-analysis/reports` moves to the granular (recommended - it exposes every
    operator's trace detail exports), rather than staying on the main permission.
 4. Confirm the Trace Search tab renders disabled with the reason stated (recommended) rather than

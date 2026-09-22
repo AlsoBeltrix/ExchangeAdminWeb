@@ -49,10 +49,11 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   `docs/MessageTracePermissionSplit-Plan.md`, `Status: Draft`, codex consensus after three rounds
   (`155eaf7`, `c3b4239`, `5e69dd9`, `995b673`), drafted during the weekend run - the claim that
   nothing had been started was wrong and is corrected here 2026-09-22.** No code has been written.
-  First action: the plan's seven open questions are the owner's and none is answered; question 1
-  gates everything because it decides whether checklist step 1 copies today's `MessageTrace` groups
-  onto the new alias or re-grants deliberately. Put question 1 to the owner, then approval of the
-  plan. Do not implement before the plan is approved.
+  **Questions 1 and 2 of the plan are ANSWERED** - `.agents/decisions.md` 2026-09-21: re-grant
+  deliberately rather than copy the existing group across, and the alias is `MessageTraceSearch`.
+  Questions 3 to 7 are open, and the plan body already implements the recommended answer to each,
+  so approving the plan as written answers them. First action: put that approval to the owner. Do
+  not implement before the plan is approved.
 
 - **THE WEEKEND BACKLOG RUN IS AT ITS END STATE (2026-09-18 to 2026-09-19); tier 1 is complete
   and only owner-blocked work remains. Read
@@ -125,8 +126,8 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
     Revision 6). Plan questions Q2-Q5 remain unanswered and the shipped behaviour in each case is the
     plan's proposal, not a ruling.
   - **Queue 4, trace vs header-analysis permissions** - `docs/MessageTracePermissionSplit-Plan.md`,
-    **codex consensus after three rounds**, `Status: Draft`. Blocked on the owner's question 1:
-    copy today's `MessageTrace` groups onto the new alias, or re-grant deliberately. **Deploy
+    **codex consensus after three rounds**, `Status: Draft`. Questions 1 and 2 answered
+    2026-09-21 - re-grant deliberately, alias `MessageTraceSearch`. **Deploy
     hazard, stated first in the plan on purpose:** a new fail-closed alias denies EVERY operator
     including the owner until a group is stored against it, and the alias cannot be granted before
     the descriptor deploys - hence three commits with a mandatory deploy boundary. Recovery needs
