@@ -5,6 +5,45 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-22 - CloudPasswordReset is OFF HOLD, and employeeId matching is back on the table
+
+Status: Active. Scope: `CloudPasswordReset`. **Supersedes the 2026-09-14 hold** in full, and
+reopens what the 2026-09-11 ruling closed on the evidence available then.
+
+Owner, verbatim: *"yes, that plan is off hold."* Said in answer to a message naming exactly what
+the hold was blocking - querying Graph or AD to measure the employeeId match rate, and revising
+`docs/CloudPasswordReset-Plan.md` - so **both are authorized**, not merely unprohibited.
+
+**What changed underneath the old ruling.** Queue item 10 asks the module to match on employeeId
+and derive the destination mailbox from it. On 2026-09-11 that was measured impossible:
+employeeId was populated on **0 of 172** cloud accounts, and stamping them was refused, which is
+what produced *"if we cannot get a 100% working match, then matching is off the table"* and the
+operator-types-the-destination design. The owner has since stamped them. Verbatim, 2026-09-22:
+*"yes, already updated the accounts in-scope."* **The blocker was the data, and the owner changed
+the data** - this is not a reinterpretation of the old survey.
+
+**What is now authorized:** a read-only coverage survey against the stamped accounts, and the plan
+revision that follows from it.
+
+**What is NOT yet authorized, and must not be inferred from the lift:** implementation. The plan's
+current design is built around the operator typing the destination, which only exists because
+matching had failed. Matching returning changes that design, so the plan is revised and re-approved
+before any C# is written.
+
+**Two things the revision must carry rather than quietly drop.**
+1. **The 100% bar is the owner's own, and "already updated" is a reported action, not a measured
+   match rate.** The survey measures it; a partial result is a fresh decision for the owner, not
+   something to route around with a fallback.
+2. **D4 comes back.** The separate `CloudPasswordResetReveal` permission was justified by the
+   operator being unable to obtain the password, then undermined when the operator began typing the
+   destination. A derived destination restores that justification, and the plan already requires
+   D4 be re-put before S5. It was never withdrawn on its merits.
+
+**The security property this restores, stated because it is the reason the work is worth doing:**
+under the typed-destination design an operator can address another user's password to themselves,
+and only the audit record and the admin alert catch it afterwards. A derived destination prevents
+it instead of detecting it.
+
 ### 2026-09-22 - Queue 4: an operator without trace search does not see the Trace Search tab
 
 Status: Active. Settled in conversation on 2026-09-22. Answers open question 4 of

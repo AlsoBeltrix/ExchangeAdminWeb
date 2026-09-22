@@ -1,23 +1,43 @@
 # Cloud Password Reset Module (Entra ID cloud-only accounts)
 
-Status: **ON HOLD.** Owner ruling 2026-09-14: *"stop this module's development and put it on
-hold."* No reason was given and none is inferred here. **Nothing in this plan is authorized --
-not S2, not a line of C#, not a further revision of the plan itself.** D4 was put to the owner
-and answered *"no. neither."*; it is neither settled nor open, because the question stopped
-mattering when the module stopped.
+Status: **OFF HOLD as of 2026-09-22, AND THIS DOCUMENT IS OUT OF DATE.** The owner lifted the
+2026-09-14 hold (*"yes, that plan is off hold."*, `.agents/decisions.md`). **Authorized right now:
+a read-only coverage survey, and the revision of this plan. NOT authorized: implementation** - the
+design below is built on a premise the owner has since falsified, so it must be revised and
+re-approved before any C# is written.
+
+**Read this before anything else in the file.** Two queue items landed after the hold and together
+they change the module's shape:
+
+- **Item 10 - match on employeeId and derive the destination mailbox from it.** This reverses the
+  central design decision recorded below. Everything here that says the operator types the
+  destination exists only because the 2026-09-11 survey found employeeId populated on **0 of 172**
+  cloud accounts and stamping them was refused. The owner has since stamped them (*"yes, already
+  updated the accounts in-scope."*). The blocker was the data and the data changed.
+  **The 100% bar is still the owner's** - *"if we cannot get a 100% working match, then matching is
+  off the table"* - and "already updated" is a reported action, not a measured rate. The survey
+  measures it first; a partial result is a fresh owner decision, not something to paper over with a
+  fallback to typing.
+- **Item 11 - force password change at next sign-in must be a RUNTIME option on the reset form,
+  defaulting to yes.** Owner, verbatim: *"O365 PW change module should have an option at runtime,
+  so not secreted away in settings, to force pw change on next login, which should default to
+  yes."* So it is a control the operator sees and can turn off per reset, checked by default - NOT
+  a config field on the module's settings page, and not a hardcoded constant.
+
+**D4 comes back with item 10.** The separate `CloudPasswordResetReveal` permission was justified by
+the operator being unable to obtain the password; typing the destination undermined that, and a
+derived destination restores it. It was answered *"no. neither."* and so was never withdrawn on its
+merits. Re-put it before S5.
 
 Nothing was ever built. The stream shipped PowerShell survey tooling, which is deleted
 (`a56f41f`), and this plan. There is no `CloudPasswordReset` descriptor in
 `Modules/ModuleCatalog.cs`, no service, no page, no permission, no config field and no version
-bump anywhere. **Resuming costs nothing to undo; it starts at S2.**
+bump anywhere. **Resuming costs nothing to undo.**
 
-If this is picked up again, read the whole plan rather than this header, and re-put D4 before
-S5 -- it was never withdrawn on its merits.
-
-**State at the hold:** the S0 gate is gone (the owner-resolution survey ran, returned 46.5%, and
-the owner ended the approach rather than amending it); the module derives nothing and the
-operator types the destination address; D1 is settled (the app generates the password); D2 is
-settled (the operator names the destination); D3 is withdrawn.
+**State as the hold was lifted, which the revision starts from:** D1 is settled (the app generates
+the password); D2 (the operator names the destination) is REOPENED by item 10; D3 is withdrawn; D4
+is reopened as above. The S0 gate returns in a new form - a coverage survey against the stamped
+accounts.
 
 New module `CloudPasswordReset`. **The base app version bumps** -- this stream adds a public
 method to `Services/EmailService.cs`, which is shared infrastructure (Constitution, Deployment

@@ -89,10 +89,10 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   the parent policy, so the page told the owner that `ExchangeWebPerms`, holding the parent alias
   alone, cannot search traces. It can. Fixed with transitional wording plus a tripwire test that
   fails until slice 3 flips it; the plan gained step 11a to make that flip a numbered step.
-  **The corrected text is NOT on the dev instance - `db092e8` has not been deployed.** Until it is,
-  the Access tab still shows the false copy.
+  **DEPLOYED AND VERIFIED BY THE OWNER 2026-09-22**, together with the Access tab labels
+  (`bdd01a8`) and the version bumps. The corrected copy is live on dev.
 
-- **ACCESS TAB LABELS: DONE, `bdd01a8`, NOT DEPLOYED.** Owner ruling 2026-09-22: *"the access names
+- **ACCESS TAB LABELS: DONE, `bdd01a8`, DEPLOYED AND VERIFIED BY THE OWNER 2026-09-22.** Owner ruling 2026-09-22: *"the access names
   are stupid. 'MessageTrace' vs 'MessageTraceSearch'? trace is what we're gating. header analysis
   vs trace. name them more clearly in the UI."* `ModulePermission` gained an optional `DisplayName`
   defaulting to null; `Components/Pages/ModuleConfig.razor` heads each grant with it and keeps the
@@ -125,19 +125,22 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   **ANSWERED BY THE OWNER 2026-09-22: the accounts are stamped.** Verbatim: *"yes, already updated
   the accounts in-scope."* So the 0-of-172 measurement of 2026-09-11 is **superseded by a change to
   the directory, not by a re-reading of the old data** - the blocker was the data, and the owner
-  fixed the data. Matching on employeeId is now possible in principle.
-  **What is still NOT authorized.** The 2026-09-14 hold on `CloudPasswordReset` has not been lifted:
-  it bars any implementation slice, any revision of `docs/CloudPasswordReset-Plan.md` beyond
-  recording the hold, and any Graph or AD query in service of the module. The owner said "look at
-  item 10", which is reconnaissance, not a go. **Do not query Graph or AD, and do not revise that
-  plan, until the owner lifts the hold.**
-  **What a resumption would have to re-open, so it is not lost:** the plan is written around the
-  operator typing the destination, which is the design the 0% measurement forced. Matching changes
-  that back, which revives D4 - whether the separate `CloudPasswordResetReveal` permission still
-  fences anything - and the plan's own note says D4 must be put again before S5. A coverage
-  measurement against the newly stamped accounts is the first slice, because "already updated" is
-  the owner's report of an action, not yet a measured match rate, and the 2026-09-11 ruling set the
-  bar at 100%.
+  fixed the data.
+  **AND THE HOLD IS LIFTED, 2026-09-22.** Verbatim: *"yes, that plan is off hold."* Said in answer
+  to a message naming what the hold blocked, so **the coverage survey and the plan revision are
+  both authorized**; implementation is not - see `.agents/decisions.md` for the boundary. The plan
+  header now states this; the body below it is still the old design and is stale.
+  **ITEM 11, added by the owner 2026-09-22, same module.** Verbatim: *"O365 PW change module should
+  have an option at runtime, so not secreted away in settings, to force pw change on next login,
+  which should default to yes."* A control on the reset form, checked by default, that the operator
+  can clear per reset - **explicitly NOT a module config field**, which is how this app would
+  otherwise reach for it. Maps to `forceChangePasswordNextSignIn` on the Graph `passwordProfile`,
+  the same PATCH that sets the password, so it costs nothing extra at the service.
+  **NEXT ACTION, in order:** (1) a read-only coverage survey of employeeId across the in-scope
+  cloud accounts, measured against the owner's own 100% bar - "already updated" is a reported
+  action, not a rate, and a partial result is a fresh owner decision rather than a reason to fall
+  back to typing; (2) revise the plan around items 10 and 11 and re-put D4; (3) owner approval.
+  The old survey tooling was deleted at `a56f41f` and would have to be rebuilt or recovered.
   **Worth stating when this is picked up, because it cuts toward doing the work:** a derived
   destination restores the security property the current design knowingly traded away. Today's
   design lets an operator type their own address and receive another user's password; only the
