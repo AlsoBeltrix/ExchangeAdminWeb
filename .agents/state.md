@@ -9,8 +9,8 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 - **QUEUE 8 (Defender for Endpoint) IS PARKED BY THE OWNER, 2026-09-22, waiting on an updated
   requirements document from the stakeholder. Do not resume it until that arrives.** Commit
-  `43a944e` is landed locally and **NOT PUSHED** - the owner was asked and parked the work before
-  answering, so the ask stands.
+  `43a944e` is pushed to both remotes (owner ran `pushall` 2026-09-22); the earlier standing ask
+  about it is closed. Pushed is not deployed and not resumed - the park stands.
   **Two defects are open against the shipped module and neither is fixed:**
   1. *The page is unusable at tenant scale.* It renders every device row, so the Blazor circuit
      dies ("Rejoining the server...") and nothing can be scrolled. The owner rejected virtualised
@@ -61,7 +61,7 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   trace tab in code from the header-analysis handoff and can run the trace outright, so removing
   the tab button leaves that route open. Section 4 now requires the handoff control hidden, the
   switch refused and `RunTrace` gated server-side regardless.
-  **SLICE 1 IS LANDED: `9d97e4b`, NOT PUSHED, NOT DEPLOYED.** Owner gave the go 2026-09-22 and
+  **SLICE 1 IS LANDED AND PUSHED: `9d97e4b`.** Owner gave the go 2026-09-22 and
   authorized an Opus 5 coding subagent for it. The granular `MessageTraceSearch` is declared on the
   `MessageTrace` descriptor, the main permission's description no longer claims to grant trace, and
   the module version went `1.4.2` -> `1.5.0` (minor, per question 6; the plan text predates 1.4.2
@@ -276,11 +276,11 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   review findings; the owner has since added items 8 and 9. The button gate is closed out - the owner accepted it on 2026-09-18 ("seems to
   work well enough") and added the app-wide audit to their own queue themselves, so do not
   re-raise it here as an open item.
-  **Both remotes are level with local at `3e19aef`**, verified with `git ls-remote` on
-  2026-09-18; `origin` (LAN gitea) was reachable on that check, so the `SEC_E_CERT_EXPIRED`
-  TLS failure seen earlier the same day was transient. This supersedes the earlier
-  "local and unpushed, both remotes at `523b69d`" note. Re-verify with `git ls-remote` rather
-  than trusting this line; push policy is unchanged (`.agents/push-policy.md`).
+  **Both remotes are level with local at `6f3ee22`**, verified with `git ls-remote` on
+  2026-09-22 after the owner ran `pushall`; `origin` (LAN gitea) was reachable, so the
+  `SEC_E_CERT_EXPIRED` TLS failure seen on 2026-09-18 remains transient rather than a standing
+  fault. Supersedes the `3e19aef` note. Re-verify with `git ls-remote` rather than trusting this
+  line; push policy is unchanged (`.agents/push-policy.md`).
 
 - **Service Health now shows its spinner on the first load. Closed, nothing outstanding.**
   `docs/ServiceHealthLoadFeedback-Plan.md` is Implemented. The owner deployed to dev, ran its
