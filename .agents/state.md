@@ -80,6 +80,29 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   entry said). Per the owner's 2026-09-21 ruling the grant is a DELIBERATE re-grant, not a copy of
   today's `MessageTrace` groups, so trace search stays dark for everyone until the owner grants it.
 
+- **QUEUE ITEM 10 CONTRADICTS A MEASURED RESULT AND A RECORDED OWNER RULING. Put to the owner
+  2026-09-22, unanswered.** The item reads: *"Update O365 password change module to match on
+  EmployeeID and use that to determine the target mailbox to send the new password to."* Two
+  problems, both from the record rather than from inference:
+  1. **There is no such module to update.** It was planned as `docs/CloudPasswordReset-Plan.md` and
+     never built - no descriptor, no service, no page, no permission, no config field. The owner
+     put it ON HOLD 2026-09-14 (`.agents/decisions.md`), which prohibits any implementation slice,
+     any further revision of that plan, and **any Graph or AD query in service of the module**. So
+     item 10 is not an update; it is build-the-module, plus matching on top.
+  2. **EmployeeID was already measured and ruled out.** `.agents/decisions.md` 2026-09-11: it is
+     "the strongest available identifier and is populated on the on-premises side, but on **0 of
+     172** cloud accounts", and the remedy - stamping it onto several hundred CLD accounts - was
+     refused by the owner in the same ruling, which ended matching outright: *"if we cannot get a
+     100% working match, then matching is off the table."* The operator-types-the-destination
+     design exists because of that ruling.
+  **The question put to the owner:** have the cloud accounts been stamped with employeeId since, or
+  is the owner now willing to have them stamped? Re-measuring needs the owner's go because the hold
+  bars the query. **Do not query Graph or AD for this until that go is given.**
+  **Worth stating when this is picked up, because it cuts toward doing the work:** a derived
+  destination restores the security property the current design knowingly traded away. Today's
+  design lets an operator type their own address and receive another user's password; only the
+  audit record and the admin alert catch it, after the fact. Matching would prevent it.
+
 - **THE WEEKEND BACKLOG RUN IS AT ITS END STATE (2026-09-18 to 2026-09-19); tier 1 is complete
   and only owner-blocked work remains. Read
   `.agents/decisions.md` 2026-09-18 "Weekend backlog run" for the authority it ran under - that
