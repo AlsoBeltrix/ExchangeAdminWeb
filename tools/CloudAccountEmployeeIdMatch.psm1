@@ -43,37 +43,36 @@ function ConvertTo-LdapFilterValue {
     return $escaped
 }
 
-function Get-DomainDnsFromDistinguishedName {
+function Test-EmployeeIdLookupSuspect {
     <#
     .SYNOPSIS
-        Derive the DNS domain name of an object from its distinguished name.
+        Is a zero-match result explained better by a broken query than by the directory?
     .DESCRIPTION
-        A global catalog search can return a user from any domain in the forest, and the
-        authoritative read of that user's attributes has to be directed at the domain that owns
-        it. That domain is derived here from the object's own DC components rather than named
-        anywhere, which is what keeps this survey environment-neutral: it works in whatever
-        forest the host belongs to and knows nothing about any particular one.
+        THE GUARD THIS SURVEY DID NOT HAVE, AND PAID FOR. Its first live run reported
+        "0% resolve" across 111 accounts whose ids were known to be set. The cause was the query,
+        not the data: it searched the forest GLOBAL CATALOG for employeeID, and employeeID is not
+        in the global catalog's partial attribute set, so the filter could never match anything
+        anywhere. Every account came back NoDirectoryMatch and the summary printed a confident 0%.
 
-        Returns $null when the DN carries no DC component, so a caller must decide what to do
-        rather than receive a plausible-looking wrong server.
+        A zero-match on SOME accounts is a finding. A zero-match on EVERY account that has an id
+        to match is a statement about the query. The distinction is mechanical and cheap, so the
+        survey now refuses to report a rate in the second case instead of publishing a number that
+        looks like an answer.
+
+        Deliberately exact rather than a threshold: ALL populated ids missing is unambiguous,
+        whereas "almost all" is a judgment this function has no basis to make. A near-uniform
+        failure - 110 of 111 - is NOT caught here, and the caller is told so rather than being
+        left to assume coverage this does not give.
     #>
     [CmdletBinding()]
-    [OutputType([string])]
+    [OutputType([bool])]
     param(
-        [Parameter(Mandatory)]
-        [AllowEmptyString()]
-        [string] $DistinguishedName
+        [int] $PopulatedCount = 0,
+        [int] $ZeroMatchCount = 0
     )
 
-    if ([string]::IsNullOrWhiteSpace($DistinguishedName)) { return $null }
-
-    $parts = [regex]::Matches($DistinguishedName, '(?i)(?:^|,)\s*DC=([^,]+)')
-    if ($parts.Count -eq 0) { return $null }
-
-    $labels = foreach ($p in $parts) { $p.Groups[1].Value.Trim() }
-    if ($labels | Where-Object { [string]::IsNullOrWhiteSpace($_) }) { return $null }
-
-    return ($labels -join '.')
+    if ($PopulatedCount -le 0) { return $false }
+    return $ZeroMatchCount -eq $PopulatedCount
 }
 
 function Get-EmployeeIdMatchOutcome {
@@ -263,4 +262,4 @@ function Get-EmployeeIdScopeExclusions {
     return @('NotCloudOnly', 'CloudAccountNotFound')
 }
 
-Export-ModuleMember -Function ConvertTo-LdapFilterValue, Get-DomainDnsFromDistinguishedName, Get-EmployeeIdMatchOutcome, Get-EmployeeIdOutcomeClasses, ConvertTo-UpnList, Get-CloudAccountScopeOutcome, Get-EmployeeIdScopeExclusions
+Export-ModuleMember -Function ConvertTo-LdapFilterValue, Test-EmployeeIdLookupSuspect, Get-EmployeeIdMatchOutcome, Get-EmployeeIdOutcomeClasses, ConvertTo-UpnList, Get-CloudAccountScopeOutcome, Get-EmployeeIdScopeExclusions

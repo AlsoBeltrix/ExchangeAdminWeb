@@ -69,11 +69,10 @@
 
     Environment neutrality (.agents/repo-guidance.md, owner ruling 2026-09-11): no domain, host,
     OU, group or address is named or defaulted anywhere in this script. The forest is discovered
-    from the host's own membership via Get-ADForest, and each matched user is re-read from the
-    domain derived from its own distinguished name.
+    from the host's own membership via Get-ADForest, and every domain it names is searched.
 
     If the forest cannot be resolved the survey FAILS rather than quietly falling back to the
-    local domain. A local-domain-only answer cannot see a duplicate employeeId in another domain,
+    local domain. A single-domain answer cannot see a duplicate employeeId in another domain,
     so it would under-report Ambiguous - the one outcome whose whole purpose is to look across
     domains - and a narrower answer would read as a cleaner one against a bar set at 100%.
 
@@ -143,7 +142,9 @@ if ($script:Upns.Count -eq 0) {
 
 $script:CloudAccounts = @()
 $script:Rows = @()
-$script:GlobalCatalog = $null
+$script:Domains = @()
+$script:Populated = 0
+$script:ZeroMatch = 0
 
 # -------------------------------------------------------------------------------------------
 # Step 1 - Graph, read-only. Enumerate the population and read employeeId.
@@ -206,7 +207,7 @@ Invoke-PlanOrAction "Read each listed account by name (one Graph call per accoun
 # Step 2 - Active Directory, read-only, forest-wide.
 # -------------------------------------------------------------------------------------------
 
-Invoke-PlanOrAction "Load Active Directory via the same module (ADImport) and discover this host's forest global catalog" {
+Invoke-PlanOrAction "Load Active Directory via the same module (ADImport) and discover this host's forest domains" {
     if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
         Write-Fail "The ActiveDirectory module is not installed. Add RSAT-AD-PowerShell, or run this from a host that has it."
     }
@@ -220,21 +221,33 @@ Invoke-PlanOrAction "Load Active Directory via the same module (ADImport) and di
         Write-Fail "$ConnectionModulePath does not export ADImport."
     }
 
-    # Deliberately fail-CLOSED, unlike the app's own fail-soft global catalog resolution. See
-    # the note in the help block: a local-domain answer under-reports Ambiguous.
+    # Fail-CLOSED: a single-domain answer cannot see a cross-domain duplicate, so it would
+    # under-report Ambiguous and read as a cleaner result than the truth.
     try {
         $forest = Get-ADForest
     }
     catch {
-        Write-Fail "Could not resolve the forest ($($_.Exception.Message)). This survey needs a forest-wide search to count duplicate employeeIds; a local-domain answer would under-report them."
+        Write-Fail "Could not resolve the forest ($($_.Exception.Message)). This survey needs every domain to count duplicate employeeIds; a single-domain answer would under-report them."
     }
 
-    $script:GlobalCatalog = "$($forest.Name):3268"
-    Write-Ok "Global catalog $($script:GlobalCatalog), $($forest.Domains.Count) domain(s) in scope"
+    # EVERY DOMAIN, NOT THE GLOBAL CATALOG. The first live run searched the GC and reported a
+    # confident 0% across 111 accounts whose ids were known to be set, because employeeID is not
+    # in the GC's partial attribute set - verified on this forest, where mail carries
+    # isMemberOfPartialAttributeSet True and employeeID carries nothing. A GC filter on it cannot
+    # match anywhere, ever. Searching each domain on 389 reads the real attribute, and querying
+    # the owning domain directly also returns mail and Enabled authoritatively, so no second read
+    # is needed.
+    $script:Domains = @($forest.Domains)
+    if ($script:Domains.Count -eq 0) {
+        Write-Fail "Get-ADForest returned no domains, so there is nowhere to search."
+    }
+    Write-Ok "$($script:Domains.Count) domain(s) in scope: $($script:Domains -join ', ')"
 }
 
 Invoke-PlanOrAction "Resolve each employeeId across the forest and classify the outcome" {
     $i = 0
+    $populated = 0
+    $zeroMatch = 0
     foreach ($entry in $script:CloudAccounts) {
         $i++
         if ($i % 50 -eq 0) { Write-Host "    ... $i of $($script:CloudAccounts.Count)" -ForegroundColor DarkGray }
@@ -274,31 +287,32 @@ Invoke-PlanOrAction "Resolve each employeeId across the forest and classify the 
         $note = ''
 
         if (-not [string]::IsNullOrWhiteSpace($employeeId)) {
-            try {
-                $filterValue = ConvertTo-LdapFilterValue -Value $employeeId
-                $hits = @(Get-ADUser -Server $script:GlobalCatalog -LDAPFilter "(employeeID=$filterValue)" -Properties employeeID)
-                $matchCount = $hits.Count
+            $populated++
+            $filterValue = ConvertTo-LdapFilterValue -Value $employeeId
+            $hits = @()
 
-                if ($matchCount -eq 1) {
-                    # Re-read from the domain that owns the object. The global catalog holds a
-                    # partial attribute set, so mail or Enabled can be absent there and read as
-                    # a failure that is really an artefact of where we looked.
-                    $ownerDn = $hits[0].DistinguishedName
-                    $domain = Get-DomainDnsFromDistinguishedName -DistinguishedName $ownerDn
-                    if (-not $domain) {
-                        $unavailable = $true
-                        $note = "Matched object has no DC component in its DN; cannot route an authoritative read."
-                    }
-                    else {
-                        $full = Get-ADUser -Server $domain -Identity $ownerDn -Properties mail, Enabled
-                        $ownerMail = if ($full.mail) { [string]$full.mail } else { '' }
-                        $ownerEnabled = [bool]$full.Enabled
-                    }
+            foreach ($domain in $script:Domains) {
+                try {
+                    $hits += @(Get-ADUser -Server $domain -LDAPFilter "(employeeID=$filterValue)" -Properties employeeID, mail, Enabled)
+                }
+                catch {
+                    # One unreachable domain cannot be reported as "no duplicate here": that is
+                    # the difference between looking and not looking, and it decides Ambiguous.
+                    $unavailable = $true
+                    $note = "Search failed against ${domain}: $($_.Exception.Message)"
                 }
             }
-            catch {
-                $unavailable = $true
-                $note = $_.Exception.Message
+
+            if (-not $unavailable) {
+                $hits = @($hits | Sort-Object DistinguishedName -Unique)
+                $matchCount = $hits.Count
+                if ($matchCount -eq 0) { $zeroMatch++ }
+
+                if ($matchCount -eq 1) {
+                    $ownerDn = $hits[0].DistinguishedName
+                    $ownerMail = if ($hits[0].mail) { [string]$hits[0].mail } else { '' }
+                    $ownerEnabled = [bool]$hits[0].Enabled
+                }
             }
         }
 
@@ -323,6 +337,8 @@ Invoke-PlanOrAction "Resolve each employeeId across the forest and classify the 
         }
     }
 
+    $script:Populated = $populated
+    $script:ZeroMatch = $zeroMatch
     Write-Ok "$($script:Rows.Count) accounts classified"
 }
 
@@ -370,6 +386,17 @@ Invoke-PlanOrAction "Print the coverage summary" {
 
     if ($inScope -le 0) {
         Write-Fail "Every listed account was excluded, so there is no coverage rate to report. Check the list."
+    }
+
+    # Before any rate is printed: if EVERY populated employeeId found nobody, that is a statement
+    # about the query, not the directory. This survey shipped without this check and its first
+    # live run reported a confident 0% caused entirely by searching an attribute the global
+    # catalog does not replicate.
+    if (Test-EmployeeIdLookupSuspect -PopulatedCount $script:Populated -ZeroMatchCount $script:ZeroMatch) {
+        Write-Fail ("All $($script:Populated) accounts carrying an employeeId matched nobody in any of the $($script:Domains.Count) domain(s) searched. " +
+            "A uniform zero is far more likely to be a broken lookup than a directory in which no id resolves, so no coverage rate is reported. " +
+            "Check that employeeID is searchable in the domains listed above, then re-run. " +
+            "Note this check catches only a TOTAL miss - a near-uniform failure would still print a rate.")
     }
 
     $rate = [math]::Round(100.0 * $resolved / $inScope, 1)

@@ -53,39 +53,26 @@ Describe 'ConvertTo-LdapFilterValue' {
     }
 }
 
-Describe 'Get-DomainDnsFromDistinguishedName' {
+Describe 'Test-EmployeeIdLookupSuspect' {
 
-    It 'joins the DC components in order' {
-        Get-DomainDnsFromDistinguishedName -DistinguishedName 'CN=Jo,OU=Staff,DC=corp,DC=example,DC=test' |
-            Should -Be 'corp.example.test'
+    It 'flags a total miss: every populated id matched nobody' {
+        # The live failure this exists for. 111 accounts with ids set, 111 zero matches, and the
+        # summary printed a confident 0% - caused entirely by searching the global catalog for an
+        # attribute it does not replicate.
+        Test-EmployeeIdLookupSuspect -PopulatedCount 111 -ZeroMatchCount 111 | Should -BeTrue
     }
 
-    It 'is case insensitive about the DC attribute name' {
-        Get-DomainDnsFromDistinguishedName -DistinguishedName 'CN=Jo,dc=corp,Dc=test' |
-            Should -Be 'corp.test'
+    It 'does not flag a partial miss, which is a real finding about the data' {
+        Test-EmployeeIdLookupSuspect -PopulatedCount 111 -ZeroMatchCount 110 | Should -BeFalse
+        Test-EmployeeIdLookupSuspect -PopulatedCount 10 -ZeroMatchCount 0 | Should -BeFalse
     }
 
-    It 'tolerates whitespace around the components' {
-        Get-DomainDnsFromDistinguishedName -DistinguishedName 'CN=Jo, DC=corp , DC=test' |
-            Should -Be 'corp.test'
+    It 'does not flag when nothing was populated, which is NoEmployeeId not a broken query' {
+        Test-EmployeeIdLookupSuspect -PopulatedCount 0 -ZeroMatchCount 0 | Should -BeFalse
     }
 
-    It 'handles a DN that is nothing but DC components' {
-        Get-DomainDnsFromDistinguishedName -DistinguishedName 'DC=corp,DC=test' |
-            Should -Be 'corp.test'
-    }
-
-    It 'does not mistake a CN containing the letters dc for a domain component' {
-        Get-DomainDnsFromDistinguishedName -DistinguishedName 'CN=adc user,OU=abcdc,DC=corp,DC=test' |
-            Should -Be 'corp.test'
-    }
-
-    It 'returns null when the DN carries no DC component, rather than a plausible wrong server' {
-        Get-DomainDnsFromDistinguishedName -DistinguishedName 'CN=Jo,OU=Staff' | Should -BeNullOrEmpty
-    }
-
-    It 'returns null for an empty DN' {
-        Get-DomainDnsFromDistinguishedName -DistinguishedName '' | Should -BeNullOrEmpty
+    It 'does not flag an empty survey' {
+        Test-EmployeeIdLookupSuspect | Should -BeFalse
     }
 }
 
@@ -238,6 +225,23 @@ Describe 'Get-CloudAccountEmployeeIdCoverage.ps1 connection contract' {
         foreach ($needle in @('analog', 'ashbex', 'winroot')) {
             $script:SurveyCode | Should -Not -Match $needle
         }
+    }
+
+    It 'searches every domain directly and NEVER the global catalog' {
+        # employeeID is not in the global catalog's partial attribute set - verified on this
+        # forest, where mail carries isMemberOfPartialAttributeSet True and employeeID carries
+        # nothing - so a GC filter on it matches nothing anywhere and reports as a clean 0%.
+        $script:SurveyCode | Should -Not -Match ':3268'
+        $script:SurveyCode | Should -Not -Match 'GlobalCatalog'
+        $script:SurveyCode | Should -Match 'foreach \(\$domain in \$script:Domains\)'
+    }
+
+    It 'refuses to print a rate when every populated id matched nobody' {
+        $script:SurveyCode | Should -Match 'Test-EmployeeIdLookupSuspect'
+        # The refusal must come BEFORE the rate is computed, or the number is already on screen.
+        $guard = $script:SurveyCode.IndexOf('Test-EmployeeIdLookupSuspect')
+        $rate = $script:SurveyCode.IndexOf('$rate = ')
+        $guard | Should -BeLessThan $rate
     }
 
     It 'fails closed when the forest cannot be resolved, rather than falling back to one domain' {
