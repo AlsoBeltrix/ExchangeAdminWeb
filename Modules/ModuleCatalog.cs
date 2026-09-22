@@ -271,16 +271,21 @@ public sealed class ModuleCatalog
             // (docs/MessageTracePermissionSplit-Plan.md, 2026-09-22). Declared only, for now:
             // nothing consults the new alias until the enforcement slice ships, and the owner
             // grants a group against it in between.
-            Version = "1.5.0",
+            // 1.5.1: both Access-tab descriptions said the split was live while nothing enforced
+            // it, so the page told an administrator that the parent grant excluded trace search
+            // when it did not (review finding mtps-1, 2026-09-22). They now state the unenforced
+            // state; the enforcement slice replaces them with the final wording in the same
+            // commit that makes the gates consult the alias.
+            Version = "1.5.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
                 "MessageTrace",
-                "Open the module and analyse message headers pasted in or uploaded as a file; the analysis is local and reads nothing from Exchange. Searching message traces needs the separate Search permission.",
+                "Open the module, analyse message headers, AND search message traces. NOT YET SPLIT: the Search permission below is declared but nothing enforces it, so this permission still grants trace search and the reading of any user's mail metadata. Do not grant it to anyone who should be limited to header analysis until the split is enforced.",
                 FailClosed: true),
             GranularPermissions = [
                 new("Search", "MessageTraceSearch",
-                    "Search message traces and read any user's mail metadata across Exchange Online and the on-premises transport logs: senders, recipients, subjects, delivery status, message IDs and IP addresses, plus the per-message delivery trail and the detail exports built from it.",
+                    "Will grant message trace search: reading any user's senders, recipients, subjects, delivery status, message IDs and IP addresses across Exchange Online and the on-premises transport logs, the per-message delivery trail, and the detail exports built from it. NOT YET ENFORCED: granting this today gives nobody anything and withholding it blocks nobody. Grant it now to the groups that should keep trace search once enforcement lands.",
                     FailClosed: true)
             ],
             ConfigFields = [

@@ -637,6 +637,15 @@ slice rather than those queued before slice 4.
     `Download` re-check, all on `MessageTraceSearch`.
 11. Tripwires in `ExchangeAdminWeb.Tests/PageAuthorizationRecheckTests.cs` and the `[Authorize]`
     pin in `ExchangeAdminWeb.Tests/MessageTracePageRoutingTests.cs` (section "Tests").
+11a. **Replace BOTH Access-tab descriptions with their final wording, in THIS commit, and rewrite
+    `Catalog_MessageTrace_DescriptionsSayTheSplitIsNotEnforcedYet` to assert the final wording
+    instead.** Slice 1 shipped transitional copy saying the split is declared but not enforced,
+    because the original wording described the finished state while every gate still accepted the
+    parent policy - an administrator reading it would have granted on false information (review
+    finding `mtps-1`, `.agents/review/findings/mtps-1.md`). That test fails until the copy is
+    flipped, deliberately: it is the tripwire that stops the page and the code drifting apart.
+    Flipping the copy earlier than this commit re-opens the same defect, and later leaves the page
+    understating what the parent grant now excludes.
 12. Guard proof, five mutations, each restored byte-identically and each expected to fail exactly
     its named assertion and nothing else:
     - **removed gate** - delete the whole re-check from `RunTrace`.

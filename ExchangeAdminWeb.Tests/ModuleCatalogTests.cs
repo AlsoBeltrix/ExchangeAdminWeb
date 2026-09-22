@@ -225,6 +225,27 @@ public class ModuleCatalogTests
     }
 
     [Fact]
+    public void Catalog_MessageTrace_DescriptionsSayTheSplitIsNotEnforcedYet()
+    {
+        // These two sentences are rendered beside the grants on the Module Config Access tab
+        // (ModuleConfig.razor:184-187), and they are the only thing telling an administrator what
+        // a grant does. While the split is declared but inert, describing the FINAL behaviour
+        // makes the page lie: every gate still accepts the parent policy, so a group granted only
+        // MessageTrace can still search traces (review finding mtps-1).
+        //
+        // DELIBERATE TRIPWIRE ON THE ENFORCEMENT SLICE. When the pages and the job processor
+        // actually consult MessageTraceSearch, the descriptions become true and must be rewritten
+        // to the final wording - and this test must be rewritten with them, to assert the final
+        // wording instead. It fails until someone does, which is how the copy and the code are
+        // kept from drifting apart.
+        var module = _catalog.GetById("MessageTrace")!;
+        var granular = Assert.Single(module.GranularPermissions);
+
+        Assert.Contains("NOT YET SPLIT", module.MainPermission.Description);
+        Assert.Contains("NOT YET ENFORCED", granular.Description);
+    }
+
+    [Fact]
     public void Catalog_MessageTrace_PolicyAliasesAreConfigurable()
     {
         // The alias has to reach the Module Config Access tab, which builds its list from here:
