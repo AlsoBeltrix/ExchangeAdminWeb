@@ -250,6 +250,129 @@ Describe 'Get-CloudAccountEmployeeIdCoverage.ps1 connection contract' {
     It 'never writes to the directory: no Set, New or Remove AD or Mg cmdlets' {
         $script:SurveyCode | Should -Not -Match '(Set|New|Remove|Update)-(AD|Mg)\w+'
     }
+
+    It 'NEVER enumerates the directory' {
+        # Owner, 2026-09-22: "you cannot enumerate all users. that is a data exfill security
+        # flag." Reading the tenant to find a few hundred named accounts is an exfiltration
+        # pattern whatever the intent, and the module this gates resolves one named target per
+        # operation too. Every Get-MgUser here must be -UserId.
+        $script:SurveyCode | Should -Not -Match 'Get-MgUser\s+-All'
+        $script:SurveyCode | Should -Not -Match '-All\b'
+        foreach ($call in [regex]::Matches($script:SurveyCode, 'Get-MgUser[^\r\n|]*')) {
+            $call.Value | Should -Match '-UserId'
+        }
+    }
+
+    It 'takes the in-scope population as a mandatory input instead of discovering it' {
+        $script:SurveyCode | Should -Match '\[Parameter\(Mandatory\)\]'
+        $script:SurveyCode | Should -Match '\$UpnListPath'
+        $script:SurveyCode | Should -Match 'ConvertTo-UpnList'
+    }
+
+    It 'computes the rate over in-scope accounts and shows what it excluded' {
+        # A denominator change raises the percentage without changing a directory fact, so the
+        # excluded count has to reach the screen.
+        $script:SurveyCode | Should -Match 'Get-EmployeeIdScopeExclusions'
+        $script:SurveyCode | Should -Match 'excluded from the rate'
+        $script:SurveyCode | Should -Match '\$inScope'
+    }
+}
+
+Describe 'ConvertTo-UpnList' {
+
+    It 'reads one UPN per line' {
+        ConvertTo-UpnList -Lines @('a@x.test', 'b@x.test') | Should -Be @('a@x.test', 'b@x.test')
+    }
+
+    It 'ignores blank lines and comments so the operator can annotate the file' {
+        ConvertTo-UpnList -Lines @('# admins', '', 'a@x.test', '   ', '# tactical', 'b@x.test') |
+            Should -Be @('a@x.test', 'b@x.test')
+    }
+
+    It 'collapses duplicates, which would otherwise inflate both sides of the rate' {
+        ConvertTo-UpnList -Lines @('a@x.test', 'a@x.test', 'b@x.test') | Should -Be @('a@x.test', 'b@x.test')
+    }
+
+    It 'reads a CSV by its UserPrincipalName header rather than by position' {
+        $csv = @('DisplayName,UserPrincipalName,Id', 'Jo,a@x.test,1', 'Sam,b@x.test,2')
+        ConvertTo-UpnList -Lines $csv | Should -Be @('a@x.test', 'b@x.test')
+    }
+
+    It 'strips quotes from a quoted CSV export' {
+        $csv = @('"DisplayName","UserPrincipalName"', '"Jo","a@x.test"')
+        ConvertTo-UpnList -Lines $csv | Should -Be @('a@x.test')
+    }
+
+    It 'returns empty for an empty file rather than throwing' {
+        ConvertTo-UpnList -Lines @() | Should -BeNullOrEmpty
+    }
+
+    It 'returns empty when the file is only comments' {
+        ConvertTo-UpnList -Lines @('# nothing here', '') | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Get-CloudAccountScopeOutcome' {
+
+    It 'admits a cloud-only member account' {
+        Get-CloudAccountScopeOutcome -Found $true -OnPremisesSyncEnabled $null -UserType 'Member' |
+            Should -Be 'InScope'
+    }
+
+    It 'reports CloudAccountNotFound for a listed account that is not in the tenant' {
+        Get-CloudAccountScopeOutcome -Found $false | Should -Be 'CloudAccountNotFound'
+    }
+
+    It 'excludes a synced account, which L2 already resets on-premises' {
+        Get-CloudAccountScopeOutcome -Found $true -OnPremisesSyncEnabled $true -UserType 'Member' |
+            Should -Be 'NotCloudOnly'
+    }
+
+    It 'excludes a guest' {
+        Get-CloudAccountScopeOutcome -Found $true -OnPremisesSyncEnabled $null -UserType 'Guest' |
+            Should -Be 'NotCloudOnly'
+    }
+
+    It 'reads the sync flag fail-closed: only a definite true counts as synced' {
+        # onPremisesSyncEnabled is NULL rather than false for a cloud-only account. Treating an
+        # unreadable value as synced would drop the account out of the denominator silently.
+        Get-CloudAccountScopeOutcome -Found $true -OnPremisesSyncEnabled $false -UserType 'Member' |
+            Should -Be 'InScope'
+        Get-CloudAccountScopeOutcome -Found $true -OnPremisesSyncEnabled $null -UserType $null |
+            Should -Be 'InScope'
+    }
+
+    It 'only ever returns a declared outcome class' {
+        $classes = @(Get-EmployeeIdOutcomeClasses) + 'InScope'
+        foreach ($found in @($true, $false)) {
+            foreach ($sync in @($true, $false, $null)) {
+                foreach ($type in @('Member', 'Guest', $null)) {
+                    $classes | Should -Contain (Get-CloudAccountScopeOutcome -Found $found -OnPremisesSyncEnabled $sync -UserType $type)
+                }
+            }
+        }
+    }
+}
+
+Describe 'Get-EmployeeIdScopeExclusions' {
+
+    It 'excludes exactly the two list problems, and nothing that is a matching failure' {
+        # Widening this raises the reported percentage without changing a directory fact. Pinned
+        # so that doing so is a visible, deliberate edit.
+        Get-EmployeeIdScopeExclusions | Should -Be @('NotCloudOnly', 'CloudAccountNotFound')
+    }
+
+    It 'never excludes a real coverage failure' {
+        foreach ($outcome in @('NoEmployeeId', 'NoDirectoryMatch', 'Ambiguous', 'MatchedOwnerDisabled', 'MatchedNoMailbox', 'Unavailable')) {
+            Get-EmployeeIdScopeExclusions | Should -Not -Contain $outcome
+        }
+    }
+
+    It 'names only declared outcome classes' {
+        foreach ($excluded in (Get-EmployeeIdScopeExclusions)) {
+            Get-EmployeeIdOutcomeClasses | Should -Contain $excluded
+        }
+    }
 }
 
 Describe 'Get-EmployeeIdOutcomeClasses' {

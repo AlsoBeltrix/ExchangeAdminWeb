@@ -37,9 +37,16 @@
     Per-account detail output. Defaults to CloudAccountEmployeeIdCoverage-<yyyyMMdd-HHmmss>.csv
     in the current directory.
 
-.PARAMETER SampleSize
-    0 (default) surveys every cloud-only account. A positive number surveys that many, for a
-    faster first look. A sample gives an estimate; a 100% bar needs the full run.
+.PARAMETER UpnListPath
+    REQUIRED. File listing the in-scope accounts to survey: one userPrincipalName per line, or a
+    CSV with a UserPrincipalName column. Blank lines and lines starting with # are ignored.
+
+    This script does NOT discover the population. Owner, 2026-09-22: "you cannot enumerate all
+    users. that is a data exfill security flag. I told you in-scope users have been updated."
+    Reading the whole directory to find a few hundred accounts is an exfiltration pattern
+    whatever the intent, and it is not how the module works either - CloudPasswordReset resolves
+    ONE named target per operation and never lists the tenant. The survey matches that: it reads
+    only the accounts named in this file, one Graph call each.
 
 .PARAMETER SamplesPerClass
     How many example accounts to print per outcome class. Default 5. Only the cloud UPN is
@@ -75,10 +82,10 @@
 #>
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory)]
+    [string] $UpnListPath,
     [switch] $PlanOnly,
     [string] $CsvPath,
-    [ValidateRange(0, [int]::MaxValue)]
-    [int] $SampleSize = 0,
     [ValidateRange(0, 100)]
     [int] $SamplesPerClass = 5,
     [string] $ConnectionModulePath
@@ -126,6 +133,14 @@ if (-not $ConnectionModulePath) {
     $ConnectionModulePath = $entry.Matches[0].Groups[1].Value
 }
 
+if (-not (Test-Path -LiteralPath $UpnListPath)) {
+    Write-Fail "The in-scope list was not found: $UpnListPath"
+}
+$script:Upns = @(ConvertTo-UpnList -Lines (Get-Content -LiteralPath $UpnListPath))
+if ($script:Upns.Count -eq 0) {
+    Write-Fail "$UpnListPath contains no accounts. Supply one userPrincipalName per line, or a CSV with a UserPrincipalName column."
+}
+
 $script:CloudAccounts = @()
 $script:Rows = @()
 $script:GlobalCatalog = $null
@@ -156,27 +171,35 @@ Invoke-PlanOrAction "Connect to Microsoft Graph via $ConnectionModulePath (Graph
     Write-Ok "Graph tenant $($ctx.TenantId), app $($ctx.ClientId), auth $($ctx.AuthType)"
 }
 
-Invoke-PlanOrAction "Enumerate every cloud-only member account and read its employeeId" {
+Invoke-PlanOrAction "Read each listed account by name (one Graph call per account, no directory listing)" {
     $props = @('Id', 'DisplayName', 'UserPrincipalName', 'AccountEnabled', 'OnPremisesSyncEnabled', 'UserType', 'EmployeeId')
 
-    # Filtered client-side on purpose: onPremisesSyncEnabled is NULL rather than false for a
-    # cloud-only account, and a Graph filter over a null-valued property is exactly the shape
-    # that silently returns an empty page. Read fail-closed - only a definite $true counts as
-    # synced, so an unreadable value stays IN the survey rather than disappearing from it.
-    $all = Get-MgUser -All -Property $props -ConsistencyLevel eventual | Select-Object $props
+    # ONE CALL PER NAMED ACCOUNT. There is deliberately no Get-MgUser -All here and there must
+    # never be: pulling the tenant to find a few hundred accounts is an exfiltration pattern, and
+    # the module this survey gates resolves one named target per operation too.
+    $resolved = foreach ($upn in $script:Upns) {
+        $user = $null
+        $found = $false
+        try {
+            $user = Get-MgUser -UserId $upn -Property $props -ErrorAction Stop | Select-Object $props
+            $found = $true
+        }
+        catch {
+            # Not found is an answer about this account, not a failure of the survey. Anything
+            # else is recorded as a failed read further down rather than guessed at.
+            $found = $false
+        }
 
-    $cloud = @($all | Where-Object {
-            $_.OnPremisesSyncEnabled -ne $true -and $_.UserType -ne 'Guest'
-        })
-
-    if ($SampleSize -gt 0 -and $cloud.Count -gt $SampleSize) {
-        Write-Warn "Sampling $SampleSize of $($cloud.Count) cloud-only accounts. This is an estimate; the 100% bar needs a full run."
-        $cloud = @($cloud | Get-Random -Count $SampleSize)
+        [pscustomobject]@{
+            Upn   = $upn
+            Found = $found
+            User  = $user
+        }
     }
 
-    $script:CloudAccounts = $cloud
-    $stamped = @($cloud | Where-Object { -not [string]::IsNullOrWhiteSpace($_.EmployeeId) }).Count
-    Write-Ok "$($all.Count) users in tenant, $($cloud.Count) cloud-only non-guest accounts, $stamped carrying an employeeId"
+    $script:CloudAccounts = @($resolved)
+    $foundCount = @($script:CloudAccounts | Where-Object { $_.Found }).Count
+    Write-Ok "$($script:Upns.Count) accounts listed, $foundCount read from Graph"
 }
 
 # -------------------------------------------------------------------------------------------
@@ -212,9 +235,35 @@ Invoke-PlanOrAction "Load Active Directory via the same module (ADImport) and di
 
 Invoke-PlanOrAction "Resolve each employeeId across the forest and classify the outcome" {
     $i = 0
-    foreach ($account in $script:CloudAccounts) {
+    foreach ($entry in $script:CloudAccounts) {
         $i++
         if ($i % 50 -eq 0) { Write-Host "    ... $i of $($script:CloudAccounts.Count)" -ForegroundColor DarkGray }
+
+        $account = $entry.User
+
+        # Scope first, and kept separate from the match outcome: an entry that is not a cloud-only
+        # member account is a list problem, not a coverage gap, and counting it as one would make
+        # the rate look worse while hiding the real cause.
+        $scope = Get-CloudAccountScopeOutcome `
+            -Found $entry.Found `
+            -OnPremisesSyncEnabled $(if ($entry.Found) { $account.OnPremisesSyncEnabled } else { $null }) `
+            -UserType $(if ($entry.Found) { [string]$account.UserType } else { $null })
+
+        if ($scope -ne 'InScope') {
+            $script:Rows += [pscustomobject]@{
+                CloudUpn         = $entry.Upn
+                CloudDisplayName = if ($entry.Found) { $account.DisplayName } else { '' }
+                CloudEnabled     = if ($entry.Found) { $account.AccountEnabled } else { '' }
+                EmployeeId       = if ($entry.Found) { $account.EmployeeId } else { '' }
+                MatchCount       = 0
+                OwnerDn          = ''
+                OwnerMail        = ''
+                OwnerEnabled     = $false
+                Outcome          = $scope
+                Note             = 'Excluded from the coverage rate: not a cloud-only member account in this tenant.'
+            }
+            continue
+        }
 
         $employeeId = $account.EmployeeId
         $matchCount = 0
@@ -261,7 +310,7 @@ Invoke-PlanOrAction "Resolve each employeeId across the forest and classify the 
             -Unavailable $unavailable
 
         $script:Rows += [pscustomobject]@{
-            CloudUpn         = $account.UserPrincipalName
+            CloudUpn         = $entry.Upn
             CloudDisplayName = $account.DisplayName
             CloudEnabled     = $account.AccountEnabled
             EmployeeId       = $employeeId
@@ -306,15 +355,31 @@ Invoke-PlanOrAction "Print the coverage summary" {
         }
     }
 
+    # The rate is over IN-SCOPE accounts, and the excluded ones are named rather than netted off
+    # quietly - moving an entry out of the denominator raises the percentage without changing a
+    # single directory fact, so it has to be visible on the same screen as the number.
+    $exclusions = Get-EmployeeIdScopeExclusions
+    $excluded = @($script:Rows | Where-Object { $_.Outcome -in $exclusions }).Count
+    $inScope = $total - $excluded
     $resolved = @($script:Rows | Where-Object { $_.Outcome -eq 'Resolved' }).Count
-    $rate = [math]::Round(100.0 * $resolved / $total, 1)
 
     Write-Host ""
-    if ($resolved -eq $total) {
-        Write-Ok "100% of surveyed accounts resolve to exactly one live mailbox. The bar is met on this population."
+    if ($excluded -gt 0) {
+        Write-Warn "$excluded of the $total listed accounts were excluded from the rate ($($exclusions -join ', ')). They are on the list but are not cloud-only member accounts in this tenant."
+    }
+
+    if ($inScope -le 0) {
+        Write-Fail "Every listed account was excluded, so there is no coverage rate to report. Check the list."
+    }
+
+    $rate = [math]::Round(100.0 * $resolved / $inScope, 1)
+
+    Write-Host ""
+    if ($resolved -eq $inScope) {
+        Write-Ok "100% of the $inScope in-scope accounts resolve to exactly one live mailbox. The bar is met on this population."
     }
     else {
-        Write-Warn "$rate% resolve. The owner's bar is 100%, so this is a decision for the owner, not a gap to route around with a fallback."
+        Write-Warn "$rate% of $inScope in-scope accounts resolve. The owner's bar is 100%, so this is a decision for the owner, not a gap to route around with a fallback."
     }
     Write-Host ""
     Write-Host "Full detail, including the raw match count per account, is in $CsvPath" -ForegroundColor White

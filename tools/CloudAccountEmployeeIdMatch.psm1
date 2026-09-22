@@ -126,6 +126,96 @@ function Get-EmployeeIdMatchOutcome {
     return 'Resolved'
 }
 
+function ConvertTo-UpnList {
+    <#
+    .SYNOPSIS
+        Parse the operator-supplied in-scope list into UPNs.
+    .DESCRIPTION
+        The survey is given the accounts to examine; it does not go looking for them. Owner,
+        2026-09-22: "you cannot enumerate all users. that is a data exfill security flag. I told
+        you in-scope users have been updated." So the population is an input, and this turns the
+        file's lines into that input.
+
+        Accepts one UPN per line, or a CSV whose header carries a UserPrincipalName column.
+        Blank lines and lines beginning with # are ignored so the operator can annotate the file.
+        Duplicates are collapsed, because surveying the same account twice would inflate both the
+        numerator and the denominator of a rate the owner reads as a percentage.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string[]] $Lines
+    )
+    # AllowEmptyString is load-bearing, not defensive dressing: a real list file has blank lines
+    # in it, and without this the binder rejects the whole array on the first one.
+
+    $cleaned = foreach ($line in $Lines) {
+        if ($null -eq $line) { continue }
+        $trimmed = $line.Trim().Trim('"')
+        if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
+        if ($trimmed.StartsWith('#')) { continue }
+        $trimmed
+    }
+
+    $cleaned = @($cleaned)
+    if ($cleaned.Count -eq 0) { return @() }
+
+    # A CSV export is the likeliest shape for a list pulled out of a portal, so accept it: find
+    # the UserPrincipalName column by header and take that field. Anything else is treated as a
+    # plain list, which is what a hand-written file looks like.
+    $header = $cleaned[0]
+    if ($header -match '(?i)userprincipalname') {
+        $columns = $header.Split(',') | ForEach-Object { $_.Trim().Trim('"') }
+        $index = [array]::FindIndex($columns, [Predicate[string]] { param($c) $c -match '(?i)^userprincipalname$' })
+        if ($index -ge 0) {
+            $values = foreach ($row in $cleaned[1..($cleaned.Count - 1)]) {
+                $fields = $row.Split(',')
+                if ($fields.Count -gt $index) { $fields[$index].Trim().Trim('"') }
+            }
+            $values = @($values | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            return @($values | Select-Object -Unique)
+        }
+    }
+
+    return @($cleaned | Select-Object -Unique)
+}
+
+function Get-CloudAccountScopeOutcome {
+    <#
+    .SYNOPSIS
+        Decide whether a supplied account is in scope for this survey at all.
+    .DESCRIPTION
+        Kept separate from the match classification because they answer different questions, and
+        merging them would let a list problem be read as a matching failure. An entry that is not
+        a cloud-only member account is not a coverage gap - it should not have been on the list.
+
+        Fail-closed on the sync flag, matching the module's own reading: only a definite $true
+        counts as synced, so an unreadable value stays in scope and gets surveyed rather than
+        silently disappearing from the denominator.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [bool] $Found = $false,
+
+        [AllowNull()]
+        [object] $OnPremisesSyncEnabled = $null,
+
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string] $UserType = $null
+    )
+
+    if (-not $Found) { return 'CloudAccountNotFound' }
+    if ($OnPremisesSyncEnabled -eq $true) { return 'NotCloudOnly' }
+    if ($UserType -eq 'Guest') { return 'NotCloudOnly' }
+    return 'InScope'
+}
+
 function Get-EmployeeIdOutcomeClasses {
     <#
     .SYNOPSIS
@@ -146,8 +236,28 @@ function Get-EmployeeIdOutcomeClasses {
         'Ambiguous',
         'MatchedOwnerDisabled',
         'MatchedNoMailbox',
-        'Unavailable'
+        'Unavailable',
+        'NotCloudOnly',
+        'CloudAccountNotFound'
     )
 }
 
-Export-ModuleMember -Function ConvertTo-LdapFilterValue, Get-DomainDnsFromDistinguishedName, Get-EmployeeIdMatchOutcome, Get-EmployeeIdOutcomeClasses
+function Get-EmployeeIdScopeExclusions {
+    <#
+    .SYNOPSIS
+        The outcomes that mean "this entry should not have been on the list", not "matching failed".
+    .DESCRIPTION
+        The coverage rate is computed over in-scope accounts only, and this is the list that says
+        which those are not. It exists as its own function so the summary cannot quietly widen it:
+        moving an outcome in here raises the reported percentage without changing a single
+        directory fact, which is exactly the kind of denominator change that should require an
+        edit somebody can see.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param()
+
+    return @('NotCloudOnly', 'CloudAccountNotFound')
+}
+
+Export-ModuleMember -Function ConvertTo-LdapFilterValue, Get-DomainDnsFromDistinguishedName, Get-EmployeeIdMatchOutcome, Get-EmployeeIdOutcomeClasses, ConvertTo-UpnList, Get-CloudAccountScopeOutcome, Get-EmployeeIdScopeExclusions
