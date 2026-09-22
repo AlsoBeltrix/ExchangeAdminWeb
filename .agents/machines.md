@@ -102,6 +102,22 @@ inspection. Its SHA-256 is
 Findings and limits are canonical in `.agents/research/cloud-password-owner-runtime.md`.
 Disposition of the retained CSVs remains with the owner.
 
+### Graph and AD connection for this repo's survey tooling
+
+- m365-connections-module: `D:\source\scripts\Modules\M365Connections.psm1`
+
+**This is how Graph is connected for anything run against this tenant, not a one-off for the
+2026-09-14 investigation below.** Owner, 2026-09-22: *"I don't log in to graph like this. I use
+the connection module's GraphConnect."* The module exports `GraphConnect`, which authenticates the
+existing app registration through its Delinea credential helper and is **app-only**, so a script
+must not ask for delegated `-Scopes`; and `ADImport`, which loads the ActiveDirectory module. Do
+not call `Connect-AllM365Services` for Graph-only work - it also runs module updates and opens
+other service connections unless controlled.
+
+The path above is machine-specific and lives here rather than in any script, read the same way
+`tools/Get-TokenUsage.ps1` reads `transcript-root:`. `tools/Get-CloudAccountEmployeeIdCoverage.ps1`
+reads this entry and takes `-ConnectionModulePath` to override it.
+
 ### Graph connection for the owner investigation (2026-09-14)
 
 The owner directed use of `D:\source\scripts\Modules\M365Connections.psm1` through

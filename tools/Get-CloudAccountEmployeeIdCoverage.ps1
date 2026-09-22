@@ -45,7 +45,21 @@
     How many example accounts to print per outcome class. Default 5. Only the cloud UPN is
     printed; owner mail addresses stay in the CSV.
 
+.PARAMETER ConnectionModulePath
+    The M365Connections module that owns Graph and AD authentication here. Defaults to the
+    'm365-connections-module:' entry in .agents/machines.md - machine-specific, so never
+    hardcoded in this script.
+
 .NOTES
+    CONNECTING: this script does NOT call Connect-MgGraph itself and must not be changed to.
+    Owner, 2026-09-22: "I don't log in to graph like this. I use the connection module's
+    GraphConnect." That function authenticates the existing app registration through its Delinea
+    credential helper, APP-ONLY, so there are no delegated scopes to request - asking for them
+    would be both wrong and a prompt the operator should never see. AD comes from the same
+    module's ADImport. Connect-AllM365Services is deliberately not used: it also runs module
+    updates and opens other service connections, which this read-only survey has no business
+    doing.
+
     Environment neutrality (.agents/repo-guidance.md, owner ruling 2026-09-11): no domain, host,
     OU, group or address is named or defaulted anywhere in this script. The forest is discovered
     from the host's own membership via Get-ADForest, and each matched user is re-read from the
@@ -66,7 +80,8 @@ param(
     [ValidateRange(0, [int]::MaxValue)]
     [int] $SampleSize = 0,
     [ValidateRange(0, 100)]
-    [int] $SamplesPerClass = 5
+    [int] $SamplesPerClass = 5,
+    [string] $ConnectionModulePath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -96,6 +111,21 @@ if (-not $CsvPath) {
     $CsvPath = Join-Path (Get-Location).Path ("CloudAccountEmployeeIdCoverage-{0}.csv" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 }
 
+# Resolved the same way tools/Get-TokenUsage.ps1 resolves transcript-root: the path is a fact
+# about this machine, so it lives in .agents/machines.md and not in the script.
+if (-not $ConnectionModulePath) {
+    $machinesFile = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath '.agents/machines.md'
+    if (-not (Test-Path -LiteralPath $machinesFile)) {
+        Write-Fail "No -ConnectionModulePath given and machines file not found: $machinesFile"
+    }
+    $entry = Select-String -LiteralPath $machinesFile -Pattern 'm365-connections-module:\s*`([^`]+)`' |
+        Select-Object -First 1
+    if (-not $entry) {
+        Write-Fail "No -ConnectionModulePath given and no 'm365-connections-module:' entry in $machinesFile. Add one, or pass -ConnectionModulePath."
+    }
+    $ConnectionModulePath = $entry.Matches[0].Groups[1].Value
+}
+
 $script:CloudAccounts = @()
 $script:Rows = @()
 $script:GlobalCatalog = $null
@@ -104,15 +134,26 @@ $script:GlobalCatalog = $null
 # Step 1 - Graph, read-only. Enumerate the population and read employeeId.
 # -------------------------------------------------------------------------------------------
 
-Invoke-PlanOrAction "Connect to Microsoft Graph as the signed-in admin (delegated User.Read.All, read-only)" {
+Invoke-PlanOrAction "Connect to Microsoft Graph via $ConnectionModulePath (GraphConnect, app-only)" {
+    if (-not (Test-Path -LiteralPath $ConnectionModulePath)) {
+        Write-Fail "The M365Connections module is not at $ConnectionModulePath. Pass -ConnectionModulePath, or correct the 'm365-connections-module:' entry in .agents/machines.md."
+    }
+    Import-Module $ConnectionModulePath -Force
+
+    if (-not (Get-Command -Name GraphConnect -ErrorAction SilentlyContinue)) {
+        Write-Fail "$ConnectionModulePath does not export GraphConnect."
+    }
     if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Users)) {
         Write-Fail "The Microsoft.Graph.Users module is not installed. Install-Module Microsoft.Graph -Scope CurrentUser"
     }
     Import-Module Microsoft.Graph.Users
-    Connect-MgGraph -Scopes 'User.Read.All' -NoWelcome
+
+    # No -Scopes: GraphConnect is app-only through the app registration's Delinea credential.
+    GraphConnect
+
     $ctx = Get-MgContext
-    if (-not $ctx) { Write-Fail "Connect-MgGraph returned no context." }
-    Write-Ok "Graph tenant $($ctx.TenantId) as $($ctx.Account)"
+    if (-not $ctx) { Write-Fail "GraphConnect returned no Graph context." }
+    Write-Ok "Graph tenant $($ctx.TenantId), app $($ctx.ClientId), auth $($ctx.AuthType)"
 }
 
 Invoke-PlanOrAction "Enumerate every cloud-only member account and read its employeeId" {
@@ -142,11 +183,19 @@ Invoke-PlanOrAction "Enumerate every cloud-only member account and read its empl
 # Step 2 - Active Directory, read-only, forest-wide.
 # -------------------------------------------------------------------------------------------
 
-Invoke-PlanOrAction "Load the ActiveDirectory module and discover this host's forest global catalog" {
+Invoke-PlanOrAction "Load Active Directory via the same module (ADImport) and discover this host's forest global catalog" {
     if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
         Write-Fail "The ActiveDirectory module is not installed. Add RSAT-AD-PowerShell, or run this from a host that has it."
     }
-    Import-Module ActiveDirectory
+
+    # ADImport rather than a bare Import-Module, for the same reason as GraphConnect: this repo
+    # does not open its own connections when the connection module owns them.
+    if (Get-Command -Name ADImport -ErrorAction SilentlyContinue) {
+        ADImport
+    }
+    else {
+        Write-Fail "$ConnectionModulePath does not export ADImport."
+    }
 
     # Deliberately fail-CLOSED, unlike the app's own fail-soft global catalog resolution. See
     # the note in the help block: a local-domain answer under-reports Ambiguous.

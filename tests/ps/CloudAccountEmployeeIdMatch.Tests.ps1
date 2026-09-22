@@ -168,6 +168,90 @@ Describe 'Get-EmployeeIdMatchOutcome' {
     }
 }
 
+Describe 'Get-CloudAccountEmployeeIdCoverage.ps1 connection contract' {
+
+    BeforeAll {
+        $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        $script:SurveyPath = Join-Path -Path $repoRoot -ChildPath 'tools/Get-CloudAccountEmployeeIdCoverage.ps1'
+        $script:SurveyText = Get-Content -LiteralPath $script:SurveyPath -Raw
+        $script:MachinesPath = Join-Path -Path $repoRoot -ChildPath '.agents/machines.md'
+
+        # Every "must not appear" assertion below runs against CODE ONLY. The script explains in
+        # prose why it does not call Connect-MgGraph, Connect-AllM365Services or -Scopes, and an
+        # assertion over the raw text would be tripped by the explanation rather than by a
+        # regression - punishing the script for documenting itself.
+        $noBlockComments = [regex]::Replace($script:SurveyText, '(?s)<#.*?#>', '')
+        $script:SurveyCode = ($noBlockComments -split "`n" |
+                Where-Object { $_ -notmatch '^\s*#' } |
+                ForEach-Object { $_ -replace '\s#.*$', '' }) -join "`n"
+    }
+
+    It 'parses without syntax errors' {
+        $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($script:SurveyPath, [ref]$null, [ref]$errors) | Out-Null
+        $errors | Should -BeNullOrEmpty
+    }
+
+    It 'sets $ErrorActionPreference = Stop (repo error model)' {
+        $script:SurveyText | Should -Match "\`$ErrorActionPreference\s*=\s*'Stop'"
+    }
+
+    It 'exposes a -PlanOnly switch and gates every step through Invoke-PlanOrAction' {
+        $script:SurveyText | Should -Match '\[switch\]\s*\$PlanOnly'
+        # Nothing may act outside the gate, or -PlanOnly would query the tenant.
+        $script:SurveyText | Should -Match 'Invoke-PlanOrAction'
+    }
+
+    It 'connects Graph through GraphConnect, not its own Connect-MgGraph' {
+        # Owner, 2026-09-22: "I don't log in to graph like this. I use the connection module's
+        # GraphConnect." An interactive Connect-MgGraph here would prompt the operator for a
+        # delegated sign-in that this tenant's tooling does not use.
+        $script:SurveyText | Should -Match '(?m)^\s*GraphConnect\s*$'
+        $script:SurveyCode | Should -Not -Match 'Connect-MgGraph\s+-'
+    }
+
+    It 'requests no delegated scopes, because GraphConnect is app-only' {
+        # Matches a -Scopes that is actually PASSED something, so the script stays free to
+        # explain in a comment why it does not use one.
+        $script:SurveyCode | Should -Not -Match "-Scopes\s+['`"@\$]"
+    }
+
+    It 'loads Active Directory through ADImport rather than opening its own' {
+        $script:SurveyText | Should -Match '(?m)^\s*ADImport\s*$'
+    }
+
+    It 'never calls Connect-AllM365Services, which does more than this survey needs' {
+        $script:SurveyCode | Should -Not -Match 'Connect-AllM365Services'
+    }
+
+    It 'reads the module path from machines.md instead of hardcoding it' {
+        $script:SurveyText | Should -Match 'm365-connections-module:'
+        $script:SurveyCode | Should -Not -Match 'D:\\\\source\\\\scripts'
+    }
+
+    It 'has a machines.md entry for the path to resolve' {
+        Select-String -LiteralPath $script:MachinesPath -Pattern 'm365-connections-module:\s*`([^`]+)`' |
+            Should -Not -BeNullOrEmpty
+    }
+
+    It 'names no environment-specific domain, host or address' {
+        foreach ($needle in @('analog', 'ashbex', 'winroot')) {
+            $script:SurveyCode | Should -Not -Match $needle
+        }
+    }
+
+    It 'fails closed when the forest cannot be resolved, rather than falling back to one domain' {
+        # A local-domain search cannot see a cross-domain duplicate employeeId, so a fallback
+        # would under-report Ambiguous and read as a cleaner result.
+        $script:SurveyText | Should -Match 'Could not resolve the forest'
+        $script:SurveyText | Should -Match 'under-report'
+    }
+
+    It 'never writes to the directory: no Set, New or Remove AD or Mg cmdlets' {
+        $script:SurveyCode | Should -Not -Match '(Set|New|Remove|Update)-(AD|Mg)\w+'
+    }
+}
+
 Describe 'Get-EmployeeIdOutcomeClasses' {
 
     It 'lists Resolved first, because the summary leads with the number the bar is set against' {
