@@ -5,6 +5,36 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-22 - No tooling enumerates the directory, and Graph is reached through GraphConnect
+
+Status: Active. Scope: every script and module in this repo that touches Graph or AD, not just
+the survey that prompted it.
+
+**Do not enumerate the directory.** Owner, verbatim: *"you cannot enumerate all users. that is a
+data exfill security flag. I told you in-scope users have been updated."* A `Get-MgUser -All` (or
+any equivalent full listing) to find a known set of accounts is an exfiltration pattern whatever
+the intent, and it is flagged as one. **A population is an INPUT, supplied by the operator, not
+something tooling discovers.** Read each named account with its own `-UserId` call.
+
+This also matches the app. `CloudPasswordReset` resolves one named target per operation and never
+lists the tenant, so a survey that enumerates is not even measuring what the module does.
+
+**Graph is connected through `GraphConnect` from the M365Connections module, never a direct
+`Connect-MgGraph`.** Owner, verbatim: *"I don't log in to graph like this. I use the connection
+module's GraphConnect."* It authenticates the existing app registration through its Delinea
+credential helper and is **app-only**, so a script that asks for delegated `-Scopes` is both wrong
+and prompting the operator for a sign-in this tenant does not use. AD comes from the same module's
+`ADImport`. `Connect-AllM365Services` is not used for single-service work - it also runs module
+updates and opens other connections. The module path is machine-specific and lives in
+`.agents/machines.md` as `m365-connections-module:`, never in a script.
+
+**Where both rules came from is worth keeping:** the deleted survey tooling at `80419d7` did it
+the wrong way on both counts, and `tools/Get-CloudAccountEmployeeIdCoverage.ps1` inherited both
+faults by being modelled on it. Recovering deleted tooling as a pattern carries its defects
+forward; the owner caught these in review, twice. `tests/ps/CloudAccountEmployeeIdMatch.Tests.ps1`
+now pins both rules as static assertions so the next script copied from this one cannot reintroduce
+them quietly.
+
 ### 2026-09-22 - CloudPasswordReset is OFF HOLD, and employeeId matching is back on the table
 
 Status: Active. Scope: `CloudPasswordReset`. **Supersedes the 2026-09-14 hold** in full, and

@@ -136,11 +136,20 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   can clear per reset - **explicitly NOT a module config field**, which is how this app would
   otherwise reach for it. Maps to `forceChangePasswordNextSignIn` on the Graph `passwordProfile`,
   the same PATCH that sets the password, so it costs nothing extra at the service.
-  **THE SURVEY TOOLING IS BUILT AND COMMITTED: `80d9f4b`. IT HAS NOT BEEN RUN - THE OWNER RUNS
-  IT.** `tools/Get-CloudAccountEmployeeIdCoverage.ps1` (read-only; Graph + AD; writes one CSV;
-  supports `-PlanOnly`), the pure decision logic in `tools/CloudAccountEmployeeIdMatch.psm1`, and
-  31 Pester tests in `tests/ps/CloudAccountEmployeeIdMatch.Tests.ps1`. Suite 188/0 across 9 files
-  (was 140 across 8); PSScriptAnalyzer 0 errors; guard proof two mutations, each caught.
+  **THE SURVEY TOOLING IS BUILT AND COMMITTED: `80d9f4b`, corrected twice by the owner in
+  `b0de8bf` and `50094d6`. IT HAS NOT BEEN RUN - THE OWNER RUNS IT.**
+  `tools/Get-CloudAccountEmployeeIdCoverage.ps1` (read-only; Graph + AD; writes one CSV; supports
+  `-PlanOnly`), the pure decision logic in `tools/CloudAccountEmployeeIdMatch.psm1`, and 62 Pester
+  tests in `tests/ps/CloudAccountEmployeeIdMatch.Tests.ps1`. Suite 219/0 across 9 files (was 140
+  across 8); PSScriptAnalyzer 0 errors; guard proof on every correction.
+  **Run it as:** `pwsh tools/Get-CloudAccountEmployeeIdCoverage.ps1 -UpnListPath <file>`, where the
+  file is the owner's in-scope list - one UPN per line, or a CSV with a `UserPrincipalName` column.
+  **BOTH CORRECTIONS WERE OWNER SECURITY RULINGS AND ARE NOW GENERAL, NOT LOCAL TO THIS SCRIPT** -
+  `.agents/decisions.md` 2026-09-22 "No tooling enumerates the directory": the first draft called
+  `Connect-MgGraph` with delegated scopes instead of the connection module's `GraphConnect`, and
+  the second enumerated the whole tenant with `Get-MgUser -All` to find a few hundred known
+  accounts. Both faults were inherited by modelling the script on the deleted `80419d7` tooling.
+  Static assertions now pin both so the next script copied from this one cannot reintroduce them.
   **It answers a different question from "is the field populated".** Outcomes: `Resolved`,
   `NoEmployeeId`, `NoDirectoryMatch`, `Ambiguous`, `MatchedOwnerDisabled`, `MatchedNoMailbox`,
   `Unavailable`. **Read `Ambiguous` first** - a duplicate employeeId means the module would pick an
