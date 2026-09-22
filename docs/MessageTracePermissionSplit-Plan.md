@@ -475,25 +475,30 @@ says so, and that is parity with the live model, not a regression introduced her
 
 ## 4. The UI for a header-only operator
 
-**The Trace Search tab renders, disabled, with the reason on the control.** Not hidden.
+**The Trace Search tab is NOT RENDERED for an operator without the granular permission.** Owner
+ruling 2026-09-22, `.agents/decisions.md`; it overrules this section's original design, which
+disabled the tab and named the missing permission on it. That argument rested on this page's
+comment at `:397-399` about a disabled button stating its reason - a rule about a control refusing
+a click, not about a capability never granted. `Components/Pages/Home.razor:53-65` is the closer
+precedent and it hides: each module card sits inside an `AuthorizeView` on the module's alias.
 
-Justification comes from this page's own recorded rule, at `:397-399`:
+Concretely: wrap the `<li>` at `:31-33` so it renders only when `canTrace`. No accompanying
+explanatory line - hiding it and then describing it defeats the ruling. The headers tab, the
+upload control, the paste box and the analysis output are untouched.
 
-```
-// Why the live button is unavailable, on the CONTROL. A disabled button
-// that states no reason is what produced "the Download details button
-// doesn't click" - it was refusing correctly and silently.
-```
+**The default tab already survives this.** `activeTab` initialises to `"headers"` (`:600`), so a
+header-only operator lands on a tab that exists.
 
-An operator who cannot find the Trace Search tab files the same support ticket as an operator who
-cannot click it, except the hidden version gives the service desk nothing to go on. The disabled
-version names the missing permission, so the operator can ask for it by name. The tab strip here
-is `<button type="button">` (`:29`, `:32`), so `disabled` is honoured, unlike Migration's anchors.
+**But hiding the tab does not close the route to the trace panel, and this is the slice's real
+work.** `:878` sets `activeTab = "trace"` programmatically from the header-analysis handoff, and
+with `runNow` it calls `RunTrace()` immediately. So:
 
-Concretely: `disabled="@(!canTrace)"` on `:32` plus a `title` naming the permission, and a short
-`form-text` line under the tab strip when `!canTrace` explaining that trace search requires the
-Message Analysis Search permission. No other layout change. The headers tab, the upload control,
-the paste box and the analysis output are untouched.
+1. The handoff control that reaches `:878` is hidden on the same `canTrace` condition.
+2. The method containing `:878` returns without switching tabs when `!canTrace`, so no future
+   caller can re-open the panel by accident.
+3. `RunTrace` refuses server-side regardless, per section 3. **Hiding is presentation; the gate is
+   the enforcement point.** A reviewer should treat any argument of the form "the operator cannot
+   reach it because the tab is hidden" as unsound.
 
 ## 5. Route compatibility
 
@@ -1025,8 +1030,12 @@ the canonical record. 3 to 7 remain open.**
    *(Original question: alias name - `MessageTraceSearch` (recommended) or `MessageTraceTrace`?)*
 3. Confirm `/message-analysis/reports` moves to the granular (recommended - it exposes every
    operator's trace detail exports), rather than staying on the main permission.
-4. Confirm the Trace Search tab renders disabled with the reason stated (recommended) rather than
-   being hidden.
+4. **ANSWERED 2026-09-22: HIDE the tab**, overruling this plan's recommendation. Section 4 is
+   rewritten to match and carries the consequence the disabled design did not have: the
+   header-analysis handoff at `MessageTrace.razor:878` switches to the trace tab in code, so
+   hiding the tab alone leaves that route open.
+   *(Original question: confirm the Trace Search tab renders disabled with the reason stated
+   (recommended) rather than being hidden.)*
 5. Should `ExportCsv` be gated (recommended - it exports the whole result set, not the 50 rendered
    rows), or left ungated because the operator already ran the trace that produced it?
 6. Module version: patch (as written) or minor, given the Migration button gate took a minor for a

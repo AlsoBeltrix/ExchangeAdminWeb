@@ -5,6 +5,26 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-22 - Queue 4: an operator without trace search does not see the Trace Search tab
+
+Status: Active. Settled in conversation on 2026-09-22. Answers open question 4 of
+`docs/MessageTracePermissionSplit-Plan.md` and **overrules that plan's recommendation**, which
+argued for a disabled tab naming the missing permission.
+
+**HIDE the tab.** Verbatim: *"hide"*. This matches what the app already does for authorization
+rather than for busy state: `Components/Pages/Home.razor:53-65` wraps each module card in an
+`AuthorizeView` on the module's policy alias, so a person who lacks a permission does not see the
+capability at all. The plan's contrary argument rested on `MessageTrace.razor:397-399`, a comment
+about disabled *buttons* stating their reason - that rule is about a control refusing a click
+silently, which is a different situation from a capability the operator was never granted.
+
+**A consequence the plan did not have to handle while the tab was merely disabled, and which the
+enforcement slice now must:** `MessageTrace.razor:878` sets `activeTab = "trace"` programmatically
+from the header-analysis handoff, and runs the trace outright when that path is taken with
+`runNow`. Hiding the tab button does not close that route. The handoff control must be hidden for
+an operator without the granular permission, and `RunTrace` must refuse on the server regardless -
+hiding is presentation and never the gate.
+
 ### 2026-09-21 - Queue 6: the owner OVERRULED the do-not-containerize recommendation
 
 Status: Active. Supersedes the verdict in `docs/Containerization-Feasibility.md`, which stands as
