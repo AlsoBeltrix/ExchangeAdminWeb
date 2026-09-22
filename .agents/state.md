@@ -61,9 +61,24 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   trace tab in code from the header-analysis handoff and can run the trace outright, so removing
   the tab button leaves that route open. Section 4 now requires the handoff control hidden, the
   switch refused and `RunTrace` gated server-side regardless.
-  **The only thing left before code is the owner's go.** Nothing else is pending and no question is
-  being held back. Implementation is three commits with a mandatory deploy boundary between slice 1
-  (inert declaration) and the enforcement slice; slice 1 changes nobody's access.
+  **SLICE 1 IS LANDED: `9d97e4b`, NOT PUSHED, NOT DEPLOYED.** Owner gave the go 2026-09-22 and
+  authorized an Opus 5 coding subagent for it. The granular `MessageTraceSearch` is declared on the
+  `MessageTrace` descriptor, the main permission's description no longer claims to grant trace, and
+  the module version went `1.4.2` -> `1.5.0` (minor, per question 6; the plan text predates 1.4.2
+  and the coder computed from the field instead of the plan). `ExchangeAdminWeb.csproj` untouched,
+  verified by diff. Four new/changed catalog tests; the alias count in
+  `Catalog_GetConfigurablePolicyAliases_MatchesExpected` went 42 -> 43, not the 41 -> 42 the plan
+  predicted, for the same reason. Suite 2951 passed / 0 failed / 3 skipped; guard proof mutated the
+  descriptor and all four tests failed for four distinct reasons, then restored with the mtime
+  touch. **The slice is inert: nothing outside `ModuleCatalog.cs` consults the alias, so nobody's
+  access changes.**
+  **BLOCKED ON THE OWNER, and slice 2 must not start first:** deploy this, then grant a
+  section-access group against `MessageTraceSearch` on the Module Config Access tab. That needs a
+  GLOBAL admin, not a module admin - the section-access save handler re-checks `AdminSettings`. The
+  alias cannot be granted before the descriptor deploys, which is why the boundary exists.
+  Remaining work is slices 2, 3 and 4 (four commits total, not three as an earlier version of this
+  entry said). Per the owner's 2026-09-21 ruling the grant is a DELIBERATE re-grant, not a copy of
+  today's `MessageTrace` groups, so trace search stays dark for everyone until the owner grants it.
 
 - **THE WEEKEND BACKLOG RUN IS AT ITS END STATE (2026-09-18 to 2026-09-19); tier 1 is complete
   and only owner-blocked work remains. Read
@@ -136,8 +151,8 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
     Revision 6). Plan questions Q2-Q5 remain unanswered and the shipped behaviour in each case is the
     plan's proposal, not a ruling.
   - **Queue 4, trace vs header-analysis permissions** - `docs/MessageTracePermissionSplit-Plan.md`,
-    **codex consensus after three rounds**, `Status: Draft`. All seven open questions settled by
-    2026-09-22; waiting only on the owner's go to implement. **Deploy
+    **codex consensus after three rounds**, `Status: Approved, in progress`. All seven questions
+    settled and slice 1 landed 2026-09-22; see the Now entry above. **Deploy
     hazard, stated first in the plan on purpose:** a new fail-closed alias denies EVERY operator
     including the owner until a group is stored against it, and the alias cannot be granted before
     the descriptor deploys - hence three commits with a mandatory deploy boundary. Recovery needs
