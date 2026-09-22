@@ -45,10 +45,14 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   no blocked decision in front of it, and `.agents/state.md` already named it "the obvious
   alternative" when item 7 was taken. Item 2 is blocked on a decision about a second status
   source; item 5 has no defined scope or credential model; item 6 is large and touches the deploy
-  pipeline and the shared-config-DB invariant. **Nothing has been started on it - no plan exists
-  yet.** First action: read `Modules/ModuleCatalog.cs` for the current message-trace descriptor and
-  its single policy alias, then draft `docs/MessageTracePermissions-Plan.md` and put it to the
-  owner. Do not implement before the plan is approved.
+  pipeline and the shared-config-DB invariant. **The plan already exists and is finished drafting:
+  `docs/MessageTracePermissionSplit-Plan.md`, `Status: Draft`, codex consensus after three rounds
+  (`155eaf7`, `c3b4239`, `5e69dd9`, `995b673`), drafted during the weekend run - the claim that
+  nothing had been started was wrong and is corrected here 2026-09-22.** No code has been written.
+  First action: the plan's seven open questions are the owner's and none is answered; question 1
+  gates everything because it decides whether checklist step 1 copies today's `MessageTrace` groups
+  onto the new alias or re-grants deliberately. Put question 1 to the owner, then approval of the
+  plan. Do not implement before the plan is approved.
 
 - **THE WEEKEND BACKLOG RUN IS AT ITS END STATE (2026-09-18 to 2026-09-19); tier 1 is complete
   and only owner-blocked work remains. Read
@@ -120,6 +124,8 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
     and whether `DiscoverySources` arrives as a JSON string or an array (both shapes handled,
     Revision 6). Plan questions Q2-Q5 remain unanswered and the shipped behaviour in each case is the
     plan's proposal, not a ruling.
+  - **Queue 4, trace vs header-analysis permissions** - `docs/MessageTracePermissionSplit-Plan.md`,
+    **codex consensus after three rounds**, `Status: Draft`. Blocked on the owner's question 1:
     copy today's `MessageTrace` groups onto the new alias, or re-grant deliberately. **Deploy
     hazard, stated first in the plan on purpose:** a new fail-closed alias denies EVERY operator
     including the owner until a group is stored against it, and the alias cannot be granted before
