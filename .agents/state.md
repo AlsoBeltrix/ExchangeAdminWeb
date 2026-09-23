@@ -107,99 +107,43 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   own test. Constitution "Planning Rules" puts UI polish outside the written-plan requirement, so
   no plan was written.
 
-- **QUEUE ITEM 10 CONTRADICTS A MEASURED RESULT AND A RECORDED OWNER RULING. Put to the owner
-  2026-09-22, unanswered.** The item reads: *"Update O365 password change module to match on
-  EmployeeID and use that to determine the target mailbox to send the new password to."* Two
-  problems, both from the record rather than from inference:
-  1. **There is no such module to update.** It was planned as `docs/CloudPasswordReset-Plan.md` and
-     never built - no descriptor, no service, no page, no permission, no config field. The owner
-     put it ON HOLD 2026-09-14 (`.agents/decisions.md`), which prohibits any implementation slice,
-     any further revision of that plan, and **any Graph or AD query in service of the module**. So
-     item 10 is not an update; it is build-the-module, plus matching on top.
-  2. **EmployeeID was already measured and ruled out.** `.agents/decisions.md` 2026-09-11: it is
-     "the strongest available identifier and is populated on the on-premises side, but on **0 of
-     172** cloud accounts", and the remedy - stamping it onto several hundred CLD accounts - was
-     refused by the owner in the same ruling, which ended matching outright: *"if we cannot get a
-     100% working match, then matching is off the table."* The operator-types-the-destination
-     design exists because of that ruling.
-  **ANSWERED BY THE OWNER 2026-09-22: the accounts are stamped.** Verbatim: *"yes, already updated
-  the accounts in-scope."* So the 0-of-172 measurement of 2026-09-11 is **superseded by a change to
-  the directory, not by a re-reading of the old data** - the blocker was the data, and the owner
-  fixed the data.
-  **AND THE HOLD IS LIFTED, 2026-09-22.** Verbatim: *"yes, that plan is off hold."* Said in answer
-  to a message naming what the hold blocked, so **the coverage survey and the plan revision are
-  both authorized**; implementation is not - see `.agents/decisions.md` for the boundary. The plan
-  header now states this; the body below it is still the old design and is stale.
-  **ITEM 11, added by the owner 2026-09-22, same module.** Verbatim: *"O365 PW change module should
-  have an option at runtime, so not secreted away in settings, to force pw change on next login,
-  which should default to yes."* A control on the reset form, checked by default, that the operator
-  can clear per reset - **explicitly NOT a module config field**, which is how this app would
-  otherwise reach for it. Maps to `forceChangePasswordNextSignIn` on the Graph `passwordProfile`,
-  the same PATCH that sets the password, so it costs nothing extra at the service.
-  **THE COVERAGE SURVEY WAS BUILT AND IS NOW DELETED. DO NOT REBUILD IT.** It existed at
-  `80d9f4b`..`63be0a9` (`tools/Get-CloudAccountEmployeeIdCoverage.ps1`,
-  `tools/CloudAccountEmployeeIdMatch.psm1`, `tests/ps/CloudAccountEmployeeIdMatch.Tests.ps1`) and
-  is recoverable from history if the reasoning is ever revisited.
-  **It was removed because its PREMISE is prohibited, not because of a fixable bug.** Measuring
-  "does each employeeId resolve to exactly one user" over a population is a directory census by
-  construction, and the owner's rule is no bulk directory operations
-  (`.agents/decisions.md` 2026-09-22). There is no version of that question that is not a sweep.
-  **Four owner corrections in a row on this one tool, none self-caught, listed so the pattern is
-  not repeated:** (1) it called `Connect-MgGraph` with delegated scopes instead of the connection
-  module's `GraphConnect`; (2) it enumerated the whole tenant with `Get-MgUser -All`; (3) it
-  searched the forest GLOBAL CATALOG for `employeeID`, which is not in the GC partial attribute
-  set, and reported a confident 0% across 111 accounts whose ids were set; (4) with that fixed it
-  swept every account against every forest domain - the same bulk pattern as (2), corrected on the
-  Graph side and left in place on the AD side. The first three were inherited or invented while
-  modelling the script on the deleted `80419d7` tooling.
-  **The replacement shape, PROPOSED AND NOT YET APPROVED:** the module does the lookup at reset
-  time, for the one account the operator named, and fails closed - exactly one enabled user with a
-  mailbox sends, anything else refuses and says why. That makes the owner's 100% bar a runtime
-  refusal rather than a precondition to measure, needs no census, and gives the federal-tenant
-  accounts a readable refusal instead of a silent failure. **Put this to the owner before building
-  anything.**
-  **It answers a different question from "is the field populated".** Outcomes: `Resolved`,
-  `NoEmployeeId`, `NoDirectoryMatch`, `Ambiguous`, `MatchedOwnerDisabled`, `MatchedNoMailbox`,
-  `Unavailable`. **Read `Ambiguous` first** - a duplicate employeeId means the module would pick an
-  owner it cannot justify, and mailing a password on that guess is worse than not matching.
-  `Unavailable` is deliberately never folded into a negative: "found nothing" and "could not look"
-  must not add up together.
-  **Two deliberate departures from the app's own directory code, both recorded in the script:** the
-  forest search is fail-CLOSED (a local-domain fallback cannot see a cross-domain duplicate, so it
-  would under-report `Ambiguous` and look cleaner for it), and each single match is re-read from
-  the domain derived from its own DN, because the global catalog's partial attribute set can make a
-  present mailbox look absent.
-  The old derivation tooling (`80419d7`) was NOT the basis for this: it implemented name matching,
-  which is the approach that failed, and it named three domains, which the 2026-09-11 neutrality
-  ruling forbids.
-  **THE OWNER'S OWN TRUE-UP DATA ALREADY ANSWERS PART OF THIS, AND THE ANSWER IS NOT 100%.**
-  `D:\source\scripts\Entra\CloudAdminEmployeeIdTrueUp` (outside this repo; counts read 2026-09-22,
-  no identities copied here). Of **149** privileged accounts in `priv_accounts_update.csv`:
-  - **8 could not be mapped at all** - `corrected-unresolved.csv`, every one "No AD account with
-    sAMAccountName '...'". They have no on-premises owner to derive.
-  - **141 were mapped** (`original_corrected.csv`, `CloudUPN,OwnerADUPN,EmployeeId`), of which
-    `employeeid-current.csv` shows **111 set and matching, 30 not found**.
-  - **28 of those 30 are in a SECOND TENANT** - their UPNs end `@analogfed.onmicrosoft.us`, not
-    `@analog.onmicrosoft.com`. They are not missing; the run was not pointed at that tenant. **This
-    is queue 5's subject** (`.agents/decisions.md` 2026-09-21: *"there's one other tenant. creds
-    for that tenant will live in delinea."*), so items 10 and 5 are now entangled: a quarter of the
-    privileged population the stakeholder cares about lives where this module cannot reach.
-  - The remaining **2 are genuinely absent** from the commercial tenant.
-  So: **111 of 113 attempted in the commercial tenant (98.2%), 111 of 149 overall (74.5%)** -
-  against a bar the owner set at 100%.
-  **What the true-up did NOT measure, and what the survey is still for:** whether each employeeId
-  resolves to exactly ONE live directory user WITH A MAILBOX. The true-up validated the owner UPN
-  and id **against a single domain only** (its README: "AD validation runs once per CSV row, only
-  against ad.analog.com"), so a duplicate employeeId elsewhere in the forest was never visible, and
-  mailbox presence was never checked. Those are exactly `Ambiguous` and `MatchedNoMailbox`.
-  **NEXT ACTION, in order:** (1) owner runs the survey and hands back the summary; (2) revise the
-  plan around items 10 and 11 against that number and re-put D4; (3) owner approval; (4) implement.
-  A result short of 100% is a fresh owner decision, not a gap to route around with a fallback to
-  operator-typed destinations.
-  **Worth stating when this is picked up, because it cuts toward doing the work:** a derived
-  destination restores the security property the current design knowingly traded away. Today's
-  design lets an operator type their own address and receive another user's password; only the
-  audit record and the admin alert catch it, after the fact. Matching would prevent it.
+- **CLOUD PASSWORD RESET (queue items 10 and 11) IS BUILT, REVIEWED AND NOT DEPLOYED. It has never
+  run against a real tenant.** `docs/CloudPasswordReset-Plan.md`, `Status: Implemented, unproven
+  against the live service`. Module `1.0.0`, base app `2.22.0` -> `2.23.0` (the `EmailService`
+  method is shared infrastructure). Module doc: `docs/CloudPasswordReset.md`.
+  Six commits: generator `c219a27`, service and the forest-wide employeeId lookup `56451bd`,
+  owner's email `e1b786a`, descriptor and preflight page `8a411c1`, write path `3b29e5f`, records
+  `dad322e`.
+  **The design in one line:** the operator names a cloud-only account; the module reads the
+  `employeeId` off it, finds the one directory user carrying that id, generates a password, writes
+  it to Entra and mails it to that person. **The operator chooses no address and normally never
+  sees the password** - which is the control that the earlier operator-typed design had given up.
+  **Five destination refusals, none falling back to anything:** no employee ID, no match, more than
+  one match, owner has no mailbox, lookup failed. A `CloudPasswordResetReveal` holder overrides all
+  five including the lookup failure (owner ruling 2026-09-23, `.agents/decisions.md`), which settles
+  D4 in favour of keeping that permission - with the destination derived it is the only route to a
+  password and therefore a real boundary.
+  **Force change at next sign-in defaults ON** (owner ruling 2026-09-23): the password travels by
+  email, so forcing a change makes it a one-time handover. Clearable per reset, and clearing it
+  shows the owner's verbatim instruction.
+  **Five review findings, every slice reviewed by codex, all admitted and fixed** -
+  `.agents/review/findings/cpr-4.md` through `cpr-7.md` plus the index. **Three of the five were
+  the same mistake in different places: an unanswered question read as a negative answer** (a
+  missing sync property read as cloud-only; a failed role read rendered as "None active"; and,
+  before them, the deleted survey's confident 0%). That rule is now stated in the plan and pinned
+  by tests rather than left to each site.
+  **BLOCKED ON THE OWNER, and nothing works until these are done:**
+  1. Create a dedicated Entra app registration with `User.Read.All`,
+     `User-PasswordProfile.ReadWrite.All` and `RoleManagement.Read.Directory`, admin-consented.
+     **Do not reuse another module's registration.**
+  2. Create the Delinea record (`Tenant ID`, `Application ID`, `Client Secret`, no checkout
+     workflow) and enter its id in the module's `GraphDelineaSecretId`.
+  3. Deploy, enable the module (it ships disabled), and grant the section-access groups.
+  4. Run the manual acceptance checklist in the plan. **None of it has been run.** The two items
+     that matter most: a deliberately contrived two-people-share-an-employee-ID case, which is the
+     failure that would otherwise mail an admin password to a guess; and the CLEARED
+     force-change case against an account whose sign-in path cannot service a change prompt,
+     because that path is the reason the checkbox still exists.
 
 - **THE WEEKEND BACKLOG RUN IS AT ITS END STATE (2026-09-18 to 2026-09-19); tier 1 is complete
   and only owner-blocked work remains. Read

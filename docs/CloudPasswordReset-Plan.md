@@ -1,7 +1,9 @@
 # Cloud Password Reset Module (Entra ID cloud-only accounts)
 
-Status: **Revision 2026-09-23 (seventh). Approved shape, implementation under way.** The password
-generator is built and committed; nothing else is.
+Status: **Implemented 2026-09-23, unproven against the live service.** Every slice is built,
+tested and reviewed; nothing in it has ever run against a real tenant, because the app
+registration and the Delinea record do not exist yet. See **External prerequisites** and the
+manual acceptance checklist - none of it has been run.
 
 This revision does one thing: **the destination is derived from the target account's `employeeId`
 instead of being typed by the operator**, and the force-change-at-next-sign-in checkbox now
@@ -21,13 +23,22 @@ The two instructions, in the owner's words:
   Still a per-reset checkbox the operator can clear; only the default moved. See the
   force-change discussion under **The Graph surface**.
 
-**What is built:** `Services/PasswordGenerator.cs` and its embedded word list, committed with
-tests and provenance. **What is not:** the service, the email helper, the descriptor, the page,
-the write path, and the records.
+**What is built and where:** the generator (`c219a27`), the service and the forest-wide employeeId
+lookup (`56451bd`), the owner's email (`e1b786a`), the descriptor and preflight page (`8a411c1`),
+the write path with protection, audit and notification (`3b29e5f`), and the records (`dad322e`).
 
-**The open owner question is D4** - whether the separate reveal permission still fences anything.
-A derived destination restores the justification it lost when the address became typeable, so it
-is reopened rather than settled. It is not needed until the page is built.
+**D4 is settled: both permissions ship.** The owner's answers of 2026-09-23 presuppose the reveal
+permission and extend it - a reveal holder overrides all five destination refusals, including an
+unreachable directory (`.agents/decisions.md`). With the destination derived rather than typed,
+reveal is the only route by which an operator can learn a generated password, so it is a real
+boundary rather than the decorative control the sixth revision judged it to be.
+
+**Five review findings, all admitted and fixed**, records in `.agents/review/findings/`:
+`cpr-4` (HIGH, a missing sync property admitted a synced account), `cpr-5` (HIGH, a failed SMTP
+disconnect reported a delivered password as undelivered), `cpr-6` (MEDIUM, a failed role read
+rendered as "None active"), `cpr-7` (LOW, an undefined sidebar icon class).
+**Three of these are the same mistake in different places** - an unanswered question read as a
+negative answer - which is why that rule is stated in this plan rather than left to each site.
 
 ## Revision history
 
