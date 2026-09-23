@@ -792,8 +792,10 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   **destination address**, a required text field with no default, no pre-fill, no suggestion
   and no picker -- the module has nothing to suggest from and an autofilled address would be
   read as a verified one; and the **change at next sign-in** checkbox, **CHECKED by default**
-  (owner ruling 2026-09-23). Help text, exactly: *"The account must change this password at next
-  sign-in."* The panel
+  (owner ruling 2026-09-23). Label: *"Force password change at next sign-in"*. Help text,
+  exactly: *"If cleared, the emailed password stays valid until someone changes it."* The help
+  text must not restate the label - the operator can read the label. It carries the one thing
+  the label does not: what clearing the box costs. The panel
   states, in plain words next to the address field, that the address is recorded
   in the audit log and mailed to the administrators. No write path in this slice. Catalog
   tests, plus tests that the address field starts empty, that submitting it blank or malformed

@@ -23,9 +23,14 @@ changing it, is no longer a live credential to an admin account.
 reset - item 11: *"an option at runtime, so not secreted away in settings"*. The 2026-09-10 failure
 mode is still real: some accounts in this population sign in by routes that cannot service a
 change-password prompt, and leaving the box ticked for one of those hands back an account nobody
-can sign into. The default moved; the choice did not. Help text, exactly: *"The account must change this
-password at next sign-in."* Names the account rather than "the user" - this page also has an
-operator and a destination mailbox - and "this password" ties it to the one just generated. The reasoning belongs in this record.
+can sign into. The default moved; the choice did not.
+
+**Label and help text, and why they are not the same sentence.** Label: *"Force password change
+at next sign-in"*. Help text: *"If cleared, the emailed password stays valid until someone
+changes it."* Three drafts of the help text restated the label in different words, which tells
+an operator nothing they cannot read for themselves. Help text earns its space only by carrying
+what the label cannot, and here that is the security consequence of turning the default off:
+the password that was just mailed remains a live credential to an admin account indefinitely.
 
 **Plan amended in the same commit:** the ruling paragraph under "The Graph surface", S3 (the flag
 is now a required parameter with no service-side default - the default belongs to the page, and a
