@@ -27,6 +27,18 @@ public enum CloudPasswordResetRefusal
     GraphReadFailed,
     PasswordPolicyRejected,
     GeneratorFailed,
+
+    /// <summary>
+    /// The write was ISSUED and its outcome is unknown. Not a refusal: the password may well have
+    /// changed.
+    /// </summary>
+    /// <remarks>
+    /// A transport failure after the PATCH left the client - a timeout, a dropped connection -
+    /// means Graph may have applied it and the response never arrived. Reporting that as a
+    /// refusal would tell the operator no change was made, which is a claim nothing supports, and
+    /// would audit a write that may exist as one that never happened (review finding cpr-8).
+    /// </remarks>
+    WriteIndeterminate,
 }
 
 /// <summary>What the preflight read about the account an operator named.</summary>
@@ -472,7 +484,33 @@ public class CloudPasswordResetService
             },
         };
 
-        var (ok, status, safeError) = await client.PatchWithStatusAsync($"/users/{Uri.EscapeDataString(objectId)}", body);
+        bool ok;
+        System.Net.HttpStatusCode status;
+        string? safeError;
+
+        try
+        {
+            (ok, status, safeError) = await client.PatchWithStatusAsync($"/users/{Uri.EscapeDataString(objectId)}", body);
+        }
+        catch (Exception ex)
+        {
+            // THE REQUEST WAS ISSUED AND WE DO NOT KNOW WHAT HAPPENED TO IT. GraphTokenClient does
+            // not catch around HttpClient.SendAsync, so a timeout or a dropped connection arrives
+            // here - and Graph may have applied the change before the response was lost.
+            //
+            // Reporting this as a failure would tell the operator "no change was made", which
+            // nothing supports, and would audit a write that may exist as one that never happened.
+            // The account could be left with a password nobody knows while the record says the
+            // reset never ran (review finding cpr-8).
+            _logger.LogCritical(ex,
+                "The password write for {ObjectId} was issued and its outcome is UNKNOWN. The password may have been changed. Verify the account before retrying",
+                objectId);
+
+            return new CloudPasswordResetOutcome(false, null, CloudPasswordResetRefusal.WriteIndeterminate,
+                "The password change was sent to Entra ID but no response came back, so it is not known whether it applied. "
+                + "The password has been discarded and NOT delivered. Check the account before running this again - "
+                + "if the change did apply, nobody currently knows the password.");
+        }
 
         if (ok)
         {

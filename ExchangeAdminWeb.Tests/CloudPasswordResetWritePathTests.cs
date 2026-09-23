@@ -57,7 +57,7 @@ public class CloudPasswordResetWritePathTests
                      "AuthorizeAsync(authState.User, \"CloudPasswordReset\")",
                      "ValidateTicketAsync(ticket)",
                      "CheckProtectionAsync(",
-                     "DeriveDestination(target)",
+                     "DeriveDestination(fresh)",
                      "Email.UserNotificationsEnabled",
                  })
         {
@@ -70,7 +70,11 @@ public class CloudPasswordResetWritePathTests
     {
         // The directory can change between the preflight and the confirm. A stale destination is
         // a password mailed somewhere nobody currently chose.
-        Assert.Contains("destination = ResetService.DeriveDestination(target);", HandlerBody());
+        // Strengthened after review finding cpr-9: the original assertion accepted deriving from
+        // the CACHED preflight target, which refreshed only the directory half of the lookup. The
+        // account itself must be re-read too, or the employeeId is minutes old.
+        Assert.Contains("await ResetService.ResolveTargetAsync(upn)", HandlerBody());
+        Assert.Contains("destination = ResetService.DeriveDestination(fresh);", HandlerBody());
     }
 
     [Fact]
@@ -130,7 +134,7 @@ public class CloudPasswordResetWritePathTests
         // LogModuleAction writes ["error"] = success ? null : errorDetail, so a note passed as
         // errorDetail on a success is silently discarded - the failure that lost an
         // authorised-servicer record once already.
-        Assert.Contains("[\"protectedPrincipalServiced\"] = servicedNote,", Page());
+        Assert.Contains("[\"protectedPrincipalServiced\"] = servicedNote", Page());
     }
 
     [Fact]
@@ -251,5 +255,137 @@ public class ModuleIconClassTests
         Assert.True(undefined.Count == 0,
             "these modules name a sidebar icon class the host CSS does not define, so their nav "
             + "item renders without an icon:\n  " + string.Join("\n  ", undefined));
+    }
+}
+
+/// <summary>
+/// Guards on the four defects the write-path review found (cpr-8 through cpr-11).
+/// </summary>
+public class CloudPasswordResetWritePathReviewTests
+{
+    private static string Page() =>
+        File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "CloudPasswordReset.razor"));
+
+    private static string Service() =>
+        File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "CloudPasswordResetService.cs"));
+
+    private static int IndexOf(string haystack, string needle)
+    {
+        var i = haystack.IndexOf(needle, StringComparison.Ordinal);
+        Assert.True(i >= 0, $"'{needle}' not found - this guard is pinned to code that no longer exists.");
+        return i;
+    }
+
+    [Fact]
+    public void A_transport_failure_on_the_write_is_indeterminate_not_a_refusal()
+    {
+        // cpr-8. GraphTokenClient does not catch around HttpClient.SendAsync, so a timeout after
+        // the request left arrives as an exception - and Graph may already have applied it.
+        // Calling that "no change was made" is a claim nothing supports.
+        var service = Service();
+
+        Assert.Contains("WriteIndeterminate", service);
+
+        var patch = IndexOf(service, "await client.PatchWithStatusAsync(");
+        var before = service[..patch];
+        Assert.Contains("try", before[(before.LastIndexOf("string? safeError;", StringComparison.Ordinal) is var p && p > 0 ? p : 0)..]);
+    }
+
+    [Fact]
+    public void The_indeterminate_outcome_is_never_audited_as_NotAttempted()
+    {
+        var page = Page();
+        var branch = page[IndexOf(page, "CloudPasswordResetRefusal.WriteIndeterminate")..];
+        var block = branch[..Math.Min(1200, branch.Length)];
+
+        Assert.Contains("delivery: \"Indeterminate\"", block);
+        Assert.DoesNotContain("delivery: \"NotAttempted\"", block);
+    }
+
+    [Fact]
+    public void The_target_is_re_read_from_Entra_before_the_write()
+    {
+        // cpr-9. Deriving from the cached preflight target only refreshed the directory half; the
+        // employeeId itself could be minutes old, so the password could go to the owner of an id
+        // the account no longer carries.
+        var page = Page();
+        var body = page[IndexOf(page, "private async Task ExecuteResetAsync()")..];
+
+        var reRead = IndexOf(body, "await ResetService.ResolveTargetAsync(upn)");
+        var derive = IndexOf(body, "ResetService.DeriveDestination(fresh)");
+        var patch = IndexOf(body, "ResetPasswordAsync(");
+
+        Assert.True(reRead < derive, "The account must be re-read before the destination is derived.");
+        Assert.True(derive < patch, "The destination must be derived before the write.");
+    }
+
+    [Fact]
+    public void A_destination_that_changed_during_confirmation_stops_the_reset()
+    {
+        // Silently switching the recipient - or switching from "email it to Jo" to "show it on
+        // screen" - would complete an operation the operator never approved.
+        var page = Page();
+        var body = page[IndexOf(page, "private async Task ExecuteResetAsync()")..];
+
+        var check = IndexOf(body, "revealing != confirmedRevealing");
+        var patch = IndexOf(body, "ResetPasswordAsync(");
+
+        Assert.True(check < patch, "The changed-destination check must run before the write.");
+        Assert.Contains("confirmedAddress", body);
+    }
+
+    [Fact]
+    public void A_new_lookup_clears_every_per_attempt_field()
+    {
+        // cpr-10. "Shown once" is not true if a revealed password survives the next search, and an
+        // armed confirmation must not carry over to an account it was never armed for.
+        var page = Page();
+        var lookup = page[IndexOf(page, "private async Task LookupAsync()")..];
+        var block = lookup[..Math.Min(1400, lookup.Length)];
+
+        foreach (var field in new[] { "revealedPassword = null", "resultMessage = \"\"", "resultSuccess = false", "resetConfirmPending = false" })
+        {
+            Assert.Contains(field, block);
+        }
+    }
+
+    [Fact]
+    public void The_confirm_button_is_gated_on_CanReset_not_only_on_busy()
+    {
+        Assert.Contains("@onclick=\"ExecuteResetAsync\" disabled=\"@(isBusy || !CanReset)\"", Page());
+    }
+
+    [Fact]
+    public void The_audit_uses_a_sentinel_because_the_writer_drops_nulls()
+    {
+        // cpr-11. JsonlLogService filters null-valued keys AND its serializer ignores nulls, so an
+        // explicit null reaches Splunk as an ABSENT field - the one thing AC18 exists to prevent.
+        // The plan pre-authorised the "n/a" sentinel for exactly this case.
+        var page = Page();
+        var audit = page[IndexOf(page, "private void AuditReset(")..];
+        var block = audit[..IndexOf(audit, "private async Task NotifyAdminsAsync(")];
+
+        Assert.Contains("const string NotApplicable = \"n/a\";", block);
+
+        // No audit value may be a bare null, or its key vanishes from the record.
+        foreach (var key in new[] { "targetObjectId", "destinationAddress", "destinationEmployeeId", "refusalReason", "protectedPrincipalServiced" })
+        {
+            var line = block.Split('\n').FirstOrDefault(l => l.Contains($"[\"{key}\"]", StringComparison.Ordinal));
+            Assert.NotNull(line);
+            Assert.DoesNotContain("= null", line!);
+            Assert.DoesNotContain(": null", line!);
+        }
+    }
+
+    [Fact]
+    public void The_writer_really_does_drop_nulls_so_the_sentinel_is_load_bearing()
+    {
+        // Pins the reason rather than the workaround. If JsonlLogService is ever changed to
+        // preserve nulls, this fails and whoever changed it can drop the sentinel deliberately
+        // instead of leaving a defensive string nobody remembers the cause of.
+        var writer = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "JsonlLogService.cs"));
+
+        Assert.Contains("Where(kv => kv.Value != null)", writer);
+        Assert.Contains("JsonIgnoreCondition.WhenWritingNull", writer);
     }
 }

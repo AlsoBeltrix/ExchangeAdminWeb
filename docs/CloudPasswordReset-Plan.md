@@ -682,10 +682,16 @@ included, so an explicit null survives to the writer.
 2. **Booleans are JSON booleans.** Not `"Yes"`, not `"true"`, not `"(set)"`.
 3. **Enumerated fields draw from a closed list, stated below.** Never a free-text sentence, and
    never an operator- or upstream-supplied string. A value not on the list is a bug.
-4. **Every field appears on every event of its action, with an explicit `null` where it does not
-   apply** -- an absent field and a null field look different to a search, and "missing" is not
-   an answer anyone can act on. S6 confirms the JSON writer emits nulls rather than dropping
-   them; if it drops them, the sentinel is the string `"n/a"` and this plan is amended to say so.
+4. **Every field appears on every event of its action, carrying the string `"n/a"` where it does
+   not apply** - an absent field and a present one look different to a search, and "missing" is
+   not an answer anyone can act on.
+   **CONFIRMED IN S6, and the answer was the fallback:** the writer drops nulls twice over.
+   `JsonlLogService.WriteToFile` filters every null-valued key before serializing, and its
+   serializer options carry `JsonIgnoreCondition.WhenWritingNull` as well. An explicit null
+   therefore reaches Splunk as an absent field, which is the exact outcome this rule exists to
+   prevent (review finding `cpr-11`). So the sentinel is in force. It is applied in this module
+   rather than by changing the shared writer, whose behaviour every other module's logs inherit
+   and which is not this stream's to change.
 5. **Names are frozen once shipped.** Changing one is a breaking change to somebody's dashboard
    and needs the same care as a schema migration.
 6. **No password, and nothing derived from one.** Not its length, not its entropy, not its word
@@ -701,13 +707,13 @@ These ride in `extra`:
 |---|---|---|
 | `targetObjectId` | string | The Entra object id (GUID). Stable across renames, unlike the UPN. |
 | `targetCloudOnly` | bool | Always `true` on a successful reset; `false` on a synced-account refusal. |
-| `destinationAddress` | string or null | The address the module derived, recorded lowercased, whether or not the send then succeeded; null on the reveal path and on refusals that happened before the derivation ran or that the derivation itself caused. **This is the field that answers "where did the password actually go".** |
-| `destinationEmployeeId` | string or null | The `employeeId` the address was derived FROM, as read off the target account. Null when the target had none, or when the refusal happened before it was read. Present on successes and on every derivation refusal: without it, `destinationAddress` says where the password went but nothing says why there, and a wrong destination cannot be traced back to the directory record that caused it. |
+| `destinationAddress` | string | The address the module derived, recorded lowercased, or `"n/a"`, whether or not the send then succeeded; null on the reveal path and on refusals that happened before the derivation ran or that the derivation itself caused. **This is the field that answers "where did the password actually go".** |
+| `destinationEmployeeId` | string | The `employeeId` the address was derived FROM, as read off the target account. Null when the target had none, or when the refusal happened before it was read. Present on successes and on every derivation refusal: without it, `destinationAddress` says where the password went but nothing says why there, and a wrong destination cannot be traced back to the directory record that caused it. |
 | `forceChangePasswordNextSignIn` | bool | Exactly what went in the PATCH body, under the Graph property's own name so the audit and the API cannot drift apart. |
-| `passwordDelivery` | string | `Sent` \| `SendFailed` \| `Revealed` \| `NotAttempted` |
+| `passwordDelivery` | string | One of `Sent`, `SendFailed`, `Revealed`, `NotAttempted`, `Indeterminate`. **`Indeterminate` means the write was ISSUED and its outcome is unknown** - a transport failure after the request left, where Graph may have applied it. It is not a refusal and must never be recorded as `NotAttempted`, which would state that no change was made (finding `cpr-8`). |
 | `revealUsed` | bool | True only on the reveal path. Redundant against `passwordDelivery` by design: an alert on a single boolean is harder to get wrong than one on a string. |
-| `refusalReason` | string or null | Null on an ordinary success. On a REVEAL it carries the derivation failure the operator pushed past, not null - the reveal is a success but it overrode something, and which one matters after an incident. Otherwise one of: `SyncedAccount`, `GuestAccount`, `DestinationNoEmployeeId`, `DestinationNoMatch`, `DestinationAmbiguous`, `DestinationNoMailbox`, `DestinationLookupFailed`, `NotificationsDisabled`, `TicketInvalid`, `TicketValidatorUnavailable`, `ProtectedPrincipal`, `ProtectionCheckFailed`, `PermissionDenied`, `GraphReadFailed`, `PasswordPolicyRejected`, `GeneratorFailed`. |
-| `protectedPrincipalServiced` | string or null | The shared helper's note (`ProtectedPrincipalServicing.Extra`), unchanged -- it is prose, and it is the one field that stays prose because the shared helper owns its shape. |
+| `refusalReason` | string | `"n/a"` on an ordinary success. On a REVEAL it carries the derivation failure the operator pushed past, not null - the reveal is a success but it overrode something, and which one matters after an incident. Otherwise one of: `SyncedAccount`, `GuestAccount`, `DestinationNoEmployeeId`, `DestinationNoMatch`, `DestinationAmbiguous`, `DestinationNoMailbox`, `DestinationLookupFailed`, `NotificationsDisabled`, `TicketInvalid`, `TicketValidatorUnavailable`, `ProtectedPrincipal`, `ProtectionCheckFailed`, `PermissionDenied`, `GraphReadFailed`, `PasswordPolicyRejected`, `GeneratorFailed`, `WriteIndeterminate`. |
+| `protectedPrincipalServiced` | string | The shared helper's note (`ProtectedPrincipalServicing.Extra`), unchanged -- it is prose, and it is the one field that stays prose because the shared helper owns its shape. |
 
 Refusal events carry the **same** field set as successes, so one search over
 `category=CloudPasswordReset` returns uniform records and a missing field always means a bug
