@@ -299,10 +299,91 @@ public sealed class PasswordGenerator
         return converted;
     }
 
+    /// <summary>
+    /// Arrange the styles so no two neighbours match, and GUARANTEE it rather than usually manage it.
+    /// </summary>
+    /// <remarks>
+    /// The shuffle-and-retry loop is kept because it is what makes the arrangement random in the
+    /// ordinary case, and the entropy score counts style arrangements. But it used to give up
+    /// after 20 tries and return whatever it had, so a password could ship with two adjacent
+    /// ALLCAPS words - while AC14 states the property as a guarantee and the plan's method
+    /// describes it as one (review finding cpr-13).
+    ///
+    /// The repair pass closes that. It is deterministic and only runs when 20 random shuffles all
+    /// failed, which is rare: for the multisets this generator builds - at most a pair of each of
+    /// three styles - a valid arrangement always exists, so the repair always succeeds.
+    /// </remarks>
     private static void ShuffleAvoidingAdjacentDuplicates(List<int> styles)
     {
         Shuffle(styles);
         for (var attempt = 0; attempt < 20 && HasAdjacentDuplicate(styles); attempt++) Shuffle(styles);
+
+        RepairAdjacentDuplicates(styles);
+    }
+
+    /// <summary>
+    /// Swap any neighbour collision away, deterministically.
+    /// </summary>
+    /// <remarks>
+    /// For each position that matches its predecessor, find a later element that differs from both
+    /// that predecessor and from whatever currently follows the collision, and swap it in. No
+    /// multiset this generator produces can defeat it: with counts of at most two across three
+    /// styles, no style ever exceeds the ceiling that makes a valid arrangement impossible.
+    /// </remarks>
+    private static void RepairAdjacentDuplicates(List<int> styles)
+    {
+        if (styles.Count < 2 || !HasAdjacentDuplicate(styles)) return;
+
+        // Rebuild rather than swap. A local swap pass looks adequate and is not: on [0,0,1,1,2,2]
+        // it fixes the head and strands a collision in the tail, because by the time it reaches
+        // the last pair there is nothing left to swap with. The direct unit test caught that; the
+        // end-to-end draw test could not, since 20 random shuffles almost always succeed and the
+        // repair rarely runs at all.
+        //
+        // Greedy by remaining count is the standard arrangement for this problem and is correct
+        // whenever no style occupies more than half the positions (rounded up). The multisets this
+        // generator builds never come close - at most a pair of each of three styles - so it
+        // always succeeds.
+        var remaining = new Dictionary<int, int>();
+        foreach (var style in styles)
+        {
+            remaining[style] = remaining.TryGetValue(style, out var c) ? c + 1 : 1;
+        }
+
+        var rebuilt = new List<int>(styles.Count);
+        var previous = -1;
+
+        while (rebuilt.Count < styles.Count)
+        {
+            var next = -1;
+            var best = 0;
+
+            foreach (var (style, count) in remaining)
+            {
+                if (count <= 0 || style == previous) continue;
+                if (count > best)
+                {
+                    best = count;
+                    next = style;
+                }
+            }
+
+            if (next < 0)
+            {
+                // Unreachable for this generator's multisets. Leaving the original arrangement is
+                // the safe answer: the styles are still balanced and the only cost is a repeated
+                // neighbour, where inventing a style would unbalance the distribution the entropy
+                // score is calculated from.
+                return;
+            }
+
+            rebuilt.Add(next);
+            remaining[next]--;
+            previous = next;
+        }
+
+        styles.Clear();
+        styles.AddRange(rebuilt);
     }
 
     private static bool HasAdjacentDuplicate(List<int> styles)
@@ -470,13 +551,71 @@ public sealed class PasswordGenerator
             if (trimmed.Length > 0) words.Add(trimmed);
         }
 
-        if (words.Count < 1000)
+        ValidateWordList(words);
+        return words.ToArray();
+    }
+
+    /// <summary>The word count the provenance record measures. Pinned, not a floor.</summary>
+    /// <remarks>
+    /// Exact rather than a minimum so that changing the pool is visible as a diff to a stated
+    /// number, which is what `Resources/CloudPasswordWordList.provenance.md` exists to make
+    /// possible. A replacement list is then a deliberate two-file edit rather than a silent
+    /// entropy change.
+    /// </remarks>
+    private const int ExpectedWordCount = 7771;
+
+    /// <summary>
+    /// Refuse a word list that would make the entropy score dishonest.
+    /// </summary>
+    /// <remarks>
+    /// THE ORIGINAL CHECK WAS A COUNT FLOOR AND THAT WAS NOT ENOUGH. A list of 7,771 copies of
+    /// "aaa" passed it: every selected word then scored against a 7,771-entry length bucket, so
+    /// the computed entropy cleared 60 bits while the real entropy was close to zero, and the
+    /// generator reported a strong password it had not produced (review finding cpr-12).
+    ///
+    /// The entropy calculation assumes three properties of the pool - that the words are DISTINCT,
+    /// that they fall in the documented 3-9 character range, and that the pool is the measured
+    /// one. None was checked. All three are now, at load, before a single password is generated,
+    /// and each failure refuses rather than degrades.
+    /// </remarks>
+    private static void ValidateWordList(List<string> words)
+    {
+        if (words.Count != ExpectedWordCount)
         {
             throw new InvalidOperationException(
-                $"The embedded word list holds only {words.Count} words. That is far below the list this generator's entropy estimates assume, so it refuses to run rather than issue weak passwords.");
+                $"The embedded word list holds {words.Count} words; this generator's entropy figures are measured against {ExpectedWordCount}. "
+                + "If the pool was replaced deliberately, re-measure it and update both ExpectedWordCount and Resources/CloudPasswordWordList.provenance.md.");
         }
 
-        return words.ToArray();
+        var distinct = new HashSet<string>(words, StringComparer.OrdinalIgnoreCase);
+        if (distinct.Count != words.Count)
+        {
+            // Duplicates are the dangerous malformation: they inflate every length bucket, so the
+            // score credits choices the generator never had.
+            throw new InvalidOperationException(
+                $"The embedded word list holds {words.Count - distinct.Count} duplicate word(s). Duplicates inflate the effective-pool calculation, "
+                + "so the measured entropy would overstate the real entropy. Refusing to run.");
+        }
+
+        foreach (var word in words)
+        {
+            if (word.Length is < 3 or > 9)
+            {
+                throw new InvalidOperationException(
+                    $"The embedded word list contains a {word.Length}-character entry. The documented pool is 3-9 characters and the "
+                    + "length-fitting logic assumes it. Refusing to run.");
+            }
+
+            foreach (var c in word)
+            {
+                if (c is (< 'a' or > 'z') and not '-')
+                {
+                    throw new InvalidOperationException(
+                        "The embedded word list contains an entry outside the documented lowercase-ASCII-plus-hyphen shape. "
+                        + "Refusing to run rather than emit passwords with unverified characters.");
+                }
+            }
+        }
     }
 
     private static Dictionary<int, int> BuildLengthCounts(string[] words)

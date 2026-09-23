@@ -126,8 +126,10 @@ public class PasswordGeneratorTests
     [Fact]
     public void Generate_NeverPutsTwoIdenticallyStyledWordsSideBySide()
     {
-        // The adjacency re-shuffle is capped at 20 attempts, so this is a strong tendency rather
-        // than a guarantee. Asserting the tendency still catches the rule being dropped entirely.
+        // A GUARANTEE, not a tendency. It was written as a tendency because the re-shuffle gives
+        // up after 20 attempts - but AC14 states the property absolutely, and the generator now
+        // has a deterministic repair pass behind the shuffles (review finding cpr-13). Asserting
+        // a tolerance would have kept passing while the guarantee was broken.
         var offenders = 0;
         foreach (var password in Many(500))
         {
@@ -142,8 +144,8 @@ public class PasswordGeneratorTests
             }
         }
 
-        Assert.True(offenders < 100,
-            $"{offenders} adjacent same-style word pairs across 500 passwords suggests the style balancing is not running.");
+        Assert.True(offenders == 0,
+            $"{offenders} adjacent same-style word pairs across 500 passwords. AC14 states this as a guarantee.");
     }
 
     [Fact]
