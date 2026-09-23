@@ -1,80 +1,54 @@
 # Cloud Password Reset Module (Entra ID cloud-only accounts)
 
-Status: **OFF HOLD as of 2026-09-22, AND THIS DOCUMENT IS OUT OF DATE.** The owner lifted the
-2026-09-14 hold (*"yes, that plan is off hold."*, `.agents/decisions.md`). **Authorized right now:
-a read-only coverage survey, and the revision of this plan. NOT authorized: implementation** - the
-design below is built on a premise the owner has since falsified, so it must be revised and
-re-approved before any C# is written.
+Status: **Revision 2026-09-23 (seventh). Approved shape, implementation under way.** The password
+generator is built and committed; nothing else is.
 
-**Read this before anything else in the file.** Two queue items landed after the hold and together
-they change the module's shape:
+This revision does one thing: **the destination is derived from the target account's `employeeId`
+instead of being typed by the operator**, and the force-change-at-next-sign-in checkbox now
+defaults to on. Both are owner instructions that post-date the sixth revision, and they reverse
+decisions that revision recorded. The sections they touch are rewritten rather than annotated -
+git history holds what they said before.
 
-- **Item 10 - match on employeeId and derive the destination mailbox from it.** This reverses the
-  central design decision recorded below. Everything here that says the operator types the
-  destination exists only because the 2026-09-11 survey found employeeId populated on **0 of 172**
-  cloud accounts and stamping them was refused. The owner has since stamped them (*"yes, already
-  updated the accounts in-scope."*). The blocker was the data and the data changed.
-  **The 100% bar is still the owner's** - *"if we cannot get a 100% working match, then matching is
-  off the table"* - and "already updated" is a reported action, not a measured rate. The survey
-  measures it first; a partial result is a fresh owner decision, not something to paper over with a
-  fallback to typing.
-- **Item 11 - force password change at next sign-in must be a RUNTIME option on the reset form,
-  defaulting to yes.** Owner, verbatim: *"O365 PW change module should have an option at runtime,
-  so not secreted away in settings, to force pw change on next login, which should default to
-  yes."* So it is a control the operator sees and can turn off per reset, checked by default - NOT
-  a config field on the module's settings page, and not a hardcoded constant.
+The two instructions, in the owner's words:
 
-**D4 comes back with item 10.** The separate `CloudPasswordResetReveal` permission was justified by
-the operator being unable to obtain the password; typing the destination undermined that, and a
-derived destination restores it. It was answered *"no. neither."* and so was never withdrawn on its
-merits. Re-put it before S5.
+- **2026-09-22:** *"Update O365 password change module to match on EmployeeID and use that to
+  determine the target mailbox to send the new password to."* The sixth revision had the operator
+  typing the address, because a survey found `employeeId` populated on 0 of 172 cloud accounts and
+  stamping them was refused. The owner has since stamped the in-scope accounts, so the reason is
+  gone. See **Where the password goes**.
+- **2026-09-23:** *"now that we're sending passwords over email correctly, we need to DEFAULT to
+  force password change so email breaches and lazy users don't cause massive security incidents."*
+  Still a per-reset checkbox the operator can clear; only the default moved. See the
+  force-change discussion under **The Graph surface**.
 
-Nothing was ever built. The stream shipped PowerShell survey tooling, which is deleted
-(`a56f41f`), and this plan. There is no `CloudPasswordReset` descriptor in
-`Modules/ModuleCatalog.cs`, no service, no page, no permission, no config field and no version
-bump anywhere. **Resuming costs nothing to undo.**
+**What is built:** `Services/PasswordGenerator.cs` and its embedded word list, committed with
+tests and provenance. **What is not:** the service, the email helper, the descriptor, the page,
+the write path, and the records.
 
-**State as the hold was lifted, which the revision starts from:** D1 is settled (the app generates
-the password); D2 (the operator names the destination) is REOPENED by item 10; D3 is withdrawn; D4
-is reopened as above. The S0 gate returns in a new form - a coverage survey against the stamped
-accounts.
+**The open owner question is D4** - whether the separate reveal permission still fences anything.
+A derived destination restores the justification it lost when the address became typeable, so it
+is reopened rather than settled. It is not needed until the page is built.
+
+## Revision history
+
+Only the reversals that still govern are kept. Superseded design text is not retained as
+commentary.
+
+- **2026-09-23 (seventh).** Destination derived from `employeeId`; force-change defaults on.
+- **2026-09-22.** Hold lifted (`.agents/decisions.md`).
+- **2026-09-14 (sixth).** Deleted the entire owner-derivation design after it measured 46.5%
+  coverage, and moved the destination to an operator-typed field. **The seventh revision reverses
+  the destination half of this.** What survives from it: no stored owner map, and the deletion of
+  the corroboration and leaver rules, which are not coming back - matching on a stamped
+  `employeeId` is a different mechanism from guessing at a name.
+- **2026-09-10 (fourth).** Two reversals that still bind: the first draft gated on "target holds
+  an admin role", which fenced nothing because nearly every target is an admin; and the second
+  draft displayed the password in the UI, which settled to emailed-and-not-displayed.
 
 New module `CloudPasswordReset`. **The base app version bumps** -- this stream adds a public
 method to `Services/EmailService.cs`, which is shared infrastructure (Constitution, Deployment
 And Versioning). The "adding a module does not bump the base version" exception does not apply,
-because this is not only a module. The `ADSearchResult` additions the fifth revision also
-counted here are gone with the derivation; `EmailService` is now the whole of the shared
-change.
-
-Revision 2026-09-14 (sixth) deletes the entire owner-derivation design. The rebuilt derivation
-was surveyed against the live tenant and resolved 46.5% of in-scope accounts; the owner's
-ruling was that a partial match is not a design, and that the destination is simply typed by
-the operator. Everything that existed to derive, corroborate, survey or gate on an owner is
-removed from this plan and from the repo. The security argument changes shape as a result and
-is restated honestly in **Where the password goes** -- it is now detection and accountability,
-not prevention. Superseded sections are not kept as commentary; git history holds them.
-
-Revision 2026-09-11 (fifth) rebuilt the derivation after the first authorised survey run
-returned 9.6%. Superseded by the sixth revision; retained only as the reason the survey was
-re-run at all.
-
-Revision 2026-09-10 (fourth) folds in the codex review of `c493b2a..7c47c3c` and the two owner
-rulings it produced: a post-write send failure fails closed with no reveal, downstream mail
-delivery is out of scope, and the AD lookup is short three fields the corroboration and leaver
-rules need. See the Review log at the end. The third revision's two overturned premises still
-govern and are kept below because both reversals are load-bearing:
-
-1. The first draft gated on "target holds an admin role". The owner corrected the premise --
-   *almost no non-admin accounts are in scope* -- so that tier fenced nothing and was removed,
-   along with an invented `BlockedDirectoryRoles` config field the owner never asked for.
-2. The second draft had the password displayed in the UI, then emailed, then displayed again.
-   The answer then settled on **emailed, invisible to the operator**, with an on-screen reveal
-   under a second permission. The owner's words: *"we need reliable email notification for
-   users and admins and no visibility of the password for the tech making the change unless we
-   gate that with another permission level."* **Half of this survives the sixth revision:** the
-   password is still emailed and still not displayed, but "invisible to the operator" is no
-   longer achievable, because the operator chooses where it goes. The reveal permission's
-   status is D4.
+because this is not only a module.
 
 ## Purpose
 
@@ -94,14 +68,15 @@ several hundred of them. That is not an edge case to be gated; it is the module'
 1. **A privileged-target permission tier keyed on "the target is an admin" would be
    decoration.** Nearly every target trips it, so every operator must hold it to use the
    module at all -- the `idm-3` decorative-control class. The second permission this plan
-   carries is keyed on whether the operator may *see* the password; D4 asks whether that
-   distinction still fences anything now that the operator names the destination.
+   carries is keyed on whether the operator may *see* the password; with the destination derived
+   again, that distinction fences something real, which is what reopens D4.
 2. **Many targets have no mailbox of their own.** An Entra-only admin or automation identity
    commonly has no Exchange recipient. The password therefore cannot be sent to the account
    being reset; it must go to the human who owns that account, at their corporate mailbox.
-3. **The account does not know who owns it, and cannot be made to.** Five revisions tried to
-   derive the owner and the best measured result was 46.5%. The operator supplies the
-   destination instead. See **Where the password goes**.
+3. **The account now carries who owns it.** The owner has stamped `employeeId` onto the in-scope
+   cloud accounts, which is what makes the destination derivable. Five earlier revisions tried to
+   infer the owner from names and reached 46.5%; that approach is dead and is not what this is.
+   Matching a stamped identifier is an exact lookup, not a guess. See **Where the password goes**.
 
 ## Why delivery, not visibility
 
@@ -109,75 +84,85 @@ The password is mailed rather than shown. Owner ruling 2026-09-10: *"those passw
 emailed to the owner of the cloud account's @analog.com email address, not displayed in the
 UI."*
 
-The original justification was stronger than the one that survives. It was that an operator who
-never sees the password cannot take over the account they reset, which made the delivery model
-a genuine control. With the destination now typed by the operator (see **Where the password
-goes**), that is no longer true, and mailing rather than showing is worth keeping for three
-smaller reasons rather than one large one:
+**The original justification holds again.** An operator who never sees the password cannot take
+over the account they reset, and with the destination derived rather than typed they cannot
+redirect it either. That makes the delivery model a real control, not a convenience:
 
-1. The password reaches the owner without a second manual step, which is the point of the
+1. The operator does not learn the credential of any account they reset.
+2. The password reaches the owner without a second manual step, which is the point of the
    module -- the current process is L2 relaying it by phone.
-2. It keeps the credential out of the operator's screen, session and shoulder-surfing range in
-   the ordinary case, where the destination is somebody else.
-3. It gives the audit record a concrete destination to carry, which an on-screen reveal does
-   not.
+3. It gives the audit record a concrete destination to carry, which an on-screen reveal does not.
 
-None of those is a fence. The fences are in **Where the password goes**.
+The sixth revision had to downgrade point 1 to "keeps it off the operator's screen in the ordinary
+case", because a typed address meant the operator could make themselves the recipient. That
+caveat is gone. See **Where the password goes**.
 
 ## Where the password goes
 
-**The operator names the destination.** They type an address on the reset form; the generated
-password is mailed there and is not shown on screen on the ordinary path.
+**The module derives the destination from the target account's `employeeId`.** The operator does
+not type an address and cannot choose one. Owner instruction, queue item 10, 2026-09-22: *"Update
+O365 password change module to match on EmployeeID and use that to determine the target mailbox to
+send the new password to."*
 
-This replaces a derivation. The first five revisions computed the account's on-premises owner
-fresh at each reset from three agreeing sources, and mailed the password to that person so the
-operator never learned it. The S0 survey measured that derivation against the live tenant: it
-resolved **80 of 172 in-scope accounts, 46.5%**. Owner ruling 2026-09-11, ending the approach:
-*"if we cannot get a 100% working match, then matching is off the table."* The numbers, the
-failure analysis and the two mechanical fixes that were on the table are recorded in
-`.agents/decisions.md` (2026-09-11, "Owner derivation is abandoned").
+At each reset, for the one account the operator named:
 
-### The security property this trades away
+1. Read `employeeId` from the target cloud account in Entra.
+2. Find the directory user carrying that same `employeeId`.
+3. Send the new password to that person's mailbox.
 
-The superseded design's argument was that mailing the password somewhere the operator does not
-control makes resetting a Global Administrator useless to them -- a nuisance to the owner
-rather than a takeover. **That argument no longer holds, and no sentence in this plan should be
-read as if it does.** An operator who types the destination can type their own address and
-obtain the credential of any account in the tenant.
+**One lookup, for one named account, at the moment of the reset.** The module never enumerates a
+directory and never reads a population - see `.agents/decisions.md` 2026-09-22, "No tooling
+enumerates the directory". The lookup is scoped to the subject of the operation, which is the
+shape every other directory read in this app already takes.
 
-What bounds the risk instead:
+**Every step fails closed, and a failure refuses the reset rather than falling back.** There is no
+operator-typed fallback: an address the module cannot derive is one it cannot verify, and the
+whole point of deriving is that nobody chooses where an admin credential is sent. The refusals:
 
-1. **Section access.** `CloudPasswordReset` is fail-closed and held by a named set of people.
-   It is the only preventive control left, so it carries weight it did not carry before.
-2. **The audit record.** The destination address is a required field on every event, so a
-   self-directed reset is a visible fact in Splunk rather than an inference.
-3. **The administrator alert.** Every attempt mails the administrators naming the target, the
-   operator, the ticket and the destination address, so the fact surfaces without anyone
-   running a query. Owner ruling 2026-09-11: *"destination email needs to be in the logs and in
-   the admin alert email."*
+| Condition | Refusal |
+|---|---|
+| Target has no `employeeId` | `DestinationNoEmployeeId` |
+| No directory user carries that `employeeId` | `DestinationNoMatch` |
+| More than one user carries it | `DestinationAmbiguous` |
+| The matched user has no mailbox | `DestinationNoMailbox` |
+| The lookup itself failed | `DestinationLookupFailed` |
 
-These are detection and accountability, not prevention. The owner made that trade on the
-record, against a current process -- L2 telephoning L3 -- that has neither property and is
-slower. It is stated here because a reviewer who finds the old no-visibility sentences in git
-history would otherwise read this as a regression rather than a decision.
+`DestinationAmbiguous` is the one worth stating twice: two people sharing an `employeeId` means
+the module cannot say whose account it is looking at, and mailing an admin password to a guess is
+worse than not resetting at all.
+
+### Why this is a fence and the typed address was not
+
+Until 2026-09-22 the operator typed the destination. That was forced on the design by a survey
+which found `employeeId` populated on **0 of 172** cloud accounts, with the owner refusing to
+stamp them (`.agents/decisions.md` 2026-09-11). The owner has since stamped the in-scope accounts,
+which removes the reason.
+
+It matters because the two designs are not equivalent:
+
+- **Typed:** an operator can address any account's password to themselves. Nothing prevents it;
+  the audit record and the administrator alert catch it afterwards. Detection, not prevention.
+- **Derived:** the operator cannot choose the destination at all. An operator who wants another
+  account's password has to change the directory to get it, which is a separate privileged act
+  against a separate system, and is itself audited there.
+
+So the preventive control the fifth revision traded away is back. **Do not read the superseded
+sentences in git history - or any sentence in this plan that survived from them - as current.**
+
+The audit record and the administrator alert still carry the destination, and are still required.
+They are no longer the only thing standing between an operator and a credential.
 
 ### What is not built
 
-Nothing derives, stores, suggests or validates an owner. There is no owner map (rejected
-2026-09-10: *"cannot store it ... we're not going to create an instantly stale map"*), no
-derivation, no coverage survey, and no correctness check on the typed address beyond syntactic
-validity and a non-empty value. The module cannot know who owns a cloud-only account and no
-longer pretends to.
+There is no owner **map**. The 2026-09-10 ruling against storing one stands unchanged -- *"cannot
+store it ... we're not going to create an instantly stale map"* -- and deriving at each reset is
+what honours it. Nothing is cached, nothing is seeded, and no CSV is read: the owner's
+employeeId true-up files are how the directory got populated and are **not part of this module**
+(owner, 2026-09-23). The module reads the directory, live, one account at a time.
 
-`employeeId` is not consulted. It is the strongest identifier available and is populated
-on-premises, but on **0 of 172** cloud accounts, and the remedy -- stamping it onto several
-hundred CLD accounts -- was refused by the owner. Recorded so it is not rediscovered and
-proposed a third time.
-
-`tools/CloudAccountOwnerDerivation.psm1`, `tools/Get-CloudAccountOwnerCoverage.ps1` and
-`tests/ps/CloudAccountOwnerDerivation.Tests.ps1` were built for the abandoned design and are
-deleted; git history keeps them if the question is ever reopened.
-
+The module still does not **validate** the derived address against anything else. It is whatever
+the directory says, and if the directory is wrong the mail goes to the wrong person. That is a
+directory-accuracy problem with a directory-accuracy fix, not something this module second-guesses.
 ## Scope
 
 IN: cloud-only Entra ID user accounts (`onPremisesSyncEnabled` not true), including
@@ -186,21 +171,23 @@ role-holding admin and tactical accounts. One target per operation.
 OUT: synced accounts (mastered on-premises -- L2 already resets those); guest / external
 (`userType` `Guest`); MFA methods (that is `MfaReset`); enabling, unblocking or unlocking an
 account; any `passwordProfile`-adjacent property other than the password itself; bulk reset;
-any stored owner mapping; any derivation, lookup or validation of who owns the target account.
+any stored owner mapping; any operator input that influences where the password is sent.
+
+**Reading a directory for a population is also OUT.** The destination lookup is one query for
+the one account being reset, at the moment it is reset. Nothing enumerates, surveys or
+pre-computes (`.agents/decisions.md` 2026-09-22).
 
 **Self-reset is structurally impossible and needs no guard.** The app authenticates operators
 against on-premises AD; every target here is cloud-only by definition. The two populations
 cannot intersect, so an operator cannot be their own target. Recorded explicitly because a
 reviewer reading only the Graph surface will otherwise raise it (it was raised once already).
 
-**The related case -- an operator directing the password to their own mailbox -- is now
-possible by construction, and is not guarded.** Codex raised its narrower ancestor over
-`7c47c3c` (finding cpr-1, `.agents/review/cpr-1.contested.md`) when the destination was
-derived; the derivation is gone and the question is no longer about derivation at all. There is
-no check that can distinguish "the operator is legitimately the recipient" from "the operator is
-helping themselves", because both are the operator typing an address they control. The answer is
-the audit record and the administrator alert, both of which carry the destination. See **Where
-the password goes**.
+**An operator cannot direct the password to themselves.** They supply no address; the module
+derives it. Codex raised the narrower ancestor of this over `7c47c3c` (finding cpr-1,
+`.agents/review/cpr-1.contested.md`), and the sixth revision had to accept the general case as
+unguarded because the address was typed. It is guarded again. The residual case is an operator
+who edits the directory to redirect a future reset - a separate privileged act against a separate
+system, audited there, and not something this module can or should police.
 
 ## The Graph surface, and why the obvious API is the wrong one
 
@@ -228,9 +215,9 @@ User-PasswordProfile.ReadWrite.All is the least privileged permission."*
 
 | Operation | Method and path | Permission | Success |
 |---|---|---|---|
-| Resolve target | `GET /users/{upn}?$select=id,displayName,userPrincipalName,accountEnabled,onPremisesSyncEnabled,userType` | `User.Read.All` | 200 |
+| Resolve target | `GET /users/{upn}?$select=id,displayName,userPrincipalName,accountEnabled,onPremisesSyncEnabled,userType,employeeId` | `User.Read.All` | 200 |
 | Read active roles | `GET /users/{id}/transitiveMemberOf/microsoft.graph.directoryRole?$select=id,displayName,roleTemplateId` | `RoleManagement.Read.Directory` (ASSUMPTION -- confirm at consent; `Directory.Read.All` is the wider fallback) | 200 |
-| Reset password | `PATCH /users/{id}` body `{"passwordProfile":{"password":"...","forceChangePasswordNextSignIn":false}}` | `User-PasswordProfile.ReadWrite.All` | 204 |
+| Reset password | `PATCH /users/{id}` body `{"passwordProfile":{"password":"...","forceChangePasswordNextSignIn":true}}` | `User-PasswordProfile.ReadWrite.All` | 204 |
 
 All v1.0; `GraphTokenClient` hardcodes that base (`GraphTokenClient.cs:16`).
 `Services/GraphTokenClient.cs:134` already exposes `PatchWithStatusAsync`, so no new Graph
@@ -331,17 +318,20 @@ GranularPermissions = [
 `MailboxPermissionsOnPrem` / `MigrationCreate` granular entries
 (`Modules/ModuleCatalog.cs:154`, `:210`).
 
-- **`CloudPasswordReset`** -- reset the account and mail the password to the address the
-  operator supplied. The password is not shown. This is the L2 permission.
+- **`CloudPasswordReset`** -- reset the account and mail the password to the owner the module
+  derived. The password is not shown and the operator does not choose where it goes. This is the
+  L2 permission.
 - **`CloudPasswordResetReveal`** -- additionally see the password once on screen instead of
   mailing it, for targets where no mailbox can receive it.
 
-**D4 (open) questions whether the second permission survives.** Its former justification was
-that an operator holding only the main permission could not obtain the password by any route.
-That is no longer true: the destination is typed. A scarce permission guarding an outcome the
-main permission already reaches is the `idm-3` decorative-control class this plan names
-elsewhere. See **Owner decisions**. The descriptor below still carries it; if D4 rules it out,
-S5 drops the granular entry and the reveal path with it.
+**D4 is open, and the derivation changes which way it should go.** The reveal permission was
+scarce because an operator holding only the main permission had no route to the password. When
+the destination became typeable that stopped being true and the permission became decorative.
+Deriving the destination makes it true again: the main permission now genuinely cannot yield a
+password to the operator, and the reveal permission is the only thing that can. So it is a real
+boundary rather than the `idm-3` decorative-control class -- which is an argument for keeping it,
+where the sixth revision's analysis was an argument for dropping it. Put D4 to the owner before
+the page is built; the descriptor below carries the granular entry until then.
 
 The fences that bind, in evaluation order:
 
@@ -352,7 +342,7 @@ The fences that bind, in evaluation order:
    `"CloudPasswordResetReveal"` before any reveal, mirroring
    `Components/Pages/MfaReset.razor:250-258`. The `@attribute [Authorize(Policy = ...)]` on
    the page is navigation control, not the gate (Constitution: UI hiding is not security).
-3. **A non-blank, syntactically valid destination address** -- or the reveal permission.
+3. **A destination that derived cleanly** - exactly one directory user carrying the target's employee ID, with a mailbox -- or the reveal permission.
 4. **Protected principals** -- below.
 
 ## Protection, and the gap this population sits in
@@ -499,8 +489,10 @@ password nobody knows.
 
 **Pre-write gates -- all of these are checked before the PATCH:**
 
-1. A destination address was supplied and is non-blank and syntactically valid, **or** the
-   reveal permission is held and the operator chose the reveal path.
+1. The destination derived cleanly: the target carries an `employeeId`, it matched exactly one
+   directory user, and that user has a mailbox. Any other outcome refuses with its own reason
+   from the table in **Where the password goes**. The alternative is the reveal path, which needs
+   the reveal permission.
 2. `EmailService.UserNotificationsEnabled` (`Services/EmailService.cs:438`) is **true** when
    the run depends on email. This is a deployment-wide switch that outranks anything the
    module wants, and its own remark warns that a caller which cannot say so on screen has
@@ -508,12 +500,12 @@ password nobody knows.
    suppression would lock the owner out of their account. If it is off, the reset is refused
    before the write, naming the switch.
 
-**The destination is not validated beyond its syntax.** The module has no way to know whether
-the address belongs to the account's owner, and any check it invented would be the derivation
-this design just abandoned. Two consequences are accepted deliberately: a typo mails the
-password to a stranger, and a deliberate self-addressing succeeds. Both are visible in the audit
-event and the administrator alert, which is the whole of the control -- see **Where the password
-goes**. Validation is a format check only (`MailAddress` parse), never a directory lookup.
+**The derived address is taken as the directory gives it.** The module does not second-guess it
+and has nothing to compare it against. If the directory holds the wrong mailbox for an
+`employeeId`, the password goes to the wrong person, and the fix is in the directory. What the
+module does guarantee is that the address came from the directory rather than from whoever is
+running the reset -- the typo and self-addressing risks the sixth revision had to accept are gone
+with the text box.
 
 **Post-write send failure -- fail closed, no reveal.** Owner ruling 2026-09-10: *"if the send
 itself fails, then fail closed."* If the PATCH succeeds and the SMTP send then fails, the
@@ -623,12 +615,12 @@ These ride in `extra`:
 |---|---|---|
 | `targetObjectId` | string | The Entra object id (GUID). Stable across renames, unlike the UPN. |
 | `targetCloudOnly` | bool | Always `true` on a successful reset; `false` on a synced-account refusal. |
-| `targetDirectoryRoles` | array of string | Directory role display names held by the target; `[]` when none, never null and never omitted. This is the field that answers "who reset a Global Admin, and when". |
-| `destinationAddress` | string or null | The address the operator supplied, recorded lowercased, whether or not the send then succeeded; null only on the reveal path and on refusals that happened before the field was read. **This is the field that answers "where did the password actually go".** Owner ruling 2026-09-11: required, not optional. |
+| `destinationAddress` | string or null | The address the module derived, recorded lowercased, whether or not the send then succeeded; null on the reveal path and on refusals that happened before the derivation ran or that the derivation itself caused. **This is the field that answers "where did the password actually go".** |
+| `destinationEmployeeId` | string or null | The `employeeId` the address was derived FROM, as read off the target account. Null when the target had none, or when the refusal happened before it was read. Present on successes and on every derivation refusal: without it, `destinationAddress` says where the password went but nothing says why there, and a wrong destination cannot be traced back to the directory record that caused it. |
 | `forceChangePasswordNextSignIn` | bool | Exactly what went in the PATCH body, under the Graph property's own name so the audit and the API cannot drift apart. |
 | `passwordDelivery` | string | `Sent` \| `SendFailed` \| `Revealed` \| `NotAttempted` |
 | `revealUsed` | bool | True only on the reveal path. Redundant against `passwordDelivery` by design: an alert on a single boolean is harder to get wrong than one on a string. |
-| `refusalReason` | string or null | Null on success. Otherwise one of: `SyncedAccount`, `GuestAccount`, `DestinationMissing`, `DestinationMalformed`, `NotificationsDisabled`, `TicketInvalid`, `TicketValidatorUnavailable`, `ProtectedPrincipal`, `ProtectionCheckFailed`, `PermissionDenied`, `GraphReadFailed`, `PasswordPolicyRejected`, `GeneratorFailed`. |
+| `refusalReason` | string or null | Null on success. Otherwise one of: `SyncedAccount`, `GuestAccount`, `DestinationNoEmployeeId`, `DestinationNoMatch`, `DestinationAmbiguous`, `DestinationNoMailbox`, `DestinationLookupFailed`, `NotificationsDisabled`, `TicketInvalid`, `TicketValidatorUnavailable`, `ProtectedPrincipal`, `ProtectionCheckFailed`, `PermissionDenied`, `GraphReadFailed`, `PasswordPolicyRejected`, `GeneratorFailed`. |
 | `protectedPrincipalServiced` | string or null | The shared helper's note (`ProtectedPrincipalServicing.Extra`), unchanged -- it is prose, and it is the one field that stays prose because the shared helper owns its shape. |
 
 Refusal events carry the **same** field set as successes, so one search over
@@ -655,10 +647,14 @@ it's using, not the code."* An operator-typed password was never compatible with
 the operator would know it by definition and the reveal permission would mean nothing. Spec in
 **The generated password**, above.
 
-### D2 -- SETTLED 2026-09-11: the operator names the destination
+### D2 -- SUPERSEDED 2026-09-22: the module derives the destination from `employeeId`
 
-The derivation is abandoned at 46.5% measured coverage. Full record in `.agents/decisions.md`
-(2026-09-11) and in **Where the password goes**.
+Settled 2026-09-11 as "the operator names the destination", because name-based derivation
+measured 46.5% and the owner ruled that a partial match is not a design. Reversed by owner
+instruction (queue item 10) once the in-scope accounts were stamped with `employeeId`, which
+replaces inference with an exact lookup. **The operator supplies no address.** Full record in
+`.agents/decisions.md` (2026-09-11 for the original, 2026-09-22 for the reversal) and in
+**Where the password goes**.
 
 ### D3 -- WITHDRAWN 2026-09-11: the corroboration tolerance
 
@@ -715,11 +711,10 @@ Outside the codebase; neither blocks the build, both block the first live call.
 ```
 Id = "CloudPasswordReset"
 DisplayName = "Cloud Password Reset"
-Description = "Reset the password of an Entra ID cloud-only account that has no on-premises Active Directory object. The new password is emailed to an address the operator supplies and is recorded in the audit log."
+Description = "Reset the password of an Entra ID cloud-only account that has no on-premises Active Directory object. The new password is emailed to the account owner, found from the employee ID on the account, and the reset is recorded in the audit log."
 Route = "cloud-password-reset"
 IconCss = "bi bi-key-fill"
-Category = "Identity & Access"
-SortOrder = 760                  (immediately after MfaReset at 750)
+Category = ModuleCategories.IdentityAndAccess   (the constant, not a string - a catalog test fails anything else)
 EnabledByDefault = false
 IsSystemModule = false
 Version = "1.0.0"
@@ -773,10 +768,16 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   refusals, the display-only role read, the `ITicketValidator` gate, the generated password
   from S2, the change-at-next-sign-in flag taken as a REQUIRED parameter with no default at all
   (never read from config, and no service-side default either - the default belongs to the page,
-  and a second one here is a second place for it to be wrong), the destination address taken as a required parameter with no default and
-  format-validated here as well as in the page (server-side is the gate; the page is
-  convenience), and the PATCH returning a status-bearing result. No descriptor, no page.
-  Tests assert the flag reaches the request body unaltered in both states. Tests for
+  and a second one here is a second place for it to be wrong), **the destination derivation -
+  read `employeeId` off the target, resolve the one directory user carrying it, take that user's
+  mailbox - with each of the five failure modes returning its own refusal and none of them
+  falling back to anything**, and the PATCH returning a status-bearing result. The service takes
+  NO destination parameter: there is nothing for a caller to pass and therefore nothing for a
+  future caller to pass wrongly. No descriptor, no page.
+  Tests assert the flag reaches the request body unaltered in both states, that each derivation
+  failure refuses with its own reason and performs no PATCH, and that a directory read which
+  FAILS is never read as "no match" -- Known Failure Class 3, and the mistake that produced a
+  confident 0% in the deleted survey tooling. Tests for
   every refusal path and for Known Failure Class 3: a failed Graph read must never read as
   "not synced" or "no roles". **The Entra allowed-character check lands here**: confirm
   `!@#$%&*?+=` and `-` against Microsoft's published password policy before the first live
@@ -789,9 +790,7 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
 - **S5 -- descriptor and read-only page. Blocked on D4.** Catalog entry, and
   `Components/Pages/CloudPasswordReset.razor` with search plus a preflight panel: resolved
   identity, cloud-only yes/no, roles held, protection status. Two operator inputs: the
-  **destination address**, a required text field with no default, no pre-fill, no suggestion
-  and no picker -- the module has nothing to suggest from and an autofilled address would be
-  read as a verified one; and the **change at next sign-in** checkbox, **CHECKED by default**
+  **ticket**; and the **change at next sign-in** checkbox, **CHECKED by default**
   (owner ruling 2026-09-23). Label: *"Force password change at next sign-in"*. Help text, owner's
   words 2026-09-23, to be used verbatim and shown when the box is CLEARED:
 
@@ -799,24 +798,30 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   > reset before closing the ticket.
 
   It is an instruction, not an explanation: it tells the operator what they are now obliged to do.
-  Do not soften it, shorten it, or replace it with a statement of consequence. The panel
-  states, in plain words next to the address field, that the address is recorded
-  in the audit log and mailed to the administrators. No write path in this slice. Catalog
-  tests, plus tests that the address field starts empty, that submitting it blank or malformed
-  is refused client- and server-side, and that the checkbox renders CHECKED on first load.
+  Do not soften it, shorten it, or replace it with a statement of consequence.
+
+  **There is no destination field.** The preflight panel SHOWS the derived destination -- the
+  `employeeId` read off the account and the mailbox it resolved to -- so the operator can see
+  where the password will go before committing, and can stop if it looks wrong. It is display
+  only: no text box, no picker, no override. Where the derivation refused, the panel shows which
+  refusal and the reset button stays unavailable.
+
+  No write path in this slice. Catalog tests, plus tests that the panel renders the derived
+  destination and the refusal states, that no editable destination control exists anywhere on the
+  page, and that the checkbox renders CHECKED on first load.
   D4 decides whether the descriptor carries one permission or two.
 - **S6 -- the write.** The server-side authorization re-checks, the full protection flow
   including the unresolved branch with a real `EntraObjectId`, the ticket gate, the pre-write
   delivery gates, the PATCH, `400` surfaced as a policy rejection, the send, the fail-closed
   handling of a send failure (password discarded, nothing displayed,
   `CloudPasswordReset_DeliveryFailed` audited), `LogModuleAction` for each outcome with the
-  serviced note, **the destination address** and the change-at-next-sign-in choice in `extra`,
-  the administrator email (which states both the destination and the choice), and the
-  `ModuleConfig.razor` servicer opt-in entry **in this same commit**. Two values are each
-  traced end to end by a single test rather than hop by hop: the checkbox from page to PATCH
-  body to both emails, and the destination address from the page to the send, to the audit
-  `extra`, and to the administrator email. **A refusal must still carry the destination it was
-  given**, so a blocked attempt is as searchable as a completed one.
+  serviced note, **the derived destination and the employee ID it came from** and the
+  change-at-next-sign-in choice in `extra`, the administrator email (which states both the
+  destination and the choice), and the `ModuleConfig.razor` servicer opt-in entry **in this same
+  commit**. Two values are each traced end to end by a single test rather than hop by hop: the
+  checkbox from page to PATCH body to both emails, and the destination from the directory lookup
+  to the send, to the audit `extra`, and to the administrator email. **A refusal must still carry
+  the employee ID it failed on**, so a blocked attempt is as searchable as a completed one.
 - **S7 -- records.** README section, plan status and traceability, `.agents/state.md`,
   `.agents/token-log.md`.
 
@@ -840,9 +845,10 @@ Automated, per `.agents/repo-guidance.md`:
 Manual, needing a deployed instance and the app registration -- none run at implementation
 time:
 
-1. A cloud-only account resets; the address the operator typed receives the password; the
-   operator's screen shows no password. The audit event and the administrator email both carry
-   that address, spelled exactly as typed apart from case.
+1. A cloud-only account resets. The preflight panel shows the employee ID read off the account
+   and the mailbox it resolved to; the password arrives at that mailbox; the operator's screen
+   shows no password and offers no way to change the destination. The audit event and the
+   administrator email both carry that address and that employee ID.
 2. Both settings of the change-at-next-sign-in checkbox, on real accounts. Ticked (the
    default): sign-in prompts for a change and the new password takes. Cleared: sign-in
    succeeds with **no** change prompt, including on a path that could not service one, and
@@ -854,9 +860,12 @@ time:
 3. A **synced** account is refused at preflight, naming the on-premises path, with no Graph
    write attempted.
 4. A guest account is refused.
-5. A blank destination is refused before any Graph write, and so is a malformed one
-   (`not-an-address`, `a@`, `a b@c.com`). The refusal is audited with `refusalReason`
-   `DestinationMissing` or `DestinationMalformed`, and the account's password is unchanged.
+5. Each derivation failure refuses before any Graph write, and the account's password is
+   unchanged afterwards: an account with no employee ID, one whose ID matches nobody, one whose
+   ID matches two people, and one whose owner has no mailbox. Each is audited with its own
+   `refusalReason` and carries the employee ID it failed on. **The two-match case is the one to
+   contrive deliberately** - it is the failure that would otherwise mail an admin password to a
+   guess, and it is the least likely to occur by chance during testing.
 6. Subject to D4: with the reveal permission held and the reveal path chosen, the password
    shows once on screen, no mail is sent, and `CloudPasswordReset_Revealed` is audited
    distinctly with a null `destinationAddress`.
@@ -887,18 +896,22 @@ time:
 - AC1 A target with `onPremisesSyncEnabled` true, or whose sync status could not be read, is
   refused.
 - AC2 The reset uses `PATCH /users/{id}` `passwordProfile`; `resetPassword` is never called.
-- AC3 The destination address is **operator-supplied and required** on the email path. The
-  module derives, looks up, suggests, pre-fills, defaults and autocompletes nothing: no owner
-  query runs, and a search of the module's source for an owner-resolution call returns
-  nothing. A blank or syntactically malformed address refuses **before** the PATCH, with
-  `refusalReason` `DestinationMissing` or `DestinationMalformed`. Validation is syntactic only
-  -- the module never asserts the address belongs to the target account's owner.
-- AC4 The destination address reaches **both** records. Every `CloudPasswordReset` audit event
-  on a path that read the field carries `destinationAddress` lowercased -- successes, delivery
-  failures and post-read refusals alike -- and the administrator alert email names the same
-  address in its body. A test asserts the two carry the same value for one reset, and that a
-  refusal after the field was read still carries it. Owner ruling 2026-09-11: this is required,
-  not optional.
+- AC3 The destination is **derived, and the operator cannot influence it**. It comes from the
+  `employeeId` on the target account, resolved to exactly one directory user with a mailbox. No
+  control on the page accepts an address, the service signature takes no address parameter, and a
+  search of the module's source finds no path by which operator input reaches the recipient. Each
+  of the five derivation failures -- no `employeeId`, no match, more than one match, no mailbox,
+  lookup failed -- refuses **before** the PATCH with its own `refusalReason`, and none falls back
+  to any other destination.
+- AC4 The destination reaches **both** records, with the identifier it was derived from. Every
+  `CloudPasswordReset` audit event on a path that got as far as the derivation carries
+  `destinationAddress` lowercased and `destinationEmployeeId` -- successes, delivery failures and
+  derivation refusals alike -- and the administrator alert names the same address in its body. A
+  test asserts the two records carry the same address for one reset, and that a derivation
+  refusal still carries the `employeeId` it failed on.
+- AC4a The derivation reads **one account at a time**. No code path in this module enumerates,
+  lists or filters a directory for more than the single target of the operation
+  (`.agents/decisions.md` 2026-09-22). A source-text test asserts no unbounded directory query.
 - AC5 An operator without `CloudPasswordResetReveal` never sees the password, on any path. A
   post-write send failure discards it rather than displaying it. (Subject to D4: if the reveal
   permission is dropped, the second sentence stands for every operator and the first is void.)
