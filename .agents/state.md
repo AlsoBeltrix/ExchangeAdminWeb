@@ -145,6 +145,45 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
      force-change case against an account whose sign-in path cannot service a change prompt,
      because that path is the reason the checkbox still exists.
 
+
+- **TWO NEW QUEUE ITEMS, 12 AND 13, BOTH ON MAILBOX MIGRATIONS. Read 2026-09-23; nothing started,
+  no plan written for either.** Both are new operator-facing capability on a mutating module, so
+  the Constitution's Planning Rules require a written plan before implementation.
+  - **Item 12 - scheduled completion.** Verbatim: *"Add option for CompleteAfter attribute in
+    migration app so users can schedule migration completion, same ticket requirements as the
+    other options."* **The plumbing is half there and that is the trap:** `MigrationService.cs:490`
+    already passes `CompleteAfter` to `Set-MigrationBatch`, and `:698` to `Set-MigrationUser` - but
+    both pass a time in the PAST (`AddHours(-1)`, `UtcNow`) to mean "complete now". The item asks
+    for a FUTURE time, which is the attribute's actual purpose. So this is not "wire up an unused
+    parameter"; it is a new operator input, a datetime, that changes what those two call sites
+    mean. `:596` also reads `CompleteAfter != null` as a boolean "auto-complete" flag, which stops
+    being a safe reading once a real schedule can be set.
+  - **Item 13 - per-migration selection and actions.** Verbatim: *"Add checkboxes for individual
+    migrations when the batch is expanded, and add Complete, Remove, Pause, Go, etc. options. name
+    appropriately, my names are guesses."* Two things in one: row selection inside an expanded
+    batch, and a set of per-user actions. **The owner explicitly delegated the naming** - the
+    Exchange cmdlets are `Complete-MigrationBatch`/`Set-MigrationUser -CompleteAfter`,
+    `Remove-MigrationUser`, `Stop-MigrationBatch`/`Stop-MigrationUser` and
+    `Start-MigrationBatch`/`Resume-MigrationUser`, so the plan should propose names from what the
+    actions DO rather than transliterate the guesses.
+    **This one needs the most care of anything in the queue right now.** It adds destructive
+    per-user actions to a table, which the Developer Guide's UI standards warn against directly
+    ("avoid putting destructive actions directly in dense tables when a confirmation edit/detail
+    view is more appropriate"), and bulk selection turns Known Failure Class 2 - success
+    aggregation - from theoretical into the dominant risk: a loop over N selected users must
+    report per-row outcomes and must never collapse partial success into a blanket result.
+    `docs/MigrationBatchSelection-Plan.md` and `docs/MigrationButtonGating-Plan.md` are prior art
+    for the selection and gating shapes respectively.
+  - **Both inherit the module's existing obligations:** ticket required (the owner said so for 12
+    and it applies equally to 13), protected-principal gate on every write target, audit per
+    action, admin notification, and the click-gating rules - Migration is already a converted
+    page in `ClickGateRegistry.Pages`, so any new control must satisfy that suite.
+  **Also noted from the same read:** the owner has been maintaining status markers in
+  `queue.txt` - 1, 3, 4, 7 are marked DONE, 6 ON-HOLD, 8 HOLD FOR REQS DOC, 10 and 11 IN-PROGRESS,
+  and **9 is marked "UPDATE / IN-PROGRESS?"**, which reads as the owner asking where it stands
+  rather than stating it. State says tier 1 is complete and tiers 2-4 are audited but unapproved;
+  that is the answer if they ask. **Do not edit `queue.txt` - it is the owner's file and says so
+  on its first line.**
 - **THE WEEKEND BACKLOG RUN IS AT ITS END STATE (2026-09-18 to 2026-09-19); tier 1 is complete
   and only owner-blocked work remains. Read
   `.agents/decisions.md` 2026-09-18 "Weekend backlog run" for the authority it ran under - that
