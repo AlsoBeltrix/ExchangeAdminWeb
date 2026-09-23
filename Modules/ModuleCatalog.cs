@@ -551,7 +551,7 @@ public sealed class ModuleCatalog
             DisplayName = "Cloud Password Reset",
             Description = "Reset the password of an Entra ID cloud-only account that has no on-premises Active Directory object. The new password is emailed to the account owner, found from the employee ID on the account, and the reset is recorded in the audit log.",
             Route = "cloud-password-reset",
-            IconCss = "bi bi-key-fill-nav-menu",
+            IconCss = "bi bi-person-fill-nav-menu",
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,

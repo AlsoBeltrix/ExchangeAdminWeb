@@ -361,11 +361,16 @@ public class CloudPasswordResetCatalogTests
     {
         // AC3. The whole point of deriving the destination is that the operator cannot choose it,
         // and a text box - even a disabled or read-only one - is the defect this design removes.
+        //
+        // Asserted on INPUT BINDINGS rather than on the word "destination": the audit builder has
+        // a legitimate ["destinationAddress"] key, and an assertion that banned the substring
+        // would have banned the audit field with it.
         var page = PageText();
 
         Assert.DoesNotContain("@bind=\"destinationInput\"", page);
-        Assert.DoesNotContain("destinationAddress\"", page);
+        Assert.DoesNotContain("@bind=\"destination", page);
         Assert.DoesNotContain("Destination address</label>", page);
+        Assert.DoesNotContain("Send to</label>", page);
     }
 
     [Fact]
@@ -388,21 +393,17 @@ public class CloudPasswordResetCatalogTests
     }
 
     [Fact]
-    public void Page_has_no_write_path_yet()
+    public void Page_renders_a_password_ONLY_on_the_reveal_path()
     {
-        // This slice is preflight only. A reset button here would mean the write landed without
-        // its authorization re-check, protection flow, audit and notification.
+        // Replaced the S5-era "never renders a password" assertion when the write path landed.
+        // The page does render one now, deliberately and in exactly one place: the reveal branch,
+        // behind its own permission. What must stay true is that there is no OTHER place.
         var page = PageText();
 
-        Assert.DoesNotContain("ResetPasswordAsync", page);
-    }
+        Assert.Equal(1, page.Split("<code>@revealedPassword</code>").Length - 1);
+        Assert.DoesNotContain("@outcome.Password", page);
 
-    [Fact]
-    public void Page_never_renders_a_password()
-    {
-        var page = PageText();
-
-        Assert.DoesNotContain("outcome.Password", page);
-        Assert.DoesNotContain("@password", page);
+        // And it is only ever set from the reveal branch, never from a delivery failure.
+        Assert.Equal(1, page.Split("revealedPassword = outcome.Password").Length - 1);
     }
 }

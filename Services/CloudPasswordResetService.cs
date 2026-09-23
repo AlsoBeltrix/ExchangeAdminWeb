@@ -37,7 +37,8 @@ public sealed record CloudPasswordTarget(
     bool AccountEnabled,
     bool CloudOnly,
     string? EmployeeId,
-    IReadOnlyList<string> DirectoryRoles);
+    IReadOnlyList<string> DirectoryRoles,
+    bool DirectoryRolesReadFailed);
 
 /// <summary>Where a reset's password would be sent, or why it cannot be.</summary>
 /// <remarks>
@@ -220,9 +221,9 @@ public class CloudPasswordResetService
                 "Guest accounts are out of scope for this module.");
         }
 
-        var roles = await ReadDirectoryRolesAsync(client, objectId);
+        var (roles, rolesReadFailed) = await ReadDirectoryRolesAsync(client, objectId);
 
-        return (new CloudPasswordTarget(objectId, upn, displayName, enabled, CloudOnly: true, employeeId, roles),
+        return (new CloudPasswordTarget(objectId, upn, displayName, enabled, CloudOnly: true, employeeId, roles, rolesReadFailed),
                 CloudPasswordResetRefusal.None, "");
     }
 
@@ -285,17 +286,21 @@ public class CloudPasswordResetService
     /// so a PIM-eligible admin who has not activated reads as holding no roles. That costs
     /// accuracy on a panel, nothing more.
     /// </remarks>
-    private async Task<IReadOnlyList<string>> ReadDirectoryRolesAsync(GraphTokenClient client, string objectId)
+    private async Task<(IReadOnlyList<string> Roles, bool ReadFailed)> ReadDirectoryRolesAsync(GraphTokenClient client, string objectId)
     {
-        if (string.IsNullOrWhiteSpace(objectId)) return [];
+        if (string.IsNullOrWhiteSpace(objectId)) return ([], false);
 
         var (doc, status) = await client.GetWithStatusAsync(
             $"/users/{Uri.EscapeDataString(objectId)}/transitiveMemberOf/microsoft.graph.directoryRole?$select=id,displayName,roleTemplateId");
 
         if (doc is null)
         {
-            _logger.LogWarning("Could not read directory roles for {ObjectId} ({Status}); the panel will show none", objectId, (int)status);
-            return [];
+            // Reported as a FAILED read, not as an empty list. Nothing is gated on roles, so this
+            // cannot open a hole - but the panel is what an operator reads before resetting a
+            // possible Global Administrator, and "None active" is a claim this call did not earn
+            // (review finding cpr-6).
+            _logger.LogWarning("Could not read directory roles for {ObjectId} ({Status}); the panel will say so", objectId, (int)status);
+            return ([], true);
         }
 
         using var _ = doc;
@@ -311,7 +316,7 @@ public class CloudPasswordResetService
         }
 
         _logger.LogDebug("Target {ObjectId} holds {RoleCount} active directory role(s)", objectId, roles.Count);
-        return roles;
+        return (roles, false);
     }
 
     /// <summary>
