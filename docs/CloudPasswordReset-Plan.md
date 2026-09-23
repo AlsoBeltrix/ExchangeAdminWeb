@@ -33,12 +33,31 @@ unreachable directory (`.agents/decisions.md`). With the destination derived rat
 reveal is the only route by which an operator can learn a generated password, so it is a real
 boundary rather than the decorative control the sixth revision judged it to be.
 
-**Five review findings, all admitted and fixed**, records in `.agents/review/findings/`:
-`cpr-4` (HIGH, a missing sync property admitted a synced account), `cpr-5` (HIGH, a failed SMTP
-disconnect reported a delivered password as undelivered), `cpr-6` (MEDIUM, a failed role read
-rendered as "None active"), `cpr-7` (LOW, an undefined sidebar icon class).
-**Three of these are the same mistake in different places** - an unanswered question read as a
-negative answer - which is why that rule is stated in this plan rather than left to each site.
+**EVERY SLICE WAS REVIEWED BY CODEX AND EVERY ONE CAME BACK `unsound`. Ten findings, all admitted
+and fixed**, records in `.agents/review/findings/cpr-4.md` through `cpr-13.md`:
+
+| | Severity | What |
+|---|---|---|
+| `cpr-4` | HIGH | A missing sync property admitted a synced account |
+| `cpr-5` | HIGH | A failed SMTP disconnect reported a delivered password as undelivered |
+| `cpr-6` | MEDIUM | A failed role read rendered as "None active" |
+| `cpr-7` | LOW | An undefined sidebar icon class |
+| `cpr-8` | HIGH | A transport failure on the PATCH was audited as "no change was made" |
+| `cpr-9` | HIGH | The write derived its destination from stale preflight data |
+| `cpr-10` | MEDIUM | A revealed password survived a new lookup |
+| `cpr-11` | MEDIUM | The audit's explicit nulls were dropped by the writer |
+| `cpr-12` | HIGH | A malformed word list would pass validation and fake the entropy floor |
+| `cpr-13` | MEDIUM | A stated guarantee about capitalisation was implemented as a tendency |
+
+**Four of the ten are the same mistake in different places** - an unanswered question read as a
+negative answer (`cpr-4`, `cpr-6`, `cpr-8`, and before them the deleted survey's confident 0%).
+That is why the rule is stated here rather than left to each site.
+
+**Three were guards that existed and did not bite.** `cpr-9` slipped past a test asserting the very
+property it broke, because the test checked that a call happened rather than what it read from.
+`cpr-13` slipped past a test that asserted a tolerance where the plan states a guarantee. `cpr-11`
+was invisible to source-text guards entirely and needed a test that reads the emitted JSON back.
+A test that cannot fail for the reason it was written is worse than none: it reports coverage.
 
 ## Revision history
 

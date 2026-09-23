@@ -111,9 +111,11 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   run against a real tenant.** `docs/CloudPasswordReset-Plan.md`, `Status: Implemented, unproven
   against the live service`. Module `1.0.0`, base app `2.22.0` -> `2.23.0` (the `EmailService`
   method is shared infrastructure). Module doc: `docs/CloudPasswordReset.md`.
-  Six commits: generator `c219a27`, service and the forest-wide employeeId lookup `56451bd`,
-  owner's email `e1b786a`, descriptor and preflight page `8a411c1`, write path `3b29e5f`, records
-  `dad322e`.
+  Nine commits: generator `c219a27`, service and the forest-wide employeeId lookup `56451bd`,
+  owner email `e1b786a`, descriptor and preflight page `8a411c1`, write path `3b29e5f`, records
+  `dad322e`, then the review fixes: `3190262` (four write-path findings), `ec613d0` (the audit-shape
+  test that closed cpr-11's recorded gap and found AC18's one real exception) and `5d2913e` (two
+  generator findings).
   **The design in one line:** the operator names a cloud-only account; the module reads the
   `employeeId` off it, finds the one directory user carrying that id, generates a password, writes
   it to Entra and mails it to that person. **The operator chooses no address and normally never
@@ -126,12 +128,18 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   **Force change at next sign-in defaults ON** (owner ruling 2026-09-23): the password travels by
   email, so forcing a change makes it a one-time handover. Clearable per reset, and clearing it
   shows the owner's verbatim instruction.
-  **Five review findings, every slice reviewed by codex, all admitted and fixed** -
-  `.agents/review/findings/cpr-4.md` through `cpr-7.md` plus the index. **Three of the five were
-  the same mistake in different places: an unanswered question read as a negative answer** (a
-  missing sync property read as cloud-only; a failed role read rendered as "None active"; and,
-  before them, the deleted survey's confident 0%). That rule is now stated in the plan and pinned
-  by tests rather than left to each site.
+  **EVERY SLICE WAS REVIEWED BY CODEX. Every one came back `unsound`; ten findings, all admitted
+  and fixed** - `.agents/review/findings/cpr-4.md` through `cpr-13.md` plus the index. Four HIGH,
+  five MEDIUM, one LOW.
+  **Four of the ten were the same mistake in different places: an unanswered question read as a
+  negative answer** - a missing sync property read as cloud-only, a failed role read rendered as
+  "None active", a lost PATCH response audited as "no change was made", and before them the
+  deleted survey's confident 0%. That rule is now stated in the plan and pinned by tests.
+  **Three were guards that existed and did not bite**, which is the more uncomfortable pattern: a
+  test asserting the destination was re-derived passed on code that re-derived it from a stale
+  cache, because it checked that the call happened rather than what it read from; a test asserted
+  a tolerance where the plan states a guarantee; and the audit-shape claim was invisible to
+  source-text guards until a test read the emitted JSON back.
   **BLOCKED ON THE OWNER, and nothing works until these are done:**
   1. Create a dedicated Entra app registration with `User.Read.All`,
      `User-PasswordProfile.ReadWrite.All` and `RoleManagement.Read.Directory`, admin-consented.
