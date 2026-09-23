@@ -8,7 +8,7 @@ namespace ExchangeAdminWeb.Services;
 /// Runs under the app pool's ambient identity (no Delinea credential).
 /// NOT used for authorization, protected-principal enforcement, or writes.
 /// </summary>
-public sealed class ADDirectorySearchService : IOperatorDirectory
+public sealed partial class ADDirectorySearchService : IOperatorDirectory
 {
     private readonly ILogger<ADDirectorySearchService> _logger;
     private readonly SemaphoreSlim _runspaceLock = new(1, 1);

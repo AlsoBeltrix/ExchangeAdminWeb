@@ -157,6 +157,8 @@ try
     builder.Services.AddSingleton<ModuleCredentialService>();
     builder.Services.AddSingleton<ModuleAdminService>();
     builder.Services.AddSingleton<MfaResetService>();
+    builder.Services.AddSingleton<PasswordGenerator>();
+    builder.Services.AddSingleton<CloudPasswordResetService>();
     builder.Services.AddSingleton<IntuneDeviceService>();
     builder.Services.AddSingleton<Comms10kService>();
     builder.Services.AddScoped<ConferenceRoomService>();
