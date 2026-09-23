@@ -28,12 +28,18 @@ and prompting the operator for a sign-in this tenant does not use. AD comes from
 updates and opens other connections. The module path is machine-specific and lives in
 `.agents/machines.md` as `m365-connections-module:`, never in a script.
 
-**Where both rules came from is worth keeping:** the deleted survey tooling at `80419d7` did it
-the wrong way on both counts, and `tools/Get-CloudAccountEmployeeIdCoverage.ps1` inherited both
-faults by being modelled on it. Recovering deleted tooling as a pattern carries its defects
-forward; the owner caught these in review, twice. `tests/ps/CloudAccountEmployeeIdMatch.Tests.ps1`
-now pins both rules as static assertions so the next script copied from this one cannot reintroduce
-them quietly.
+**Where both rules came from is worth keeping:** the deleted survey tooling at `80419d7` did it the
+wrong way on both counts, and its 2026-09-22 replacement inherited both faults by being modelled on
+it. Recovering deleted tooling as a pattern carries its defects forward.
+
+**That replacement is itself now deleted, and the reason extends this rule.** After the
+enumeration was removed from its Graph side, it still swept every account against every domain in
+the forest - the same bulk pattern, corrected in one place and left in the other. Owner: *"'each'
+'accross the forest' implies data exfil."* **So the rule is not "do not call `-All`"; it is that a
+directory operation is scoped to one named subject, at the moment something is being done to that
+subject.** A loop over a population is a census however each individual query is written, and
+measuring a property across a population is therefore not something this repo's tooling does. The
+property gets enforced at the point of use instead, fail-closed, one subject at a time.
 
 ### 2026-09-22 - CloudPasswordReset is OFF HOLD, and employeeId matching is back on the table
 

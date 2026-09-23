@@ -114,9 +114,10 @@ must not ask for delegated `-Scopes`; and `ADImport`, which loads the ActiveDire
 not call `Connect-AllM365Services` for Graph-only work - it also runs module updates and opens
 other service connections unless controlled.
 
-The path above is machine-specific and lives here rather than in any script, read the same way
-`tools/Get-TokenUsage.ps1` reads `transcript-root:`. `tools/Get-CloudAccountEmployeeIdCoverage.ps1`
-reads this entry and takes `-ConnectionModulePath` to override it.
+The path above is machine-specific and lives here rather than in any script; read it the way
+`tools/Get-TokenUsage.ps1` reads `transcript-root:`, and let the caller override it with a
+parameter. The script that first used it has been deleted, so nothing reads this entry today - it
+stays because the connection rule it records applies to whatever comes next.
 
 ### Graph connection for the owner investigation (2026-09-14)
 

@@ -136,20 +136,28 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   can clear per reset - **explicitly NOT a module config field**, which is how this app would
   otherwise reach for it. Maps to `forceChangePasswordNextSignIn` on the Graph `passwordProfile`,
   the same PATCH that sets the password, so it costs nothing extra at the service.
-  **THE SURVEY TOOLING IS BUILT AND COMMITTED: `80d9f4b`, corrected twice by the owner in
-  `b0de8bf` and `50094d6`. IT HAS NOT BEEN RUN - THE OWNER RUNS IT.**
-  `tools/Get-CloudAccountEmployeeIdCoverage.ps1` (read-only; Graph + AD; writes one CSV; supports
-  `-PlanOnly`), the pure decision logic in `tools/CloudAccountEmployeeIdMatch.psm1`, and 62 Pester
-  tests in `tests/ps/CloudAccountEmployeeIdMatch.Tests.ps1`. Suite 219/0 across 9 files (was 140
-  across 8); PSScriptAnalyzer 0 errors; guard proof on every correction.
-  **Run it as:** `pwsh tools/Get-CloudAccountEmployeeIdCoverage.ps1 -UpnListPath <file>`, where the
-  file is the owner's in-scope list - one UPN per line, or a CSV with a `UserPrincipalName` column.
-  **BOTH CORRECTIONS WERE OWNER SECURITY RULINGS AND ARE NOW GENERAL, NOT LOCAL TO THIS SCRIPT** -
-  `.agents/decisions.md` 2026-09-22 "No tooling enumerates the directory": the first draft called
-  `Connect-MgGraph` with delegated scopes instead of the connection module's `GraphConnect`, and
-  the second enumerated the whole tenant with `Get-MgUser -All` to find a few hundred known
-  accounts. Both faults were inherited by modelling the script on the deleted `80419d7` tooling.
-  Static assertions now pin both so the next script copied from this one cannot reintroduce them.
+  **THE COVERAGE SURVEY WAS BUILT AND IS NOW DELETED. DO NOT REBUILD IT.** It existed at
+  `80d9f4b`..`63be0a9` (`tools/Get-CloudAccountEmployeeIdCoverage.ps1`,
+  `tools/CloudAccountEmployeeIdMatch.psm1`, `tests/ps/CloudAccountEmployeeIdMatch.Tests.ps1`) and
+  is recoverable from history if the reasoning is ever revisited.
+  **It was removed because its PREMISE is prohibited, not because of a fixable bug.** Measuring
+  "does each employeeId resolve to exactly one user" over a population is a directory census by
+  construction, and the owner's rule is no bulk directory operations
+  (`.agents/decisions.md` 2026-09-22). There is no version of that question that is not a sweep.
+  **Four owner corrections in a row on this one tool, none self-caught, listed so the pattern is
+  not repeated:** (1) it called `Connect-MgGraph` with delegated scopes instead of the connection
+  module's `GraphConnect`; (2) it enumerated the whole tenant with `Get-MgUser -All`; (3) it
+  searched the forest GLOBAL CATALOG for `employeeID`, which is not in the GC partial attribute
+  set, and reported a confident 0% across 111 accounts whose ids were set; (4) with that fixed it
+  swept every account against every forest domain - the same bulk pattern as (2), corrected on the
+  Graph side and left in place on the AD side. The first three were inherited or invented while
+  modelling the script on the deleted `80419d7` tooling.
+  **The replacement shape, PROPOSED AND NOT YET APPROVED:** the module does the lookup at reset
+  time, for the one account the operator named, and fails closed - exactly one enabled user with a
+  mailbox sends, anything else refuses and says why. That makes the owner's 100% bar a runtime
+  refusal rather than a precondition to measure, needs no census, and gives the federal-tenant
+  accounts a readable refusal instead of a silent failure. **Put this to the owner before building
+  anything.**
   **It answers a different question from "is the field populated".** Outcomes: `Resolved`,
   `NoEmployeeId`, `NoDirectoryMatch`, `Ambiguous`, `MatchedOwnerDisabled`, `MatchedNoMailbox`,
   `Unavailable`. **Read `Ambiguous` first** - a duplicate employeeId means the module would pick an
