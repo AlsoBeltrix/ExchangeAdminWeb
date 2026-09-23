@@ -7,6 +7,15 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
+**HANDOFF 2026-09-23.** Head `bd29a9c` on `master`, working tree clean, every gate green
+(build 0 errors, `dotnet test` 3064 passed / 0 failed / 3 skipped, format clean,
+`git diff --check` clean, Pester 157/0, PSScriptAnalyzer 0 errors).
+**35 commits are local-only** - both remotes are at `6f3ee22`, verified with `git ls-remote`, and
+the push is an ask under `.agents/push-policy.md`.
+**Next session's task is QUEUE ITEM 14, and it is a PLANNING task** - see the entry below. Nothing
+is half-finished: Cloud Password Reset is complete and reviewed, and queue 4 slice 1 is landed with
+slices 2-4 unstarted and unblocked.
+
 - **QUEUE 8 (Defender for Endpoint) IS PARKED BY THE OWNER, 2026-09-22, waiting on an updated
   requirements document from the stakeholder. Do not resume it until that arrives.** Commit
   `43a944e` is pushed to both remotes (owner ran `pushall` 2026-09-22); the earlier standing ask
@@ -158,9 +167,36 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
      because that path is the reason the checkbox still exists.
 
 
-- **TWO NEW QUEUE ITEMS, 12 AND 13, BOTH ON MAILBOX MIGRATIONS. Read 2026-09-23; nothing started,
-  no plan written for either.** Both are new operator-facing capability on a mutating module, so
-  the Constitution's Planning Rules require a written plan before implementation.
+- **NEXT SESSION STARTS HERE: QUEUE ITEM 14, REDESIGN THE MIGRATIONS INTERFACE. It is a PLANNING
+  task and the owner said so - "handoff so I can plan in a new session".** Added to `queue.txt`
+  2026-09-23, verbatim:
+  > 14. Precedes 12 & 13. Design a better, safer, and easier to use interface for managing
+  > migrations. multi-pane or tabs or something that makes it less dense and easier to use without
+  > UI-induced error. no burying controls off the screen, no hiding selected items off the page.
+
+  **"Precedes 12 & 13" is the instruction that matters.** Items 12 and 13 are both additions to the
+  Migration page, and the owner has said the page cannot take them in its current shape. So the
+  order is 14 then 12 and 13, and **12 and 13 must not be started first** - building either into
+  the existing layout is the thing item 14 exists to prevent.
+  **What the owner named as the failure mode, in their own words:** "UI-induced error", "no burying
+  controls off the screen", "no hiding selected items off the page". Read that as a constraint on
+  the design rather than a style preference - it says an operator has made, or nearly made, a
+  mistake because a control or a selection was not visible.
+  **No plan exists and none should be written before the design question is put to the owner.**
+  "Multi-pane or tabs or something" is explicitly a question, not a specification.
+  **Where the relevant code and prior art are:** `Components/Pages/Migration.razor` is the page;
+  `docs/MigrationBatchSelection-Plan.md`, `docs/MigrationButtonGating-Plan.md` and
+  `docs/MigrationStaleReport-Plan.md` are the recent work on it. Migration is a CONVERTED page in
+  `ExchangeAdminWeb.Tests/ClickGateRegistry.cs`, so any control the redesign moves or adds has to
+  satisfy that suite - a layout change here is not cosmetic to the tests.
+  **Two things a redesign should carry that are already known defects of the current page**, both
+  recorded below in the queue 12/13 entry: destructive per-user actions in a dense table, and no
+  per-row result reporting for a bulk selection.
+
+- **QUEUE ITEMS 12 AND 13, BOTH ON MAILBOX MIGRATIONS, BLOCKED BEHIND ITEM 14. Read 2026-09-23;
+  nothing started, no plan written for either.** Both are new operator-facing capability on a
+  mutating module, so the Constitution's Planning Rules require a written plan before
+  implementation - and item 14 now precedes both by the owner's instruction.
   - **Item 12 - scheduled completion.** Verbatim: *"Add option for CompleteAfter attribute in
     migration app so users can schedule migration completion, same ticket requirements as the
     other options."* **The plumbing is half there and that is the trap:** `MigrationService.cs:490`
