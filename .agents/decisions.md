@@ -5,6 +5,33 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-23 - CloudPasswordReset: the reveal permission overrides every destination refusal
+
+Status: Active. Scope: `CloudPasswordReset`. Settles part of D4 and constrains the rest.
+
+With the destination derived from `employeeId` rather than typed, five things can stop a reset:
+the account has no `employeeId`, it matches nobody, it matches more than one person, the matched
+person has no mailbox, or the directory lookup failed. An operator holding only the reset
+permission is refused on all five. **An operator who also holds `CloudPasswordResetReveal` can
+override all five**, seeing the password once on screen with nothing mailed.
+
+**The fifth case was nearly excluded, and the owner's challenge is the part worth keeping.** The
+proposal was to fail closed when the directory is unreachable, on the reasoning that a transient
+error should be retried rather than overridden. Owner: *"'The lookup failed' meaning AD is
+unreachable, so potentially a major incident where speed and access to creds is essential? and you
+want to fail closed, even for users who could normally see the password anyway?"*
+
+Both halves land. **The control would have protected nothing:** a reveal holder can already obtain
+a password through the other four paths by choosing an account with no `employeeId`, so an outage
+gate stops nobody who is determined. **And it would have cost exactly when it mattered:** an
+unreachable directory is plausibly the incident, and that is when resetting an admin account
+quickly is the point. A gate the motivated can walk around and the legitimate cannot is not a
+fence - it is an availability cost wearing a security label.
+
+**What is kept instead:** `refusalReason` stays populated on a reveal, naming which refusal was
+overridden. "Revealed because the directory was unreachable" and "revealed because the account has
+no owner" are different facts, and the first is what somebody searches for after an incident.
+
 ### 2026-09-23 - CloudPasswordReset: force-change-at-next-sign-in DEFAULTS ON
 
 Status: Active. Scope: `CloudPasswordReset`. **Reverses the default set on 2026-09-10**, which

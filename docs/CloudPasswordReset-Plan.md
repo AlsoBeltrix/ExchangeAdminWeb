@@ -115,9 +115,10 @@ directory and never reads a population - see `.agents/decisions.md` 2026-09-22, 
 enumerates the directory". The lookup is scoped to the subject of the operation, which is the
 shape every other directory read in this app already takes.
 
-**Every step fails closed, and a failure refuses the reset rather than falling back.** There is no
-operator-typed fallback: an address the module cannot derive is one it cannot verify, and the
-whole point of deriving is that nobody chooses where an admin credential is sent. The refusals:
+**Every step fails closed for an operator holding only the reset permission, and a failure refuses
+rather than falling back.** There is no operator-typed fallback: an address the module cannot
+derive is one it cannot verify, and the whole point of deriving is that nobody chooses where an
+admin credential is sent. The refusals:
 
 | Condition | Refusal |
 |---|---|
@@ -126,6 +127,21 @@ whole point of deriving is that nobody chooses where an admin credential is sent
 | More than one user carries it | `DestinationAmbiguous` |
 | The matched user has no mailbox | `DestinationNoMailbox` |
 | The lookup itself failed | `DestinationLookupFailed` |
+
+**The reveal permission overrides ALL FIVE, including the directory being unreachable.** Owner
+ruling 2026-09-23. The operator sees the password once on screen, nothing is mailed, and the event
+is audited as a reveal carrying the refusal it overrode.
+
+Excluding the unreachable-directory case was considered and rejected on the owner's challenge,
+and the reasoning is worth keeping because it is the general shape of a bad control: **it would
+have protected nothing and cost availability during an incident.** A reveal holder can already
+obtain a password on the other four paths simply by choosing an account with no `employeeId`, so
+denying them during an outage stops nobody determined. Meanwhile an unreachable directory is
+plausibly the incident itself, and that is exactly when resetting an admin account quickly
+matters. A gate that the motivated can walk around and the legitimate cannot is not a fence.
+
+An operator WITHOUT the reveal permission is still refused on all five: they cannot be shown the
+password and there is nowhere to mail it.
 
 `DestinationAmbiguous` is the one worth stating twice: two people sharing an `employeeId` means
 the module cannot say whose account it is looking at, and mailing an admin password to a guess is
@@ -555,10 +571,12 @@ one and hitting it on a client that cannot service the change is locked out.
   `["error"] = success ? null : errorDetail`, so a detail passed as `errorDetail` on a success
   is silently discarded -- the failure that lost an authorised-servicer record once already
   (`AuditService.cs:22-37`). Pass `ProtectedPrincipalServicing.Extra(note)`.
-- **Every reveal is its own audited event.** There is exactly one condition that permits a
-  reveal -- an unresolved owner plus the reveal permission -- and it is recorded as such. A
-  reveal is the one path where an operator learns a credential; it is never folded into the
-  ordinary success record.
+- **Every reveal is its own audited event, and it records WHICH refusal it overrode.** A reveal
+  is the one path where an operator learns a credential; it is never folded into the ordinary
+  success record. `refusalReason` stays populated on a reveal, carrying the derivation failure
+  the operator pushed past. "Revealed because the directory was unreachable" and "revealed
+  because the account has no owner" are different facts, and after an incident the first is the
+  one somebody will search for.
 - Every gate refusal is its own audited event carrying its reason.
 - **Administrator email** on every real attempt via `Email.SendAdminNotificationAsync`
   (`Services/EmailService.cs:39`, `virtual` and test-seamable), armed only after the ticket
@@ -620,7 +638,7 @@ These ride in `extra`:
 | `forceChangePasswordNextSignIn` | bool | Exactly what went in the PATCH body, under the Graph property's own name so the audit and the API cannot drift apart. |
 | `passwordDelivery` | string | `Sent` \| `SendFailed` \| `Revealed` \| `NotAttempted` |
 | `revealUsed` | bool | True only on the reveal path. Redundant against `passwordDelivery` by design: an alert on a single boolean is harder to get wrong than one on a string. |
-| `refusalReason` | string or null | Null on success. Otherwise one of: `SyncedAccount`, `GuestAccount`, `DestinationNoEmployeeId`, `DestinationNoMatch`, `DestinationAmbiguous`, `DestinationNoMailbox`, `DestinationLookupFailed`, `NotificationsDisabled`, `TicketInvalid`, `TicketValidatorUnavailable`, `ProtectedPrincipal`, `ProtectionCheckFailed`, `PermissionDenied`, `GraphReadFailed`, `PasswordPolicyRejected`, `GeneratorFailed`. |
+| `refusalReason` | string or null | Null on an ordinary success. On a REVEAL it carries the derivation failure the operator pushed past, not null - the reveal is a success but it overrode something, and which one matters after an incident. Otherwise one of: `SyncedAccount`, `GuestAccount`, `DestinationNoEmployeeId`, `DestinationNoMatch`, `DestinationAmbiguous`, `DestinationNoMailbox`, `DestinationLookupFailed`, `NotificationsDisabled`, `TicketInvalid`, `TicketValidatorUnavailable`, `ProtectedPrincipal`, `ProtectionCheckFailed`, `PermissionDenied`, `GraphReadFailed`, `PasswordPolicyRejected`, `GeneratorFailed`. |
 | `protectedPrincipalServiced` | string or null | The shared helper's note (`ProtectedPrincipalServicing.Extra`), unchanged -- it is prose, and it is the one field that stays prose because the shared helper owns its shape. |
 
 Refusal events carry the **same** field set as successes, so one search over
