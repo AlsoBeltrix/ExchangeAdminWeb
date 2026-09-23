@@ -592,6 +592,50 @@ one and hitting it on a client that cannot service the change is locked out.
   ..."*). A source-text test asserts that no audit or admin-email call site in this module
   receives the password variable.
 
+## Diagnostic logging, and the levels it uses
+
+Owner instruction 2026-09-23: *"logging should capture as much as possible, in line with the
+different event log logging levels."*
+
+This is the third record the module writes and it is not the same as the other two. The **audit
+event** answers who did what to whom. The **operation trace** is the multi-step transcript. This
+is `ILogger`, the app log, and its job is to let somebody reconstruct a reset that behaved oddly
+without reproducing it. Serilog reads its minimum level from configuration (`Program.cs:23-28`),
+so writing at the right level is what makes verbosity a deployment choice rather than a code
+change - a module that logs everything at `Information` cannot be turned down, and one that logs
+everything at `Debug` cannot be turned up.
+
+**Log generously. The limit is sensitivity, not volume.**
+
+| Level | What goes here |
+|---|---|
+| `Debug` | Every step, with its inputs and outcome: target resolved and its object id, `onPremisesSyncEnabled` as read, `userType`, roles returned, the `employeeId` read off the account, the directory query issued and how many users matched, the mailbox resolved, ticket validation outcome, protection check outcome, how many generator attempts were needed. This is the level that answers "why did it choose that mailbox". |
+| `Information` | The milestones a healthy reset passes: reset requested for target X by operator Y, destination derived, PATCH accepted, mail handed to SMTP, reveal used. One line each, no payloads. |
+| `Warning` | Every refusal, with its reason - all five derivation failures, synced account, guest, ticket rejected, notifications disabled, protected principal. A refusal is the module working correctly, so it is not an error; it is worth seeing without turning on `Debug`. Also: a reveal, because a credential reached a human screen. |
+| `Error` | Something the module depends on failed: Graph read or PATCH failed, the directory was unreachable, SMTP handoff failed, the generator refused after 100 attempts, the audit write threw, `400` from the PATCH (a tenant policy rejection - the module's request was wrong). |
+| `Critical` | **The post-write send failure.** The password was changed and could not be delivered, so an account exists that nobody can sign into and nobody knows the password for. It self-heals on a retry, but it is the one state in this module where a human should be told without going looking. |
+
+**What never appears at any level, including `Debug`:**
+
+- The generated password, and anything derived from it - its length, its entropy, its word count,
+  a hash, a prefix, a masked form. The Constitution's Credential Isolation rule is absolute here
+  and `Debug` is not an exemption, because `Debug` is exactly where somebody would put it while
+  diagnosing (AC7).
+- The Delinea response, the Graph token, and any raw auth body.
+- Raw exception text from the credential or token path. Log the type and the operation that
+  failed.
+
+**Two things must be distinguishable in the log, because they were confused in this repo before:**
+a directory query that returned no match, and a directory query that failed. Both leave the reset
+refused, and logging them the same way turns an outage into what reads as a clean negative result.
+`DestinationNoMatch` is a `Warning`; `DestinationLookupFailed` is an `Error`. The level is the
+distinction.
+
+**The operation trace still carries the step transcript** (`OperationTraceService`, the pattern in
+the Developer Guide). This section does not replace it and does not license putting trace detail
+into the app log instead. They have different readers: the trace is per-operation and correlated
+by `operationId`; the log is chronological across the whole app.
+
 ## Audit fields, and Splunk
 
 **These events are forwarded to Splunk** (owner, 2026-09-10: *"these logs are going to splunk,
@@ -934,8 +978,15 @@ time:
   post-write send failure discards it rather than displaying it. (Subject to D4: if the reveal
   permission is dropped, the second sentence stands for every operator and the first is void.)
 - AC6 `UserNotificationsEnabled` false refuses an email-path reset **before** the PATCH.
-- AC7 The password appears in no audit event, administrator email, log or trace -- enforced by
-  a source-text test, not by inspection.
+- AC7 The password appears in no audit event, administrator email, log or trace, **at any log
+  level including `Debug`**, and neither does anything derived from it -- length, entropy, word
+  count, hash, prefix or masked form. Enforced by a source-text test asserting no logging call in
+  the module receives the password variable, not by inspection.
+- AC7a The module logs at the levels in **Diagnostic logging** rather than everything at one
+  level: step detail at `Debug`, milestones at `Information`, refusals and reveals at `Warning`,
+  dependency failures at `Error`, an undelivered post-write password at `Critical`. A directory
+  query that returned nothing and one that failed are distinguishable by level - `Warning` and
+  `Error` - never logged identically.
 - AC8 Protection runs via `ResolveWithExchangeFallbackAsync` with both branches implemented,
   fails closed on `Unavailable` / `Ambiguous` / `CheckFailed`, and the unresolved branch passes
   the Graph object id as `EntraObjectId`.
