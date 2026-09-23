@@ -547,6 +547,32 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "CloudPasswordReset",
+            DisplayName = "Cloud Password Reset",
+            Description = "Reset the password of an Entra ID cloud-only account that has no on-premises Active Directory object. The new password is emailed to the account owner, found from the employee ID on the account, and the reset is recorded in the audit log.",
+            Route = "cloud-password-reset",
+            IconCss = "bi bi-key-fill-nav-menu",
+            Category = ModuleCategories.IdentityAndAccess,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            Version = "1.0.0",
+            MainPermission = new(
+                "Access",
+                "CloudPasswordReset",
+                "Open the module and reset the password of an Entra ID cloud-only account, including accounts holding administrative roles. The new password is emailed to the account's owner and is never shown to the operator.",
+                FailClosed: true),
+            GranularPermissions = [
+                new("Reveal", "CloudPasswordResetReveal",
+                    "Additionally see the new password on screen, for an account the module cannot find an owner mailbox for. This is the only way an operator can learn a password this module generates, so hold it to as few people as possible.",
+                    FailClosed: true)
+            ],
+            ConfigFields = [
+                new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields"),
+                new("ValidateTickets", "Validate ServiceNow tickets", "On: a ticket must validate through ServiceNow before a reset runs. Off: any non-blank ticket is accepted as audit metadata.", Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean)
+            ]
+        },
+        new()
+        {
             Id = "AccountLockoutRemediation",
             DisplayName = "Account Lockout Remediation",
             Description = "Identify account lockout source machines and log selected accounts off from implicated or scoped domain computers.",

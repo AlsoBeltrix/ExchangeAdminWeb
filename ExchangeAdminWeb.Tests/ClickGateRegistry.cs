@@ -58,6 +58,13 @@ public static class ClickGateRegistry
             // SelfServiceGroups.razor - are converted and live in Pages above. Nothing below this
             // line is approved for conversion without an owner go.
 
+            // New module, landed 2026-09-23 with a preflight-only page. Declared here rather than
+            // converted: conversion is the nine-page tier-1 scope in docs/ClickGatingAudit-Plan.md
+            // and this page is not in it. Its one button is already gated on isBusy and on a
+            // non-blank UPN, and the write path it will gain is a later slice that must come with
+            // its own gating review.
+            ["CloudPasswordReset.razor"] = "new module 2026-09-23, not in the approved tier-1 conversion scope; preflight-only page, its single action gated on isBusy",
+
             // Prerequisite fixes (slice 1), converted after their flags are made safe.
             ["BlockedSenders.razor"] = "tier 3, not approved; slice 1 prerequisite done - ConfirmUnblock's "
                 + "preflight now fails closed in a catch, guarded by ClickGateStuckFlagTests",

@@ -15,7 +15,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(29, _catalog.GetAll().Count); // 29 modules (28 operational + 1 config-only)
+        Assert.Equal(30, _catalog.GetAll().Count); // 30 modules (29 operational + 1 config-only)
     }
 
     [Fact]
@@ -450,7 +450,9 @@ public class ModuleCatalogTests
         Assert.Contains("ServiceHealth", aliases);
         Assert.Contains("DefenderEndpointDevices", aliases);
         Assert.Contains("MessageTraceSearch", aliases);
-        Assert.Equal(43, aliases.Count);
+        Assert.Contains("CloudPasswordReset", aliases);
+        Assert.Contains("CloudPasswordResetReveal", aliases);
+        Assert.Equal(45, aliases.Count);
     }
 
     [Fact]
@@ -568,6 +570,7 @@ public class ModuleCatalogTests
             "MigrationCheck", "MigrationCreate", "MigrationManage",
             "DelegationReport",
             "MessageTrace", "MessageTraceSearch",
+            "CloudPasswordReset", "CloudPasswordResetReveal",
             "RecipientLookup",
             "OutOfOffice",
             "BlockedSenders", "BlockedSendersUnblock",

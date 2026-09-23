@@ -890,7 +890,27 @@ public class EmailService
             await client.AuthenticateAsync(_smtpUser, _smtpPass);
 
         await client.SendAsync(message);
-        await client.DisconnectAsync(true);
+
+        // THE HANDOFF IS COMPLETE HERE. Everything below is cleanup, and a failure in cleanup
+        // must not be reported as a failure to send.
+        //
+        // DisconnectAsync sends QUIT and waits for the server, which can throw on a dropped
+        // connection AFTER the message has been accepted. This method's contract is "throws if
+        // the mail was not handed over", and callers act on that: the cloud password reset
+        // discards a live credential and audits a delivery failure when this throws. A failed
+        // QUIT would have made it discard a password the owner had already received (review
+        // finding cpr-5, HIGH).
+        //
+        // Absorbed rather than rethrown for every caller, not just that one: no caller of this
+        // method wants a successful send reported as a failure because the socket closed badly.
+        try
+        {
+            await client.DisconnectAsync(true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("SMTP disconnect after a successful send to {To} failed: {Message}", to, ex.Message);
+        }
 
         _logger.LogInformation("Email sent to {To}: {Subject}", to, subject);
     }

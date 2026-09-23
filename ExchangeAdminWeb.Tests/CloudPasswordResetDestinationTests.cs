@@ -1,5 +1,6 @@
 using ExchangeAdminWeb.Services;
 using System.Text.Json;
+using ExchangeAdminWeb.Modules;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -272,5 +273,136 @@ public class CloudPasswordResetSyncStateTests
                 CloudPasswordResetService.SyncState.CloudOnly,
                 CloudPasswordResetService.ClassifySyncState(Json(raw)));
         }
+    }
+}
+
+/// <summary>
+/// Catalog and page tests for the Cloud Password Reset module
+/// (docs/CloudPasswordReset-Plan.md, "Catalog descriptor" and the page slice).
+/// </summary>
+public class CloudPasswordResetCatalogTests
+{
+    private readonly ModuleCatalog _catalog = new();
+
+    private static string PageText() =>
+        File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "CloudPasswordReset.razor"));
+
+    [Fact]
+    public void Module_is_registered_and_optional()
+    {
+        var module = _catalog.GetById("CloudPasswordReset");
+
+        Assert.NotNull(module);
+        Assert.Equal("cloud-password-reset", module!.Route);
+        Assert.Equal("Identity & Access", module.Category);
+        Assert.False(module.EnabledByDefault);
+        Assert.False(module.IsSystemModule);
+        Assert.Equal("1.0.0", module.Version);
+    }
+
+    [Fact]
+    public void Both_permissions_are_fail_closed()
+    {
+        // This module resets the password of accounts that are almost all administrative. A
+        // permission here that fell back to AllowedGroups would hand the capability to everyone
+        // the app has ever granted anything.
+        var module = _catalog.GetById("CloudPasswordReset")!;
+
+        Assert.Equal("CloudPasswordReset", module.MainPermission.PolicyAlias);
+        Assert.True(module.MainPermission.FailClosed);
+
+        var reveal = Assert.Single(module.GranularPermissions);
+        Assert.Equal("Reveal", reveal.Name);
+        Assert.Equal("CloudPasswordResetReveal", reveal.PolicyAlias);
+        Assert.True(reveal.FailClosed);
+    }
+
+    [Fact]
+    public void Declares_its_own_graph_secret_and_a_boolean_ticket_switch()
+    {
+        var module = _catalog.GetById("CloudPasswordReset")!;
+
+        Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
+
+        // A true/false setting rendered as free text can be mistyped, and a mistyped security
+        // switch silently does the wrong thing (owner ruling 2026-09-01).
+        var ticketSwitch = Assert.Single(module.ConfigFields, f => f.Key == "ValidateTickets");
+        Assert.Equal(ConfigFieldType.Boolean, ticketSwitch.FieldType);
+        Assert.Equal("false", ticketSwitch.DefaultValue);
+    }
+
+    [Fact]
+    public void Page_route_and_policy_match_the_descriptor()
+    {
+        var page = PageText();
+
+        Assert.Contains("@page \"/cloud-password-reset\"", page);
+        Assert.Contains("[Authorize(Policy = \"CloudPasswordReset\")]", page);
+    }
+
+    [Fact]
+    public void Page_shows_its_module_version()
+    {
+        // Canonical rule, enforced by tools/validate-module-package.ps1.
+        Assert.Contains("<ModuleVersion />", PageText());
+    }
+
+    [Fact]
+    public void Page_rechecks_authorization_on_initialization()
+    {
+        var page = PageText();
+
+        Assert.Contains("AuthorizeAsync(user, \"CloudPasswordReset\")", page);
+        Assert.Contains("access-denied", page);
+    }
+
+    [Fact]
+    public void Page_offers_NO_destination_control_of_any_kind()
+    {
+        // AC3. The whole point of deriving the destination is that the operator cannot choose it,
+        // and a text box - even a disabled or read-only one - is the defect this design removes.
+        var page = PageText();
+
+        Assert.DoesNotContain("@bind=\"destinationInput\"", page);
+        Assert.DoesNotContain("destinationAddress\"", page);
+        Assert.DoesNotContain("Destination address</label>", page);
+    }
+
+    [Fact]
+    public void Force_change_checkbox_defaults_to_checked()
+    {
+        // Owner ruling 2026-09-23. The password travels by email, so forcing a change makes it a
+        // one-time handover rather than a standing credential sitting in a mailbox.
+        var page = PageText();
+
+        Assert.Contains("private bool forceChangeAtNextSignIn = true;", page);
+    }
+
+    [Fact]
+    public void Clearing_the_checkbox_shows_the_owners_instruction_verbatim()
+    {
+        // The owner's own words, recorded as not-to-be-reworded in .agents/decisions.md.
+        Assert.Contains(
+            "This is a security risk. You MUST walk the user through a manual reset and confirm it's been reset before closing the ticket.",
+            PageText());
+    }
+
+    [Fact]
+    public void Page_has_no_write_path_yet()
+    {
+        // This slice is preflight only. A reset button here would mean the write landed without
+        // its authorization re-check, protection flow, audit and notification.
+        var page = PageText();
+
+        Assert.DoesNotContain("ResetPasswordAsync", page);
+    }
+
+    [Fact]
+    public void Page_never_renders_a_password()
+    {
+        var page = PageText();
+
+        Assert.DoesNotContain("outcome.Password", page);
+        Assert.DoesNotContain("@password", page);
     }
 }

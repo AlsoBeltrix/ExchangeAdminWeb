@@ -121,3 +121,50 @@ public class CloudPasswordResetEmailTests
         Assert.Contains("forceChangeAtNextSignIn", parameters);
     }
 }
+
+/// <summary>
+/// Source-text guards on the SMTP handoff (review finding cpr-5).
+/// </summary>
+/// <remarks>
+/// SendEmailOrThrowAsync needs a mail server to exercise, so these assert its SHAPE. That is the
+/// same approach DeployInvariantsTests takes for the deploy scripts, and for the same reason: the
+/// property is a control-flow one and a reviewer cannot see it in a diff's outline.
+/// </remarks>
+public class EmailSendHandoffTests
+{
+    private static string Source() =>
+        File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "EmailService.cs"));
+
+    [Fact]
+    public void Disconnect_failures_after_a_successful_send_are_absorbed()
+    {
+        // The defect: SendAsync succeeds, the server drops during QUIT, DisconnectAsync throws,
+        // and the whole method throws - so a caller that must report whether a credential reached
+        // its owner reports "no" for a mail that was accepted. The cloud password reset then
+        // discards a password the owner already has and audits a delivery failure.
+        var source = Source();
+
+        var sendIndex = source.IndexOf("await client.SendAsync(message);", StringComparison.Ordinal);
+        Assert.True(sendIndex > 0, "SendAsync call not found - this guard is pinned to the wrong method.");
+
+        var afterSend = source[sendIndex..];
+        var disconnectIndex = afterSend.IndexOf("await client.DisconnectAsync", StringComparison.Ordinal);
+        Assert.True(disconnectIndex > 0, "DisconnectAsync call not found after SendAsync.");
+
+        // The disconnect must sit inside a try that starts after the send.
+        var betweenSendAndDisconnect = afterSend[..disconnectIndex];
+        Assert.Contains("try", betweenSendAndDisconnect);
+    }
+
+    [Fact]
+    public void The_sent_log_line_follows_the_send_not_the_disconnect()
+    {
+        // Ordering evidence that the handoff, not the cleanup, is what "sent" means here.
+        var source = Source();
+
+        var sendIndex = source.IndexOf("await client.SendAsync(message);", StringComparison.Ordinal);
+        var sentLogIndex = source.IndexOf("Email sent to {To}", StringComparison.Ordinal);
+
+        Assert.True(sendIndex > 0 && sentLogIndex > sendIndex);
+    }
+}
