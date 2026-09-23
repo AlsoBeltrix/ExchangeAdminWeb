@@ -1051,7 +1051,13 @@ time:
   an account that cannot service a change prompt is locked out by the default.
 
 - AC18 Every `CloudPasswordReset` audit event carries the full field set in **Audit fields, and
-  Splunk** -- successes and refusals alike, with explicit nulls rather than omissions. Booleans
+  Splunk** -- successes and refusals alike, using the `"n/a"` sentinel rather than nulls, because
+  the writer drops nulls (finding `cpr-11`).
+  **One documented exception, measured rather than assumed:** the top-level `error` key is written
+  by `AuditService.LogModuleAction` as `success ? null : errorDetail`, so it is present on failures
+  and absent on successes. That is shared-service behaviour this module cannot change without
+  altering every other module's records. `CloudPasswordResetAuditShapeTests` asserts `error` is the
+  ONLY key that varies, so the exception cannot quietly widen. Booleans
   are JSON booleans, enumerated fields hold only their listed values, and no field packs two
   facts into one string. A test asserts the emitted key set is identical across a success, a
   refusal, a reveal and a delivery failure, and that every enumerated value a code path can

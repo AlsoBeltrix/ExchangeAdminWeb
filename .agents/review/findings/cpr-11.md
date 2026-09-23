@@ -55,11 +55,17 @@ sentinel and amend the plan - and the plan had already chosen the second for thi
 
 ## Known gaps
 
-**No test asserts the EMITTED JSON key sets are identical** across a success, a refusal, a reveal
-and a delivery failure, which is what AC18 actually claims. That needs a serialization-level test
-driving `AuditService` and reading the file back, which the reviewer also recommended. It is worth
-doing and is not done: the guards here prove the module SUPPLIES uniform keys, not that the writer
-emits them.
+**Closed in the same commit.** The gap as first written was that no test asserted the EMITTED key
+sets are identical - only that the module supplies them. `CloudPasswordResetAuditShapeTests` now
+writes real events through the real `AuditService` and `JsonlLogService`, reads the file back, and
+compares.
+
+**And it immediately found something the source-text guards could not:** the top-level `error` key
+IS absent on successes and present on failures, because `LogModuleAction` writes it as
+`success ? null : errorDetail` and the writer drops the null. So AC18 as originally written was
+unachievable for that key regardless of what this module does. The test pins `error` as the only
+key allowed to vary, and AC18 now records the exception. Changing it would mean changing the
+shared audit service for every module, which is a separate decision.
 
 ## Reviewer comments
 
