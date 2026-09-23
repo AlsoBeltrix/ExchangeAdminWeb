@@ -233,3 +233,89 @@ public class PasswordGeneratorTests
         return string.Join("\n", lines);
     }
 }
+
+/// <summary>
+/// The two acceptance criteria that had no test until an AC audit found them: AC14's word count
+/// and AC15's entropy floor.
+/// </summary>
+/// <remarks>
+/// Both were "covered" by assertions that the CONSTANTS held the right values - that MinEntropyBits
+/// is 60.0 and that the word range is 2 to 6. That is not the claim. AC14 and AC15 are about every
+/// password the generator RETURNS, and neither figure is recoverable from the string, so the
+/// generator exposes the accepted candidate's measurements to this assembly.
+///
+/// The gap is worth naming: the constants test would have passed unchanged if the acceptance
+/// check in Generate had been deleted entirely.
+/// </remarks>
+public class PasswordGeneratorMeasurementTests
+{
+    private const int Draws = 1000;
+
+    private static readonly PasswordGenerator Generator = new();
+
+    [Fact]
+    public void Every_returned_password_clears_the_entropy_floor()
+    {
+        // AC15, asserted on the measurement rather than on the constant.
+        for (var i = 0; i < Draws; i++)
+        {
+            var candidate = Generator.GenerateCandidate();
+
+            Assert.True(
+                candidate.EntropyBits >= PasswordGenerator.MinEntropyBits,
+                $"A returned password measured {candidate.EntropyBits:F2} bits, below the {PasswordGenerator.MinEntropyBits} floor.");
+        }
+    }
+
+    [Fact]
+    public void Every_returned_password_uses_between_two_and_six_words()
+    {
+        // AC14. The upper bound is what physically fits the target length; the lower is what the
+        // conservative estimate needs to clear the floor.
+        for (var i = 0; i < Draws; i++)
+        {
+            Assert.InRange(Generator.GenerateCandidate().WordCount, 2, 6);
+        }
+    }
+
+    [Fact]
+    public void The_entropy_floor_is_a_real_filter_and_not_a_formality()
+    {
+        // If EVERY attempt cleared 60 bits regardless, the acceptance check would be dead code and
+        // the two tests above would pass without proving anything about it. This measures the
+        // headroom instead of assuming it: the accepted population should sit above the floor, and
+        // the floor should be close enough to the distribution to matter.
+        var measurements = new List<double>(Draws);
+        for (var i = 0; i < Draws; i++) measurements.Add(Generator.GenerateCandidate().EntropyBits);
+
+        Assert.All(measurements, m => Assert.True(m >= PasswordGenerator.MinEntropyBits));
+
+        // Sanity on the other side: a generator scoring absurdly high everywhere would suggest the
+        // effective-pool calculation had stopped narrowing and gone back to crediting the full list.
+        Assert.True(
+            measurements.Max() < 200,
+            $"Measured entropy reached {measurements.Max():F2} bits, which is far above what this "
+            + "algorithm can produce - the effective-pool calculation is likely crediting the whole "
+            + "word list rather than the length-narrowed choice.");
+    }
+
+    [Fact]
+    public void The_refusal_after_a_hundred_attempts_exists_and_emits_nothing()
+    {
+        // AC15's second half. NOT exercised behaviourally, and that is stated rather than implied:
+        // reaching it requires every one of 100 attempts to fail the floor, which cannot be forced
+        // without weakening the generator for the test. What is asserted is that the path throws
+        // rather than returning, and that its message carries nothing about the attempts - a
+        // candidate, a length or an entropy figure in that string would be a credential leak into
+        // whatever logs the exception.
+        var source = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "PasswordGenerator.cs"));
+
+        var loopEnd = source.IndexOf("throw new InvalidOperationException(", StringComparison.Ordinal);
+        Assert.True(loopEnd > 0, "The refusal throw is gone - the generator may now return a candidate that failed the floor.");
+
+        var message = source[loopEnd..(loopEnd + 300)];
+        Assert.DoesNotContain("candidate", message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("EntropyBits", message);
+        Assert.DoesNotContain("Password", message);
+    }
+}

@@ -1055,6 +1055,16 @@ time:
 - AC15 Every generated password measures at least 60 bits of entropy under the effective-pool
   calculation. When 100 attempts fail to reach it, the generator **refuses**; it never returns
   a weaker password and never widens its own parameters to succeed.
+  **Asserted on the MEASUREMENT of returned passwords, not on the constant.** Until an acceptance
+  audit on 2026-09-23 this was covered only by a test that `MinEntropyBits == 60.0`, which would
+  have passed unchanged with the acceptance check deleted - and the mutation probe confirmed it:
+  all 34 generator tests stayed green with the floor removed. The generator exposes the accepted
+  candidate's measurements to the test assembly because neither the entropy nor the word count is
+  recoverable from the password string.
+  **The 100-attempt refusal is NOT exercised behaviourally** and the plan says so rather than
+  implying coverage: reaching it needs 100 consecutive failures, which cannot be forced without
+  weakening the generator for the test. What is asserted is that the path throws rather than
+  returning, and that its message leaks no candidate, length or entropy figure.
 - AC16 The generator draws only from `RandomNumberGenerator`. `System.Random` appears nowhere
   in the generator's source -- enforced by a source-text test. The word list is an embedded
   resource, and the parameters (length range, word count, separators, entropy floor, attempt

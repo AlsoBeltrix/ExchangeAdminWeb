@@ -63,7 +63,19 @@ public sealed class PasswordGenerator
     /// length range. The caller must treat this as a failed reset. It must NOT retry with weaker
     /// parameters: refusing is the designed behaviour, not an error to work around.
     /// </exception>
-    public string Generate()
+    public string Generate() => GenerateCandidate().Password;
+
+    /// <summary>
+    /// The accepted candidate, with the measurements that got it accepted.
+    /// </summary>
+    /// <remarks>
+    /// A test seam, and a narrow one: <see cref="Generate"/> is the production entry point and
+    /// returns only the string. It exists because AC14 and AC15 are claims about the MEASUREMENTS
+    /// of every returned password - 2 to 6 words, at least 60 bits - and neither is observable
+    /// from the string alone. Without this the tests could assert that the constants say 60 and 2
+    /// to 6, which is not the same claim and is what they did until this was noticed.
+    /// </remarks>
+    internal Candidate GenerateCandidate()
     {
         for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
@@ -72,7 +84,7 @@ public sealed class PasswordGenerator
                 candidate.Password.Length >= MinLength &&
                 candidate.Password.Length <= MaxLength)
             {
-                return candidate.Password;
+                return candidate;
             }
         }
 
@@ -82,7 +94,8 @@ public sealed class PasswordGenerator
             $"Could not generate a password meeting the required strength after {MaxAttempts} attempts. No password was produced.");
     }
 
-    private sealed record Candidate(string Password, double EntropyBits);
+    /// <summary>One attempt, with the measurements the acceptance check reads.</summary>
+    internal sealed record Candidate(string Password, double EntropyBits, int WordCount);
 
     private static Candidate GenerateOnce()
     {
@@ -99,7 +112,7 @@ public sealed class PasswordGenerator
         var password = Assemble(styled, targetLength);
         var entropy = EntropyBits(wordCount, Separators.Length, paddingCount, effectivePool);
 
-        return new Candidate(password, entropy);
+        return new Candidate(password, entropy, wordCount);
     }
 
     /// <summary>

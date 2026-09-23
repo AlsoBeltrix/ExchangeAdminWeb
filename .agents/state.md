@@ -135,11 +135,15 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   negative answer** - a missing sync property read as cloud-only, a failed role read rendered as
   "None active", a lost PATCH response audited as "no change was made", and before them the
   deleted survey's confident 0%. That rule is now stated in the plan and pinned by tests.
-  **Three were guards that existed and did not bite**, which is the more uncomfortable pattern: a
+  **FOUR were guards that existed and did not bite**, which is the more uncomfortable pattern: a
   test asserting the destination was re-derived passed on code that re-derived it from a stale
   cache, because it checked that the call happened rather than what it read from; a test asserted
-  a tolerance where the plan states a guarantee; and the audit-shape claim was invisible to
-  source-text guards until a test read the emitted JSON back.
+  a tolerance where the plan states a guarantee; the audit-shape claim was invisible to
+  source-text guards until a test read the emitted JSON back; and **AC15's entropy floor was
+  covered only by a test that the CONSTANT was 60.0** - found by an acceptance-criteria audit
+  AFTER every codex review had passed, and confirmed by a probe in which all 34 generator tests
+  stayed green with the acceptance check deleted. **Codex did not catch that one and neither did
+  five review rounds; walking the ACs one by one did.**
   **BLOCKED ON THE OWNER, and nothing works until these are done:**
   1. Create a dedicated Entra app registration with `User.Read.All`,
      `User-PasswordProfile.ReadWrite.All` and `RoleManagement.Read.Directory`, admin-consented.
