@@ -254,11 +254,19 @@ Consequences of the PATCH path, all load-bearing:
    here would make the app less capable than the console it replaces, which is the opposite
    of the app's reason to exist.
 
-   So: a single checkbox on the reset panel, **unchecked by default**. Default-off because the
-   owner's stated failure mode is real -- many accounts in this population sign in through
-   paths that cannot service a change-password interrupt, and a reset that quietly returns an
-   unusable account is the worse error. The operator ticks it when they know the account can
-   handle it.
+   So: a single checkbox on the reset panel, **CHECKED by default**. Owner ruling 2026-09-23,
+   superseding the default-off position above: *"now that we're sending passwords over email
+   correctly, we need to DEFAULT to force password change so email breaches and lazy users don't
+   cause massive security incidents."* Mailing the password puts it in a mailbox, where it sits
+   until somebody acts. Forcing a change at next sign-in closes that window: a later mailbox
+   compromise, or an owner who never gets round to changing it, stops being a live credential.
+   The generated password becomes a one-time handover rather than the account's standing password.
+
+   The earlier failure mode has not gone away and is not being dismissed - some accounts in this
+   population sign in by routes that cannot service a change-password prompt, and ticking the box
+   for one of those returns an account nobody can sign into. **That is why it stays a checkbox the
+   operator can clear per reset, and why the help text next to it must name that risk.** The
+   default moved; the choice did not.
 
    Three things follow and are requirements, not commentary:
 
@@ -268,9 +276,10 @@ Consequences of the PATCH path, all load-bearing:
    - **The owner email matches the choice.** Checked: the mail says a change will be required
      at next sign-in. Unchecked: it says the password works as-is and to change it when
      convenient. It never promises a prompt that will not appear.
-   - **The generated password has to stand alone regardless.** With the box unchecked -- the
-     default, so the common case -- the generated password *is* the account's password until
-     someone changes it. That is what makes the generator's 18-32 characters and 60-bit floor
+   - **The generated password has to stand alone regardless.** Whenever the operator CLEARS the
+     box - no longer the default, but still a real path for an account that cannot service a
+     change prompt - the generated password IS the account's standing password until someone
+     changes it. That is what keeps the generator's 18-32 characters and 60-bit floor
      load-bearing rather than decorative.
 4. **The grant reaches every account in the tenant, and that is the requirement.** The role
    restrictions Microsoft documents under "Who can reset passwords" bound *delegated* callers
@@ -762,8 +771,9 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
 - **S3 -- service, DI.** `Services/CloudPasswordResetService.cs`: Delinea/Graph bootstrap and
   `IsAvailable` (the `MfaResetService.cs:20-46` shape), target resolve, the synced and guest
   refusals, the display-only role read, the `ITicketValidator` gate, the generated password
-  from S2, the change-at-next-sign-in flag taken as a parameter (defaulting to `false`, never
-  read from config), the destination address taken as a required parameter with no default and
+  from S2, the change-at-next-sign-in flag taken as a REQUIRED parameter with no default at all
+  (never read from config, and no service-side default either - the default belongs to the page,
+  and a second one here is a second place for it to be wrong), the destination address taken as a required parameter with no default and
   format-validated here as well as in the page (server-side is the gate; the page is
   convenience), and the PATCH returning a status-bearing result. No descriptor, no page.
   Tests assert the flag reaches the request body unaltered in both states. Tests for
@@ -781,12 +791,14 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   identity, cloud-only yes/no, roles held, protection status. Two operator inputs: the
   **destination address**, a required text field with no default, no pre-fill, no suggestion
   and no picker -- the module has nothing to suggest from and an autofilled address would be
-  read as a verified one; and the **change at next sign-in** checkbox, unchecked by default,
-  with help text saying an account that cannot service a change prompt will be unable to sign
-  in. The panel states, in plain words next to the address field, that the address is recorded
+  read as a verified one; and the **change at next sign-in** checkbox, **CHECKED by default**
+  (owner ruling 2026-09-23), with help text naming BOTH risks the operator is choosing between:
+  clearing it leaves the mailed password standing as the account's password, and leaving it
+  ticked locks out an account whose sign-in path cannot service a change prompt. The panel
+  states, in plain words next to the address field, that the address is recorded
   in the audit log and mailed to the administrators. No write path in this slice. Catalog
   tests, plus tests that the address field starts empty, that submitting it blank or malformed
-  is refused client- and server-side, and that the checkbox renders unchecked on first load.
+  is refused client- and server-side, and that the checkbox renders CHECKED on first load.
   D4 decides whether the descriptor carries one permission or two.
 - **S6 -- the write.** The server-side authorization re-checks, the full protection flow
   including the unresolved branch with a real `EntraObjectId`, the ticket gate, the pre-write
@@ -826,11 +838,14 @@ time:
 1. A cloud-only account resets; the address the operator typed receives the password; the
    operator's screen shows no password. The audit event and the administrator email both carry
    that address, spelled exactly as typed apart from case.
-2. Both settings of the change-at-next-sign-in checkbox, on real accounts. Left unchecked
-   (the default): sign-in succeeds with **no** change prompt, including on a path that could
-   not service one, and the password stays as issued. Ticked: sign-in does prompt for a
-   change and the new password takes. In each case the owner email's closing line matches
-   what actually happened, and the success audit records which way the flag went.
+2. Both settings of the change-at-next-sign-in checkbox, on real accounts. Ticked (the
+   default): sign-in prompts for a change and the new password takes. Cleared: sign-in
+   succeeds with **no** change prompt, including on a path that could not service one, and
+   the password stays as issued. In each case the owner email's closing line matches what
+   actually happened, and the success audit records which way the flag went.
+   **Run the cleared case against an account whose sign-in path cannot service a change
+   prompt** - that path is the reason the checkbox still exists now the default has moved, and
+   an untested escape hatch is not one.
 3. A **synced** account is refused at preflight, naming the on-premises path, with no Graph
    write attempted.
 4. A guest account is refused.
@@ -907,10 +922,14 @@ time:
   resource, and the parameters (length range, word count, separators, entropy floor, attempt
   cap) are constants, not configuration.
 - AC17 `forceChangePasswordNextSignIn` carries the operator's per-reset checkbox, which
-  defaults to **unchecked**. The PATCH body sends whichever value was chosen, the success
-  audit records which, and the owner email's wording follows it -- a change is promised only
-  when the box was ticked. A test covers both values end to end, including the default when
-  the operator touches nothing.
+  defaults to **CHECKED** (owner ruling 2026-09-23; it was unchecked until then, and the
+  reversal is deliberate - the password now travels by email, so forcing a change turns it
+  into a one-time handover instead of a standing credential sitting in a mailbox). The PATCH
+  body sends whichever value was chosen, the success audit records which, and the owner
+  email's wording follows it -- a change is promised only when the box was ticked. A test
+  covers both values end to end, **including that the value sent when the operator touches
+  nothing is `true`**. The operator can still clear it, and clearing it must remain possible:
+  an account that cannot service a change prompt is locked out by the default.
 
 - AC18 Every `CloudPasswordReset` audit event carries the full field set in **Audit fields, and
   Splunk** -- successes and refusals alike, with explicit nulls rather than omissions. Booleans

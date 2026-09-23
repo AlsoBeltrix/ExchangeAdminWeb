@@ -5,6 +5,33 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-23 - CloudPasswordReset: force-change-at-next-sign-in DEFAULTS ON
+
+Status: Active. Scope: `CloudPasswordReset`. **Reverses the default set on 2026-09-10**, which
+is quoted in `docs/CloudPasswordReset-Plan.md` and was unchecked-by-default.
+
+Owner, verbatim: *"now that we're sending passwords over email correctly, we need to DEFAULT to
+force password change so email breaches and lazy users don't cause massive security incidents."*
+
+**The reason the earlier default no longer holds.** This module mails the password. That puts a
+live credential in a mailbox, where it stays until somebody acts on it. Forcing a change at next
+sign-in closes that window: the mailed password becomes a one-time handover rather than the
+account's standing password, so a later mailbox compromise, or an owner who never gets round to
+changing it, is no longer a live credential to an admin account.
+
+**What did NOT change.** It is still a checkbox on the reset form that the operator can clear per
+reset - item 11: *"an option at runtime, so not secreted away in settings"*. The 2026-09-10 failure
+mode is still real: some accounts in this population sign in by routes that cannot service a
+change-password prompt, and leaving the box ticked for one of those hands back an account nobody
+can sign into. The default moved; the choice did not, and the help text next to the box must name
+both risks because the operator is choosing between them.
+
+**Plan amended in the same commit:** the ruling paragraph under "The Graph surface", S3 (the flag
+is now a required parameter with no service-side default - the default belongs to the page, and a
+second one is a second place to be wrong), S5 (checkbox checked on first load), manual check 2
+(which now requires the CLEARED case to be run against an account that cannot service a prompt -
+an untested escape hatch is not one), and AC17.
+
 ### 2026-09-22 - No tooling enumerates the directory, and Graph is reached through GraphConnect
 
 Status: Active. Scope: every script and module in this repo that touches Graph or AD, not just
