@@ -507,6 +507,101 @@ public class EmailService
     }
 
     /// <summary>
+    /// Sends a reset Entra ID cloud-only account password to the account's owner
+    /// (docs/CloudPasswordReset-Plan.md, "Delivery, and the ordering trap that comes with it").
+    /// </summary>
+    /// <remarks>
+    /// Its own method rather than an overload: every other user-facing mail here is mailbox-,
+    /// group- or device-specific, and none of them carries a credential.
+    ///
+    /// RETURNS WHETHER IT ACTUALLY SENT. The caller has already changed the password by the time
+    /// this runs and cannot undo it, so "was the owner told?" decides whether the reset is
+    /// reported as complete or as changed-but-undelivered. A silent false is indistinguishable
+    /// from a failure and both must be recorded, never assumed.
+    ///
+    /// <paramref name="forceChangeAtNextSignIn"/> exists so the closing line matches what was
+    /// actually done. It must never promise a prompt that will not appear: an owner expecting one
+    /// and not getting it raises a ticket, and an owner not expecting one who meets it on a client
+    /// that cannot service the change is locked out.
+    ///
+    /// The body names the account, the ticket and the password. It does NOT name the operator.
+    /// </remarks>
+    public virtual async Task<bool> SendCloudPasswordResetAsync(
+        string ownerEmail,
+        string targetUpn,
+        string password,
+        string ticketNumber,
+        bool forceChangeAtNextSignIn)
+    {
+        if (!_notifyUsers)
+        {
+            // No address and no target in this line: the send did not happen, and the interesting
+            // fact is the switch, not who it would have gone to.
+            _logger.LogWarning("User notifications are disabled; a cloud password reset mail was NOT sent");
+            return false;
+        }
+
+        var subject = $"[Exchange Admin] Password reset: {targetUpn}";
+        var body = BuildCloudPasswordResetBody(targetUpn, password, ticketNumber, forceChangeAtNextSignIn);
+
+        try
+        {
+            // SendEmailOrThrowAsync, not the swallowing SendEmailAsync: a caller that must report
+            // whether a credential reached its owner cannot be handed a true it did not earn.
+            await SendEmailOrThrowAsync(ownerEmail, subject, body);
+            _logger.LogInformation("Cloud password reset mail accepted by the mail server for {TargetUpn}", targetUpn);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // ex.Message only. The body held a password and must never reach a log through an
+            // exception's ToString().
+            _logger.LogError("Failed to send the cloud password reset mail for {TargetUpn}: {Message}", targetUpn, ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The owner's mail body for a cloud password reset. Extracted from the send so it is
+    /// assertable without SMTP.
+    /// </summary>
+    /// <remarks>
+    /// The closing line is conditional on <paramref name="forceChangeAtNextSignIn"/> and is the
+    /// reason this takes the flag at all. Every value is HTML-encoded, the password included: a
+    /// generated password contains characters from the separator set and an unencoded one could
+    /// break the markup around it.
+    /// </remarks>
+    internal static string BuildCloudPasswordResetBody(
+        string targetUpn,
+        string password,
+        string ticketNumber,
+        bool forceChangeAtNextSignIn)
+    {
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
+
+        var closing = forceChangeAtNextSignIn
+            ? "You will be asked to set a new password the first time you sign in with this one."
+            : "This password will keep working until you change it. Please change it when convenient.";
+
+        return $@"<html>
+<body style=""font-family: Segoe UI, Arial, sans-serif; color: #222;"">
+    <div style=""max-width: 640px; margin: 0 auto;"">
+        <h2>Password reset</h2>
+        <p>The password for the account below has been reset by an administrator.</p>
+        <table style=""border-collapse: collapse;"" cellpadding=""6"">
+            <tr><td><strong>Account</strong></td><td>{h(targetUpn)}</td></tr>
+            <tr><td><strong>New password</strong></td><td><code>{h(password)}</code></td></tr>
+            <tr><td><strong>Ticket</strong></td><td>{h(ticketNumber)}</td></tr>
+        </table>
+        <p>{h(closing)}</p>
+        <p>If you were not expecting this, contact the IT Service Desk immediately and quote the ticket number.</p>
+        <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
+    </div>
+</body>
+</html>";
+    }
+
+    /// <summary>
     /// The path of the Downloadable Reports page, relative to the app's base URL. Must stay in step
     /// with the @page directive on Components/Pages/MessageTraceReports.razor.
     /// </summary>

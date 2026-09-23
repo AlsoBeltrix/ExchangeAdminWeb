@@ -183,8 +183,7 @@ public class CloudPasswordResetService
         using var _ = doc;
         var root = doc.RootElement;
 
-        var syncEnabled = root.TryGetProperty("onPremisesSyncEnabled", out var syncProp)
-            && syncProp.ValueKind == JsonValueKind.True;
+        var syncState = ClassifySyncState(root);
 
         var userType = root.TryGetProperty("userType", out var typeProp) ? typeProp.GetString() : null;
         var employeeId = root.TryGetProperty("employeeId", out var empProp) ? empProp.GetString() : null;
@@ -194,14 +193,24 @@ public class CloudPasswordResetService
         var enabled = !root.TryGetProperty("accountEnabled", out var enProp) || enProp.ValueKind != JsonValueKind.False;
 
         _logger.LogDebug(
-            "CloudPasswordReset preflight for {Upn}: id={ObjectId} synced={Synced} userType={UserType} employeeIdPresent={HasEmployeeId}",
-            upn, objectId, syncEnabled, userType, !string.IsNullOrWhiteSpace(employeeId));
+            "CloudPasswordReset preflight for {Upn}: id={ObjectId} syncState={SyncState} userType={UserType} employeeIdPresent={HasEmployeeId}",
+            upn, objectId, syncState, userType, !string.IsNullOrWhiteSpace(employeeId));
 
-        if (syncEnabled)
+        if (syncState == SyncState.Synced)
         {
             _logger.LogWarning("CloudPasswordReset refused {Upn}: account is synced from on-premises", upn);
             return (null, CloudPasswordResetRefusal.SyncedAccount,
                 "This account is synced from on-premises Active Directory. Reset it there.");
+        }
+
+        if (syncState == SyncState.Unknown)
+        {
+            // Not "cloud-only by default". We asked for the property and did not get a value we
+            // understand, so the question is unanswered - and an unanswered sync question on a
+            // password reset is a refusal (plan AC1, Known Failure Class 3).
+            _logger.LogError("CloudPasswordReset refused {Upn}: onPremisesSyncEnabled was absent or unreadable in the Graph response", upn);
+            return (null, CloudPasswordResetRefusal.GraphReadFailed,
+                "Entra ID did not report whether this account is synced from on-premises. The reset was refused rather than assume it is cloud-only.");
         }
 
         if (string.Equals(userType, "Guest", StringComparison.OrdinalIgnoreCase))
@@ -215,6 +224,53 @@ public class CloudPasswordResetService
 
         return (new CloudPasswordTarget(objectId, upn, displayName, enabled, CloudOnly: true, employeeId, roles),
                 CloudPasswordResetRefusal.None, "");
+    }
+
+    /// <summary>What the Graph response says about whether the target is mastered on-premises.</summary>
+    internal enum SyncState
+    {
+        /// <summary>Definitely synced from on-premises. Out of scope.</summary>
+        Synced,
+
+        /// <summary>Definitely not synced. In scope.</summary>
+        CloudOnly,
+
+        /// <summary>The response did not answer the question. Refuse; do not assume either way.</summary>
+        Unknown,
+    }
+
+    /// <summary>
+    /// Read <c>onPremisesSyncEnabled</c> as three states rather than two.
+    /// </summary>
+    /// <remarks>
+    /// **Graph never returns <c>false</c> here.** The property is <c>true</c> for a synced account
+    /// and <c>null</c> for one that is not - so a literal reading of the plan's "absent a definite
+    /// false, refuse" would refuse this module's entire population. The rule the plan is actually
+    /// expressing is that an UNANSWERED question must not be read as a permissive answer, and the
+    /// three states below are what that means against the real API:
+    ///
+    /// - present and <c>true</c>  -> Synced. Refuse: its password is mastered on-premises.
+    /// - present and <c>null</c> or <c>false</c> -> CloudOnly. In scope.
+    /// - absent, or any other kind -> Unknown. **Refuse.** The property was requested in the
+    ///   <c>$select</c>, so its absence means the projection did not happen, not that the account
+    ///   is cloud-only.
+    ///
+    /// The first implementation collapsed Unknown into CloudOnly, which would have admitted a
+    /// synced account whenever Graph returned 200 without the property - review finding cpr-4,
+    /// severity HIGH.
+    /// </remarks>
+    internal static SyncState ClassifySyncState(JsonElement root)
+    {
+        if (!root.TryGetProperty("onPremisesSyncEnabled", out var prop))
+            return SyncState.Unknown;
+
+        return prop.ValueKind switch
+        {
+            JsonValueKind.True => SyncState.Synced,
+            JsonValueKind.False => SyncState.CloudOnly,
+            JsonValueKind.Null => SyncState.CloudOnly,
+            _ => SyncState.Unknown,
+        };
     }
 
     /// <summary>

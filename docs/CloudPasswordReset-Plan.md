@@ -304,9 +304,22 @@ A synced account's password is mastered on-premises: writing `passwordProfile` t
 fails or is overwritten at the next sync. Preflight reads `onPremisesSyncEnabled` and refuses
 any target where it is true, naming the on-premises path in the refusal.
 
-Fail-closed corollary: absent a definite `onPremisesSyncEnabled: false`, the target is
-refused. An unreadable or missing property is a refusal, never an assumption of cloud-only
-(Known Failure Class 3).
+Fail-closed corollary, in **three** states rather than two. Earlier revisions said "absent a
+definite `onPremisesSyncEnabled: false`, refuse", which cannot be implemented: **Graph does not
+send `false` for this property.** It sends `true` for a synced account and `null` for one that is
+not, so requiring a literal `false` would refuse this module's entire population. What the rule
+means against the real API:
+
+| Response | State | Action |
+|---|---|---|
+| present, `true` | Synced | Refuse, naming the on-premises path |
+| present, `null` or `false` | Cloud-only | In scope |
+| absent, or any other JSON kind | **Unknown** | **Refuse** as a failed read |
+
+The third row is the rule. The property is named in the `$select`, so its absence means the
+projection did not happen - not that the account is cloud-only. An unanswered sync question is
+never a permissive answer (Known Failure Class 3). The first implementation collapsed Unknown
+into cloud-only and codex caught it: review finding `cpr-4`, HIGH.
 
 ## The PIM trap
 
@@ -955,8 +968,10 @@ time:
 
 ## Acceptance criteria
 
-- AC1 A target with `onPremisesSyncEnabled` true, or whose sync status could not be read, is
-  refused.
+- AC1 A target with `onPremisesSyncEnabled` true, or whose sync status could not be read at all
+  (property absent, or an unexpected JSON kind), is refused. `null` is the value Graph uses for a
+  cloud-only account and is the ONE reading that admits a target; two-state parsing of this
+  property is a defect, not a simplification (finding `cpr-4`).
 - AC2 The reset uses `PATCH /users/{id}` `passwordProfile`; `resetPassword` is never called.
 - AC3 The destination is **derived, and the operator cannot influence it**. It comes from the
   `employeeId` on the target account, resolved to exactly one directory user with a mailbox. No

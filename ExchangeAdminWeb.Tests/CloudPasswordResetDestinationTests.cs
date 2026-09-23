@@ -1,4 +1,5 @@
 using ExchangeAdminWeb.Services;
+using System.Text.Json;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -189,5 +190,87 @@ public class CloudPasswordResetDestinationTests
         var result = CloudPasswordResetService.ClassifyDestination("  0001234  ", Found(Owner("jo@corp.test")));
 
         Assert.Equal("0001234", result.EmployeeId);
+    }
+}
+
+/// <summary>
+/// Tests for the sync-state read (review finding cpr-4).
+/// </summary>
+/// <remarks>
+/// The property that decides whether an account is in scope at all. Reading it as two states
+/// instead of three admitted a synced account whenever Graph answered 200 without projecting it.
+/// </remarks>
+public class CloudPasswordResetSyncStateTests
+{
+    private static JsonElement Json(string raw) => JsonDocument.Parse(raw).RootElement;
+
+    [Fact]
+    public void True_is_synced_and_therefore_out_of_scope()
+    {
+        Assert.Equal(
+            CloudPasswordResetService.SyncState.Synced,
+            CloudPasswordResetService.ClassifySyncState(Json("""{"onPremisesSyncEnabled": true}""")));
+    }
+
+    [Fact]
+    public void Null_is_cloud_only_because_that_is_how_Graph_says_it()
+    {
+        // Graph returns null, never false, for an account that is not synced. Treating null as
+        // unknown would refuse this module's entire population.
+        Assert.Equal(
+            CloudPasswordResetService.SyncState.CloudOnly,
+            CloudPasswordResetService.ClassifySyncState(Json("""{"onPremisesSyncEnabled": null}""")));
+    }
+
+    [Fact]
+    public void False_is_cloud_only_too_if_Graph_ever_sends_it()
+    {
+        Assert.Equal(
+            CloudPasswordResetService.SyncState.CloudOnly,
+            CloudPasswordResetService.ClassifySyncState(Json("""{"onPremisesSyncEnabled": false}""")));
+    }
+
+    [Fact]
+    public void An_absent_property_is_unknown_and_must_not_read_as_cloud_only()
+    {
+        // The defect codex found. The property is in the $select, so its absence means the
+        // projection did not happen - not that the account is cloud-only.
+        Assert.Equal(
+            CloudPasswordResetService.SyncState.Unknown,
+            CloudPasswordResetService.ClassifySyncState(Json("""{"id": "abc"}""")));
+    }
+
+    [Fact]
+    public void An_unexpected_kind_is_unknown()
+    {
+        foreach (var raw in new[]
+                 {
+                     """{"onPremisesSyncEnabled": "true"}""",
+                     """{"onPremisesSyncEnabled": 1}""",
+                     """{"onPremisesSyncEnabled": {}}""",
+                     """{"onPremisesSyncEnabled": []}""",
+                 })
+        {
+            Assert.Equal(
+                CloudPasswordResetService.SyncState.Unknown,
+                CloudPasswordResetService.ClassifySyncState(Json(raw)));
+        }
+    }
+
+    [Fact]
+    public void Only_a_definite_negative_admits_the_target()
+    {
+        // The property this guard exists to hold: nothing ambiguous ever reaches CloudOnly.
+        foreach (var raw in new[]
+                 {
+                     """{}""",
+                     """{"onPremisesSyncEnabled": "yes"}""",
+                     """{"onPremisesSyncEnabled": 0}""",
+                 })
+        {
+            Assert.NotEqual(
+                CloudPasswordResetService.SyncState.CloudOnly,
+                CloudPasswordResetService.ClassifySyncState(Json(raw)));
+        }
     }
 }
