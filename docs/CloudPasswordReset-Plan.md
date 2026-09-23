@@ -792,9 +792,9 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   **destination address**, a required text field with no default, no pre-fill, no suggestion
   and no picker -- the module has nothing to suggest from and an autofilled address would be
   read as a verified one; and the **change at next sign-in** checkbox, **CHECKED by default**
-  (owner ruling 2026-09-23), with help text naming BOTH risks the operator is choosing between:
-  clearing it leaves the mailed password standing as the account's password, and leaving it
-  ticked locks out an account whose sign-in path cannot service a change prompt. The panel
+  (owner ruling 2026-09-23). One line of help text, not a paragraph: *"Clear this only if the
+  account cannot handle a sign-in prompt."* The reasoning on both sides lives in this plan; the
+  operator needs the one fact that decides their click. The panel
   states, in plain words next to the address field, that the address is recorded
   in the audit log and mailed to the administrators. No write path in this slice. Catalog
   tests, plus tests that the address field starts empty, that submitting it blank or malformed

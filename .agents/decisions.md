@@ -23,8 +23,9 @@ changing it, is no longer a live credential to an admin account.
 reset - item 11: *"an option at runtime, so not secreted away in settings"*. The 2026-09-10 failure
 mode is still real: some accounts in this population sign in by routes that cannot service a
 change-password prompt, and leaving the box ticked for one of those hands back an account nobody
-can sign into. The default moved; the choice did not, and the help text next to the box must name
-both risks because the operator is choosing between them.
+can sign into. The default moved; the choice did not. The help text is ONE line - *"Clear this
+only if the account cannot handle a sign-in prompt."* The reasoning belongs in this record, not
+on the page.
 
 **Plan amended in the same commit:** the ruling paragraph under "The Graph surface", S3 (the flag
 is now a required parameter with no service-side default - the default belongs to the page, and a
