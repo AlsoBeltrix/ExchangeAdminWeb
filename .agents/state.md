@@ -3,23 +3,22 @@
 Current work and blockers only. Rules live in `docs/ProjectConstitution.md` and
 `.agents/repo-guidance.md`, decisions in `.agents/decisions.md`, and machine observations in
 `.agents/machines.md`. Each plan owns its implementation and manual acceptance checklist.
-Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archived 2026-09-15).
+Superseded descriptions are verbatim in `docs/history/state-archive.md` (newest section first;
+the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**HANDOFF 2026-09-23.** Head `bd29a9c` on `master`, working tree clean, every gate green
+**HANDOFF 2026-09-23.** On `master`, working tree clean. Gates are green **as of `bd29a9c`**
 (build 0 errors, `dotnet test` 3064 passed / 0 failed / 3 skipped, format clean,
-`git diff --check` clean, Pester 157/0, PSScriptAnalyzer 0 errors).
-**35 commits are local-only** - both remotes are at `6f3ee22`, verified with `git ls-remote`, and
-the push is an ask under `.agents/push-policy.md`.
+`git diff --check` clean, Pester 157/0, PSScriptAnalyzer 0 errors); the only commits since are
+docs-only, so nothing has been re-run against them.
 **Next session's task is QUEUE ITEM 14, and it is a PLANNING task** - see the entry below. Nothing
 is half-finished: Cloud Password Reset is complete and reviewed, and queue 4 slice 1 is landed with
 slices 2-4 unstarted and unblocked.
 
 - **QUEUE 8 (Defender for Endpoint) IS PARKED BY THE OWNER, 2026-09-22, waiting on an updated
-  requirements document from the stakeholder. Do not resume it until that arrives.** Commit
-  `43a944e` is pushed to both remotes (owner ran `pushall` 2026-09-22); the earlier standing ask
-  about it is closed. Pushed is not deployed and not resumed - the park stands.
+  requirements document from the stakeholder. Do not resume it until that arrives.** The module
+  (`43a944e`) is not deployed and not resumed - the park stands.
   **Two defects are open against the shipped module and neither is fixed:**
   1. *The page is unusable at tenant scale.* It renders every device row, so the Blazor circuit
      dies ("Rejoining the server...") and nothing can be scrolled. The owner rejected virtualised
@@ -53,11 +52,12 @@ slices 2-4 unstarted and unblocked.
   chosen over 2, 5 and 6: it is self-contained, needs no new credential or app registration, has
   no blocked decision in front of it, and `.agents/state.md` already named it "the obvious
   alternative" when item 7 was taken. Item 2 is blocked on a decision about a second status
-  source; item 5 has no defined scope or credential model; item 6 is large and touches the deploy
-  pipeline and the shared-config-DB invariant. **The plan already exists and is finished drafting:
-  `docs/MessageTracePermissionSplit-Plan.md`, `Status: Draft`, codex consensus after three rounds
-  (`155eaf7`, `c3b4239`, `5e69dd9`, `995b673`), drafted during the weekend run - the claim that
-  nothing had been started was wrong and is corrected here 2026-09-22.** No code has been written.
+  source; items 5 and 6 were both re-scoped by the owner on 2026-09-21 (`.agents/decisions.md`)
+  after this pick was made, so the reasons given here for skipping them no longer hold - see the
+  weekend-run entry below for each item's current standing. **The plan already exists and is
+  approved: `docs/MessageTracePermissionSplit-Plan.md` (it owns its own `Status:` header - read
+  it there), codex consensus after three rounds (`155eaf7`, `c3b4239`, `5e69dd9`, `995b673`),
+  drafted during the weekend run.**
   **ALL SEVEN of the plan's open questions are now settled and the plan body matches.** 1 and 2 by
   the owner 2026-09-21 (re-grant deliberately, alias `MessageTraceSearch`); 4 by the owner
   2026-09-22 (**hide** the Trace Search tab, overruling the plan's disabled-tab recommendation);
@@ -70,7 +70,7 @@ slices 2-4 unstarted and unblocked.
   trace tab in code from the header-analysis handoff and can run the trace outright, so removing
   the tab button leaves that route open. Section 4 now requires the handoff control hidden, the
   switch refused and `RunTrace` gated server-side regardless.
-  **SLICE 1 IS LANDED AND PUSHED: `9d97e4b`.** Owner gave the go 2026-09-22 and
+  **SLICE 1 IS LANDED: `9d97e4b`.** Owner gave the go 2026-09-22 and
   authorized an Opus 5 coding subagent for it. The granular `MessageTraceSearch` is declared on the
   `MessageTrace` descriptor, the main permission's description no longer claims to grant trace, and
   the module version went `1.4.2` -> `1.5.0` (minor, per question 6; the plan text predates 1.4.2
@@ -100,21 +100,13 @@ slices 2-4 unstarted and unblocked.
   fails until slice 3 flips it; the plan gained step 11a to make that flip a numbered step.
   **DEPLOYED AND VERIFIED BY THE OWNER 2026-09-22**, together with the Access tab labels
   (`bdd01a8`) and the version bumps. The corrected copy is live on dev.
-
-- **ACCESS TAB LABELS: DONE, `bdd01a8`, DEPLOYED AND VERIFIED BY THE OWNER 2026-09-22.** Owner ruling 2026-09-22: *"the access names
-  are stupid. 'MessageTrace' vs 'MessageTraceSearch'? trace is what we're gating. header analysis
-  vs trace. name them more clearly in the UI."* `ModulePermission` gained an optional `DisplayName`
-  defaulting to null; `Components/Pages/ModuleConfig.razor` heads each grant with it and keeps the
-  alias beside it in muted text. `MessageTrace` declares "Header Analysis" and "Trace Search";
-  every other module declares none and renders exactly as before, pinned by its own test.
-  **The aliases were NOT renamed and must not be** - each is the section-access storage key and the
-  store is fail-closed, so a rename orphans the groups granted against it and denies them rather
-  than failing open. The alias stays on screen for the same reason it stays in the code: it is what
-  the denial log line names.
-  Both bumps fired per the Constitution's two rules: base app `2.21.1` -> `2.22.0` (shared record
-  and config page), module `1.5.1` -> `1.5.2`. Suite 2954/0/3; two mutations, each failing only its
-  own test. Constitution "Planning Rules" puts UI polish outside the written-plan requirement, so
-  no plan was written.
+  **A rule slices 2-4 must not break, kept live here because no other file states it:** the
+  aliases `MessageTrace` and `MessageTraceSearch` must NOT be renamed. Each is the section-access
+  storage key and the store is fail-closed, so a rename orphans the groups granted against it and
+  denies them rather than failing open. Operator-facing wording is changed through the
+  `ModulePermission.DisplayName` field instead (added in `bdd01a8`, rotated to
+  `docs/history/state-archive.md` 2026-09-23); the alias stays on screen because it is what the
+  denial log line names.
 
 - **CLOUD PASSWORD RESET (queue items 10 and 11) IS BUILT, REVIEWED AND NOT DEPLOYED. It has never
   run against a real tenant.** `docs/CloudPasswordReset-Plan.md`, `Status: Implemented, unproven
@@ -165,7 +157,6 @@ slices 2-4 unstarted and unblocked.
      failure that would otherwise mail an admin password to a guess; and the CLEARED
      force-change case against an account whose sign-in path cannot service a change prompt,
      because that path is the reason the checkbox still exists.
-
 
 - **NEXT SESSION STARTS HERE: QUEUE ITEM 14, REDESIGN THE MIGRATIONS INTERFACE. It is a PLANNING
   task and the owner said so - "handoff so I can plan in a new session".** Added to `queue.txt`
@@ -238,12 +229,13 @@ slices 2-4 unstarted and unblocked.
   authority lapses when the owner's goal is cleared, not before** - while it stands, plans
   self-approve on codex consensus, pushes go to both remotes, and implementation subagents are
   authorized. Afterwards the standing rules resume: ask-first pushes per
-  `.agents/push-policy.md` and the Token Budget one-slice-one-session rule. 32 commits, both
-  remotes level, every gate green at every commit. Per-item outcome:
+  `.agents/push-policy.md` and the Token Budget one-slice-one-session rule. 32 commits, every
+  gate green at every commit. Per-item outcome:
   - **Queue 9, click-gating: TIER 1 IS COMPLETE, all nine pages.** See the entry below.
   - **Queue 8, Defender for Endpoint - REBUILT FOR SCALE after the first live run returned nothing.
-    Module `1.1.0`.** `docs/DefenderEndpointDevices-Plan.md`, `Status: Implemented, unproven against
-    the live service`. Five slices landed first: S1 `4835942` (API client, models, service, paging),
+    Module `1.1.0`.** `docs/DefenderEndpointDevices-Plan.md` owns its own `Status:` header (it
+    still reads `In progress` - R1 (a)-(e) and the acceptance checklist are what is unfinished).
+    Five slices landed first: S1 `4835942` (API client, models, service, paging),
     S2 `a4facc6` (descriptor, page, three config fields), S4 `8f2aa37` (discovery-sources
     enrichment), S3 `d4993f6` (CSV export, 27 columns), S5 `bb37bc9` (`docs/DefenderEndpointDevices.md`
     and the README section). **Then the dev deploy proved the design could not work here.**
@@ -309,11 +301,15 @@ slices 2-4 unstarted and unblocked.
     including the owner until a group is stored against it, and the alias cannot be granted before
     the descriptor deploys - hence three commits with a mandatory deploy boundary. Recovery needs
     a GLOBAL admin, not a module admin.
-  - **Queue 6, containerize** - `docs/Containerization-Feasibility.md`, **answered: do not.**
-    13-17 sessions to reach what the existing installer reaches in 3-4. The blocker is the
-    Delinea bootstrap credential living in the Windows per-user credential locker, which is also
-    why the csproj carries an OS-versioned TFM. Recommends hardening
-    `tools/Install-ExchangeAdminWeb.ps1`; **that plan is NOT written** and needs an owner ruling.
+  - **Queue 6, containerize - THIS ENTRY'S VERDICT IS FALSIFIED. The owner OVERRULED it on
+    2026-09-21** (`.agents/decisions.md`, verbatim *"we need to containerize the app and it needs
+    to work. fix."*), after the recommendation and its blocker were put to them and they
+    reaffirmed. `docs/Containerization-Feasibility.md` stands as the analysis, **not** as the
+    recommendation; do not re-litigate the verdict. What the analysis established still binds and
+    is enumerated in that decision: the Delinea bootstrap credential needs a provider seam,
+    Windows containers only, gMSA plus SPN registration, the UNC guard would falsely pass, and the
+    jobs/usage/log files land in scratch space. No plan is written. See `## Blockers` for the part
+    that is not ours to do.
   - **Queue 2, status.cloud.microsoft** - `docs/ServiceHealthPublicStatus-Plan.md`, `Status:
     Draft`, **PARKED after FOUR codex rounds, by judgement rather than blockage.** Each round found real
     defects, but rounds 2 and 3 found them in the verification apparatus rather than the design,
@@ -328,13 +324,16 @@ slices 2-4 unstarted and unblocked.
     version fields. Fixed. Three findings are recorded and deliberately unfixed as
     pre-implementation work - they are cheap once the feature is known to be wanted and wasted
     otherwise.
-  - **Queue 5, other tenants/domains** - `docs/MessageTraceMultiTenant-Plan.md`, `Status: Draft`.
-    **May be ZERO work and it is the cheapest question on the board.** The cloud query passes no
-    domain, organization or accepted-domain filter; the only scoping is the session's
-    `-Organization`, which names a TENANT. So extra accepted domains on the existing tenant are
-    already covered, and slice 0 is one read-only search to turn that inference into a
-    measurement. Separate tenants are real work whose hardest blocker is that per-tenant
-    authorization has no expression in the current model.
+  - **Queue 5, other tenants/domains** - `docs/MessageTraceMultiTenant-Plan.md` (Draft; the plan
+    owns its status). **THE "MAY BE ZERO WORK" READING RECORDED HERE IS FALSIFIED.** Owner,
+    2026-09-21 (`.agents/decisions.md`): *"there's one other tenant. creds for that tenant will
+    live in delinea."* So this is the SEPARATE-TENANT case, not extra accepted domains on the
+    existing tenant, and its hardest blocker stands: per-tenant authorization has no expression in
+    the current model. **One assumption was stated to the owner rather than asked, and it changes
+    the design if wrong:** tenant 2 is being designed around a client secret in Delinea, because
+    the existing tenant does not authenticate that way - it uses a `LocalMachine\My` certificate
+    plus AppId/Organization from module config, and `MessageTrace`'s `DelineaSecretId` is the
+    on-prem credential only.
 - **A live defect was found while scoping queue 4 and is NOT fixed. It needs its own commit.**
   `Components/Pages/MessageTraceReports.razor` carries only the main `MessageTrace` policy
   (`:4`, `:126`), and `Exports.GetExports()` (`:143`) calls
@@ -345,9 +344,9 @@ slices 2-4 unstarted and unblocked.
   independent of the permission split; the split makes it worse by admitting header-only
   operators to that page. Not caused by this run's work.
 
-
 - **A defect in committed TEST infrastructure, found in plan review and not yet fixed.**
-  `ExchangeAdminWeb.Tests/ClickGateSource.cs:213-228`, `ExtractBlock`, counts `{` and `}`
+  `ExchangeAdminWeb.Tests/ClickGateSource.cs:364-384` (re-verified 2026-09-23 as of `26b414b`;
+  the earlier `:213-228` citation was stale), `ExtractBlock`, counts `{` and `}`
   without being quote-aware, so a brace inside a string or interpolated string miscounts the
   depth and the extracted block ends in the wrong place - usually over-capturing into the code
   that follows. **The asymmetry is the tell:** `Tags()` in the same file IS quote-aware and its
@@ -359,77 +358,6 @@ slices 2-4 unstarted and unblocked.
   that only test containment within a generously-sized block are less affected. **Its own slice
   with its own guard proof** (an interpolated string containing a brace, placed inside an
   extracted block); deliberately not folded into another agent's work.
-- **Branch `master`, working tree clean. Nothing is in flight.**
-  The owner's issue queue is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the
-  repo, and not ours to write to). Queue items 1, 3 and 7 are landed and closed, with no open
-  review findings; the owner has since added items 8 and 9. The button gate is closed out - the owner accepted it on 2026-09-18 ("seems to
-  work well enough") and added the app-wide audit to their own queue themselves, so do not
-  re-raise it here as an open item.
-  **Both remotes are level with local at `6f3ee22`**, verified with `git ls-remote` on
-  2026-09-22 after the owner ran `pushall`; `origin` (LAN gitea) was reachable, so the
-  `SEC_E_CERT_EXPIRED` TLS failure seen on 2026-09-18 remains transient rather than a standing
-  fault. Supersedes the `3e19aef` note. Re-verify with `git ls-remote` rather than trusting this
-  line; push policy is unchanged (`.agents/push-policy.md`).
-
-- **Service Health now shows its spinner on the first load. Closed, nothing outstanding.**
-  `docs/ServiceHealthLoadFeedback-Plan.md` is Implemented. The owner deployed to dev, ran its
-  manual acceptance checklist on 2026-09-18 and reported "this passes", which is the evidence
-  of record for this item. Landed 2026-09-18 in `d1ed96e`; ServiceHealth module version 1.3.2,
-  no base app bump. Queue item 7.
-  **The complaint was never "there is no spinner"** - the page already had three, and they
-  were all correct. Root cause: the page prerenders (`Program.cs:374`, no `prerender: false`
-  anywhere in the app), prerendering emits no HTML until `OnInitializedAsync` completes, and
-  that method awaited the whole Graph round trip. So the browser's first byte of the page was
-  the finished board and no spinner could ever render. Worse, enhanced navigation
-  (`Components/App.razor` listens for `blazor:enhancedload`) leaves the *previous* page
-  rendered and interactive during the fetch, so the UI looked completely idle - hence the
-  repeated clicks. Fix follows the `BlockedSenders.razor:166-181` precedent: the load moved to
-  `OnAfterRenderAsync` behind a `firstRender && !loadStarted && authChecked` guard, with
-  `StateHasChanged()` added to `LoadAsync`'s `finally` because Blazor does not auto-render
-  after `OnAfterRenderAsync`. The two Graph collections also now run under `Task.WhenAll`
-  instead of serially.
-  **Resolved along the way, so nobody re-opens it:** the authorization round trip is NOT part
-  of this problem. `GroupAuthorizationHandler.HandleRequirementAsync`
-  (`Authorization/GroupAuthorizationHandler.cs:48-65`) is synchronous over in-memory state and
-  returns `Task.CompletedTask` - no directory or network I/O - which is why the auth check
-  stays in `OnInitializedAsync` here and in the precedent.
-  Five source-level tripwires guard it, all stripping comments before matching. Guard proof:
-  steps 1, 2 and 3 each mutated back independently, each 1 failed / 34 passed against its
-  named tripwire, all restores byte-identical by SHA256. Full suite green at 2510 passed /
-  0 failed / 3 skipped. Nothing here reaches the rendered
-  page - no bUnit harness exists - which is exactly why the owner's dev-deploy pass is what
-  closed it. The implementation codereview was never dispatched: the owner accepted the manual
-  result and moved to the next item. Do not re-open it on your own.
-  **Noted, not fixed:** because prerender and the interactive circuit each ran
-  `OnInitializedAsync`, every Service Health view used to write *two* `ServiceHealthView`
-  audit entries; this change incidentally drops it to one. Whether other pages duplicate their
-  audit the same way is unexamined and unscoped.
-
-- **Every control on Mailbox Migrations is gated on one in-flight predicate.**
-  `docs/MigrationButtonGating-Plan.md` is Implemented. Landed 2026-09-17 in `00da11e` (the
-  prerequisite `loadingBatchUsers` leak) and the commit on top of it; Migration module 1.9.0,
-  no base app bump. The owner's rule - a control is clickable only when its click will
-  definitively execute - is recorded as a general rule in `.agents/decisions.md` (2026-09-17).
-  **It was applied to `Components/Pages/Migration.razor` only. Sweeping the rest of the app is
-  an unscoped follow-up that nobody has approved** - do not treat other pages' ungated buttons
-  as drift, and do not start the sweep without an explicit go.
-  The page now has one `IsBusy` predicate over eight in-flight flags; 27 of 31 buttons consult
-  it, and the four that do not are named with reasons in the tests. Staged-confirmation state is
-  deliberately excluded: folding it in would have disabled Confirm at the only moment it renders,
-  and no destructive action could ever be executed again - caught by the codex review of the
-  plan, before any code, when all three then-proposed tests would have passed the broken shape.
-  The tab strip is anchors, which ignore `disabled`, so the refusal lives in `SelectTab` /
-  `SelectStatusTab`; the guard cannot move into `LoadMigrationStatus`, because
-  `ExecuteBulkBatchAction` calls that to refresh the table while it is itself still busy.
-  Seven source-level tripwires guard it (the plan specified six; the seventh enforces the tab
-  guard, which would otherwise have shipped unenforced). Two of them initially failed against
-  correct code because the scanners read the words "await" and "finally" out of the new
-  explanatory comments - **a source scanner in this repo must strip comments before matching.**
-  Guard proof: three representative controls (Delete row action, Show report, batch Details)
-  each mutated back to their pre-gate form, each failing exactly
-  `EveryButtonConsultsTheBusyPredicate`, 1 failed / 59 passed, restores byte-identical.
-  Nothing here reaches the rendered page - no bUnit harness exists.
-
 - **Mailbox Migrations no longer shows a stale open report; only the manual checks remain.**
   `docs/MigrationStaleReport-Plan.md` is Implemented and owns the acceptance checklist. Landed
   2026-09-17 in `3e4f13d`, with the review fix `2b93fdc` on top; Migration module version 1.8.2,
@@ -472,32 +400,6 @@ slices 2-4 unstarted and unblocked.
   name decides the order. Blazor markup has no test harness here, so the rendered sidebar,
   Module Config tree and home tiles are unverified by automation - run the plan's manual checks
   after a dev deploy. The plan's implementation codereview has not been dispatched.
-
-- **CloudPasswordReset: the owner is populating `employeeID` on Entra CLD accounts (2026-09-15).**
-  This replaces heuristic name/alias matching with a direct key: the CLD account's `employeeID`
-  matches the AD employee record's employee identifier, and that record supplies the destination
-  mailbox. The owner directs reopening module work on this basis. The name/alias/legacy-suffix
-  rules proposed in `.agents/research/cloud-password-owner-runtime.md` are consequently candidates
-  for demotion to fallback or deletion, and the 89/82 split from the old experiment is superseded
-  as a coverage claim once enrollment completes. Open: enrollment is in progress, not complete, so
-  the resolver's behavior for an unpopulated `employeeID` (refuse vs fall back) is undecided, as is
-  whether `employeeID` alone is sufficient without a corroborating name check. Implementation
-  remains on hold pending an updated plan.
-
-- **CloudPasswordReset: runtime owner investigation reopened; implementation remains on hold.**
-  The owner requested completion of the runtime-association investigation and authorized the
-  M365Connections/PTK connection. Scope is individually owned employee CLD accounts. L2 alone
-  uses the app; ServiceNow and the employee do not interact with it. No advance enrollment,
-  maintained owner map, or operator-supplied delivery address. Requirements are recorded in
-  `.agents/decisions.md` (2026-09-14); current evidence, proposed rules and remaining validation
-  are canonical in `.agents/research/cloud-password-owner-runtime.md`. Inspect the local
-  diagnostic receipt listed in `.agents/machines.md`, independently classify unresolved
-  employee candidates, then approve an updated plan before implementation. The old held
-  `docs/CloudPasswordReset-Plan.md` still describes operator-entered delivery and is not the
-  current proposed solution. No module code or new permissions have shipped. The abandoned
-  tooling remains deleted; its earlier survey approval is not standing query authority.
-  D4 remains unresolved. Survey-data disposition and unnecessary survey-registration grants
-  remain open outside module implementation; see Blockers and `.agents/machines.md`.
 
 - **Service Health is implemented; design acceptance and manual checks remain.**
   `docs/ServiceHealth-Plan.md` owns the design and checklist. The original dashboard appearance
@@ -608,60 +510,16 @@ slices 2-4 unstarted and unblocked.
   - **`BlockedSenderService.UnblockSenderAsync` still takes no `CancellationToken`** and the file
     has no timeout - the one confirmed live instance of the page-deadening hazard the whole sweep
     was about.
-- **Superseded by the entry above: next agreed item was queue 9, the app-wide click-gating audit.** Picked 2026-09-18 when the
-  owner closed item 7 and said "pick next item from the updated list"; they did not name one,
-  so this is the working agent's pick and the owner may override it. Reasons it was chosen
-  over 8, 4, 5, 6 and 2: the rule is already settled and written down, the Migration work is
-  the worked precedent, it needs no new credential or app registration, and its deliverable is
-  an audit and an effort estimate rather than code - so it sizes the rest of the queue. Item 8
-  is the bigger prize but opens on a blocker only the owner can clear (a new app registration),
-  so surface its permissions ask early if 9 stalls. Item 2 stays blocked on a decision.
-  That audit is now delivered as `docs/ClickGatingAudit-Plan.md`; the paragraph above is kept
-  only for the reasoning behind picking 9 over 8, 4, 5, 6 and 2. **First action for the next
-  session: wait for the owner's scope answer on that plan. Do not start fixing.**
 
-- **Owner-reported issues, raised 2026-09-15. Issues 1, 3 and 7 are closed; 2 is not started.**
-  1. *Licensing Updates sat in the wrong nav category.* Landed 2026-09-15 as `7d4b976`: it is
-     now `Category = ModuleCategories.IdentityAndAccess`, module version 1.1.1. Category is nav
-     grouping only - section-access keys are per-module policy aliases - so the move did not
-     touch authorization. Closed.
-  2. *Service Health misses `status.cloud.microsoft`.* Microsoft splits its status reporting;
-     the module currently reads only the Graph service-health source. Needs a decision on how
-     that second source is obtained (no documented Graph equivalent is established) before any
-     design. Interacts with `docs/ServiceHealth-Plan.md`, whose appearance is binding.
-     Blocked on that decision, which is why item 7 was taken first.
-  3. *Mailbox Migrations shows a stale open report.* Landed 2026-09-17 as `3e4f13d`, reviewed,
-     and its one finding fixed in `2b93fdc`; see the Now entry above and
-     `docs/MigrationStaleReport-Plan.md`. Code-side closed; only the plan's owner-deferred
-     manual acceptance checklist remains.
-
-- **Queue items not yet started, in the owner's own words.** Numbering is the queue's.
-  4. *Break out permissions for message trace vs header analysis.* Two capabilities behind one
-     policy alias today. Self-contained; the obvious alternative to item 7 if that stalls.
-  5. *Explore adding other owned tenants/domains to message trace.* Exploratory; scope and
-     credential model are both undefined.
-  6. *Containerize the app so it can be deployed elsewhere rapidly.* The owner's own note asks
-     whether Docker works with IIS. Large; interacts with the whole deploy pipeline and the
-     shared-config-DB invariant. Do not start without a ruling.
-  7. *O365 status module is slow to load, inviting repeated clicks or refreshes; it needs to be
-     obvious when loading.* **Landed 2026-09-18 in `d1ed96e` and closed** - the owner ran the
-     manual acceptance checklist on a dev deploy and it passed. See the Now entry and
-     `docs/ServiceHealthLoadFeedback-Plan.md`. Nothing outstanding.
-  8. *New module for Microsoft Defender for Endpoint.* List and export all devices; the
-     specific ask is every Windows device in the "Can be onboarded" state, with discovery
-     sources, IP, domain, OS and other identifying detail, exportable. **The owner's own note
-     says it needs a new app registration and asks to be told the permissions and requirements
-     up front** - that ask is the first deliverable, and it blocks any code, because the app
-     registration is the owner's to create. Largest item in the queue.
-  9. *Audit the app for clicks allowed when the system is not ready to process them*, the class
-     fixed in Mailbox Migrations, then plan to fix all of them and give the owner an idea of
-     the effort. This is the app-wide sweep that state.md has twice said needs an explicit go;
-     the owner queueing it is that go, but the deliverable they asked for is an audit plus a
-     plan with an effort estimate, **not** a code sweep. The rule it applies is already
-     recorded: `.agents/decisions.md` 2026-09-17, "a control is clickable only when its click
-     will definitively execute". `docs/MigrationButtonGating-Plan.md` is the worked precedent.
-     **The audit and estimate are delivered** (2026-09-18, `docs/ClickGatingAudit-Plan.md`,
-     Draft); the item stays open pending the owner's answer on how much of it to approve.
+- **The owner's issue queue is the enumeration of outstanding items and this file does not copy
+  it.** It lives at the path recorded in `.agents/machines.md` (machine-local, not in the repo,
+  and not ours to write to - its own first line says so). Read it for the owner's wording and
+  their own status markers. Each item's current standing is in `## Now`: 14 is next and is a
+  planning task, 12 and 13 sit behind it, 8 is parked, 4 is in progress, 9's tier 1 is complete
+  with tiers 2-4 unapproved, and 2, 5 and 6 are covered in the weekend-run entry. The previous
+  copy of the queue was rotated to `docs/history/state-archive.md` on 2026-09-23: its "not yet
+  started" header was false for four of its six items, and the entries for 5 and 6 had been
+  overtaken by owner rulings of 2026-09-21.
 
 - **Manual validation is outstanding operational work.** Start with
   `docs/DevValidation-2.3.34.md`: Admin Settings access, protected-user alias refusal and the
@@ -685,13 +543,22 @@ slices 2-4 unstarted and unblocked.
 
 ## Blockers
 
-- **Falsified deployment/configuration blockers, checked 2026-09-14 as of `a16c316`:**
+- **Falsified deployment/configuration blockers:**
   the old dev/prod versions, incomplete shared cutover and missing initial ServiceHealth,
   RiskyUsers and IntuneDevices configuration disagree with the host. Evidence is canonical in
-  `.agents/machines.md`. Manual acceptance and exact deployed module versions remain unverified.
+  `.agents/machines.md`, whose receipt was re-measured 2026-09-23 as of `26b414b` - **dev and prod
+  are no longer at the same base version.** Manual acceptance and exact deployed module versions
+  remain unverified.
+- **Queue 6, containerize: the SPN and gMSA work is not ours to do.** The owner's 2026-09-21
+  ruling makes containerization a requirement, but a containerised app runs under Kestrel rather
+  than IIS, so Windows Authentication needs a gMSA, a credential spec and SPNs registered in the
+  forest - `deploy.ps1:381` removes the Negotiate provider today precisely to avoid that. That is
+  the owner's AD team's work. Also unanswered and it changes the design: where "elsewhere" is. A
+  container outside line of sight of on-prem AD and Exchange cannot do the AD, on-prem Exchange or
+  DHCP work at all. Evidence: `.agents/decisions.md` 2026-09-21, items 3 and the closing paragraph.
 - **SQLite upgrade is no longer blocked by package availability.** The 2026-06-26 decision's
-  "no patched package exists" basis is falsified, checked 2026-09-14 as of `a16c316`:
-  local restore still resolves `SQLitePCLRaw.lib.e_sqlite3/2.1.11`, while
+  "no patched package exists" basis is falsified, re-verified 2026-09-23 as of `26b414b`:
+  `obj/project.assets.json` still resolves `SQLitePCLRaw.lib.e_sqlite3/2.1.11`, while
   [NuGet publishes newer builds](https://www.nuget.org/packages/SQLitePCLRaw.lib.e_sqlite3),
   including 3.53.3 (the package version identifies its SQLite engine).
   The [advisory](https://github.com/advisories/GHSA-2m69-gcr7-jv3q) still lists affected versions
@@ -713,14 +580,17 @@ slices 2-4 unstarted and unblocked.
   implementation uses the store's change token with a throttle. The additive-only rule has
   operative homes in the decision, guidance and test but is absent from the Constitution.
   Evidence: `docs/SharedConfigDb-Plan.md` section 9. No ruling inferred.
-- **Plan-status drift remains:** `docs/BlockedSendersLoadTiming-Plan.md` and
+- **Plan-status drift remains, re-verified 2026-09-23 as of `26b414b`:**
+  `docs/BlockedSendersLoadTiming-Plan.md` and
   `docs/Comms10kReplaceUx-Plan.md` still say Approved;
-  `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` says Approved / In progress as of `a16c316`.
+  `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` still says Approved / In progress.
   Implementation was recorded but full completion is unverified. Do not silently relabel them.
   `docs/AdminUIRedesign-Plan.md` remains In progress with manual checks.
 - **Unscheduled M365 protection gap:** group update/delete and owner adds were recorded as
-  ungated, and protection configuration cannot identify a cloud-only group. Update/delete
-  still lack a check in `Services/M365GroupManagementService.cs` as of `a16c316`.
+  ungated, and protection configuration cannot identify a cloud-only group. Re-verified
+  2026-09-23 as of `26b414b`: `Services/M365GroupManagementService.cs` calls its
+  `CheckProtectedAsync` gate from the member/owner paths only - `UpdateGroupAsync` and
+  `DeleteGroupAsync` still call neither.
   The owner excluded this module from the on-prem target work; no work approved.
 - **Older questions:** `docs/MessageTraceNullRow-Plan.md` needs a live rerun; the upstream
   null-row cause remains undiagnosed (OQ-1). `docs/ProtectedPrincipalResolution-Plan.md`
@@ -734,14 +604,13 @@ slices 2-4 unstarted and unblocked.
 ## Verification
 
 Commands and mandatory guards are owned by `.agents/repo-guidance.md` and `AGENTS.md`.
-Last run 2026-09-19, the Defender S1 slice: build Release (0 errors, the same 23
-pre-existing warnings), `dotnet test ExchangeAdminWeb.slnx` (**2850 passed / 0 failed /
-3 skipped**), `dotnet format --verify-no-changes` exit 0, `git diff --check HEAD` exit 0,
-ASCII lint passed. PSScriptAnalyzer and Pester were run once during the run, for the one slice
-that touched PowerShell (`fab01c5`): 0 findings in the touched files, Pester 157 passed.
-Every commit of the weekend run passed these gates before it landed. Browser acceptance, AD/Graph queries and reviewer
-dispatches were not run. Current CI status/test counts do not
-belong here. Per-finding status is owned by `.agents/review/index.md`.
+**Last full run 2026-09-23, as of `bd29a9c`:** build Release 0 errors, `dotnet test
+ExchangeAdminWeb.slnx` **3064 passed / 0 failed / 3 skipped**, `dotnet format
+--verify-no-changes` clean, `git diff --check` clean, Pester 157 passed / 0 failed,
+PSScriptAnalyzer 0 errors. Commits after `bd29a9c` are docs-only and were not re-run.
+Every commit of the weekend run passed these gates before it landed. Browser acceptance, AD/Graph
+queries and reviewer dispatches were not run. Current CI status does not belong here.
+Per-finding status is owned by `.agents/review/index.md`.
 
 ## Active sources
 

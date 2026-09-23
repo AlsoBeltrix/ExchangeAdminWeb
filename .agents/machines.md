@@ -73,15 +73,30 @@ _First recorded 2026-07-21._
   appsettings files name this same existing path.** Startup-log and cross-instance
   refresh acceptance checks were not run by this records sweep.
 
+### Owner's issue queue
+
+- queue-file: `C:\Users\mcoelho\Desktop\queue.txt`
+
+Machine-local, outside the repo, and **the owner's file - never write to it**, including status
+markers; its own first line says so. It owns the enumeration of outstanding items and their
+owner-maintained status markers. `.agents/state.md` points here rather than copying the list.
+
 ### Deployment and configuration receipt (2026-09-14, as of `a16c316`)
 
 Read-only evidence: DLL FileVersion/LastWriteTime, the `ConfigStore:Path` field in
 both deployed appsettings files, and selected rows in the shared config database.
-No secret values or directory data were read. Both files report base version `2.20.2.0`
-and LastWriteTime `2026-09-09 08:24:15` (host local time):
+No secret values or directory data were read.
 
-- Dev DLL: `D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll`.
-- Prod DLL: `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll`.
+**Deployed base versions re-measured 2026-09-23 as of `26b414b`. Dev and prod have
+diverged; the 2026-09-14 reading of `2.20.2.0` on both is falsified for dev:**
+
+- Dev DLL `D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll` - `2.22.0.0`,
+  LastWriteTime `2026-09-22 15:46:45` (host local time). Matches the owner's 2026-09-22
+  deploy of the MessageTrace slice-1 fix and the Access-tab labels.
+- Prod DLL `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll` - `2.20.2.0`,
+  LastWriteTime `2026-09-09 08:24:15`. Unchanged since the 2026-09-14 reading.
+- The repo is at base `2.23.0` (`ExchangeAdminWeb.csproj`), so neither instance carries
+  the current build. `ExchangeAdminWeb.csproj` owns that number; do not copy it here.
 
 ServiceHealth, RiskyUsers and IntuneDevices are enabled; each has a nonblank,
 nonzero `GraphDelineaSecretId` and at least one section-access row. These checks do

@@ -13,6 +13,194 @@ still ran it inline.
 > can be run from the dev instance. Read every "no dev tenant" below as "live validation
 > not yet performed."
 
+## Archived 2026-09-23 (drift sweep)
+
+Preserved verbatim. Rotated out of `.agents/state.md` because each entry was completed,
+explicitly superseded, or falsified by current evidence. What is still live has a home
+elsewhere and is named here:
+
+- **Access tab labels** landed, deployed and verified; the module-version history is in the
+  `ModuleCatalog.cs` comment on the `MessageTrace` descriptor. The one rule it carried that had
+  no other home - the aliases must never be renamed - is kept live in `.agents/state.md`.
+- **Branch/queue status** entry: the queue.txt path moved to `.agents/machines.md`; the push
+  status in it was deleted rather than rotated, per the 2026-07-11 ruling.
+- **Service Health load feedback** and **Migration button gating** are both Implemented and
+  owner-accepted; the gating rule itself is `.agents/decisions.md` 2026-09-17.
+- **Both CloudPasswordReset hold/investigation entries** are falsified: the module is built and
+  reviewed (`docs/CloudPasswordReset-Plan.md`, `Status: Implemented`), which the entries below
+  say had not happened. Residuals stay in `## Blockers`.
+- **The three `## Next` entries** were a superseded pick rationale, a set of owner-reported
+  issues with 1/3/7 closed and 2 living in the weekend-run entry, and a queue enumeration the
+  owner's own `queue.txt` owns and whose "not yet started" header was false for four of six
+  items.
+
+- **ACCESS TAB LABELS: DONE, `bdd01a8`, DEPLOYED AND VERIFIED BY THE OWNER 2026-09-22.** Owner ruling 2026-09-22: *"the access names
+  are stupid. 'MessageTrace' vs 'MessageTraceSearch'? trace is what we're gating. header analysis
+  vs trace. name them more clearly in the UI."* `ModulePermission` gained an optional `DisplayName`
+  defaulting to null; `Components/Pages/ModuleConfig.razor` heads each grant with it and keeps the
+  alias beside it in muted text. `MessageTrace` declares "Header Analysis" and "Trace Search";
+  every other module declares none and renders exactly as before, pinned by its own test.
+  **The aliases were NOT renamed and must not be** - each is the section-access storage key and the
+  store is fail-closed, so a rename orphans the groups granted against it and denies them rather
+  than failing open. The alias stays on screen for the same reason it stays in the code: it is what
+  the denial log line names.
+  Both bumps fired per the Constitution's two rules: base app `2.21.1` -> `2.22.0` (shared record
+  and config page), module `1.5.1` -> `1.5.2`. Suite 2954/0/3; two mutations, each failing only its
+  own test. Constitution "Planning Rules" puts UI polish outside the written-plan requirement, so
+  no plan was written.
+
+- **Branch `master`, working tree clean. Nothing is in flight.**
+  The owner's issue queue is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the
+  repo, and not ours to write to). Queue items 1, 3 and 7 are landed and closed, with no open
+  review findings; the owner has since added items 8 and 9. The button gate is closed out - the owner accepted it on 2026-09-18 ("seems to
+  work well enough") and added the app-wide audit to their own queue themselves, so do not
+  re-raise it here as an open item.
+  **Both remotes are level with local at `6f3ee22`**, verified with `git ls-remote` on
+  2026-09-22 after the owner ran `pushall`; `origin` (LAN gitea) was reachable, so the
+  `SEC_E_CERT_EXPIRED` TLS failure seen on 2026-09-18 remains transient rather than a standing
+  fault. Supersedes the `3e19aef` note. Re-verify with `git ls-remote` rather than trusting this
+  line; push policy is unchanged (`.agents/push-policy.md`).
+
+- **Service Health now shows its spinner on the first load. Closed, nothing outstanding.**
+  `docs/ServiceHealthLoadFeedback-Plan.md` is Implemented. The owner deployed to dev, ran its
+  manual acceptance checklist on 2026-09-18 and reported "this passes", which is the evidence
+  of record for this item. Landed 2026-09-18 in `d1ed96e`; ServiceHealth module version 1.3.2,
+  no base app bump. Queue item 7.
+  **The complaint was never "there is no spinner"** - the page already had three, and they
+  were all correct. Root cause: the page prerenders (`Program.cs:374`, no `prerender: false`
+  anywhere in the app), prerendering emits no HTML until `OnInitializedAsync` completes, and
+  that method awaited the whole Graph round trip. So the browser's first byte of the page was
+  the finished board and no spinner could ever render. Worse, enhanced navigation
+  (`Components/App.razor` listens for `blazor:enhancedload`) leaves the *previous* page
+  rendered and interactive during the fetch, so the UI looked completely idle - hence the
+  repeated clicks. Fix follows the `BlockedSenders.razor:166-181` precedent: the load moved to
+  `OnAfterRenderAsync` behind a `firstRender && !loadStarted && authChecked` guard, with
+  `StateHasChanged()` added to `LoadAsync`'s `finally` because Blazor does not auto-render
+  after `OnAfterRenderAsync`. The two Graph collections also now run under `Task.WhenAll`
+  instead of serially.
+  **Resolved along the way, so nobody re-opens it:** the authorization round trip is NOT part
+  of this problem. `GroupAuthorizationHandler.HandleRequirementAsync`
+  (`Authorization/GroupAuthorizationHandler.cs:48-65`) is synchronous over in-memory state and
+  returns `Task.CompletedTask` - no directory or network I/O - which is why the auth check
+  stays in `OnInitializedAsync` here and in the precedent.
+  Five source-level tripwires guard it, all stripping comments before matching. Guard proof:
+  steps 1, 2 and 3 each mutated back independently, each 1 failed / 34 passed against its
+  named tripwire, all restores byte-identical by SHA256. Full suite green at 2510 passed /
+  0 failed / 3 skipped. Nothing here reaches the rendered
+  page - no bUnit harness exists - which is exactly why the owner's dev-deploy pass is what
+  closed it. The implementation codereview was never dispatched: the owner accepted the manual
+  result and moved to the next item. Do not re-open it on your own.
+  **Noted, not fixed:** because prerender and the interactive circuit each ran
+  `OnInitializedAsync`, every Service Health view used to write *two* `ServiceHealthView`
+  audit entries; this change incidentally drops it to one. Whether other pages duplicate their
+  audit the same way is unexamined and unscoped.
+
+- **Every control on Mailbox Migrations is gated on one in-flight predicate.**
+  `docs/MigrationButtonGating-Plan.md` is Implemented. Landed 2026-09-17 in `00da11e` (the
+  prerequisite `loadingBatchUsers` leak) and the commit on top of it; Migration module 1.9.0,
+  no base app bump. The owner's rule - a control is clickable only when its click will
+  definitively execute - is recorded as a general rule in `.agents/decisions.md` (2026-09-17).
+  **It was applied to `Components/Pages/Migration.razor` only. Sweeping the rest of the app is
+  an unscoped follow-up that nobody has approved** - do not treat other pages' ungated buttons
+  as drift, and do not start the sweep without an explicit go.
+  The page now has one `IsBusy` predicate over eight in-flight flags; 27 of 31 buttons consult
+  it, and the four that do not are named with reasons in the tests. Staged-confirmation state is
+  deliberately excluded: folding it in would have disabled Confirm at the only moment it renders,
+  and no destructive action could ever be executed again - caught by the codex review of the
+  plan, before any code, when all three then-proposed tests would have passed the broken shape.
+  The tab strip is anchors, which ignore `disabled`, so the refusal lives in `SelectTab` /
+  `SelectStatusTab`; the guard cannot move into `LoadMigrationStatus`, because
+  `ExecuteBulkBatchAction` calls that to refresh the table while it is itself still busy.
+  Seven source-level tripwires guard it (the plan specified six; the seventh enforces the tab
+  guard, which would otherwise have shipped unenforced). Two of them initially failed against
+  correct code because the scanners read the words "await" and "finally" out of the new
+  explanatory comments - **a source scanner in this repo must strip comments before matching.**
+  Guard proof: three representative controls (Delete row action, Show report, batch Details)
+  each mutated back to their pre-gate form, each failing exactly
+  `EveryButtonConsultsTheBusyPredicate`, 1 failed / 59 passed, restores byte-identical.
+  Nothing here reaches the rendered page - no bUnit harness exists.
+
+- **CloudPasswordReset: the owner is populating `employeeID` on Entra CLD accounts (2026-09-15).**
+  This replaces heuristic name/alias matching with a direct key: the CLD account's `employeeID`
+  matches the AD employee record's employee identifier, and that record supplies the destination
+  mailbox. The owner directs reopening module work on this basis. The name/alias/legacy-suffix
+  rules proposed in `.agents/research/cloud-password-owner-runtime.md` are consequently candidates
+  for demotion to fallback or deletion, and the 89/82 split from the old experiment is superseded
+  as a coverage claim once enrollment completes. Open: enrollment is in progress, not complete, so
+  the resolver's behavior for an unpopulated `employeeID` (refuse vs fall back) is undecided, as is
+  whether `employeeID` alone is sufficient without a corroborating name check. Implementation
+  remains on hold pending an updated plan.
+
+- **CloudPasswordReset: runtime owner investigation reopened; implementation remains on hold.**
+  The owner requested completion of the runtime-association investigation and authorized the
+  M365Connections/PTK connection. Scope is individually owned employee CLD accounts. L2 alone
+  uses the app; ServiceNow and the employee do not interact with it. No advance enrollment,
+  maintained owner map, or operator-supplied delivery address. Requirements are recorded in
+  `.agents/decisions.md` (2026-09-14); current evidence, proposed rules and remaining validation
+  are canonical in `.agents/research/cloud-password-owner-runtime.md`. Inspect the local
+  diagnostic receipt listed in `.agents/machines.md`, independently classify unresolved
+  employee candidates, then approve an updated plan before implementation. The old held
+  `docs/CloudPasswordReset-Plan.md` still describes operator-entered delivery and is not the
+  current proposed solution. No module code or new permissions have shipped. The abandoned
+  tooling remains deleted; its earlier survey approval is not standing query authority.
+  D4 remains unresolved. Survey-data disposition and unnecessary survey-registration grants
+  remain open outside module implementation; see Blockers and `.agents/machines.md`.
+
+- **Superseded by the entry above: next agreed item was queue 9, the app-wide click-gating audit.** Picked 2026-09-18 when the
+  owner closed item 7 and said "pick next item from the updated list"; they did not name one,
+  so this is the working agent's pick and the owner may override it. Reasons it was chosen
+  over 8, 4, 5, 6 and 2: the rule is already settled and written down, the Migration work is
+  the worked precedent, it needs no new credential or app registration, and its deliverable is
+  an audit and an effort estimate rather than code - so it sizes the rest of the queue. Item 8
+  is the bigger prize but opens on a blocker only the owner can clear (a new app registration),
+  so surface its permissions ask early if 9 stalls. Item 2 stays blocked on a decision.
+  That audit is now delivered as `docs/ClickGatingAudit-Plan.md`; the paragraph above is kept
+  only for the reasoning behind picking 9 over 8, 4, 5, 6 and 2. **First action for the next
+  session: wait for the owner's scope answer on that plan. Do not start fixing.**
+
+- **Owner-reported issues, raised 2026-09-15. Issues 1, 3 and 7 are closed; 2 is not started.**
+  1. *Licensing Updates sat in the wrong nav category.* Landed 2026-09-15 as `7d4b976`: it is
+     now `Category = ModuleCategories.IdentityAndAccess`, module version 1.1.1. Category is nav
+     grouping only - section-access keys are per-module policy aliases - so the move did not
+     touch authorization. Closed.
+  2. *Service Health misses `status.cloud.microsoft`.* Microsoft splits its status reporting;
+     the module currently reads only the Graph service-health source. Needs a decision on how
+     that second source is obtained (no documented Graph equivalent is established) before any
+     design. Interacts with `docs/ServiceHealth-Plan.md`, whose appearance is binding.
+     Blocked on that decision, which is why item 7 was taken first.
+  3. *Mailbox Migrations shows a stale open report.* Landed 2026-09-17 as `3e4f13d`, reviewed,
+     and its one finding fixed in `2b93fdc`; see the Now entry above and
+     `docs/MigrationStaleReport-Plan.md`. Code-side closed; only the plan's owner-deferred
+     manual acceptance checklist remains.
+
+- **Queue items not yet started, in the owner's own words.** Numbering is the queue's.
+  4. *Break out permissions for message trace vs header analysis.* Two capabilities behind one
+     policy alias today. Self-contained; the obvious alternative to item 7 if that stalls.
+  5. *Explore adding other owned tenants/domains to message trace.* Exploratory; scope and
+     credential model are both undefined.
+  6. *Containerize the app so it can be deployed elsewhere rapidly.* The owner's own note asks
+     whether Docker works with IIS. Large; interacts with the whole deploy pipeline and the
+     shared-config-DB invariant. Do not start without a ruling.
+  7. *O365 status module is slow to load, inviting repeated clicks or refreshes; it needs to be
+     obvious when loading.* **Landed 2026-09-18 in `d1ed96e` and closed** - the owner ran the
+     manual acceptance checklist on a dev deploy and it passed. See the Now entry and
+     `docs/ServiceHealthLoadFeedback-Plan.md`. Nothing outstanding.
+  8. *New module for Microsoft Defender for Endpoint.* List and export all devices; the
+     specific ask is every Windows device in the "Can be onboarded" state, with discovery
+     sources, IP, domain, OS and other identifying detail, exportable. **The owner's own note
+     says it needs a new app registration and asks to be told the permissions and requirements
+     up front** - that ask is the first deliverable, and it blocks any code, because the app
+     registration is the owner's to create. Largest item in the queue.
+  9. *Audit the app for clicks allowed when the system is not ready to process them*, the class
+     fixed in Mailbox Migrations, then plan to fix all of them and give the owner an idea of
+     the effort. This is the app-wide sweep that state.md has twice said needs an explicit go;
+     the owner queueing it is that go, but the deliverable they asked for is an audit plus a
+     plan with an effort estimate, **not** a code sweep. The rule it applies is already
+     recorded: `.agents/decisions.md` 2026-09-17, "a control is clickable only when its click
+     will definitively execute". `docs/MigrationButtonGating-Plan.md` is the worked precedent.
+     **The audit and estimate are delivered** (2026-09-18, `docs/ClickGatingAudit-Plan.md`,
+     Draft); the item stays open pending the owner's answer on how much of it to approve.
+
 ## Archived 2026-09-15 (drift sweep)
 
 Preserved verbatim. The entry below recorded a completed records correction whose durable
