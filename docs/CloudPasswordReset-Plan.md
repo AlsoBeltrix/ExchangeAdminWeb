@@ -792,9 +792,8 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   **destination address**, a required text field with no default, no pre-fill, no suggestion
   and no picker -- the module has nothing to suggest from and an autofilled address would be
   read as a verified one; and the **change at next sign-in** checkbox, **CHECKED by default**
-  (owner ruling 2026-09-23). **Label only, no help text.** The Entra console offers the same
-  checkbox unexplained, and the Developer Guide's UI standard is to avoid explanatory text on
-  the page. The panel
+  (owner ruling 2026-09-23). Help text, exactly: *"The user must set a new password the first
+  time they sign in."* It says what the setting does and stops. The panel
   states, in plain words next to the address field, that the address is recorded
   in the audit log and mailed to the administrators. No write path in this slice. Catalog
   tests, plus tests that the address field starts empty, that submitting it blank or malformed

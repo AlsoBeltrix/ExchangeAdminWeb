@@ -23,9 +23,9 @@ changing it, is no longer a live credential to an admin account.
 reset - item 11: *"an option at runtime, so not secreted away in settings"*. The 2026-09-10 failure
 mode is still real: some accounts in this population sign in by routes that cannot service a
 change-password prompt, and leaving the box ticked for one of those hands back an account nobody
-can sign into. The default moved; the choice did not. **The checkbox carries a label and no help
-text** - the Entra console offers the same control unexplained, and the Developer Guide's UI
-standard is to keep explanatory text off the page. The reasoning belongs in this record.
+can sign into. The default moved; the choice did not. Help text, exactly: *"The user must set a
+new password the first time they sign in."* It states the behaviour and nothing else - no
+warning, no rationale, no reference to this decision. The reasoning belongs in this record.
 
 **Plan amended in the same commit:** the ruling paragraph under "The Graph surface", S3 (the flag
 is now a required parameter with no service-side default - the default belongs to the page, and a
