@@ -151,13 +151,17 @@ reported a problem with.
 
 ### Why both halves, when either might do
 
-Either change alone stops the overflow. Both are in scope because they fix different
-things and leaving one behind leaves a trap:
+**Step 2 is the fix. Step 1 is not, and an earlier draft of this plan wrongly said either
+one would do.** They are both in scope because they address different things:
 
-- Step 2 alone fixes the scrollbar but leaves `calc(100vh - 2.9rem)` as a live
-  magic number, so the next edit to the brand row reintroduces this class of bug.
-- Step 1 alone removes the magic number but leaves `nav` a block, so the margin still
-  collapses and the 11 pixels still overflow.
+- **Step 2 (`nav` becomes flex) is what stops the overflow.** A flex container does not
+  collapse margins with its children, so the 0.7rem stays where it was written.
+- **Step 1 (sidebar flex column, `calc()` removed) fixes nothing today.** It removes the
+  fragile coupling between two constants in two files that nothing keeps in step. Without
+  step 2 the margin still collapses and the 11 pixels still overflow; without step 1 the
+  bug is fixed but the next edit to the brand row can reintroduce its whole class.
+
+If only one may land, land step 2.
 
 ## Slices
 
@@ -167,9 +171,21 @@ produce a commit that fixes half a geometry bug.
 ### S1 -- the sidebar scroll pane
 
 Files: `Components/Layout/NavMenu.razor.css`, `Components/Layout/MainLayout.razor.css`.
-No `.razor` markup changes, and **no change to `wwwroot/app.css`** -- verified above that
-none of the touched rules is mirrored there. If implementation finds otherwise, stop and
-mirror deliberately rather than picking one copy.
+No `.razor` markup changes unless Q1 rules (b).
+
+**No change to `wwwroot/app.css`, and the reason needs stating rather than asserting.**
+`app.css` does carry a `.sidebar` selector (`:1316`), so "the touched rules are not
+mirrored" is too loose a claim to rest on. That rule is
+`.sidebar { background-image: none !important; }` -- a theme override and nothing else.
+**No sidebar geometry exists in `app.css` at all:** neither `width: 218px` nor
+`height: 100vh` appears anywhere in the file, and both are live on the deployed dev
+instance, which is visible in the 2026-09-24 screenshot as a 218px-wide full-height
+sidebar. Those declarations exist only in `MainLayout.razor.css`, so CSS isolation is
+demonstrably working for that component on this deployment and the mirror is not needed
+for it. Geometry belongs in the isolated file; `app.css`'s `.sidebar` stays theme-only.
+
+If implementation finds any touched declaration present in both files, stop and mirror
+deliberately rather than picking one copy.
 
 Tests: a CSS tripwire in the `ExchangeAdminWeb.Tests/UiThemeCssTests.cs` shape (it already
 reads both stylesheets from disk and asserts rule content, `:421-433`). Assert the two
@@ -254,14 +270,46 @@ the Administration block to the bottom of the sidebar.
 - **(a) Let it move.** The markup already says `mt-auto` and `flex-column`; honouring them
   restores what the code was written to do, and a version stamp pinned to the bottom is
   the conventional place for one. Costs nothing extra.
-- **(b) Keep it where it is.** Add `margin-top: 0` to that element to neutralise
-  `mt-auto`. The scrollbar fix is unaffected. This keeps the change strictly to what was
-  reported and moves nothing the owner did not ask about.
+- **(b) Keep it where it is.** The scrollbar fix is unaffected either way. But this costs
+  a markup change, not a one-line CSS override: Bootstrap declares
+  `.mt-auto{margin-top:auto!important}`, so a plain `margin-top: 0` in the isolated
+  stylesheet loses to it. Do it by **removing `mt-auto` from
+  `Components/Layout/NavMenu.razor:130`**, which states the intent in the one place a
+  reader will look, rather than by fighting `!important` from a stylesheet.
 
 Recommendation: **(a)**. The current position is not a design decision anyone made -- it
 is the same missing `display: flex` reported as a bug, showing up somewhere else. But it
 is a visible change that was not requested, which is why it is being asked rather than
 assumed.
+
+## Review
+
+`openreview codex (@azure-openai-eus2-global/gpt-5.5-dzs @ xhigh, fallback) over
+fa0dd1b..941cd77: acceptable_with_changes`. codex-cli 0.154.0, 2026-09-24. Capability
+proof passed both halves (read `AGENTS.md`; ran `git diff --stat` over the pins, plus
+`git diff --check`). Resolved model identity is not recoverable from the CLI envelope --
+the Portkey gateway obscures it -- so this records what was dispatched, per the playbook.
+
+The reviewer confirmed the root-cause analysis against the code and endorsed the
+approach: sidebar as a flex column, nav pane `flex: 1; min-height: 0; overflow-y: auto`,
+`<nav>` a real column flex container, mobile drawer untouched, footer position asked
+rather than assumed.
+
+Three material changes, **all three admitted and folded into the text above**:
+
+1. **The plan contradicted itself.** It opened "Either change alone stops the overflow"
+   and then, four lines later, said step 1 alone leaves the 11 pixels. The second
+   statement is the correct one. Rewritten: step 2 is the fix, step 1 removes the
+   fragile coupling, and if only one lands it must be step 2.
+2. **The no-mirror claim was too loose to rest on.** `wwwroot/app.css:1316` does carry a
+   `.sidebar` selector. Checked: it is `background-image: none !important` and nothing
+   else, and no sidebar geometry exists in `app.css` at all -- neither `width: 218px` nor
+   `height: 100vh` appears there, while both are live on dev. That is positive evidence
+   CSS isolation works for `MainLayout` on this deployment, which is now written down
+   instead of assumed.
+3. **Q1 option (b) would not have worked.** Bootstrap declares
+   `.mt-auto{margin-top:auto!important}`, so the proposed `margin-top: 0` override loses.
+   Option (b) now removes `mt-auto` from the markup instead.
 
 ## Related records
 
