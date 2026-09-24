@@ -1,9 +1,9 @@
 # Migration -- Redesign The Status Interface (queue item 14)
 
 Status: **Draft, awaiting owner approval.** No code written. The layout was settled by the
-owner over many rounds against a working mockup (`.agents/mockups/migration-v3.html`), and
-three codex openreviews have run against this plan. **Two owner rulings are outstanding, Q3
-and Q4, and one of them decides whether a slice exists at all.**
+owner over many rounds against a working mockup (`.agents/mockups/migration-v3.html`), three
+codex openreviews have run against this plan, and **every open question is now closed**. What
+remains is the owner approving the plan itself.
 
 ## Why a plan at all
 
@@ -28,9 +28,8 @@ per-mailbox bulk actions (R12), Schedule as a first-class control (R13) and Expo
 (R31) are all here. Item 14 "preceding" 12 and 13 means the layout lands first, in S1-S6,
 before their behaviour is wired in S7 and after.
 
-The one piece not yet settled is the `CompleteAfter` service semantics item 12 needs (trap 1
-below). They are drafted as S8 and gated on **Q3**: without them a Schedule button cannot do
-anything, so either S8 is in or Schedule ships disabled.
+The `CompleteAfter` service semantics item 12 needs (trap 1 below) are S8, and they are in:
+nothing ships until all three items are done, so Schedule lands working rather than disabled.
 
 ## What is wrong with the page today
 
@@ -78,13 +77,11 @@ R5. **Nothing is pinned into the batch list.** No ticked-rows section at the top
 The left list is a plain paged list. The selection is visible because it has its own pane, not
 because rows are held back from the filter.
 
-R5a. **Mailboxes are the unresolved case and the mockup currently pins them.** R5 was ruled for
-the batch list, where the right pane shows the selection instead. Mailboxes have no equivalent
-second surface, so the mockup still pins ticked mailbox rows above an "OTHER MAILBOXES"
-divider -- which is how R11 is met there, and which is also the shape the owner rejected for
-batches. **This is an open owner question, not a settled rule.** Either pinning is acceptable
-for mailboxes because there is nowhere else for them to go, or the mailbox selection needs its
-own surface the way batches got one.
+R5a. **Ticked mailboxes ARE pinned, above an "OTHER MAILBOXES" divider** (owner ruling
+2026-09-24). R5 applies to the batch list only, where the right pane shows the selection
+instead. Mailboxes have no equivalent second surface, so pinning is how R11 is met for them.
+The two rules are not in conflict: each list keeps its selection visible by the means available
+to it.
 
 R6. **Actions sit at the top of the thing they act on. Never a footer.** That is what every
 other list UI does and what operators expect.
@@ -281,6 +278,12 @@ framework persists row outcomes and not files, so the job cannot simply hand a f
 
 Each slice is its own commit with its own verification. S1 and S2 carry no behaviour change.
 
+**Slices are commits, not releases.** Owner ruling 2026-09-24: nothing ships until items 12,
+13 and 14 are all done. So no slice is deployed on its own, no intermediate state has to be
+coherent for an operator, and no half-wired control ever reaches anyone. Slicing here buys
+reviewability and bisectable history, not incremental delivery -- which also means a slice may
+leave a control non-functional if the slice that wires it is still to come.
+
 **S1 -- Addressable state.** Drive the open batch from a **query parameter on the existing
 route** (`/migration?batch=<name>`), not from `expandedBatch`, and not from a new path
 segment. A path segment is ruled out on evidence: `Components/Shared/ModuleVersion.razor:23`
@@ -320,7 +323,7 @@ and a zip of one text file per report with a named list of any that failed. Modu
 bump. Satisfies R31. This is the only slice that adds a new operation rather than relocating
 an existing one, and it can ship after the rest.
 
-**S8 -- Scheduled completion semantics (conditional on Q3).** `CompleteAfter` currently means
+**S8 -- Scheduled completion semantics.** `CompleteAfter` currently means
 "complete now": `Services/MigrationService.cs:490` and `:698` pass a past timestamp and `:596`
 reads the property as an auto-complete boolean. A real future schedule needs those three sites
 to separate "complete immediately" from "complete at T", with the boolean reading replaced.
@@ -362,16 +365,11 @@ from the expanded view" needed a transition. Under R9 a click both selects and s
 batch, so reaching its actions is one click in the batch pane rather than a different act
 from opening it. No transition is needed and nothing blocks on this.
 
-**Q3. Does Schedule ship working, or as UI only?** Items 12 and 13 are in scope (see Scope),
-but `CompleteAfter` today means "complete now" -- `Services/MigrationService.cs:490` and
-`:698` pass a time in the **past**, and `:596` reads `CompleteAfter != null` as an
-auto-complete flag. A Schedule button that sets a future time therefore cannot work until
-those semantics change, which is S8. Either S8 is in and Schedule ships working, or Schedule
-is present but disabled until a later stream. **Owner ruling required; this is the only thing
-in the plan that would ship a button that does nothing.**
+**Q3 is closed, 2026-09-24: nothing ships until 12, 13 and 14 are all done** (owner). So S8 is
+in and Schedule works; there was never a disabled-button option, because there is no release
+in between for a disabled button to appear in. See "Slices are commits, not releases" below.
 
-**Q4. May ticked mailboxes be pinned?** See R5a. The batch list got a selection pane instead
-of pinning; mailboxes have no such surface, so the mockup pins them. **Owner ruling required.**
+**Q4 is closed, 2026-09-24: yes, ticked mailboxes are pinned** (owner). R5a resolved.
 
 ## Tests each slice must bring
 
