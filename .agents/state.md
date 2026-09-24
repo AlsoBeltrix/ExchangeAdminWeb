@@ -8,13 +8,46 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**HANDOFF 2026-09-23.** On `master`, working tree clean. Gates are green **as of `bd29a9c`**
+**HANDOFF 2026-09-24.** On `master`, working tree clean. Gates are green **as of `bd29a9c`**
 (build 0 errors, `dotnet test` 3064 passed / 0 failed / 3 skipped, format clean,
-`git diff --check` clean, Pester 157/0, PSScriptAnalyzer 0 errors); the only commits since are
-docs-only, so nothing has been re-run against them.
-**Next session's task is QUEUE ITEM 14, and it is a PLANNING task** - see the entry below. Nothing
-is half-finished: Cloud Password Reset is complete and reviewed, and queue 4 slice 1 is landed with
-slices 2-4 unstarted and unblocked.
+`git diff --check` clean, Pester 157/0, PSScriptAnalyzer 0 errors); every commit since is
+docs-only, so nothing has been re-run against them. Nothing is half-finished.
+
+- **TWO OWNER-REPORTED DEFECTS WERE PLANNED AND REVIEWED 2026-09-24. BOTH PLANS ARE DRAFT AND
+  AWAIT APPROVAL; NO CODE IS WRITTEN. Each has ONE open owner question.** They jumped ahead of
+  queue item 14, which is still the next *queued* item.
+  - **`docs/RiskyUsersCompleteResults-Plan.md`** (`dc79994`, revised `fa0dd1b`). The module
+    returns one 500-row Graph page in an unspecified order and runs the UPN search inside it, so
+    a High-risk account visible in the Entra portal is absent from the page. This is the S4a
+    slice `docs/RiskyUsersModule-Plan.md` deferred; both halves of its trigger have fired.
+    Server-side UPN matching is ruled out on the Graph v1.0 reference (`$filter`/`$select` only,
+    no documented `contains()`), so paging is the only route, and it needs `GraphTokenClient` to
+    accept a guarded absolute `@odata.nextLink`. Three slices; base app bump in S1, module bump
+    in S2. **Open Q1: may the page render several thousand rows, or render the top N by severity
+    and say so** - the Defender "Rejoining the server" hazard. Blocks S3 only.
+  - **`docs/SidebarScrollbar-Plan.md`** (`941cd77`, revised `afdacaa`). The sidebar scrollbar
+    never leaves because the scroll pane overflows by a constant 0.7rem: the first category
+    heading's `margin-top` collapses out of a `nav` that has no padding-top, `.nav-scrollable` is
+    a BFC so it cannot escape, and `nav` is `min-height: 100%`. `nav` is a block, not flex -
+    Bootstrap's `.flex-column` sets `flex-direction` only - which is also why `mt-auto` on the
+    version footer does nothing. One slice, CSS only, base app PATCH bump. **Open Q1: may the
+    version footer move to the bottom** (making `nav` flex activates the existing `mt-auto`).
+  - **Both were openreviewed by codex** (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh,
+    fallback, codex-cli 0.154.0), both `acceptable_with_changes`, **three material changes each,
+    all six admitted and folded in**. Each plan's `## Review` section owns the detail.
+    **The one worth carrying:** the Risky Users fix as first drafted would have shipped and done
+    nothing. Redefining `MaxRows` from page size to total ceiling reads back the value the owner
+    stored on 2026-09-02 - 500 - so the ceiling would have been 500 and the module would still
+    have fetched one page, from correct code. Gates and a dev deploy would both have passed it.
+    A new `MaxTotalRows` key instead. **Also found while verifying the reviewer's own citations:
+    `docs/AdminModuleDeveloperGuide.md` contradicts itself** - `:645` requires Graph endpoints to
+    start with `/`, `:649` requires following `@odata.nextLink`, which is absolute. That is the
+    root of the defect, and why `M365GroupManagementService.cs:304-309` and
+    `NamedLocationsService.cs:78-84` each hand-strip the base URL. S1 amends the guide.
+
+**QUEUE ITEM 14 remains the next queued task and it is a PLANNING task** - see the entry below.
+Cloud Password Reset is complete and reviewed; queue 4 slice 1 is landed with slices 2-4 unstarted
+and unblocked.
 
 - **QUEUE 8 (Defender for Endpoint) IS PARKED BY THE OWNER, 2026-09-22, waiting on an updated
   requirements document from the stakeholder. Do not resume it until that arrives.** The module
