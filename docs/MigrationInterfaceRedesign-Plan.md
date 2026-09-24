@@ -22,9 +22,16 @@ moves with it. That is the trigger, not the visual work.
 > without UI-induced error. no burying controls off the screen, no hiding selected items
 > off the page.
 
-Items 12 (scheduled completion) and 13 (per-mailbox checkboxes and actions) are blocked
-behind this and are **not** in scope here, but the layout must leave room for both and
-this plan says where each one lands.
+**Scope, corrected 2026-09-24.** This plan first said items 12 and 13 were out of scope. That
+is no longer true and pretending otherwise hid a contradiction that two reviews caught. During
+the design session the owner required mailbox checkboxes (R7), per-mailbox bulk actions (R12),
+Schedule as a first-class control (R13) and a new Export Reports operation (R31). Items 12 and
+13 are therefore **substantially delivered by this plan**, and item 14 "preceding" them means
+the layout lands first, in S1-S6, before their behaviour is wired in S7 and after.
+
+What is still explicitly **not** here: the `CompleteAfter` service semantics that item 12 needs
+(trap 1 below), which stay a separate piece of work because they change what two existing call
+sites mean. **This needs the owner's word, since it redefines what item 14 covers.**
 
 ## What is wrong with the page today
 
@@ -43,8 +50,14 @@ this plan says where each one lands.
 ## Requirements
 
 Every line below is an owner ruling from the 2026-09-24 design session, most of them made by
-rejecting something I had built. They are requirements, not preferences, and the mockup
-`.agents/mockups/migration-v3.html` is the reference implementation of all of them.
+rejecting something I had built. They are requirements, not preferences.
+
+**The mockup `.agents/mockups/migration-v3.html` is the reference for layout and interaction
+only, and this list wins wherever they differ.** Two places they do: the mockup routes on
+`#/batch/<array index>`, while R22 and S1 require a query parameter keyed by batch **name** --
+an array index is not an identity and would point at a different batch after any refresh that
+reorders the list. And the mockup was built while ticking and opening were separate acts, so
+older parts of it may still behave that way; R9 governs.
 
 ### Structure
 
@@ -153,6 +166,15 @@ migration, so closing and reopening the dialog must never run it again. The dial
 copy already held and states when it was taken; "Fetch again" is its own button and says what
 it costs. This is a correctness requirement about operator time, not a caching optimisation.
 
+R24b. **The kept report is invalidated by the same events that close it today, or R24a
+regresses a fixed bug.** Queue item 3 was exactly this: a report open while the batch was
+removed elsewhere and recreated under the same name kept showing the previous migration's
+report. The fix is `CloseUserReport()` and the `reportGeneration` counter
+(`Components/Pages/Migration.razor:1830-1836`), called by every site that reloads or discards
+`batchUsers`, with the generation bump also invalidating a fetch still in flight. The cache
+must hang off the same generation: any refresh or replacement of the mailbox rows discards it.
+A report kept across a batch being recreated is worse than a slow one.
+
 R25. **Action results are reported per row, and never as a blanket banner.** Today one
 `batchActionResult` alert (`:434-:443`) speaks for an operation over N batches. A loop over N
 items must report per-item outcomes -- the same rule the outcome preview follows before the
@@ -197,6 +219,15 @@ copy held, not pulled again.
 R31d. **Read-only, so no ticket and no protected-principal gate.** Fetching a report changes
 nothing. It is still audited as a read of migration data, and the zip is named for the batch
 and the time it was taken.
+
+R31e. **The zip needs a store, not just a job.** The bulk-job framework persists per-row
+outcomes, not downloadable artifacts, so S7 cannot simply hand a file back when the job ends
+-- the operator may have closed the page hours earlier. This repo already solved that for
+Message Trace: `MessageTraceExportStore` with its listing page
+(`Components/Pages/MessageTraceReports.razor`) and its own tests. S7 borrows that pattern and
+must state, before implementation: where the zip is written, who may download it, how the
+download is audited, and when it is deleted. An export store with no retention rule is a pile
+of mailbox diagnostics accumulating on disk.
 
 
 ## Slices
@@ -274,6 +305,30 @@ and nothing needs limiting.
 **Q2. Does the habit change need a transition?** Today an operator completes a batch from
 the expanded view. After S3 they tick it in the left pane and act there. That is the safety
 gain and it follows from R2 and R3, but it is a habit change and worth confirming.
+
+## Tests each slice must bring
+
+Named here so they are not decided while implementing. Every one of these must be shown to
+bite: revert the behaviour, watch the test fail, restore it.
+
+1. **Routing (S1).** The batch in the URL is keyed by name, not by a list index, and a reorder
+   or refresh of the batch list does not change which batch the URL resolves to.
+   `Catalog.GetByRoute("migration")` still resolves with the query parameter present, so the
+   version badge and usage telemetry keep working.
+2. **No full-list rendering (S2, S5).** With a large batch set and a large mailbox set, the
+   rendered row count stays at the page size. This is the Defender hazard and the only test
+   that catches a regression of it.
+3. **Selection identity (S3).** Selection survives paging and filtering, and is held by batch
+   name so it cannot silently retarget. Ticking, highlighting and the right pane always agree
+   -- the R9 single-concept rule, asserted rather than assumed.
+4. **Skipped rows are not sent (S4).** An operation over a mixed selection issues calls only
+   for the eligible rows, and the result names every row with its own outcome.
+5. **Stale report invalidation (S6).** The kept report is discarded when the mailbox rows are
+   reloaded or replaced, including a batch removed and recreated under the same name. This is
+   a regression test for queue item 3, which R24a would otherwise undo.
+6. **Export store (S7).** The zip contains one entry per succeeded mailbox and none for the
+   failed ones, a partial result is still downloadable, the download is audited, and the
+   retention rule actually deletes.
 
 ## Acceptance
 
