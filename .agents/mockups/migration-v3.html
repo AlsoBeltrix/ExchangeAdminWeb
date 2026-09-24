@@ -19,7 +19,9 @@
   .v3-batch:hover { background: #f6f9fc; }
   .v3-batch.active { background: #cfe2ff; box-shadow: inset 3px 0 0 #0d6efd; }
   .mk-split.collapsed .mk-left { display: none; }
-  .mk-report { flex: 1 1 0; min-width: 24rem; }
+  .mk-report { flex: 0 0 34rem; min-width: 16rem; }
+  .mk-gutter { flex: 0 0 6px; cursor: col-resize; background: #dee2e6; border-radius: 3px; }
+  .mk-gutter:hover { background: #0d6efd; }
   /* With the report open the mailbox table gives up its least-load-bearing columns rather
      than squeezing every column thinner. */
   .mk-split.reporting .u-dim { display: none; }
@@ -107,7 +109,11 @@
 
         </div>
 
+        <div class="mk-gutter" onmousedown="startDrag(event, 'left')"></div>
+
         <div class="mk-pane mk-right" id="mkRight"></div>
+
+        <div class="mk-gutter" id="gutterReport" style="display:none;" onmousedown="startDrag(event, 'report')"></div>
 
         <!-- Third pane. Its own column, so the report never covers the mailbox table, is never
              covered by it, and never replaces it. Both scroll independently. -->
@@ -424,13 +430,40 @@ function findPerson() {
 // ---- R24: the report is its own pane ----
 function hideReport() {
   document.getElementById('mkReport').style.display = 'none';
+  document.getElementById('gutterReport').style.display = 'none';
   document.getElementById('mkSplit').classList.remove('reporting');
 }
 function showReport(b, email) {
   var el = document.getElementById('mkReport');
   el.style.display = 'flex';
+  document.getElementById('gutterReport').style.display = 'block';
   document.getElementById('mkSplit').classList.add('reporting');
   el.innerHTML = reportPane(b, email);
+}
+
+// Panes are resizable. A fixed split is always wrong for someone: long batch names need a
+// wider list, a stack trace needs a wider report.
+function startDrag(ev, which) {
+  ev.preventDefault();
+  var left = document.querySelector('.mk-left'), rep = document.getElementById('mkReport');
+  var startX = ev.clientX;
+  var startLeft = left.getBoundingClientRect().width;
+  var startRep = rep.getBoundingClientRect().width;
+  function move(e) {
+    if (which === 'left') {
+      left.style.flex = '0 0 ' + Math.max(220, Math.min(900, startLeft + (e.clientX - startX))) + 'px';
+    } else {
+      rep.style.flex = '0 0 ' + Math.max(240, Math.min(1400, startRep - (e.clientX - startX))) + 'px';
+    }
+  }
+  function up() {
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', up);
+    document.body.style.userSelect = '';
+  }
+  document.body.style.userSelect = 'none';
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
 }
 function reportPane(b, email) {
   var u = byEmail(email) || { st: 'Unknown', items: 0, last: '-' };
@@ -472,7 +505,7 @@ function reportPane(b, email) {
     '</div>' +
     '<div class="mk-pane-scroll p-2">' +
       (loadingPane === 'report' ? paneLoading('Fetching the report')
-        : '<pre class="mb-0" style="font-size:.75rem;white-space:pre-wrap;">' + body.join('\n') + '</pre>') +
+        : '<pre class="mb-0" style="font-size:.8rem;line-height:1.35;white-space:pre;">' + body.join('\n') + '</pre>') +
     '</div>';
 }
 function closeReport(ev) {
@@ -565,7 +598,8 @@ function table(page, pinned) {
       '<th style="width:2.2rem;"><input class="form-check-input" type="checkbox"' + (allTicked ? ' checked' : '') +
         ' title="Tick every mailbox matching the filter, not just this page"' +
         ' onchange="utickAll(this.checked)"></th>' +
-      '<th>Mailbox</th><th style="width:8.5rem;">Status</th><th style="width:6.5rem;" class="text-end">Items</th>' +
+      '<th style="min-width:14rem;">Mailbox</th><th style="width:7.5rem;">Status</th>' +
+      '<th style="width:5.5rem;" class="text-end">Items</th>' +
       '<th style="width:7.5rem;" class="u-dim">Last sync</th><th class="u-dim">Error</th><th style="width:10rem;" class="text-end"></th>' +
     '</tr></thead><tbody>' +
     page.map(function (u, idx) {
@@ -577,7 +611,7 @@ function table(page, pinned) {
               : u.st === 'Syncing' ? '<button class="btn btn-sm btn-outline-warning me-1">Pause</button>' : '';
       return sep + '<tr' + (highlight === u.email ? ' class="table-warning"' : '') + '><td><input class="form-check-input" type="checkbox"' + (usel[u.email] ? ' checked' : '') +
           ' onchange="utick(\'' + u.email + '\', this.checked)"></td>' +
-        '<td class="text-truncate" style="max-width:0;">' + u.email +
+        '<td class="text-truncate">' + u.email +
           (ubulk && usel[u.email]
             ? ' <span class="small ' + (uverdict(ubulk, u)[0] ? 'text-success' : 'text-muted') + '">' + uverdict(ubulk, u)[1] + '</span>'
             : '') + '</td>' +
@@ -591,7 +625,9 @@ function table(page, pinned) {
     }).join('') + '</tbody></table>';
 }
 function byEmail(e) {
-  var b = currentBatch(), list = b ? usersFor(b) : [];
+  var m = /^#\/batch\/(\d+)/.exec(location.hash);
+  var b = (m && batches[Number(m[1])]) || currentBatch();
+  var list = b ? usersFor(b) : [];
   for (var i = 0; i < list.length; i++) { if (list[i].email === e) { return list[i]; } }
   return null;
 }
