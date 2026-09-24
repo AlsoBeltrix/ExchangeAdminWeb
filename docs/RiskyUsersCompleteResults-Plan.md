@@ -1,7 +1,8 @@
 # Risky Users -- Complete Results, And Actions An Operator Can Identify
 
-Status: **Draft, awaiting owner approval.** No code written. One open question (Q1)
-is a genuine owner gate and blocks S3 only; S1 and S2 can proceed without it.
+Status: **Draft, awaiting owner approval.** No code written. Four slices. **One open owner
+question remains, Q1, and it blocks S3 only** -- S1, S2 and S4 can proceed without it.
+Q3 was closed coder-side on 2026-09-24; Q2 is a recommendation, not a gate.
 
 This is the plan `docs/RiskyUsersModule-Plan.md` section **S4a** said to write:
 
@@ -111,11 +112,15 @@ vocabulary *"reads ambiguous, and this module is headed for L2 support desk staf
 reason still holds -- "Confirm user compromised" genuinely does not tell an L2 operator
 that the account's sign-ins are about to be blocked.
 
-So this is not "the plain wording was wrong". It is that **plain wording was made to do
-two jobs and can only do one.** A label has to identify which action this is; a sentence
-has to say what it does. The 2026-09-02 change replaced the first job with the second and
-put the second in a tooltip, which is why the mapping disappeared. Both jobs need doing,
-visibly.
+So this is not "the plain wording was wrong". It is that **one string was made to do two
+jobs and can only do one.** A label identifies which action this is; a sentence says what
+it does. The 2026-09-02 change gave the label the sentence's job and demoted the sentence
+to a tooltip, which is why the mapping disappeared.
+
+Both jobs still need doing -- but not in the same place, and not on every row. The label
+goes on the button, where it is repeated N times and must therefore be as short as the
+distinction allows. The sentence goes to the confirmation step, where it appears once, for
+the one action the operator actually chose. S4 builds on that split.
 
 ### The same defect, one column to the left
 
@@ -135,8 +140,9 @@ In scope:
    following continuation links, under an explicit ceiling.
 3. Replace the truncation notice and its wrong advice with honest, accurate states.
 4. Re-point the tests that assert the old single-page behaviour, without weakening them.
-5. Make each remediation action identifiable as the Microsoft action it performs, without
-   losing the plain-English consequence the 2026-09-02 ruling asked for.
+5. Make each remediation action identifiable as the Microsoft action it performs, keeping
+   the plain-English consequence the 2026-09-02 ruling asked for but moving it to the
+   confirmation step, where it is shown once rather than on every row.
 6. Render `riskDetail` as readable text, with the raw value preserved for anything
    unrecognised.
 
@@ -364,23 +370,64 @@ Tests: `ExchangeAdminWeb.Tests/RiskyUsersPageTests.cs` is source-level only -- n
 harness exists in this repo. Assert the wording tripwires; do not report a green suite as
 evidence the operator sees the fix. The manual checks below are that evidence.
 
-### S4 -- actions an operator can identify (blocked on Q3)
+### S4 -- actions an operator can identify
 
 `Components/Pages/RiskyUsers.razor`, `Services/RiskyUsersService.cs`,
 `Modules/ModuleCatalog.cs`.
 
-**The design, assuming Q3 resolves to (a).** Each action gains two strings with two
-distinct jobs, and both are rendered, neither hidden in a tooltip:
+#### The rule this slice is built on
 
-| Graph | Microsoft's term -- the label | Plain English -- the consequence |
+**A control repeated on every row carries only what differs between the three. Everything
+shared belongs to the column header, the row, or the confirmation step -- each of which
+says it once.**
+
+An earlier draft of this slice failed that rule and is recorded here so it is not
+rewritten later: it proposed labelling the buttons with Microsoft's full toolbar strings,
+`Dismiss user risk` / `Confirm user safe` / `Confirm user compromised`, and rendering a
+consequence sentence beside each. Two of the three then open with the same word, all three
+contain "user", and the token that actually distinguishes them sits at the end where it is
+scanned last -- multiplied by every row in the table. Owner, 2026-09-24: *"we do not need
+the same long string on every button."*
+
+Entra can afford those strings because its toolbar acts on a selection and appears once.
+Copying them into a per-row group is a category error, not a mapping fix.
+
+#### The design
+
+| Graph | Button | Accessible name (`aria-label`, `title`) |
 | --- | --- | --- |
-| `dismiss` | Dismiss user risk | Clears the alert. Says nothing about whether it was real; it can fire again. |
-| `confirmSafe` | Confirm user safe | Clears the alert and teaches the risk engine this is normal for them. Only after you have verified with the user. |
-| `confirmCompromised` | Confirm user compromised | Raises the user to high risk. Sign-in is blocked or forced to reset, immediately. |
+| `dismiss` | `Dismiss` | Dismiss user risk |
+| `confirmSafe` | `Safe` | Confirm user safe |
+| `confirmCompromised` | `Compromised` | Confirm user compromised |
 
-The consequence column is today's `ActionConsequence` text, which is good and stays; it
-moves from a `title` attribute to rendered text in the confirm bar, where the operator is
-already stopped and typing a ticket. The label column replaces `ActionLabel`.
+One word per button -- and it is precisely the word that differs in Microsoft's own three
+labels, so scanning for it is *easier* than scanning three near-identical phrases, not
+harder. The subject comes from the row, the verb category from the column header
+`Remediate`, and the existing `aria-label="Remediate"` on the `btn-group`
+(`RiskyUsers.razor:177`) already groups them.
+
+The full Microsoft term rides along as the accessible name and the tooltip. That costs no
+pixels, gives a screen reader the complete phrase, and keeps the `title` short enough to
+actually read -- unlike today's, which is a two-clause paragraph.
+
+**The consequence sentence moves to the confirmation step and appears once, for the one
+action chosen.** That is where it belongs: the operator has stopped, is typing a ticket,
+and is about to do something with consequences. `ConfirmPrompt`
+(`RiskyUsers.razor:781-787`) already renders there and already names the action and the
+user; it gains the full Microsoft term and one line of consequence. Today's
+`ActionConsequence` strings are the right content in the wrong place -- keep them, trim
+them to one clause, render them there instead of in a `title`.
+
+Nothing else is added. No legend above the table, no help text, no second line on the
+buttons. Those would be the same mistake at a different scale.
+
+#### What this deliberately does not do
+
+It does not restructure the Remediate column into a single control opening a panel. That
+would also fix the density and would answer the Developer Guide's warning about
+destructive actions in dense tables, but it is a page redesign, not a labelling fix, and
+it overlaps the queue-14 discussion of exactly that hazard. Recorded as a known
+alternative, not taken here.
 
 **Four implementation hazards, each of which has already caused a defect somewhere in
 this repo:**
@@ -408,14 +455,20 @@ this repo:**
    unrecognised `riskDetail` shown as "Unknown" is a lie about what Microsoft said.
 
 Tests: `RiskyUsersPageTests.cs` is source-level only. Assert that the two label copies
-agree; that every `RiskyUserAction` has both a label and a consequence; that the label set
-contains Microsoft's terms; that `ActionConsequence` is rendered as text and not only as a
-`title`; and that the `riskDetail` map returns the input unchanged for an unknown value.
-That last one is the only test here that guards a real hazard rather than a string.
+agree; that every `RiskyUserAction` has a button label, an accessible name and a
+consequence line; that **no two button labels share a word** -- the mechanical form of the
+rule this slice is built on, and the one guard that would have caught the earlier draft;
+that the accessible name for each action contains Microsoft's term; and that the
+`riskDetail` map returns the input unchanged for an unknown value.
+
+The last two guard real hazards. The others guard strings, and a source-level scan cannot
+tell whether a label reads clearly to a person -- manual check 6 is the only thing that
+can.
 
 Guard proof: change one label copy and not the other, confirm the agreement test fails;
-feed the `riskDetail` map an invented value, confirm it comes back unchanged and that
-deleting the fallback makes the test fail. Restore and touch the files.
+set two labels to share a word, confirm the no-shared-word test fails; feed the
+`riskDetail` map an invented value, confirm it comes back unchanged and that deleting the
+fallback makes the test fail. Restore and touch the files.
 
 `Modules/ModuleCatalog.cs`: `RiskyUsers` `Version` -> next MINOR. S2 already moves it to
 `1.2.0`, so S4 takes `1.3.0`. Compute from the field at implementation time, not from this
@@ -442,15 +495,18 @@ document. No base app bump.
   `GraphTokenClientTests` passes with no test modified.
 - **AC9.** Audit behaviour is unchanged: every query is still logged, reads are still
   never alert-emailed (D2, 2026-08-31).
-- **AC10.** Each remediation button names the Microsoft action it performs, in wording an
-  operator can match against the Entra admin center toolbar and Microsoft's documentation.
-- **AC11.** The plain-English consequence is **visible without hovering** before the
-  operator commits. A tooltip alone does not satisfy this.
-- **AC12.** The button an operator clicks and the name written to the audit record are the
+- **AC10.** Each remediation button can be matched to its Entra admin center toolbar item
+  without guessing. The full Microsoft term is the button's accessible name.
+- **AC11.** No two remediation button labels share a word, and none repeats the subject or
+  the verb category already supplied by the row and the column header.
+- **AC12.** The consequence of the chosen action is **visible without hovering** at the
+  confirmation step, once, for that action only. A tooltip alone does not satisfy this,
+  and neither does a sentence beside every button on every row.
+- **AC13.** The button an operator clicks and the name written to the audit record are the
   same string. Provable by test, not by inspection.
-- **AC13.** The audit action identifiers `RiskyUsers_Dismiss`, `RiskyUsers_ConfirmSafe`
+- **AC14.** The audit action identifiers `RiskyUsers_Dismiss`, `RiskyUsers_ConfirmSafe`
   and `RiskyUsers_ConfirmCompromised` are byte-identical to today's.
-- **AC14.** `riskDetail` renders as readable text for known values, and an unrecognised
+- **AC15.** `riskDetail` renders as readable text for known values, and an unrecognised
   value renders as its own raw string -- not blank, not "Unknown", not omitted.
 
 ## Verification
@@ -482,8 +538,8 @@ in this repo renders a Razor page:
    whether S4 actually fixed it -- no automated check can tell whether a label reads
    clearly to a person.
 7. Confirm the consequence sentence is readable without hovering, including by keyboard
-   (AC11).
-8. Compare the Risk detail column against the same user's Entra timeline entries (AC14).
+   (AC12).
+8. Compare the Risk detail column against the same user's Entra timeline entries (AC15).
    Find one value the map does not know -- or force one -- and confirm it renders raw
    rather than as "Unknown".
 
@@ -515,28 +571,13 @@ Recommendation: **(b)**, and it does not depend on measuring the tenant first --
 gambles on a number nobody has, while (b) is correct at any size. But (a) is materially
 less work and is defensible if step 1 of the manual checks comes back small.
 
-**Q3 (owner, blocks S4). How should a remediation action be presented?**
-
-The complaint is that the buttons cannot be matched to anything Microsoft shows. Both
-shapes below fix that; they differ in how much of the page moves.
-
-- **(a) Relabel in place.** The three buttons stay where they are and read Microsoft's
-  terms; the plain-English consequence stops being a tooltip and becomes visible text in
-  the confirm bar. Smallest change, no change to the table's shape, and it is the direct
-  answer to what was reported.
-- **(b) One "Remediate" control per row.** The row carries a single button; clicking it
-  opens the existing confirm panel, which lists all three actions with Microsoft's term,
-  the consequence sentence and the ticket box together. This also closes two things
-  nobody has asked about yet: the Remediate column is already three buttons wide and will
-  get wider with longer labels, and the Developer Guide warns against putting destructive
-  actions directly in dense tables. Costs a real page restructure and a
-  `ClickGateRegistry` update, since RiskyUsers is a click-gated page.
-
-Recommendation: **(a)**. It answers the report, it is small, and it can ship with the
-completeness work. (b) is the better page but it is a different piece of work, and turning
-a reported labelling defect into a page redesign without being asked is how scope goes
-wrong. If the owner wants (b), it should be its own plan -- and it would overlap the
-queue-14 discussion about dense tables with destructive per-row actions.
+**Q3 -- CLOSED 2026-09-24, coder-side, on the owner's instruction to "do it correctly"
+rather than to ask again.** The question had been which of two shapes to take: relabel in
+place, or restructure the Remediate column into one control opening a panel. Relabelling
+in place is what S4 does. The restructure is the better page and would also answer the
+Developer Guide's warning about destructive actions in dense tables, but it is a redesign
+rather than a labelling fix and it overlaps queue item 14, which exists to discuss exactly
+that hazard. Recorded in S4 under "What this deliberately does not do".
 
 **Q2 (not blocking, recommendation stated).** The default filter is `Any` / `Any`, so the
 default view is every risk record the tenant has ever held, including remediated and
