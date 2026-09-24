@@ -188,9 +188,10 @@ Out of scope, and deliberately so:
   must reach the operator.
 - **An unbounded loop is not the fix either.** The tenant size is unknown and the
   Defender rebuild measured 113,102 devices where 40,000 was assumed. A ceiling is
-  mandatory, and hitting it must be a refusal that names the action, not a silent cut --
-  owner ruling 2026-09-21 on user-facing strings, and the `Truncated` contract this
-  module already has.
+  mandatory, and hitting it must be stated on screen, not cut silently -- owner ruling
+  2026-09-21 on user-facing strings. Since the owner's ruling of 2026-09-24 that statement
+  is a constraint notice over the rows, not a refusal that withholds them; see the Design
+  section.
 - **Environment neutrality.** No source file names an ADI domain, host or account. The
   UPNs in this plan are evidence in a document, not behaviour.
 
@@ -212,25 +213,45 @@ Three distinguishable outcomes, never collapsed into each other:
 
 | Outcome | Meaning | `Users` | Operator sees |
 | --- | --- | --- | --- |
-| Complete | Graph stopped offering pages | the full set | the sorted list, no notice |
-| CeilingHit | more exist; the module stopped asking | **empty** | a refusal naming what to do |
+| Complete | Graph stopped offering pages | the full set | the sorted list, paged, no notice |
+| CeilingHit | more exist; the module stopped asking | the rows fetched | the list, paged, under a constraint notice |
 | Failure | a page request failed | **empty** | the existing error alert |
 
-**CeilingHit carries no rows, and the page branches on the outcome before it reaches the
-table.** This is a correction from this plan's first draft, which called CeilingHit a
-refusal in one paragraph and then said `RiskyUsers.razor` needed only re-wording because
-`Truncated` kept its meaning. Those two statements contradict each other:
-`RiskyUsers.razor:111` renders the table whenever `results.Count > 0` and `truncated`
-only adds a warning above it, so keeping that shape would produce exactly what this plan
-exists to remove -- an arbitrary subset of the tenant's risky users, rendered as a list,
-with a caption. The in-repo precedent for a large-list refusal is Defender for Endpoint:
-the refusal is a distinct outcome on the model (`Models/DefenderDeviceModels.cs:376`) and
-`Components/Pages/DefenderEndpointDevices.razor:230` branches it away from the table
-entirely. Follow that.
+**CeilingHit shows its rows under a visible constraint notice. It is not a refusal.**
+Owner ruling 2026-09-24: *"retrieving and working with 10,000 risky users in a web portal
+is unmanageable anyway. make it a visible constraint notice."*
 
-`RiskyUserPage` therefore gains an explicit outcome and, for CeilingHit, the reason text.
-`Truncated` is either removed or derived from the outcome; it must not survive as an
-independent flag that a future edit can set while rows are still rendered.
+This reverses a change made earlier in this plan, and the reversal is the owner's, so it
+stands. The earlier version made CeilingHit a refusal carrying no rows, on the Defender for
+Endpoint precedent (`Models/DefenderDeviceModels.cs:376`,
+`Components/Pages/DefenderEndpointDevices.razor:230`). **That precedent was set before this
+plan had pagination, and pagination changes what the alternatives are.** Defender's choice
+was between a refusal and dumping an unusable wall of rows; here the choice is between a
+refusal and a paged, ordered, searchable list of everything the module did fetch. Throwing
+10,000 retrieved users away to avoid overstating completeness is the same error as the two
+render-capping options the owner rejected: protecting the operator from a caption by
+denying them the data.
+
+**What the notice must say, and the trap in it.** When the ceiling is hit the fetch stopped
+early, so the rows held are an arbitrary subset of the tenant in Graph's unspecified order
+-- and the severity sort then runs over *that subset*. **The first page is therefore the
+highest-risk of a sample, not the highest-risk in the tenant.** A notice that says only
+"showing 10,000, more exist" would let an operator believe the worst cases are on screen.
+It must say the list is partial, that the order is partial with it, and name the two
+controls that actually shrink the fetch. Proposed wording, for the implementer to finalise
+within those constraints:
+
+> Showing 10,000 risky users. The tenant has more, so this is a partial list and the
+> highest-risk users may not be in it. Risk level and Risk state narrow the search itself;
+> use them for a complete result.
+
+**It must not say "narrow the filter".** That is the string this plan exists to delete:
+UPN contains does not reduce the fetch, so the old advice was wrong, and repeating it
+generically would reintroduce the defect in new words.
+
+`RiskyUserPage` gains an explicit outcome and, for CeilingHit, the notice text. `Truncated`
+is removed or derived from the outcome; it must not survive as an independent flag, because
+two sources for "is this complete?" is how the two disagree later.
 
 ### The ceiling gets a NEW config key. Reusing `MaxRows` would ship a fix that does nothing.
 
@@ -355,14 +376,14 @@ Name each one in the commit message with what it asserts now.
 
 `Components/Pages/RiskyUsers.razor`.
 
-- **Branch on the outcome before the table.** `:111` currently keys the whole result
-  block on `results.Count == 0`. CeilingHit must reach its own branch, not the table's,
-  following `Components/Pages/DefenderEndpointDevices.razor:230`.
 - `:118-123` currently reads `Showing the first @requestedMax; more exist. Narrow the
-  filter.` Replace with the CeilingHit refusal: what happened and what to do, per the
-  2026-09-21 ruling -- no design rationale, no self-reference. The advice must be
-  actionable and true, so it names Risk level and Risk state, which narrow the fetch, and
-  not UPN contains, which does not.
+  filter.` Replace with the CeilingHit constraint notice specified in the Design section:
+  the list is partial, the order is partial with it, and Risk level and Risk state are the
+  two controls that shrink the fetch. Per the 2026-09-21 ruling -- state what happened and
+  what to do, no design rationale, no self-reference. **Do not reuse the words "narrow the
+  filter"**; UPN contains does not reduce the fetch and that advice is the defect.
+- The notice sits above the table and the table still renders. CeilingHit is a constraint,
+  not a refusal -- only Failure branches away from the table.
 - The Complete case renders no notice at all. A complete list must not carry a caveat.
 
 #### Pagination (Q1, owner ruling 2026-09-24)
@@ -532,9 +553,10 @@ implementation time, not from this document. No base app bump.
   tenant, not the highest-severity of an arbitrary 500.
 - **AC4.** A failure on page N of M surfaces as an error with no rows rendered. The
   operator is never shown a short list as if it were complete.
-- **AC5.** Reaching the ceiling renders a refusal that says more exist and names a filter
-  that actually reduces the fetch, and renders **no table and no rows**. A partial set is
-  never shown with a caption over it.
+- **AC5.** Reaching the ceiling renders the fetched rows, paged, beneath a visible notice
+  that says the list is partial, that the highest-risk users may not be in it, and names
+  Risk level and Risk state as the controls that shrink the fetch. The notice does not
+  contain the words "narrow the filter", and no row is discarded to produce it.
 - **AC6.** A complete result set renders **no** truncation notice.
 - **AC7.** An absolute nextLink is refused, with no bearer token sent, when its host is
   not the Graph host, when its scheme is not `https`, or when its path is outside `/v1.0`.
@@ -691,8 +713,13 @@ obscures it -- so this records what was dispatched, per the playbook.
 Three material changes, **all three admitted and folded into the text above**:
 
 1. **CeilingHit was not really a refusal.** The draft called it one and then kept the
-   rendering path that shows rows with a warning over them. Now a refusal outcome with an
-   empty `Users`, and the page branches before the table.
+   rendering path that shows rows with a warning over them. It was made a refusal with an
+   empty `Users`, on the Defender precedent. **The owner overruled that on 2026-09-24**,
+   after pagination landed: CeilingHit now shows its rows under a constraint notice. The
+   finding was still correct -- the plan had said two contradictory things and had to pick
+   one -- and picking the refusal was right at the time, because the plan then had no way
+   to render 10,000 rows usably. Recorded rather than quietly rewritten, so a later reader
+   does not "restore" the refusal from this section.
 2. **The fix would have shipped and done nothing on this deployment.** Redefining
    `MaxRows` from page size to total ceiling reads back the value stored on 2026-09-02:
    500. Now a new `MaxTotalRows` key with no stored row, plus a test that the old key is

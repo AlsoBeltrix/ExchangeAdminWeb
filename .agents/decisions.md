@@ -5,7 +5,7 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
-### 2026-09-24 - Long result tables are PAGED. Never capped, never truncated to protect the circuit.
+### 2026-09-24 - Long result tables are PAGED, and a fetch limit is a notice, not a refusal
 
 Status: Active. Scope: `RiskyUsers` now; read as the default shape for any module table
 that can return more rows than a browser should render at once.
@@ -26,9 +26,19 @@ What this settles:
 - The table renders a fixed page size (50, matching `AdminEventLog.razor` and the portal).
   Every fetched row is reachable by paging.
 - The row count above a table reports the full match count, never the page's.
-- A fetch ceiling still exists and still refuses honestly when hit. Paging bounds
-  rendering; it does not make an incomplete answer complete, and the two must not be
-  confused.
+- **A fetch ceiling still exists, and hitting it is a visible constraint notice over the
+  rows -- not a refusal that withholds them.** Owner, same day, on being told the ceiling
+  would show nothing: *"retrieving and working with 10,000 risky users in a web portal is
+  unmanageable anyway. make it a visible constraint notice."* Withholding fetched rows to
+  avoid overstating completeness is the same error as capping the render: protecting the
+  operator from a caption by denying them the data.
+- **The notice must admit that the ORDER is partial too, not just the list.** When the
+  fetch stops early the rows held are an arbitrary subset, and the severity sort then runs
+  over that subset -- so the first page is the worst of a sample, not the worst in the
+  tenant. "Showing N, more exist" alone would mislead. Name the filters that actually
+  shrink the fetch, and never the ones that do not.
+- Paging bounds rendering; it does not make an incomplete answer complete. The notice is
+  what keeps those two apart.
 - **Virtualised scrolling remains rejected** (owner, on Defender for Endpoint: 40,000 rows
   behind one scrollbar is useless however it is rendered). Paging is not a softer form of
   it.

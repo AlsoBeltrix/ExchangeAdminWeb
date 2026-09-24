@@ -62,6 +62,15 @@ half-finished. **56 commits are unpushed on both remotes** and push policy is as
     this ceiling would be 200 buttons. Fetch and sort stay tenant-wide. Recorded in
     `.agents/decisions.md` as the default shape for any long module table, and it answers by
     precedent the still-open Defender browsing fork (which still needs its own go).
+    **The same ruling was extended the same day: hitting the 10,000 fetch limit is a VISIBLE
+    CONSTRAINT NOTICE over the rows, not a refusal that withholds them** - *"retrieving and
+    working with 10,000 risky users in a web portal is unmanageable anyway. make it a visible
+    constraint notice."* This OVERRULES an earlier codex finding this plan had admitted (refusal
+    with zero rows, on the Defender precedent); that precedent predates pagination here. **The
+    notice must admit the ORDER is partial, not only the list** - a ceiling-limited fetch holds
+    an arbitrary subset and the severity sort runs over that subset, so the first page is the
+    worst of a sample, not the worst in the tenant. It must not contain the words "narrow the
+    filter": UPN contains does not shrink the fetch, and that string is the defect.
     **S4 was added 2026-09-24 on a second owner report** (`b5052d8`, redesigned `71c5390`). The
     Remediate buttons read "Close as handled" / "This was the real user" / "Account was breached"
     and nothing on the page maps them to Entra's "Dismiss user(s) risk" / "Confirm user(s) safe" /
