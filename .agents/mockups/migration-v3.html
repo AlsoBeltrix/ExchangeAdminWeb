@@ -19,6 +19,10 @@
   .v3-batch:hover { background: #f6f9fc; }
   .v3-batch.active { background: #cfe2ff; box-shadow: inset 3px 0 0 #0d6efd; }
   .mk-split.collapsed .mk-left { display: none; }
+  .mk-report { flex: 1 1 0; min-width: 24rem; }
+  /* With the report open the mailbox table gives up its least-load-bearing columns rather
+     than squeezing every column thinner. */
+  .mk-split.reporting .u-dim { display: none; }
 </style>
 </head>
 <body>
@@ -104,6 +108,10 @@
         </div>
 
         <div class="mk-pane mk-right" id="mkRight"></div>
+
+        <!-- Third pane. Its own column, so the report never covers the mailbox table, is never
+             covered by it, and never replaces it. Both scroll independently. -->
+        <div class="mk-pane mk-report" id="mkReport" style="display:none;"></div>
 
       </div>
     </div>
@@ -249,10 +257,18 @@ function render() {
   renderList();
   var right = document.getElementById('mkRight');
   renderExport();
+  if (location.hash.indexOf("/report/") < 0) { hideReport(); }
   if (location.hash === '#/housekeeping') { right.innerHTML = housekeeping(); return; }
   var rep = /^#\/batch\/(\d+)\/report\/(.+)$/.exec(location.hash);
   if (rep && batches[Number(rep[1])]) {
-    right.innerHTML = reportPane(batches[Number(rep[1])], decodeURIComponent(rep[2])); return;
+    // Addressable (R22). Rendered as a dialog OVER the pane, not in place of it and not below
+    // it: the list is not shortened, nothing is pushed off screen, and closing restores the
+    // exact view. The row's status and actions travel into the dialog header, because the
+    // report is what tells you to use them.
+    var rb = batches[Number(rep[1])];
+    right.innerHTML = batchHtml(rb);
+    showReport(rb, decodeURIComponent(rep[2]));
+    return;
   }
   // The right pane always shows what is selected. More than one ticked and it lists those
   // batches with their own pager, so there is never a question about which batch is displayed.
@@ -405,23 +421,65 @@ function findPerson() {
   msg.textContent = 'No mailbox matching "' + q + '" in any batch.';
 }
 
-// ---- R24: the report is a drill-down in the right pane, not an injected row ----
+// ---- R24: the report is its own pane ----
+function hideReport() {
+  document.getElementById('mkReport').style.display = 'none';
+  document.getElementById('mkSplit').classList.remove('reporting');
+}
+function showReport(b, email) {
+  var el = document.getElementById('mkReport');
+  el.style.display = 'flex';
+  document.getElementById('mkSplit').classList.add('reporting');
+  el.innerHTML = reportPane(b, email);
+}
 function reportPane(b, email) {
+  var u = byEmail(email) || { st: 'Unknown', items: 0, last: '-' };
+  var act = u.st === 'Failed' ? '<button class="btn btn-sm btn-primary">Retry</button>'
+          : u.st === 'NeedsApproval' ? '<button class="btn btn-sm btn-warning">Approve</button>'
+          : u.st === 'Synced' ? '<button class="btn btn-sm btn-success">Complete</button>'
+          : u.st === 'Syncing' ? '<button class="btn btn-sm btn-outline-warning">Pause</button>' : '';
+  var body = [];
+  body.push('Batch:             ' + b.name);
+  body.push('Mailbox:           ' + email);
+  body.push('Status:            ' + u.st);
+  body.push('Items synced:      ' + u.items.toLocaleString());
+  body.push('Last attempt:      ' + u.last);
+  body.push('');
+  body.push('Error:');
+  body.push('  MapiExceptionNetworkError (0x80004005)');
+  body.push('  The connection to the source server was reset while copying folder /Inbox.');
+  body.push('');
+  body.push('Suggested action:');
+  body.push('  Resume the mailbox. The move restarts from the last checkpoint.');
+  body.push('');
+  // R20 applies here too: a report can run to tens of thousands of lines, so the pane holds a
+  // bounded window of it and the rest is fetched on demand, never pushed over the circuit at once.
+  for (var n = 1; n <= 120; n++) {
+    body.push('[' + String(n).padStart(5, '0') + '] 09:1' + (n % 10) + ':' + String(n % 60).padStart(2, '0') +
+      '  copy /Inbox/Archive/' + (2019 + (n % 7)) + '  ' + (400 + n * 13) + ' items  ok');
+  }
+
   return '<div class="mk-pane-head d-flex align-items-center gap-2 flex-wrap">' +
-      '<button class="btn btn-sm btn-outline-secondary" onclick="location.hash=\'#/batch/' + b.i + '\'">&larr; Mailboxes</button>' +
-      '<h5 class="mb-0">' + email + '</h5>' +
-      '<span class="small text-muted">migration report &middot; ' + b.name + '</span>' +
-      '<button class="btn btn-sm btn-outline-secondary ms-auto" title="Refresh" onclick="refreshPane(\'report\')">&#x21bb;</button>' +
+      '<strong class="text-truncate" style="max-width:16rem;">' + email + '</strong>' +
+      '<span class="badge bg-' + (U_BADGE[u.st] || 'secondary') + '">' + u.st + '</span>' +
+      act +
+      '<button class="btn btn-sm btn-outline-secondary" title="Refresh the report" onclick="refreshPane(\'report\')">&#x21bb;</button>' +
+      '<button class="btn btn-sm btn-outline-secondary ms-auto" onclick="closeReport()">Close</button>' +
     '</div>' +
-    '<div class="mk-pane-scroll p-3">' +
+    '<div class="px-2 py-1 border-bottom small text-muted">' +
+      'Report &middot; ' + b.name + ' &middot; showing the last 120 of 48,310 lines' +
+      ' <a href="javascript:void(0)">download the full report</a>' +
+    '</div>' +
+    '<div class="mk-pane-scroll p-2">' +
       (loadingPane === 'report' ? paneLoading('Fetching the report')
-        : '<pre class="bg-light p-2 rounded mb-0" style="font-size:.78rem;white-space:pre-wrap;">' +
-          'Status:            Failed\nBatch:             ' + b.name + '\nMailbox:           ' + email +
-          '\nItems synced:      18,402\nLast attempt:      Sep 23 09:14\n\nError:\n  MapiExceptionNetworkError (0x80004005)\n' +
-          '  The connection to the source server was reset while copying folder /Inbox.\n\n' +
-          'Suggested action:\n  Resume the mailbox. The move restarts from the last checkpoint.\n' +
-          '</pre>') +
+        : '<pre class="mb-0" style="font-size:.75rem;white-space:pre-wrap;">' + body.join('\n') + '</pre>') +
     '</div>';
+}
+function closeReport(ev) {
+  if (ev) { ev.stopPropagation(); }
+  hideReport();
+  var b = selIds().length === 1 ? batches[selIds()[0]] : currentBatch();
+  location.hash = '#/batch/' + (b ? b.i : 0);
 }
 
 // Mock execution. Every affected row gets its own outcome; a failure on one never changes
@@ -508,7 +566,7 @@ function table(page, pinned) {
         ' title="Tick every mailbox matching the filter, not just this page"' +
         ' onchange="utickAll(this.checked)"></th>' +
       '<th>Mailbox</th><th style="width:8.5rem;">Status</th><th style="width:6.5rem;" class="text-end">Items</th>' +
-      '<th style="width:7.5rem;">Last sync</th><th>Error</th><th style="width:10rem;" class="text-end"></th>' +
+      '<th style="width:7.5rem;" class="u-dim">Last sync</th><th class="u-dim">Error</th><th style="width:10rem;" class="text-end"></th>' +
     '</tr></thead><tbody>' +
     page.map(function (u, idx) {
       var sep = (pinned && idx === pinned)
@@ -525,8 +583,8 @@ function table(page, pinned) {
             : '') + '</td>' +
         '<td><span class="badge bg-' + U_BADGE[u.st] + '">' + u.st + '</span></td>' +
         '<td class="text-end mk-stat">' + u.items.toLocaleString() + '</td>' +
-        '<td><small>' + u.last + '</small></td>' +
-        '<td class="small text-danger text-truncate" style="max-width:0;">' + u.error + '</td>' +
+        '<td class="u-dim"><small>' + u.last + '</small></td>' +
+        '<td class="small text-danger text-truncate u-dim" style="max-width:0;">' + u.error + '</td>' +
         '<td class="text-end text-nowrap">' + act +
           '<button class="btn btn-sm btn-outline-danger" style="padding:.1rem .4rem;font-size:.78rem;"' +
           ' onclick="openReport(\'' + u.email + '\')">Report</button></td></tr>';
