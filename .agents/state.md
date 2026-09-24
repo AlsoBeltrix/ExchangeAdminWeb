@@ -8,14 +8,45 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**HANDOFF 2026-09-24.** On `master`, working tree clean. Gates are green **as of `bd29a9c`**
-(build 0 errors, `dotnet test` 3064 passed / 0 failed / 3 skipped, format clean,
-`git diff --check` clean, Pester 157/0, PSScriptAnalyzer 0 errors); every commit since is
-docs-only, so nothing has been re-run against them. Nothing is half-finished.
+**HANDOFF 2026-09-24 (second of the day).** On `master`, working tree clean, head `9b85957`.
+Gates are green **as of `bd29a9c`** (build 0 errors, `dotnet test` 3064 passed / 0 failed /
+3 skipped, format clean, `git diff --check` clean, Pester 157/0, PSScriptAnalyzer 0 errors);
+every commit since is docs-only, so nothing has been re-run against them. Nothing is
+half-finished. **56 commits are unpushed on both remotes** and push policy is ask.
+
+- **QUEUE ITEM 14 IS PLANNED, FOUR-TIMES REVIEWED, AND AWAITS ONE THING: THE OWNER APPROVING
+  `docs/MigrationInterfaceRedesign-Plan.md`. No code is written and none may be until then.**
+  The owner's closing instruction was to hand the slices to agents in a fresh session, so the
+  next session's job is to get that approval and then run S1.
+  **Read the plan's `## Requirements` section before anything else - all 31 rules with their
+  sub-rules. It is the contract, not a summary.** The mockup
+  `.agents/mockups/migration-v3.html` is the reference for layout and interaction only; the
+  plan wins wherever they differ, and the plan names the two places they do.
+  - **Scope: items 12 and 13 are IN, not deferred.** Mailbox checkboxes, per-mailbox bulk
+    actions, Schedule and Export Reports are all here. Item 14 "preceding" them means the
+    layout lands first. **Nothing ships until 12, 13 and 14 are all done** (owner ruling), so
+    the eight slices are commits for reviewability, not deliveries - a slice may leave a
+    control unwired if the slice that wires it is still to come.
+  - **Eight slices.** S1 addressable state (query parameter, not a path segment - a path
+    segment breaks `Catalog.GetByRoute` and silently kills the version badge and usage
+    telemetry). S2 two panes plus batch-list paging. S3 selection model. S4 outcome preview.
+    S5 mailbox filter/sort/paging. S6 output destinations. S7 Export Reports. S8 `CompleteAfter`
+    semantics. Seven named test obligations, each of which must be proven to bite.
+  - **Four codex openreviews ran** (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, fallback
+    grade), each `acceptable with changes`, fourteen findings total, all closed. Results in
+    `.agents/review/openreview-mir*.result.txt` (gitignored, machine-local).
+  - **The finding worth carrying:** the plan's own "keep the fetched report" rule would have
+    re-broken queue item 3. That bug was a report surviving its batch being removed and
+    recreated under the same name; the fix is the `reportGeneration` counter at
+    `Migration.razor:1830`. A caching rule written without reading that fix would have undone
+    it, and gates would not have caught it. R24b and test 5 exist for that.
+  - **The other trap:** `CompleteAfter` today *means* "complete now" -
+    `MigrationService.cs:490` and `:698` pass a **past** timestamp and `:596` reads the property
+    as an auto-complete boolean. Schedule cannot work until S8 separates those.
 
 - **TWO OWNER-REPORTED DEFECTS WERE PLANNED AND REVIEWED 2026-09-24. BOTH PLANS ARE DRAFT AND
-  AWAIT APPROVAL; NO CODE IS WRITTEN. Each has ONE open owner question.** They jumped ahead of
-  queue item 14, which is still the next *queued* item.
+  AWAIT APPROVAL; NO CODE IS WRITTEN.** They jumped ahead of queue item 14. Only the sidebar
+  plan still has an open owner question.
   - **`docs/RiskyUsersCompleteResults-Plan.md`** (`dc79994`, revised `fa0dd1b`). The module
     returns one 500-row Graph page in an unspecified order and runs the UPN search inside it, so
     a High-risk account visible in the Entra portal is absent from the page. This is the S4a
@@ -74,9 +105,9 @@ docs-only, so nothing has been re-run against them. Nothing is half-finished.
     root of the defect, and why `M365GroupManagementService.cs:304-309` and
     `NamedLocationsService.cs:78-84` each hand-strip the base URL. S1 amends the guide.
 
-**QUEUE ITEM 14 remains the next queued task and it is a PLANNING task** - see the entry below.
-Cloud Password Reset is complete and reviewed; queue 4 slice 1 is landed with slices 2-4 unstarted
-and unblocked.
+**Queue item 14 is no longer a planning task - the plan exists and is above.** Cloud Password
+Reset is complete and reviewed; queue 4 slice 1 is landed with slices 2-4 unstarted and
+unblocked.
 
 - **QUEUE 8 (Defender for Endpoint) IS PARKED BY THE OWNER, 2026-09-22, waiting on an updated
   requirements document from the stakeholder. Do not resume it until that arrives.** The module
