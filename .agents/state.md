@@ -94,6 +94,23 @@ half-finished. **56 commits are unpushed on both remotes** and push policy is as
     NOT be swept into a rename.
     **Q3 is CLOSED coder-side** (relabel in place; the one-control-per-row restructure is
     recorded as deliberately not taken - it is a redesign and overlaps queue 14).
+    **S5 WAS ADDED 2026-09-24 AND IS THE BEST ANSWER TO THE ORIGINAL BUG.** The owner asked
+    whether user 10,001 is reachable at all; the answer exposed that the plan had conflated two
+    questions. "Show me matching rows" needs a list scan and can be capped. **"Is this person
+    risky?" needs `GET /identityProtection/riskyUsers/{objectId}`** - v1.0, needs only
+    `IdentityRiskyUser.Read.All` which the module ALREADY holds, already used for History
+    (`RiskyUsersService.cs:119`), and no ceiling can touch it. A separate "Look up a user"
+    control, deliberately NOT merged into the `UPN contains` box.
+    **R1 reconnaissance decides the implementation and must run before any S5 code:** probe
+    `$filter=userPrincipalName eq` on the list endpoint (one call, no new permission, wins if it
+    works), then `startswith(...)`, then `/users/<upn>?$select=id` - **which would need
+    `User.Read.All` added to the app registration and consented, an owner action.** Do not
+    borrow another module's registration; the Developer Guide forbids it.
+    **404 from the lookup is a CLEAN NEGATIVE, not an error and not "no risky users found".**
+    Three distinguishable outcomes: risky / exists but no risk record / no such user. This is
+    the Cloud Password Reset lesson inverted - there an unanswered question was read as a
+    negative answer; here a real negative must not be dressed up as a failure.
+    Module `1.3.0` -> `1.4.0`. **S5 is unreviewed.**
   - **`docs/SidebarScrollbar-Plan.md`** (`941cd77`, revised `afdacaa`). The sidebar scrollbar
     never leaves because the scroll pane overflows by a constant 0.7rem: the first category
     heading's `margin-top` collapses out of a `nav` that has no padding-top, `.nav-scrollable` is

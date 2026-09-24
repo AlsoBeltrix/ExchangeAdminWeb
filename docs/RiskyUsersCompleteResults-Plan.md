@@ -1,6 +1,6 @@
-# Risky Users -- Complete Results, And Actions An Operator Can Identify
+# Risky Users -- Complete Results, Findable Users, Identifiable Actions
 
-Status: **Draft, awaiting owner approval.** No code written. Four slices. **No open owner
+Status: **Draft, awaiting owner approval.** No code written. Five slices. **No open owner
 questions remain.** Q1 was ruled by the owner on 2026-09-24 (paginate the table), Q3 was
 closed coder-side the same day, and Q2 is a recommendation rather than a gate.
 
@@ -77,7 +77,13 @@ It does not enumerate which properties or operators `$filter` accepts, and it do
 no `contains()` or `startswith()` support on this collection. A filter Graph rejects
 returns 400, which S2 rule 1 correctly surfaces as a hard failure -- so building the UPN
 search on an undocumented operator would trade "incomplete results" for "the module
-stops working", which is worse. Paging is the only route to a complete answer.
+stops working", which is worse. Paging is the only route to a complete **list**.
+
+**It is not the only route to a complete answer about one named person**, and an earlier
+version of this section said it was. That was too strong, and the owner caught it by
+asking whether user 10,001 is reachable at all. Substring search over a list and "is this
+person risky?" are different questions, and the second has a direct answer that no ceiling
+can affect. S5 adds it.
 
 The same doc confirms `$orderby` and `$count` are unsupported, so defect 3 cannot be
 fixed by asking Graph for an order. It is fixed by retrieving everything and sorting
@@ -145,6 +151,8 @@ In scope:
    confirmation step, where it is shown once rather than on every row.
 6. Render `riskDetail` as readable text, with the raw value preserved for anything
    unrecognised.
+7. Add a direct single-user lookup, so a named person can be answered for regardless of
+   how large the tenant is or where the fetch stopped.
 
 Items 5 and 6 were added on the owner's instruction of 2026-09-24 (*"update the risky
 users fix plan to make this better"*) after the completeness work was already reviewed.
@@ -372,7 +380,7 @@ Name each one in the commit message with what it asserts now.
 `Modules/ModuleCatalog.cs`: `MaxRows` removed, `MaxTotalRows` added; `RiskyUsers`
 `Version` `1.1.0` -> `1.2.0`. No base app bump in this slice (S1 already did it).
 
-### S3 -- the page tells the truth (blocked on Q1)
+### S3 -- the page tells the truth, and pages
 
 `Components/Pages/RiskyUsers.razor`.
 
@@ -542,6 +550,100 @@ fallback makes the test fail. Restore and touch the files.
 two module bumps this plan makes, recorded in `## Versioning`. Compute from the field at
 implementation time, not from this document. No base app bump.
 
+### S5 -- look one user up directly, so no ceiling can hide them
+
+`Components/Pages/RiskyUsers.razor`, `Services/RiskyUsersService.cs`,
+`Modules/ModuleCatalog.cs`.
+
+#### Why this exists
+
+The defect that opened this plan was *"is Paul.Charles@analog.com risky, and why is he not
+here?"* Answering that by scanning a list is the wrong shape: the list can be capped, its
+order is unspecified, and the substring match runs in memory. Answering it by **asking
+Graph about that one user** cannot be capped, cannot be mis-ordered, and costs one or two
+calls at any tenant size.
+
+`GET /identityProtection/riskyUsers/{riskyUserId}` is v1.0, needs only
+`IdentityRiskyUser.Read.All` -- **already held** -- and this module already addresses
+individual risky users that way for the History expander
+(`RiskyUsersService.cs:119`). `docs/RiskyUsersModule-Plan.md:86` already records the
+endpoint. Microsoft documents that it accepts no OData query parameters, which is fine: it
+is a direct get, not a query.
+
+`riskyUserId` is the Entra object id. The owner's screenshot shows the Entra portal
+labelling it "User ID" on the Risky User Details page, and S6 of the module plan already
+populates `EntraObjectId` from `riskyUser.id`, so the two are the same identifier.
+
+#### R1 -- reconnaissance, and it decides the implementation
+
+The gap is turning a typed UPN into that object id. **Probe in this order; the first that
+works wins, and the earlier ones cost nothing.** Run against the module's own credentials
+before writing code -- this is the Defender R1 pattern, where an assumption about an
+endpoint's behaviour was cheaper to measure than to design around.
+
+1. `GET /identityProtection/riskyUsers?$filter=userPrincipalName eq '<upn>'`
+   If this returns 200 with the user, **S5 is one call, needs no new permission, and
+   nothing below applies.** Undocumented, hence a probe rather than a design.
+2. `GET /identityProtection/riskyUsers?$filter=startswith(userPrincipalName,'<prefix>')`
+   If 1 fails but this works, prefix search becomes server-side and the UPN box itself can
+   stop being a post-fetch filter for the common case.
+3. `GET /users/<upn>?$select=id` then `GET /identityProtection/riskyUsers/<id>`
+   The guaranteed route. **It needs `User.Read.All` added to the Risky Users app
+   registration and admin-consented -- an owner action, not a code change.** Do not reach
+   for another module's registration to avoid it: `docs/AdminModuleDeveloperGuide.md:642`
+   forbids falling back to another module's Graph config, and reuse is permitted only when
+   the operator deliberately configures the same secret id on both.
+
+Record which probe won, in the plan and in the code comment, so the next reader knows
+whether the shipped shape was chosen or forced.
+
+#### Three outcomes, and none of them is an error
+
+The whole value of a direct lookup is a definitive answer, including a definitive negative.
+
+| Result | Meaning | Operator sees |
+| --- | --- | --- |
+| Risky user returned | Graph holds a risk record | the single row, with its actions and History |
+| 404 from the lookup | the user exists, Entra holds no risk record | "No risk record for this user." A clean no. |
+| The UPN resolves to nobody | no such user | "No user matches that name." Different from the above. |
+| Any other failure | the request failed | the existing error alert |
+
+**404 must not render as an error and must not render as "no risky users found".** It is
+the answer the operator came for. Conflating "Entra says this person is fine" with "the
+query failed" or with "the list is empty" is the same failure class as S2 rule 1 and as the
+four Cloud Password Reset findings where an unanswered question was read as a negative
+answer -- except inverted: here a real negative must not be dressed up as a failure.
+
+#### The control
+
+One labelled input and a button, in its own row above the filter panel: **Look up a user**,
+taking a full UPN. Its result replaces the table with a single-row result or one of the
+messages above, and a Clear returns to the browse view.
+
+It is deliberately separate from `UPN contains`. Those answer different questions -- "show
+me matching rows in this list" versus "tell me about this person" -- and a single box that
+guesses which one the operator meant from whether the text looks like a complete address
+would be exactly the kind of cleverness that makes a tool untrustworthy. Two controls, two
+labels, no mode switch.
+
+#### What this does to the ceiling
+
+It demotes it. The ceiling stops being the thing that hides a specific person and becomes
+what it should have been: a bound on how much of the tenant the browse view will pull. The
+constraint notice stays, because a partial list is still partial -- but the operator now
+has a route that is never partial.
+
+Tests: `RiskyUsersServiceTests.cs` through the existing `Func<Task<GraphTokenClient?>>`
+seam. A 200 returns the user; **a 404 returns a distinct not-risky result, not null and not
+an exception**; an unresolvable UPN is distinguishable from a 404 on the risky-user get;
+any other status still throws. Page-side, assert the three outcomes reach three different
+branches.
+
+Guard proof: collapse the 404 branch into the failure branch and confirm the not-risky test
+fails. That is the whole slice in one mutation.
+
+`Modules/ModuleCatalog.cs`: `RiskyUsers` `1.3.0` -> `1.4.0`. No base app bump.
+
 ## Acceptance criteria
 
 - **AC1.** A tenant with more than 500 risky users returns more than 500 rows on an
@@ -586,6 +688,14 @@ implementation time, not from this document. No base app bump.
   `AuditService.cs:215` in the `action` field) are byte-identical to today's. They are
   stable record keys and are deliberately NOT the button text; AC13 must not be read as
   requiring them to match it.
+- **AC16.** A direct lookup of a named user returns that user's risk record regardless of
+  tenant size, including when a browse query for the same name hits the ceiling and does
+  not contain them. Run specifically against the reported case.
+- **AC17.** A user with no risk record produces a clean negative -- "no risk record" --
+  that is distinguishable from a failed request and from an empty list, and is not styled
+  as an error.
+- **AC18.** A UPN matching no user is distinguishable from a UPN matching a user who is
+  not risky.
 - **AC15.** `riskDetail` renders as readable text for known values, and an unrecognised
   value renders as its own raw string -- not blank, not "Unknown", not omitted.
 
@@ -628,18 +738,23 @@ in this repo renders a Razor page:
 8. Compare the Risk detail column against the same user's Entra timeline entries (AC15).
    Find one value the map does not know -- or force one -- and confirm it renders raw
    rather than as "Unknown".
+9. **Run R1's three probes before writing S5** and record which one won. This is the step
+   that decides whether S5 needs a new app-registration permission at all.
+10. Look up `Paul.Charles@analog.com` directly and confirm the High risk record comes back
+   (AC16). Then look up a user who is certainly not risky and confirm the clean negative
+   (AC17), and a UPN that matches nobody (AC18). The three must be visibly different.
 
 ## Versioning
 
 - `ExchangeAdminWeb.csproj` `2.23.0` -> `2.24.0`, in **S1 only**. `GraphTokenClient` is
   shared infrastructure. **Read the csproj's real value at implementation time** -- another
   plan may land first, and writing a stale number downgrades three version fields.
-- `Modules/ModuleCatalog.cs` `RiskyUsers`: **two module bumps, because two slices change
-  module-scoped behaviour.** S2 `1.1.0` -> `1.2.0` (the result set changes). S4 `1.2.0` ->
-  `1.3.0` (the operator-facing actions change). Each bump fires on its own slice; neither
-  is optional, because two deployed builds sharing a version number is worse than a wrong
-  number. S1 and S3 change no module version -- S3 is the page rendering its service's
-  existing outcome, under S2's bump.
+- `Modules/ModuleCatalog.cs` `RiskyUsers`: **three module bumps, because three slices
+  change module-scoped behaviour.** S2 `1.1.0` -> `1.2.0` (the result set changes). S4
+  `1.2.0` -> `1.3.0` (the operator-facing actions change). S5 `1.3.0` -> `1.4.0` (a new
+  capability). Each bump fires on its own slice; none is optional, because two deployed
+  builds sharing a version number is worse than a wrong number. S1 and S3 change no module
+  version -- S3 is the page rendering its service's existing outcome, under S2's bump.
 - The two rules are independent. Verify by diff that S1 leaves `ModuleCatalog.cs`
   untouched, and that S2 and S4 each leave the csproj untouched.
 
