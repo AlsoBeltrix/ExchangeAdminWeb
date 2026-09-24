@@ -1,9 +1,9 @@
 # Migration -- Redesign The Status Interface (queue item 14)
 
-Status: **Draft, awaiting owner approval.** No code written. The design itself is settled:
-the owner reviewed and drove it through a working HTML mockup over many rounds, and
-`.agents/mockups/migration-v3.html` is the accepted shape. What needs approval is the
-implementation, not the design.
+Status: **Draft, awaiting owner approval.** No code written. The layout was settled by the
+owner over many rounds against a working mockup (`.agents/mockups/migration-v3.html`), and
+three codex openreviews have run against this plan. **Two owner rulings are outstanding, Q3
+and Q4, and one of them decides whether a slice exists at all.**
 
 ## Why a plan at all
 
@@ -28,8 +28,9 @@ per-mailbox bulk actions (R12), Schedule as a first-class control (R13) and Expo
 (R31) are all here. Item 14 "preceding" 12 and 13 means the layout lands first, in S1-S6,
 before their behaviour is wired in S7 and after.
 
-What is **not** here: the `CompleteAfter` service semantics item 12 needs (trap 1 below), which
-stay separate because they change what two existing call sites mean.
+The one piece not yet settled is the `CompleteAfter` service semantics item 12 needs (trap 1
+below). They are drafted as S8 and gated on **Q3**: without them a Schedule button cannot do
+anything, so either S8 is in or Schedule ships disabled.
 
 ## What is wrong with the page today
 
