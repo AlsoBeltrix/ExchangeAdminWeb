@@ -1,0 +1,34 @@
+/* Mockup chrome only. Not app code. Bootstrap 5 (the app's own copy) does the rest. */
+body { margin: 0; }
+.mk-shell { display: flex; height: 100vh; overflow: hidden; }
+.mk-sidebar { width: 250px; flex: 0 0 250px; background: #1b2a3a; color: #cfd8e3; padding: 1rem .75rem; font-size: .875rem; }
+.mk-sidebar .mk-brand { font-weight: 600; color: #fff; margin-bottom: 1rem; font-size: 1rem; }
+.mk-sidebar ul { list-style: none; padding: 0; margin: 0; }
+.mk-sidebar li { padding: .35rem .5rem; border-radius: .25rem; }
+.mk-sidebar li.active { background: rgba(255,255,255,.16); color: #fff; }
+.mk-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.mk-banner { background: #fff3cd; border-bottom: 1px solid #ffe69c; padding: .45rem 1rem; font-size: .8rem;
+             display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+.mk-body { padding: 1rem 1.25rem; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.mk-split { display: flex; gap: 1rem; flex: 1 1 auto; min-height: 0; }
+.mk-pane { display: flex; flex-direction: column; min-height: 0; border: 1px solid #dee2e6; border-radius: .5rem; background: #fff; }
+.mk-pane-head { padding: .6rem .75rem; background: #f8f9fa; border-bottom: 1px solid #dee2e6; border-radius: .5rem .5rem 0 0; }
+.mk-pane-foot { padding: .6rem .75rem; background: #f8f9fa; border-top: 1px solid #dee2e6; border-radius: 0 0 .5rem .5rem; }
+.mk-pane-scroll { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.mk-left { flex: 0 0 400px; }
+.mk-right { flex: 1 1 auto; min-width: 0; }
+.mk-batch { display: flex; gap: .5rem; align-items: flex-start; padding: .5rem .75rem; border-bottom: 1px solid #eceff1; cursor: pointer; }
+.mk-batch:hover { background: #f6f9fc; }
+.mk-batch.active { background: #cfe2ff; box-shadow: inset 3px 0 0 #0d6efd; }
+.mk-selbar { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+.mk-chips { display: flex; gap: .25rem; flex-wrap: wrap; }
+.mk-chips .badge { font-weight: 500; }
+.mk-note { font-size: .8rem; }
+.mk-stat { font-variant-numeric: tabular-nums; }
+.mk-drawer { position: fixed; top: 0; right: 0; height: 100vh; width: 680px; max-width: 94vw; background: #fff;
+             border-left: 1px solid #dee2e6; box-shadow: -8px 0 24px rgba(0,0,0,.18); display: flex; flex-direction: column;
+             transform: translateX(0); transition: transform .15s ease; z-index: 1050; }
+.mk-drawer.closed { transform: translateX(100%); }
+.mk-sticky-toolbar { position: sticky; top: 0; z-index: 10; background: #fff; border-bottom: 1px solid #dee2e6; padding: .6rem .75rem; }
+.mk-scrollarea { overflow-y: auto; flex: 1 1 auto; min-height: 0; border: 1px solid #dee2e6; border-top: 0; border-radius: 0 0 .5rem .5rem; background: #fff; }
+.mk-index { max-width: 60rem; margin: 3rem auto; padding: 0 1.5rem; }

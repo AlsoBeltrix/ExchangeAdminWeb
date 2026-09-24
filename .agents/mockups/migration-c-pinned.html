@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup C - Pinned bar + drawer - Exchange Migration</title>
+<link rel="stylesheet" href="../../wwwroot/bootstrap/bootstrap.min.css">
+<link rel="stylesheet" href="_mockup.css">
+<script src="_mockup.js" defer></script>
+</head>
+<body>
+<div class="mk-shell">
+
+  <nav class="mk-sidebar">
+    <div class="mk-brand">ExchangeAdminWeb</div>
+    <ul>
+      <li>Home</li>
+      <li>Mailbox Permissions</li>
+      <li>Calendar Permissions</li>
+      <li class="active">Exchange Migration</li>
+      <li>Group Management</li>
+      <li>Message Trace</li>
+      <li>Conference Rooms</li>
+    </ul>
+  </nav>
+
+  <div class="mk-main">
+    <div class="mk-banner">
+      <strong>Mockup C &ndash; Pinned bar + drawer</strong>
+      <span>Today's table kept, but the toolbar and selection bar never scroll away and the batch detail opens in a side panel instead of inside the row.</span>
+      <span class="ms-auto">
+        <a href="index.html">Index</a> &middot;
+        <a href="migration-a-split.html">A &ndash; Split pane</a> &middot;
+        <a href="migration-b-list.html">B &ndash; Drill-down</a>
+      </span>
+    </div>
+
+    <div class="mk-body">
+      <h2 class="h4">Exchange Migration <span class="badge bg-secondary align-middle" style="font-size:.6em;">v2.9.0</span></h2>
+
+      <ul class="nav nav-tabs mb-3">
+        <li class="nav-item"><a class="nav-link" href="#">Single User Check</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">Bulk CSV Check</a></li>
+        <li class="nav-item"><a class="nav-link active" href="#">Migration Status</a></li>
+      </ul>
+
+      <div class="mk-sticky-toolbar border rounded-top">
+        <div class="d-flex gap-2 align-items-center flex-wrap mb-2">
+          <input class="form-control form-control-sm" style="width:20rem;" placeholder="Search user or batch">
+          <button class="btn btn-sm btn-outline-primary">Search</button>
+          <span class="text-muted small ms-2">9 batches</span>
+          <button class="btn btn-sm btn-outline-secondary ms-auto">Download CSV</button>
+          <button class="btn btn-sm btn-primary">Refresh</button>
+        </div>
+        <div class="alert alert-secondary mb-0 py-2">
+          <div class="mk-selbar mb-2">
+            <strong class="small" data-count="batches">2 selected</strong>
+            <div class="mk-chips" data-chips="batches"></div>
+          </div>
+          <div class="mk-selbar">
+            <button class="btn btn-sm btn-danger" data-needs="batches">Delete</button>
+            <button class="btn btn-sm btn-outline-danger" data-needs="batches">Remove Completed</button>
+            <button class="btn btn-sm btn-outline-success" data-needs="batches">Resume/Retry</button>
+            <button class="btn btn-sm btn-outline-secondary ms-auto" data-needs="batches">Untick all</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="mk-scrollarea">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light" style="position:sticky; top:0; z-index:2;">
+            <tr>
+              <th style="width:2.2rem;"><input class="form-check-input" type="checkbox"></th>
+              <th>Batch Name</th>
+              <th style="width:8rem;">Status</th>
+              <th style="width:9rem;">Direction</th>
+              <th style="width:7rem;">Created</th>
+              <th style="width:5rem;" class="text-center">Total</th>
+              <th style="width:5rem;" class="text-center">Synced</th>
+              <th style="width:5rem;" class="text-center">Failed</th>
+              <th style="width:20rem;" class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="table-primary">
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Wave3-Finance" checked></td>
+              <td>Wave3-Finance</td><td><span class="badge bg-info text-dark">Syncing</span></td><td>Onboarding</td><td>Sep 21</td>
+              <td class="text-center mk-stat">48</td><td class="text-center mk-stat">31</td><td class="text-center text-danger mk-stat">2</td>
+              <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-outline-warning me-1">Stop</button>
+                <button class="btn btn-sm btn-outline-danger me-1">Delete</button>
+                <button class="btn btn-sm btn-primary" onclick="mkDrawer(true)">Open panel</button>
+              </td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Wave2-Engineering" checked></td>
+              <td>Wave2-Engineering</td><td><span class="badge bg-success">Synced</span></td><td>Onboarding</td><td>Sep 18</td>
+              <td class="text-center mk-stat">120</td><td class="text-center mk-stat">120</td><td class="text-center mk-stat">0</td>
+              <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-success me-1">Complete</button>
+                <button class="btn btn-sm btn-outline-danger me-1">Delete</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="mkDrawer(true)">Open panel</button>
+              </td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Wave4-Sales"></td>
+              <td>Wave4-Sales</td><td><span class="badge bg-secondary">Starting</span></td><td>Onboarding</td><td>Sep 23</td>
+              <td class="text-center mk-stat">64</td><td class="text-center mk-stat">0</td><td class="text-center mk-stat">0</td>
+              <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-outline-warning me-1">Stop</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="mkDrawer(true)">Open panel</button>
+              </td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Offboard-Contractors"></td>
+              <td>Offboard-Contractors</td><td><span class="badge bg-warning text-dark">Stopped</span></td><td>Offboarding</td><td>Sep 22</td>
+              <td class="text-center mk-stat">7</td><td class="text-center mk-stat">3</td><td class="text-center text-danger mk-stat">4</td>
+              <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-outline-success me-1">Resume</button>
+                <button class="btn btn-sm btn-outline-danger me-1">Delete</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="mkDrawer(true)">Open panel</button>
+              </td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Rehome-Legal"></td>
+              <td>Rehome-Legal</td><td><span class="badge bg-success">Synced</span></td><td>Onboarding</td><td>Sep 19</td>
+              <td class="text-center mk-stat">22</td><td class="text-center mk-stat">22</td><td class="text-center text-danger mk-stat">1</td>
+              <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-success me-1">Complete</button>
+                <button class="btn btn-sm btn-outline-danger me-1">Delete</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="mkDrawer(true)">Open panel</button>
+              </td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Wave1-Pilot"></td>
+              <td>Wave1-Pilot</td><td><span class="badge bg-primary">Completed</span></td><td>Onboarding</td><td>Sep 08</td>
+              <td class="text-center mk-stat">12</td><td class="text-center mk-stat">12</td><td class="text-center mk-stat">0</td>
+              <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-outline-danger me-1">Delete</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="mkDrawer(true)">Open panel</button>
+              </td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Archive-Facilities"></td>
+              <td>Archive-Facilities</td><td><span class="badge bg-info text-dark">Syncing</span></td><td>Onboarding</td><td>Sep 23</td>
+              <td class="text-center mk-stat">33</td><td class="text-center mk-stat">11</td><td class="text-center mk-stat">0</td>
+              <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-outline-warning me-1">Stop</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="mkDrawer(true)">Open panel</button>
+              </td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Wave5-Support"></td>
+              <td>Wave5-Support</td><td><span class="badge bg-secondary">Created</span></td><td>Onboarding</td><td>Sep 23</td>
+              <td class="text-center mk-stat">90</td><td class="text-center mk-stat">0</td><td class="text-center mk-stat">0</td>
+              <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-outline-danger me-1">Delete</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="mkDrawer(true)">Open panel</button>
+              </td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Offboard-Interns"></td>
+              <td>Offboard-Interns</td><td><span class="badge bg-primary">Completed</span></td><td>Offboarding</td><td>Aug 29</td>
+              <td class="text-center mk-stat">15</td><td class="text-center mk-stat">15</td><td class="text-center mk-stat">0</td>
+              <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-outline-danger me-1">Delete</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="mkDrawer(true)">Open panel</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="border border-top-0 rounded-bottom bg-light p-2">
+        <div class="mk-note text-muted">The table scrolls under the pinned toolbar above it. Batch detail never expands inside a row, so nothing below the clicked row is ever pushed off screen.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Drawer: batch detail -->
+<div class="mk-drawer" id="mkDrawer">
+  <div class="p-3 border-bottom bg-light">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <h5 class="mb-0">Wave3-Finance</h5>
+      <span class="badge bg-info text-dark">Syncing</span>
+      <button class="btn-close ms-auto" onclick="mkDrawer(false)" aria-label="Close"></button>
+    </div>
+    <div class="text-muted small">Onboarding &middot; created Sep 21 &middot; started Sep 21 14:02</div>
+    <div class="d-flex gap-3 my-2 small mk-stat">
+      <span><strong>48</strong> total</span>
+      <span class="text-success"><strong>31</strong> synced</span>
+      <span class="text-danger"><strong>2</strong> failed</span>
+      <span class="text-muted"><strong>15</strong> in progress</span>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <button class="btn btn-sm btn-success">Complete batch</button>
+      <button class="btn btn-sm btn-outline-warning">Stop</button>
+      <button class="btn btn-sm btn-outline-success">Resume</button>
+      <button class="btn btn-sm btn-outline-danger">Delete</button>
+    </div>
+  </div>
+
+  <div class="mk-pane-scroll">
+    <div class="alert alert-warning rounded-0 border-0 border-bottom mb-0 py-2">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <strong class="small">Complete batch</strong>
+        <input class="form-control form-control-sm" style="width:10rem;" placeholder="Ticket (required)">
+        <label class="small mb-0">Complete after</label>
+        <input class="form-control form-control-sm" style="width:13rem;" type="datetime-local" value="2026-09-25T19:00">
+        <button class="btn btn-sm btn-warning">Confirm</button>
+        <button class="btn btn-sm btn-outline-secondary">Cancel</button>
+      </div>
+      <div class="small text-muted mt-1">Queue item 12 would live here.</div>
+    </div>
+
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-light" style="position:sticky; top:0; z-index:2;">
+        <tr>
+          <th style="width:2.2rem;"><input class="form-check-input" type="checkbox"></th>
+          <th>Email</th>
+          <th style="width:8rem;">Status</th>
+          <th style="width:9rem;" class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><input class="form-check-input" type="checkbox" data-group="users" data-label="avery.singh" checked></td>
+          <td>avery.singh@example.com<div class="small text-muted">18,402 synced &middot; Sep 23 09:14</div></td>
+          <td><span class="badge bg-success">Synced</span></td>
+          <td class="text-end text-nowrap"><button class="btn btn-sm btn-success me-1">Complete</button><button class="btn btn-sm btn-outline-danger">Report</button></td>
+        </tr>
+        <tr>
+          <td><input class="form-check-input" type="checkbox" data-group="users" data-label="blake.moreau" checked></td>
+          <td>blake.moreau@example.com<div class="small text-danger">MapiExceptionNetworkError (0x80004005)</div></td>
+          <td><span class="badge bg-danger">Failed</span></td>
+          <td class="text-end text-nowrap"><button class="btn btn-sm btn-primary me-1">Resume</button><button class="btn btn-sm btn-outline-danger">Report</button></td>
+        </tr>
+        <tr>
+          <td><input class="form-check-input" type="checkbox" data-group="users" data-label="casey.duval"></td>
+          <td>casey.duval@example.com<div class="small text-muted">9,744 synced &middot; Sep 23 09:20</div></td>
+          <td><span class="badge bg-info text-dark">Syncing</span></td>
+          <td class="text-end text-nowrap"><button class="btn btn-sm btn-outline-warning me-1">Pause</button><button class="btn btn-sm btn-outline-danger">Report</button></td>
+        </tr>
+        <tr>
+          <td><input class="form-check-input" type="checkbox" data-group="users" data-label="devon.park"></td>
+          <td>devon.park@example.com<div class="small text-danger">LargeItem count 27 exceeds limit</div></td>
+          <td><span class="badge bg-warning text-dark">NeedsApproval</span></td>
+          <td class="text-end text-nowrap"><button class="btn btn-sm btn-warning me-1">Approve</button><button class="btn btn-sm btn-outline-danger">Report</button></td>
+        </tr>
+        <tr>
+          <td><input class="form-check-input" type="checkbox" data-group="users" data-label="elena.rossi"></td>
+          <td>elena.rossi@example.com<div class="small text-muted">31,208 synced &middot; Sep 21 17:02</div></td>
+          <td><span class="badge bg-primary">Completed</span></td>
+          <td class="text-end text-nowrap"><button class="btn btn-sm btn-outline-secondary me-1">Clear</button><button class="btn btn-sm btn-outline-danger">Report</button></td>
+        </tr>
+        <tr>
+          <td><input class="form-check-input" type="checkbox" data-group="users" data-label="farid.haddad"></td>
+          <td>farid.haddad@example.com<div class="small text-danger">Stopped by administrator</div></td>
+          <td><span class="badge bg-warning text-dark">Stopped</span></td>
+          <td class="text-end text-nowrap"><button class="btn btn-sm btn-primary me-1">Resume</button><button class="btn btn-sm btn-outline-danger">Report</button></td>
+        </tr>
+        <tr>
+          <td><input class="form-check-input" type="checkbox" data-group="users" data-label="gina.okafor"></td>
+          <td>gina.okafor@example.com<div class="small text-muted">12,877 synced &middot; Sep 23 09:02</div></td>
+          <td><span class="badge bg-success">Synced</span></td>
+          <td class="text-end text-nowrap"><button class="btn btn-sm btn-success me-1">Complete</button><button class="btn btn-sm btn-outline-danger">Report</button></td>
+        </tr>
+        <tr>
+          <td><input class="form-check-input" type="checkbox" data-group="users" data-label="hector.velez"></td>
+          <td>hector.velez@example.com<div class="small text-muted">6,301 synced &middot; Sep 23 09:21</div></td>
+          <td><span class="badge bg-info text-dark">Syncing</span></td>
+          <td class="text-end text-nowrap"><button class="btn btn-sm btn-outline-warning me-1">Pause</button><button class="btn btn-sm btn-outline-danger">Report</button></td>
+        </tr>
+        <tr>
+          <td><input class="form-check-input" type="checkbox" data-group="users" data-label="iris.tanaka"></td>
+          <td>iris.tanaka@example.com<div class="small text-muted">40,115 synced &middot; Sep 23 08:44</div></td>
+          <td><span class="badge bg-success">Synced</span></td>
+          <td class="text-end text-nowrap"><button class="btn btn-sm btn-success me-1">Complete</button><button class="btn btn-sm btn-outline-danger">Report</button></td>
+        </tr>
+        <tr>
+          <td><input class="form-check-input" type="checkbox" data-group="users" data-label="jonas.reiter"></td>
+          <td>jonas.reiter@example.com<div class="small text-danger">3 items skipped</div></td>
+          <td><span class="badge bg-secondary">CompletedWithErrors</span></td>
+          <td class="text-end text-nowrap"><button class="btn btn-sm btn-outline-secondary me-1">Clear</button><button class="btn btn-sm btn-outline-danger">Report</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="p-2 border-top bg-light">
+    <div class="mk-selbar mb-2">
+      <strong class="small" data-count="users">2 selected</strong>
+      <div class="mk-chips" data-chips="users"></div>
+    </div>
+    <div class="mk-selbar">
+      <button class="btn btn-sm btn-success" data-needs="users">Complete</button>
+      <button class="btn btn-sm btn-outline-warning" data-needs="users">Pause</button>
+      <button class="btn btn-sm btn-outline-success" data-needs="users">Resume</button>
+      <button class="btn btn-sm btn-danger" data-needs="users">Remove</button>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" data-needs="users">Untick all</button>
+    </div>
+    <div class="mk-note text-muted mt-1">Queue item 13 would live here. Note the cost of this shape: two selections exist at once, batches behind and users in front.</div>
+  </div>
+</div>
+
+</body>
+</html>

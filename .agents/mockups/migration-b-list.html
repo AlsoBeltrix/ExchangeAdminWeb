@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup B - Batch list - Exchange Migration</title>
+<link rel="stylesheet" href="../../wwwroot/bootstrap/bootstrap.min.css">
+<link rel="stylesheet" href="_mockup.css">
+<script src="_mockup.js" defer></script>
+</head>
+<body>
+<div class="mk-shell">
+
+  <nav class="mk-sidebar">
+    <div class="mk-brand">ExchangeAdminWeb</div>
+    <ul>
+      <li>Home</li>
+      <li>Mailbox Permissions</li>
+      <li>Calendar Permissions</li>
+      <li class="active">Exchange Migration</li>
+      <li>Group Management</li>
+      <li>Message Trace</li>
+      <li>Conference Rooms</li>
+    </ul>
+  </nav>
+
+  <div class="mk-main">
+    <div class="mk-banner">
+      <strong>Mockup B &ndash; Drill-down (screen 1 of 2)</strong>
+      <span>The list is only a list. Click a batch name to open its own page. <a href="migration-b-detail.html">Try Wave3-Finance &rarr;</a></span>
+      <span class="ms-auto">
+        <a href="index.html">Index</a> &middot;
+        <a href="migration-a-split.html">A &ndash; Split pane</a> &middot;
+        <a href="migration-c-pinned.html">C &ndash; Pinned bar + drawer</a>
+      </span>
+    </div>
+
+    <div class="mk-body">
+      <h2 class="h4">Exchange Migration <span class="badge bg-secondary align-middle" style="font-size:.6em;">v2.9.0</span></h2>
+
+      <ul class="nav nav-tabs mb-3">
+        <li class="nav-item"><a class="nav-link" href="#">Single User Check</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">Bulk CSV Check</a></li>
+        <li class="nav-item"><a class="nav-link active" href="#">Migration Status</a></li>
+      </ul>
+
+      <div class="mk-sticky-toolbar border rounded-top d-flex gap-2 align-items-center flex-wrap">
+        <input class="form-control form-control-sm" style="width:20rem;" placeholder="Search user or batch">
+        <button class="btn btn-sm btn-outline-primary">Search</button>
+        <span class="text-muted small ms-2">9 batches</span>
+        <button class="btn btn-sm btn-outline-secondary ms-auto">Download CSV</button>
+        <button class="btn btn-sm btn-primary">Refresh</button>
+      </div>
+
+      <div class="mk-scrollarea">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light" style="position:sticky; top:0; z-index:2;">
+            <tr>
+              <th style="width:2.2rem;"><input class="form-check-input" type="checkbox"></th>
+              <th>Batch Name</th>
+              <th style="width:8rem;">Status</th>
+              <th style="width:9rem;">Direction</th>
+              <th style="width:7rem;">Created</th>
+              <th style="width:5rem;" class="text-center">Total</th>
+              <th style="width:5rem;" class="text-center">Synced</th>
+              <th style="width:5rem;" class="text-center">Failed</th>
+              <th style="width:7rem;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Wave3-Finance" checked></td>
+              <td><a href="migration-b-detail.html">Wave3-Finance</a></td>
+              <td><span class="badge bg-info text-dark">Syncing</span></td><td>Onboarding</td><td>Sep 21</td>
+              <td class="text-center mk-stat">48</td><td class="text-center mk-stat">31</td><td class="text-center text-danger mk-stat">2</td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="migration-b-detail.html">Open &rsaquo;</a></td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Wave2-Engineering" checked></td>
+              <td><a href="migration-b-detail.html">Wave2-Engineering</a></td>
+              <td><span class="badge bg-success">Synced</span></td><td>Onboarding</td><td>Sep 18</td>
+              <td class="text-center mk-stat">120</td><td class="text-center mk-stat">120</td><td class="text-center mk-stat">0</td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="migration-b-detail.html">Open &rsaquo;</a></td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Wave4-Sales"></td>
+              <td><a href="migration-b-detail.html">Wave4-Sales</a></td>
+              <td><span class="badge bg-secondary">Starting</span></td><td>Onboarding</td><td>Sep 23</td>
+              <td class="text-center mk-stat">64</td><td class="text-center mk-stat">0</td><td class="text-center mk-stat">0</td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="migration-b-detail.html">Open &rsaquo;</a></td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Offboard-Contractors"></td>
+              <td><a href="migration-b-detail.html">Offboard-Contractors</a></td>
+              <td><span class="badge bg-warning text-dark">Stopped</span></td><td>Offboarding</td><td>Sep 22</td>
+              <td class="text-center mk-stat">7</td><td class="text-center mk-stat">3</td><td class="text-center text-danger mk-stat">4</td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="migration-b-detail.html">Open &rsaquo;</a></td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Rehome-Legal"></td>
+              <td><a href="migration-b-detail.html">Rehome-Legal</a></td>
+              <td><span class="badge bg-success">Synced</span></td><td>Onboarding</td><td>Sep 19</td>
+              <td class="text-center mk-stat">22</td><td class="text-center mk-stat">22</td><td class="text-center text-danger mk-stat">1</td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="migration-b-detail.html">Open &rsaquo;</a></td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Wave1-Pilot"></td>
+              <td><a href="migration-b-detail.html">Wave1-Pilot</a></td>
+              <td><span class="badge bg-primary">Completed</span></td><td>Onboarding</td><td>Sep 08</td>
+              <td class="text-center mk-stat">12</td><td class="text-center mk-stat">12</td><td class="text-center mk-stat">0</td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="migration-b-detail.html">Open &rsaquo;</a></td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Archive-Facilities"></td>
+              <td><a href="migration-b-detail.html">Archive-Facilities</a></td>
+              <td><span class="badge bg-info text-dark">Syncing</span></td><td>Onboarding</td><td>Sep 23</td>
+              <td class="text-center mk-stat">33</td><td class="text-center mk-stat">11</td><td class="text-center mk-stat">0</td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="migration-b-detail.html">Open &rsaquo;</a></td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Wave5-Support"></td>
+              <td><a href="migration-b-detail.html">Wave5-Support</a></td>
+              <td><span class="badge bg-secondary">Created</span></td><td>Onboarding</td><td>Sep 23</td>
+              <td class="text-center mk-stat">90</td><td class="text-center mk-stat">0</td><td class="text-center mk-stat">0</td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="migration-b-detail.html">Open &rsaquo;</a></td>
+            </tr>
+            <tr>
+              <td><input class="form-check-input" type="checkbox" data-group="batches" data-label="Offboard-Interns"></td>
+              <td><a href="migration-b-detail.html">Offboard-Interns</a></td>
+              <td><span class="badge bg-primary">Completed</span></td><td>Offboarding</td><td>Aug 29</td>
+              <td class="text-center mk-stat">15</td><td class="text-center mk-stat">15</td><td class="text-center mk-stat">0</td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="migration-b-detail.html">Open &rsaquo;</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="border border-top-0 rounded-bottom bg-light p-2">
+        <div class="mk-selbar mb-2">
+          <strong class="small" data-count="batches">2 selected</strong>
+          <div class="mk-chips" data-chips="batches"></div>
+        </div>
+        <div class="mk-selbar">
+          <button class="btn btn-sm btn-danger" data-needs="batches">Delete</button>
+          <button class="btn btn-sm btn-outline-danger" data-needs="batches">Remove Completed</button>
+          <button class="btn btn-sm btn-outline-success" data-needs="batches">Resume/Retry</button>
+          <button class="btn btn-sm btn-outline-secondary ms-auto" data-needs="batches">Untick all</button>
+        </div>
+        <div class="mk-note text-muted mt-1">The bar is pinned below the scrolling table and names what is ticked, so the selection is never off screen when you press a destructive button.</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</body>
+</html>

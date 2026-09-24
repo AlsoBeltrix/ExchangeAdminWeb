@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup A at scale - Exchange Migration</title>
+<link rel="stylesheet" href="../../wwwroot/bootstrap/bootstrap.min.css">
+<link rel="stylesheet" href="_mockup.css">
+<style>
+  .mk-overflow { font-size: .8rem; color: #495057; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mk-bulkbanner { font-size: .8rem; }
+  .mk-split.collapsed .mk-left { display: none; }
+  .mk-right:not(.multi) .multi-only { display: none; }
+  .mk-right.multi .single-only { display: none; }
+  .mk-right.multi #uMulti { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+</style>
+</head>
+<body>
+<div class="mk-shell">
+
+  <nav class="mk-sidebar">
+    <div class="mk-brand">ExchangeAdminWeb</div>
+    <ul>
+      <li>Home</li>
+      <li>Mailbox Permissions</li>
+      <li>Calendar Permissions</li>
+      <li class="active">Exchange Migration</li>
+      <li>Group Management</li>
+      <li>Message Trace</li>
+      <li>Conference Rooms</li>
+    </ul>
+  </nav>
+
+  <div class="mk-main">
+    <div class="mk-banner">
+      <strong>Mockup A at scale</strong>
+      <span>Batches:</span>
+      <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-dark" onclick="setScale(100, null)">100</button>
+        <button class="btn btn-outline-dark" onclick="setScale(500, null)">500</button>
+        <button class="btn btn-outline-dark" onclick="setScale(2000, null)">2000</button>
+      </div>
+      <span>Users in selected batch:</span>
+      <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-dark" onclick="setScale(null, 137)">137</button>
+        <button class="btn btn-outline-dark" onclick="setScale(null, 500)">500</button>
+        <button class="btn btn-outline-dark" onclick="setScale(null, 2000)">2000</button>
+      </div>
+      <span class="text-danger">Both lists page at 50 rows; the numbers above set the dataset size, not what gets rendered.</span>
+      <span class="ms-auto"><a href="index.html">Index</a> &middot; <a href="migration-a-split.html">A at small scale</a></span>
+    </div>
+
+    <div class="mk-body">
+      <h2 class="h4 mb-2">Exchange Migration <span class="badge bg-secondary align-middle" style="font-size:.6em;">v2.9.0</span></h2>
+
+      <ul class="nav nav-tabs mb-3">
+        <li class="nav-item"><a class="nav-link" href="#">Single User Check</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">Bulk CSV Check</a></li>
+        <li class="nav-item"><a class="nav-link active" href="#">Migration Status</a></li>
+      </ul>
+
+      <div class="mk-split" id="mkSplit">
+
+        <!-- LEFT -->
+        <div class="mk-pane mk-left">
+          <div class="mk-pane-head">
+            <div class="d-flex gap-1 mb-2">
+              <input class="form-control form-control-sm" id="bFilter" placeholder="Filter batches" oninput="bPage=0; renderBatches()">
+              <select class="form-select form-select-sm" style="width:9rem;" id="bStatus" onchange="bPage=0; renderBatches()">
+                <option value="">All statuses</option>
+                <option>Syncing</option><option>Synced</option><option>Starting</option>
+                <option>Stopped</option><option>Completed</option><option>Created</option>
+              </select>
+            </div>
+            <div class="d-flex gap-1 align-items-center">
+              <select class="form-select form-select-sm" style="width:11rem;" id="bSort" onchange="bPage=0; renderBatches()">
+                <option value="created">Sort: newest first</option>
+                <option value="name">Sort: name</option>
+                <option value="failed">Sort: most failed</option>
+                <option value="status">Sort: status</option>
+              </select>
+              <span class="small text-muted" id="bCount"></span>
+              <button class="btn btn-sm btn-outline-secondary ms-auto">CSV</button>
+              <button class="btn btn-sm btn-primary">Refresh</button>
+            </div>
+          </div>
+
+          <div class="mk-pane-scroll" id="bList"></div>
+
+          <div class="mk-pane-foot border-bottom d-flex align-items-center gap-2 py-1">
+            <button class="btn btn-sm btn-outline-secondary" onclick="pageBatches(-1)">&lsaquo; Prev</button>
+            <span class="small text-muted" id="bPager"></span>
+            <button class="btn btn-sm btn-outline-secondary" onclick="pageBatches(1)">Next &rsaquo;</button>
+            <select class="form-select form-select-sm ms-auto" style="width:7rem;" id="bPageSize" onchange="bPage=0; renderBatches()">
+              <option value="25">25 / page</option>
+              <option value="50" selected>50 / page</option>
+              <option value="100">100 / page</option>
+            </select>
+          </div>
+
+          <div class="mk-pane-foot">
+            <div class="d-flex align-items-start gap-2 mb-2">
+              <strong class="small text-nowrap" id="bSelCount">Nothing selected</strong>
+              <div class="mk-chips mk-overflow" id="bChips"></div>
+            </div>
+            <div class="mk-selbar">
+              <button class="btn btn-sm btn-outline-primary" id="bOnlyBtn" data-bneeds onclick="toggleOnlySelected()">Show selected</button>
+              <span class="small text-danger" id="bOffPage"></span>
+              <button class="btn btn-sm btn-outline-secondary ms-auto" data-bneeds onclick="clearBatchSel()">Untick all</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT -->
+        <div class="mk-pane mk-right" id="mkRight">
+          <div id="uMulti" class="multi-only"></div>
+          <div class="mk-pane-head single-only">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <h5 class="mb-0" id="uBatchName">-</h5>
+              <span id="uBatchBadge"></span>
+              <span class="text-muted small" id="uBatchMeta"></span>
+              <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="deselectOpen()" title="Deselect this batch">Deselect</button>
+              <button class="btn btn-sm btn-outline-secondary" id="paneToggle" onclick="togglePane()">Hide batch list</button>
+              <button class="btn btn-sm btn-outline-secondary" title="Refresh batch users">&#x21bb;</button>
+            </div>
+            <div class="d-flex gap-3 my-2 small mk-stat" id="uBatchStats"></div>
+            <div class="d-flex gap-2 flex-wrap mb-2">
+              <button class="btn btn-sm btn-success">Complete batch</button>
+              <button class="btn btn-sm btn-outline-warning">Stop</button>
+              <button class="btn btn-sm btn-outline-success">Resume</button>
+              <button class="btn btn-sm btn-outline-danger">Delete</button>
+            </div>
+            <div class="d-flex gap-1 align-items-center">
+              <input class="form-control form-control-sm" style="max-width:18rem;" id="uFilter" placeholder="Filter users in this batch" oninput="uPage=0; renderUsers()">
+              <select class="form-select form-select-sm" style="width:12rem;" id="uStatus" onchange="uPage=0; renderUsers()">
+                <option value="">All statuses</option>
+                <option>Synced</option><option>Syncing</option><option>Failed</option>
+                <option>NeedsApproval</option><option>Stopped</option><option>Completed</option>
+                <option>CompletedWithErrors</option>
+              </select>
+              <span class="small text-muted" id="uCount"></span>
+            </div>
+          </div>
+
+          <div class="mk-pane-scroll single-only" id="uScroll">
+            <div id="uBulkBanner"></div>
+            <table class="table table-sm table-hover align-middle mb-0">
+              <thead class="table-light" style="position:sticky; top:0; z-index:2;">
+                <tr>
+                  <th style="width:2.2rem;"><input class="form-check-input" type="checkbox" id="uAll" onchange="toggleAllUsers(this.checked)"></th>
+                  <th role="button" onclick="toggleUserSort('email')">Email <span data-usort="email"></span></th>
+                  <th role="button" style="width:9rem;" onclick="toggleUserSort('status')">Status <span data-usort="status"></span></th>
+                  <th role="button" style="width:6rem;" class="text-end" onclick="toggleUserSort('synced')">Synced <span data-usort="synced"></span></th>
+                  <th role="button" style="width:8rem;" onclick="toggleUserSort('ts')">Last Sync <span data-usort="ts"></span></th>
+                  <th role="button" onclick="toggleUserSort('error')">Error <span data-usort="error"></span></th>
+                  <th style="width:14rem;" class="text-end">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="uBody"></tbody>
+            </table>
+          </div>
+
+          <div class="mk-pane-foot single-only border-bottom d-flex align-items-center gap-2 py-1">
+            <button class="btn btn-sm btn-outline-secondary" onclick="pageUsers(-1)">&lsaquo; Prev</button>
+            <span class="small text-muted" id="uPager"></span>
+            <button class="btn btn-sm btn-outline-secondary" onclick="pageUsers(1)">Next &rsaquo;</button>
+            <select class="form-select form-select-sm ms-auto" style="width:7rem;" id="uPageSize" onchange="uPage=0; renderUsers()">
+              <option value="25">25 / page</option>
+              <option value="50" selected>50 / page</option>
+              <option value="100">100 / page</option>
+            </select>
+          </div>
+
+          <div class="mk-pane-foot single-only">
+            <div class="d-flex align-items-start gap-2 mb-2">
+              <strong class="small text-nowrap" id="uSelCount">Nothing selected</strong>
+              <div class="mk-chips mk-overflow" id="uChips"></div>
+            </div>
+            <div class="mk-selbar">
+              <button class="btn btn-sm btn-success" data-uneeds>Complete</button>
+              <button class="btn btn-sm btn-outline-warning" data-uneeds>Pause</button>
+              <button class="btn btn-sm btn-outline-success" data-uneeds>Resume</button>
+              <button class="btn btn-sm btn-danger" data-uneeds>Remove from batch</button>
+              <button class="btn btn-sm btn-outline-secondary ms-auto" data-uneeds onclick="clearUserSel()">Untick all</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- deterministic fake data -------------------------------------------------
+var seed = 12345;
+function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+function pick(a) { return a[Math.floor(rnd() * a.length)]; }
+
+var DEPTS = ['Finance','Engineering','Sales','Legal','Facilities','Support','Marketing','Payroll','Research','Logistics','Retail','Clinical','Fieldops','Archive','Security','Training'];
+var B_STATUS = ['Syncing','Synced','Starting','Stopped','Completed','Created'];
+var B_BADGE = {Syncing:'info text-dark',Synced:'success',Starting:'secondary',Stopped:'warning text-dark',Completed:'primary',Created:'secondary'};
+var U_STATUS = ['Synced','Syncing','Failed','NeedsApproval','Stopped','Completed','CompletedWithErrors'];
+var U_BADGE = {Synced:'success',Syncing:'info text-dark',Failed:'danger',NeedsApproval:'warning text-dark',Stopped:'warning text-dark',Completed:'primary',CompletedWithErrors:'secondary'};
+var U_ACTION = {Synced:['btn-success','Complete'],Syncing:['btn-outline-warning','Pause'],Failed:['btn-primary','Resume'],
+                NeedsApproval:['btn-warning','Approve'],Stopped:['btn-primary','Resume'],Completed:['btn-outline-secondary','Clear'],
+                CompletedWithErrors:['btn-outline-secondary','Clear']};
+var ERRORS = {Failed:'MapiExceptionNetworkError (0x80004005)', NeedsApproval:'LargeItem count exceeds limit',
+              Stopped:'Stopped by administrator', CompletedWithErrors:'3 items skipped'};
+var FIRST = ['avery','blake','casey','devon','elena','farid','gina','hector','iris','jonas','kira','liam','mona','noor','omar','priya','quinn','rosa','sam','tariq','uma','viktor','wen','xenia','yusuf','zara'];
+var LAST = ['singh','moreau','duval','park','rossi','haddad','okafor','velez','tanaka','reiter','novak','bauer','kelly','osei','lindqvist','ferrara','abbas','koch','sato','mbeki'];
+
+var batches = [], users = [], nBatches = 100, nUsers = 137, selectedBatch = 0;
+var uSortField = 'email', uSortDir = 1;
+var bPage = 0, uPage = 0, uPageList = [], uAllCount = 0, pendingBulk = null;
+var bOnlySelected = false, bPageOrders = [];
+var bSel = {}, uSel = {}, uSelectAllMatching = false;
+
+function buildBatches(n) {
+  seed = 12345; batches = [];
+  for (var i = 0; i < n; i++) {
+    var st = pick(B_STATUS), total = 5 + Math.floor(rnd() * 400);
+    var synced = st === 'Created' || st === 'Starting' ? 0 : (st === 'Synced' || st === 'Completed' ? total : Math.floor(total * rnd()));
+    batches.push({
+      name: 'Wave' + (1 + Math.floor(i / 8)) + '-' + pick(DEPTS) + '-' + String(i + 1).padStart(3, '0'),
+      status: st, direction: rnd() > 0.82 ? 'Offboarding' : 'Onboarding',
+      created: 'Sep ' + (1 + Math.floor(rnd() * 23)), total: total, synced: synced,
+      failed: st === 'Stopped' || rnd() > 0.7 ? Math.floor(rnd() * 6) : 0, order: i
+    });
+  }
+}
+function buildUsers(n) {
+  seed = 777; users = [];
+  for (var i = 0; i < n; i++) {
+    var st = pick(U_STATUS);
+    var d = 18 + Math.floor(rnd() * 6), h = Math.floor(rnd() * 24), m = Math.floor(rnd() * 60);
+    users.push({ email: pick(FIRST) + '.' + pick(LAST) + (i > 40 ? i : '') + '@example.com', status: st,
+      synced: Math.floor(rnd() * 45000),
+      last: 'Sep ' + d + ' ' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'),
+      ts: d * 1440 + h * 60 + m,
+      error: ERRORS[st] || null });
+  }
+}
+
+// ---- rendering ---------------------------------------------------------------
+function filteredBatches() {
+  var q = document.getElementById('bFilter').value.toLowerCase();
+  var s = document.getElementById('bStatus').value;
+  var sort = document.getElementById('bSort').value;
+  var out = batches.filter(function (b) {
+    if (bOnlySelected && !bSel[b.order]) { return false; }
+    return (!q || b.name.toLowerCase().indexOf(q) >= 0) && (!s || b.status === s);
+  });
+  out.sort(function (x, y) {
+    if (sort === 'name') { return x.name < y.name ? -1 : 1; }
+    if (sort === 'failed') { return y.failed - x.failed; }
+    if (sort === 'status') { return x.status < y.status ? -1 : (x.status > y.status ? 1 : x.order - y.order); }
+    return y.order - x.order;
+  });
+  return out;
+}
+function renderBatches() {
+  var all = filteredBatches(), html = [];
+  var size = parseInt(document.getElementById('bPageSize').value, 10);
+  var pages = Math.max(1, Math.ceil(all.length / size));
+  if (bPage >= pages) { bPage = pages - 1; }
+  var from = bPage * size, list = all.slice(from, from + size);
+  for (var i = 0; i < list.length; i++) {
+    var b = list[i];
+    html.push(
+      '<div class="mk-batch' + (bSel[b.order] ? ' active' : '') + '" onclick="openOnly(' + b.order + ')">' +
+        '<input class="form-check-input mt-1" type="checkbox" onclick="event.stopPropagation()" onchange="toggleBatch(' + b.order + ', this.checked)"' + (bSel[b.order] ? ' checked' : '') + '>' +
+        '<div class="flex-grow-1">' +
+          '<div class="d-flex align-items-center gap-2"><strong class="small">' + b.name + '</strong>' +
+          '<span class="badge bg-' + B_BADGE[b.status] + '">' + b.status + '</span></div>' +
+          '<div class="small text-muted mk-stat">' + b.direction + ' &middot; ' + b.created + ' &middot; ' + b.synced + '/' + b.total + ' synced' +
+          (b.failed ? ' &middot; <span class="text-danger">' + b.failed + ' failed</span>' : '') + '</div>' +
+        '</div>' +
+      '</div>');
+  }
+  bPageOrders = list.map(function (b) { return b.order; });
+  document.getElementById('bList').innerHTML = html.join('');
+  document.getElementById('bCount').textContent = all.length + ' match of ' + batches.length;
+  document.getElementById('bPager').textContent = all.length
+    ? (from + 1) + '-' + (from + list.length) + ' of ' + all.length
+    : 'no batches match';
+  syncBatchSel();
+}
+function pageBatches(d) { bPage = Math.max(0, bPage + d); renderBatches(); }
+// ONE selection. The highlight, the tick and what the right pane shows are the same fact,
+// so they cannot disagree. Clicking a row selects only it; the tick adds to the selection.
+function selOrders() { return Object.keys(bSel).map(Number).sort(function (a, b) { return a - b; }); }
+function openOnly(i) {
+  bSel = {}; bSel[i] = 1; selectedBatch = i;
+  uSel = {}; uSelectAllMatching = false; uPage = 0; pendingBulk = null;
+  renderBatches(); renderRight();
+}
+function toggleBatch(i, on) {
+  if (on) { bSel[i] = 1; } else { delete bSel[i]; }
+  pendingBulk = null;
+  if (bOnlySelected && Object.keys(bSel).length === 0) { bOnlySelected = false; bPage = 0; }
+  var o = selOrders();
+  if (o.length === 1 && o[0] !== selectedBatch) {
+    selectedBatch = o[0]; uSel = {}; uSelectAllMatching = false; uPage = 0;
+  }
+  renderBatches(); renderRight();
+}
+function clearBatchSel() {
+  bSel = {}; pendingBulk = null;
+  // Never strand the operator on an empty "selected only" list.
+  if (bOnlySelected) { bOnlySelected = false; bPage = 0; }
+  renderBatches(); renderRight();
+}
+// The open batch can always be deselected from the pane showing it, whatever page its row is on.
+function deselectOpen() { toggleBatch(selectedBatch, false); }
+
+function renderRight() {
+  var right = document.getElementById('mkRight');
+  if (selOrders().length === 1) {
+    right.classList.remove('multi');
+    renderBatchHeader(); renderUsers();
+  } else {
+    right.classList.add('multi');
+    renderMulti();
+  }
+}
+
+// What each operation would do to each selected batch, decided per batch and shown before
+// the operator commits. A loop over N batches never reports one blanket outcome.
+function eligibility(action, b) {
+  if (action === 'Delete') { return { ok: true, why: 'will be deleted' }; }
+  if (action === 'Complete') {
+    return b.status === 'Synced' ? { ok: true, why: 'will be completed' } : { ok: false, why: 'skipped, status is ' + b.status };
+  }
+  if (action === 'Remove Completed') {
+    return b.status === 'Completed' ? { ok: true, why: 'will be removed' } : { ok: false, why: 'skipped, status is ' + b.status };
+  }
+  return b.status === 'Stopped' ? { ok: true, why: 'will be resumed' } : { ok: false, why: 'skipped, status is ' + b.status };
+}
+function stageBulk(action) { pendingBulk = action; renderMulti(); }
+function cancelBulk() { pendingBulk = null; renderMulti(); }
+
+function renderMulti() {
+  var el = document.getElementById('uMulti'), orders = selOrders();
+  if (orders.length === 0) {
+    el.innerHTML = '<div class="p-5 text-center text-muted">' +
+      '<div class="h5">No batch selected</div>' +
+      '<div class="small">Click a batch on the left to open it. Tick several to act on them together.</div></div>';
+    return;
+  }
+  var users = 0, failed = 0, eligible = 0;
+  orders.forEach(function (o) { users += batches[o].total; failed += batches[o].failed; });
+  var rows = orders.map(function (o) {
+    var b = batches[o], v = pendingBulk ? eligibility(pendingBulk, b) : null;
+    if (v && v.ok) { eligible++; }
+    return '<tr' + (v && !v.ok ? ' class="table-secondary text-muted"' : '') + '>' +
+      '<td><strong class="small">' + b.name + '</strong></td>' +
+      '<td><span class="badge bg-' + B_BADGE[b.status] + '">' + b.status + '</span></td>' +
+      '<td>' + b.direction + '</td>' +
+      '<td class="text-end mk-stat">' + b.total + '</td>' +
+      '<td class="text-end mk-stat' + (b.failed ? ' text-danger' : '') + '">' + b.failed + '</td>' +
+      (pendingBulk ? '<td class="small ' + (v.ok ? 'text-success' : 'text-muted') + '">' + v.why + '</td>' : '') +
+      '<td class="text-end text-nowrap">' +
+        '<button class="btn btn-sm btn-outline-primary me-1" onclick="openOnly(' + o + ')">Open</button>' +
+        '<button class="btn btn-sm btn-outline-secondary" title="Remove from selection" onclick="toggleBatch(' + o + ', false)">&times;</button>' +
+      '</td></tr>';
+  }).join('');
+
+  el.innerHTML =
+    '<div class="mk-pane-head">' +
+      '<div class="d-flex align-items-center gap-2 flex-wrap">' +
+        '<h5 class="mb-0">' + orders.length + ' batches selected</h5>' +
+        '<span class="text-muted small">the user list is hidden while more than one batch is selected</span>' +
+        '<button class="btn btn-sm btn-outline-secondary ms-auto" onclick="clearBatchSel()">Clear selection</button>' +
+      '</div>' +
+      '<div class="d-flex gap-3 my-2 small mk-stat">' +
+        '<span><strong>' + orders.length + '</strong> batches</span>' +
+        '<span><strong>' + users + '</strong> users in total</span>' +
+        '<span class="text-danger"><strong>' + failed + '</strong> failed</span>' +
+      '</div>' +
+      '<div class="d-flex gap-2 flex-wrap">' +
+        '<button class="btn btn-sm btn-success" onclick="stageBulk(\'Complete\')">Complete</button>' +
+        '<button class="btn btn-sm btn-outline-success" onclick="stageBulk(\'Resume/Retry\')">Resume/Retry</button>' +
+        '<button class="btn btn-sm btn-outline-danger" onclick="stageBulk(\'Remove Completed\')">Remove Completed</button>' +
+        '<button class="btn btn-sm btn-danger" onclick="stageBulk(\'Delete\')">Delete</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="mk-pane-scroll">' +
+      '<table class="table table-sm table-hover align-middle mb-0">' +
+        '<thead class="table-light" style="position:sticky; top:0; z-index:2;"><tr>' +
+          '<th>Batch</th><th style="width:8rem;">Status</th><th style="width:8rem;">Direction</th>' +
+          '<th style="width:5rem;" class="text-end">Users</th><th style="width:5rem;" class="text-end">Failed</th>' +
+          (pendingBulk ? '<th style="width:14rem;">Outcome</th>' : '') +
+          '<th style="width:8rem;"></th>' +
+        '</tr></thead><tbody>' + rows + '</tbody>' +
+      '</table>' +
+    '</div>' +
+    '<div class="mk-pane-foot">' + (pendingBulk
+      ? '<div class="alert alert-warning py-2 mb-2 mk-bulkbanner">' +
+          '<strong>' + pendingBulk + '</strong> will act on <strong>' + eligible + '</strong> of ' + orders.length + ' selected batches' +
+          (eligible < orders.length ? '. The other ' + (orders.length - eligible) + ' are listed as skipped above and nothing will be sent for them.' : '.') +
+        '</div>' +
+        '<div class="mk-selbar">' +
+          '<input class="form-control form-control-sm" style="width:14rem;" placeholder="Ticket number (required)">' +
+          '<button class="btn btn-sm btn-warning"' + (eligible === 0 ? ' disabled' : '') + '>Confirm ' + pendingBulk + '</button>' +
+          '<button class="btn btn-sm btn-outline-secondary" onclick="cancelBulk()">Cancel</button>' +
+          (eligible === 0 ? '<span class="small text-danger">No selected batch is eligible.</span>' : '') +
+        '</div>'
+      : '<div class="mk-note text-muted">Pick an operation above to see, per batch, what it would do before you commit.</div>') +
+    '</div>';
+}
+// Names while they fit on one line, a count once they do not. A list of 137 names beside
+// "137 selected" only repeats the table above it.
+function describe(names) {
+  if (names.length === 0) { return ''; }
+  if (names.length <= 3) { return names.join(', '); }
+  return names.slice(0, 2).join(', ') + ' and ' + (names.length - 2) + ' more';
+}
+// Paging must never be able to hide a selected batch from the operator. The count says how many
+// are off the current page, and one click collapses the list to exactly what is selected.
+function toggleOnlySelected() {
+  bOnlySelected = !bOnlySelected; bPage = 0; renderBatches();
+}
+function syncBatchSel() {
+  var keys = Object.keys(bSel);
+  document.getElementById('bSelCount').textContent = keys.length ? keys.length + ' selected' : 'Nothing selected';
+  document.getElementById('bChips').textContent = describe(keys.map(function (k) { return batches[k].name; }));
+  document.querySelectorAll('[data-bneeds]').forEach(function (el) { el.disabled = keys.length === 0; });
+
+  var off = keys.filter(function (k) { return bPageOrders.indexOf(Number(k)) < 0; }).length;
+  document.getElementById('bOffPage').textContent = off ? off + ' not on this page' : '';
+  var btn = document.getElementById('bOnlyBtn');
+  btn.textContent = bOnlySelected ? 'Show all batches' : 'Show selected';
+  btn.className = 'btn btn-sm ' + (bOnlySelected ? 'btn-primary' : 'btn-outline-primary');
+  if (bOnlySelected) { btn.disabled = false; }
+}
+function renderBatchHeader() {
+  var b = batches[selectedBatch];
+  document.getElementById('uBatchName').textContent = b.name;
+  document.getElementById('uBatchBadge').innerHTML = '<span class="badge bg-' + B_BADGE[b.status] + '">' + b.status + '</span>';
+  document.getElementById('uBatchMeta').textContent = b.direction + ' &middot; created ' + b.created;
+  document.getElementById('uBatchStats').innerHTML =
+    '<span><strong>' + nUsers + '</strong> in this batch</span>' +
+    '<span class="text-success"><strong>' + b.synced + '</strong> synced</span>' +
+    '<span class="text-danger"><strong>' + b.failed + '</strong> failed</span>';
+}
+function toggleUserSort(f) {
+  if (uSortField === f) { uSortDir = -uSortDir; } else { uSortField = f; uSortDir = 1; }
+  renderUsers();
+}
+function filteredUsers() {
+  var q = document.getElementById('uFilter').value.toLowerCase();
+  var s = document.getElementById('uStatus').value;
+  var out = users.filter(function (u) {
+    return (!q || u.email.indexOf(q) >= 0) && (!s || u.status === s);
+  });
+  var f = uSortField;
+  out.sort(function (x, y) {
+    var a = x[f], b = y[f];
+    if (f === 'error') { a = a || ''; b = b || ''; }
+    if (a === b) { return x.email < y.email ? -1 : 1; }
+    return (a < b ? -1 : 1) * uSortDir;
+  });
+  return out;
+}
+function renderUsers() {
+  var all = filteredUsers(), html = [];
+  var size = parseInt(document.getElementById('uPageSize').value, 10);
+  var pages = Math.max(1, Math.ceil(all.length / size));
+  if (uPage >= pages) { uPage = pages - 1; }
+  var from = uPage * size, list = all.slice(from, from + size);
+  uPageList = list; uAllCount = all.length;
+  for (var i = 0; i < list.length; i++) {
+    var u = list[i], a = U_ACTION[u.status];
+    html.push('<tr>' +
+      '<td><input class="form-check-input" type="checkbox" onchange="toggleUser(\'' + u.email + '\', this.checked)"' + (uSel[u.email] ? ' checked' : '') + '></td>' +
+      '<td class="text-break">' + u.email + '</td>' +
+      '<td><span class="badge bg-' + U_BADGE[u.status] + '">' + u.status + '</span></td>' +
+      '<td class="text-end mk-stat">' + u.synced.toLocaleString() + '</td>' +
+      '<td><small>' + u.last + '</small></td>' +
+      '<td>' + (u.error ? '<small class="text-danger">' + u.error + '</small>' : '<small class="text-muted">-</small>') + '</td>' +
+      '<td class="text-end text-nowrap"><button class="btn btn-sm ' + a[0] + ' me-1">' + a[1] + '</button>' +
+      '<button class="btn btn-sm btn-outline-danger">Report</button></td>' +
+      '</tr>');
+  }
+  document.getElementById('uBody').innerHTML = html.join('');
+  document.getElementById('uCount').textContent = all.length + ' match of ' + users.length;
+  document.getElementById('uPager').textContent = all.length
+    ? (from + 1) + '-' + (from + list.length) + ' of ' + all.length
+    : 'no users match';
+  document.querySelectorAll('[data-usort]').forEach(function (el) {
+    el.innerHTML = el.getAttribute('data-usort') === uSortField ? (uSortDir === 1 ? '&#9650;' : '&#9660;') : '';
+  });
+  syncUserSel();
+}
+function pageUsers(d) { uPage = Math.max(0, uPage + d); renderUsers(); }
+// The header tick covers THIS PAGE only. Anything wider has to be asked for, because a
+// destructive action against rows the operator never saw is the error this page exists to stop.
+function toggleAllUsers(on) {
+  uPageList.forEach(function (u) { if (on) { uSel[u.email] = 1; } else { delete uSel[u.email]; } });
+  uSelectAllMatching = false;
+  renderUsers();
+}
+function toggleUser(email, on) { if (on) { uSel[email] = 1; } else { delete uSel[email]; uSelectAllMatching = false; } syncUserSel(); }
+function clearUserSel() { uSel = {}; uSelectAllMatching = false; renderUsers(); }
+function selectAllMatching() { uSelectAllMatching = true; syncUserSel(); }
+function syncUserSel() {
+  var list = uPageList, keys = Object.keys(uSel);
+  var label = uSelectAllMatching ? 'All ' + uAllCount + ' matching selected' : (keys.length ? keys.length + ' selected' : 'Nothing selected');
+  document.getElementById('uSelCount').textContent = label;
+  document.getElementById('uChips').textContent = uSelectAllMatching
+    ? 'every user in ' + batches[selectedBatch].name
+    : describe(keys.map(function (k) { return k.split('@')[0]; }));
+  document.querySelectorAll('[data-uneeds]').forEach(function (el) { el.disabled = keys.length === 0 && !uSelectAllMatching; });
+
+  // The select-all ambiguity, made explicit rather than guessed.
+  var banner = document.getElementById('uBulkBanner');
+  var allVisibleTicked = list.length > 0 && list.every(function (u) { return uSel[u.email]; });
+  if (allVisibleTicked && !uSelectAllMatching && uAllCount > list.length) {
+    banner.innerHTML = '<div class="alert alert-info rounded-0 border-0 border-bottom mb-0 py-2 mk-bulkbanner">' +
+      'All <strong>' + list.length + '</strong> users on this page are ticked. ' +
+      '<a href="javascript:void(0)" onclick="selectAllMatching()">Select all ' + uAllCount + ' matching the filter instead</a>.</div>';
+  } else if (uSelectAllMatching) {
+    banner.innerHTML = '<div class="alert alert-warning rounded-0 border-0 border-bottom mb-0 py-2 mk-bulkbanner">' +
+      '<strong>' + uAllCount + '</strong> users are selected, including rows on pages you have not looked at. ' +
+      '<a href="javascript:void(0)" onclick="clearUserSel()">Undo</a>.</div>';
+  } else {
+    banner.innerHTML = '';
+  }
+}
+
+// The split pane costs the user table 400px of width for good. This gives it back on demand:
+// collapsed, mockup A is mockup B without the page navigation.
+function togglePane() {
+  var s = document.getElementById('mkSplit');
+  var collapsed = s.classList.toggle('collapsed');
+  document.getElementById('paneToggle').textContent = collapsed ? 'Show batch list' : 'Hide batch list';
+}
+
+function setScale(b, u) {
+  pendingBulk = null;
+  if (b) { nBatches = b; bSel = {}; bSel[0] = 1; selectedBatch = 0; bPage = 0; buildBatches(nBatches); }
+  if (u) { nUsers = u; uSel = {}; uSelectAllMatching = false; uPage = 0; buildUsers(nUsers); }
+  renderBatches(); renderRight();
+}
+
+buildBatches(nBatches); buildUsers(nUsers);
+bSel[0] = 1; selectedBatch = 0;
+renderBatches(); renderRight();
+</script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Queue item 14 - Migration page redesign - mockups</title>
+<link rel="stylesheet" href="../../wwwroot/bootstrap/bootstrap.min.css">
+<link rel="stylesheet" href="_mockup.css">
+</head>
+<body>
+<div class="mk-index">
+
+  <h1 class="h3">Queue item 14 &ndash; Migrations interface</h1>
+  <p class="text-muted">Three shapes for the Migration Status view. Nothing is decided and no plan is written.
+  These are throwaway HTML, not app code &ndash; they use the repo's own Bootstrap so the look is honest,
+  but none of the buttons do anything except the ticks, which update the selection bars, and the
+  &quot;Open panel&quot; button in mockup C.</p>
+
+  <div class="alert alert-secondary">
+    <strong>What is wrong with the page today.</strong>
+    The Migration Status tab is one wide batch table. Clicking a batch injects a second user table
+    <em>inside</em> the row, so everything below is pushed down. The bulk-action bar sits above the table
+    and scrolls out of sight while you tick rows below it, and the ticket confirmation appears at the row's
+    own position, which may be off screen. That is the &quot;burying controls&quot; and &quot;hiding selected
+    items&quot; you named.
+  </div>
+
+  <div class="card mb-3 border-primary">
+    <div class="card-body">
+      <h2 class="h5"><a href="migration-v2.html">Current candidate &ndash; attention-first</a></h2>
+      <p class="mb-2">A's two panes kept, but the page leads with what needs a person, multi-select is gone from browsing,
+      every batch has its own address so browser Back works, and bulk removal is described by a rule instead of assembled by ticking rows.</p>
+      <p class="mb-0"><a class="btn btn-sm btn-primary" href="migration-v2.html">Open the candidate &rarr;</a></p>
+    </div>
+  </div>
+
+  <hr class="my-4">
+  <p class="text-muted small">Earlier explorations, kept for reference.</p>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h2 class="h5"><a href="migration-a-split.html">A &ndash; Split pane</a></h2>
+      <p class="mb-2">Batch list in a narrow left column, the selected batch's detail in a right column that is
+      always on screen. Each side scrolls independently and has its own pinned action bar at the bottom.</p>
+      <p class="mb-1"><strong>Gains:</strong> you can see the batch you picked and its users at the same time; no
+      nesting; batch actions and user actions never move.</p>
+      <p class="mb-2"><strong>Costs:</strong> the user table gets a narrower column, so error text is tighter.
+      Two selections can be live at once (batches left, users right), which needs care so the wrong one is not acted on.</p>
+      <p class="mb-0"><a class="btn btn-sm btn-primary" href="migration-a-scale.html">See A at 100&ndash;2000 batches and 137&ndash;2000 users &rarr;</a></p>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h2 class="h5"><a href="migration-b-list.html">B &ndash; Drill-down to a batch page</a></h2>
+      <p class="mb-2">The list is only a list. Clicking a batch opens its own full-width page with a Back link.
+      Two screens: <a href="migration-b-list.html">list</a> then <a href="migration-b-detail.html">batch</a>.</p>
+      <p class="mb-1"><strong>Gains:</strong> one job on screen at a time, which is the strongest answer to
+      UI-induced error; the widest room for the user table and for anything items 12 and 13 add; the two
+      selections can never be confused because they are never both on screen.</p>
+      <p class="mb-0"><strong>Costs:</strong> you cannot watch several batches at once; comparing two batches means
+      going back and forth; it is the largest change to how the page is navigated.</p>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h2 class="h5"><a href="migration-c-pinned.html">C &ndash; Keep the table, pin the bar, detail in a drawer</a></h2>
+      <p class="mb-2">Today's single table stays. The toolbar and selection bar are pinned so they never scroll away,
+      and batch detail opens in a panel that slides over the right-hand side instead of expanding inside the row.</p>
+      <p class="mb-1"><strong>Gains:</strong> smallest change and the least risk to the existing click-gating tests;
+      keeps the sortable columns you have now.</p>
+      <p class="mb-0"><strong>Costs:</strong> the drawer covers the table it came from; the per-row action column stays
+      dense, which is the shape the Developer Guide warns about for destructive actions; it fixes the symptoms without
+      changing the density the item complains about.</p>
+    </div>
+  </div>
+
+  <p class="text-muted small">All three show where queue items 12 (a future &quot;complete after&quot; time) and 13
+  (per-user ticks with their own action bar) would sit, because item 14 has to leave room for them.</p>
+
+</div>
+</body>
+</html>

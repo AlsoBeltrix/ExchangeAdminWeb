@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migration - candidate - Exchange Migration</title>
+<link rel="stylesheet" href="../../wwwroot/bootstrap/bootstrap.min.css">
+<link rel="stylesheet" href="_mockup.css">
+<style>
+  .v2-attention { background: #fff8e1; border: 1px solid #ffe082; border-radius: .5rem; padding: .5rem .75rem; }
+  .v2-batch { padding: .55rem .75rem; border-bottom: 1px solid #eceff1; cursor: pointer; }
+  .v2-batch:hover { background: #f6f9fc; }
+  .v2-batch.active { background: #cfe2ff; box-shadow: inset 3px 0 0 #0d6efd; }
+  .v2-progress { height: .4rem; margin-top: .3rem; }
+  .v2-plain { font-size: .8rem; color: #495057; }
+  .v2-need { border-left: 3px solid #dc3545; background: #fff5f5; }
+  .mk-split.collapsed .mk-left { display: none; }
+</style>
+</head>
+<body>
+<div class="mk-shell">
+
+  <nav class="mk-sidebar">
+    <div class="mk-brand">ExchangeAdminWeb</div>
+    <ul>
+      <li>Home</li>
+      <li>Mailbox Permissions</li>
+      <li>Calendar Permissions</li>
+      <li class="active">Exchange Migration</li>
+      <li>Group Management</li>
+      <li>Message Trace</li>
+      <li>Conference Rooms</li>
+    </ul>
+  </nav>
+
+  <div class="mk-main">
+    <div class="mk-banner">
+      <strong>Migration &ndash; candidate</strong>
+      <span>Attention-first. No multi-select while browsing. Every batch has its own address, so browser Back works &ndash; try it.</span>
+      <span>Batches:</span>
+      <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-dark" onclick="setScale(100)">100</button>
+        <button class="btn btn-outline-dark" onclick="setScale(500)">500</button>
+        <button class="btn btn-outline-dark" onclick="setScale(2000)">2000</button>
+      </div>
+      <span class="ms-auto"><a href="index.html">Index</a></span>
+    </div>
+
+    <div class="mk-body">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <h2 class="h4 mb-0">Exchange Migration <span class="badge bg-secondary align-middle" style="font-size:.6em;">v2.9.0</span></h2>
+        <button class="btn btn-sm btn-outline-secondary ms-auto">Download CSV</button>
+        <button class="btn btn-sm btn-primary">Refresh</button>
+      </div>
+
+      <ul class="nav nav-tabs mb-2">
+        <li class="nav-item"><a class="nav-link" href="#">Single User Check</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">Bulk CSV Check</a></li>
+        <li class="nav-item"><a class="nav-link active" href="#">Migration Status</a></li>
+      </ul>
+
+      <!-- THE FRONT DOOR: what needs a human, before any table -->
+      <div class="v2-attention mb-2 d-flex align-items-center gap-3 flex-wrap" id="v2Attention"></div>
+
+      <div class="mk-split" id="mkSplit">
+
+        <!-- LEFT: navigation only. One highlight, one meaning. -->
+        <div class="mk-pane mk-left">
+          <div class="mk-pane-head">
+            <input class="form-control form-control-sm mb-2" id="bSearch" placeholder="Search a batch, or a person's address"
+                   oninput="bPage = 0; renderList()">
+            <div class="d-flex gap-1 align-items-center">
+              <select class="form-select form-select-sm" id="bView" onchange="bPage = 0; renderList()">
+                <option value="attention">Needs attention</option>
+                <option value="active">In progress</option>
+                <option value="all" selected>All batches</option>
+                <option value="done">Finished</option>
+              </select>
+              <span class="small text-muted" id="bCount"></span>
+            </div>
+          </div>
+
+          <div class="mk-pane-scroll" id="bList"></div>
+
+          <div class="mk-pane-foot d-flex align-items-center gap-2 py-1">
+            <button class="btn btn-sm btn-outline-secondary" onclick="pageList(-1)">&lsaquo;</button>
+            <span class="small text-muted" id="bPager"></span>
+            <button class="btn btn-sm btn-outline-secondary" onclick="pageList(1)">&rsaquo;</button>
+            <button class="btn btn-sm btn-outline-danger ms-auto" onclick="go('#/housekeeping')">Housekeeping</button>
+          </div>
+        </div>
+
+        <!-- RIGHT: whatever the address says -->
+        <div class="mk-pane mk-right" id="mkRight"></div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- deterministic fake data ----------
+var seed = 1;
+function srand(s) { seed = s; }
+function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+function pick(a) { return a[Math.floor(rnd() * a.length)]; }
+
+var DEPTS = ['Finance','Engineering','Sales','Legal','Facilities','Support','Marketing','Payroll','Research','Logistics','Clinical','Security'];
+var FIRST = ['avery','blake','casey','devon','elena','farid','gina','hector','iris','jonas','kira','liam','mona','noor','omar','priya','quinn','rosa','sam','tariq'];
+var LAST = ['singh','moreau','duval','park','rossi','haddad','okafor','velez','tanaka','reiter','novak','bauer','kelly','osei','ferrara','abbas'];
+var B_BADGE = {Syncing:'info text-dark',Synced:'success',Starting:'secondary',Stopped:'warning text-dark',Completed:'primary',Created:'secondary'};
+var U_BADGE = {Synced:'success',Syncing:'info text-dark',Failed:'danger',NeedsApproval:'warning text-dark',Stopped:'warning text-dark',Completed:'primary'};
+
+var batches = [], nBatches = 100, bPage = 0, PAGE = 40, userCache = {};
+
+function buildBatches(n) {
+  srand(4242); batches = [];
+  var sts = ['Syncing','Synced','Starting','Stopped','Completed','Created'];
+  for (var i = 0; i < n; i++) {
+    var st = pick(sts), total = 5 + Math.floor(rnd() * 240);
+    var failed = (st === 'Stopped' || rnd() > 0.72) ? 1 + Math.floor(rnd() * 5) : 0;
+    var approval = rnd() > 0.85 ? 1 + Math.floor(rnd() * 3) : 0;
+    var synced = (st === 'Created' || st === 'Starting') ? 0
+               : (st === 'Synced' || st === 'Completed') ? total - failed
+               : Math.floor(total * (0.3 + rnd() * 0.6));
+    batches.push({ i: i, name: 'Wave' + (1 + Math.floor(i / 7)) + '-' + pick(DEPTS) + '-' + String(i + 1).padStart(3, '0'),
+      status: st, direction: rnd() > 0.85 ? 'Offboarding' : 'Onboarding',
+      created: 'Sep ' + String(1 + Math.floor(rnd() * 22)).padStart(2, '0'), ticket: 'INC' + (400000 + Math.floor(rnd() * 99999)),
+      total: total, synced: Math.max(0, synced), failed: failed, approval: approval,
+      // CompleteAfter: a real, persistent property of the batch, not a dialog field.
+      scheduled: (['Syncing','Synced'].indexOf(st) >= 0 && rnd() > 0.7)
+        ? 'Sep ' + (24 + Math.floor(rnd() * 4)) + ', ' + pick(['19:00','20:00','22:00','23:30'])
+        : null });
+  }
+  userCache = {};
+}
+function usersFor(b) {
+  if (userCache[b.i]) { return userCache[b.i]; }
+  srand(90000 + b.i * 7);
+  var list = [], k;
+  for (k = 0; k < b.failed; k++) { list.push({ st: 'Failed' }); }
+  for (k = 0; k < b.approval; k++) { list.push({ st: 'NeedsApproval' }); }
+  while (list.length < b.total) {
+    list.push({ st: b.status === 'Completed' ? 'Completed' : (b.status === 'Created' || b.status === 'Starting') ? 'Syncing'
+              : (list.length < b.synced ? 'Synced' : 'Syncing') });
+  }
+  for (k = 0; k < list.length; k++) {
+    var u = list[k], d = 18 + Math.floor(rnd() * 6), h = Math.floor(rnd() * 24), m = Math.floor(rnd() * 60);
+    u.email = pick(FIRST) + '.' + pick(LAST) + (k ? k : '') + '@example.com';
+    u.synced = Math.floor(rnd() * 42000);
+    u.last = 'Sep ' + d + ' ' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+    u.ts = d * 1440 + h * 60 + m;
+    u.error = u.st === 'Failed' ? 'MapiExceptionNetworkError (0x80004005)'
+            : u.st === 'NeedsApproval' ? 'LargeItem count exceeds the batch limit' : null;
+  }
+  // deterministic interleave so attention rows are not all bunched at the top of the full table
+  list.sort(function (x, y) { return x.ts - y.ts; });
+  userCache[b.i] = list;
+  return list;
+}
+function needsAttention(b) { return b.failed > 0 || b.approval > 0; }
+function readyToComplete(b) { return b.status === 'Synced'; }
+
+// ---------- the attention strip: the first thing on the page ----------
+function renderAttention() {
+  var bf = batches.filter(function (b) { return b.failed > 0; });
+  var ba = batches.filter(function (b) { return b.approval > 0; });
+  var br = batches.filter(readyToComplete);
+  var uf = bf.reduce(function (n, b) { return n + b.failed; }, 0);
+  var ua = ba.reduce(function (n, b) { return n + b.approval; }, 0);
+  var html = '';
+  if (uf) {
+    html += '<span><strong class="text-danger">' + uf + ' mailboxes failed</strong> across ' + bf.length + ' batches ' +
+      '<button class="btn btn-sm btn-outline-danger ms-1" onclick="showView(\'attention\')">Show them</button></span>';
+  }
+  if (ua) {
+    html += '<span><strong class="text-warning-emphasis">' + ua + ' waiting for approval</strong> in ' + ba.length + ' batches ' +
+      '<button class="btn btn-sm btn-outline-warning ms-1" onclick="showView(\'attention\')">Show them</button></span>';
+  }
+  if (br.length) {
+    html += '<span><strong>' + br.length + ' batches are fully synced</strong> and can be completed ' +
+      '<button class="btn btn-sm btn-outline-success ms-1" onclick="showView(\'ready\')">Show them</button></span>';
+  }
+  var sch = batches.filter(function (b) { return b.scheduled; });
+  if (sch.length) {
+    html += '<span><strong class="text-primary">' + sch.length + ' batches cut over on a schedule</strong> ' +
+      '<button class="btn btn-sm btn-outline-primary ms-1" onclick="showView(\'scheduled\')">Show them</button></span>';
+  }
+  if (!html) { html = '<span class="text-success">Nothing needs attention. Every batch is either finished or syncing cleanly.</span>'; }
+  document.getElementById('v2Attention').innerHTML = html;
+}
+function showView(v) {
+  var sel = document.getElementById('bView');
+  document.getElementById('bSearch').value = '';
+  readyOnly = (v === 'ready');
+  scheduledOnly = (v === 'scheduled');
+  sel.value = (readyOnly || scheduledOnly) ? 'all' : v;
+  bPage = 0; renderList();
+}
+var readyOnly = false, scheduledOnly = false;
+
+// ---------- left list: navigation only ----------
+function matching() {
+  var q = document.getElementById('bSearch').value.toLowerCase();
+  var v = document.getElementById('bView').value;
+  return batches.filter(function (b) {
+    if (readyOnly && !readyToComplete(b)) { return false; }
+    if (scheduledOnly && !b.scheduled) { return false; }
+    if (v === 'attention' && !needsAttention(b)) { return false; }
+    if (v === 'active' && ['Completed','Created'].indexOf(b.status) >= 0) { return false; }
+    if (v === 'done' && b.status !== 'Completed') { return false; }
+    return !q || b.name.toLowerCase().indexOf(q) >= 0;
+  }).sort(function (x, y) {
+    var a = needsAttention(x) ? 0 : 1, c = needsAttention(y) ? 0 : 1;
+    return a !== c ? a - c : y.i - x.i;
+  });
+}
+function renderList() {
+  var all = matching();
+  var pages = Math.max(1, Math.ceil(all.length / PAGE));
+  if (bPage >= pages) { bPage = pages - 1; }
+  var from = bPage * PAGE, list = all.slice(from, from + PAGE), html = [];
+  var open = currentBatch();
+  for (var i = 0; i < list.length; i++) {
+    var b = list[i];
+    var pct = b.total ? Math.round(b.synced / b.total * 100) : 0;
+    html.push('<div class="v2-batch' + (open && open.i === b.i ? ' active' : '') + '" onclick="go(\'#/batch/' + b.i + '\')">' +
+      '<div class="d-flex align-items-center gap-2">' +
+        '<strong class="small flex-grow-1">' + b.name + '</strong>' +
+        (b.failed ? '<span class="badge bg-danger">' + b.failed + ' failed</span>' : '') +
+        (b.approval ? '<span class="badge bg-warning text-dark">' + b.approval + ' to approve</span>' : '') +
+      '</div>' +
+      '<div class="v2-plain">' + plainStatus(b) + '</div>' +
+      '<div class="progress v2-progress"><div class="progress-bar bg-success" style="width:' + pct + '%"></div></div>' +
+    '</div>');
+  }
+  document.getElementById('bList').innerHTML = html.join('') ||
+    '<div class="p-4 text-center text-muted small">Nothing matches.</div>';
+  document.getElementById('bCount').textContent = all.length + ' of ' + batches.length + (readyOnly ? ' (ready to complete)' : '');
+  document.getElementById('bPager').textContent = all.length ? (from + 1) + '-' + (from + list.length) + ' of ' + all.length : '0';
+}
+function pageList(d) { bPage = Math.max(0, bPage + d); renderList(); }
+
+// Plain language, not a badge and four numbers to decode.
+function plainStatus(b) {
+  var s;
+  if (b.status === 'Created') { s = 'Created, not started yet. ' + b.total + ' mailboxes.'; }
+  else if (b.status === 'Starting') { s = 'Starting. ' + b.total + ' mailboxes queued.'; }
+  else if (b.status === 'Completed') { s = 'Finished. ' + b.total + ' mailboxes moved.'; }
+  else if (b.status === 'Stopped') { s = 'Stopped by an administrator at ' + b.synced + ' of ' + b.total + '.'; }
+  else if (b.status === 'Synced') { s = 'Synced and waiting to be completed. ' + b.synced + ' of ' + b.total + ' ready.'; }
+  else { s = 'Syncing. ' + b.synced + ' of ' + b.total + ' done.'; }
+  // A scheduled cut-over is something an operator must see without opening the batch.
+  return s + (b.scheduled ? ' <span class="text-primary">Completes ' + b.scheduled + '.</span>' : '');
+}
+
+// ---------- addressable state: the URL is the truth ----------
+function go(hash) { if (location.hash === hash) { render(); } else { location.hash = hash; } }
+function currentBatch() {
+  var m = /^#\/batch\/(\d+)$/.exec(location.hash);
+  return m && batches[Number(m[1])] ? batches[Number(m[1])] : null;
+}
+window.addEventListener('hashchange', render);
+
+var lastHash = null;
+function render() {
+  // Moving to a different batch abandons anything staged against the old one. A confirm
+  // prompt must never survive a navigation and get pressed against the wrong target.
+  if (location.hash !== lastHash) {
+    lastHash = location.hash; pendingAction = null; uPage = 0; uFilterText = ''; uFilterStatus = '';
+  }
+  renderAttention(); renderList();
+  var right = document.getElementById('mkRight');
+  if (location.hash === '#/housekeeping') { right.innerHTML = housekeepingHtml(); return; }
+  var b = currentBatch();
+  if (!b) {
+    right.innerHTML = '<div class="p-5 text-center text-muted"><div class="h5">Pick a batch</div>' +
+      '<div class="small">Anything needing a person is listed at the top of the page.</div></div>';
+    return;
+  }
+  right.innerHTML = batchHtml(b);
+}
+
+// ---------- right pane: one batch ----------
+var uFilterText = '', uFilterStatus = '', uPage = 0, U_PAGE = 50, pendingAction = null;
+
+function batchHtml(b) {
+  var users = usersFor(b);
+  var need = users.filter(function (u) { return u.st === 'Failed' || u.st === 'NeedsApproval'; });
+  var pct = b.total ? Math.round(b.synced / b.total * 100) : 0;
+
+  var shown = users.filter(function (u) {
+    return (!uFilterText || u.email.indexOf(uFilterText) >= 0) && (!uFilterStatus || u.st === uFilterStatus);
+  });
+  var pages = Math.max(1, Math.ceil(shown.length / U_PAGE));
+  if (uPage >= pages) { uPage = pages - 1; }
+  var from = uPage * U_PAGE, page = shown.slice(from, from + U_PAGE);
+
+  return '<div class="mk-pane-head">' +
+      '<div class="d-flex align-items-center gap-2 flex-wrap">' +
+        '<h5 class="mb-0">' + b.name + '</h5>' +
+        '<span class="badge bg-' + B_BADGE[b.status] + '">' + b.status + '</span>' +
+        '<button class="btn btn-sm btn-outline-secondary ms-auto" onclick="togglePane()" id="paneToggle">Hide list</button>' +
+        '<button class="btn btn-sm btn-outline-secondary" title="Refresh">&#x21bb;</button>' +
+      '</div>' +
+      '<div class="v2-plain mt-1">' + plainStatus(b) + ' ' + b.direction + ', created ' + b.created + ' under ticket ' + b.ticket + '.</div>' +
+      '<div class="progress v2-progress mb-2" style="height:.6rem;"><div class="progress-bar bg-success" style="width:' + pct + '%"></div></div>' +
+      actionsHtml(b) +
+    '</div>' +
+    '<div class="mk-pane-scroll">' +
+      (need.length ? needSection(b, need) : '') +
+      '<div class="d-flex gap-1 align-items-center p-2 border-bottom bg-light">' +
+        '<strong class="small me-1">All mailboxes</strong>' +
+        '<input class="form-control form-control-sm" style="max-width:16rem;" placeholder="Find a person" value="' + uFilterText + '"' +
+          ' oninput="uFilterText = this.value; uPage = 0; render()">' +
+        '<select class="form-select form-select-sm" style="width:11rem;" onchange="uFilterStatus = this.value; uPage = 0; render()">' +
+          ['','Synced','Syncing','Failed','NeedsApproval','Completed'].map(function (s) {
+            return '<option value="' + s + '"' + (uFilterStatus === s ? ' selected' : '') + '>' + (s || 'Any status') + '</option>';
+          }).join('') +
+        '</select>' +
+        '<span class="small text-muted ms-1">' + shown.length + ' of ' + users.length + '</span>' +
+      '</div>' +
+      userTable(page) +
+    '</div>' +
+    '<div class="mk-pane-foot d-flex align-items-center gap-2 py-1">' +
+      '<button class="btn btn-sm btn-outline-secondary" onclick="uPage = Math.max(0, uPage - 1); render()">&lsaquo;</button>' +
+      '<span class="small text-muted">' + (shown.length ? (from + 1) + '-' + (from + page.length) + ' of ' + shown.length : '0') + '</span>' +
+      '<button class="btn btn-sm btn-outline-secondary" onclick="uPage = uPage + 1; render()">&rsaquo;</button>' +
+    '</div>';
+}
+
+// Every action says what it will do, in the button's own row, before it is pressed.
+function actionsHtml(b) {
+  if (pendingAction) {
+    return '<div class="alert alert-warning py-2 mb-0">' +
+      '<div class="small mb-2"><strong>' + pendingAction.label + '</strong> &mdash; ' + pendingAction.consequence + '</div>' +
+      '<div class="d-flex gap-2 align-items-center flex-wrap">' +
+        '<input class="form-control form-control-sm" style="width:13rem;" placeholder="Ticket number (required)">' +
+        (pendingAction.schedule
+          ? '<label class="small mb-0">Complete after</label>' +
+            '<input type="datetime-local" class="form-control form-control-sm" style="width:14rem;" value="2026-09-25T19:00">' +
+            '<span class="small text-muted">leave blank to complete as soon as syncing finishes</span>'
+          : '') +
+        '<button class="btn btn-sm btn-warning">Confirm</button>' +
+        '<button class="btn btn-sm btn-outline-secondary" onclick="pendingAction = null; render()">Cancel</button>' +
+      '</div></div>';
+  }
+  // Scheduled completion is shown on every batch, whatever its status, because you schedule it
+  // BEFORE syncing finishes. Hiding it inside the Complete confirm made it invisible until too late.
+  var sched = '<div class="d-flex align-items-center gap-2 mb-2 p-2 border rounded bg-white flex-wrap">' +
+    '<strong class="small">Completion</strong>' +
+    (b.scheduled
+      ? '<span class="badge bg-info text-dark">Scheduled</span>' +
+        '<span class="small">Cuts over automatically on <strong>' + b.scheduled + '</strong> once every mailbox has synced.</span>' +
+        '<button class="btn btn-sm btn-outline-primary ms-auto" onclick="stage(\'Change the scheduled completion\', \'Moves the automatic cut-over to a new time. The batch is not completed now.\', true)">Change time</button>' +
+        '<button class="btn btn-sm btn-outline-danger" onclick="stage(\'Cancel the scheduled completion\', \'The batch will stay synced until someone completes it by hand. Nothing else changes.\', false)">Cancel schedule</button>'
+      : '<span class="small text-muted">Not scheduled. This batch will sit at Synced until someone completes it.</span>' +
+        '<button class="btn btn-sm btn-outline-primary ms-auto" onclick="stage(\'Schedule the completion\', \'Sets the time the cut-over happens by itself. Nothing moves until then, and only once every mailbox has synced.\', true)">Schedule completion</button>') +
+  '</div>';
+
+  var btns = [];
+  if (b.status === 'Synced') {
+    btns.push(['btn-success', 'Complete batch now', 'Cuts over all ' + b.total + ' mailboxes immediately and finishes the move. Cannot be undone.', false]);
+  }
+  if (['Syncing','Synced','Starting'].indexOf(b.status) >= 0) {
+    btns.push(['btn-outline-warning', 'Stop syncing', 'Pauses the move. Nothing is lost and it can be resumed.', false]);
+  }
+  if (b.status === 'Stopped') {
+    btns.push(['btn-outline-success', 'Resume', 'Restarts syncing from where it stopped.', false]);
+  }
+  btns.push(['btn-outline-danger', 'Delete batch', 'Removes the batch and its history. Mailboxes already moved stay moved.', false]);
+  return sched + '<div class="d-flex gap-2 flex-wrap">' + btns.map(function (x) {
+    return '<button class="btn btn-sm ' + x[0] + '" title="' + x[2] + '" ' +
+      'onclick="stage(\'' + x[1] + '\', \'' + x[2] + '\', ' + x[3] + ')">' + x[1] + '</button>';
+  }).join('') + '</div>';
+}
+function stage(label, consequence, schedule) {
+  pendingAction = { label: label, consequence: consequence, schedule: schedule };
+  render();
+}
+
+// The failures come to the operator. They are not something to go looking for behind a filter.
+function needSection(b, need) {
+  return '<div class="v2-need p-2 border-bottom">' +
+    '<strong class="small">' + need.length + ' mailboxes need a person</strong>' +
+    '<table class="table table-sm mb-0 mt-1 bg-white">' +
+      '<tbody>' + need.slice(0, 10).map(function (u) {
+        return '<tr>' +
+          '<td>' + u.email + '</td>' +
+          '<td style="width:9rem;"><span class="badge bg-' + U_BADGE[u.st] + '">' + u.st + '</span></td>' +
+          '<td class="small text-danger">' + (u.error || '') + '</td>' +
+          '<td class="text-end text-nowrap" style="width:13rem;">' +
+            (u.st === 'Failed'
+              ? '<button class="btn btn-sm btn-primary me-1">Retry this mailbox</button>'
+              : '<button class="btn btn-sm btn-warning me-1">Approve</button>') +
+            '<button class="btn btn-sm btn-outline-danger">Report</button>' +
+          '</td></tr>';
+      }).join('') + '</tbody></table>' +
+    (need.length > 10 ? '<div class="small text-muted mt-1">' + (need.length - 10) + ' more below.</div>' : '') +
+  '</div>';
+}
+
+function userTable(page) {
+  return '<table class="table table-sm table-hover align-middle mb-0">' +
+    '<thead class="table-light" style="position:sticky; top:0; z-index:2;"><tr>' +
+      '<th>Mailbox</th><th style="width:9rem;">Status</th><th style="width:7rem;" class="text-end">Items</th>' +
+      '<th style="width:8rem;">Last sync</th><th style="width:12rem;" class="text-end">Actions</th>' +
+    '</tr></thead><tbody>' +
+    page.map(function (u) {
+      return '<tr><td>' + u.email + '</td>' +
+        '<td><span class="badge bg-' + U_BADGE[u.st] + '">' + u.st + '</span></td>' +
+        '<td class="text-end mk-stat">' + u.synced.toLocaleString() + '</td>' +
+        '<td><small>' + u.last + '</small></td>' +
+        '<td class="text-end text-nowrap">' +
+          (u.st === 'Failed' ? '<button class="btn btn-sm btn-primary me-1">Retry</button>' :
+           u.st === 'NeedsApproval' ? '<button class="btn btn-sm btn-warning me-1">Approve</button>' :
+           u.st === 'Synced' ? '<button class="btn btn-sm btn-success me-1" onclick="stage(\'Complete ' + u.email + '\', \'Cuts this one mailbox over. You can do it now or set a time below.\', true)">Complete</button>' :
+           u.st === 'Syncing' ? '<button class="btn btn-sm btn-outline-warning me-1">Pause</button>' : '') +
+          '<button class="btn btn-sm btn-outline-danger">Report</button>' +
+        '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+// ---------- housekeeping: the only multi-batch operation, and it is scoped by rule ----------
+var hkDays = 30;
+function housekeepingHtml() {
+  var doomed = batches.filter(function (b) { return b.status === 'Completed' && Number(b.created.slice(4)) <= (23 - Math.min(hkDays, 22)); });
+  return '<div class="mk-pane-head">' +
+      '<div class="d-flex align-items-center gap-2">' +
+        '<h5 class="mb-0">Housekeeping</h5>' +
+        '<button class="btn btn-sm btn-outline-secondary ms-auto" onclick="go(\'#/\')">Close</button>' +
+      '</div>' +
+      '<div class="v2-plain mt-1">Bulk removal is described by a rule, never assembled by ticking rows. ' +
+      'The full list of what the rule catches is below, and it is the same list that gets acted on.</div>' +
+      '<div class="d-flex gap-2 align-items-center mt-2 flex-wrap">' +
+        '<span class="small">Remove finished batches older than</span>' +
+        '<input type="number" class="form-control form-control-sm" style="width:6rem;" value="' + hkDays + '" min="1"' +
+          ' onchange="hkDays = Number(this.value); render()">' +
+        '<span class="small">days</span>' +
+        '<span class="badge bg-secondary">' + doomed.length + ' match</span>' +
+      '</div>' +
+    '</div>' +
+    '<div class="mk-pane-scroll">' +
+      (doomed.length
+        ? '<table class="table table-sm mb-0"><thead class="table-light"><tr><th>Batch</th><th style="width:8rem;">Status</th>' +
+          '<th style="width:7rem;">Created</th><th style="width:6rem;" class="text-end">Mailboxes</th></tr></thead><tbody>' +
+          doomed.map(function (b) {
+            return '<tr><td>' + b.name + '</td><td><span class="badge bg-' + B_BADGE[b.status] + '">' + b.status + '</span></td>' +
+              '<td>' + b.created + '</td><td class="text-end mk-stat">' + b.total + '</td></tr>';
+          }).join('') + '</tbody></table>'
+        : '<div class="p-5 text-center text-muted">No finished batch is older than ' + hkDays + ' days.</div>') +
+    '</div>' +
+    '<div class="mk-pane-foot">' +
+      '<div class="alert alert-warning py-2 mb-2 small">Removes the <strong>' + doomed.length + '</strong> batches listed above and nothing else. ' +
+      'Mailboxes already moved are not affected. Each removal is audited separately and any that fail are reported per batch.</div>' +
+      '<div class="d-flex gap-2 align-items-center">' +
+        '<input class="form-control form-control-sm" style="width:13rem;" placeholder="Ticket number (required)">' +
+        '<button class="btn btn-sm btn-danger"' + (doomed.length ? '' : ' disabled') + '>Remove ' + doomed.length + ' batches</button>' +
+        '<button class="btn btn-sm btn-outline-secondary" onclick="go(\'#/\')">Cancel</button>' +
+      '</div>' +
+    '</div>';
+}
+
+function togglePane() {
+  var s = document.getElementById('mkSplit');
+  var c = s.classList.toggle('collapsed');
+  document.getElementById('paneToggle').textContent = c ? 'Show list' : 'Hide list';
+}
+function setScale(n) { nBatches = n; bPage = 0; buildBatches(n); go('#/'); render(); }
+
+buildBatches(nBatches);
+if (!location.hash) { location.hash = '#/batch/0'; }
+render();
+</script>
+</body>
+</html>

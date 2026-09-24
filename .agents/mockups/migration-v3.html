@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migration - Exchange Migration</title>
+<link rel="stylesheet" href="../../wwwroot/bootstrap/bootstrap.min.css">
+<link rel="stylesheet" href="_mockup.css">
+<style>
+  /* Fixed columns so the counts line up and nothing is clipped by the scrollbar. */
+  .mk-left { flex: 0 0 470px; }
+  .v3-head { background: #f1f3f5; font-size: .72rem; text-transform: uppercase; letter-spacing: .03em;
+             color: #6c757d; cursor: default; font-weight: 600; }
+  .v3-head:hover { background: #f1f3f5; }
+  .v3-batch { display: grid; grid-template-columns: 1rem 1fr 5.6rem 2.6rem 5rem; gap: .5rem; align-items: center;
+              padding: .4rem 1rem .4rem .75rem; border-bottom: 1px solid #eceff1; cursor: pointer; font-size: .875rem; }
+  .v3-batch .v3-count { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .v3-batch .badge { width: 100%; }
+  .v3-batch:hover { background: #f6f9fc; }
+  .v3-batch.active { background: #cfe2ff; box-shadow: inset 3px 0 0 #0d6efd; }
+  .mk-split.collapsed .mk-left { display: none; }
+</style>
+</head>
+<body>
+<div class="mk-shell">
+
+  <nav class="mk-sidebar">
+    <div class="mk-brand">ExchangeAdminWeb</div>
+    <ul>
+      <li>Home</li>
+      <li>Mailbox Permissions</li>
+      <li>Calendar Permissions</li>
+      <li class="active">Exchange Migration</li>
+      <li>Group Management</li>
+      <li>Message Trace</li>
+      <li>Conference Rooms</li>
+    </ul>
+  </nav>
+
+  <div class="mk-main">
+    <div class="mk-banner">
+      <strong>Migration &ndash; v3</strong>
+      <span>One fact, one place. Back button works.</span>
+      <span>Batches:</span>
+      <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-dark" onclick="setScale(100, null)">100</button>
+        <button class="btn btn-outline-dark" onclick="setScale(500, null)">500</button>
+        <button class="btn btn-outline-dark" onclick="setScale(2000, null)">2000</button>
+      </div>
+      <span>Mailboxes per batch:</span>
+      <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-dark" onclick="setScale(null, 0)">mixed</button>
+        <button class="btn btn-outline-dark" onclick="setScale(null, 500)">500</button>
+        <button class="btn btn-outline-dark" onclick="setScale(null, 2000)">2000</button>
+      </div>
+      <span class="ms-auto"><a href="index.html">Index</a></span>
+    </div>
+
+    <div class="mk-body">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <h2 class="h4 mb-0">Exchange Migration <span class="badge bg-secondary align-middle" style="font-size:.6em;">v2.9.0</span></h2>
+        <button class="btn btn-sm btn-outline-secondary ms-auto">Download CSV</button>
+        <button class="btn btn-sm btn-primary">Refresh</button>
+      </div>
+
+      <ul class="nav nav-tabs mb-2">
+        <li class="nav-item"><a class="nav-link" href="#">Single User Check</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">Bulk CSV Check</a></li>
+        <li class="nav-item"><a class="nav-link active" href="#">Migration Status</a></li>
+      </ul>
+
+      <div class="mk-split" id="mkSplit">
+
+        <div class="mk-pane mk-left">
+          <div class="mk-pane-head d-flex gap-1 align-items-center">
+            <input class="form-check-input mt-0 flex-shrink-0" type="checkbox" id="bAll" onchange="tickAll(this.checked)"
+                   title="Tick every batch matching the filter, not just this page">
+            <input class="form-control form-control-sm" id="bSearch" placeholder="Find a batch" oninput="bPage=0; renderList()">
+            <select class="form-select form-select-sm" style="width:9.5rem;" id="bView" onchange="bPage=0; renderList()">
+              <option value="active" selected>In progress</option>
+              <option value="failed">With failures</option>
+              <option value="all">All</option>
+              <option value="done">Finished</option>
+            </select>
+          </div>
+
+          <div id="bActions"></div>
+
+          <div class="mk-pane-scroll" id="bList"></div>
+
+          <div class="mk-pane-foot d-flex align-items-center gap-2 py-1">
+            <button class="btn btn-sm btn-outline-secondary" onclick="pageList(-1)">&lsaquo;</button>
+            <span class="small text-muted" id="bPager"></span>
+            <button class="btn btn-sm btn-outline-secondary" onclick="pageList(1)">&rsaquo;</button>
+            <a class="small ms-auto" href="#/housekeeping">Housekeeping</a>
+          </div>
+
+        </div>
+
+        <div class="mk-pane mk-right" id="mkRight"></div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var seed = 1;
+function srand(s) { seed = s; }
+function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+function pick(a) { return a[Math.floor(rnd() * a.length)]; }
+
+var DEPTS = ['Finance','Engineering','Sales','Legal','Facilities','Support','Marketing','Payroll','Research','Logistics'];
+var FIRST = ['avery','blake','casey','devon','elena','farid','gina','hector','iris','jonas','kira','liam','mona','noor','omar','priya'];
+var LAST = ['singh','moreau','duval','park','rossi','haddad','okafor','velez','tanaka','reiter','novak','bauer','kelly','osei'];
+var B_BADGE = {Syncing:'info text-dark',Synced:'success',Starting:'secondary',Stopped:'warning text-dark',Completed:'primary',Created:'secondary'};
+var U_BADGE = {Synced:'success',Syncing:'info text-dark',Failed:'danger',NeedsApproval:'warning text-dark',Completed:'primary'};
+
+var batches = [], nBatches = 100, uPerBatch = 0, bPage = 0, PAGE = 40, userCache = {};
+var uFilter = '', uStatus = '', uPage = 0, U_PAGE = 50, pending = null, lastHash = null;
+var sel = {}, bulkAction = null;
+var usel = {}, uPageEmails = [], uAllFiltered = [];
+
+function buildBatches(n) {
+  srand(4242); batches = []; userCache = {};
+  var sts = ['Syncing','Synced','Starting','Stopped','Completed','Created'];
+  for (var i = 0; i < n; i++) {
+    var st = pick(sts), total = uPerBatch || (5 + Math.floor(rnd() * 240));
+    var failed = (st === 'Stopped' || rnd() > 0.72) ? 1 + Math.floor(rnd() * 5) : 0;
+    var approval = rnd() > 0.85 ? 1 + Math.floor(rnd() * 3) : 0;
+    var synced = (st === 'Created' || st === 'Starting') ? 0
+               : (st === 'Synced' || st === 'Completed') ? total - failed : Math.floor(total * (0.3 + rnd() * 0.6));
+    batches.push({ i: i, name: 'Wave' + (1 + Math.floor(i / 7)) + '-' + pick(DEPTS) + '-' + String(i + 1).padStart(3, '0'),
+      status: st, direction: rnd() > 0.85 ? 'Offboarding' : 'Onboarding',
+      created: 'Sep ' + String(1 + Math.floor(rnd() * 22)).padStart(2, '0'), ticket: 'INC' + (400000 + Math.floor(rnd() * 99999)),
+      total: total, synced: Math.max(0, synced), failed: failed, approval: approval,
+      scheduled: (['Syncing','Synced'].indexOf(st) >= 0 && rnd() > 0.7) ? 'Sep ' + (24 + Math.floor(rnd() * 4)) + ' ' + pick(['19:00','22:00']) : null });
+  }
+}
+function usersFor(b) {
+  if (userCache[b.i]) { return userCache[b.i]; }
+  srand(90000 + b.i * 7);
+  var list = [], k;
+  for (k = 0; k < b.failed; k++) { list.push({ st: 'Failed' }); }
+  for (k = 0; k < b.approval; k++) { list.push({ st: 'NeedsApproval' }); }
+  while (list.length < b.total) {
+    list.push({ st: b.status === 'Completed' ? 'Completed'
+              : (b.status === 'Created' || b.status === 'Starting') ? 'Syncing'
+              : (list.length < b.synced ? 'Synced' : 'Syncing') });
+  }
+  for (k = 0; k < list.length; k++) {
+    var u = list[k], d = 18 + Math.floor(rnd() * 6), h = Math.floor(rnd() * 24), m = Math.floor(rnd() * 60);
+    u.email = pick(FIRST) + '.' + pick(LAST) + (k ? k : '') + '@example.com';
+    u.items = Math.floor(rnd() * 42000);
+    u.last = 'Sep ' + d + ' ' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+    u.ts = d * 1440 + h * 60 + m;
+    u.error = u.st === 'Failed' ? 'MapiExceptionNetworkError (0x80004005)'
+            : u.st === 'NeedsApproval' ? 'LargeItem count exceeds limit' : '';
+  }
+  list.sort(function (x, y) { return x.ts - y.ts; });
+  userCache[b.i] = list;
+  return list;
+}
+
+// ---- left list: name, state, counts. Nothing else. ----
+function matching() {
+  var q = document.getElementById('bSearch').value.toLowerCase();
+  var v = document.getElementById('bView').value;
+  return batches.filter(function (b) {
+    if (v === 'active' && ['Completed','Created'].indexOf(b.status) >= 0) { return false; }
+    if (v === 'failed' && !b.failed) { return false; }
+    if (v === 'done' && b.status !== 'Completed') { return false; }
+    return !q || b.name.toLowerCase().indexOf(q) >= 0;
+  });
+}
+function renderList() {
+  // A ticked batch is NEVER off the page. Ticked rows are pinned above the list and are not
+  // subject to the filter or the pager; paging walks the rest.
+  var picked = batches.filter(function (b) { return sel[b.i]; });
+  var rest = matching().filter(function (b) { return !sel[b.i]; });
+  var pages = Math.max(1, Math.ceil(rest.length / PAGE));
+  if (bPage >= pages) { bPage = pages - 1; }
+  var from = bPage * PAGE;
+  var list = picked.concat(rest.slice(from, from + PAGE));
+  var open = currentBatch(), html = [], actions = [];
+  // Header lives INSIDE the scrolling list so it shares the rows' width; the scrollbar cannot
+  // shift it out of alignment. The operation bar lives outside, so it never scrolls away.
+  html.push('<div class="v3-batch v3-head" style="position:sticky;top:0;z-index:2;">' +
+    '<span></span><span>Batch</span><span class="v3-count">Synced</span>' +
+    '<span class="v3-count">Failed</span><span style="text-align:center;">Status</span></div>');
+  // The operations sit at the top of the ticked section, directly above the rows they act on.
+  if (picked.length) {
+    var ok = picked.filter(function (b) { return !bulkAction || verdict(bulkAction, b)[0]; }).length;
+    var btn = 'padding:.1rem .4rem;font-size:.78rem;';
+    actions.push('<div class="bg-light border-bottom">' +
+      '<div class="px-2 py-1 d-flex gap-1 align-items-center">' +
+        '<strong class="small me-1 text-nowrap">' + picked.length + ' ticked</strong>' +
+        ['Complete','Schedule','Stop','Resume','Delete'].map(function (a) {
+          return '<button class="btn btn-sm ' + (bulkAction === a ? 'btn-warning' : a === 'Delete' ? 'btn-outline-danger' : 'btn-outline-secondary') +
+            '" style="' + btn + '" onclick="setBulk(\'' + a + '\')">' + a + '</button>';
+        }).join('') +
+        '<button class="btn btn-sm btn-outline-secondary ms-auto" style="' + btn + '" title="Untick all" onclick="clearSel()">&times;</button>' +
+      '</div>' +
+      (bulkAction
+        ? '<div class="px-2 pb-1 d-flex gap-1 align-items-center">' +
+            '<input class="form-control form-control-sm" style="width:7.5rem;font-size:.78rem;" placeholder="Ticket">' +
+            (bulkAction === 'Schedule'
+              ? '<input type="datetime-local" class="form-control form-control-sm" style="width:11rem;font-size:.78rem;" value="2026-09-25T19:00">'
+              : '<span class="small text-muted text-truncate">' + ok + ' of ' + picked.length + ', rest skipped</span>') +
+            '<button class="btn btn-sm btn-warning ms-auto" style="' + btn + '"' + (ok ? '' : ' disabled') + '>Confirm ' + ok + '</button>' +
+            '<button class="btn btn-sm btn-outline-secondary" style="' + btn + '" onclick="setBulk(null)">Cancel</button>' +
+          '</div>'
+        : '') +
+    '</div>');
+  }
+  for (var i = 0; i < list.length; i++) {
+    var b = list[i];
+    if (picked.length && i === picked.length) {
+      html.push('<div class="px-2 py-1 bg-light border-bottom text-muted" style="font-size:.7rem;">OTHER BATCHES</div>');
+    }
+    var v = (bulkAction && sel[b.i]) ? verdict(bulkAction, b) : null;
+    html.push('<div class="v3-batch' + (open && open.i === b.i ? ' active' : '') +
+      (v && !v[0] ? ' text-muted' : '') +
+      '" onclick="location.hash=\'#/batch/' + b.i + '\'">' +
+      '<input class="form-check-input mt-0" type="checkbox" onclick="event.stopPropagation()"' +
+        ' onchange="tick(' + b.i + ', this.checked)"' + (sel[b.i] ? ' checked' : '') + '>' +
+      '<span class="text-truncate">' + b.name +
+        (v ? ' <span class="small ' + (v[0] ? 'text-success' : 'text-muted') + '">' + v[1] + '</span>' : '') + '</span>' +
+      '<span class="text-muted v3-count" style="font-size:.78rem;">' + b.synced + '/' + b.total +
+        '</span>' + '<span class="text-danger v3-count" style="font-size:.78rem;">' + (b.failed ? b.failed : '') + '</span>' +
+      '<span class="badge bg-' + B_BADGE[b.status] + '">' + b.status + '</span>' +
+    '</div>');
+  }
+  document.getElementById('bActions').innerHTML = actions.join('');
+  document.getElementById('bList').innerHTML = html.join('');
+  var shownRest = Math.min(PAGE, Math.max(0, rest.length - from));
+  document.getElementById('bPager').textContent = rest.length ? (from + 1) + '-' + (from + shownRest) + ' of ' + rest.length : '0';
+}
+// Ticking and opening are different things and stay that way: the highlight says what you are
+// looking at, the tick says what an operation will hit. Opening never changes the ticks.
+function tick(i, on) {
+  if (on) { sel[i] = 1; } else { delete sel[i]; }
+  renderList();
+}
+// Select-all covers everything the filter matches, not just the rendered page.
+function tickAll(on) {
+  matching().forEach(function (b) { if (on) { sel[b.i] = 1; } else { delete sel[b.i]; } });
+  renderList();
+}
+function selIds() { return Object.keys(sel).map(Number); }
+function clearSel() { sel = {}; bulkAction = null; bPage = 0; renderList(); }
+function pageList(d) { bPage = Math.max(0, bPage + d); renderList(); }
+
+// ---- address is the state ----
+function currentBatch() {
+  var m = /^#\/batch\/(\d+)$/.exec(location.hash);
+  return m && batches[Number(m[1])] ? batches[Number(m[1])] : null;
+}
+window.addEventListener('hashchange', render);
+
+function render() {
+  if (location.hash !== lastHash) { lastHash = location.hash; pending = null; bulkAction = null; usel = {}; uPage = 0; uFilter = ''; uStatus = ''; }
+  renderList();
+  var right = document.getElementById('mkRight');
+  if (location.hash === '#/housekeeping') { right.innerHTML = housekeeping(); return; }
+  var b = currentBatch();
+  right.innerHTML = b ? batchHtml(b) : '<div class="p-5 text-center text-muted">Pick a batch.</div>';
+}
+
+
+function batchHtml(b) {
+  var users = usersFor(b);
+  // Same rule as the batch list: a ticked mailbox is never paged or filtered off the page.
+  var picked = users.filter(function (u) { return usel[u.email]; });
+  var rest = users.filter(function (u) {
+    return !usel[u.email] && (!uFilter || u.email.indexOf(uFilter) >= 0) && (!uStatus || u.st === uStatus);
+  });
+  var pages = Math.max(1, Math.ceil(rest.length / U_PAGE));
+  if (uPage >= pages) { uPage = pages - 1; }
+  var from = uPage * U_PAGE, restPage = rest.slice(from, from + U_PAGE);
+  var page = picked.concat(restPage);
+  uAllFiltered = picked.concat(rest).map(function (u) { return u.email; });
+
+  return '<div class="mk-pane-head">' +
+      '<div class="d-flex align-items-baseline gap-2 flex-wrap">' +
+        '<h5 class="mb-0">' + b.name + '</h5>' +
+        '<span class="badge bg-' + B_BADGE[b.status] + '">' + b.status + '</span>' +
+        '<span class="small text-muted mk-stat">' + b.synced + ' of ' + b.total + ' synced' +
+          (b.failed ? ', <span class="text-danger">' + b.failed + ' failed</span>' : '') +
+          (b.scheduled ? ', completes ' + b.scheduled : '') + '</span>' +
+        '<span class="small text-muted ms-auto">' + b.direction + ' &middot; ' + b.created + ' &middot; ' + b.ticket + '</span>' +
+        '<button class="btn btn-sm btn-outline-secondary" onclick="togglePane()" id="paneToggle">Hide list</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="mk-pane-scroll">' + table(page, picked.length) + '</div>' +
+    '<div class="mk-pane-foot d-flex align-items-center gap-2 py-1">' +
+      '<input class="form-control form-control-sm" style="max-width:13rem;" placeholder="Find a mailbox" value="' + uFilter + '"' +
+        ' oninput="uFilter=this.value; uPage=0; render()">' +
+      '<select class="form-select form-select-sm" style="width:10rem;" onchange="uStatus=this.value; uPage=0; render()">' +
+        ['','Failed','NeedsApproval','Synced','Syncing','Completed'].map(function (s) {
+          return '<option value="' + s + '"' + (uStatus === s ? ' selected' : '') + '>' + (s || 'Any status') + '</option>';
+        }).join('') + '</select>' +
+      '<button class="btn btn-sm btn-outline-secondary" onclick="uPage=Math.max(0,uPage-1); render()">&lsaquo;</button>' +
+      '<span class="small text-muted">' + (rest.length ? (from + 1) + '-' + (from + restPage.length) + ' of ' + rest.length : '0') + '</span>' +
+      '<button class="btn btn-sm btn-outline-secondary" onclick="uPage=uPage+1; render()">&rsaquo;</button>' +
+    '</div>' +
+    userSelBar(users.length);
+}
+
+
+
+function table(page, pinned) {
+  uPageEmails = page.map(function (u) { return u.email; });
+  var allTicked = uAllFiltered.length > 0 && uAllFiltered.every(function (e) { return usel[e]; });
+  return '<table class="table table-sm table-hover align-middle mb-0">' +
+    '<thead class="table-light" style="position:sticky;top:0;z-index:2;"><tr>' +
+      '<th style="width:2.2rem;"><input class="form-check-input" type="checkbox"' + (allTicked ? ' checked' : '') +
+        ' title="Tick every mailbox matching the filter, not just this page"' +
+        ' onchange="utickAll(this.checked)"></th>' +
+      '<th>Mailbox</th><th style="width:8.5rem;">Status</th><th style="width:6.5rem;" class="text-end">Items</th>' +
+      '<th style="width:7.5rem;">Last sync</th><th>Error</th><th style="width:10rem;" class="text-end"></th>' +
+    '</tr></thead><tbody>' +
+    page.map(function (u, idx) {
+      var sep = (pinned && idx === pinned)
+        ? '<tr class="table-light"><td colspan="7" class="py-1 text-muted" style="font-size:.7rem;">OTHER MAILBOXES</td></tr>' : '';
+      var act = u.st === 'Failed' ? '<button class="btn btn-sm btn-primary me-1">Retry</button>'
+              : u.st === 'NeedsApproval' ? '<button class="btn btn-sm btn-warning me-1">Approve</button>'
+              : u.st === 'Synced' ? '<button class="btn btn-sm btn-success me-1">Complete</button>'
+              : u.st === 'Syncing' ? '<button class="btn btn-sm btn-outline-warning me-1">Pause</button>' : '';
+      return sep + '<tr><td><input class="form-check-input" type="checkbox"' + (usel[u.email] ? ' checked' : '') +
+          ' onchange="utick(\'' + u.email + '\', this.checked)"></td>' +
+        '<td class="text-truncate" style="max-width:0;">' + u.email + '</td>' +
+        '<td><span class="badge bg-' + U_BADGE[u.st] + '">' + u.st + '</span></td>' +
+        '<td class="text-end mk-stat">' + u.items.toLocaleString() + '</td>' +
+        '<td><small>' + u.last + '</small></td>' +
+        '<td class="small text-danger text-truncate" style="max-width:0;">' + u.error + '</td>' +
+        '<td class="text-end text-nowrap">' + act + '<button class="btn btn-sm btn-outline-danger">Report</button></td></tr>';
+    }).join('') + '</tbody></table>';
+}
+function utick(e, on) { if (on) { usel[e] = 1; } else { delete usel[e]; } render(); }
+function utickAll(on) {
+  uAllFiltered.forEach(function (e) { if (on) { usel[e] = 1; } else { delete usel[e]; } });
+  render();
+}
+function uclear() { usel = {}; render(); }
+function userSelBar(total) {
+  var ids = Object.keys(usel);
+  if (!ids.length) { return ''; }
+  return '<div class="mk-pane-foot d-flex align-items-center gap-2 py-1 flex-wrap">' +
+    '<span class="badge bg-primary">' + ids.length + ' ticked mailboxes</span>' +
+    '<span class="small text-muted">of ' + total + '</span>' +
+    '<button class="btn btn-sm btn-success">Complete</button>' +
+    '<button class="btn btn-sm btn-outline-warning">Pause</button>' +
+    '<button class="btn btn-sm btn-outline-success">Resume</button>' +
+    '<button class="btn btn-sm btn-danger">Remove</button>' +
+    '<button class="btn btn-sm btn-outline-secondary ms-auto" onclick="uclear()">Clear</button>' +
+  '</div>';
+}
+
+function verdict(a, b) {
+  if (a === 'Delete') { return [true, 'will be deleted']; }
+  if (a === 'Complete') { return b.status === 'Synced' ? [true, 'will be completed'] : [false, 'skipped, ' + b.status]; }
+  if (a === 'Schedule') {
+    return ['Syncing','Synced','Starting'].indexOf(b.status) >= 0
+      ? [true, b.scheduled ? 'moves from ' + b.scheduled : 'will be scheduled'] : [false, 'skipped, ' + b.status];
+  }
+  if (a === 'Stop') {
+    return ['Syncing','Synced','Starting'].indexOf(b.status) >= 0 ? [true, 'will be stopped'] : [false, 'skipped, ' + b.status];
+  }
+  if (a === 'Resume') { return b.status === 'Stopped' ? [true, 'will be resumed'] : [false, 'skipped, ' + b.status]; }
+  return b.status === 'Completed' ? [true, 'will be removed'] : [false, 'skipped, ' + b.status];
+}
+function setBulk(a) { bulkAction = a; render(); }
+
+var hkDays = 30;
+function housekeeping() {
+  var doomed = batches.filter(function (b) { return b.status === 'Completed' && Number(b.created.slice(4)) <= (23 - Math.min(hkDays, 22)); });
+  return '<div class="mk-pane-head d-flex align-items-center gap-2 flex-wrap">' +
+      '<h5 class="mb-0">Housekeeping</h5>' +
+      '<span class="small">Remove finished batches older than</span>' +
+      '<input type="number" class="form-control form-control-sm" style="width:5rem;" value="' + hkDays + '" onchange="hkDays=Number(this.value); render()">' +
+      '<span class="small">days &mdash; ' + doomed.length + ' match</span>' +
+      '<button class="btn btn-sm btn-outline-secondary ms-auto" onclick="location.hash=\'#/batch/0\'">Close</button>' +
+    '</div>' +
+    '<div class="mk-pane-scroll"><table class="table table-sm mb-0"><thead class="table-light"><tr>' +
+      '<th>Batch</th><th style="width:7rem;">Created</th><th style="width:6rem;" class="text-end">Mailboxes</th></tr></thead><tbody>' +
+      doomed.map(function (b) { return '<tr><td>' + b.name + '</td><td>' + b.created + '</td><td class="text-end mk-stat">' + b.total + '</td></tr>'; }).join('') +
+    '</tbody></table></div>' +
+    '<div class="mk-pane-foot d-flex gap-2 align-items-center">' +
+      '<span class="small">Removes the ' + doomed.length + ' batches listed and nothing else. Each is audited separately.</span>' +
+      '<input class="form-control form-control-sm ms-auto" style="width:11rem;" placeholder="Ticket (required)">' +
+      '<button class="btn btn-sm btn-danger"' + (doomed.length ? '' : ' disabled') + '>Remove ' + doomed.length + '</button>' +
+    '</div>';
+}
+
+function togglePane() {
+  var c = document.getElementById('mkSplit').classList.toggle('collapsed');
+  document.getElementById('paneToggle').textContent = c ? 'Show list' : 'Hide list';
+}
+function setScale(b, u) {
+  if (b) { nBatches = b; }
+  if (u !== null && u !== undefined) { uPerBatch = u; }
+  bPage = 0; sel = {}; usel = {}; buildBatches(nBatches);
+  if (location.hash === '#/batch/0') { render(); } else { location.hash = '#/batch/0'; }
+}
+
+buildBatches(nBatches);
+if (!location.hash) { location.hash = '#/batch/0'; }
+render();
+</script>
+</body>
+</html>
