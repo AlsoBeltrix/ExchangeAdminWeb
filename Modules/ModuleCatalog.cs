@@ -214,7 +214,10 @@ public sealed class ModuleCatalog
             // 1.9.1: the search box and the staged-ticket box carry that predicate too, so Enter can
             // no longer reach a search or a destructive confirmation that the button beside it is
             // refusing (docs/ClickGatingAudit-Plan.md; a disabled input fires no keydown).
-            Version = "1.9.1",
+            // 1.10.0: the open batch is addressable as /migration?batch=<name>, so browser Back, a
+            // refresh and a circuit reconnect restore it instead of collapsing the page
+            // (docs/MigrationInterfaceRedesign-Plan.md S1).
+            Version = "1.10.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

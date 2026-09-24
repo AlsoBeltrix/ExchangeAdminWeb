@@ -8,16 +8,16 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**HANDOFF 2026-09-24 (second of the day).** On `master`, working tree clean, head `9b85957`.
-Gates are green **as of `bd29a9c`** (build 0 errors, `dotnet test` 3064 passed / 0 failed /
-3 skipped, format clean, `git diff --check` clean, Pester 157/0, PSScriptAnalyzer 0 errors);
-every commit since is docs-only, so nothing has been re-run against them. Nothing is
-half-finished. **56 commits are unpushed on both remotes** and push policy is ask.
+**2026-09-24 (third session of the day).** On `master`, working tree clean. Gates are green at
+this head: build 0 errors, `dotnet test` **3069 passed / 0 failed / 3 skipped**, format clean,
+`git diff --check HEAD` clean, ASCII scan clean. Pester and PSScriptAnalyzer were NOT re-run -
+no PowerShell changed. Nothing is half-finished. **3 commits are unpushed on both remotes**
+(`origin` and `github` both sit at `9b85957`) and push policy is ask. The previous handoff's
+"56 unpushed" and head `9b85957` were already stale when written; a push had landed.
 
-- **QUEUE ITEM 14 IS PLANNED, FOUR-TIMES REVIEWED, AND AWAITS ONE THING: THE OWNER APPROVING
-  `docs/MigrationInterfaceRedesign-Plan.md`. No code is written and none may be until then.**
-  The owner's closing instruction was to hand the slices to agents in a fresh session, so the
-  next session's job is to get that approval and then run S1.
+- **QUEUE ITEM 14: THE PLAN IS APPROVED (owner, 2026-09-24) AND S1 IS LANDED. S2 IS NEXT.**
+  `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In progress`. Module `1.9.1` ->
+  `1.10.0`, no base app bump.
   **Read the plan's `## Requirements` section before anything else - all 31 rules with their
   sub-rules. It is the contract, not a summary.** The mockup
   `.agents/mockups/migration-v3.html` is the reference for layout and interaction only; the
@@ -27,18 +27,35 @@ half-finished. **56 commits are unpushed on both remotes** and push policy is as
     layout lands first. **Nothing ships until 12, 13 and 14 are all done** (owner ruling), so
     the eight slices are commits for reviewability, not deliveries - a slice may leave a
     control unwired if the slice that wires it is still to come.
-  - **Eight slices.** S1 addressable state (query parameter, not a path segment - a path
-    segment breaks `Catalog.GetByRoute` and silently kills the version badge and usage
+  - **Eight slices. S1 DONE.** S1 addressable state (query parameter, not a path segment - a
+    path segment breaks `Catalog.GetByRoute` and silently kills the version badge and usage
     telemetry). S2 two panes plus batch-list paging. S3 selection model. S4 outcome preview.
     S5 mailbox filter/sort/paging. S6 output destinations. S7 Export Reports. S8 `CompleteAfter`
     semantics. Seven named test obligations, each of which must be proven to bite.
+  - **S1's landed shape, and the one risk it could not close.** The URL is the source of truth
+    and `expandedBatch` mirrors it; `OpenBatch` is the only outbound writer, `SyncOpenBatchFromUrl`
+    (via a one-line `OnParametersSetAsync`) the only inbound one, and a test pins that pair.
+    **No test in this repo renders a Blazor component, so nothing proves what a browser does with
+    the address.** The plan's `## Acceptance` now carries three hand checks, and check 2 is a real
+    risk, not a formality: the router is static and the page is `@rendermode InteractiveServer`,
+    so every `NavigateTo` from inside the component is an enhanced navigation. The documented
+    behaviour is that the interactive component is preserved and just gets new parameters; if it
+    is instead torn down, opening a batch resets the tab, the loaded catalogue and the selection,
+    and S1 must switch to writing the address without navigating. **This is the app's first
+    query-parameter route, so there is no precedent here to read the answer off - it needs a dev
+    deploy and a browser.**
+  - **Two things S1 had to touch that the next slices will too.** `ClickGateRegistry` pins
+    Migration's line count (now 2127) and cites handler coordinates in its rationale; every slice
+    will fail `TheRegisteredLineCountStillMatchesTheFile` until both are re-checked and updated.
+    And `LoadMigrationStatus` is now a two-part split (`LoadBatchList` is the shared reload);
+    `SelectionIsPrunedWhenTheTableReloads` is anchored on the shared half.
   - **Four codex openreviews ran** (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, fallback
     grade), each `acceptable with changes`, fourteen findings total, all closed. Results in
     `.agents/review/openreview-mir*.result.txt` (gitignored, machine-local).
   - **The finding worth carrying:** the plan's own "keep the fetched report" rule would have
     re-broken queue item 3. That bug was a report surviving its batch being removed and
     recreated under the same name; the fix is the `reportGeneration` counter at
-    `Migration.razor:1830`. A caching rule written without reading that fix would have undone
+    `Migration.razor:1932`. A caching rule written without reading that fix would have undone
     it, and gates would not have caught it. R24b and test 5 exist for that.
   - **The other trap:** `CompleteAfter` today *means* "complete now" -
     `MigrationService.cs:490` and `:698` pass a **past** timestamp and `:596` reads the property

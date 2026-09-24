@@ -869,6 +869,27 @@
     private List<MigrationBatchInfo>? migrationBatches;
     private bool isLoadingStatus = false;
     private bool batchesLoaded = false;
+    private bool accessDenied = false;
+    // The open batch is addressable: it lives in the URL as ?batch=<name>, so browser Back, a
+    // refresh and a circuit reconnect restore it instead of silently collapsing the page.
+    //
+    // A QUERY PARAMETER, never a path segment. Components/Shared/ModuleVersion.razor and
+    // Components/Layout/UsageTracker.razor both identify the running module with
+    // Catalog.GetByRoute() over the path with the query string cut off, and this module's route
+    // is the exact string "migration" (Modules/ModuleCatalog.cs). A /migration/batch/<name> form
+    // would stop resolving and would silently kill the version badge and the usage telemetry.
+    // A query parameter also keeps operator-supplied batch names out of the path, where they
+    // would need encoding rules of their own.
+    private const string BatchQueryParameter = "batch";
+
+    [SupplyParameterFromQuery(Name = BatchQueryParameter)]
+    public string? OpenBatchParameter { get; set; }
+
+    // Mirrors the query parameter above, and is what the markup renders against. Exactly two
+    // places may write it: OpenBatch, which moves the address in the same breath, and
+    // SyncOpenBatchFromUrl, which adopts an address the operator moved. Assigning it anywhere
+    // else puts the page and the URL out of step, and the URL is the one that survives a
+    // reconnect; a test enforces that no such assignment exists.
     private string? expandedBatch;
     private List<MigrationUserInfo>? batchUsers;
     private string? loadingBatchUsers;
@@ -924,6 +945,11 @@
         var authResult = await AuthorizationService.AuthorizeAsync(user, "MigrationCheck");
         if (!authResult.Succeeded)
         {
+            // Latched before the bounce, not inferred from it. The bounce is a full-page load, so
+            // this component still finishes its lifecycle here, and OnParametersSetAsync runs
+            // immediately afterwards - a ?batch= in the address would otherwise send an
+            // unauthorized visitor's request straight to Exchange on the way out.
+            accessDenied = true;
             Navigation.NavigateTo("access-denied", forceLoad: true);
             return;
         }
@@ -935,6 +961,69 @@
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
+    }
+
+    // Deliberately a one-line delegation with no logic of its own. Everything it does happens in
+    // a private method so the in-flight-flag sweeps in MigrationStatusPageTests, which attribute
+    // a setter to the nearest enclosing PRIVATE signature, read the right method body.
+    protected override Task OnParametersSetAsync() => SyncOpenBatchFromUrl();
+
+    // The outbound half of the address. Changing which batch is open is a navigation, so the URL
+    // and the rendered page move together and can never disagree; the guard keeps a collapse that
+    // collapses nothing, or a re-open of the batch already open, from stacking a history entry
+    // the operator would have to press Back through twice.
+    private void OpenBatch(string? batchName)
+    {
+        expandedBatch = batchName;
+
+        var uri = Navigation.GetUriWithQueryParameter(BatchQueryParameter, batchName);
+        if (!string.Equals(uri, Navigation.Uri, StringComparison.Ordinal))
+            Navigation.NavigateTo(uri);
+    }
+
+    // The inbound half. Browser Back, a refresh, a circuit reconnect and a pasted link all arrive
+    // here with the address already changed and, in the last three cases, no component state at
+    // all. An operator click reaches this too, because OpenBatch navigates - but OpenBatch has
+    // already put expandedBatch in step, so those re-entries fall out at the equality check and
+    // nothing is fetched twice.
+    private async Task SyncOpenBatchFromUrl()
+    {
+        // Prerendering runs a whole lifecycle on the server before the circuit exists, and the
+        // interactive render then runs it again on a fresh instance. Without this the batch named
+        // in a pasted link would be pulled from Exchange twice and the first result discarded.
+        if (!RendererInfo.IsInteractive || accessDenied)
+            return;
+
+        var requested = string.IsNullOrWhiteSpace(OpenBatchParameter) ? null : OpenBatchParameter.Trim();
+        if (string.Equals(requested, expandedBatch, StringComparison.Ordinal))
+            return;
+
+        expandedBatch = requested;
+        batchUsers = null;
+        CloseUserReport();
+
+        if (requested == null)
+            return;
+
+        // Set before the first await - see CreateSingleMigrationBatch for why - and it covers the
+        // batch-list load below as well, because a pasted link lands with no list behind it.
+        loadingBatchUsers = requested;
+
+        try
+        {
+            if (!batchesLoaded)
+                await LoadBatchList();
+
+            ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(requested));
+        }
+        catch
+        {
+            ReplaceBatchUsers(new List<MigrationUserInfo>());
+        }
+        finally
+        {
+            loadingBatchUsers = null;
+        }
     }
 
     private async Task CheckSingleEligibility()
@@ -1225,13 +1314,26 @@
         await LoadMigrationStatus();
     }
 
+    // What the Refresh buttons, the tab and the bulk executor call: reloading the catalogue
+    // collapses the open batch, exactly as it did before the address carried it. The rows are
+    // discarded here rather than left to SyncOpenBatchFromUrl, which runs on the renderer's own
+    // schedule: leaving the clearing to it would let the reload below land on top of the previous
+    // batch's rows and only then wipe them.
     private async Task LoadMigrationStatus()
+    {
+        OpenBatch(null);
+        batchUsers = null;
+        CloseUserReport();
+
+        await LoadBatchList();
+    }
+
+    // The catalogue reload on its own, with no opinion about which batch is open. Split out so a
+    // pasted ?batch= link can load the list it needs without collapsing the batch it came for.
+    private async Task LoadBatchList()
     {
         tabIndex = 2;
         isLoadingStatus = true;
-        expandedBatch = null;
-        batchUsers = null;
-        CloseUserReport();
 
         try
         {
@@ -1353,14 +1455,14 @@
         // If clicking the same batch, collapse it
         if (expandedBatch == batchName)
         {
-            expandedBatch = null;
+            OpenBatch(null);
             batchUsers = null;
             CloseUserReport();
             return;
         }
 
         // Expand this batch and load users
-        expandedBatch = batchName;
+        OpenBatch(batchName);
         loadingBatchUsers = batchName;
         batchUsers = null;
         CloseUserReport();
@@ -1768,7 +1870,7 @@
 
             if (matchedBatch != null)
             {
-                expandedBatch = matchedBatch.BatchName;
+                OpenBatch(matchedBatch.BatchName);
                 loadingBatchUsers = matchedBatch.BatchName;
                 batchUsers = null;
                 CloseUserReport();
@@ -1799,7 +1901,7 @@
             }
 
             highlightedUser = searchResult.Email;
-            expandedBatch = searchResult.BatchId;
+            OpenBatch(searchResult.BatchId);
             loadingBatchUsers = searchResult.BatchId;
             batchUsers = null;
             CloseUserReport();

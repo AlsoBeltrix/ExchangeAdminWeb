@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using ExchangeAdminWeb.Components.Layout;
+using ExchangeAdminWeb.Modules;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -51,10 +53,130 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void TheOpenBatchIsAddressedByAQueryParameterAndNotAPathSegment()
+    {
+        // docs/MigrationInterfaceRedesign-Plan.md S1, test obligation 1. A path segment was ruled
+        // out on evidence, and the evidence is asserted below rather than restated: this test
+        // guards the FORM of the address, the next one guards what that form costs if it changes.
+        var page = ReadPage();
+
+        var routes = Regex.Matches(page, @"^@page\s+""(?<route>[^""]+)""", RegexOptions.Multiline)
+            .Select(match => match.Groups["route"].Value)
+            .ToList();
+        Assert.Equal(new[] { "/migration" }, routes);
+
+        Assert.Contains(
+            "private const string BatchQueryParameter = \"batch\";",
+            page,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "[SupplyParameterFromQuery(Name = BatchQueryParameter)]",
+            page,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheModuleStillResolvesWithTheBatchQueryParameterPresent()
+    {
+        // The reason the address is a query parameter. ModuleVersion.razor and UsageTracker.razor
+        // both identify the running module by handing Catalog.GetByRoute the base-relative path
+        // with the query cut off; a /migration/batch/<name> form would miss the catalog's exact
+        // "migration" route and the version badge and usage telemetry would both go silent with no
+        // error anywhere. Behavioural, not a source scan: the real derivation, the real catalog.
+        var catalog = new ModuleCatalog();
+
+        Assert.NotNull(catalog.GetByRoute(UsageTracker.RouteOf("migration")));
+        Assert.NotNull(catalog.GetByRoute(UsageTracker.RouteOf("migration?batch=Wave%2012")));
+
+        // The counterweight. Without it the two assertions above would still pass under the very
+        // design they exist to refuse, and would read as coverage of a decision they never test.
+        Assert.Null(catalog.GetByRoute(UsageTracker.RouteOf("migration/batch/Wave%2012")));
+    }
+
+    [Fact]
+    public void TheOpenBatchIsKeyedOnBatchNameNotRowIndex()
+    {
+        // Same defect as the selection guard above, one surface further out: the batch list
+        // re-sorts on every header click and reloads after every action, so an index in the
+        // address would resolve to a different batch after a refresh - and the address is the part
+        // that gets pasted into a ticket and reopened tomorrow.
+        var page = StripLineComments(ReadPage());
+
+        // Call sites only. The trailing semicolon excludes the declaration, whose parameter list
+        // would otherwise be read as an argument and fail the shape check below.
+        var arguments = Regex.Matches(page, @"(?<![A-Za-z0-9_])OpenBatch\((?<value>[^)]*)\);")
+            .Select(match => match.Groups["value"].Value.Trim())
+            .ToList();
+        Assert.True(arguments.Count >= 5,
+            $"expected every open-batch site to still be present, found {arguments.Count}");
+
+        foreach (var argument in arguments)
+        {
+            Assert.True(
+                argument == "null" || Regex.IsMatch(argument, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$"),
+                $"OpenBatch({argument}) is not a plain batch-name expression; an index or a "
+                + "computed position here retargets the address on the next reorder");
+        }
+
+        var row = GetBatchRowMarkup();
+        Assert.Contains("ToggleBatchDetails(batch.BatchName)", row, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheAddressAndTheRenderedPageAreWrittenTogether()
+    {
+        // The page renders against expandedBatch and the operator's browser remembers the URL. If
+        // any other code writes the field, those two disagree and the URL is the one that wins a
+        // reconnect - the operator comes back to a different batch than the one they left open,
+        // with no error. Two writers, both of which move the pair at once.
+        var page = StripLineComments(ReadPage());
+
+        var writers = Regex.Matches(page, @"(?<![A-Za-z0-9_])expandedBatch\s*=(?!=)")
+            .Select(match => EnclosingMethodName(page, match.Index))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(new[] { "OpenBatch", "SyncOpenBatchFromUrl" }, writers);
+
+        var open = GetMethodBody("OpenBatch");
+        Assert.Contains("GetUriWithQueryParameter(BatchQueryParameter, batchName)", open, StringComparison.Ordinal);
+        Assert.Contains("Navigation.NavigateTo(uri)", open, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheUrlSyncRefusesToFetchBeforeTheCircuitExists()
+    {
+        // The page prerenders, so its whole lifecycle runs once on the server with no circuit and
+        // again on a fresh instance when it goes interactive. Get-MigrationBatchUser is a real
+        // Exchange call; unguarded, a pasted ?batch= link would make it twice and throw the first
+        // result away. The authorization latch is here for a sharper reason: the access-denied
+        // bounce is a full-page load, so this component finishes its lifecycle on the way out and
+        // would otherwise read migration data for someone who was just refused the page.
+        var body = GetMethodBody("SyncOpenBatchFromUrl");
+
+        var guard = body.IndexOf("if (!RendererInfo.IsInteractive || accessDenied)", StringComparison.Ordinal);
+        var fetch = body.IndexOf("GetMigrationBatchUsersAsync", StringComparison.Ordinal);
+        Assert.True(guard >= 0, "SyncOpenBatchFromUrl must refuse a non-interactive or denied pass");
+        Assert.True(fetch > guard, "the guard must precede the Exchange call");
+
+        Assert.Contains(
+            "accessDenied = true;",
+            ExtractBlock(ReadPage(), "protected override async Task OnInitializedAsync()"),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SelectionIsPrunedWhenTheTableReloads()
     {
         // A batch removed by another operator, or by Exchange, must not stay ticked.
-        var body = GetMethodBody("LoadMigrationStatus");
+        //
+        // Anchored on LoadBatchList, not on LoadMigrationStatus. S1 split the catalogue reload out
+        // of the collapse-and-reload handler so a pasted ?batch= link can load the list it needs
+        // without closing the batch it came for, which gave the page a SECOND path to a reloaded
+        // table. LoadBatchList is the one both go through, so it is the one that has to prune;
+        // leaving this on the wrapper would pass while the deep-link path pruned nothing.
+        var body = GetMethodBody("LoadBatchList");
 
         Assert.Contains("PruneSelection()", body, StringComparison.Ordinal);
     }

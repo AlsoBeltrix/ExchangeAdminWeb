@@ -120,7 +120,7 @@ public static class ClickGateRegistry
     private static PageGateEntry Migration => new()
     {
         Page = "Migration.razor",
-        ExpectedLineCount = 2025,
+        ExpectedLineCount = 2127,
 
         Predicates =
         [
@@ -211,8 +211,8 @@ public static class ClickGateRegistry
 
             // Gated 2026-09-18, closing the two Enter-key holes this entry had recorded as found
             // rather than granted. Each input carries an @onkeydown whose handler reaches the very
-            // operation the button beside it refuses - HandleSearchKeyDown (1742) calls SearchUser
-            // with no busy guard while Find at 400 is gated, and HandleConfirmKeyDown (1429) calls
+            // operation the button beside it refuses - HandleSearchKeyDown (1844) calls SearchUser
+            // with no busy guard while Find at 400 is gated, and HandleConfirmKeyDown (1531) calls
             // ConfirmPendingAction with no busy guard while Confirm at 825 is gated. A disabled
             // input fires no keydown, so the attribute closes the handler path as well as the
             // typing path; a handler guard would not, and on a control that renders server state it
@@ -236,14 +236,14 @@ public static class ClickGateRegistry
                 "left live on purpose, and the purpose is written into the page. The selection "
                 + "toolbar comment at 455-459 records owner ruling D2(a): the bulk-action buttons "
                 + "are never conditioned on eligibility, and the staged callback re-plans from the "
-                + "LIVE selection (1346) rather than from a snapshot, so the tick boxes are an input "
+                + "LIVE selection (1448) rather than from a snapshot, so the tick boxes are an input "
                 + "to the confirm step and not a value in flight. Nothing can be executed from this "
                 + "state while the page is busy - all three action buttons carry "
                 + "disabled=\"@(IsBusy || pendingActionLabel != null)\" (464, 469, 474)"),
 
             new UngatedDomSyncedControl(544, "title=\"Select for a bulk action\"", "input",
                 "the per-row half of the same selection, on the same owner ruling and the same "
-                + "re-plan at 1346. ToggleBatchSelected (1281) writes only to selectedBatches and "
+                + "re-plan at 1448. ToggleBatchSelected (1383) writes only to selectedBatches and "
                 + "nulls the result banner; it makes no call and awaits nothing"),
         ],
 
@@ -275,7 +275,7 @@ public static class ClickGateRegistry
                 "Enter EXECUTES the staged action - a batch start, stop or remove, the destructive "
                 + "half of this page - which the Confirm button at 825 refuses while busy. It "
                 + "avoided double execution only by accident, and the accident is worth writing "
-                + "down: ConfirmPendingAction calls CancelPendingAction (1435) BEFORE awaiting the "
+                + "down: ConfirmPendingAction calls CancelPendingAction (1537) BEFORE awaiting the "
                 + "staged callback, which nulls pendingActionLabel and so unrenders the whole "
                 + "PendingActionConfirm fragment, and blanks pendingActionTicket so a second press "
                 + "fails the handler's own emptiness check. Nothing in that is a busy gate, and "

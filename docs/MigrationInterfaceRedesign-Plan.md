@@ -1,9 +1,9 @@
 # Migration -- Redesign The Status Interface (queue item 14)
 
-Status: **Draft, awaiting owner approval.** No code written. The layout was settled by the
-owner over many rounds against a working mockup (`.agents/mockups/migration-v3.html`), and four
+Status: **Approved by the owner 2026-09-24. In progress: S1 landed, S2-S8 to go.** The layout
+was settled by the owner over many rounds against a working mockup (`.agents/mockups/migration-v3.html`), and four
 codex openreviews have run against it. **Every question the reviews raised is closed and no
-question is outstanding.** What remains is the owner approving the plan itself.
+question is outstanding.**
 
 ## Why a plan at all
 
@@ -33,7 +33,10 @@ nothing ships until all three items are done, so Schedule lands working rather t
 
 ## What is wrong with the page today
 
-`Components/Pages/Migration.razor`, 2025 lines, Migration Status tab:
+`Components/Pages/Migration.razor`, 2025 lines when this was written and 2127 after S1, Migration
+Status tab. Line references in this section are the pre-S1 ones and are kept as found; S1 touched
+only the `@code` block below the `PendingActionConfirm` fragment, so every markup coordinate here
+is still live:
 
 1. One wide batch table. Clicking a batch injects a **second, nested user table inside the
    row** (`:654-:790`), pushing everything below it down the page.
@@ -43,7 +46,7 @@ nothing ships until all three items are done, so Schedule lands working rather t
    position, which may be off screen.
 4. The user table has no sort and no filter; the batch table has sort only.
 5. Nothing is addressable. Which batch is expanded lives in `expandedBatch`, so browser
-   Back, refresh and a circuit reconnect all lose it.
+   Back, refresh and a circuit reconnect all lose it. **Fixed by S1**; 1-4 remain.
 
 ## Requirements
 
@@ -221,7 +224,7 @@ R24b. **The kept report is invalidated by the same events that close it today, o
 regresses a fixed bug.** Queue item 3 was exactly this: a report open while the batch was
 removed elsewhere and recreated under the same name kept showing the previous migration's
 report. The fix is `CloseUserReport()` and the `reportGeneration` counter
-(`Components/Pages/Migration.razor:1830-1836`), called by every site that reloads or discards
+(`Components/Pages/Migration.razor:1932-1938`), called by every site that reloads or discards
 `batchUsers`, with the generation bump also invalidating a fetch still in flight. The cache
 must hang off the same generation: any refresh or replacement of the mailbox rows discards it.
 A report kept across a batch being recreated is worse than a slow one.
@@ -320,6 +323,32 @@ silently break the version badge and usage telemetry. A query parameter also avo
 inventing encoding rules for operator-supplied batch names. Selection state moves to fields
 that survive a re-render. No layout change. Module version bump only -- nothing shared
 changes.
+
+**S1 is LANDED (2026-09-24), module `1.9.1` -> `1.10.0`, no base app bump.** What it turned into,
+recorded because three of these are not obvious from the slice description:
+
+- The address is the source of truth and `expandedBatch` is its mirror. `OpenBatch` is the only
+  outbound writer and moves both at once; `SyncOpenBatchFromUrl`, reached through a one-line
+  `OnParametersSetAsync`, is the only inbound one. An operator click passes through both and the
+  equality check stops it fetching twice. A test pins the writer set to exactly those two.
+- **Prerendering had to be guarded.** The page prerenders, so the whole lifecycle runs once with
+  no circuit and again on a fresh instance. Unguarded, a pasted `?batch=` link would have made the
+  `Get-MigrationBatchUser` call twice and thrown the first result away. Same guard carries the
+  access-denied latch: that bounce is a full-page load, so this component finishes its lifecycle
+  on the way out and would otherwise have read migration data for someone just refused the page.
+- **`LoadMigrationStatus` split in two.** Reloading the catalogue still collapses the open batch,
+  but a pasted link needs the list without the collapse, so `LoadBatchList` is the shared half.
+  That gave the page a second path to a reloaded table, and `SelectionIsPrunedWhenTheTableReloads`
+  was re-anchored onto the shared half -- on the wrapper it would have passed while the deep-link
+  path pruned nothing.
+- **The click-gate fingerprint moved.** `ClickGateRegistry` pins Migration's line count (2025 ->
+  2127) and cites five handler coordinates in its rationale; every registered control line was
+  re-checked against the file and none had moved, since every insertion is inside `@code` below
+  the `PendingActionConfirm` fragment. The five prose coordinates were re-pointed.
+- Five tests, each proved to bite by reverting the behaviour and watching it fail: the address
+  form, module resolution with the query present (behavioural, against the real catalog and the
+  real route derivation, with a path-segment counterweight that must NOT resolve), name-not-index
+  keying, the two-writer rule, and the prerender/authorization guard.
 
 **S2 -- Split the panes, and page the batch list.** Replace the nested-row expansion with the
 two-pane layout: batch list left, mailbox table right, each with its own scroll region, sticky
@@ -434,3 +463,24 @@ bite: revert the behaviour, watch the test fail, restore it.
 Beyond the gates: with the app running, no control that acts on a selection may be off
 screen while that selection exists, and no ticked row may be hidden by a filter or a page
 change. Those two are the item-14 clauses and are checked by hand on dev.
+
+**S1's own hand check, and the one thing the gates cannot answer.** No test in this repo renders
+a Blazor component, so nothing here proves what a browser does with the address. Three things
+need a dev deploy and a browser, and the middle one is a genuine risk rather than a formality:
+
+1. Open a batch, press Back: it collapses. Press Forward: it reopens. Paste
+   `/migration?batch=<name>` into a new tab: the Status tab is selected, the catalogue loads and
+   that batch's mailboxes are open.
+2. **Opening a batch must not reset the page.** `Components/Routes.razor` renders the router
+   statically and each page declares `@rendermode InteractiveServer`, so a `NavigateTo` from
+   inside this component goes through enhanced navigation. The documented behaviour is that an
+   interactive component at the same position with the same type is preserved and simply receives
+   new parameters, which is what `SyncOpenBatchFromUrl` is written against. If instead the
+   component is torn down and rebuilt on every batch click, the operator loses the tab, the loaded
+   catalogue and the selection each time, and S1 has to switch to writing the address without
+   navigating. **Watch for the tab jumping back to Single User Check, or the batch list
+   re-fetching, when a batch is opened.** This is the first query-parameter route in the app, so
+   there is no precedent here to read the answer off.
+3. The version badge beside the heading still reads a version, and the batch open is recorded in
+   usage telemetry, with `?batch=` in the address. Both resolve the module by route, and a test
+   pins the derivation, but the test cannot see the rendered badge.
