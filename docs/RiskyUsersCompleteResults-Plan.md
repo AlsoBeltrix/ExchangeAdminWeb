@@ -1,8 +1,8 @@
 # Risky Users -- Complete Results, And Actions An Operator Can Identify
 
-Status: **Draft, awaiting owner approval.** No code written. Four slices. **One open owner
-question remains, Q1, and it blocks S3 only** -- S1, S2 and S4 can proceed without it.
-Q3 was closed coder-side on 2026-09-24; Q2 is a recommendation, not a gate.
+Status: **Draft, awaiting owner approval.** No code written. Four slices. **No open owner
+questions remain.** Q1 was ruled by the owner on 2026-09-24 (paginate the table), Q3 was
+closed coder-side the same day, and Q2 is a recommendation rather than a gate.
 
 This is the plan `docs/RiskyUsersModule-Plan.md` section **S4a** said to write:
 
@@ -364,11 +364,53 @@ Name each one in the commit message with what it asserts now.
   actionable and true, so it names Risk level and Risk state, which narrow the fetch, and
   not UPN contains, which does not.
 - The Complete case renders no notice at all. A complete list must not carry a caveat.
-- If Q1 comes back "cap what is rendered", add the render limit and its own notice here.
+
+#### Pagination (Q1, owner ruling 2026-09-24)
+
+**The complete sorted set is held; 50 rows are rendered at a time.** Fetching and sorting
+stay tenant-wide, so the UPN search and the severity order are still computed over
+everything -- only the rendering is bounded. The row count line above the table keeps
+reporting the full match count, not the page's.
+
+Follow `Components/Pages/AdminEventLog.razor` (`:314-333`, `:454-461`, `:828-836`), which
+already does this in this codebase: `currentPage`, `const int PageSize = 50`, a computed
+`totalPages`, a `SetPage` that range-checks, and `Skip((currentPage - 1) * PageSize)
+.Take(PageSize)` at the render.
+
+**Copy its structure, not its pager markup.** `AdminEventLog:321` renders one numbered
+button per page in a `@for` loop. At the event log's volumes that is fine; against a
+10,000-row ceiling it is 200 buttons, which is a worse density problem than the one being
+fixed. Render Prev / Next, "Page X of Y", and nothing else.
+
+**Four pieces of state must reset when the page changes, and one must not:**
+
+- `confirmUserId`, `confirmAction` and `actionTicket` -- **close the confirm bar.** It is
+  rendered beneath its row (`:196-225`); page away and it is either orphaned or, worse,
+  sitting under a different user. A half-typed ticket must not survive to a row it was not
+  typed for.
+- `expandedUserId` and `historyEntries` -- **collapse the history expander**, same reason.
+- `actingUserId` -- **paging must be refused while an action is in flight**, not reset.
+  The pager buttons take `ActionsDisabled` like every other control.
+- `rowOutcomes` -- **must NOT be cleared.** It is keyed by user id, so an operator paging
+  back should still see what happened to that row. Clearing it on page change would
+  destroy the only per-row record of a completed action (AC10 of the module plan, Known
+  Failure Class 2).
+
+`currentPage` resets to 1 on every new query, alongside the existing per-query state
+clear at `:398-412`.
 
 Tests: `ExchangeAdminWeb.Tests/RiskyUsersPageTests.cs` is source-level only -- no bUnit
-harness exists in this repo. Assert the wording tripwires; do not report a green suite as
-evidence the operator sees the fix. The manual checks below are that evidence.
+harness exists in this repo. Assert the wording tripwires, that `SetPage` clears the
+confirm and expander fields, that it does **not** clear `rowOutcomes`, and that
+`currentPage` is reset by the query path. Do not report a green suite as evidence the
+operator sees the fix. The manual checks below are that evidence.
+
+**Click gating.** `ExchangeAdminWeb.Tests/ClickGateRegistry.cs:84` records
+`RiskyUsers.razor` as *"tier 3, not approved; has a partial ActionsDisabled already"*, so
+the page is **not** a converted page and this slice does not convert it -- that remains
+queue 9 tier 3 and unapproved. But the pager adds controls to a page whose
+`ActionsDisabled` is already known-incomplete, so gate the new buttons on it explicitly
+rather than leaving them ungated and assuming the eventual conversion catches them.
 
 ### S4 -- actions an operator can identify
 
@@ -500,6 +542,11 @@ implementation time, not from this document. No base app bump.
   `GraphTokenClientTests` passes with no test modified.
 - **AC9.** Audit behaviour is unchanged: every query is still logged, reads are still
   never alert-emailed (D2, 2026-08-31).
+- **AC9a.** The table renders 50 rows at a time. Every fetched row is reachable by paging;
+  none is discarded to bound the render. The count above the table reports the full match
+  count, not the current page's.
+- **AC9b.** Changing page closes any open confirm bar and history expander, preserves
+  per-row outcomes, and is refused while an action is in flight.
 - **AC10.** Each remediation button can be matched to its Entra admin center toolbar item
   without guessing. The full Microsoft term is the button's accessible name.
 - **AC11.** No two remediation button labels share a word, and none repeats the subject or
@@ -539,7 +586,13 @@ in this repo renders a Razor page:
    first measurement of the tenant's real risky-user population and it decides whether
    the 10,000 default is right.**
 2. `UPN contains = charles`. `Paul.Charles@analog.com` appears at High risk (AC2).
-3. Confirm the top row is High risk and the list descends by severity (AC3).
+3. Confirm the top row is High risk and the list descends by severity (AC3) -- and that it
+   is the tenant's highest, not the first page's. Page to the last page and confirm the
+   order still descends across the boundary; a sort applied per page instead of over the
+   whole set looks identical on page 1.
+3a. Open a confirm bar on a row, then change page. The bar closes and the typed ticket
+   does not reappear anywhere (AC9b). Repeat with the history expander. Page back and
+   confirm a completed row's outcome is still shown.
 4. Confirm no truncation notice appears when the fetch completes (AC6).
 5. A per-row action still works end to end: Graph accepts, audit row written with ticket,
    admin notification received. S2 changes the read path only, but the page is shared.
@@ -570,23 +623,21 @@ in this repo renders a Razor page:
 
 ## Open questions
 
-**Q1 (owner, blocks S3 only).** Once the fetch is complete, the page renders every row it
-retrieved. If this tenant holds several thousand risky users, that is several thousand
-rows in one Blazor Server table -- the failure the owner already hit on Defender for
-Endpoint ("Rejoining the server..."), where virtualised scrolling was rejected outright.
-Two shapes:
+**Q1 -- RULED by the owner, 2026-09-24: "neither? just page them."** Both offered shapes
+were rejected. **The table is paginated.** Recorded in `.agents/decisions.md`.
 
-- **(a) Render everything, ceiling refusal above the limit.** Simplest, matches what the
-  module does today, and the severity sort puts what matters on the first screen. Risk:
-  the circuit dies at some unknown row count and this plan will have moved the failure
-  rather than fixed it.
-- **(b) Fetch everything, render the top N by severity, say so.** The fetch stays
-  complete so search and sort are correct tenant-wide; only the rendering is bounded, and
-  the notice states the bound rather than implying the data is missing.
+The ruling is better than either option offered, and the reason is worth keeping: both of
+mine threw rows away to protect the circuit. (a) refused above a limit, (b) rendered only
+the top N -- in each case the operator could not reach a user the module had already
+fetched. Pagination bounds what is *rendered* without bounding what is *reachable*. It is
+also what the Entra portal does, so the module stops behaving unlike the thing it mirrors.
 
-Recommendation: **(b)**, and it does not depend on measuring the tenant first -- (a)
-gambles on a number nobody has, while (b) is correct at any size. But (a) is materially
-less work and is defensible if step 1 of the manual checks comes back small.
+This is the same shape the owner leaned toward on Defender for Endpoint, where the
+unanswered fork is recorded in `.agents/state.md` as *"make browsing filter-first and paged
+(portal-style, 50 at a time)"* and virtualised scrolling was rejected outright. Two modules
+now want the same answer; do not invent a second one here.
+
+S3 carries it. Q1 is closed.
 
 **Q3 -- CLOSED 2026-09-24, coder-side, on the owner's instruction to "do it correctly"
 rather than to ask again.** The question had been which of two shapes to take: relabel in

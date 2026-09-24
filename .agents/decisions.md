@@ -5,6 +5,42 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-24 - Long result tables are PAGED. Never capped, never truncated to protect the circuit.
+
+Status: Active. Scope: `RiskyUsers` now; read as the default shape for any module table
+that can return more rows than a browser should render at once.
+
+The Risky Users fix plan asked the owner to choose between refusing above a row limit and
+rendering only the top N by severity. Owner ruling, verbatim: *"neither? just page them."*
+
+**Both rejected options threw rows away to protect the Blazor circuit.** Under either one,
+a user the module had already fetched could be unreachable in the UI. Pagination bounds
+what is rendered without bounding what is reachable, which is the distinction both options
+missed. It is also what the Entra portal does, so the module stops behaving unlike the
+thing it mirrors.
+
+What this settles:
+
+- The fetch and the sort stay complete and tenant-wide. Filtering and ordering are
+  computed over everything, so the first page genuinely holds the highest-risk users.
+- The table renders a fixed page size (50, matching `AdminEventLog.razor` and the portal).
+  Every fetched row is reachable by paging.
+- The row count above a table reports the full match count, never the page's.
+- A fetch ceiling still exists and still refuses honestly when hit. Paging bounds
+  rendering; it does not make an incomplete answer complete, and the two must not be
+  confused.
+- **Virtualised scrolling remains rejected** (owner, on Defender for Endpoint: 40,000 rows
+  behind one scrollbar is useless however it is rendered). Paging is not a softer form of
+  it.
+
+This also answers, by precedent rather than by ruling, the shape of the still-open Defender
+for Endpoint fork recorded in `.agents/state.md` -- *"make browsing filter-first and paged
+(portal-style, 50 at a time)"*. Two modules wanting the same answer should get the same
+one; Defender still needs its own explicit go before anyone implements it there.
+
+Affected: `docs/RiskyUsersCompleteResults-Plan.md` S3 (carries it), and
+`docs/DefenderEndpointDevices-Plan.md` when queue 8 resumes.
+
 ### 2026-09-23 - CloudPasswordReset: the reveal permission overrides every destination refusal
 
 Status: Active. Scope: `CloudPasswordReset`. Settles part of D4 and constrains the rest.

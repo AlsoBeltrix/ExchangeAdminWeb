@@ -24,9 +24,13 @@ docs-only, so nothing has been re-run against them. Nothing is half-finished.
     no documented `contains()`), so paging is the only route, and it needs `GraphTokenClient` to
     accept a guarded absolute `@odata.nextLink`. **FOUR slices.** Base app bump in S1; module
     bumps in BOTH S2 (`1.2.0`) and S4 (`1.3.0`).
-    **Open Q1: may the page render several thousand rows, or render the top N by severity
-    and say so** - the Defender "Rejoining the server" hazard. Blocks S3 only; it is the plan's
-    only remaining owner gate.
+    **Q1 IS RULED and the plan has NO open owner questions left.** Owner 2026-09-24, offered a
+    render cap or a top-N render: *"neither? just page them."* Both options threw rows away to
+    protect the circuit; pagination bounds what is RENDERED without bounding what is REACHABLE.
+    50 rows a page, following `AdminEventLog.razor` - but not its numbered-button loop, which at
+    this ceiling would be 200 buttons. Fetch and sort stay tenant-wide. Recorded in
+    `.agents/decisions.md` as the default shape for any long module table, and it answers by
+    precedent the still-open Defender browsing fork (which still needs its own go).
     **S4 was added 2026-09-24 on a second owner report** (`b5052d8`, redesigned `71c5390`). The
     Remediate buttons read "Close as handled" / "This was the real user" / "Account was breached"
     and nothing on the page maps them to Entra's "Dismiss user(s) risk" / "Confirm user(s) safe" /
