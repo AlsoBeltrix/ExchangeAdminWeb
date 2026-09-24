@@ -1,4 +1,4 @@
-# Risky Users -- Complete And Ordered Results
+# Risky Users -- Complete Results, And Actions An Operator Can Identify
 
 Status: **Draft, awaiting owner approval.** No code written. One open question (Q1)
 is a genuine owner gate and blocks S3 only; S1 and S2 can proceed without it.
@@ -33,7 +33,7 @@ A High-risk account missing from a risky-users list is the module's whole purpos
 failing. The three rows that did appear are a mix of 2017, 2021 and 2026 records, which
 is itself evidence for the ordering defect below.
 
-## Root cause -- three defects, one design
+## Root cause of the incomplete results -- three defects, one design
 
 All three are in `Services/RiskyUsersService.GetRiskyUsersAsync`
 (`Services/RiskyUsersService.cs:75-113`).
@@ -85,6 +85,47 @@ locally, which the module already knows how to do.
 **This is not a licensing, consent or credential problem.** Reads are succeeding; rows
 are being returned; the 403 path (`:175-177`) is not firing.
 
+## The second defect, reported 2026-09-24: the remediation buttons name nothing
+
+Owner, with a screenshot of the Remediate column: *"these don't make sense. it's unclear
+what specific, mapped to Microsoft's page, these options are."*
+
+The three buttons read **Close as handled**, **This was the real user**, **Account was
+breached**. The Entra admin center's own toolbar, visible in the owner's other screenshot
+of the same session, reads **Dismiss user(s) risk**, **Confirm user(s) safe**, **Confirm
+user(s) compromised**. Graph calls them `dismiss`, `confirmSafe`, `confirmCompromised`.
+
+**Nothing rendered on the page connects the two vocabularies.** Not the button, not the
+confirm bar (`RiskyUsers.razor:218` reuses the same `ActionLabel`), and not the tooltip --
+`ActionConsequence` is a plain-English consequence sentence, not the Microsoft term, and
+it is attached as a `title` attribute, so it does not appear on touch, does not appear for
+a keyboard user, and did not appear in the owner's screenshot. An operator who reads
+Microsoft's documentation, or looks at the same user in the Entra portal, or reads the
+`riskDetail` value in the very next column, has no bridge back to these three buttons.
+
+### This refines an owner ruling rather than contradicting one
+
+The current wording is itself an owner ruling, recorded at
+`docs/RiskyUsersModule-Plan.md:477-485` (2026-09-02, module `1.0.0` -> `1.1.0`): Microsoft's
+vocabulary *"reads ambiguous, and this module is headed for L2 support desk staff."* That
+reason still holds -- "Confirm user compromised" genuinely does not tell an L2 operator
+that the account's sign-ins are about to be blocked.
+
+So this is not "the plain wording was wrong". It is that **plain wording was made to do
+two jobs and can only do one.** A label has to identify which action this is; a sentence
+has to say what it does. The 2026-09-02 change replaced the first job with the second and
+put the second in a tooltip, which is why the mapping disappeared. Both jobs need doing,
+visibly.
+
+### The same defect, one column to the left
+
+`RiskyUsers.razor:154` renders `riskDetail` raw: the owner's screenshot shows
+`userPerformedSecuredPasswordReset`. Entra shows that same fact as a readable sentence.
+This is the identical failure -- an API token shown where a person's word belongs -- and it
+is in the same table, so it is in scope here. `riskLevel` and `riskState` stay as they are:
+they are short, already readable, and the operator matches them against the portal's own
+badges.
+
 ## Scope
 
 In scope:
@@ -94,6 +135,16 @@ In scope:
    following continuation links, under an explicit ceiling.
 3. Replace the truncation notice and its wrong advice with honest, accurate states.
 4. Re-point the tests that assert the old single-page behaviour, without weakening them.
+5. Make each remediation action identifiable as the Microsoft action it performs, without
+   losing the plain-English consequence the 2026-09-02 ruling asked for.
+6. Render `riskDetail` as readable text, with the raw value preserved for anything
+   unrecognised.
+
+Items 5 and 6 were added on the owner's instruction of 2026-09-24 (*"update the risky
+users fix plan to make this better"*) after the completeness work was already reviewed.
+They widen this plan beyond its original title, which is why the title changed. They share
+the module, the page, the version bump and the deploy with items 1-4, so splitting them
+into a second plan would buy nothing and cost a second deploy boundary.
 
 Out of scope, and deliberately so:
 
@@ -313,6 +364,63 @@ Tests: `ExchangeAdminWeb.Tests/RiskyUsersPageTests.cs` is source-level only -- n
 harness exists in this repo. Assert the wording tripwires; do not report a green suite as
 evidence the operator sees the fix. The manual checks below are that evidence.
 
+### S4 -- actions an operator can identify (blocked on Q3)
+
+`Components/Pages/RiskyUsers.razor`, `Services/RiskyUsersService.cs`,
+`Modules/ModuleCatalog.cs`.
+
+**The design, assuming Q3 resolves to (a).** Each action gains two strings with two
+distinct jobs, and both are rendered, neither hidden in a tooltip:
+
+| Graph | Microsoft's term -- the label | Plain English -- the consequence |
+| --- | --- | --- |
+| `dismiss` | Dismiss user risk | Clears the alert. Says nothing about whether it was real; it can fire again. |
+| `confirmSafe` | Confirm user safe | Clears the alert and teaches the risk engine this is normal for them. Only after you have verified with the user. |
+| `confirmCompromised` | Confirm user compromised | Raises the user to high risk. Sign-in is blocked or forced to reset, immediately. |
+
+The consequence column is today's `ActionConsequence` text, which is good and stays; it
+moves from a `title` attribute to rendered text in the confirm bar, where the operator is
+already stopped and typing a ticket. The label column replaces `ActionLabel`.
+
+**Four implementation hazards, each of which has already caused a defect somewhere in
+this repo:**
+
+1. **The three strings exist in two files and nothing enforces agreement.**
+   `RiskyUsers.razor:759-763` (`ActionLabel`) and `Services/RiskyUsersService.cs:165-171`
+   (`ActionDisplayName`) each hold their own copy, kept in step by a comment
+   (`:160-163`) and nothing else. The service's copy is what lands in the **outcome
+   message and the audit record**. Change one and not the other and the operator clicks
+   one name while the audit trail records a different one. Either change both in the same
+   commit or, better, give them one source. A test must assert they agree.
+2. **`ExchangeAdminWeb.Tests/RiskyUsersPageTests.cs:188-191` pins the current three
+   strings**, in a test named `ActionLabel_MatchesTheOwnerApprovedL2Wording`. Re-point it,
+   and rename it -- a test whose name cites a superseded ruling will mislead the next
+   reader into restoring the old strings.
+3. **Audit action names do not change.** `RiskyUsers_Dismiss`, `RiskyUsers_ConfirmSafe`
+   and `RiskyUsers_ConfirmCompromised` are stable identifiers in the audit store; renaming
+   them would split every existing record from its successors. Only display text moves --
+   the same constraint the 2026-09-02 ruling set, and it still holds.
+4. **`riskDetail` needs a display map that fails open, not closed.** S2 rule 4 of
+   `docs/RiskyUsersModule-Plan.md` is binding: Microsoft extends these enums and an
+   unrecognised value must still render. Map the known values to readable text and fall
+   back to **the raw value itself** for anything unmatched -- never to "Unknown", never to
+   blank, never dropped. An unrecognised `riskDetail` shown raw is mildly ugly; an
+   unrecognised `riskDetail` shown as "Unknown" is a lie about what Microsoft said.
+
+Tests: `RiskyUsersPageTests.cs` is source-level only. Assert that the two label copies
+agree; that every `RiskyUserAction` has both a label and a consequence; that the label set
+contains Microsoft's terms; that `ActionConsequence` is rendered as text and not only as a
+`title`; and that the `riskDetail` map returns the input unchanged for an unknown value.
+That last one is the only test here that guards a real hazard rather than a string.
+
+Guard proof: change one label copy and not the other, confirm the agreement test fails;
+feed the `riskDetail` map an invented value, confirm it comes back unchanged and that
+deleting the fallback makes the test fail. Restore and touch the files.
+
+`Modules/ModuleCatalog.cs`: `RiskyUsers` `Version` -> next MINOR. S2 already moves it to
+`1.2.0`, so S4 takes `1.3.0`. Compute from the field at implementation time, not from this
+document. No base app bump.
+
 ## Acceptance criteria
 
 - **AC1.** A tenant with more than 500 risky users returns more than 500 rows on an
@@ -334,6 +442,16 @@ evidence the operator sees the fix. The manual checks below are that evidence.
   `GraphTokenClientTests` passes with no test modified.
 - **AC9.** Audit behaviour is unchanged: every query is still logged, reads are still
   never alert-emailed (D2, 2026-08-31).
+- **AC10.** Each remediation button names the Microsoft action it performs, in wording an
+  operator can match against the Entra admin center toolbar and Microsoft's documentation.
+- **AC11.** The plain-English consequence is **visible without hovering** before the
+  operator commits. A tooltip alone does not satisfy this.
+- **AC12.** The button an operator clicks and the name written to the audit record are the
+  same string. Provable by test, not by inspection.
+- **AC13.** The audit action identifiers `RiskyUsers_Dismiss`, `RiskyUsers_ConfirmSafe`
+  and `RiskyUsers_ConfirmCompromised` are byte-identical to today's.
+- **AC14.** `riskDetail` renders as readable text for known values, and an unrecognised
+  value renders as its own raw string -- not blank, not "Unknown", not omitted.
 
 ## Verification
 
@@ -358,6 +476,16 @@ in this repo renders a Razor page:
 4. Confirm no truncation notice appears when the fetch completes (AC6).
 5. A per-row action still works end to end: Graph accepts, audit row written with ticket,
    admin notification received. S2 changes the read path only, but the page is shared.
+6. **Open the same user in the Entra admin center and in this module side by side, as the
+   owner did on 2026-09-24, and check that each button can be matched to a toolbar item
+   there without guessing** (AC10). This is the reported defect and the only test of
+   whether S4 actually fixed it -- no automated check can tell whether a label reads
+   clearly to a person.
+7. Confirm the consequence sentence is readable without hovering, including by keyboard
+   (AC11).
+8. Compare the Risk detail column against the same user's Entra timeline entries (AC14).
+   Find one value the map does not know -- or force one -- and confirm it renders raw
+   rather than as "Unknown".
 
 ## Versioning
 
@@ -387,6 +515,29 @@ Recommendation: **(b)**, and it does not depend on measuring the tenant first --
 gambles on a number nobody has, while (b) is correct at any size. But (a) is materially
 less work and is defensible if step 1 of the manual checks comes back small.
 
+**Q3 (owner, blocks S4). How should a remediation action be presented?**
+
+The complaint is that the buttons cannot be matched to anything Microsoft shows. Both
+shapes below fix that; they differ in how much of the page moves.
+
+- **(a) Relabel in place.** The three buttons stay where they are and read Microsoft's
+  terms; the plain-English consequence stops being a tooltip and becomes visible text in
+  the confirm bar. Smallest change, no change to the table's shape, and it is the direct
+  answer to what was reported.
+- **(b) One "Remediate" control per row.** The row carries a single button; clicking it
+  opens the existing confirm panel, which lists all three actions with Microsoft's term,
+  the consequence sentence and the ticket box together. This also closes two things
+  nobody has asked about yet: the Remediate column is already three buttons wide and will
+  get wider with longer labels, and the Developer Guide warns against putting destructive
+  actions directly in dense tables. Costs a real page restructure and a
+  `ClickGateRegistry` update, since RiskyUsers is a click-gated page.
+
+Recommendation: **(a)**. It answers the report, it is small, and it can ship with the
+completeness work. (b) is the better page but it is a different piece of work, and turning
+a reported labelling defect into a page redesign without being asked is how scope goes
+wrong. If the owner wants (b), it should be its own plan -- and it would overlap the
+queue-14 discussion about dense tables with destructive per-row actions.
+
 **Q2 (not blocking, recommendation stated).** The default filter is `Any` / `Any`, so the
 default view is every risk record the tenant has ever held, including remediated and
 dismissed ones from 2017. Once severity sorting covers the complete set those sink to the
@@ -394,6 +545,10 @@ bottom, so this is no longer a correctness problem. Recommendation: leave the de
 alone and revisit after the owner has used the fixed page. Not implemented in this plan.
 
 ## Review
+
+**This review covers slices S1-S3 only. S4 and scope items 5 and 6 were added afterwards,
+on 2026-09-24, and have not been reviewed by anyone.** Do not read the verdict below as
+covering them.
 
 `openreview codex (@azure-openai-eus2-global/gpt-5.5-dzs @ xhigh, fallback) over
 cecddcc..dc79994: acceptable_with_changes`. codex-cli 0.154.0, 2026-09-24. Capability
@@ -434,8 +589,14 @@ AGENTS.md rather than silently chosen between.
 
 - `docs/RiskyUsersModule-Plan.md` -- the module plan. Its **S4a** authorised exactly this
   work as a separate plan; its **AC6** and **AC7** are superseded by this plan's AC5/AC6,
-  and its S2 rules 2 and 3 are amended by S2 here. Update that plan's S4a section when
-  this one lands.
+  and its S2 rules 2 and 3 are amended by S2 here. Its **Revision 2026-09-02** (the
+  L2-plain action wording, `:477-485`) is refined by S4 here: the consequence sentences
+  survive and become more visible, the labels do not. Update both sections when this
+  lands, and record the 2026-09-24 ruling in `.agents/decisions.md` -- the 2026-09-02 one
+  was never written there, which is part of why its reasoning was only discoverable from
+  a code comment.
+- **S2 rule 4 of `docs/RiskyUsersModule-Plan.md`** -- unknown enum values pass through,
+  never dropped or allowlisted. Binding on S4's `riskDetail` map.
 - `docs/ProjectConstitution.md` -- Deployment And Versioning (the two-bump rule).
 - `.agents/decisions.md` 2026-09-21 -- user-facing strings state what happened and what
   to do.
