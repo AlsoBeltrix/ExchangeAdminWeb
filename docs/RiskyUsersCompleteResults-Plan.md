@@ -443,10 +443,15 @@ this repo:**
    strings**, in a test named `ActionLabel_MatchesTheOwnerApprovedL2Wording`. Re-point it,
    and rename it -- a test whose name cites a superseded ruling will mislead the next
    reader into restoring the old strings.
-3. **Audit action names do not change.** `RiskyUsers_Dismiss`, `RiskyUsers_ConfirmSafe`
-   and `RiskyUsers_ConfirmCompromised` are stable identifiers in the audit store; renaming
-   them would split every existing record from its successors. Only display text moves --
-   the same constraint the 2026-09-02 ruling set, and it still holds.
+3. **Two different "action name" strings exist and only one of them moves.**
+   `AuditActionFor` (`RiskyUsers.razor:745`) produces `RiskyUsers_Dismiss` and friends,
+   which `AuditService.cs:215` stores in the `action` column. Those are stable record
+   keys: renaming them splits every existing audit record from its successors, so they do
+   not change. What does change is the **display** string -- the button, the confirm bar,
+   the service's outcome message, and `extra["Action"]` in the admin notification
+   (`:728`). Do not let a rename sweep catch the identifiers, and do not conclude from
+   AC13 that the audit column should read "Dismiss". Same constraint the 2026-09-02 ruling
+   set, and it still holds.
 4. **`riskDetail` needs a display map that fails open, not closed.** S2 rule 4 of
    `docs/RiskyUsersModule-Plan.md` is binding: Microsoft extends these enums and an
    unrecognised value must still render. Map the known values to readable text and fall
@@ -470,9 +475,9 @@ set two labels to share a word, confirm the no-shared-word test fails; feed the
 `riskDetail` map an invented value, confirm it comes back unchanged and that deleting the
 fallback makes the test fail. Restore and touch the files.
 
-`Modules/ModuleCatalog.cs`: `RiskyUsers` `Version` -> next MINOR. S2 already moves it to
-`1.2.0`, so S4 takes `1.3.0`. Compute from the field at implementation time, not from this
-document. No base app bump.
+`Modules/ModuleCatalog.cs`: `RiskyUsers` `Version` `1.2.0` -> `1.3.0` -- the second of the
+two module bumps this plan makes, recorded in `## Versioning`. Compute from the field at
+implementation time, not from this document. No base app bump.
 
 ## Acceptance criteria
 
@@ -502,10 +507,16 @@ document. No base app bump.
 - **AC12.** The consequence of the chosen action is **visible without hovering** at the
   confirmation step, once, for that action only. A tooltip alone does not satisfy this,
   and neither does a sentence beside every button on every row.
-- **AC13.** The button an operator clicks and the name written to the audit record are the
-  same string. Provable by test, not by inspection.
+- **AC13.** Every operator-facing rendering of an action's name is the same string as the
+  button the operator clicked: the confirm bar, the per-row outcome message from
+  `RiskyUsersService`, and the `Action` entry in the admin notification
+  (`RiskyUsers.razor:728`). These are display fields, and they are the ones that must
+  agree with each other -- **not** the audit `action` column, which AC14 pins separately.
 - **AC14.** The audit action identifiers `RiskyUsers_Dismiss`, `RiskyUsers_ConfirmSafe`
-  and `RiskyUsers_ConfirmCompromised` are byte-identical to today's.
+  and `RiskyUsers_ConfirmCompromised` (`RiskyUsers.razor:745`, stored by
+  `AuditService.cs:215` in the `action` field) are byte-identical to today's. They are
+  stable record keys and are deliberately NOT the button text; AC13 must not be read as
+  requiring them to match it.
 - **AC15.** `riskDetail` renders as readable text for known values, and an unrecognised
   value renders as its own raw string -- not blank, not "Unknown", not omitted.
 
@@ -546,10 +557,16 @@ in this repo renders a Razor page:
 ## Versioning
 
 - `ExchangeAdminWeb.csproj` `2.23.0` -> `2.24.0`, in **S1 only**. `GraphTokenClient` is
-  shared infrastructure.
-- `Modules/ModuleCatalog.cs` `RiskyUsers` `1.1.0` -> `1.2.0`, in **S2 only**.
-- Two independent rules, each firing once. Verify by diff that S1 leaves
-  `ModuleCatalog.cs` untouched and S2 leaves the csproj untouched.
+  shared infrastructure. **Read the csproj's real value at implementation time** -- another
+  plan may land first, and writing a stale number downgrades three version fields.
+- `Modules/ModuleCatalog.cs` `RiskyUsers`: **two module bumps, because two slices change
+  module-scoped behaviour.** S2 `1.1.0` -> `1.2.0` (the result set changes). S4 `1.2.0` ->
+  `1.3.0` (the operator-facing actions change). Each bump fires on its own slice; neither
+  is optional, because two deployed builds sharing a version number is worse than a wrong
+  number. S1 and S3 change no module version -- S3 is the page rendering its service's
+  existing outcome, under S2's bump.
+- The two rules are independent. Verify by diff that S1 leaves `ModuleCatalog.cs`
+  untouched, and that S2 and S4 each leave the csproj untouched.
 
 ## Open questions
 
@@ -587,12 +604,35 @@ alone and revisit after the owner has used the fixed page. Not implemented in th
 
 ## Review
 
-**This review covers slices S1-S3 only. S4 and scope items 5 and 6 were added afterwards,
-on 2026-09-24, and have not been reviewed by anyone.** Do not read the verdict below as
-covering them.
+Two rounds, both `codex (@azure-openai-eus2-global/gpt-5.5-dzs @ xhigh, fallback)`,
+codex-cli 0.154.0, both `acceptable_with_changes`, six material changes, all six admitted
+and folded in. Round 1 covered S1-S3; round 2 covered S4 and swept the whole plan.
 
-`openreview codex (@azure-openai-eus2-global/gpt-5.5-dzs @ xhigh, fallback) over
-cecddcc..dc79994: acceptable_with_changes`. codex-cli 0.154.0, 2026-09-24. Capability
+### Round 2 -- `openreview` over `afdacaa..71c5390`, 2026-09-24
+
+Capability proof passed both halves. The reviewer endorsed both designs -- guarded
+nextLink paging with a separate ceiling and a hard failure rather than partial data, and
+short per-row buttons with the Microsoft term exposed accessibly, consequences at the
+confirmation step, `riskDetail` mapped with a raw fallback. All three findings were
+internal inconsistencies this plan had accumulated while growing, and every one of them
+would have misled a cold implementer:
+
+1. **`.agents/state.md` still said three slices and "Open Q3, blocks S4"** after the plan
+   moved to four slices and closed Q3. Fixed in state, not here.
+2. **The Versioning section said the module bumps in S2 only**, while S4 also declared a
+   bump. Both are real -- two slices change module-scoped behaviour -- so Versioning now
+   records both, `1.2.0` at S2 and `1.3.0` at S4.
+3. **AC13 and AC14 contradicted each other.** AC13 required the clicked button and the
+   audit record to carry the same string; AC14 required the audit identifiers to stay
+   byte-identical. Both cannot hold once the button reads `Dismiss` and the identifier
+   reads `RiskyUsers_Dismiss`. AC13 now names the display fields it actually meant -- the
+   confirm bar, the outcome message, and `extra["Action"]` in the admin notification -- and
+   explicitly disclaims the audit `action` column, which `AuditService.cs:215` stores and
+   AC14 pins.
+
+### Round 1 -- `openreview` over `cecddcc..dc79994`, 2026-09-24
+
+`acceptable_with_changes`. codex-cli 0.154.0, 2026-09-24. Capability
 proof passed both halves (read `AGENTS.md`; ran `git diff --stat` over the pins, exit 0).
 Resolved model identity is not recoverable from the CLI envelope -- the Portkey gateway
 obscures it -- so this records what was dispatched, per the playbook.

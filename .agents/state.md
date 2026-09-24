@@ -22,22 +22,34 @@ docs-only, so nothing has been re-run against them. Nothing is half-finished.
     slice `docs/RiskyUsersModule-Plan.md` deferred; both halves of its trigger have fired.
     Server-side UPN matching is ruled out on the Graph v1.0 reference (`$filter`/`$select` only,
     no documented `contains()`), so paging is the only route, and it needs `GraphTokenClient` to
-    accept a guarded absolute `@odata.nextLink`. Three slices; base app bump in S1, module bump
-    in S2. **Open Q1: may the page render several thousand rows, or render the top N by severity
-    and say so** - the Defender "Rejoining the server" hazard. Blocks S3 only.
-    **S4 was added 2026-09-24 on a second owner report and is NOT covered by the codex review**
-    (`b5052d8`). The Remediate buttons read "Close as handled" / "This was the real user" /
-    "Account was breached" and nothing on the page maps them to Entra's "Dismiss user(s) risk" /
-    "Confirm user(s) safe" / "Confirm user(s) compromised" - the consequence text exists but only
-    as a `title` attribute, so it is invisible on touch, to a keyboard and in a screenshot. This
-    REFINES the 2026-09-02 L2-wording ruling rather than reversing it: a label identifies the
-    action, a sentence says what it does, and one string was doing both.
-    `riskDetail` renders raw camelCase in the next column - same defect, also in scope.
+    accept a guarded absolute `@odata.nextLink`. **FOUR slices.** Base app bump in S1; module
+    bumps in BOTH S2 (`1.2.0`) and S4 (`1.3.0`).
+    **Open Q1: may the page render several thousand rows, or render the top N by severity
+    and say so** - the Defender "Rejoining the server" hazard. Blocks S3 only; it is the plan's
+    only remaining owner gate.
+    **S4 was added 2026-09-24 on a second owner report** (`b5052d8`, redesigned `71c5390`). The
+    Remediate buttons read "Close as handled" / "This was the real user" / "Account was breached"
+    and nothing on the page maps them to Entra's "Dismiss user(s) risk" / "Confirm user(s) safe" /
+    "Confirm user(s) compromised" - the consequence text exists but only as a `title` attribute,
+    so it is invisible on touch, to a keyboard and in a screenshot. This REFINES the 2026-09-02
+    L2-wording ruling rather than reversing it: one string was doing two jobs.
+    **The first S4 draft was rejected by the owner and the rule that replaced it is the durable
+    part:** it proposed Microsoft's full toolbar strings on every button, and the owner answered
+    *"we do not need the same long string on every button. that's not UI, that's your context
+    leaking into the product."* **A control repeated on every row carries only what differs;
+    everything shared belongs to the column header, the row, or the confirmation step.** So:
+    `Dismiss` / `Safe` / `Compromised`, full Microsoft term as the accessible name, consequence
+    sentence at the confirm step only. A test asserts no two labels share a word.
+    `riskDetail` renders raw camelCase in the next column - same defect, also in scope, with the
+    raw value as the fallback for anything unrecognised.
     **The hazard to carry: the three label strings live in TWO files** (`RiskyUsers.razor:759`
-    and `RiskyUsersService.cs:165`) kept in step by a comment, and the service's copy is what
-    reaches the audit record. A half-rename makes the operator click one name while the audit
-    trail records another. Audit action identifiers must not change.
-    **Open Q3: relabel in place, or one "Remediate" control per row opening a panel.** Blocks S4.
+    and `RiskyUsersService.cs:165`) kept in step by a comment, and the service's copy reaches the
+    outcome message. A half-rename makes the operator click one name while another is reported.
+    Separately, `AuditActionFor` (`RiskyUsers.razor:745`) produces the STABLE ids
+    `RiskyUsers_Dismiss` etc. that `AuditService.cs:215` stores - those are record keys and must
+    NOT be swept into a rename.
+    **Q3 is CLOSED coder-side** (relabel in place; the one-control-per-row restructure is
+    recorded as deliberately not taken - it is a redesign and overlaps queue 14).
   - **`docs/SidebarScrollbar-Plan.md`** (`941cd77`, revised `afdacaa`). The sidebar scrollbar
     never leaves because the scroll pane overflows by a constant 0.7rem: the first category
     heading's `margin-top` collapses out of a `nav` that has no padding-top, `.nav-scrollable` is
