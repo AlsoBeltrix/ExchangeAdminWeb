@@ -22,16 +22,14 @@ moves with it. That is the trigger, not the visual work.
 > without UI-induced error. no burying controls off the screen, no hiding selected items
 > off the page.
 
-**Scope, corrected 2026-09-24.** This plan first said items 12 and 13 were out of scope. That
-is no longer true and pretending otherwise hid a contradiction that two reviews caught. During
-the design session the owner required mailbox checkboxes (R7), per-mailbox bulk actions (R12),
-Schedule as a first-class control (R13) and a new Export Reports operation (R31). Items 12 and
-13 are therefore **substantially delivered by this plan**, and item 14 "preceding" them means
-the layout lands first, in S1-S6, before their behaviour is wired in S7 and after.
+**Scope.** Items 12 and 13 were always in scope; an earlier draft of this plan said otherwise,
+which was my error and not an owner ruling (owner, 2026-09-24). Mailbox checkboxes (R7),
+per-mailbox bulk actions (R12), Schedule as a first-class control (R13) and Export Reports
+(R31) are all here. Item 14 "preceding" 12 and 13 means the layout lands first, in S1-S6,
+before their behaviour is wired in S7 and after.
 
-What is still explicitly **not** here: the `CompleteAfter` service semantics that item 12 needs
-(trap 1 below), which stay a separate piece of work because they change what two existing call
-sites mean. **This needs the owner's word, since it redefines what item 14 covers.**
+What is **not** here: the `CompleteAfter` service semantics item 12 needs (trap 1 below), which
+stay separate because they change what two existing call sites mean.
 
 ## What is wrong with the page today
 
@@ -166,6 +164,24 @@ migration, so closing and reopening the dialog must never run it again. The dial
 copy already held and states when it was taken; "Fetch again" is its own button and says what
 it costs. This is a correctness requirement about operator time, not a caching optimisation.
 
+R24c. **Reports are stored on disk, not in the circuit, and there is exactly one copy that
+every consumer reads.** Today `userReport` is a `string?` field on the component
+(`Components/Pages/Migration.razor:878`) -- one report, held in the operator's circuit memory.
+That is fine for one and wrong for many: reports run to several megabytes, so a cache of fifty
+would pin hundreds of megabytes per operator for the life of the circuit. A report is a
+point-in-time snapshot, so it is written once with its fetch time, and the modal and the export
+zip both read those same bytes. Two artifacts labelled "the report" for one mailbox that do not
+match is the failure this prevents (owner, 2026-09-24).
+
+R24d. **Retention: invalidation first, twelve hours as the outer bound, purged lazily.** There
+is no scheduler in this app, so the store sweeps entries older than **12 hours** whenever it is
+touched, and again at application start -- otherwise a store nobody opens keeps last week's
+reports (owner ruling, 2026-09-24). Generation invalidation (R24b) still deletes immediately,
+because a report whose batch was reloaded or recreated is misleading rather than merely old.
+A failed delete during a sweep is logged and skipped and must not fail the read it interrupted:
+**fail-soft on purging, fail-closed on serving.** Never render a report that cannot be shown to
+be current.
+
 R24b. **The kept report is invalidated by the same events that close it today, or R24a
 regresses a fixed bug.** Queue item 3 was exactly this: a report open while the batch was
 removed elsewhere and recreated under the same name kept showing the previous migration's
@@ -220,14 +236,14 @@ R31d. **Read-only, so no ticket and no protected-principal gate.** Fetching a re
 nothing. It is still audited as a read of migration data, and the zip is named for the batch
 and the time it was taken.
 
-R31e. **The zip needs a store, not just a job.** The bulk-job framework persists per-row
-outcomes, not downloadable artifacts, so S7 cannot simply hand a file back when the job ends
--- the operator may have closed the page hours earlier. This repo already solved that for
-Message Trace: `MessageTraceExportStore` with its listing page
-(`Components/Pages/MessageTraceReports.razor`) and its own tests. S7 borrows that pattern and
-must state, before implementation: where the zip is written, who may download it, how the
-download is audited, and when it is deleted. An export store with no retention rule is a pile
-of mailbox diagnostics accumulating on disk.
+R31e. **The export writes nothing new: it zips the stored reports.** Each mailbox's report is
+fetched into the R24c store as the job walks the selection, and the zip is assembled from those
+same files. The zip is the transient artifact; the reports it contains are not deleted when it
+is delivered, because the modal still serves them and a report re-fetched later would no longer
+match the zip the operator already has (owner, 2026-09-24). Their lifetime is R24d's, not the
+download's. `MessageTraceExportStore` and `Components/Pages/MessageTraceReports.razor` are the
+precedent for how an artifact is written, served and audited in this repo; the bulk-job
+framework persists row outcomes and not files, so the job cannot simply hand a file back.
 
 
 ## Slices
@@ -327,8 +343,11 @@ bite: revert the behaviour, watch the test fail, restore it.
    reloaded or replaced, including a batch removed and recreated under the same name. This is
    a regression test for queue item 3, which R24a would otherwise undo.
 6. **Export store (S7).** The zip contains one entry per succeeded mailbox and none for the
-   failed ones, a partial result is still downloadable, the download is audited, and the
-   retention rule actually deletes.
+   failed ones, a partial result is still downloadable, and the download is audited.
+7. **Retention (S6, S7).** A report older than 12 hours is gone after the store is next
+   touched and after an application restart; a report whose batch was reloaded or recreated is
+   gone immediately; a delete that fails mid-sweep does not fail the read it interrupted; and
+   the bytes the modal renders are the same bytes the zip contained.
 
 ## Acceptance
 
