@@ -73,9 +73,17 @@ hundred. They are never in the right pane.
 R4. **The multi-batch view has its own pager**, labelled so it is unmistakable that it pages
 the selection ("1-40 of 847 selected batches"), not the catalogue.
 
-R5. **Nothing is pinned into the browse list.** No ticked-rows section at the top, no
-dividers. The left list is a plain paged list. The selection is visible because it has its
-own pane, not because rows are held back from the filter.
+R5. **Nothing is pinned into the batch list.** No ticked-rows section at the top, no dividers.
+The left list is a plain paged list. The selection is visible because it has its own pane, not
+because rows are held back from the filter.
+
+R5a. **Mailboxes are the unresolved case and the mockup currently pins them.** R5 was ruled for
+the batch list, where the right pane shows the selection instead. Mailboxes have no equivalent
+second surface, so the mockup still pins ticked mailbox rows above an "OTHER MAILBOXES"
+divider -- which is how R11 is met there, and which is also the shape the owner rejected for
+batches. **This is an open owner question, not a settled rule.** Either pinning is acceptable
+for mailboxes because there is nowhere else for them to go, or the mailbox selection needs its
+own surface the way batches got one.
 
 R6. **Actions sit at the top of the thing they act on. Never a footer.** That is what every
 other list UI does and what operators expect.
@@ -173,6 +181,20 @@ point-in-time snapshot, so it is written once with its fetch time, and the modal
 zip both read those same bytes. Two artifacts labelled "the report" for one mailbox that do not
 match is the failure this prevents (owner, 2026-09-24).
 
+R24f. **The store's contract, stated before implementation.** `MessageTraceExportStore` is the
+precedent and it is careful about exactly the things a migration report store can get wrong.
+  - **Path.** Under the instance's own runtime directory, alongside the other per-instance
+    runtime files, never in the publish folder and never promoted between dev and prod.
+  - **Keying.** A report is identified by batch name plus mailbox address, both of which are
+    operator-supplied text. Neither may reach the filesystem as written: the on-disk name is a
+    hash or a sanitised token, the real identity lives inside the file or in an index, and any
+    path that resolves outside the store directory is refused rather than corrected.
+  - **Ownership and download.** A stored report is readable only through the module's own
+    authorised route, subject to the same section-access check as the page that produced it.
+    Downloads are audited as a read of migration data.
+  - **Purge hooks.** Every read, write and export touches the sweep, and the application start
+    path calls it once. There is no other trigger, because there is no scheduler.
+
 R24d. **Retention: invalidation first, twelve hours as the outer bound, purged lazily.** There
 is no scheduler in this app, so the store sweeps entries older than **12 hours** whenever it is
 touched, and again at application start -- otherwise a store nobody opens keeps last week's
@@ -181,6 +203,14 @@ because a report whose batch was reloaded or recreated is misleading rather than
 A failed delete during a sweep is logged and skipped and must not fail the read it interrupted:
 **fail-soft on purging, fail-closed on serving.** Never render a report that cannot be shown to
 be current.
+
+R24e. **Dismissing the modal and invalidating the report are two different operations.**
+Today they are one: the Close button calls `CloseUserReport()`
+(`Components/Pages/Migration.razor:777`), which bumps `reportGeneration` and throws the text
+away. Reusing that helper for Close would make R24a impossible -- every close would guarantee
+a re-fetch. The implementation needs `DismissReportModal` (hides the dialog, touches nothing)
+separate from `InvalidateStoredReports` (bumps the generation, deletes the stored copies),
+called only by the events in R24b.
 
 R24b. **The kept report is invalidated by the same events that close it today, or R24a
 regresses a fixed bug.** Queue item 3 was exactly this: a report open while the batch was
@@ -289,6 +319,14 @@ and a zip of one text file per report with a named list of any that failed. Modu
 bump. Satisfies R31. This is the only slice that adds a new operation rather than relocating
 an existing one, and it can ship after the rest.
 
+**S8 -- Scheduled completion semantics (conditional on Q3).** `CompleteAfter` currently means
+"complete now": `Services/MigrationService.cs:490` and `:698` pass a past timestamp and `:596`
+reads the property as an auto-complete boolean. A real future schedule needs those three sites
+to separate "complete immediately" from "complete at T", with the boolean reading replaced.
+This is service behaviour on a mutating path, not layout, and it is the work that makes the
+Schedule button in S3 real. Module version bump; tests must cover a past time, a future time
+and no time at all.
+
 ## Traps this must not walk into
 
 1. **`CompleteAfter` already exists and lies.** `Services/MigrationService.cs:490` passes it
@@ -318,9 +356,21 @@ pinned design with it. With the selection living in its own paged pane, select-a
 40 rows there and 40 in the left list whatever the selection size, so trap 3 does not fire
 and nothing needs limiting.
 
-**Q2. Does the habit change need a transition?** Today an operator completes a batch from
-the expanded view. After S3 they tick it in the left pane and act there. That is the safety
-gain and it follows from R2 and R3, but it is a habit change and worth confirming.
+**Q2 is closed, 2026-09-24, and was largely overtaken.** It asked whether losing "complete
+from the expanded view" needed a transition. Under R9 a click both selects and shows the
+batch, so reaching its actions is one click in the batch pane rather than a different act
+from opening it. No transition is needed and nothing blocks on this.
+
+**Q3. Does Schedule ship working, or as UI only?** Items 12 and 13 are in scope (see Scope),
+but `CompleteAfter` today means "complete now" -- `Services/MigrationService.cs:490` and
+`:698` pass a time in the **past**, and `:596` reads `CompleteAfter != null` as an
+auto-complete flag. A Schedule button that sets a future time therefore cannot work until
+those semantics change, which is S8. Either S8 is in and Schedule ships working, or Schedule
+is present but disabled until a later stream. **Owner ruling required; this is the only thing
+in the plan that would ship a button that does nothing.**
+
+**Q4. May ticked mailboxes be pinned?** See R5a. The batch list got a selection pane instead
+of pinning; mailboxes have no such surface, so the mockup pins them. **Owner ruling required.**
 
 ## Tests each slice must bring
 
