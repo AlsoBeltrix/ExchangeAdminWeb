@@ -1,8 +1,12 @@
 # Defender for Endpoint Devices Module - Plan
 
-Status: In progress (2026-09-21). S1-S5 landed; the owner then ran the module against the live service and it refused, which answered R1(g) (no continuation cursor - see Revision 3) and R1(f) (the tenant exceeds the old 20000 ceiling) and forced the fetch and filter rebuild recorded in Revision 3. R1 (a), (b), (c), (d) and (e) have NOT been answered and the manual acceptance checklist has NOT been performed. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
+Status: In progress (2026-09-24). S1-S5 landed and the module ships at `1.1.0`; the owner then ran it against the live service, which answered R1(g) (no continuation cursor) and R1(f) (the tenant exceeds the old 20000 ceiling) and forced the rebuild recorded in Revision 3 of the second series. **The owner has now REVISED queue item 8 - the quote below is the new text, and Revision 5 folds it in.** The app-registration blocker earlier revisions carried is gone: the registration exists, Revision 3 records both permissions as granted and consented, and the Delinea Secret ID is **657**. Still open: R1 (a), (b), (c), (d), (e) and the new items (h) through (l); the manual acceptance checklist; Q2, Q3, Q4, Q5 and the new Q7, Q8 and Q9. Queue 8's park and the two defects open against the shipped module are recorded in `.agents/state.md`, which owns them - not here. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
 
-Owner request, verbatim from the queue:
+Owner request, verbatim from the queue as revised on 2026-09-24. **This supersedes the original
+queue text, which asked for "3. other important info" and said the app registration still had to be
+created.** What changed: the module's PURPOSE is now stated, item 3 is a named field rather than a
+blank cheque, the registration exists with its Delinea Secret ID, and the owner asks for a
+location-narrowing column set to be proposed for approval.
 
 > 8. New module for Microsoft Defender for Endpoints:
 > 	List & Export all devices
@@ -10,17 +14,43 @@ Owner request, verbatim from the queue:
 > 	including
 > 	1. discovery sources
 > 	2. IP, domain, OS, etc.
-> 	3. other important info
-> 	Report should be exportable. Will require a new app reg, so tell me what the permissions/requirements are.
+> 	3. "Recently Seen By" (see screenshot "C:\Users\mcoelho\Desktop\Screenshot 2026-09-24 163154b.png")
+> 	Purpose of this is to help locate machines physically in a global company, so using recently seen by helps narrow a location. anything else that could help narrow a physical loc should be included in the plan and presented to me for approval.
+> 	Report should be exportable. New appreg created. SS Secret ID 657.
 
 New module `DefenderEndpointDevices`. Read-only. Closest precedent in this repo is
 `docs/IntuneDeviceManagement-Plan.md` (a device-listing module over a per-module Entra app
 registration) and the CSV half of `docs/ModuleCsvExport-Plan.md`. This module is independent of
 both: no shared code, no ordering constraint either way.
 
-All API facts below were verified against Microsoft Learn on **2026-09-18**, not from memory.
+All API facts below were verified against Microsoft Learn on **2026-09-18**, and everything the
+2026-09-24 revision added or re-leaned on was verified again on **2026-09-24**, not from memory.
 Every source URL is listed under Sources. Anything that could NOT be verified is collected under
 "Assumptions" and is labelled as an assumption in the body as well.
+
+## The purpose, and what it reframes
+
+**The module is still list-and-export. What changed is the criterion for choosing its columns:
+every column now has to earn its place by narrowing a physical location.** The owner's sentence is
+the whole of it - "Purpose of this is to help locate machines physically in a global company."
+
+Three consequences, each of which contradicts something written below it in earlier revisions:
+
+1. **"Discovery sources" was never the requirement.** It was a proxy for "where did this thing come
+   from", and the research settles that it is the wrong data: `DeviceInfo.DiscoverySources` is
+   documented as "Products or services that have seen or reported the device, including when they
+   last reported it" - it names **MDE** or **Microsoft Defender for IoT**, a *product*, not a
+   machine and not a place. It is also mostly blank in this tenant, for the reason
+   `.agents/state.md` records under queue 8. `DiscoverySources` is **not deleted** - it is a cheap
+   column already shipped and it costs nothing to keep - but it is **demoted**: it stops being
+   presented as answering the owner's need, and nothing in the report, this plan or
+   `docs/DefenderEndpointDevices.md` may imply that it locates anything.
+2. **"Recently Seen By" is the field that does the work,** it is obtainable, and it is obtainable
+   only through advanced hunting. See "Recently Seen By" below.
+3. **A column set has to be proposed and approved.** The owner asked for exactly that - "anything
+   else that could help narrow a physical loc should be included in the plan and presented to me
+   for approval" - so it is a proposal, not a decision this plan makes. See "Location-narrowing
+   candidate fields".
 
 ## Scope
 
@@ -89,12 +119,19 @@ resource expected by the API, requests fail with `403 Forbidden`, even if the AP
 `https://api.security.microsoft.com`. Use `https://api.securitycenter.microsoft.com` as the
 resource or scope when acquiring tokens." See T2.
 
-## What the owner must create - the app registration
+## The app registration - CREATED; this section is now a verification checklist
 
-This is the deliverable. It is written so it can be handed to whoever holds the tenant admin role
-without a follow-up round trip.
+**Status changed on 2026-09-24. The registration exists, the Delinea secret exists, and its Secret
+ID is 657.** Everything below was written as instructions for creating it; it is kept, converted,
+because one of the two permissions changed status - `ThreatHunting.Read.All` went from optional to
+load-bearing when "Recently Seen By" became a named requirement - and a registration consented
+under the old, optional reading may not hold it. **Deleting this section would delete the only
+place that says what to check.**
 
-### 1. Register the application
+Each numbered item below now reads as: what was asked for, and what has to be observed against the
+registration that exists. Nothing here is a new ask unless it says so.
+
+### 1. Register the application - DONE
 
 In the Microsoft Entra admin center: **App registrations** > **New registration**. Single tenant.
 Creating it needs a role with app-registration rights, such as **Application Administrator**
@@ -103,6 +140,10 @@ Creating it needs a role with app-registration rights, such as **Application Adm
 Name it for the module so it is identifiable later, for example `ExchangeAdminWeb - Defender
 Endpoint Devices`. The name is cosmetic; nothing in the code reads it.
 
+**Verify:** nothing. Revision 3 of the second series records the owner creating it, entering the
+Secret ID, deploying to dev and reaching the live service, which is proof the registration exists
+and authenticates.
+
 ### 2. Grant these application permissions
 
 **Application permissions only. No delegated permissions.** The app runs as a background service
@@ -110,12 +151,39 @@ with no signed-in user (OAuth 2.0 client credentials).
 
 | # | Permission | Display name in the portal | API / resource to pick | Needed for | Required? |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `Machine.Read.All` | 'Read all machine profiles' | **WindowsDefenderATP** (API permissions > Add permission > **APIs my organization uses** > search `WindowsDefenderATP`) | The device list, all fields except discovery sources | **Yes** - without it the module does nothing |
-| 2 | `ThreatHunting.Read.All` | 'Run hunting queries' (Microsoft Graph) | **Microsoft Graph** | Discovery sources, device type, vendor and model columns | **Only if the owner wants discovery sources** - see Q1 |
+| 1 | `Machine.Read.All` | 'Read all machine profiles' | **WindowsDefenderATP** (API permissions > Add permission > **APIs my organization uses** > search `WindowsDefenderATP`) | The device list, all fields except the hunting-only ones | **Yes** - without it the module does nothing |
+| 2 | `ThreatHunting.Read.All` | 'Run hunting queries' (Microsoft Graph) | **Microsoft Graph** | **"Recently Seen By"** and every location-narrowing field that comes from `DeviceNetworkInfo` or `DeviceInfo`; also discovery sources, device type, vendor and model | **Yes, now mandatory** - see below |
 
-That is the whole list. Two permissions, and the second one is optional.
+That is still the whole list. Two permissions - but **the second is no longer optional**, and that
+is the substantive change in this revision.
 
-### 3. Admin consent
+**Why permission 2 changed status.** It was optional while its only consumer was the
+discovery-sources enrichment, which shipped behind the `IncludeDiscoverySources` config flag
+(`Modules/ModuleCatalog.cs:830`) and which Q1 made droppable. "Recently Seen By" is now a named
+owner requirement, the only documented route to it is the `SeenBy()` advanced hunting function, and
+the only non-retiring API for advanced hunting is Graph `runHuntingQuery` with
+`ThreatHunting.Read.All`. So hunting is load-bearing: without that consent the module cannot answer
+requirement 3 at all. This does not make the permission any narrower - the tenant-wide cost stated
+under "Least privilege" is unchanged - it makes it unavoidable. Q1 closed "yes" on 2026-09-21 for
+discovery sources (Revision 5 of the first series); it would now close "yes" a second time on a
+different and stronger ground.
+
+**Verify against the registration that exists:**
+
+1. In the registration's **API permissions** blade, `ThreatHunting.Read.All` is present under
+   **Microsoft Graph**, type **Application**, and its Status column reads **Granted for
+   \<tenant\>**. A permission that is added but not consented looks almost identical and fails at
+   runtime with a 403.
+2. `Machine.Read.All` is present under **WindowsDefenderATP**, type **Application**, granted. It
+   is proved working already - the live run in Revision 3 of the second series returned 10,000
+   device rows - so this one is a formality.
+3. No `*.ReadWrite.*` grant is present on this registration. See "Least privilege"; the repo has a
+   live blocker about exactly that on a different registration.
+
+If item 1 fails, the fix is a consent by a Privileged Role Administrator or Global Administrator,
+not a code change. See "Admin consent" below, which is the same fact and is why it is still here.
+
+### 3. Admin consent - the fact that decides who has to be in the room
 
 **Yes, admin consent is required, and it is required for both.** Application permissions (app
 roles) are never user-consentable; they take effect only after a tenant admin grants consent, in
@@ -132,9 +200,17 @@ matters:
   Global Administrator, which contains it). Application Administrator and Cloud Application
   Administrator are explicitly excluded from consenting Microsoft Graph app roles.
 
-**So: if the owner wants the discovery-sources column, the consent has to be done by a Privileged
-Role Administrator or a Global Administrator.** If discovery sources are dropped, an Application
-Administrator can complete the whole thing.
+**So: the Graph consent has to be done by a Privileged Role Administrator or a Global
+Administrator. An Application Administrator cannot do it, however senior they are.** That was
+already true; what changed is that there is no longer a version of this module that avoids it. The
+old escape hatch - drop discovery sources and an Application Administrator can complete the whole
+thing - is closed, because "Recently Seen By" is a named requirement and hunting is the only route
+to it.
+
+**Verify:** the Status column in the registration's API permissions blade, per item 1 of the
+verification list above. `.agents/state.md` and this file have both carried the
+Privileged-Role-Administrator fact since the first draft; it is not new and it is not negotiable
+by asking a different administrator.
 
 ### 4. Credential: client secret
 
@@ -148,7 +224,12 @@ use one today**: `Services/GraphTokenClient.cs` and everything modelled on it au
 (`Tenant ID`, `Application ID`, `Client Secret`) has no certificate field. Certificate auth would
 be a separate piece of shared work. **Create a secret.**
 
-### 5. Where the credential lands in this repo
+### 5. Where the credential lands in this repo - Secret ID 657
+
+**The Delinea Secret ID is 657.** It goes in this module's own `GraphDelineaSecretId` config field,
+declared on the descriptor at `Modules/ModuleCatalog.cs:825` (the descriptor starts at `:799`), and
+it is entered on the module's config page - never in `appsettings.json`, never in source, and never
+in this file as a credential. The number itself is not a secret; the record it names is.
 
 Exactly the `ServiceHealth` / `IntuneDevices` shape, unchanged:
 
@@ -157,9 +238,10 @@ Exactly the `ServiceHealth` / `IntuneDevices` shape, unchanged:
    (`docs/AdminModuleSpec.md`, "For Graph API modules"). The secret must be directly readable by
    the Delinea API bootstrap credential, with no checkout or approval workflow - a noninteractive
    call cannot complete one.
-2. That record's numeric **Secret ID** is typed into the module's own config page, into the
+2. That record's numeric **Secret ID - 657** is typed into the module's own config page, into the
    `GraphDelineaSecretId` field declared by the descriptor below. Same field id and same label as
-   `ServiceHealth` and `IntuneDevices` use.
+   `ServiceHealth` and `IntuneDevices` use. **Verify:** the value on the module's config page reads
+   657, and the module reports available rather than "credentials unavailable".
 3. Nothing else is configured anywhere. **The tenant ID and client ID are read from the Delinea
    secret at call time.** They are not in `appsettings.json`, not defaulted in code, and not
    written into this plan.
@@ -208,8 +290,16 @@ hunting table in the tenant** - device events, email events, identity events, cl
 not merely `DeviceInfo`. There is no narrower documented scope, and no way to restrict the
 permission to one table. The module's own query only ever touches `DeviceInfo` and that is
 asserted by a test (T7), but the *grant* is broad, and a compromised secret would not be
-constrained by the module's code. That is the honest trade for the discovery-sources column, and
-it is Q1 below rather than a decision this plan makes for the owner.
+constrained by the module's code.
+
+**This was Q1, and Q1 is closed "yes" (Revision 5 of the first series).** It is recorded here
+unchanged rather than deleted, because the trade did not stop being real when it stopped being
+optional - it is now the price of requirement 3 rather than the price of a nice-to-have column, and
+the request-body guard that keeps the module inside the hunting tables it actually needs is
+therefore the only boundary there is. **The query text is about to widen** - "Recently Seen By"
+adds `invoke SeenBy()` and a self-join on `DeviceInfo`, and the fallback would add
+`DeviceNetworkInfo` - so the T7 guard that pins the posted `Query` must be widened deliberately and
+exactly, never loosened. See T7.
 
 ### 8. Other prerequisites, none of them code
 
@@ -281,6 +371,210 @@ advanced hunting
 `ThreatHunting.Read.All` being mandatory rather than optional, and would need to go back to the
 owner. This is the single riskiest unknown in the plan.
 
+## "Recently Seen By" - requirement 3, and how it is obtained
+
+### The owner's screenshot answers a question this repo recorded as open
+
+`.agents/state.md` records, under queue 8, one open question asked and unanswered: *does the
+Defender portal itself show a discovering or onboarded machine on a "Can be onboarded" device's
+page?* **It is answered, and the evidence is the owner's own screenshot of 2026-09-24**, cited in
+the revised queue text above.
+
+What the screenshot shows, on the device page of a device whose onboarding status is **Can be
+onboarded** and whose Last seen is 21 Sep 2026: a field labelled **"Recently seen by"**, carrying
+the name of a *different* device - an **onboarded** one - together with a **"View all seen by"**
+link. The observed device is a VMware-vendor machine; the observer is an onboarded workstation
+named by FQDN. So the answer is **yes: the portal does show an onboarded machine on a
+can-be-onboarded device's page, the data exists, and the route needed finding rather than
+inventing.**
+
+The device names, the vendor string and the dates in that screenshot are **evidence about this
+tenant, not behaviour**. Nothing in this plan, and nothing in any source file, may name them, key
+off them or rest a safety argument on them (`.agents/repo-guidance.md` invariant 7). They appear
+here only because the finding has to be attributable.
+
+### `SeenBy()` is a FUNCTION, not a column - which is why the column hunt failed
+
+This is the whole reason the earlier search came up empty. `.agents/state.md` records that
+`DeviceInfo`'s columns were enumerated in the portal and **none of them is a "discovered by"**.
+That measurement is correct and is not overturned. The relationship is not a column at all; it is
+an enrichment **function**:
+
+> "The `SeenBy()` function is invoked to see a list of onboarded devices that have seen a certain
+> device using the device discovery feature."
+> -- https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-seenby-function
+
+From that page, verified rather than recalled:
+
+| Fact | Value |
+| --- | --- |
+| Syntax | `invoke SeenBy(x)`, where x is the device ID of interest. Piped from `DeviceInfo` it needs no argument, because the pipe supplies it. |
+| Returned column | `DeviceId` (`string`), "Unique identifier for the device in the service" |
+| Hard cap | "You can enter up to **1,000 devices** in this function." |
+| Caveat Learn states itself | "Enrichment functions show supplemental information only when they're available. Availability of information is varied and depends on many factors." |
+
+**The 1,000-device cap is the design constraint that matters**, and it does not fit this module's
+shape as built. The listing partitions an inventory of 12,902 can-be-onboarded devices (the count
+is `.agents/state.md`'s, measured by the owner; it is pointed at, not copied) and the enrichment
+runs **once per refresh** (T7). One `invoke SeenBy()` cannot cover that set. Whatever S6 does about
+it - batch the enrichment in chunks of at most 1,000, or enrich only the rows the operator is
+looking at - is a design question this revision raises and does not answer. It is **Q9**.
+
+### Microsoft publishes the query for exactly this scenario, and says what it is for
+
+This is not an inference from a function reference. Learn's "Review and assess devices" page has a
+section on discovered devices that states the purpose in the same words the owner used:
+
+> "By invoking the **SeenBy** function, in your advanced hunting query, you can get detail on which
+> onboarded device a discovered device was seen by. **This information can help determine the
+> network location of each discovered device** and subsequently, help to identify it in the
+> network."
+> -- https://learn.microsoft.com/en-us/defender-endpoint/assess-devices
+
+And the query, quoted from that page verbatim:
+
+```kusto
+DeviceInfo
+| where OnboardingStatus != "Onboarded"
+| summarize arg_max(Timestamp, *) by DeviceId
+| where isempty(MergedToDeviceId)
+| limit 100
+| invoke SeenBy()
+| project DeviceId, DeviceName, DeviceType, SeenBy
+```
+
+Three things to read off it rather than past it:
+
+1. `summarize arg_max(Timestamp, *) by DeviceId` and `where isempty(MergedToDeviceId)` are the same
+   two clauses the module's shipped hunting query already carries (T7). The shape is compatible.
+2. The `| limit 100` is Microsoft's, and it is in their example because of the cap above. It is not
+   decoration and it must not be dropped without deciding Q9.
+3. **The published query and the function reference disagree about the returned column name.** The
+   reference table says the function returns `DeviceId`; Microsoft's own example projects a column
+   called `SeenBy`. Both pages are current. **This plan does not resolve that on paper** - it is
+   **R1(h)**, observed on the first live run, and the parser must be written so the answer is a
+   one-line change rather than a rewrite.
+
+### The observer comes back as an ID, not a name - and an implementer who forgets will ship blanks
+
+The function's documented return is `DeviceId`: an opaque service identifier. The FQDN the portal
+shows on the "Recently seen by" field is the portal joining that ID back to the observer's own
+`DeviceInfo` row for `DeviceName`. **The module must do the same join.** Rendering the raw
+`DeviceId` would satisfy the letter of "Recently Seen By" and be useless for locating a machine,
+which is the entire purpose. Say it in the code comment too; it is the kind of thing that reads as
+working right up until someone opens the CSV.
+
+### Correction to a claim this plan and `.agents/state.md` both rest on: `HostDeviceId`
+
+`.agents/state.md` records `HostDeviceId` as "a dead end", populated on 1 device out of 113,102 and
+pointing at itself, listed alongside the genuine dead ends as though it were a data gap.
+
+**It is not a data gap and it was never a candidate.** Learn documents the column as:
+`HostDeviceId` (`string`) - "**Device ID of the device running Windows Subsystem for Linux**"
+(https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-deviceinfo-table). It is a WSL
+host pointer. One row in a hundred thousand is exactly what that column should look like in a
+tenant with almost no WSL, and a row pointing at itself is a WSL guest and host being the same
+machine. **The measurement was right; the conclusion drawn from it - that a promising lead had
+failed - was wrong, and the surprise was unearned.** Recorded here because the same reasoning would
+otherwise be repeated the next time someone reads the schema looking for a relationship column.
+
+### No REST endpoint returns this relationship. The hunting API is the only route.
+
+Checked in both directions rather than assumed:
+
+- **WindowsDefenderATP.** The `machine` resource has no seen-by, discovered-by or observer property
+  of any kind (https://learn.microsoft.com/en-us/defender-endpoint/api/machine). The device list
+  this module already fetches cannot carry it.
+- **Microsoft Graph security.** Has no device-inventory resource at all, which is D1's original
+  finding and is unchanged
+  (https://learn.microsoft.com/en-us/graph/api/resources/security-api-overview).
+
+So the call is **`POST https://graph.microsoft.com/v1.0/security/runHuntingQuery`**, permission
+`ThreatHunting.Read.All`, application context, which is the call S4 already makes
+(https://learn.microsoft.com/en-us/graph/api/security-security-runhuntingquery). The documented
+per-query limits that bound it - 30-day window, 100,000-row result set, at least 45 calls a minute
+per tenant, a three-minute per-request timeout and a 50 MB result cap - are the Graph API's own and
+are already recorded in T7 from the Graph security API overview. The portal-side figures differ
+slightly (10-minute timeout, 64 MB) and are **not** the ones that apply here
+(https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-overview); do not mix them.
+
+**Do not build any part of this on the legacy endpoint.**
+`POST https://api.security.microsoft.com/api/advancedqueries/run` carries the retirement notice -
+"Retirement began in January 2026" - and the older endpoints stop returning data on 2027-02-01
+(https://learn.microsoft.com/en-us/defender-endpoint/api/run-advanced-query-api). This was already
+D1's ruling and it binds the new work too.
+
+### The 30-day retention argument does NOT transfer to this module's target set
+
+`.agents/state.md` and this plan both explain the blankness of the discovery data with the same
+fact: advanced hunting holds 30 days, the inventory holds devices last seen months ago, so there is
+no hunting row left to join to. The fact is right and it is a **product limit, not a tenant
+setting** - "Advanced hunting is a query-based threat hunting tool that you use to explore up to 30
+days of raw Defender XDR data", with the quota table giving "Date range - 30 days for native
+Defender XDR data" (https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-overview). No
+configuration widens it; onboarding a Sentinel workspace is a different product decision and is out
+of scope.
+
+**But the inference does not carry.** That measurement was taken across the whole 113,102-device
+inventory, which includes tens of thousands of stale and unsupported records. This module's target
+set is **Windows devices currently in "Can be onboarded"** - by definition devices that Defender is
+*actively discovering right now*, because a discovered device is one an onboarded sensor has
+recently seen. Those are the devices most likely to be **inside** the 30-day window, not outside
+it. Learn's own note points the same way: a non-onboarded device stays in the portal for more than
+180 days when "the device is discovered by an onboarded endpoint on the same network"
+(https://learn.microsoft.com/en-us/defender-endpoint/assess-devices) - which is a statement about
+inventory retention, not hunting retention, and is precisely why the two sets differ.
+
+**This plan therefore asserts nothing about coverage and asks instead.** It is **R1(i)**: measure
+what fraction of the Windows / can-be-onboarded set returns a `SeenBy()` result. If the answer is
+high, the requirement is met. If it is low, the fallback below becomes relevant and the owner needs
+to hear the number before the module is presented as answering the request.
+
+### Fallback, if and only if R1(i) says `SeenBy()` is sparse
+
+Documented mechanism, presented as a fallback and **not** as the primary design. Device discovery
+attributes network activity to non-onboarded devices through the onboarded sensor that observed
+them, and Learn names the two action types:
+
+> "when a non-onboarded device attempts to communicate with an onboarded Defender for Endpoint
+> device, the attempt generates a DeviceNetworkEvent ... `ConnectionAttempt` - An attempt to
+> establish a TCP connection (syn); `ConnectionAcknowledged` - An acknowledgment that a TCP
+> connection was accepted (syn\ack)"
+> -- https://learn.microsoft.com/en-us/defender-endpoint/assess-devices
+
+In those rows the **observer** is `DeviceNetworkEvents.DeviceId` / `DeviceName` (the onboarded
+sensor) and the **discovered device** is the other end, `RemoteIP` or `LocalIP`. Two documented
+functions bridge between a device and an IP:
+
+- `AssignedIPAddresses(x, y)` - x is a `DeviceId` or `DeviceName`, y an optional timestamp; returns
+  `Timestamp`, `IPAddress`, `IPType` (public or private), `NetworkAdapterType` and
+  `ConnectedNetworks`
+  (https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-assignedipaddresses-function).
+- `DeviceFromIP()` - maps an IP to the devices assigned it, returning `IP` and `DeviceId`. Learn is
+  explicit about its limit: the IP "should be a local IP address. **External IP addresses aren't
+  supported.**"
+  (https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefromip-function)
+
+**Why this is a fallback and not the design.** It is an inference chain - IP to device to observer -
+where `SeenBy()` is a first-class answer the service computes itself; it costs at least one more
+hunting call per run against the same 30-day window and the same quotas; and it is subject to the
+`DeviceFromIP()` external-IP limit, which silently excludes exactly the devices seen across a NAT
+boundary. Building it before R1(i) has been run would be speculative code on a read path.
+
+### Consequence for the module, and it is the important one
+
+1. **Hunting is load-bearing.** See "The app registration", permission 2. The report cannot answer
+   requirement 3 without `ThreatHunting.Read.All`.
+2. **The registration must be verified to hold that consent**, because it was consented under the
+   old reading where the permission was optional.
+3. **The hunting query text widens**, which moves the T7 request-body guard. Widen it exactly; see
+   T7.
+4. **What the module does when hunting fails and the device list succeeds is already decided and
+   must not be re-decided loosely.** T7's rule stands: the list renders, the hunting-fed columns
+   read `(unavailable)` with a named reason above the table, and a failed enrichment never blanks a
+   column silently. T7 is extended below rather than duplicated here, because two copies of that
+   rule is how one of them drifts.
+
 ## Field mapping
 
 What the owner asked for, against real field names. Blank is not an option: where something is
@@ -288,7 +582,8 @@ not obtainable it says so here so it is not discovered during a demo.
 
 | Owner asked for | Concrete field | Where from | Notes |
 | --- | --- | --- | --- |
-| Discovery sources | `DiscoverySources` | advanced hunting `DeviceInfo`, via Graph `runHuntingQuery` | **Not available from the machines API.** Learn: "Products or services that have seen or reported the device, including when they last reported it." The portal column "tells you how each device was found: **MDE** (found by the Defender for Endpoint sensor), **Microsoft Defender for IoT** (discovered by Defender for IoT), and other sources." |
+| **"Recently Seen By" (requirement 3 - the one that carries the purpose)** | the `SeenBy()` function's returned observer `DeviceId`, joined back to `DeviceInfo.DeviceName` for the FQDN | advanced hunting, via Graph `runHuntingQuery` | **Not a column anywhere - a function.** `invoke SeenBy()` piped from `DeviceInfo`; returns the **onboarded** device that saw the target; capped at 1,000 devices per invocation (Q9). Returns an ID, not a name - the join is mandatory or the column ships blank. Returned column name is `DeviceId` per the function reference and `SeenBy` per Microsoft's own example: **R1(h)**. See "Recently Seen By". |
+| Discovery sources (requirement 1) | `DiscoverySources` | advanced hunting `DeviceInfo`, via Graph `runHuntingQuery` | **Demoted, and kept only because it is already shipped and costs nothing.** Learn: "Products or services that have seen or reported the device, including when they last reported it" - it names a **product** (MDE, Microsoft Defender for IoT), never a machine and never a place. It does **not** answer the owner's purpose and must not be presented as if it did. It is also mostly blank in this tenant for the reason `.agents/state.md` records under queue 8. |
 | IP | `lastIpAddress`, `lastExternalIpAddress`, and the `ipAddresses` collection | machines API | `ipAddresses` entries carry `ipAddress`, `macAddress` and `operationalStatus` (Learn's OData samples show all three on a list response), so MAC addresses come free with the IPs. |
 | Domain | **partially available - read this before promising it** | machines API | There is **no `domain` property** on the `machine` resource. The portal's device inventory does show a "domain" column, but the REST resource does not expose it. What exists is `computerDnsName`, the "machine fully qualified name" - so the **DNS suffix** can be derived from it (everything after the first dot) and that is what the CSV column `DnsDomain` will contain. **Active Directory domain membership as such is not obtainable here.** Entra join state is available separately as `isAadJoined` / `aadDeviceId`. |
 | OS | `osPlatform`, `version`, `osBuild`, `osArchitecture` | machines API | `osPlatform` carries values like `Windows10`, `Windows11`; `osProcessor` is deprecated in favour of `osArchitecture`. |
@@ -307,6 +602,85 @@ not obtainable it says so here so it is not discovered during a demo.
   ephemeral and guest devices by its own logic; this list does not reproduce that logic and must
   not be presented as if it had.
 
+## Location-narrowing candidate fields - PROPOSAL, for the owner to approve or strike
+
+The owner asked for this explicitly: *"anything else that could help narrow a physical loc should
+be included in the plan and presented to me for approval."* So this is a proposal. **Nothing in
+this section is decided, nothing here is implemented, and a field only enters the report when the
+owner says so.** Strike a row and it does not get built.
+
+Three things to hold while reading the table:
+
+- **The target set is NON-onboarded devices.** Several of the strongest location signals in
+  Defender exist only for onboarded ones. That limitation is stated in its own column, on every
+  row, rather than in a footnote, because a footnote is how half a report ends up empty.
+- **Every hunting-sourced row costs the 30-day window and the quotas** already described, and the
+  `SeenBy()` rows additionally cost the 1,000-device cap (Q9).
+- **Location strength is a judgement about this KIND of data, not about this tenant.** Where the
+  strength depends on a local convention - a subnet-to-site map, a naming standard, a tagging
+  habit - the row says so and says the strength is conditional. `.agents/repo-guidance.md`
+  invariant 7 forbids resting the design on a fact about this environment; asking whether such a
+  convention exists is permitted and is what Q7 does.
+
+### Available for a NON-onboarded device (advanced hunting)
+
+| # | Field | Exact source | Location strength | Non-onboarded? | Notes |
+| --- | --- | --- | --- | --- | --- |
+| L1 | Observing device, then that observer's own network facts | `SeenBy()` -> observer `DeviceId` -> join `DeviceInfo` for `DeviceName` and `DeviceNetworkInfo` for L2-L6 below | **Strongest available.** Microsoft says so: the seen-by relationship "can help determine the network location of each discovered device" - the observer shares an L2/L3 segment with the target | **Yes** - this is the one designed for it | Requirement 3. 1,000-device cap per invocation (Q9); coverage is R1(i); column name is R1(h) |
+| L2 | Subnet and address space | `DeviceNetworkInfo.IPAddresses` - "JSON array containing all the IP addresses assigned to the adapter, along with their respective subnet prefix and IP address space, such as public, private, or link-local" | **Strong, conditional** - a subnet is a site only if an IPAM or subnet-to-site map exists to read it against (Q7) | Yes, for the **observer**; for the target only if discovery populated a row for it | Carries the prefix, not just the address, which is what makes it a site key rather than a number |
+| L3 | Default gateway | `DeviceNetworkInfo.DefaultGateways` - "Default gateway addresses in JSON array format" | **Strong.** A gateway is typically per-VLAN or per-wiring-closet, so it is effectively a site key even without an IPAM | Same as L2 | The single highest-value field after L1 if no IPAM exists |
+| L4 | DHCP server | `DeviceNetworkInfo.IPv4Dhcp`, `DeviceNetworkInfo.IPv6Dhcp` - "IPv4 address of DHCP server" / "IPv6 address of DHCP server" | **Strong.** Microsoft's own corporate-network heuristic keys on network name plus default gateway plus DHCP server, which is a statement that these three together identify a network | Same as L2 | Pairs with L3; two independent site keys agreeing is worth more than either alone |
+| L5 | Adapter DNS suffix | `DeviceNetworkInfo.NetworkAdapterDnsSuffix` - "Domain suffix assigned to the device's network adapter, indicating the network environment the network adapter is connected to" | **Strong where suffixes are site-scoped, weak where one flat suffix is used everywhere** (Q7) | Same as L2 | Learn's own description says "indicating the network environment", which is the claim being relied on |
+| L6 | DNS servers | `DeviceNetworkInfo.DnsAddresses` - "DNS server addresses in JSON array format" | **Medium-strong.** DNS resolvers are usually regional rather than per-site | Same as L2 | Narrows to a region, rarely to a building |
+| L7 | Connected networks | `DeviceNetworkInfo.ConnectedNetworks` - each JSON element carries "the network name, category (public, private or domain), a description, and a flag indicating if it's connected publicly to the internet" | **Medium.** The name is operator-chosen, so its usefulness is exactly the discipline behind it | Same as L2 | Learn's discovered-devices article has a worked query filtering on network name |
+| L8 | MAC and adapter vendor | `DeviceNetworkInfo.MacAddress`, `DeviceNetworkInfo.NetworkAdapterVendor`; the machines API also returns MACs on `ipAddresses[].macAddress` | **Weak for location, strong for identity - and useful mainly as an EXCLUSION** | Yes | **This is not a footnote.** The owner's own screenshot shows the example device with vendor `VMware`: a virtual machine, which has **no physical location to find**. Vendor is therefore the field that keeps VMs out of a report about walking to a machine. Without it the report is a list padded with things nobody can go and look at |
+| L9 | Site | `DeviceInfo.Site` - "Represents the physical location where the device is located" | **Strong on its face** - it is literally the field being asked for | Yes, when populated | **Licence-gated and must not be assumed.** The DeviceInfo reference gives no licence note, and the claim that it is populated by Defender for IoT Site security (public preview) is an **assumption** (see Assumptions 9). Whether it is populated in this tenant is **R1(k)** - one query answers it, and if the answer is yes it outranks most of this table |
+| L10 | Device FQDN | `DeviceInfo.DeviceName` - "Fully qualified domain name (FQDN) of the device"; `machine.computerDnsName` on the REST side, already in the report | **Medium, entirely conditional on a naming convention** | Yes | The owner's examples look like a convention exists. **This plan does not assert what any part of a name means**, and no code may parse one - that would be invariant 7 in source. Q7 asks the owner whether a documented convention exists and whether decoding it is wanted |
+| L11 | Machine group and tags | `DeviceInfo.MachineGroup` - "Machine group of the device. This group is used by role-based access control"; `DeviceInfo.DeviceManualTags`; `DeviceInfo.DeviceDynamicTags` | **Medium IF the organisation tags or groups by geography, nil otherwise** (Q7) | Yes | Worth knowing before relying on dynamic tags: a dynamic rule "can be based on device name, domain, OS platform, internet facing status, onboarding status and manual device tags" - **there is no IP-range or subnet condition**, so a dynamic tag can never be derived from where a device sits on the network |
+| L12 | Hardware identity | `DeviceInfo.Model`, `DeviceInfo.Vendor`, `DeviceInfo.DeviceType`, `DeviceInfo.DeviceSubtype` | **Weak for location; useful for recognising the thing once you are in the room** | Yes, partially | Learn flags `Model`, `Vendor` and `DeviceSubtype` as "only available if device discovery finds enough information about this attribute" - expect blanks, and never let a blank read as a finding |
+
+### ONBOARDED-only - these describe the OBSERVER, not the target
+
+Stated as its own block because the distinction is the single easiest thing to get wrong here: on a
+"Can be onboarded" report, every field below is empty on the row it appears to belong to unless it
+is deliberately carried across from the observer that L1 found.
+
+| # | Field | Exact source | Location strength | Notes |
+| --- | --- | --- | --- | --- |
+| L13 | Egress IP | `DeviceInfo.PublicIP` - "Public IP address used by the **onboarded** device to connect to the Microsoft Defender for Endpoint service. This could be the IP address of the device itself, a NAT device, or a proxy" | **Strong as a site proxy**, because a shared egress usually means a shared site | Learn's own wording names the onboarded device. Carrying it from the observer is meaningful; showing it on a non-onboarded row is not |
+| L14 | REST device facts | `machine.lastIpAddress`, `machine.lastExternalIpAddress`, `machine.ipAddresses[]`, `machine.computerDnsName`, `machine.rbacGroupName`, `machine.machineTags` | Medium; same reasoning as L2, L10, L11 | Already in the shipped report for every row the list returns, so these cost nothing new |
+| L15 | Find devices by internal IP | `GET /api/machines/findbyip(ip='{IP}',timestamp={TimeStamp})` - machines "seen with the requested internal IP in the time range of 15 minutes prior and after a given timestamp"; the timestamp "must be in the past 30 days"; 100 calls a minute and 1,500 an hour | Medium - turns an IP into the devices that held it | **Recommended AGAINST, on a rule this plan already has.** Its only documented Application permission is **`Machine.ReadWrite.All`** - a write scope, on a read-only module, which is precisely what T4 exists to keep off this registration. Using it would mean re-opening the least-privilege decision with the owner. Advanced hunting's `DeviceFromIP()` answers the same question with no write scope |
+| L16 | The logged-on user's own directory location | `DeviceInfo.LoggedOnUsers`, joined to `IdentityInfo` for `City`, `Country`, `Address`, `Department`, `DistinguishedName` | **Medium-strong BY INFERENCE, and the inference is the caveat** | It locates the **user**, not the machine, and the two part company for anything shared, virtual or left behind. `DistinguishedName`'s OU path often encodes a site, which is the strongest part of this row. Note `LoggedOnUsers` needs a sensor, so this is an observer-side field; and `DistinguishedName` is marked as available only with Defender for Identity, Defender for Cloud Apps or Defender for Endpoint P2 licensing - P2 is already a stated prerequisite |
+
+### Not documented anywhere - do not go looking
+
+Recorded so the next reader does not spend a day on it:
+
+- **There is no Active Directory site field** in the MDE device schema or in the `machine` REST
+  resource. Not under another name, not in `AdditionalFields` as anything documented.
+- **There is no building, floor, room, rack or geo-coordinate field.** `DeviceInfo.Site` (L9) is
+  the closest thing that exists, and it is one opaque string.
+
+### "View in map" - a second recon surface, explicitly NOT a design
+
+The portal's device page offers **View in map** among its response actions, and Learn states where
+it comes from: "View in map and set criticality are features from Microsoft Exposure Management,
+which is currently in public preview"
+(https://learn.microsoft.com/en-us/defender-endpoint/investigate-machines).
+
+Its data is the enterprise exposure graph, which **is** queryable from advanced hunting as
+`ExposureGraphNodes` and `ExposureGraphEdges`
+(https://learn.microsoft.com/en-us/security-exposure-management/query-enterprise-exposure-graph).
+That page is also explicit that the labels are tenant-dependent rather than a fixed schema - its
+own recipe for finding out is `ExposureGraphEdges | summarize by EdgeLabel`. The labels it happens
+to show in examples are `Can Authenticate As` and `CanRemoteInteractiveLogonTo`; **no seen-by,
+discovered-by or located-at edge label is documented anywhere.**
+
+So: **enumerate it as recon (R1(l)), do not design on it.** One query lists every edge label the
+tenant actually has, which either turns up a relationship worth pursuing or closes the question in
+a minute. Committing to it before that would be building on a public-preview feature whose schema
+this plan cannot name.
+
 ## CSV export
 
 `Services/CsvExport.Write(header, rows)` - the shared writer, which already handles quoting and
@@ -317,6 +691,15 @@ and audited the same way (`ExportCsv`, with the row count).
 
 Proposed columns, in order. Multi-valued cells are joined with `"; "`, matching
 `NamedLocations.razor`.
+
+**2026-09-24: this is the SHIPPED column set, and it does not yet carry requirement 3.** The header
+is asserted verbatim by `DefenderEndpointDevicesCsvTests.ExpectedHeader` rather than derived from
+the page (Revision 7), so the list below and that constant have to move together and a human has to
+check them against each other. "Recently Seen By" and whichever of L1-L16 the owner approves are
+**additive** to this list; nothing here is removed by the revision, and the demotion of
+`DiscoverySources` is a demotion in how it is described and relied on, not a deletion of the
+column. The one column removal still pending is the R1(e) contingency Revision 7 recorded: if
+`ipAddresses` comes back unpopulated, `IpAddresses` and `MacAddresses` leave.
 
 | Column | Source |
 | --- | --- |
@@ -586,6 +969,29 @@ silence:**
 paging is stable for this endpoint** - not an argument from de-duplication, which is the argument
 that was already tried and does not hold.
 
+**A documented fact that a reader will meet here and must not misread as a reversal (2026-09-24).**
+Learn's List machines page does list `$skip` among the OData operators this collection supports,
+beside "`$top` with max value of 10,000" and the limitation "Maximum page size is 10,000"
+(https://learn.microsoft.com/en-us/defender-endpoint/api/get-machines, and the worked examples at
+https://learn.microsoft.com/en-us/defender-endpoint/api/exposed-apis-odata-samples). Revision 3 of
+the second series records the opposite-looking live measurement: 10,000 rows back and **no**
+`@odata.nextLink`.
+
+**Both are true and they do not contradict each other.** "The service accepts `$skip`" and "the
+service emits no continuation cursor" are statements about two different mechanisms; an endpoint
+can support a client-computed offset and still have no server-side cursor. What the documentation
+does **not** say - and the only thing that would matter - is that `$skip` paging is **stable**,
+which needs a documented ordering, and this collection documents no `$orderby`. That is the third
+bullet above, and it is untouched by the `$skip` line in the docs.
+
+**The rejection therefore STANDS.** It is a recorded decision with an argument, and
+`AGENTS.md` forbids stepping past a guard without first proving it is not load-bearing - which
+nobody has. What this revision adds is a way to find out rather than argue: **R1(j)** probes
+`?$top=10000&$skip=10000` against the live tenant and records what comes back. Even a successful
+probe reopens only the narrow question of whether an offset is stable under a moving window; it is
+not by itself the cited source this section asks for. The partition design (Revision 3, second
+series) is unaffected either way - it does not need `$skip` and is not waiting on this answer.
+
 ### When the ceiling is hit, the listing FAILS - it does not truncate
 
 The page renders no table and no export button, and says in words: more devices match than the
@@ -682,6 +1088,50 @@ Three separate hazards in one line of query string:
 - Graph hunting quotas: 30 days of data, up to 100,000 rows, at least 45 calls per minute per
   tenant, 50 MB result cap, `429` when CPU quota is exhausted. None of these bite at one query per
   page refresh, but a future auto-refresh would need to respect them.
+
+#### T7 extended, 2026-09-24 - the hunting call stops being optional
+
+**Extended here rather than restated in the "Recently Seen By" section, deliberately: two copies of
+a failure rule is how one of them drifts.** Everything above stays exactly as written. What follows
+is what changes when the hunting call carries a named owner requirement instead of a nice-to-have
+column.
+
+- **Unchanged, and this is the part that matters most:** a hunting failure must never take the
+  device list down, and must never leave a column merely blank. Revision 8 of the first series
+  fixed a live defect of exactly that shape - two throw paths reaching the page's own catch and
+  replacing a device list that had already proved itself complete - and that fix and its guard
+  proof stand. Nothing in this revision may weaken them.
+- **Changed: what the banner has to SAY.** While enrichment was optional, "these five columns are
+  unavailable because X" was a complete statement. It is no longer: with "Recently Seen By" in the
+  report, a failed hunting call means **the report does not answer the request it was run for**,
+  and the operator has to be told that rather than left to infer it from a greyed column. The
+  distinctness requirement on the reason strings
+  (`EveryEnrichmentReasonIsADifferentSentence`) is unchanged; the owner's on-screen wording ruling
+  of 2026-09-21 - state what happened and what to do, nothing else - is unchanged and binds the new
+  sentence too.
+- **Changed: the query text widens, so the guard moves.** The shipped guard parses the posted body
+  and requires the root `Query` property to EQUAL
+  `DefenderEndpointDeviceService.HuntingQuery` exactly, with no second property at all (Revision 8
+  of the first series, finding 2, probes M3-M5). Adding `invoke SeenBy()` and the observer-name
+  join changes that constant. **Widen the constant; do not widen the assertion.** The guard is the
+  only boundary there is - `ThreatHunting.Read.All` cannot narrow this module to any table - and an
+  assertion relaxed to `Contains` to make a new query fit would silently re-open the hole M3
+  proves is closed. If the fallback is ever built, `DeviceNetworkEvents` and the two IP functions
+  enter the constant the same way: named, exact, and one commit at a time.
+- **Changed: "once per refresh" may no longer be achievable.** `SeenBy()` accepts at most 1,000
+  devices per invocation. One query cannot enrich a can-be-onboarded set of the size
+  `.agents/state.md` records. Either the enrichment batches - several calls per run, inside the
+  45-per-minute Graph budget and the run's own request accounting - or the report enriches only a
+  subset, which would be a different product. **This plan does not choose. It is Q9**, and it is
+  the one open question that could change the module's shape rather than its columns.
+- **Changed: the `IncludeDiscoverySources` config field is now misnamed.** It is declared at
+  `Modules/ModuleCatalog.cs:830` and its description reads "Run the advanced hunting query that
+  supplies the discovery sources, device type, vendor and model columns. Turn off when the app
+  registration does not hold `ThreatHunting.Read.All`." Once the same call also supplies
+  "Recently Seen By", turning that switch off turns off requirement 3 while calling itself a
+  discovery-sources switch. The field must be renamed and re-described, or split, when the work
+  lands - and renaming a config field is a config-store question, not only a string change, so it
+  is called out here rather than left to the implementing slice to discover.
 
 ### T8 - ASCII only, and the count that another file owns
 
@@ -821,6 +1271,47 @@ config page. Its answers are recorded **in this file** before S3 starts.
   tenant has more than one matching device, say - that is recorded as "not established" and the
   single-request branch ships, because the ambiguous case refuses anyway.
 
+**(f) and (g) are ANSWERED** - by the live run recorded in Revision 3 of the second series. (a),
+(b), (c), (d) and (e) are still open. The items below were added on 2026-09-24 by Revision 5.
+
+#### R1 items added by the revised requirement, 2026-09-24
+
+**Most of these do not need the module, the deploy or the park lifted.** (h), (i), (k), (l) and (m)
+are advanced hunting queries the owner can run in the Defender portal exactly as the 2026-09-22
+queries in `.agents/research/defender-discovery-source.kql` were run. Only (j) needs an API call.
+Answers are recorded **in this file** before any code is written against them.
+
+- **(h) What column name does `SeenBy()` actually return?** The function reference documents
+  `DeviceId`; Microsoft's own published example projects `SeenBy`. Run the published query as
+  printed and read the result's column headers. This decides one line of the parser and nothing
+  else, but getting it wrong ships a blank column that looks like "no data" rather than a bug.
+- **(i) What fraction of the target set returns a `SeenBy()` result?** The decisive coverage
+  question, and the one this plan refuses to assert (see "The 30-day retention argument"). Restrict
+  to Windows devices with `OnboardingStatus` matching the can-be-onboarded state, invoke
+  `SeenBy()`, and record: how many rows went in, how many came back with a non-empty observer, and
+  the ratio. **Mind the 1,000-device cap when designing the sample - a truncated input is not a low
+  coverage rate, and confusing the two would answer Q9 wrongly as well.** If coverage is low, the
+  fallback in "Recently Seen By" becomes live and the owner hears the number before the module is
+  presented as answering the request.
+- **(j) Does `?$top=10000&$skip=10000` return a second 10,000 rows?** One API call against a filter
+  known to match more than 10,000 devices. Record the row count and whether the first row differs
+  from the first row of the unskipped request. **This records a fact; it does not reverse the
+  `$skip` rejection** - see the 2026-09-24 note in "Why `$skip` is not used", which says why a
+  successful probe is still not the cited source that section asks for.
+- **(k) Is `DeviceInfo.Site` populated in this tenant, and for non-onboarded devices?**
+  `summarize by` it, or count non-empty values split by onboarding status. If it is populated it
+  outranks most of the L2-L12 proposal, so it is worth an early minute. If it is empty, L9 comes
+  off the proposal and the licence question (Assumptions 9) never needs answering.
+- **(l) What edge labels does this tenant's exposure graph actually carry?**
+  `ExposureGraphEdges | summarize by EdgeLabel`. Enumeration only. No seen-by or discovered-by edge
+  label is documented, so this either turns up something worth pursuing or closes "View in map" as
+  a route in one query. **Nothing is designed on it either way.**
+- **(m) Does `DiscoverySources` serialise as a JSON string or a JSON array?** Carried forward from
+  Revision 6 of the first series, which flagged it as unverified, handled both shapes defensively,
+  and said to "add it to R1's list if that gate is still open". It is still open, so here it is,
+  numbered. The module is correct either way today; the answer lets the defensive branch be
+  simplified and confirmed rather than left as a guess.
+
 ### S3 - CSV export (starts after R1's answers are recorded)
 
 - `BuildCsv` as a `static internal` method taking the row list, so tests call it without a page
@@ -860,6 +1351,31 @@ config page. Its answers are recorded **in this file** before S3 starts.
 - Module version `1.0.0` confirmed in the descriptor. **No base app version bump** - see
   Versioning.
 
+### S6 - "Recently Seen By" - NOT YET SLICED, and deliberately so
+
+S1 to S5 are landed and the module shipped; the descriptor now reads `Version = "1.1.0"`
+(`Modules/ModuleCatalog.cs:816`), which supersedes S5's `1.0.0` line above. Requirement 3 is new
+work and has **no slice here yet**, because a slice written now would be written over three
+unanswered questions:
+
+- **Q9** decides the shape, not the detail: whether the enrichment batches within the 1,000-device
+  `SeenBy()` cap or the report narrows to what an operator is looking at. Those are different
+  modules, not different implementations.
+- **Q7 and Q8** decide which of the L1-L16 candidate fields exist at all, and the owner has been
+  asked to approve or strike them.
+- **R1(h) and R1(i)** decide the parser and whether the fallback is live.
+
+**The pending step is the owner's, and it is one thing: approve or strike the candidate table and
+answer Q9.** The proposed next action after that is to draft S6 against the answers - not before.
+Writing a slice against guesses is how a plan acquires a design nobody chose, and this file has a
+recorded history of the opposite discipline.
+
+Two further things S6 will have to carry, recorded now so they are not rediscovered: the
+`IncludeDiscoverySources` config field is misnamed once hunting feeds requirement 3 (T7 extended),
+and `.agents/state.md` holds an **unresolved owner fork about the page being unusable at tenant
+scale** which touches the same page S6 would edit. Neither is in this revision's scope; both are in
+S6's path.
+
 ## Verification
 
 Per `.agents/repo-guidance.md`:
@@ -891,6 +1407,13 @@ particular that the button is **absent** in the refusal state - are all unproven
 Run after the first dev deploy that follows the app registration being created. Nothing here is
 automatable today.
 
+**Two steps below are STALE and are flagged rather than silently rewritten, because this file is
+what the next slice reads.** Steps 3 and 4 describe a "Windows only" toggle that **no longer
+exists**: Revision 3 of the second series removed it at the owner's instruction and replaced it
+with a Platform dropdown defaulting to Any. Re-point both when the checklist is next actually run;
+they are not edited here because this revision is scoped to the requirement change and an
+un-run checklist step is better left visibly wrong than quietly plausible.
+
 1. With `GraphDelineaSecretId` unset, the module reports unavailable in words - not an empty
    table.
 2. Set the Secret ID. The device list loads and the module version renders beside the heading.
@@ -901,8 +1424,14 @@ automatable today.
 5. Switch the onboarding-status filter to onboarded: onboarded machines appear, with healthy
    sensor states.
 6. Spot-check one device against its portal page: FQDN, OS, last IP, MAC, first and last seen.
-7. Discovery sources are populated for at least one device, and the values look like the portal's
-   ("MDE", and whatever else this tenant has).
+7. **Revised 2026-09-24.** Discovery sources are populated for at least one device, and the values
+   look like the portal's ("MDE", and whatever else this tenant has). **Expect most cells to be
+   empty** - the 30-day hunting window against an inventory of much older devices is the reason
+   (`.agents/state.md`, queue 8), and it is not a defect of this module. What this step actually
+   proves is that the hunting call ran at all; **a column of blanks and a column of
+   `(unavailable)` mean opposite things and the operator must be able to tell them apart on
+   screen.** That distinction is the check. Do not read populated discovery sources as evidence
+   that the report can locate anything - see "The purpose, and what it reframes".
 8. Export. The CSV opens in Excel with the header intact, one row per on-screen device, and a
    device name containing a comma is intact in its own cell.
 9. Audit log shows the lookup and the export, with the export's row count.
@@ -944,6 +1473,30 @@ automatable today.
 - All slices before the first deploy means the module ships once at `1.0.0`. A behaviour change
   after a deploy bumps the module version only.
 
+### 2026-09-24 - where the version stands, and what S6 will cost
+
+- **The module is at `1.1.0` today**, set by Revision 3 of the second series and readable at
+  `Modules/ModuleCatalog.cs:816`. The `1.0.0` in the bullets above is history, not the current
+  value; **read the field, never this file** (T8).
+- **This revision is plan text only and bumps nothing.** No `.cs`, no `.razor`, no `.csproj`, no
+  descriptor. A docs-only change is not a version event under either rule.
+- **Proposed for S6 when it lands: module `1.1.0` -> `1.2.0`, and NO base app version bump.**
+  Minor, not patch: adding "Recently Seen By" and any approved location column is new behaviour on
+  a shipped module, not a fix to existing behaviour - the same reading the `MessageTrace` split
+  took when it went `1.4.2` -> `1.5.0` for a descriptor-level capability change. No base bump
+  because nothing S6 needs is shared: the API client is module-local by design precisely so that
+  `Services/GraphTokenClient.cs` is never touched (T1), and the widened KQL, the new columns and
+  the renamed config field all live inside this module's own files. **This is a proposal computed
+  from the field and the rule, and the implementing slice must recompute it from
+  `Modules/ModuleCatalog.cs` at the time rather than trusting this line** - the two rules fire
+  independently and each has been assumed from the other before in this repo.
+- **The one thing that would flip the base-bump call**, and it is worth naming because S6 is the
+  first slice with a real chance of tripping it: if batching the hunting call (Q9) turns out to
+  need a change to a shared file - `Services/GraphTokenClient.cs`, `Program.cs` beyond additive
+  module registration, or `Services/CsvExport.cs` - then the base app version bumps too and that
+  slice says so in its commit. Stop and re-read this section if any of those three appear in the
+  diff.
+
 ## Environment neutrality
 
 `.agents/repo-guidance.md` invariant 7, checked deliberately rather than assumed:
@@ -960,6 +1513,15 @@ automatable today.
   one read-only scope and composes no mutating request - not because of anything about this
   forest, this tenant or this network. If a reviewer's answer to "why is this safe?" ever contains
   a local fact, the fix is not done.
+- **Added 2026-09-24, because the location work is where this invariant is easiest to break.** The
+  device names, vendor string and dates read off the owner's screenshot, and the device counts
+  `.agents/state.md` records, are **evidence that a route exists** - they are not behaviour and no
+  code may key off them. Specifically: **no source file may parse a device-name convention**,
+  hardcode a subnet, gateway, DHCP server, DNS suffix or site string, or carry a
+  subnet-to-site map. Every location field in the L1-L16 proposal is **rendered as whatever the
+  service returned**, exactly as `DnsDomain` already is. If decoding a naming convention or holding
+  a site map is ever wanted, it is operator-supplied configuration with a plan of its own, and Q7
+  is where that conversation starts - it is not something a column quietly starts doing.
 
 ## Assumptions - not verified against live documentation
 
@@ -1007,13 +1569,46 @@ Listed separately so none of them is mistaken for a citation.
    rather than through it. `$orderby` is likewise undocumented on this collection, which is one of
    the three reasons `$skip` is not used at all (T3).
 
+### Added 2026-09-24 with the revised requirement
+
+9. **`DeviceInfo.Site` is licence-gated.** What IS verified is the column and its description -
+    "Represents the physical location where the device is located"
+    (https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-deviceinfo-table). The
+    DeviceInfo reference carries **no** licence note on it. The claim that it is populated by
+    Defender for IoT Site security, which is in public preview, is an **assumption** and no Learn
+    page was read that says so. It does not matter much either way: **R1(k)** asks the only
+    operationally useful question - is it populated in this tenant, for these devices - and the
+    answer does not depend on knowing why.
+10. **The portal's "Recently seen by" field and the hunting `SeenBy()` function are the same
+    relationship.** Strongly indicated - the function reference says it lists "onboarded devices
+    that have seen a certain device **using the device discovery feature**", and the portal field
+    sits on a discovered device's page - but no Learn page states the equivalence outright. If it
+    turned out to be false, **R1(h) and R1(i) would expose it immediately**: the queried result
+    would not match what the owner's screenshot shows. This is why those two run before code, not
+    after.
+11. **`SeenBy()` behaves identically through Graph `runHuntingQuery` as it does in the portal.**
+    Enrichment functions are documented on the advanced hunting schema pages without an API caveat,
+    and the module's existing `DeviceInfo` query already runs through that API. But Learn's own
+    warning on the function - "Enrichment functions show supplemental information only when they're
+    available" - is exactly the kind of sentence that hides an interface difference. Assumed;
+    observed by **R1(i)**, which cannot produce a coverage number without proving this in passing.
+12. **The observing device is physically near the device it saw.** This is the inference the whole
+    requirement rests on, so it is written down rather than left implicit. Microsoft supports the
+    *purpose* explicitly - the seen-by data "can help determine the network location of each
+    discovered device" - but "network location" is not "physical location", and the two part
+    company across a routed VPN, a site-to-site link or a virtualised segment. **"Help narrow",
+    which is the owner's own phrasing, is the honest claim; "locates" is not.** Any on-screen or
+    documentation wording must keep that distinction, per the owner's 2026-09-21 wording ruling.
+
 ## Open questions for the owner
 
-1. **Discovery sources cost a tenant-wide hunting permission. Grant it?** The only way to get them
-   is `ThreatHunting.Read.All` on Microsoft Graph, which lets the app read every advanced hunting
-   table in the tenant (email, identity and cloud-app events, not just devices), and its consent
-   needs a Privileged Role Administrator or Global Administrator. Yes (build S4) or no (drop the
-   five columns, and an Application Administrator can do the whole consent)?
+1. **CLOSED yes, 2026-09-21 (Revision 5, first series), and now moot.** *Discovery sources cost a
+   tenant-wide hunting permission. Grant it?* The only way to get them is `ThreatHunting.Read.All`
+   on Microsoft Graph, which lets the app read every advanced hunting table in the tenant (email,
+   identity and cloud-app events, not just devices), and its consent needs a Privileged Role
+   Administrator or Global Administrator. The owner answered yes. **It would now be unaskable
+   anyway**: "Recently Seen By" is obtainable only through hunting, so declining the permission
+   would decline requirement 3.
 2. **One app registration for both permissions, or two?** This plan assumes one registration and
    one Delinea secret carrying both grants. Two would isolate the broad hunting permission from the
    device read, at the cost of a second secret and a second config field.
@@ -1027,10 +1622,43 @@ Listed separately so none of them is mistaken for a citation.
    one?** The plan proposes refuse - no table, no export, and a message naming the ceiling - on
    the grounds that a partial CSV handed to someone else looks complete. The alternative is a
    partial report stamped as partial on screen and in a CSV column. Which?
-6. **Module display name: "Defender for Endpoint Devices"?** It sets the nav label, the route
-   `defender-endpoint-devices` and the section-access alias `DefenderEndpointDevices`. Shorter
-   alternatives ("Defender Devices") are cheaper to type and easier to confuse with Defender
-   Antivirus.
+6. **CLOSED, 2026-09-21 (Revision 5, first series).** *Module display name: "Defender for Endpoint
+   Devices"?* Shipped verbatim, with route `defender-endpoint-devices` and section-access alias
+   `DefenderEndpointDevices`.
+
+### Added 2026-09-24 by the revised requirement - these are the ones waiting
+
+**Q2, Q3, Q4 and Q5 above are still unanswered.** The three below are new, and Q8 is the one the
+owner explicitly asked to be given.
+
+7. **Do the local conventions that several candidate fields depend on actually exist?** Three
+   fields in the L1-L16 table are strong only if something outside Defender exists to read them
+   against: a **subnet-to-site or IPAM map** (L2), a **site-scoped DNS suffix scheme** (L5), and a
+   **device naming convention** (L10) - and L11 is only useful if machine groups or tags encode
+   geography. This is one question with four parts because they share an answer shape: which of
+   these exist, and is the report meant to *decode* them or just *show the raw value and let a
+   human decode it*? **The plan's own recommendation is show-the-raw-value**: decoding needs a map
+   or a rule, a map or a rule is a fact about this environment, and
+   `.agents/repo-guidance.md` invariant 7 keeps those out of source unless they arrive as operator
+   configuration with a plan of their own.
+8. **Which of L1-L16 goes in the report?** This is the approval the owner asked for. Strike any
+   row and it is not built. The plan's **recommendation, offered as a recommendation and not as a
+   decision:** take **L1** (the requirement), **L3** and **L4** (two independent site keys that
+   need no local map), **L8** (which keeps virtual machines out of a report about walking to a
+   machine), and **L9** if R1(k) says it is populated. Hold L2, L5, L10 and L11 behind Q7. Leave
+   L13-L16 out until L1 is working, since all four describe the observer and are meaningless
+   without it.
+9. **`SeenBy()` takes at most 1,000 devices per call. Batch, or narrow the report?** The shipped
+   module enriches **once per refresh** over the whole matching set, which for this tenant's
+   can-be-onboarded population cannot be one call. Two shapes, and they are different products:
+   **(a) batch** - the run makes several hunting calls inside the Graph budget and the report keeps
+   its present meaning, at more requests, more time and more ways to half-fail; **(b) narrow** -
+   enrich only the rows the operator is actually looking at, which is fast and cheap but means the
+   CSV export either loses the column or re-enriches on export. **This interacts with the
+   unresolved page-scale fork recorded in `.agents/state.md`, which is the owner's and is not
+   re-asked here** - if that fork lands on filter-first-and-paged browsing, (b) becomes the natural
+   answer and this question may resolve itself. **Recommendation: answer the state.md fork first,
+   then this one.**
 
 ## Sources
 
@@ -1070,6 +1698,47 @@ All fetched 2026-09-18.
   https://learn.microsoft.com/en-us/defender-endpoint/device-discovery
 - Grant tenant-wide admin consent (which roles may consent; the Microsoft Graph app-role
   exception): https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/grant-admin-consent
+
+### Added 2026-09-24, all fetched that day for the revised requirement
+
+- `SeenBy()` function (the definition, the syntax, the returned `DeviceId` column, the 1,000-device
+  cap, the enrichment-availability caveat):
+  https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-seenby-function
+- `DeviceNetworkInfo` table (`IPAddresses` with subnet prefix and address space, `DefaultGateways`,
+  `IPv4Dhcp`, `IPv6Dhcp`, `DnsAddresses`, `NetworkAdapterDnsSuffix`, `ConnectedNetworks`,
+  `MacAddress`, `NetworkAdapterVendor`):
+  https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicenetworkinfo-table
+- `AssignedIPAddresses()` function (arguments and returned columns, for the fallback):
+  https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-assignedipaddresses-function
+- `DeviceFromIP()` function (returned columns; "It should be a local IP address. External IP
+  addresses aren't supported."):
+  https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-devicefromip-function
+- `IdentityInfo` table (`City`, `Country`, `Address`, `Department`, `DistinguishedName`, and which
+  columns need which licence):
+  https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-identityinfo-table
+- Advanced hunting overview (the 30-day date range as a product limit; the portal-side quota table,
+  which is NOT the Graph API's): https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-overview
+- Create dynamic rules for devices (the exact condition list - device name, domain, OS platform,
+  internet facing status, onboarding status, manual device tags - and therefore the absence of any
+  IP-range condition): https://learn.microsoft.com/en-us/defender-xdr/configure-asset-rules
+- Investigate devices ("View in map and set criticality are features from Microsoft Exposure
+  Management, which is currently in public preview"):
+  https://learn.microsoft.com/en-us/defender-endpoint/investigate-machines
+- Query the enterprise exposure graph (`ExposureGraphNodes`, `ExposureGraphEdges`, and the
+  `summarize by EdgeLabel` recipe that makes R1(l) a one-query question):
+  https://learn.microsoft.com/en-us/security-exposure-management/query-enterprise-exposure-graph
+- Find devices by internal IP API (the 15-minutes-either-side window, the 30-day timestamp limit,
+  the rate limits - and that its only Application permission is `Machine.ReadWrite.All`, which is
+  why L15 is recommended against):
+  https://learn.microsoft.com/en-us/defender-endpoint/api/find-machines-by-ip
+
+**Re-read on 2026-09-24 and confirmed unchanged** where this revision leans on them:
+`advanced-hunting-deviceinfo-table` (for `HostDeviceId`, `Site`, `PublicIP`, `LoggedOnUsers`,
+`MachineGroup`, the tag columns and the "only available if device discovery finds enough
+information" flags), `assess-devices` (for the published `SeenBy()` query and the network-location
+sentence), `get-machines` (for `$skip`, `$top` max 10,000, maximum page size 10,000, the rate
+limits and 404-on-empty) and `security-security-runhuntingquery` (for the method, URL,
+`ThreatHunting.Read.All` and the 30-day `Timespan` default).
 
 ## Revision 1 - codex review, 2026-09-18
 
@@ -1962,3 +2631,148 @@ HEAD` exit 0; `tools/Test-AsciiOnly.ps1` exit 0.
 
 Unchanged by this round. R1 (a), (b), (c), (d) and (e), and the manual acceptance checklist. Q2,
 Q3, Q4 and Q5 remain unanswered. Nothing here has been run against the live service.
+
+# Revision 5 - the owner revised queue item 8, 2026-09-24
+
+Plan text only. No source file, test, script or descriptor was touched; `git diff --stat` over this
+change names one path, `docs/DefenderEndpointDevices-Plan.md`.
+
+**Numbering note, because this file has two revision series and a reader will trip on it.**
+Revisions 1-8 record the first-series work (draft, three codex rounds, then S1, S2, S4, S3 and a
+review of the finished module). A second series then restarted at "Revision 3 - the live run" and
+"Revision 4 - codex review of the rebuild". This entry continues the second series as **5**. Where
+the body above needs to disambiguate it says "first series" or "second series" explicitly.
+
+## What triggered it
+
+The owner revised queue item 8. `.agents/state.md` parked queue 8 on 2026-09-22 "waiting on an
+updated requirements document from the stakeholder"; **that document has arrived**, and the revised
+queue text is quoted verbatim at the top of this file, replacing the original. Whether the park
+lifts is the owner's call and `.agents/state.md` owns it - this revision folds the new requirement
+into the plan and does not resume the work.
+
+Four things changed, and each one invalidated something written above it.
+
+## 1. The purpose is now stated, and it re-decides the column set
+
+"Purpose of this is to help locate machines physically in a global company." The module is still
+list-and-export; what changed is that a column now has to earn its place by narrowing a location.
+Recorded in a new section, "The purpose, and what it reframes".
+
+**`DiscoverySources` is demoted, not deleted.** It names a product, never a machine and never a
+place; it was a proxy for the real question and the research shows it is the wrong data. It stays
+in the report because it is already shipped and costs nothing, and it stops being described as
+answering the owner's need anywhere - field mapping, manual check 7 and the CSV section all say so
+now.
+
+## 2. The blocker is gone, so the registration section became a checklist
+
+The registration exists, Revision 3 of the second series records both permissions granted and
+consented, and the Delinea Secret ID is **657** - which goes in `GraphDelineaSecretId`
+(`Modules/ModuleCatalog.cs:825`; descriptor at `:799`, `Version = "1.1.0"` at `:816`, `MaxDevices`
+at `:827`, `IncludeDiscoverySources` at `:830`, all read from the file rather than remembered).
+
+**The permission section was NOT deleted.** It was converted, because one permission changed status
+and a registration consented under the old reading may not hold what the new one needs:
+`ThreatHunting.Read.All` went from optional to load-bearing. The Privileged Role Administrator /
+Global Administrator fact - an Application Administrator cannot consent a Microsoft Graph app role -
+is unchanged, and is now the thing the checklist exists to make somebody check.
+
+## 3. "Recently Seen By" is obtainable, and it makes hunting mandatory
+
+The owner's screenshot **answers the question `.agents/state.md` records as open and unanswered**:
+yes, the Defender portal shows an onboarded machine on a can-be-onboarded device's page, in a field
+labelled "Recently seen by" with a "View all seen by" link.
+
+The route is `SeenBy()` - **a documented advanced hunting function, not a column**, which is why
+the earlier column enumeration was correct and still found nothing. Microsoft publishes the query
+for exactly this scenario and states the purpose in the owner's own terms: the data "can help
+determine the network location of each discovered device". A 1,000-device cap per invocation, a
+documented disagreement about the returned column name, and the fact that the function returns an
+**ID and not an FQDN** are all recorded in the new "Recently Seen By" section, with their URLs.
+
+**One prior claim is falsified.** This file and `.agents/state.md` both treat
+`DeviceInfo.HostDeviceId` as a dead end that disappointed - populated on 1 device of 113,102,
+pointing at itself. Learn documents it as "Device ID of the device running Windows Subsystem for
+Linux". It is a WSL host pointer; one row in a hundred thousand is exactly correct behaviour, not a
+data gap, and it was never a candidate. The measurement was right and the conclusion drawn from it
+was not.
+
+**And one inference is scoped rather than repeated.** The 30-day hunting retention is real and is a
+product limit, not a tenant setting - but it was measured across the whole 113,102-device inventory
+and **does not transfer** to this module's target set, which is devices Defender is actively
+discovering right now and which are therefore far more likely to be inside the window. The plan
+now asks rather than asserts: **R1(i)** measures the coverage fraction.
+
+**Consequence, and it is the important one:** hunting becomes load-bearing, the registration must
+be verified to hold that consent, and the behaviour when hunting fails while the list succeeds is
+**extended in T7 rather than duplicated** - the list still stands, the columns still read
+`(unavailable)` with a named reason, and a failed enrichment still may not blank a column silently.
+What T7 adds is that the banner must now say the report does not answer the request, that the
+request-body guard must be widened exactly rather than relaxed, and that "once per refresh" may not
+survive the 1,000-device cap (**Q9**).
+
+## 4. A location-narrowing column set is proposed for approval
+
+The owner asked for one. The new "Location-narrowing candidate fields" section presents L1-L16 as
+a table with, per row, the exact source, the location strength, and **whether the field exists for
+a non-onboarded device** - stated per row rather than in a footnote, because several of the
+strongest signals are onboarded-only and that is exactly the trap. It names what is not documented
+anywhere (no AD site field, no building, floor or geo-coordinate), recommends **against** the
+`findbyip` REST route because its only Application permission is `Machine.ReadWrite.All` and T4
+exists to keep a write scope off this registration, and treats "View in map" as a second recon
+surface to enumerate (**R1(l)**) rather than as a design. The owner's own screenshot supplies the
+sharpest point in the table: the example device is VMware-vendored, so adapter vendor is primarily
+an **exclusion** signal - it is what keeps virtual machines out of a report about walking to a
+machine.
+
+## The `$skip` tension - flagged, not resolved
+
+Learn documents `$skip` as supported on `GET /api/machines`, beside `$top` max 10,000 and "Maximum
+page size is 10,000". Revision 3 of the second series recorded a live run returning 10,000 rows
+with **no** `@odata.nextLink`. **Both are true**: supporting a client-computed offset and emitting
+no server-side cursor are different mechanisms.
+
+**The rejected-alternative section was NOT reversed.** It is a recorded decision with an argument,
+and the argument it actually rests on - that `$skip` needs a stable order and this collection
+documents no `$orderby` - is untouched by the docs listing `$skip`. A note now sits inside that
+section where a reader meets the tension, and **R1(j)** probes `?$top=10000&$skip=10000` live. The
+rejection stands until the probe and a cited stability source say otherwise, and the partition
+design does not depend on the answer either way.
+
+## Also corrected while in the file
+
+- **Q1 and Q6 were still listed as open** in "Open questions for the owner" although Revision 5 of
+  the first series closed both on 2026-09-21. Both are now marked closed with their answers. Stale
+  reference, Known Failure Class 4.
+- **Revision 6 of the first series left an instruction dangling** - the `DiscoverySources`
+  string-or-array serialisation question, to be added "to R1's list if that gate is still open". It
+  is still open, so it is now **R1(m)**.
+- **Manual checklist steps 3 and 4 are stale** - they exercise a "Windows only" toggle Revision 3
+  of the second series removed. Flagged in place rather than rewritten; see the note under that
+  heading for why.
+- **S5's `1.0.0` line is history.** The module is at `1.1.0`. A new "S6 - NOT YET SLICED" section
+  says so and says why no slice is written yet.
+
+## Versioning
+
+**This revision bumps nothing** - it is plan text. The proposal for S6, computed from the field and
+the Constitution rule rather than from memory, is module `1.1.0` -> **`1.2.0`** (minor: new
+behaviour on a shipped module) with **no base app version bump** (nothing S6 needs is shared). The
+condition that would flip the base call is named in the Versioning section. The implementing slice
+recomputes from `Modules/ModuleCatalog.cs` rather than trusting this line.
+
+## Verification
+
+Docs-only, so the repo's docs rule applies: `git diff --check`. Build, test and format were not run
+and are not claimed - no compiled file, test or script changed. No live query was run against the
+tenant by this revision; every API fact added here came from Microsoft Learn on 2026-09-24 and the
+URLs are in Sources. Every `file:line` cited was read from the file at the time of writing.
+
+## Still outstanding
+
+R1 (a), (b), (c), (d), (e) and the new (h), (i), (j), (k), (l), (m). The manual acceptance
+checklist. Q2, Q3, Q4, Q5 and the new Q7, Q8, Q9. **The pending step is the owner's: approve or
+strike the L1-L16 candidate table (Q8) and answer Q9.** The proposed next action after that is to
+draft S6 against the answers. Queue 8's park, and the unresolved fork about the page being unusable
+at tenant scale, are `.agents/state.md`'s and are not re-asked here.
