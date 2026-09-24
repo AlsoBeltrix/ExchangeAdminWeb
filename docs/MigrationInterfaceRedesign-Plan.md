@@ -134,11 +134,19 @@ produces output.
 R23. **A control that produces output has a defined place for it.** A button with nowhere to
 render its result is a defect, not a detail to settle later.
 
-R24. **The per-mailbox report has a home.** Today it injects a `<pre>` into an expanded row
-(`:777-:790`), which is the nested expansion this redesign removes. It is detail about one
-mailbox in the open batch, so it belongs in the right pane as a further drill-down: the pane
-shows the report, with a control back to the mailbox list, and is addressable like the batch
-is (R22).
+R24. **The per-mailbox report is a modal dialog with an Export button.** Owner ruling
+2026-09-24, after a drill-down, a panel under the table, a third pane and a new tab were each
+rejected. It must not replace the mailbox table, be hidden by it, or hide it, and the drawer
+under the row that production uses today (`:777-:790`) is out. The dialog carries the
+mailbox's status and its row action in its header, so the operator can act on what the report
+says. Export writes the whole report to a file rather than making anyone select tens of
+thousands of lines out of a scroll box. Only the Close button dismisses it.
+
+R24a. **A fetched report is kept, and re-fetching is a deliberate act.**
+`Get-MigrationUserStatistics` can take **twenty minutes or more** on a long or problematic
+migration, so closing and reopening the dialog must never run it again. The dialog shows the
+copy already held and states when it was taken; "Fetch again" is its own button and says what
+it costs. This is a correctness requirement about operator time, not a caching optimisation.
 
 R25. **Action results are reported per row, and never as a blanket banner.** Today one
 `batchActionResult` alert (`:434-:443`) speaks for an operation over N batches. A loop over N
@@ -195,8 +203,8 @@ and the result banner must report per-row outcomes after. Module version bump.
 **S5 -- Filter, sort and paging on the mailbox table.** Currently absent entirely. Module
 version bump. Satisfies R21.
 
-**S6 -- Output destinations.** The mailbox report as a right-pane drill-down instead of an
-injected row, per-row action results replacing the single banner, person-search distinct from
+**S6 -- Output destinations.** The mailbox report as a modal with Export and a kept copy
+instead of an injected row, per-row action results replacing the single banner, person-search distinct from
 batch filtering, per-pane loading and refresh, distinct empty states, and a named export
 scope. Module version bump. Satisfies R23-R30.
 
