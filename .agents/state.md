@@ -25,6 +25,19 @@ docs-only, so nothing has been re-run against them. Nothing is half-finished.
     accept a guarded absolute `@odata.nextLink`. Three slices; base app bump in S1, module bump
     in S2. **Open Q1: may the page render several thousand rows, or render the top N by severity
     and say so** - the Defender "Rejoining the server" hazard. Blocks S3 only.
+    **S4 was added 2026-09-24 on a second owner report and is NOT covered by the codex review**
+    (`b5052d8`). The Remediate buttons read "Close as handled" / "This was the real user" /
+    "Account was breached" and nothing on the page maps them to Entra's "Dismiss user(s) risk" /
+    "Confirm user(s) safe" / "Confirm user(s) compromised" - the consequence text exists but only
+    as a `title` attribute, so it is invisible on touch, to a keyboard and in a screenshot. This
+    REFINES the 2026-09-02 L2-wording ruling rather than reversing it: a label identifies the
+    action, a sentence says what it does, and one string was doing both.
+    `riskDetail` renders raw camelCase in the next column - same defect, also in scope.
+    **The hazard to carry: the three label strings live in TWO files** (`RiskyUsers.razor:759`
+    and `RiskyUsersService.cs:165`) kept in step by a comment, and the service's copy is what
+    reaches the audit record. A half-rename makes the operator click one name while the audit
+    trail records another. Audit action identifiers must not change.
+    **Open Q3: relabel in place, or one "Remediate" control per row opening a panel.** Blocks S4.
   - **`docs/SidebarScrollbar-Plan.md`** (`941cd77`, revised `afdacaa`). The sidebar scrollbar
     never leaves because the scroll pane overflows by a constant 0.7rem: the first category
     heading's `margin-top` collapses out of a `nav` that has no padding-top, `.nav-scrollable` is
