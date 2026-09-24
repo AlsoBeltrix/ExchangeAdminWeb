@@ -156,9 +156,32 @@ no PowerShell changed. Nothing is half-finished. **3 commits are unpushed on bot
 Reset is complete and reviewed; queue 4 slice 1 is landed with slices 2-4 unstarted and
 unblocked.
 
-- **QUEUE 8 (Defender for Endpoint) IS PARKED BY THE OWNER, 2026-09-22, waiting on an updated
-  requirements document from the stakeholder. Do not resume it until that arrives.** The module
-  (`43a944e`) is not deployed and not resumed - the park stands.
+- **QUEUE 8 (Defender for Endpoint): THE PARK'S CONDITION IS SATISFIED. The owner revised item 8
+  on 2026-09-24 and the plan is revised to match (`cb548cb`). The module is still not deployed and
+  no code has been written; the next move is an OWNER APPROVAL, not a slice.** The 2026-09-22 park
+  waited on updated requirements from the stakeholder; those arrived in the queue file.
+  **Three things the revision changed, and one that unblocked it:**
+  - **The purpose is now stated - locate machines physically in a global company - and it
+    re-decides the column set.** "Discovery sources" was never the requirement; it names the
+    products that saw a device, not a device. Demoted, not deleted.
+  - **"Recently Seen By" is a named requirement and IS obtainable.** It is `SeenBy()`, a documented
+    advanced hunting **function**, not a column. **This falsifies the entry below that says the
+    candidate list is exhausted** - the relationship was never going to be a `DeviceInfo` column.
+    Microsoft publishes the query for this exact scenario and states it determines a discovered
+    device's network location.
+  - **The app registration EXISTS and the Delinea Secret ID is 657.** The plan's "what the owner
+    must create" section is now a verification checklist.
+  - **`ThreatHunting.Read.All` is no longer optional.** It was gated behind
+    `IncludeDiscoverySources`; requirement 3 is reachable only through hunting. Verify the consent
+    on the new registration - it needs a Privileged Role Administrator, not an Application
+    Administrator.
+  **WAITING ON THE OWNER: Q8, approve or strike the sixteen proposed location-narrowing fields
+  (L1-L16 in the plan), plus Q7 (do local subnet/naming/tagging conventions exist) and Q9
+  (`SeenBy()` caps at 1,000 devices per call - batch, or narrow the report).** No slice is written
+  for requirement 3 and none should be until Q8 is answered.
+  **R1 gained (h)-(m); (h), (i), (k), (l) and (m) can be run in the Defender portal now without
+  deploying anything.** R1(i) - what fraction of the Windows/can-be-onboarded set actually returns
+  a `SeenBy()` result - is the one that most changes what the slice looks like.
   **Two defects are open against the shipped module and neither is fixed:**
   1. *The page is unusable at tenant scale.* It renders every device row, so the Blazor circuit
      dies ("Rejoining the server...") and nothing can be scrolled. The owner rejected virtualised
@@ -168,24 +191,35 @@ unblocked.
      complete partitioned fetch for CSV export only.** Do not implement either shape without a go.
   2. *Discovery sources is the wrong data and mostly blank.* The stakeholder needs **which local
      machine discovered a new device**. The column shows which Microsoft product saw it and when.
+     **This defect now has an answer: `SeenBy()`.** The plan carries it; the page still shows the
+     wrong column until a slice lands.
   **What the live hunting queries settled on 2026-09-22** (`.agents/research/defender-discovery-source.kql`,
   results run by the owner in the Defender portal - these are measured, not inferred):
   - **Advanced hunting retention is exactly 30 days.** `DeviceInfo` spans 2026-08-23 to 2026-09-22,
-    31,594,567 rows. That is the whole reason most discovery cells are blank: the inventory holds
-    devices last seen in March through August, and there is no hunting row left to join to. No code
-    change widens this.
-  - **`HostDeviceId` is a dead end.** Populated on **1 device out of 113,102**, and that one row
-    points at itself. It is not a discovery relationship.
-  - **`DeviceNetworkInfo` carries nothing either** - adapters, IPs, MACs, no discovering device.
-  - **`DeviceInfo` has 52 columns and none is a "discovered by".** Full schema in the CSV the owner
-    ran; the candidate list is exhausted.
+    31,594,567 rows. Measured, and it is the documented product limit, not a tenant setting.
+    **The CONCLUSION drawn from it was generalised too far and is now scoped:** it explains why
+    discovery cells are blank across the whole 113,102-device inventory, most of which was last
+    seen months ago. It does NOT transfer to this module's actual target set - Windows devices
+    currently in "Can be onboarded" are ones Defender is actively discovering, so far more likely
+    inside the window. R1(i) measures that rather than assuming either way.
+  - **`HostDeviceId`: the measurement stands, the conclusion does not.** 1 device in 113,102,
+    pointing at itself - but Learn documents the column as "Device ID of the device running
+    Windows Subsystem for Linux". That is a WSL host pointer. **It was never a discovery
+    relationship, so the result was correct behaviour and not a failed lead.**
+  - **`DeviceNetworkInfo` carries no discovering device** - adapters, IPs, MACs. Still true. It is
+    however the source of the strongest LOCATION fields (subnet, gateway, DHCP, DNS suffix), which
+    is what the revised requirement actually needs.
+  - **`DeviceInfo` has 52 columns and none is a "discovered by" - true. "The candidate list is
+    exhausted" is FALSIFIED.** The relationship is an enrichment FUNCTION, `SeenBy()`, not a
+    column, so no amount of reading the schema was ever going to find it.
   - **The tenant holds 113,102 devices in `DeviceInfo`** (50,835 onboarded, 12,902 can be onboarded,
     30,637 insufficient info, 18,728 unsupported) - materially more than the 40,000 the rebuild was
     sized against. The partition handles it; the 100,000 ceiling does not.
-  **The one open question, asked and unanswered:** does the Defender portal itself show a
-  discovering or onboarded machine on a "Can be onboarded" device's page? If it does, the data is
-  obtainable and the route needs finding. If it does not, the requirement cannot be met as written
-  and the stakeholder's document has to change. Ask this before doing anything else on queue 8.
+  **That open question is ANSWERED, 2026-09-24, by an owner screenshot** (referenced from the
+  queue file). The Defender portal DOES show an onboarded machine on a "Can be onboarded" device's
+  page: device `igxl830-09` carries **"Recently seen by: niss21-05.ad.analog.com"** plus a "View
+  all seen by" link. So the data is obtainable, the stakeholder's document does not have to
+  change, and the route was found - `SeenBy()`. Do not re-ask it.
 
 - **NEXT AGREED ITEM: queue 4, break out permissions for message trace vs header analysis.**
   Picked 2026-09-22 when the owner parked queue 8 and said "pick and handoff". Reasons it was
