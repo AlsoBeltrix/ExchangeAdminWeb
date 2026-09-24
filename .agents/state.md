@@ -53,8 +53,8 @@ half-finished. **56 commits are unpushed on both remotes** and push policy is as
     slice `docs/RiskyUsersModule-Plan.md` deferred; both halves of its trigger have fired.
     Server-side UPN matching is ruled out on the Graph v1.0 reference (`$filter`/`$select` only,
     no documented `contains()`), so paging is the only route, and it needs `GraphTokenClient` to
-    accept a guarded absolute `@odata.nextLink`. **FOUR slices.** Base app bump in S1; module
-    bumps in BOTH S2 (`1.2.0`) and S4 (`1.3.0`).
+    accept a guarded absolute `@odata.nextLink`. **FIVE slices.** Base app bump in S1; module
+    bumps in S2 (`1.2.0`), S4 (`1.3.0`) and S5 (`1.4.0`).
     **Q1 IS RULED and the plan has NO open owner questions left.** Owner 2026-09-24, offered a
     render cap or a top-N render: *"neither? just page them."* Both options threw rows away to
     protect the circuit; pagination bounds what is RENDERED without bounding what is REACHABLE.
@@ -101,11 +101,15 @@ half-finished. **56 commits are unpushed on both remotes** and push policy is as
     `IdentityRiskyUser.Read.All` which the module ALREADY holds, already used for History
     (`RiskyUsersService.cs:119`), and no ceiling can touch it. A separate "Look up a user"
     control, deliberately NOT merged into the `UPN contains` box.
-    **R1 reconnaissance decides the implementation and must run before any S5 code:** probe
-    `$filter=userPrincipalName eq` on the list endpoint (one call, no new permission, wins if it
-    works), then `startswith(...)`, then `/users/<upn>?$select=id` - **which would need
-    `User.Read.All` added to the app registration and consented, an owner action.** Do not
-    borrow another module's registration; the Developer Guide forbids it.
+    **`User.Read.All` MUST be added to the Risky Users app registration and consented - owner
+    action, blocking S5 and nothing else.** Not probe-dependent: a `riskyUsers` query returning
+    nothing means "no risk record for this UPN" and cannot say whether the UPN belongs to
+    anyone, so only a directory read separates "Entra says they are fine" from "you mistyped".
+    Two calls by design: `/users/<upn>?$select=id`, then `/riskyUsers/<id>`. The
+    `$filter=userPrincipalName eq` probe survives only as a positive-path shortcut.
+    **`startswith` was considered and DELETED** - it cannot serve a contains match, and the
+    reported case is typing `charles` to find `Paul.Charles@analog.com`. Do not borrow another
+    module's registration; the Developer Guide forbids it.
     **404 from the lookup is a CLEAN NEGATIVE, not an error and not "no risky users found".**
     Three distinguishable outcomes: risky / exists but no risk record / no such user. This is
     the Cloud Password Reset lesson inverted - there an unanswered question was read as a

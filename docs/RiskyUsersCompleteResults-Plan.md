@@ -4,6 +4,10 @@ Status: **Draft, awaiting owner approval.** No code written. Five slices. **No o
 questions remain.** Q1 was ruled by the owner on 2026-09-24 (paginate the table), Q3 was
 closed coder-side the same day, and Q2 is a recommendation rather than a gate.
 
+**One owner action blocks S5 and nothing else in this plan:** `User.Read.All` must be added
+to the Risky Users Entra app registration and admin-consented. S1-S4 need no new
+permission. Detail and the reason it is not optional are in S5's R1.
+
 This is the plan `docs/RiskyUsersModule-Plan.md` section **S4a** said to write:
 
 > Take S4a only if a real tenant is found to hold more than 500 risky users and the
@@ -393,6 +397,19 @@ Name each one in the commit message with what it asserts now.
 - The notice sits above the table and the table still renders. CeilingHit is a constraint,
   not a refusal -- only Failure branches away from the table.
 - The Complete case renders no notice at all. A complete list must not carry a caveat.
+- **The empty case is where this plan's own defect comes back, so it gets its own branch.**
+  `:111` currently tests `results.Count == 0` *before* anything about truncation, and
+  renders "No risky users found." Put a ceiling-limited fetch behind that with a UPN filter
+  that matches none of the rows it did retrieve, and the operator is told nobody matches
+  when the truth is that the module stopped looking. That is the reported bug exactly,
+  wearing a different string. Two distinct empty states:
+  - **Complete and empty** -> "No risky users found." True, and final.
+  - **CeilingHit and empty** -> the constraint notice, and wording that says no match was
+    found *in the rows retrieved*, not that none exists. The lookup in S5 is the thing to
+    point at here, because it answers for a named person without a fetch limit.
+  This is the second time in this plan an empty result would have masked an incomplete
+  fetch. Treat "count == 0" as never sufficient on its own: the outcome is what decides
+  what empty means.
 
 #### Pagination (Q1, owner ruling 2026-09-24)
 
@@ -547,7 +564,7 @@ set two labels to share a word, confirm the no-shared-word test fails; feed the
 fallback makes the test fail. Restore and touch the files.
 
 `Modules/ModuleCatalog.cs`: `RiskyUsers` `Version` `1.2.0` -> `1.3.0` -- the second of the
-two module bumps this plan makes, recorded in `## Versioning`. Compute from the field at
+three module bumps this plan makes, recorded in `## Versioning`. Compute from the field at
 implementation time, not from this document. No base app bump.
 
 ### S5 -- look one user up directly, so no ceiling can hide them
@@ -576,37 +593,62 @@ populates `EntraObjectId` from `riskyUser.id`, so the two are the same identifie
 
 #### R1 -- reconnaissance, and it decides the implementation
 
-The gap is turning a typed UPN into that object id. **Probe in this order; the first that
-works wins, and the earlier ones cost nothing.** Run against the module's own credentials
-before writing code -- this is the Defender R1 pattern, where an assumption about an
-endpoint's behaviour was cheaper to measure than to design around.
+The gap is turning a typed UPN into that object id.
 
-1. `GET /identityProtection/riskyUsers?$filter=userPrincipalName eq '<upn>'`
-   If this returns 200 with the user, **S5 is one call, needs no new permission, and
-   nothing below applies.** Undocumented, hence a probe rather than a design.
-2. `GET /identityProtection/riskyUsers?$filter=startswith(userPrincipalName,'<prefix>')`
-   If 1 fails but this works, prefix search becomes server-side and the UPN box itself can
-   stop being a post-fetch filter for the common case.
-3. `GET /users/<upn>?$select=id` then `GET /identityProtection/riskyUsers/<id>`
-   The guaranteed route. **It needs `User.Read.All` added to the Risky Users app
-   registration and admin-consented -- an owner action, not a code change.** Do not reach
-   for another module's registration to avoid it: `docs/AdminModuleDeveloperGuide.md:642`
-   forbids falling back to another module's Graph config, and reuse is permitted only when
-   the operator deliberately configures the same secret id on both.
+**`User.Read.All` is required either way. This is not optional and not probe-dependent.**
+An earlier version of this section said the first working probe wins and the rest fall
+away. That was wrong, and the reason is the whole point of the slice: a query against
+`riskyUsers` that returns nothing tells you *this UPN has no risk record*, and cannot tell
+you whether the UPN belongs to anybody at all. Only a directory read distinguishes "Entra
+says this person is fine" from "you mistyped the name" -- which is AC18, and the difference
+an operator most needs, because a typo that reads as a clean bill of health is worse than
+an error.
 
-Record which probe won, in the plan and in the code comment, so the next reader knows
-whether the shipped shape was chosen or forced.
+So the lookup is:
+
+1. **`GET /users/<upn>?$select=id`** -- does this person exist?
+   - 404 -> "No user matches that name." Stop. No risk query is made.
+   - 200 -> continue with the object id.
+2. **`GET /identityProtection/riskyUsers/<id>`** -- does Entra hold a risk record?
+   - 200 -> the risky user.
+   - 404 -> "No risk record for this user." A clean negative.
+
+**The owner action this creates:** `User.Read.All` must be added to the Risky Users app
+registration and admin-consented. Do not reach for another module's registration to avoid
+it -- `docs/AdminModuleDeveloperGuide.md:642` forbids falling back to another module's
+Graph config, and reuse is permitted only when the operator deliberately configures the
+same secret id on both. `Modules/ModuleCatalog.cs`'s `GraphDelineaSecretId` description
+must name the added permission, as it already names the other two.
+
+**One probe remains worth running, as an optimisation only:**
+`GET /identityProtection/riskyUsers?$filter=userPrincipalName eq '<upn>'`. If Graph accepts
+it, a *positive* answer can be had in one call instead of two. It can never serve the
+negative case, so it never removes step 1; it only lets step 2 be skipped on a hit. Treat
+it as a shortcut to measure, not a design to build on, and ship without it if it 400s.
+
+**Do not probe `startswith(userPrincipalName, ...)` as a replacement for the browse
+filter.** An earlier version suggested it could make `UPN contains` server-side. It cannot:
+the control is a *contains* match, and the case that opened this plan is the operator
+typing `charles` to find `Paul.Charles@analog.com` -- where `charles` is not a prefix.
+Swapping contains for prefix would fail AC2, which is the reported bug. `UPN contains`
+stays a post-fetch filter.
+
+Record the probe's result in the plan and in a code comment, so the next reader knows
+whether the two-call shape was chosen or forced.
 
 #### Three outcomes, and none of them is an error
 
 The whole value of a direct lookup is a definitive answer, including a definitive negative.
 
-| Result | Meaning | Operator sees |
-| --- | --- | --- |
-| Risky user returned | Graph holds a risk record | the single row, with its actions and History |
-| 404 from the lookup | the user exists, Entra holds no risk record | "No risk record for this user." A clean no. |
-| The UPN resolves to nobody | no such user | "No user matches that name." Different from the above. |
-| Any other failure | the request failed | the existing error alert |
+| Step | Result | Meaning | Operator sees |
+| --- | --- | --- | --- |
+| 1 `/users/<upn>` | 404 | no such user | "No user matches that name." |
+| 2 `/riskyUsers/<id>` | 404 | the user exists, Entra holds no risk record | "No risk record for this user." A clean no. |
+| 2 `/riskyUsers/<id>` | 200 | Graph holds a risk record | the single row, with its actions and History |
+| either | any other status | the request failed | the existing error alert |
+
+The two 404s are different answers and must read differently. Collapsing them is how a
+mistyped name becomes a clean bill of health.
 
 **404 must not render as an error and must not render as "no risky users found".** It is
 the answer the operator came for. Conflating "Entra says this person is fine" with "the
@@ -660,6 +702,9 @@ fails. That is the whole slice in one mutation.
   Risk level and Risk state as the controls that shrink the fetch. The notice does not
   contain the words "narrow the filter", and no row is discarded to produce it.
 - **AC6.** A complete result set renders **no** truncation notice.
+- **AC6a.** A ceiling-limited fetch whose filter leaves zero rows still shows the
+  constraint notice, and says no match was found in the rows retrieved -- never "No risky
+  users found". Only a complete fetch may render that string.
 - **AC7.** An absolute nextLink is refused, with no bearer token sent, when its host is
   not the Graph host, when its scheme is not `https`, or when its path is outside `/v1.0`.
 - **AC8.** Every existing caller of `GraphTokenClient` behaves identically.
@@ -792,9 +837,42 @@ alone and revisit after the owner has used the fixed page. Not implemented in th
 
 ## Review
 
-Two rounds, both `codex (@azure-openai-eus2-global/gpt-5.5-dzs @ xhigh, fallback)`,
-codex-cli 0.154.0, both `acceptable_with_changes`, six material changes, all six admitted
-and folded in. Round 1 covered S1-S3; round 2 covered S4 and swept the whole plan.
+Three rounds, all `codex (@azure-openai-eus2-global/gpt-5.5-dzs @ xhigh, fallback)`,
+codex-cli 0.154.0, all `acceptable_with_changes`, ten material changes, all ten admitted
+and folded in. Round 1 covered S1-S3; round 2 covered S4; round 3 covered S5, pagination
+and the constraint notice.
+
+### Round 3 -- `openreview` over `71c5390..e2ed3c3`, paths scoped, 2026-09-24
+
+Capability proof passed both halves. The range interleaves an unrelated Migration work
+stream, so the dispatch named the three in-scope paths and the four in-scope commits as
+mechanical coordinates. The reviewer endorsed the whole shape -- guarded nextLink paging,
+`MaxTotalRows`, local sort, 50-row pagination, an honest ceiling notice, a separate direct
+lookup, and keeping the label work in this plan.
+
+Four material changes:
+
+1. **S5's "first probe that works wins" was wrong, and it cost the slice its best
+   property.** A `riskyUsers` query returning nothing means *this UPN has no risk record*
+   -- it cannot say whether the UPN belongs to anyone. So the one-call shortcut can never
+   satisfy AC18, and `User.Read.All` is required unconditionally rather than only if the
+   probes fail. R1 is rewritten: two calls by design, the filter probe demoted to a
+   positive-path optimisation, and the permission promoted to a blocking owner action named
+   in the status header.
+2. **The `startswith` probe would have re-broken the reported bug.** It was offered as a
+   way to make `UPN contains` server-side, but the case that opened this plan is typing
+   `charles` to find `Paul.Charles@analog.com`, where `charles` is not a prefix. That fails
+   AC2. The probe is deleted, not deferred.
+3. **CeilingHit was invisible when the filter left zero rows** -- and this is the reported
+   defect reappearing inside its own fix. `RiskyUsers.razor:111` tests `results.Count == 0`
+   before anything about truncation, so a ceiling-limited fetch plus a non-matching UPN
+   would have rendered "No risky users found": the module telling the operator nobody
+   matches when it had stopped looking. Two distinct empty states now, and AC6a pins it.
+   **Second time in this plan an empty result would have masked an incomplete fetch**, so
+   S3 now states the general rule: `count == 0` is never sufficient on its own, the outcome
+   decides what empty means.
+4. **Stale slice and version metadata** in `.agents/state.md` and S4 after S5 landed --
+   four slices and two bumps, where there are now five and three.
 
 ### Round 2 -- `openreview` over `afdacaa..71c5390`, 2026-09-24
 
