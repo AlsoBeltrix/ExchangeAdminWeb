@@ -1,9 +1,9 @@
 # Migration -- Redesign The Status Interface (queue item 14)
 
 Status: **Draft, awaiting owner approval.** No code written. The layout was settled by the
-owner over many rounds against a working mockup (`.agents/mockups/migration-v3.html`), three
-codex openreviews have run against this plan, and **every open question is now closed**. What
-remains is the owner approving the plan itself.
+owner over many rounds against a working mockup (`.agents/mockups/migration-v3.html`), and four
+codex openreviews have run against this plan. **One item needs the owner: R5b, where three of
+the owner rulings collide and the plan proposes a reading.** Everything else is closed.
 
 ## Why a plan at all
 
@@ -80,8 +80,16 @@ because rows are held back from the filter.
 R5a. **Ticked mailboxes ARE pinned, above an "OTHER MAILBOXES" divider** (owner ruling
 2026-09-24). R5 applies to the batch list only, where the right pane shows the selection
 instead. Mailboxes have no equivalent second surface, so pinning is how R11 is met for them.
-The two rules are not in conflict: each list keeps its selection visible by the means available
-to it.
+
+R5b. **The pinned block is itself paged, or R5a, R8 and R20 cannot all hold.**
+Select-all has no cap (R8), every ticked mailbox is pinned (R5a), and no view may render the
+full set (R20) -- so ticking all 2000 mailboxes would pin 2000 rows and reproduce the Defender
+failure exactly. The mockup does this today: it concatenates every ticked mailbox onto the
+current page. The resolution keeps all three rules: the pinned block has its own pager
+("1-40 of 2000 ticked"), the way the batch selection got one in R4, so the selection always has
+a visible home of bounded size. **This is the coder's reading of three owner rulings that
+collide, not a ruling itself; flagged for the owner.** The alternative -- capping select-all
+for mailboxes -- is already refused by R8.
 
 R6. **Actions sit at the top of the thing they act on. Never a footer.** That is what every
 other list UI does and what operators expect.
@@ -263,6 +271,25 @@ copy held, not pulled again.
 R31d. **Read-only, so no ticket and no protected-principal gate.** Fetching a report changes
 nothing. It is still audited as a read of migration data, and the zip is named for the batch
 and the time it was taken.
+  - **Permission: `MigrationCheck`, the module's main permission** -- the same one that already
+    lets an operator read the batch list, and the same level today's single `Report` button
+    runs at, since that button sits outside every `canManage` check
+    (`Components/Pages/Migration.razor:460`, `:518`, `:541`). **Not `MigrationManage`**:
+    reading diagnostics is not managing a batch, and requiring the mutating permission to read
+    a report would be a quiet privilege escalation of the page's read surface.
+  - **Explicitly exempt from R12's ticket flow.** It is the one control in the mailbox action
+    bar that changes nothing, so it does not stage, does not take a ticket and does not show a
+    per-row eligibility preview -- every mailbox is eligible to be read. That exemption is
+    stated here precisely because it sits beside four mutating actions that all require one.
+
+R31f. **Delivery: the zip is assembled on demand from the stored reports.** The bulk-job
+runner persists per-row outcomes, not files, so the job's own record is the list of which
+mailboxes were fetched and which failed. The completed job exposes a download that builds the
+zip at click time from the R24c store. Consequences that must be handled rather than
+discovered: a report that expired under R24d between the job finishing and the download being
+clicked is **named as missing in the zip's manifest rather than silently omitted**; a download
+with nothing left to package says so instead of delivering an empty archive; and the download
+itself is audited as a read of migration data, separately from the fetches that produced it.
 
 R31e. **The export writes nothing new: it zips the stored reports.** Each mailbox's report is
 fetched into the R24c store as the job walks the selection, and the zip is assembled from those
@@ -295,9 +322,13 @@ inventing encoding rules for operator-supplied batch names. Selection state move
 that survive a re-render. No layout change. Module version bump only -- nothing shared
 changes.
 
-**S2 -- Split the panes.** Replace the nested-row expansion with the two-pane layout: batch
-list left, mailbox table right, each with its own scroll region, sticky header and pinned
-footer. Same data, same actions, same gating, no new operations. Module version bump.
+**S2 -- Split the panes, and page the batch list.** Replace the nested-row expansion with the
+two-pane layout: batch list left, mailbox table right, each with its own scroll region, sticky
+header and pinned footer. **This slice owns the batch catalogue paging** -- page state, page
+size, the pager, and resetting to the first page whenever the filter or sort changes so the
+operator is never left on page 9 of a 3-page result. R20 is otherwise only assigned for
+mailboxes (S5) and for the selection pane (S3), which would leave the list this page opens on
+unpaged. Same data, same actions, same gating, no new operations. Module version bump.
 
 **S3 -- Selection model.** Checkboxes on both lists, select-all over the whole filter with no
 cap, the batch operation bar at the top of the left pane, and the multi-batch selection view
@@ -380,9 +411,10 @@ bite: revert the behaviour, watch the test fail, restore it.
    or refresh of the batch list does not change which batch the URL resolves to.
    `Catalog.GetByRoute("migration")` still resolves with the query parameter present, so the
    version badge and usage telemetry keep working.
-2. **No full-list rendering (S2, S5).** With a large batch set and a large mailbox set, the
-   rendered row count stays at the page size. This is the Defender hazard and the only test
-   that catches a regression of it.
+2. **No full-list rendering (S2, S3, S5).** With a large batch set and a large mailbox set,
+   the rendered row count stays at the page size -- including with every batch ticked and every
+   mailbox ticked, which is the case R5b exists for and the one a naive pinned implementation
+   fails. This is the Defender hazard and the only test that catches a regression of it.
 3. **Selection identity (S3).** Selection survives paging and filtering, and is held by batch
    name so it cannot silently retarget. Ticking, highlighting and the right pane always agree
    -- the R9 single-concept rule, asserted rather than assumed.
