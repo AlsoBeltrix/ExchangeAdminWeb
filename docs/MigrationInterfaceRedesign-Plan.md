@@ -2,8 +2,8 @@
 
 Status: **Draft, awaiting owner approval.** No code written. The layout was settled by the
 owner over many rounds against a working mockup (`.agents/mockups/migration-v3.html`), and four
-codex openreviews have run against this plan. **One item needs the owner: R5b, where three of
-the owner rulings collide and the plan proposes a reading.** Everything else is closed.
+codex openreviews have run against it. **Every question the reviews raised is closed and no
+question is outstanding.** What remains is the owner approving the plan itself.
 
 ## Why a plan at all
 
@@ -87,9 +87,8 @@ full set (R20) -- so ticking all 2000 mailboxes would pin 2000 rows and reproduc
 failure exactly. The mockup does this today: it concatenates every ticked mailbox onto the
 current page. The resolution keeps all three rules: the pinned block has its own pager
 ("1-40 of 2000 ticked"), the way the batch selection got one in R4, so the selection always has
-a visible home of bounded size. **This is the coder's reading of three owner rulings that
-collide, not a ruling itself; flagged for the owner.** The alternative -- capping select-all
-for mailboxes -- is already refused by R8.
+a visible home of bounded size. **Owner ruling 2026-09-24: adopted as written.** The alternative -- capping select-all for
+mailboxes -- is already refused by R8.
 
 R6. **Actions sit at the top of the thing they act on. Never a footer.** That is what every
 other list UI does and what operators expect.

@@ -129,7 +129,7 @@ var U_BADGE = {Synced:'success',Syncing:'info text-dark',Failed:'danger',NeedsAp
 
 var batches = [], nBatches = 100, uPerBatch = 0, bPage = 0, PAGE = 40, userCache = {};
 var uFilter = '', uStatus = '', uPage = 0, U_PAGE = 50, pending = null, lastHash = null;
-var sel = {}, bulkAction = null, selPage = 0;
+var sel = {}, bulkAction = null, selPage = 0, pinPage = 0, PIN_PAGE = 40;
 var loadingPane = null, results = null, highlight = null;
 var usel = {}, uPageEmails = [], uAllFiltered = [], ubulk = null;
 
@@ -193,7 +193,8 @@ function renderList() {
   if (bPage >= pages) { bPage = pages - 1; }
   var from = bPage * PAGE;
   var list = all.slice(from, from + PAGE);
-  var open = selIds().length === 1 ? batches[selIds()[0]] : currentBatch();
+  // One concept. Highlighted, ticked, shown on the right and acted on are the same thing.
+  var open = null;
   var html = [];
   // Header lives INSIDE the scrolling list so it shares the rows' width; the scrollbar cannot
   // shift it out of alignment. The operation bar lives outside, so it never scrolls away.
@@ -202,8 +203,8 @@ function renderList() {
     '<span class="v3-count">Failed</span><span style="text-align:center;">Status</span></div>');
   for (var i = 0; i < list.length; i++) {
     var b = list[i];
-    html.push('<div class="v3-batch' + (open && open.i === b.i ? ' active' : '') +
-      '" onclick="location.hash=\'#/batch/' + b.i + '\'">' +
+    html.push('<div class="v3-batch' + (sel[b.i] ? ' active' : '') +
+      '" onclick="openOnly(' + b.i + ')">' +
       '<input class="form-check-input mt-0" type="checkbox" onclick="event.stopPropagation()"' +
         ' onchange="tick(' + b.i + ', this.checked)"' + (sel[b.i] ? ' checked' : '') + '>' +
       '<span class="text-truncate">' + b.name + '</span>' +
@@ -272,8 +273,9 @@ function render() {
   // batches with their own pager, so there is never a question about which batch is displayed.
   var ids = selIds();
   if (ids.length > 1) { right.innerHTML = selectedPane(ids); return; }
-  var b = ids.length === 1 ? batches[ids[0]] : currentBatch();
-  right.innerHTML = b ? batchHtml(b) : '<div class="p-5 text-center text-muted">Pick a batch.</div>';
+  var b = ids.length === 1 ? batches[ids[0]] : null;
+  right.innerHTML = b ? batchHtml(b)
+    : '<div class="p-5 text-center text-muted">Select a batch on the left.</div>';
 }
 
 function selectedPane(ids) {
@@ -288,7 +290,8 @@ function selectedPane(ids) {
   return '<div class="mk-pane-head d-flex align-items-center gap-2 flex-wrap">' +
       '<h5 class="mb-0">' + ids.length + ' batches selected</h5>' +
       '<span class="small text-muted">' +
-        (bulkAction ? 'showing what ' + bulkAction + ' would do to each' : 'operations are in the batch pane on the left') +
+        (bulkAction ? 'showing what ' + bulkAction + ' would do to each'
+                    : 'Open narrows the selection to that batch and shows its mailboxes') +
       '</span>' +
     '</div>' +
     '<div class="mk-pane-scroll">' +
@@ -574,7 +577,12 @@ function batchHtml(b) {
   var pages = Math.max(1, Math.ceil(rest.length / U_PAGE));
   if (uPage >= pages) { uPage = pages - 1; }
   var from = uPage * U_PAGE, restPage = rest.slice(from, from + U_PAGE);
-  var page = picked.concat(restPage);
+  // R5b: the pinned block is paged too. Concatenating every ticked mailbox onto the page is
+  // what made select-all render 2000 rows, which is the failure the whole design avoids.
+  var pinPages = Math.max(1, Math.ceil(picked.length / PIN_PAGE));
+  if (pinPage >= pinPages) { pinPage = pinPages - 1; }
+  var pinFrom = pinPage * PIN_PAGE, pinShown = picked.slice(pinFrom, pinFrom + PIN_PAGE);
+  var page = pinShown.concat(restPage);
   uAllFiltered = picked.concat(rest).map(function (u) { return u.email; });
 
   return '<div class="mk-pane-head">' +
@@ -597,7 +605,7 @@ function batchHtml(b) {
         ? '<div class="mk-pane-scroll">' + emptyState('This batch has no mailboxes.', 'Nothing was added to it.') + '</div>'
         : !page.length
           ? '<div class="mk-pane-scroll">' + emptyState('No mailbox matches this filter.', users.length + ' mailboxes are in this batch.') + '</div>'
-          : '<div class="mk-pane-scroll">' + table(page, picked.length) + '</div>') +
+          : '<div class="mk-pane-scroll">' + table(page, pinShown.length, picked.length, pinFrom) + '</div>') +
     '<div class="mk-pane-foot d-flex align-items-center gap-2 py-1">' +
       '<input class="form-control form-control-sm" style="max-width:13rem;" placeholder="Find a mailbox" value="' + uFilter + '"' +
         ' oninput="uFilter=this.value; uPage=0; render()">' +
@@ -613,7 +621,16 @@ function batchHtml(b) {
 
 
 
-function table(page, pinned) {
+function pinPager(shown, total, from) {
+  if (total <= shown && from === 0) { return ''; }
+  return '<tr class="table-warning"><td colspan="7" class="py-1" style="font-size:.72rem;">' +
+    '<button class="btn btn-sm btn-outline-secondary" style="padding:0 .35rem;" onclick="pagePinned(-1)">&lsaquo;</button> ' +
+    '<strong>ticked ' + (from + 1) + '-' + (from + shown) + ' of ' + total + '</strong> ' +
+    '<button class="btn btn-sm btn-outline-secondary" style="padding:0 .35rem;" onclick="pagePinned(1)">&rsaquo;</button>' +
+    '</td></tr>';
+}
+function pagePinned(d) { pinPage = Math.max(0, pinPage + d); render(); }
+function table(page, pinned, pinnedTotal, pinFromIdx) {
   uPageEmails = page.map(function (u) { return u.email; });
   var allTicked = uAllFiltered.length > 0 && uAllFiltered.every(function (e) { return usel[e]; });
   return '<table class="table table-sm table-hover align-middle mb-0">' +
@@ -625,9 +642,11 @@ function table(page, pinned) {
       '<th style="width:5.5rem;" class="text-end">Items</th>' +
       '<th style="width:7.5rem;" class="u-dim">Last sync</th><th class="u-dim">Error</th><th style="width:10rem;" class="text-end"></th>' +
     '</tr></thead><tbody>' +
+    (pinnedTotal ? pinPager(pinned, pinnedTotal, pinFromIdx) : '') +
     page.map(function (u, idx) {
       var sep = (pinned && idx === pinned)
-        ? '<tr class="table-light"><td colspan="7" class="py-1 text-muted" style="font-size:.7rem;">OTHER MAILBOXES</td></tr>' : '';
+        ? '<tr class="table-light"><td colspan="7" class="py-1 d-flex align-items-center gap-2 text-muted" style="font-size:.7rem;">' +
+            '<span>OTHER MAILBOXES</span></td></tr>' : '';
       var act = u.st === 'Failed' ? '<button class="btn btn-sm btn-primary me-1">Retry</button>'
               : u.st === 'NeedsApproval' ? '<button class="btn btn-sm btn-warning me-1">Approve</button>'
               : u.st === 'Synced' ? '<button class="btn btn-sm btn-success me-1">Complete</button>'
