@@ -84,6 +84,8 @@
             </select>
           </div>
 
+          <div id="bActions"></div>
+
           <div class="mk-pane-scroll" id="bList"></div>
 
           <div class="mk-pane-foot d-flex align-items-center gap-2 py-1">
@@ -198,6 +200,7 @@ function renderList() {
       '<span class="badge bg-' + B_BADGE[b.status] + '">' + b.status + '</span>' +
     '</div>');
   }
+  document.getElementById('bActions').innerHTML = batchActions();
   document.getElementById('bList').innerHTML = html.join('');
   document.getElementById("bPager").textContent = all.length ? (from + 1) + "-" + (from + list.length) + " of " + all.length : "0";
 }
@@ -291,6 +294,37 @@ function selectedPane(ids) {
       '<span class="small text-muted">' + (from + 1) + '-' + (from + page.length) + ' of ' + ids.length + ' selected batches</span>' +
       '<button class="btn btn-sm btn-outline-secondary" onclick="pageSel(1)">&rsaquo;</button>' +
     '</div>';
+}
+// Batch operations live in the batch pane, whether one batch is ticked or eight hundred.
+// The right pane is never batch-scoped: with one ticked it is entirely about that batch's
+// mailboxes, with several it is the list of what is selected.
+function batchActions() {
+  var ids = selIds();
+  if (!ids.length) { return ''; }
+  var btn = 'padding:.1rem .4rem;font-size:.78rem;';
+  var ok = ids.filter(function (i) { return !bulkAction || verdict(bulkAction, batches[i])[0]; }).length;
+  return '<div class="bg-light border-bottom">' +
+    '<div class="px-2 py-1 d-flex gap-1 align-items-center">' +
+      '<strong class="small me-1 text-nowrap">' + (ids.length === 1 ? batches[ids[0]].name : ids.length + ' ticked') + '</strong>' +
+      ['Complete','Schedule','Stop','Resume','Delete'].map(function (a) {
+        return '<button class="btn btn-sm ' + (bulkAction === a ? 'btn-warning' : a === 'Delete' ? 'btn-outline-danger' : 'btn-outline-secondary') +
+          '" style="' + btn + '" onclick="setBulk(\'' + a + '\')">' + a + '</button>';
+      }).join('') +
+      '<button class="btn btn-sm btn-outline-secondary ms-auto" style="' + btn + '" title="Untick all" onclick="clearSel()">&times;</button>' +
+    '</div>' +
+    (bulkAction
+      ? '<div class="px-2 pb-1 d-flex gap-1 align-items-center">' +
+          '<input class="form-control form-control-sm" style="width:7.5rem;font-size:.78rem;" placeholder="Ticket">' +
+          (bulkAction === 'Schedule'
+            ? '<input type="datetime-local" class="form-control form-control-sm" style="width:11rem;font-size:.78rem;" value="2026-09-25T19:00">'
+            : '<span class="small text-muted text-truncate">' +
+                (ids.length === 1 ? verdict(bulkAction, batches[ids[0]])[1] : ok + ' of ' + ids.length + ', rest skipped') + '</span>') +
+          '<button class="btn btn-sm btn-warning ms-auto" style="' + btn + '"' + (ok ? '' : ' disabled') + '>Confirm' +
+            (ids.length === 1 ? '' : ' ' + ok) + '</button>' +
+          '<button class="btn btn-sm btn-outline-secondary" style="' + btn + '" onclick="setBulk(null)">Cancel</button>' +
+        '</div>'
+      : '') +
+  '</div>';
 }
 function pageSel(d) { selPage = Math.max(0, selPage + d); render(); }
 function openOnly(i) { sel = {}; sel[i] = 1; bulkAction = null; selPage = 0; location.hash = '#/batch/' + i; render(); }

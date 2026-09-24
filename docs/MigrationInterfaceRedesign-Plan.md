@@ -40,52 +40,88 @@ this plan says where each one lands.
 5. Nothing is addressable. Which batch is expanded lives in `expandedBatch`, so browser
    Back, refresh and a circuit reconnect all lose it.
 
-## The accepted shape
+## Requirements
 
-Two panes, from `.agents/mockups/migration-v3.html`. Every rule below was a correction the
-owner made during review; they are requirements, not preferences.
+Every line below is an owner ruling from the 2026-09-24 design session, most of them made by
+rejecting something I had built. They are requirements, not preferences, and the mockup
+`.agents/mockups/migration-v3.html` is the reference implementation of all of them.
 
-- **Left pane: batches only. Right pane: mailboxes only.** No batch-level control exists in
-  the right pane, so nothing above the mailbox checkboxes can be mistaken for acting on
-  them. Scope is established by which pane a control is in, never by a label.
-- **One selection concept per pane.** The highlight says what you are looking at; the tick
-  says what an operation will hit. Opening a batch never changes the ticks.
-- **A batch is operated on by ticking it**, including a single batch. Opening is viewing.
-- **The right pane always shows the selection.** One batch ticked and it shows that batch's
-  mailboxes; more than one and it lists exactly the ticked batches, **with its own pager**
-  reading "1-40 of 847 selected batches" so it is unmistakable that you are paging the
-  selection and not the catalogue. Each row there has Open and Remove-from-selection. This
-  is what satisfies "no hiding selected items off the page": the selection has a home that
-  displays it in full, so the left list never has to hold anything back from its own filter
-  or pager. Owner ruling 2026-09-24, after an earlier pinned-rows design was rejected.
-- **The left list stays a plain paged list** -- checkboxes, filter, pager, nothing pinned,
-  no dividers, no action bar. Selecting and browsing do not fight for the same space.
-- **Action groups sit at the TOP of their own pane, above the rows they act on, and never
-  scroll.** Batch operations head the selection pane on the right, above the list of ticked
-  batches:
-  `N ticked | Complete | Schedule | Stop | Resume | Delete | x`, with the ticket field, the
-  datetime when scheduling, and Confirm on a second line of the same block. Mailbox
-  operations sit in the same place when a single batch is open: directly under the batch
-  identity line, above the mailbox table. Owner ruling 2026-09-24: **not a footer** --
-  actions belong above their rows, which is what every other list UI does and what operators
-  expect. Only one action group is ever on screen, because the right pane shows either a
-  batch selection or one batch's mailboxes, never both.
-- **Both action groups behave identically**: outline buttons until one is picked, the picked
-  one highlighted, a per-row outcome written against every affected row, a ticket required,
-  and Confirm carrying the eligible count. No colour or layout difference between the batch
-  and mailbox bars -- the earlier asymmetry was an accident and the owner caught it.
-- **"Untick" is only used where checkboxes exist.** The right pane says "Clear selection" and
-  "Remove from selection"; the left list, which has the checkboxes, says untick.
-- **Per-row outcome preview.** Staging an operation annotates each ticked row with what it
-  will do to that row ("will be completed", "skipped, Stopped") and the Confirm button
-  carries the eligible count. Ineligible rows are never sent.
-- **Both lists page** (batches 40, mailboxes 50) with filter and sort applied over the whole
-  set, not the page. Select-all covers everything the filter matches.
-- **Column header row inside the scrolling list**, sticky, sharing the rows' grid so the
-  scrollbar cannot offset it: Batch / Synced / Failed / Status. The failure count is a
-  labelled column, not a bare red number.
-- **Fixed grid columns** so counts and badges align on every row.
-- **Addressable**: each batch is a route, so Back, refresh and reconnect all work.
+### Structure
+
+R1. Two panes. Batch list on the left, detail on the right. The pane structure itself was
+accepted early and is not in question.
+
+R2. **The left pane is about batches. The right pane is about the selection.** With one
+batch ticked the right pane is **entirely and only** about that batch's mailboxes -- no
+batch-scoped control appears in it at all. With more than one ticked it lists exactly the
+ticked batches.
+
+R3. **Batch operations live in the batch pane**, whether one batch is ticked or eight
+hundred. They are never in the right pane.
+
+R4. **The multi-batch view has its own pager**, labelled so it is unmistakable that it pages
+the selection ("1-40 of 847 selected batches"), not the catalogue.
+
+R5. **Nothing is pinned into the browse list.** No ticked-rows section at the top, no
+dividers. The left list is a plain paged list. The selection is visible because it has its
+own pane, not because rows are held back from the filter.
+
+R6. **Actions sit at the top of the thing they act on. Never a footer.** That is what every
+other list UI does and what operators expect.
+
+### Selection
+
+R7. Checkboxes on batches **and** on mailboxes.
+
+R8. **Select-all means all. No cap.** "Select up to the cap" is not select-all.
+
+R9. Ticking and opening are different acts. Opening a batch never discards a selection.
+
+R10. "Untick" is only said where checkboxes exist. The right pane says "Clear selection" and
+"Remove from selection".
+
+R11. No control that acts on a selection may be off screen while that selection exists, and
+no selected item may be hidden by a filter or a page change.
+
+### Actions
+
+R12. **Both action bars are identical** in look and behaviour: outline buttons, the picked
+one highlighted, a per-row outcome written against every affected row, a ticket required, and
+Confirm carrying the eligible count. Ineligible rows are listed as skipped and nothing is
+sent for them.
+
+R13. Scheduled completion (item 12) is reachable without hunting, and per-mailbox actions
+(item 13) have a home. Neither is buried inside a single dialog on one status.
+
+### Legibility
+
+R14. **One line per batch row.** Fixed columns so counts and badges align on every row.
+
+R15. **Nothing clipped** -- not the counts, and not the trailing identifier in a batch name.
+Columns are sized for real magnitudes: four-digit counts, three-digit failure counts.
+
+R16. **A column header row** naming Batch / Synced / Failed / Status, rendered inside the
+scrolling box so the scrollbar cannot shift it out of alignment with the rows.
+
+R17. **No unlabelled values.** A bare coloured number with no header is not acceptable.
+
+R18. **One fact in one place.** A batch's state is not restated as a badge and a sentence and
+a bar and a summary strip. The page must be scannable at a glance.
+
+R19. **Ambiguity is fixed by structure, not by labels.** Adding a caption to explain what a
+control acts on is not a fix; putting it where its scope is obvious is.
+
+### Scale and behaviour
+
+R20. Both lists page. The page must stay usable at 2000 batches and 2000 mailboxes per batch,
+which means no view may render the full set -- Blazor Server pushes a render diff per row over
+the circuit and that is how the Defender page died.
+
+R21. Filter and sort apply over the whole set, not the rendered page, on **both** lists. The
+mailbox list has sorting today; it must not lose it.
+
+R22. **Browser Back works**, and refresh and a circuit reconnect keep your place, because the
+open batch is addressable rather than held in component state.
 
 ## Slices
 
@@ -106,9 +142,10 @@ changes.
 list left, mailbox table right, each with its own scroll region, sticky header and pinned
 footer. Same data, same actions, same gating, no new operations. Module version bump.
 
-**S3 -- Selection model.** Pinned ticked rows in both lists, the dividers, select-all over
-the filter, and the operation bar at the top of the ticked section. Remove the old bulk bar
-at `:460`. Module version bump.
+**S3 -- Selection model.** Checkboxes on both lists, select-all over the whole filter with no
+cap, the batch operation bar at the top of the left pane, and the multi-batch selection view
+with its own pager in the right pane. Remove the old bulk bar at `:460`. Module version bump.
+Satisfies R2-R12.
 
 **S4 -- Outcome preview.** Per-row eligibility annotation and the eligible count on Confirm,
 replacing the current blanket staging. This is where Known Failure Class 2 (success
@@ -134,8 +171,7 @@ version bump.
    each slice and check the assertions still bite.
 3. **Render volume.** Blazor Server pushes a render diff per row over the circuit; the
    Defender page died this way. Paging is what keeps this safe, so no slice may render the
-   full set. Pinned ticked rows are the one exception, which is why select-all-then-act
-   needs its own look before S3 ships.
+   full set -- there is no exception, including a select-all of every batch (R20).
 4. **Protected-principal gate, ticket, audit and notification** obligations are unchanged
    and apply to every action the new layout exposes, including per-mailbox actions.
 
@@ -148,9 +184,9 @@ pinned design with it. With the selection living in its own paged pane, select-a
 40 rows there and 40 in the left list whatever the selection size, so trap 3 does not fire
 and nothing needs limiting.
 
-**Q2. Does removing the batch buttons from the right pane need a transition?** Today an
-operator completes a batch from the expanded view. After S2 they must tick it. That is the
-safety gain, but it is a habit change and worth confirming it is wanted.
+**Q2. Does the habit change need a transition?** Today an operator completes a batch from
+the expanded view. After S3 they tick it in the left pane and act there. That is the safety
+gain and it follows from R2 and R3, but it is a habit change and worth confirming.
 
 ## Acceptance
 
