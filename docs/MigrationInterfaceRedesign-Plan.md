@@ -51,13 +51,31 @@ owner made during review; they are requirements, not preferences.
 - **One selection concept per pane.** The highlight says what you are looking at; the tick
   says what an operation will hit. Opening a batch never changes the ticks.
 - **A batch is operated on by ticking it**, including a single batch. Opening is viewing.
-- **Ticked rows are pinned to the top of their list**, above an "OTHER BATCHES" /
-  "OTHER MAILBOXES" divider, and are exempt from the filter and the pager. A selected item
-  can therefore never be off the page -- the item-14 clause is satisfied structurally, not
-  by a warning that says something is hidden.
-- **Operations sit at the top of the ticked section**, directly above the rows they act on:
-  `N ticked | Complete | Schedule | Stop | Resume | Delete | x`, with the ticket field,
-  the datetime when scheduling, and Confirm on a second line of the same block.
+- **The right pane always shows the selection.** One batch ticked and it shows that batch's
+  mailboxes; more than one and it lists exactly the ticked batches, **with its own pager**
+  reading "1-40 of 847 selected batches" so it is unmistakable that you are paging the
+  selection and not the catalogue. Each row there has Open and Remove-from-selection. This
+  is what satisfies "no hiding selected items off the page": the selection has a home that
+  displays it in full, so the left list never has to hold anything back from its own filter
+  or pager. Owner ruling 2026-09-24, after an earlier pinned-rows design was rejected.
+- **The left list stays a plain paged list** -- checkboxes, filter, pager, nothing pinned,
+  no dividers, no action bar. Selecting and browsing do not fight for the same space.
+- **Action groups sit at the TOP of their own pane, above the rows they act on, and never
+  scroll.** Batch operations head the selection pane on the right, above the list of ticked
+  batches:
+  `N ticked | Complete | Schedule | Stop | Resume | Delete | x`, with the ticket field, the
+  datetime when scheduling, and Confirm on a second line of the same block. Mailbox
+  operations sit in the same place when a single batch is open: directly under the batch
+  identity line, above the mailbox table. Owner ruling 2026-09-24: **not a footer** --
+  actions belong above their rows, which is what every other list UI does and what operators
+  expect. Only one action group is ever on screen, because the right pane shows either a
+  batch selection or one batch's mailboxes, never both.
+- **Both action groups behave identically**: outline buttons until one is picked, the picked
+  one highlighted, a per-row outcome written against every affected row, a ticket required,
+  and Confirm carrying the eligible count. No colour or layout difference between the batch
+  and mailbox bars -- the earlier asymmetry was an accident and the owner caught it.
+- **"Untick" is only used where checkboxes exist.** The right pane says "Clear selection" and
+  "Remove from selection"; the left list, which has the checkboxes, says untick.
 - **Per-row outcome preview.** Staging an operation annotates each ticked row with what it
   will do to that row ("will be completed", "skipped, Stopped") and the Confirm button
   carries the eligible count. Ineligible rows are never sent.
@@ -73,11 +91,16 @@ owner made during review; they are requirements, not preferences.
 
 Each slice is its own commit with its own verification. S1 and S2 carry no behaviour change.
 
-**S1 -- Route and state.** Give the Status tab a batch route
-(`/migration/batch/{BatchName}`) and drive the open batch from the route parameter instead
-of `expandedBatch`. Selection state (`selectedBatches`, and the new mailbox selection) moves
-to fields that survive a re-render. No layout change. Base app version bump: routing is
-shared infrastructure.
+**S1 -- Addressable state.** Drive the open batch from a **query parameter on the existing
+route** (`/migration?batch=<name>`), not from `expandedBatch`, and not from a new path
+segment. A path segment is ruled out on evidence: `Components/Shared/ModuleVersion.razor:23`
+and `Components/Layout/UsageTracker.razor:53` both resolve the current module through
+`Catalog.GetByRoute(route)`, which matches the catalog's exact `Route = "migration"`
+(`Modules/ModuleCatalog.cs:202`), so `/migration/batch/x` would stop resolving and would
+silently break the version badge and usage telemetry. A query parameter also avoids
+inventing encoding rules for operator-supplied batch names. Selection state moves to fields
+that survive a re-render. No layout change. Module version bump only -- nothing shared
+changes.
 
 **S2 -- Split the panes.** Replace the nested-row expansion with the two-pane layout: batch
 list left, mailbox table right, each with its own scroll region, sticky header and pinned
@@ -118,10 +141,12 @@ version bump.
 
 ## Open questions
 
-**Q1. Does select-all across a filter need a cap?** With ticked rows pinned, ticking 2000
-batches renders 2000 rows and reintroduces trap 3. Options: cap the tick count, or represent
-a select-all as a stated rule ("all 847 matching In progress") rather than 847 pinned rows.
-Blocks S3 only.
+**Q1 is closed, 2026-09-24. No cap.** The question only existed because ticked rows were
+pinned into the left list, so a select-all had to render every one of them. The owner
+rejected a cap outright -- "that's not Select ALL, it's Select up to the cap" -- and the
+pinned design with it. With the selection living in its own paged pane, select-all renders
+40 rows there and 40 in the left list whatever the selection size, so trap 3 does not fire
+and nothing needs limiting.
 
 **Q2. Does removing the batch buttons from the right pane need a transition?** Today an
 operator completes a batch from the expanded view. After S2 they must tick it. That is the

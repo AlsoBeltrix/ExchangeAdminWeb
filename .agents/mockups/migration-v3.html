@@ -84,8 +84,6 @@
             </select>
           </div>
 
-          <div id="bActions"></div>
-
           <div class="mk-pane-scroll" id="bList"></div>
 
           <div class="mk-pane-foot d-flex align-items-center gap-2 py-1">
@@ -118,8 +116,8 @@ var U_BADGE = {Synced:'success',Syncing:'info text-dark',Failed:'danger',NeedsAp
 
 var batches = [], nBatches = 100, uPerBatch = 0, bPage = 0, PAGE = 40, userCache = {};
 var uFilter = '', uStatus = '', uPage = 0, U_PAGE = 50, pending = null, lastHash = null;
-var sel = {}, bulkAction = null;
-var usel = {}, uPageEmails = [], uAllFiltered = [];
+var sel = {}, bulkAction = null, selPage = 0;
+var usel = {}, uPageEmails = [], uAllFiltered = [], ubulk = null;
 
 function buildBatches(n) {
   srand(4242); batches = []; userCache = {};
@@ -174,81 +172,48 @@ function matching() {
   });
 }
 function renderList() {
-  // A ticked batch is NEVER off the page. Ticked rows are pinned above the list and are not
-  // subject to the filter or the pager; paging walks the rest.
-  var picked = batches.filter(function (b) { return sel[b.i]; });
-  var rest = matching().filter(function (b) { return !sel[b.i]; });
-  var pages = Math.max(1, Math.ceil(rest.length / PAGE));
+  // Plain paged list. No pinning: when more than one batch is ticked the right pane shows the
+  // selection, so nothing has to be held at the top of this list to stay visible.
+  var all = matching();
+  var pages = Math.max(1, Math.ceil(all.length / PAGE));
   if (bPage >= pages) { bPage = pages - 1; }
   var from = bPage * PAGE;
-  var list = picked.concat(rest.slice(from, from + PAGE));
-  var open = currentBatch(), html = [], actions = [];
+  var list = all.slice(from, from + PAGE);
+  var open = selIds().length === 1 ? batches[selIds()[0]] : currentBatch();
+  var html = [];
   // Header lives INSIDE the scrolling list so it shares the rows' width; the scrollbar cannot
   // shift it out of alignment. The operation bar lives outside, so it never scrolls away.
   html.push('<div class="v3-batch v3-head" style="position:sticky;top:0;z-index:2;">' +
     '<span></span><span>Batch</span><span class="v3-count">Synced</span>' +
     '<span class="v3-count">Failed</span><span style="text-align:center;">Status</span></div>');
-  // The operations sit at the top of the ticked section, directly above the rows they act on.
-  if (picked.length) {
-    var ok = picked.filter(function (b) { return !bulkAction || verdict(bulkAction, b)[0]; }).length;
-    var btn = 'padding:.1rem .4rem;font-size:.78rem;';
-    actions.push('<div class="bg-light border-bottom">' +
-      '<div class="px-2 py-1 d-flex gap-1 align-items-center">' +
-        '<strong class="small me-1 text-nowrap">' + picked.length + ' ticked</strong>' +
-        ['Complete','Schedule','Stop','Resume','Delete'].map(function (a) {
-          return '<button class="btn btn-sm ' + (bulkAction === a ? 'btn-warning' : a === 'Delete' ? 'btn-outline-danger' : 'btn-outline-secondary') +
-            '" style="' + btn + '" onclick="setBulk(\'' + a + '\')">' + a + '</button>';
-        }).join('') +
-        '<button class="btn btn-sm btn-outline-secondary ms-auto" style="' + btn + '" title="Untick all" onclick="clearSel()">&times;</button>' +
-      '</div>' +
-      (bulkAction
-        ? '<div class="px-2 pb-1 d-flex gap-1 align-items-center">' +
-            '<input class="form-control form-control-sm" style="width:7.5rem;font-size:.78rem;" placeholder="Ticket">' +
-            (bulkAction === 'Schedule'
-              ? '<input type="datetime-local" class="form-control form-control-sm" style="width:11rem;font-size:.78rem;" value="2026-09-25T19:00">'
-              : '<span class="small text-muted text-truncate">' + ok + ' of ' + picked.length + ', rest skipped</span>') +
-            '<button class="btn btn-sm btn-warning ms-auto" style="' + btn + '"' + (ok ? '' : ' disabled') + '>Confirm ' + ok + '</button>' +
-            '<button class="btn btn-sm btn-outline-secondary" style="' + btn + '" onclick="setBulk(null)">Cancel</button>' +
-          '</div>'
-        : '') +
-    '</div>');
-  }
   for (var i = 0; i < list.length; i++) {
     var b = list[i];
-    if (picked.length && i === picked.length) {
-      html.push('<div class="px-2 py-1 bg-light border-bottom text-muted" style="font-size:.7rem;">OTHER BATCHES</div>');
-    }
-    var v = (bulkAction && sel[b.i]) ? verdict(bulkAction, b) : null;
     html.push('<div class="v3-batch' + (open && open.i === b.i ? ' active' : '') +
-      (v && !v[0] ? ' text-muted' : '') +
       '" onclick="location.hash=\'#/batch/' + b.i + '\'">' +
       '<input class="form-check-input mt-0" type="checkbox" onclick="event.stopPropagation()"' +
         ' onchange="tick(' + b.i + ', this.checked)"' + (sel[b.i] ? ' checked' : '') + '>' +
-      '<span class="text-truncate">' + b.name +
-        (v ? ' <span class="small ' + (v[0] ? 'text-success' : 'text-muted') + '">' + v[1] + '</span>' : '') + '</span>' +
+      '<span class="text-truncate">' + b.name + '</span>' +
       '<span class="text-muted v3-count" style="font-size:.78rem;">' + b.synced + '/' + b.total +
         '</span>' + '<span class="text-danger v3-count" style="font-size:.78rem;">' + (b.failed ? b.failed : '') + '</span>' +
       '<span class="badge bg-' + B_BADGE[b.status] + '">' + b.status + '</span>' +
     '</div>');
   }
-  document.getElementById('bActions').innerHTML = actions.join('');
   document.getElementById('bList').innerHTML = html.join('');
-  var shownRest = Math.min(PAGE, Math.max(0, rest.length - from));
-  document.getElementById('bPager').textContent = rest.length ? (from + 1) + '-' + (from + shownRest) + ' of ' + rest.length : '0';
+  document.getElementById("bPager").textContent = all.length ? (from + 1) + "-" + (from + list.length) + " of " + all.length : "0";
 }
 // Ticking and opening are different things and stay that way: the highlight says what you are
 // looking at, the tick says what an operation will hit. Opening never changes the ticks.
 function tick(i, on) {
   if (on) { sel[i] = 1; } else { delete sel[i]; }
-  renderList();
+  bulkAction = null; selPage = 0; render();
 }
 // Select-all covers everything the filter matches, not just the rendered page.
 function tickAll(on) {
   matching().forEach(function (b) { if (on) { sel[b.i] = 1; } else { delete sel[b.i]; } });
-  renderList();
+  bulkAction = null; selPage = 0; render();
 }
 function selIds() { return Object.keys(sel).map(Number); }
-function clearSel() { sel = {}; bulkAction = null; bPage = 0; renderList(); }
+function clearSel() { sel = {}; bulkAction = null; selPage = 0; render(); }
 function pageList(d) { bPage = Math.max(0, bPage + d); renderList(); }
 
 // ---- address is the state ----
@@ -259,13 +224,76 @@ function currentBatch() {
 window.addEventListener('hashchange', render);
 
 function render() {
-  if (location.hash !== lastHash) { lastHash = location.hash; pending = null; bulkAction = null; usel = {}; uPage = 0; uFilter = ''; uStatus = ''; }
+  if (location.hash !== lastHash) { lastHash = location.hash; pending = null; bulkAction = null; usel = {}; ubulk = null; uPage = 0; uFilter = ''; uStatus = ''; }
   renderList();
   var right = document.getElementById('mkRight');
   if (location.hash === '#/housekeeping') { right.innerHTML = housekeeping(); return; }
-  var b = currentBatch();
+  // The right pane always shows what is selected. More than one ticked and it lists those
+  // batches with their own pager, so there is never a question about which batch is displayed.
+  var ids = selIds();
+  if (ids.length > 1) { right.innerHTML = selectedPane(ids); return; }
+  var b = ids.length === 1 ? batches[ids[0]] : currentBatch();
   right.innerHTML = b ? batchHtml(b) : '<div class="p-5 text-center text-muted">Pick a batch.</div>';
 }
+
+function selectedPane(ids) {
+  var pages = Math.max(1, Math.ceil(ids.length / PAGE));
+  if (selPage >= pages) { selPage = pages - 1; }
+  var from = selPage * PAGE, page = ids.slice(from, from + PAGE);
+  var ok = ids.filter(function (i) { return !bulkAction || verdict(bulkAction, batches[i])[0]; }).length;
+  var btn = 'padding:.1rem .4rem;font-size:.78rem;';
+
+  return '<div class="mk-pane-head">' +
+      '<div class="d-flex align-items-center gap-1 flex-wrap">' +
+        '<h5 class="mb-0 me-1">' + ids.length + ' batches selected</h5>' +
+        ['Complete','Schedule','Stop','Resume','Delete'].map(function (a) {
+          return '<button class="btn btn-sm ' + (bulkAction === a ? 'btn-warning' : a === 'Delete' ? 'btn-outline-danger' : 'btn-outline-secondary') +
+            '" style="' + btn + '" onclick="setBulk(\'' + a + '\')">' + a + '</button>';
+        }).join('') +
+        '<button class="btn btn-sm btn-outline-secondary ms-auto" style="' + btn + '" onclick="clearSel()">Clear selection</button>' +
+      '</div>' +
+      (bulkAction
+        ? '<div class="d-flex gap-1 align-items-center mt-1">' +
+            '<input class="form-control form-control-sm" style="width:9rem;font-size:.78rem;" placeholder="Ticket">' +
+            (bulkAction === 'Schedule'
+              ? '<input type="datetime-local" class="form-control form-control-sm" style="width:12rem;font-size:.78rem;" value="2026-09-25T19:00">'
+              : '<span class="small text-muted">' + ok + ' of ' + ids.length + ', rest skipped</span>') +
+            '<button class="btn btn-sm btn-warning ms-auto" style="' + btn + '"' + (ok ? '' : ' disabled') + '>Confirm ' + ok + '</button>' +
+            '<button class="btn btn-sm btn-outline-secondary" style="' + btn + '" onclick="setBulk(null)">Cancel</button>' +
+          '</div>'
+        : '') +
+    '</div>' +
+    '<div class="mk-pane-scroll">' +
+      '<table class="table table-sm table-hover align-middle mb-0">' +
+        '<thead class="table-light" style="position:sticky;top:0;z-index:2;"><tr>' +
+          '<th>Batch</th><th style="width:5.5rem;">Status</th><th style="width:5.5rem;" class="text-end">Synced</th>' +
+          '<th style="width:4rem;" class="text-end">Failed</th>' +
+          (bulkAction ? '<th style="width:11rem;">Outcome</th>' : '') +
+          '<th style="width:6.5rem;" class="text-end"></th>' +
+        '</tr></thead><tbody>' +
+        page.map(function (i) {
+          var b = batches[i], v = bulkAction ? verdict(bulkAction, b) : null;
+          return '<tr' + (v && !v[0] ? ' class="text-muted"' : '') + '>' +
+            '<td class="text-truncate" style="max-width:0;">' + b.name + '</td>' +
+            '<td><span class="badge bg-' + B_BADGE[b.status] + '">' + b.status + '</span></td>' +
+            '<td class="text-end mk-stat">' + b.synced + '/' + b.total + '</td>' +
+            '<td class="text-end mk-stat' + (b.failed ? ' text-danger' : '') + '">' + (b.failed || '') + '</td>' +
+            (bulkAction ? '<td class="small ' + (v[0] ? 'text-success' : 'text-muted') + '">' + v[1] + '</td>' : '') +
+            '<td class="text-end text-nowrap">' +
+              '<button class="btn btn-sm btn-outline-primary me-1" style="' + btn + '" onclick="openOnly(' + i + ')">Open</button>' +
+              '<button class="btn btn-sm btn-outline-secondary" style="' + btn + '" title="Remove from selection" onclick="tick(' + i + ', false)">&times;</button>' +
+            '</td></tr>';
+        }).join('') +
+      '</tbody></table>' +
+    '</div>' +
+    '<div class="mk-pane-foot d-flex align-items-center gap-2 py-1">' +
+      '<button class="btn btn-sm btn-outline-secondary" onclick="pageSel(-1)">&lsaquo;</button>' +
+      '<span class="small text-muted">' + (from + 1) + '-' + (from + page.length) + ' of ' + ids.length + ' selected batches</span>' +
+      '<button class="btn btn-sm btn-outline-secondary" onclick="pageSel(1)">&rsaquo;</button>' +
+    '</div>';
+}
+function pageSel(d) { selPage = Math.max(0, selPage + d); render(); }
+function openOnly(i) { sel = {}; sel[i] = 1; bulkAction = null; selPage = 0; location.hash = '#/batch/' + i; render(); }
 
 
 function batchHtml(b) {
@@ -292,6 +320,7 @@ function batchHtml(b) {
         '<button class="btn btn-sm btn-outline-secondary" onclick="togglePane()" id="paneToggle">Hide list</button>' +
       '</div>' +
     '</div>' +
+    userSelBar(users.length) +
     '<div class="mk-pane-scroll">' + table(page, picked.length) + '</div>' +
     '<div class="mk-pane-foot d-flex align-items-center gap-2 py-1">' +
       '<input class="form-control form-control-sm" style="max-width:13rem;" placeholder="Find a mailbox" value="' + uFilter + '"' +
@@ -303,8 +332,7 @@ function batchHtml(b) {
       '<button class="btn btn-sm btn-outline-secondary" onclick="uPage=Math.max(0,uPage-1); render()">&lsaquo;</button>' +
       '<span class="small text-muted">' + (rest.length ? (from + 1) + '-' + (from + restPage.length) + ' of ' + rest.length : '0') + '</span>' +
       '<button class="btn btn-sm btn-outline-secondary" onclick="uPage=uPage+1; render()">&rsaquo;</button>' +
-    '</div>' +
-    userSelBar(users.length);
+    '</div>';
 }
 
 
@@ -329,7 +357,10 @@ function table(page, pinned) {
               : u.st === 'Syncing' ? '<button class="btn btn-sm btn-outline-warning me-1">Pause</button>' : '';
       return sep + '<tr><td><input class="form-check-input" type="checkbox"' + (usel[u.email] ? ' checked' : '') +
           ' onchange="utick(\'' + u.email + '\', this.checked)"></td>' +
-        '<td class="text-truncate" style="max-width:0;">' + u.email + '</td>' +
+        '<td class="text-truncate" style="max-width:0;">' + u.email +
+          (ubulk && usel[u.email]
+            ? ' <span class="small ' + (uverdict(ubulk, u)[0] ? 'text-success' : 'text-muted') + '">' + uverdict(ubulk, u)[1] + '</span>'
+            : '') + '</td>' +
         '<td><span class="badge bg-' + U_BADGE[u.st] + '">' + u.st + '</span></td>' +
         '<td class="text-end mk-stat">' + u.items.toLocaleString() + '</td>' +
         '<td><small>' + u.last + '</small></td>' +
@@ -337,23 +368,51 @@ function table(page, pinned) {
         '<td class="text-end text-nowrap">' + act + '<button class="btn btn-sm btn-outline-danger">Report</button></td></tr>';
     }).join('') + '</tbody></table>';
 }
+function byEmail(e) {
+  var b = currentBatch(), list = b ? usersFor(b) : [];
+  for (var i = 0; i < list.length; i++) { if (list[i].email === e) { return list[i]; } }
+  return null;
+}
+// Mirror of the batch-side verdict(): decided per mailbox, shown before anything is sent.
+function uverdict(a, u) {
+  if (!a || !u) { return [true, '']; }
+  if (a === 'Remove') { return [true, 'will be removed from the batch']; }
+  if (a === 'Complete') { return u.st === 'Synced' ? [true, 'will be completed'] : [false, 'skipped, ' + u.st]; }
+  if (a === 'Pause') { return u.st === 'Syncing' ? [true, 'will be paused'] : [false, 'skipped, ' + u.st]; }
+  return ['Failed','Stopped'].indexOf(u.st) >= 0 ? [true, 'will be resumed'] : [false, 'skipped, ' + u.st];
+}
+function setUBulk(a) { ubulk = a; render(); }
 function utick(e, on) { if (on) { usel[e] = 1; } else { delete usel[e]; } render(); }
 function utickAll(on) {
   uAllFiltered.forEach(function (e) { if (on) { usel[e] = 1; } else { delete usel[e]; } });
   render();
 }
-function uclear() { usel = {}; render(); }
+function uclear() { usel = {}; ubulk = null; render(); }
 function userSelBar(total) {
   var ids = Object.keys(usel);
   if (!ids.length) { return ''; }
-  return '<div class="mk-pane-foot d-flex align-items-center gap-2 py-1 flex-wrap">' +
-    '<span class="badge bg-primary">' + ids.length + ' ticked mailboxes</span>' +
-    '<span class="small text-muted">of ' + total + '</span>' +
-    '<button class="btn btn-sm btn-success">Complete</button>' +
-    '<button class="btn btn-sm btn-outline-warning">Pause</button>' +
-    '<button class="btn btn-sm btn-outline-success">Resume</button>' +
-    '<button class="btn btn-sm btn-danger">Remove</button>' +
-    '<button class="btn btn-sm btn-outline-secondary ms-auto" onclick="uclear()">Clear</button>' +
+  // Header, not footer: actions go above the rows they act on, which is where every other
+  // list UI puts them. Same staging model and same button treatment as the batch bar --
+  // outline until one is picked, then a preview per row and a ticket before anything runs.
+  var btn = 'padding:.1rem .4rem;font-size:.78rem;';
+  var ok = ids.filter(function (e) { return uverdict(ubulk, byEmail(e))[0]; }).length;
+  return '<div class="bg-light border-bottom">' +
+    '<div class="px-2 py-1 d-flex align-items-center gap-1">' +
+      '<strong class="small text-nowrap me-1">' + ids.length + ' of ' + total + ' ticked</strong>' +
+      ['Complete','Pause','Resume','Remove'].map(function (a) {
+        return '<button class="btn btn-sm ' + (ubulk === a ? 'btn-warning' : a === 'Remove' ? 'btn-outline-danger' : 'btn-outline-secondary') +
+          '" style="' + btn + '" onclick="setUBulk(\'' + a + '\')">' + a + '</button>';
+      }).join('') +
+      '<button class="btn btn-sm btn-outline-secondary ms-auto" style="' + btn + '" title="Untick all" onclick="uclear()">&times;</button>' +
+    '</div>' +
+    (ubulk
+      ? '<div class="px-2 pb-1 d-flex gap-1 align-items-center">' +
+          '<input class="form-control form-control-sm" style="width:7.5rem;font-size:.78rem;" placeholder="Ticket">' +
+          '<span class="small text-muted text-truncate">' + ok + ' of ' + ids.length + ', rest skipped</span>' +
+          '<button class="btn btn-sm btn-warning ms-auto" style="' + btn + '"' + (ok ? '' : ' disabled') + '>Confirm ' + ok + '</button>' +
+          '<button class="btn btn-sm btn-outline-secondary" style="' + btn + '" onclick="setUBulk(null)">Cancel</button>' +
+        '</div>'
+      : '') +
   '</div>';
 }
 
@@ -370,7 +429,7 @@ function verdict(a, b) {
   if (a === 'Resume') { return b.status === 'Stopped' ? [true, 'will be resumed'] : [false, 'skipped, ' + b.status]; }
   return b.status === 'Completed' ? [true, 'will be removed'] : [false, 'skipped, ' + b.status];
 }
-function setBulk(a) { bulkAction = a; render(); }
+function setBulk(a) { bulkAction = a; selPage = 0; render(); }
 
 var hkDays = 30;
 function housekeeping() {
