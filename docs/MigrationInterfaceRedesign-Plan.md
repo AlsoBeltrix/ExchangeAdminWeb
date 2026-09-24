@@ -75,7 +75,12 @@ R7. Checkboxes on batches **and** on mailboxes.
 
 R8. **Select-all means all. No cap.** "Select up to the cap" is not select-all.
 
-R9. Ticking and opening are different acts. Opening a batch never discards a selection.
+R9. **There is one concept: selection.** Highlighted, ticked, shown in the right pane and
+acted on are always the same set. Clicking a row selects only that row; the checkbox adds or
+removes. There is no separate "open" state. Owner ruling 2026-09-24, replacing an earlier
+design where ticking and opening were different acts -- "tick vs select vs left vs right is
+confusing and annoying". From the multi-batch list, **Open** on a row narrows the selection to
+that batch and the pane becomes its mailboxes.
 
 R10. "Untick" is only said where checkboxes exist. The right pane says "Clear selection" and
 "Remove from selection".
@@ -171,6 +176,29 @@ exists: all batches, the selection, or the open batch's mailboxes. It must name 
 R30. **Refresh is per pane.** Refreshing the batch list and refreshing one batch's mailboxes
 are different acts and both exist today (`:424`, `:628`); neither may silently do the other.
 
+R31. **Export Reports pulls a report for every ticked mailbox and delivers a zip, one text
+file per report.** It sits in the ticked-mailbox action bar beside Complete, Pause, Resume and
+Remove. Owner request 2026-09-24; one combined file was explicitly rejected.
+
+R31a. **It cannot run on the circuit.** Each report is a `Get-MigrationUserStatistics` that
+can take twenty minutes or more, so fifty ticked mailboxes is potentially a whole day. It runs
+as a background job through the existing bulk-job machinery
+(`docs/BulkJobRunner-Plan.md`), not in a request handler, and the operator is told the
+expected cost before it starts rather than watching a page that appears to do nothing.
+
+R31b. **Per-mailbox outcomes, and a partial result is still delivered.** R25 applies: three of
+six succeeding means a zip of those three and a named list of the three that failed, never a
+blanket failure and never a silent gap. One file per report is what makes a partial result
+unambiguous.
+
+R31c. **It reuses the kept reports.** Anything already fetched under R24a is packaged from the
+copy held, not pulled again.
+
+R31d. **Read-only, so no ticket and no protected-principal gate.** Fetching a report changes
+nothing. It is still audited as a read of migration data, and the zip is named for the batch
+and the time it was taken.
+
+
 ## Slices
 
 Each slice is its own commit with its own verification. S1 and S2 carry no behaviour change.
@@ -207,6 +235,12 @@ version bump. Satisfies R21.
 instead of an injected row, per-row action results replacing the single banner, person-search distinct from
 batch filtering, per-pane loading and refresh, distinct empty states, and a named export
 scope. Module version bump. Satisfies R23-R30.
+
+**S7 -- Export Reports.** The ticked-mailbox bulk report export: a background job through the
+existing bulk-job machinery, per-mailbox progress and outcomes, reuse of reports already held,
+and a zip of one text file per report with a named list of any that failed. Module version
+bump. Satisfies R31. This is the only slice that adds a new operation rather than relocating
+an existing one, and it can ship after the rest.
 
 ## Traps this must not walk into
 
