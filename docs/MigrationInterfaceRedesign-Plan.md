@@ -123,6 +123,46 @@ mailbox list has sorting today; it must not lose it.
 R22. **Browser Back works**, and refresh and a circuit reconnect keep your place, because the
 open batch is addressable rather than held in component state.
 
+### Every control has somewhere to put its output
+
+R23 is the rule the first draft of this list was missing, and it was caught by the owner
+asking where the Report button displays. R1-R22 were written from design corrections, not
+from an audit of the page's own controls, so a button with no destination survived. The
+remaining rules come from auditing `Components/Pages/Migration.razor` for everything that
+produces output.
+
+R23. **A control that produces output has a defined place for it.** A button with nowhere to
+render its result is a defect, not a detail to settle later.
+
+R24. **The per-mailbox report has a home.** Today it injects a `<pre>` into an expanded row
+(`:777-:790`), which is the nested expansion this redesign removes. It is detail about one
+mailbox in the open batch, so it belongs in the right pane as a further drill-down: the pane
+shows the report, with a control back to the mailbox list, and is addressable like the batch
+is (R22).
+
+R25. **Action results are reported per row, and never as a blanket banner.** Today one
+`batchActionResult` alert (`:434-:443`) speaks for an operation over N batches. A loop over N
+items must report per-item outcomes -- the same rule the outcome preview follows before the
+action, applied after it. The result appears in the pane that owns the action.
+
+R26. **Searching for a person is not the same control as filtering batches.** The page today
+has `SearchUser` (`:400`), which finds a mailbox across all batches and highlights it
+(`highlightedUser`, `:691`). The mockup's box only filters batch names. Both must exist, and
+finding a person must take the operator to the batch that holds them.
+
+R27. **Loading is shown in the pane that is loading**, not as a page-wide freeze. Today
+`IsBusy` (`:903-:905`) is one flag over eight operations and disables everything.
+
+R28. **Empty states are distinct and say which one applies**: no batches at all, no batch
+matching the filter, no mailbox matching the filter. "Nothing matches" for all three hides
+whether the filter or the data is the problem.
+
+R29. **Export says what it exports.** `Download CSV` (`:417`) is ambiguous once a selection
+exists: all batches, the selection, or the open batch's mailboxes. It must name its scope.
+
+R30. **Refresh is per pane.** Refreshing the batch list and refreshing one batch's mailboxes
+are different acts and both exist today (`:424`, `:628`); neither may silently do the other.
+
 ## Slices
 
 Each slice is its own commit with its own verification. S1 and S2 carry no behaviour change.
@@ -153,7 +193,12 @@ aggregation) is addressed in the UI: the operator sees per-row outcomes before c
 and the result banner must report per-row outcomes after. Module version bump.
 
 **S5 -- Filter, sort and paging on the mailbox table.** Currently absent entirely. Module
-version bump.
+version bump. Satisfies R21.
+
+**S6 -- Output destinations.** The mailbox report as a right-pane drill-down instead of an
+injected row, per-row action results replacing the single banner, person-search distinct from
+batch filtering, per-pane loading and refresh, distinct empty states, and a named export
+scope. Module version bump. Satisfies R23-R30.
 
 ## Traps this must not walk into
 
