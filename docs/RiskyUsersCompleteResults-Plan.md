@@ -153,30 +153,58 @@ while the response carries @odata.nextLink:
 
 Three distinguishable outcomes, never collapsed into each other:
 
-| Outcome | Meaning | Operator sees |
-| --- | --- | --- |
-| Complete | Graph stopped offering pages | the full sorted list, no notice |
-| CeilingHit | more exist; the module stopped asking | a refusal naming the next action |
-| Failure | a page request failed | the existing error alert; no rows |
+| Outcome | Meaning | `Users` | Operator sees |
+| --- | --- | --- | --- |
+| Complete | Graph stopped offering pages | the full set | the sorted list, no notice |
+| CeilingHit | more exist; the module stopped asking | **empty** | a refusal naming what to do |
+| Failure | a page request failed | **empty** | the existing error alert |
 
-`RiskyUserPage` gains the outcome and the page count; `Truncated` keeps its current
-meaning (more exist that were not fetched) so `RiskyUsers.razor:118-123` does not need
-re-wiring, only re-wording.
+**CeilingHit carries no rows, and the page branches on the outcome before it reaches the
+table.** This is a correction from this plan's first draft, which called CeilingHit a
+refusal in one paragraph and then said `RiskyUsers.razor` needed only re-wording because
+`Truncated` kept its meaning. Those two statements contradict each other:
+`RiskyUsers.razor:111` renders the table whenever `results.Count > 0` and `truncated`
+only adds a warning above it, so keeping that shape would produce exactly what this plan
+exists to remove -- an arbitrary subset of the tenant's risky users, rendered as a list,
+with a caption. The in-repo precedent for a large-list refusal is Defender for Endpoint:
+the refusal is a distinct outcome on the model (`Models/DefenderDeviceModels.cs:376`) and
+`Components/Pages/DefenderEndpointDevices.razor:230` branches it away from the table
+entirely. Follow that.
 
-### `MaxRows` changes meaning, and the config description must change with it
+`RiskyUserPage` therefore gains an explicit outcome and, for CeilingHit, the reason text.
+`Truncated` is either removed or derived from the outcome; it must not survive as an
+independent flag that a future edit can set while rows are still rendered.
 
-Today `MaxRows` is the `$top` page size, clamped 1-500. After this change, `$top` is
-always 500 (the documented maximum -- there is no reason to ask for smaller pages) and
-`MaxRows` becomes the **total ceiling across all pages**. The descriptor's description
-string in `Modules/ModuleCatalog.cs` currently reads "Maximum risky users fetched per
-query (Graph caps at 500)" and would be a lie the moment S2 lands. It must change in the
-same commit as S2.
+### The ceiling gets a NEW config key. Reusing `MaxRows` would ship a fix that does nothing.
 
-Proposed ceiling default: **10,000** (20 requests at 500/page). Coder-side call, stated
-rather than asked: it is an order of magnitude above the current cap, it is configurable,
-and the Defender precedent is that a ceiling exists and refuses honestly rather than
-being sized by guesswork. The first live run measures the real number and the default can
-be revised on evidence.
+`$top` becomes a constant 500 -- the documented maximum, and there is no reason to ask
+for smaller pages. The ceiling then needs a config value, and the tempting move is to
+redefine the existing `MaxRows` key from "page size" to "total ceiling".
+
+**That would leave the defect in place on this deployment.** `MaxRows` is declared with
+`DefaultValue: "500"` (`Modules/ModuleCatalog.cs:708`), and this module's configuration
+was entered by the owner and saved on 2026-09-02. `ModuleConfigService.GetValue`
+(`Services/ModuleConfigService.cs:60`) returns the STORED row, and a descriptor default
+does not overwrite a stored value. So a redefined `MaxRows` would be read back as 500,
+the ceiling would be 500, and the module would fetch one page and refuse -- the same
+result as today, from code that is correct. The plan would have shipped and changed
+nothing, and the symptom would look like the fix failing rather than like a stale config
+row.
+
+So: **add a new key, `MaxTotalRows`, `DefaultValue: "10000"`, and remove `MaxRows` from
+the descriptor.** A new key has no stored row, so the descriptor default is what is read
+on the first query after deploy. State in the commit that the orphaned `MaxRows` row is
+deliberately left in the shared config database -- deleting a row from the shared store
+is a data action needing its own authority, and an unread orphan is harmless.
+
+The old description string ("Maximum risky users fetched per query (Graph caps at 500)")
+does not survive either way; it describes behaviour that will not exist.
+
+Ceiling default **10,000** (20 requests at 500/page) is a coder-side call, stated rather
+than asked: an order of magnitude above the current cap, configurable, and the Defender
+precedent is that a ceiling exists and refuses honestly rather than being sized by
+guesswork. Manual check 1 measures the real number and the default can be revised on
+evidence.
 
 ### Sorting finally means something
 
@@ -193,10 +221,17 @@ Each slice is one commit, builds and passes green on its own.
 `DefenderApiClient.TryResolveRequestUri` shape:
 
 - A string starting with `/` keeps today's behaviour exactly: `GraphBaseUrl + endpoint`.
-- An absolute URI is accepted **only** if its scheme is `https` and its host equals the
-  Graph host, compared ordinal case-insensitively against the host parsed out of
-  `GraphBaseUrl` -- not a substring or `EndsWith` check, which `graph.microsoft.com.evil`
-  would satisfy. It is then sent unmodified.
+- An absolute URI is accepted **only** if its scheme is `https`, its host equals the
+  Graph host, **and its path begins with the `/v1.0` base path** -- all compared ordinal
+  case-insensitively against the components parsed out of `GraphBaseUrl`, never by
+  substring or `EndsWith`, which `graph.microsoft.com.evil` would satisfy. It is then
+  sent unmodified.
+- The base-path clause is not belt-and-braces. Today this client is confined to
+  `https://graph.microsoft.com/v1.0` by construction (`GraphTokenClient.cs:16,35`): no
+  caller can reach `/beta` or any other Graph surface through it. A host-only guard would
+  quietly widen that for every existing caller, which is a bigger change than the one
+  being asked for. Matching the base path keeps the client's reach exactly as it is and
+  adds only the ability to continue a query it already started.
 - Anything else is refused before the token is acquired, returning
   `(null, HttpStatusCode.BadRequest)`. The refusal must not leak the rejected URL into a
   message an operator sees.
@@ -207,9 +242,22 @@ escaping, is identical to the input); a foreign-host absolute URL refused **and 
 Authorization header ever constructed**; a `http://` Graph URL refused; a
 lookalike-host URL refused.
 
+**Amend `docs/AdminModuleDeveloperGuide.md:645-646` in this same commit.** It currently
+states, flatly, that Graph endpoints passed to `GraphTokenClient` must start with `/` --
+and four lines later, at `:649-650`, it requires authors to follow `@odata.nextLink`,
+which is absolute. Both rules cannot be obeyed through this client, which is why two
+services already hand-strip the base URL to satisfy them. S1 is what makes the pair
+consistent, so the `/`-prefix rule must gain its exception here: a continuation URL
+returned by Graph may be passed through unmodified, and nothing else absolute may.
+Leaving the guide alone would ship code that contradicts written guidance on the line a
+new module author reads first.
+
 Base app version bump: `ExchangeAdminWeb.csproj` `<VersionPrefix>`, `AssemblyVersion`,
 `FileVersion` `2.23.0` -> `2.24.0`. Shared infrastructure -- Constitution, Deployment And
-Versioning. No module version changes in this slice.
+Versioning. No module version changes in this slice. **Check the csproj's actual value at
+implementation time rather than trusting this number**: another plan may land first, and
+a literal implementer writing 2.24.0 over a higher value would downgrade three version
+fields -- the exact trap `docs/ServiceHealthPublicStatus-Plan.md` was caught in.
 
 Guard proof: delete the host comparison, confirm the foreign-host test fails, restore,
 touch the file so MSBuild rebuilds (the restore-timestamp trap).
@@ -218,9 +266,12 @@ touch the file so MSBuild rebuilds (the restore-timestamp trap).
 
 `Services/RiskyUsersService.cs`.
 
-- `$top` fixed at 500; `ClampMaxRows` becomes `ClampCeiling` with a wider range and a
-  10,000 default. Keep the "unparseable or non-positive falls back to the default"
-  behaviour; do not let a bad config value mean "unbounded".
+- `$top` fixed at 500; `ClampMaxRows` becomes `ClampCeiling`, reading the new
+  `MaxTotalRows` key, with a wider range and a 10,000 default. Keep the "unparseable or
+  non-positive falls back to the default" behaviour; do not let a bad config value mean
+  "unbounded". Add a test that the ceiling is read from `MaxTotalRows` and that a stored
+  `MaxRows` value is NOT consulted -- that is the guard against the stale-row trap
+  above.
 - Loop as designed above. Every page after the first goes through the S1 absolute path.
 - A failure on any page throws, carrying how many pages had succeeded. It must be
   impossible for a partially-fetched list to reach the caller as a success.
@@ -240,18 +291,21 @@ Existing tests that assert the old shape -- the `$top` clamp (old AC6) and
 single-page truncation (old AC7) -- are **re-pointed, not deleted and not loosened**.
 Name each one in the commit message with what it asserts now.
 
-`Modules/ModuleCatalog.cs`: `MaxRows` description corrected; `RiskyUsers` `Version`
-`1.1.0` -> `1.2.0`. No base app bump in this slice (S1 already did it).
+`Modules/ModuleCatalog.cs`: `MaxRows` removed, `MaxTotalRows` added; `RiskyUsers`
+`Version` `1.1.0` -> `1.2.0`. No base app bump in this slice (S1 already did it).
 
 ### S3 -- the page tells the truth (blocked on Q1)
 
 `Components/Pages/RiskyUsers.razor`.
 
+- **Branch on the outcome before the table.** `:111` currently keys the whole result
+  block on `results.Count == 0`. CeilingHit must reach its own branch, not the table's,
+  following `Components/Pages/DefenderEndpointDevices.razor:230`.
 - `:118-123` currently reads `Showing the first @requestedMax; more exist. Narrow the
-  filter.` Replace with wording for the CeilingHit case that states what happened and
-  what to do, per the 2026-09-21 ruling: no design rationale, no self-reference. The
-  advice must be actionable and true -- Risk level and Risk state narrow the fetch, UPN
-  contains does not.
+  filter.` Replace with the CeilingHit refusal: what happened and what to do, per the
+  2026-09-21 ruling -- no design rationale, no self-reference. The advice must be
+  actionable and true, so it names Risk level and Risk state, which narrow the fetch, and
+  not UPN contains, which does not.
 - The Complete case renders no notice at all. A complete list must not carry a caveat.
 - If Q1 comes back "cap what is rendered", add the render limit and its own notice here.
 
@@ -270,11 +324,12 @@ evidence the operator sees the fix. The manual checks below are that evidence.
   tenant, not the highest-severity of an arbitrary 500.
 - **AC4.** A failure on page N of M surfaces as an error with no rows rendered. The
   operator is never shown a short list as if it were complete.
-- **AC5.** Reaching the ceiling renders a notice that says more exist and names a filter
-  that actually reduces the fetch.
+- **AC5.** Reaching the ceiling renders a refusal that says more exist and names a filter
+  that actually reduces the fetch, and renders **no table and no rows**. A partial set is
+  never shown with a caption over it.
 - **AC6.** A complete result set renders **no** truncation notice.
-- **AC7.** An absolute nextLink to a non-Graph host is refused and no bearer token is
-  sent to it.
+- **AC7.** An absolute nextLink is refused, with no bearer token sent, when its host is
+  not the Graph host, when its scheme is not `https`, or when its path is outside `/v1.0`.
 - **AC8.** Every existing caller of `GraphTokenClient` behaves identically.
   `GraphTokenClientTests` passes with no test modified.
 - **AC9.** Audit behaviour is unchanged: every query is still logged, reads are still
@@ -337,6 +392,43 @@ default view is every risk record the tenant has ever held, including remediated
 dismissed ones from 2017. Once severity sorting covers the complete set those sink to the
 bottom, so this is no longer a correctness problem. Recommendation: leave the defaults
 alone and revisit after the owner has used the fixed page. Not implemented in this plan.
+
+## Review
+
+`openreview codex (@azure-openai-eus2-global/gpt-5.5-dzs @ xhigh, fallback) over
+cecddcc..dc79994: acceptable_with_changes`. codex-cli 0.154.0, 2026-09-24. Capability
+proof passed both halves (read `AGENTS.md`; ran `git diff --stat` over the pins, exit 0).
+Resolved model identity is not recoverable from the CLI envelope -- the Portkey gateway
+obscures it -- so this records what was dispatched, per the playbook.
+
+Three material changes, **all three admitted and folded into the text above**:
+
+1. **CeilingHit was not really a refusal.** The draft called it one and then kept the
+   rendering path that shows rows with a warning over them. Now a refusal outcome with an
+   empty `Users`, and the page branches before the table.
+2. **The fix would have shipped and done nothing on this deployment.** Redefining
+   `MaxRows` from page size to total ceiling reads back the value stored on 2026-09-02:
+   500. Now a new `MaxTotalRows` key with no stored row, plus a test that the old key is
+   not consulted. This is the most valuable of the three -- it is a defect the automated
+   gates and a dev deploy would both have passed, because the code would be correct and
+   the configuration would be what made it useless.
+3. **The URL guard was host-only, which widened the client.** Now scheme, host and the
+   `/v1.0` base path must all match, keeping every existing caller's reach unchanged.
+
+The reviewer endorsed the core approach: page with `$top=500` behind a guarded absolute
+nextLink, filter UPN after the complete fetch, sort locally, three distinct outcomes.
+
+**One reviewer claim was checked and is wrong in its detail, and checking it found
+something the review missed.** codex cited `docs/AdminModuleDeveloperGuide.md:645` as
+already requiring module authors to follow `@odata.nextLink`. That line says the
+opposite: *"Graph endpoints passed to `GraphTokenClient` must start with `/`"*. The
+nextLink rule is four lines below at `:649-650`. Both are in the same bulleted block, and
+**they contradict each other**: an `@odata.nextLink` is absolute, so no module can obey
+both through this client. That contradiction is the root of the defect this plan fixes,
+and it is why `M365GroupManagementService.cs:304-309` and `NamedLocationsService.cs:78-84`
+each hand-strip the base URL -- two authors independently working around the client to
+satisfy both rules. S1 now carries the guide amendment that resolves it. Flagged per
+AGENTS.md rather than silently chosen between.
 
 ## Related records
 
