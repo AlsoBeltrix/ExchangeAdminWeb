@@ -647,23 +647,100 @@ public class MigrationStatusPageTests
         // Slice() takes FilteredSortedMailboxes(), so the narrowing happens first by construction.
         var page = ReadPage();
 
-        Assert.Contains("ListWindow.Slice(FilteredSortedMailboxes(), mailboxPage, MailboxPageSize)",
+        // OtherMailboxes() is FilteredSortedMailboxes() minus the pinned rows, so the narrowing
+        // still happens before the windowing - which is the property. S5 step 2b inserted the
+        // pinned split between the two.
+        Assert.Contains("ListWindow.Slice(OtherMailboxes(), mailboxPage, MailboxPageSize)",
+            page, StringComparison.Ordinal);
+        Assert.Contains("FilteredSortedMailboxes().Where(u => !selectedMailboxes.Contains(u.EmailAddress))",
             page, StringComparison.Ordinal);
         Assert.Contains("ListWindow.Label(mailboxPage, MailboxTotalCount, MailboxPageSize, \"mailboxes\"",
             page, StringComparison.Ordinal);
 
         // The count the pager reports is the count AFTER filtering: paging through 340 matches of
         // 2000 is what the operator is doing, so 2000 would be the wrong number to show.
-        Assert.Contains("private int MailboxTotalCount => FilteredSortedMailboxes().Count();",
+        Assert.Contains("private int MailboxTotalCount => OtherMailboxes().Count();",
             page, StringComparison.Ordinal);
 
-        var body = StripLineComments(GetMethodBody("FilteredSortedMailboxes"));
-        Assert.Contains("rows.Where(", body, StringComparison.Ordinal);
-        Assert.Contains("OrderBy", body, StringComparison.Ordinal);
+        var filtering = StripLineComments(GetMethodBody("FilteredSortedMailboxes"));
+        Assert.Contains("rows.Where(", filtering, StringComparison.Ordinal);
+
+        // Sorting was split into SortMailboxes so the PINNED block can sort without filtering
+        // (R11). One ordering definition, or the pinned rows and the rows below them would sort by
+        // different rules and read as two unrelated lists.
+        Assert.Contains("SortMailboxes(rows)", filtering, StringComparison.Ordinal);
+        Assert.Contains("OrderBy", StripLineComments(GetMethodBody("SortMailboxes")), StringComparison.Ordinal);
+        Assert.Contains("SortMailboxes(", StripLineComments(GetMethodBody("PinnedMailboxes")), StringComparison.Ordinal);
 
         // The loop renders the page, never the set.
         Assert.Contains("@foreach (var user in GetPagedMailboxes())", page, StringComparison.Ordinal);
         Assert.DoesNotContain("@foreach (var user in batchUsers)", page, StringComparison.Ordinal);
+
+        // S5 step 2b: the pinned block pages separately, and BOTH loops render a window.
+        Assert.Contains("foreach (var user in GetPinnedMailboxesPage())", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ATickedMailboxIsNeverHiddenByTheFilterOrByAPageChange()
+    {
+        // R11, and R5a is how it is met for mailboxes. Batches have a whole pane showing the
+        // selection; mailboxes do not, so ticked ones are pinned above an "OTHER MAILBOXES"
+        // divider instead.
+        //
+        // The load-bearing detail: the pinned block is SORTED but NOT filtered. A ticked mailbox
+        // that disappears when the operator types would leave them acting on a selection they
+        // cannot see, which is precisely what R11 forbids.
+        var page = ReadPage();
+
+        var pinned = StripLineComments(GetMethodBody("PinnedMailboxes"));
+        Assert.Contains("selectedMailboxes.Contains", pinned, StringComparison.Ordinal);
+        Assert.Contains("SortMailboxes(", pinned, StringComparison.Ordinal);
+        Assert.DoesNotContain("FilteredSortedMailboxes", pinned, StringComparison.Ordinal);
+
+        Assert.Contains("OTHER MAILBOXES", page, StringComparison.Ordinal);
+
+        // R5b. The pinned block pages, or ticking 2000 mailboxes pins 2000 rows and R5a, R8 and
+        // R20 cannot all hold at once - which is the Defender failure wearing a different hat.
+        Assert.Contains("ListWindow.Slice(PinnedMailboxes(), pinnedMailboxPage, PinnedMailboxPageSize)",
+            page, StringComparison.Ordinal);
+        Assert.Contains("\"ticked\"", page, StringComparison.Ordinal);
+
+        // And the two lists are disjoint, or a ticked mailbox renders twice.
+        Assert.Contains("!selectedMailboxes.Contains(u.EmailAddress)", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BothActionBarsReachAPlannerAndNeitherLoopsTheSelectionItself()
+    {
+        // R12: both bars identical in BEHAVIOUR, not just in look. A mailbox bar that looped the
+        // selection directly would have no eligible/skipped split, no per-row preview and no named
+        // skips, and would resemble the batch bar only from a distance.
+        var page = ReadPage();
+
+        foreach (var stager in new[]
+        {
+            "StageCompleteMailboxes", "StageApproveMailboxes", "StagePauseMailboxes",
+            "StageResumeMailboxes", "StageRemoveMailboxes",
+        })
+        {
+            Assert.Contains("StageMailboxAction(",
+                GetMemberSource($@"private\s+void\s+{Regex.Escape(stager)}\s*\(", stager),
+                StringComparison.Ordinal);
+        }
+
+        // Planned twice, for the same staleness reason the batch bar plans twice: the operator can
+        // sit at the ticket field while the rows reload underneath them.
+        var stage = GetMethodBody("StageMailboxAction");
+        Assert.Equal(2, Regex.Matches(stage, @"MigrationUserActionPlanner\.Plan\(").Count);
+
+        // The executor acts on the plan's ELIGIBLE list only - nothing is sent for a skipped row.
+        var exec = GetMethodBody("ExecuteBulkMailboxAction");
+        Assert.Contains("foreach (var email in plan.Eligible)", exec, StringComparison.Ordinal);
+        Assert.Contains("MigrationUserActionPlanner.DescribeSkipped(plan.Skipped)", exec, StringComparison.Ordinal);
+
+        // Per-item outcomes, never a blanket banner (Known Failure Class 2).
+        Assert.Contains("errors.Add(", exec, StringComparison.Ordinal);
+        Assert.Contains("auditWarnings.Add(", exec, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1549,8 +1626,15 @@ public class MigrationStatusPageTests
         ExtractBlock(ReadPage(), "@foreach (var batch in GetPagedBatches())");
 
     /// <summary>The markup emitted per user row inside an expanded batch.</summary>
+    /// <summary>The markup emitted per mailbox row.</summary>
+    /// <remarks>
+    /// Anchored on the MailboxRow fragment, not on a loop. S5 step 2b defined the row ONCE and
+    /// renders it in two places - the pinned block above the "OTHER MAILBOXES" divider and the
+    /// list below it - so a loop-anchored slice would cover one of the two and report the other
+    /// as absent.
+    /// </remarks>
     private static string GetUserRowMarkup() =>
-        ExtractBlock(ReadPage(), "@foreach (var user in GetPagedMailboxes())");
+        ExtractSpan(ReadPage(), "private RenderFragment<MigrationUserInfo> MailboxRow", "</text>;");
 
     /// <summary>The text from <paramref name="opener"/> through the first <paramref name="closer"/>.</summary>
     private static string ExtractSpan(string source, string opener, string closer)

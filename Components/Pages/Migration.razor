@@ -792,9 +792,64 @@
                                    The mailbox table had neither before S5; the batch table had sort
                                    only. Same shape as the batch pane's controls so the two panes do
                                    not teach different habits. *@
+                                @* R12. The mailbox action bar, identical in look and behaviour to
+                                   the batch bar: outline buttons with the picked one filled, a
+                                   ticket required, Confirm carrying the eligible count, and every
+                                   ineligible row named as skipped with nothing sent for it. It
+                                   reaches MigrationUserActionPlanner exactly as the batch bar
+                                   reaches its own planner. R6: at the top of the list it acts on. *@
+                                @if (canManage && selectedMailboxes.Count > 0)
+                                {
+                                    <div class="mig-pane-actions d-flex align-items-center flex-wrap gap-1">
+                                        <strong class="small me-1">@selectedMailboxes.Count selected</strong>
+                                        <button class="@MailboxActionButtonClass(MigrationUserAction.Complete, "success")"
+                                                disabled="@(IsBusy || pendingActionLabel != null)"
+                                                title="Completes the selected mailboxes that have finished syncing"
+                                                @onclick="StageCompleteMailboxes">
+                                            Complete
+                                        </button>
+                                        <button class="@MailboxActionButtonClass(MigrationUserAction.Approve, "warning")"
+                                                disabled="@(IsBusy || pendingActionLabel != null)"
+                                                title="Approves the selected mailboxes that are waiting for it"
+                                                @onclick="StageApproveMailboxes">
+                                            Approve
+                                        </button>
+                                        <button class="@MailboxActionButtonClass(MigrationUserAction.Pause, "warning")"
+                                                disabled="@(IsBusy || pendingActionLabel != null)"
+                                                title="Stops the selected mailboxes that are still moving"
+                                                @onclick="StagePauseMailboxes">
+                                            Pause
+                                        </button>
+                                        <button class="@MailboxActionButtonClass(MigrationUserAction.Resume, "success")"
+                                                disabled="@(IsBusy || pendingActionLabel != null)"
+                                                title="Restarts the selected mailboxes that are stopped or failed"
+                                                @onclick="StageResumeMailboxes">
+                                            Resume
+                                        </button>
+                                        <button class="@MailboxActionButtonClass(MigrationUserAction.Clear, "danger")"
+                                                disabled="@(IsBusy || pendingActionLabel != null)"
+                                                title="Removes the selected mailboxes that have completed from the batch"
+                                                @onclick="StageRemoveMailboxes">
+                                            Remove
+                                        </button>
+                                        @* R10. "Untick all" here, where the tick boxes are. *@
+                                        <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@IsBusy"
+                                                @onclick="ClearMailboxSelection">
+                                            Untick all
+                                        </button>
+                                    </div>
+                                }
+
                                 @if (batchUsers is { Count: > 0 })
                                 {
                                     <div class="mig-pane-actions d-flex align-items-center gap-2 flex-wrap">
+                                        @if (canManage)
+                                        {
+                                            <input type="checkbox" class="form-check-input mt-0 flex-shrink-0"
+                                                   title="Tick every mailbox matching the filter, not just this page"
+                                                   checked="@AllMailboxesSelected"
+                                                   @onchange="ToggleSelectAllMailboxes" />
+                                        }
                                         <input type="text" class="form-control form-control-sm" style="width: 14rem;"
                                                placeholder="Filter these mailboxes"
                                                value="@mailboxFilter" @oninput="OnMailboxFilterChanged"
@@ -851,6 +906,10 @@
                                         <table class="table table-sm table-hover mig-mailboxes mb-0">
                                             <thead>
                                                 <tr>
+                                                    @if (canManage)
+                                                    {
+                                                        <th style="width: 2.5rem;"></th>
+                                                    }
                                                     <th>Email</th>
                                                     <th>Status</th>
                                                     <th>Synced</th>
@@ -860,103 +919,48 @@
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                @foreach (var user in GetPagedMailboxes())
+                                                @* R5a. Ticked mailboxes are PINNED above an
+                                                   "OTHER MAILBOXES" divider. R5 forbids this for
+                                                   batches because the selection has its own pane
+                                                   there; mailboxes have no second surface, so
+                                                   pinning is how R11 is met for them - a ticked
+                                                   mailbox is never hidden by the filter or by a
+                                                   page change. *@
+                                                @if (selectedMailboxes.Count > 0)
                                                 {
-                                                    <tr class="@(highlightedUser != null && user.EmailAddress.Contains(highlightedUser, StringComparison.OrdinalIgnoreCase) ? "table-warning" : "")">
-                                                        <td>@user.EmailAddress</td>
-                                                        <td><span class="badge bg-@GetUserStatusColor(user.Status)">@user.Status</span></td>
-                                                        <td>@user.ItemsSynced.ToString("N0")</td>
-                                                        <td><small>@(user.LastSyncDateTime?.ToLocalTime().ToString("MMM dd HH:mm") ?? "-")</small></td>
-                                                        <td>
-                                                            @if (!string.IsNullOrEmpty(user.ErrorSummary))
-                                                            {
-                                                                <small class="text-danger">@user.ErrorSummary</small>
-                                                            }
-                                                            else
-                                                            {
-                                                                <small class="text-muted">-</small>
-                                                            }
-                                                        </td>
-                                                        <td class="text-end text-nowrap">
-                                                            @{ var s = user.Status; var e = user.EmailAddress; }
-                                                            @if (canManage)
-                                                            {
-                                                                @if (s.Equals("Synced", StringComparison.OrdinalIgnoreCase))
-                                                                {
-                                                                    <button class="btn btn-sm btn-success me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                                            @onclick="() => CompleteUser(e)">Complete</button>
-                                                                }
-                                                                @if (s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase))
-                                                                {
-                                                                    <button class="btn btn-sm btn-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                                            @onclick="() => ApproveUser(e)">Approve</button>
-                                                                }
-                                                                @if (s.Equals("Syncing", StringComparison.OrdinalIgnoreCase))
-                                                                {
-                                                                    <button class="btn btn-sm btn-outline-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                                            @onclick="() => PauseUser(e)">Pause</button>
-                                                                }
-                                                                @if (s.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
-                                                                    || s.Equals("Failed", StringComparison.OrdinalIgnoreCase))
-                                                                {
-                                                                    <button class="btn btn-sm btn-primary me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                                            @onclick="() => ResumeUser(e)">Resume</button>
-                                                                }
-                                                                @if (s.Equals("Completed", StringComparison.OrdinalIgnoreCase))
-                                                                {
-                                                                    <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                                            @onclick="() => ClearUser(e)">Clear</button>
-                                                                }
-                                                            }
-                                                            @* Report is offered on EVERY user row. It was gated on Failed /
-                                                               NeedsApproval / a non-empty ErrorSummary, so it appeared only on rows
-                                                               that already looked broken - and a CompletedWithErrors user, whose
-                                                               report is the one worth reading, often matched none of those. It is a
-                                                               read-only diagnostic: nothing is gained by hiding it, and the third
-                                                               status allowlist on this page to hide something the operator wanted. *@
-                                                            <button class="btn btn-sm btn-outline-danger"
-                                                                    disabled="@IsBusy"
-                                                                    @onclick="() => LoadUserReport(e)">
-                                                                @if (loadingReport == e)
-                                                                {
-                                                                    <span class="spinner-border spinner-border-sm"></span>
-                                                                }
-                                                                else
-                                                                {
-                                                                    <span>Report</span>
-                                                                }
-                                                            </button>
-                                                            @if (actionInProgress == e)
-                                                            {
-                                                                <span class="spinner-border spinner-border-sm ms-1"></span>
-                                                            }
+                                                    foreach (var user in GetPinnedMailboxesPage())
+                                                    {
+                                                        @MailboxRow(user)
+                                                    }
+
+                                                    @* R5b. The pinned block pages too, or ticking
+                                                       2000 mailboxes pins 2000 rows and the
+                                                       Defender failure is back. *@
+                                                    <tr class="mig-divider">
+                                                        <td colspan="7">
+                                                            <div class="d-flex align-items-center gap-2">
+                                                                <button class="btn btn-sm btn-outline-secondary py-0" type="button"
+                                                                        disabled="@(IsBusy || pinnedMailboxPage <= 0)"
+                                                                        title="Previous page of ticked mailboxes"
+                                                                        @onclick="() => StepPinnedMailboxPage(-1)">
+                                                                    @((MarkupString)"&lsaquo;")
+                                                                </button>
+                                                                <span>@PinnedMailboxPagerLabel</span>
+                                                                <button class="btn btn-sm btn-outline-secondary py-0" type="button"
+                                                                        disabled="@(IsBusy || pinnedMailboxPage >= PinnedMailboxPageCount - 1)"
+                                                                        title="Next page of ticked mailboxes"
+                                                                        @onclick="() => StepPinnedMailboxPage(1)">
+                                                                    @((MarkupString)"&rsaquo;")
+                                                                </button>
+                                                                <span class="ms-auto">OTHER MAILBOXES</span>
+                                                            </div>
                                                         </td>
                                                     </tr>
-                                                    @* The ticket field for THIS mailbox's action, beneath its row - the
-                                                       same placement the batch rows get. Missing until mbs-1, which left
-                                                       every per-user action prompting at the top of the OUTER table. *@
-                                                    @if (pendingActionTarget == user.EmailAddress && pendingActionLabel != null)
-                                                    {
-                                                        <tr class="table-warning">
-                                                            <td colspan="6" class="py-2">
-                                                                @PendingActionConfirm
-                                                            </td>
-                                                        </tr>
-                                                    }
-                                                    @if (reportUser == user.EmailAddress && userReport != null)
-                                                    {
-                                                        <tr>
-                                                            <td colspan="6" class="p-0">
-                                                                <div class="border-top p-3">
-                                                                    <div class="d-flex justify-content-between align-items-center mb-2">
-                                                                        <strong>Report for @user.EmailAddress</strong>
-                                                                        <button class="btn btn-sm btn-outline-secondary" @onclick="CloseUserReport">Close</button>
-                                                                    </div>
-                                                                    <pre class="bg-body-tertiary p-2 rounded" style="max-height: 400px; overflow-y: auto; font-size: 0.8rem; white-space: pre-wrap;">@userReport</pre>
-                                                                </div>
-                                                            </td>
-                                                        </tr>
-                                                    }
+                                                }
+
+                                                @foreach (var user in GetPagedMailboxes())
+                                                {
+                                                    @MailboxRow(user)
                                                 }
                                             </tbody>
                                         </table>
@@ -995,6 +999,129 @@
 </div>
 
 @code {
+
+    // R12 and the repo's own lesson about two copies of one control: the mailbox row is defined
+    // ONCE and rendered in two places - the pinned block above the divider (R5a) and the list
+    // below it. Two copies would drift, and the row carries the tick box, five gated actions, the
+    // per-row ticket confirmation and the report drawer.
+    private RenderFragment<MigrationUserInfo> MailboxRow => user =>
+    @<text>
+    <tr class="@(highlightedUser != null && user.EmailAddress.Contains(highlightedUser, StringComparison.OrdinalIgnoreCase) ? "table-warning" : "")">
+        @if (canManage)
+        {
+            @* R7. Checkboxes on mailboxes as well as batches. Keyed on the address, never a row
+               index: this table now filters, sorts and pages, so an index would retarget to
+               whoever occupies that position after the next keystroke. *@
+            <td style="width: 2.5rem;">
+                <input type="checkbox" class="form-check-input" title="Select for a bulk action"
+                       checked="@IsMailboxSelected(user.EmailAddress)"
+                       @onchange="e => ToggleMailboxSelected(user.EmailAddress, e.Value is bool v && v)" />
+            </td>
+        }
+        <td>
+            @user.EmailAddress
+            @* S4's outcome preview, applied to the mailbox bar (R12). *@
+            @{ var mailboxOutcome = StagedMailboxOutcomeFor(user.EmailAddress); }
+            @if (mailboxOutcome != null)
+            {
+                <span class="mig-outcome @(StagedMailboxOutcomeIsGo(user.EmailAddress) ? "mig-outcome-go" : "mig-outcome-skip")">@mailboxOutcome</span>
+            }
+        </td>
+        <td><span class="badge bg-@GetUserStatusColor(user.Status)">@user.Status</span></td>
+        <td>@user.ItemsSynced.ToString("N0")</td>
+        <td><small>@(user.LastSyncDateTime?.ToLocalTime().ToString("MMM dd HH:mm") ?? "-")</small></td>
+        <td>
+            @if (!string.IsNullOrEmpty(user.ErrorSummary))
+            {
+                <small class="text-danger">@user.ErrorSummary</small>
+            }
+            else
+            {
+                <small class="text-muted">-</small>
+            }
+        </td>
+        <td class="text-end text-nowrap">
+            @{ var s = user.Status; var e = user.EmailAddress; }
+            @if (canManage)
+            {
+                @if (s.Equals("Synced", StringComparison.OrdinalIgnoreCase))
+                {
+                    <button class="btn btn-sm btn-success me-1" disabled="@(IsBusy || pendingActionLabel != null)"
+                            @onclick="() => CompleteUser(e)">Complete</button>
+                }
+                @if (s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase))
+                {
+                    <button class="btn btn-sm btn-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
+                            @onclick="() => ApproveUser(e)">Approve</button>
+                }
+                @if (s.Equals("Syncing", StringComparison.OrdinalIgnoreCase))
+                {
+                    <button class="btn btn-sm btn-outline-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
+                            @onclick="() => PauseUser(e)">Pause</button>
+                }
+                @if (s.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
+                    || s.Equals("Failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    <button class="btn btn-sm btn-primary me-1" disabled="@(IsBusy || pendingActionLabel != null)"
+                            @onclick="() => ResumeUser(e)">Resume</button>
+                }
+                @if (s.Equals("Completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(IsBusy || pendingActionLabel != null)"
+                            @onclick="() => ClearUser(e)">Clear</button>
+                }
+            }
+            @* Report is offered on EVERY user row. It was gated on Failed /
+               NeedsApproval / a non-empty ErrorSummary, so it appeared only on rows
+               that already looked broken - and a CompletedWithErrors user, whose
+               report is the one worth reading, often matched none of those. It is a
+               read-only diagnostic: nothing is gained by hiding it, and the third
+               status allowlist on this page to hide something the operator wanted. *@
+            <button class="btn btn-sm btn-outline-danger"
+                    disabled="@IsBusy"
+                    @onclick="() => LoadUserReport(e)">
+                @if (loadingReport == e)
+                {
+                    <span class="spinner-border spinner-border-sm"></span>
+                }
+                else
+                {
+                    <span>Report</span>
+                }
+            </button>
+            @if (actionInProgress == e)
+            {
+                <span class="spinner-border spinner-border-sm ms-1"></span>
+            }
+        </td>
+    </tr>
+    @* The ticket field for THIS mailbox's action, beneath its row - the
+       same placement the batch rows get. Missing until mbs-1, which left
+       every per-user action prompting at the top of the OUTER table. *@
+    @if (pendingActionTarget == user.EmailAddress && pendingActionLabel != null)
+    {
+        <tr class="table-warning">
+            <td colspan="@(canManage ? 7 : 6)" class="py-2">
+                @PendingActionConfirm
+            </td>
+        </tr>
+    }
+    @if (reportUser == user.EmailAddress && userReport != null)
+    {
+        <tr>
+            <td colspan="@(canManage ? 7 : 6)" class="p-0">
+                <div class="border-top p-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <strong>Report for @user.EmailAddress</strong>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="CloseUserReport">Close</button>
+                    </div>
+                    <pre class="bg-body-tertiary p-2 rounded" style="max-height: 400px; overflow-y: auto; font-size: 0.8rem; white-space: pre-wrap;">@userReport</pre>
+                </div>
+            </td>
+        </tr>
+    }
+    </text>;
+
     // The ticket-entry confirmation, defined once and rendered in one of two places: beneath the
     // row whose button was clicked, or above the table for an action that names no single row. Two
     // copies would drift, and this is the control the operator has to find.
@@ -1142,6 +1269,16 @@
     private string mailboxFilter = "";
     private string mailboxSortColumn = "Email";
     private bool mailboxSortAsc = true;
+
+    // R7. Checkboxes on mailboxes as well as batches. Keyed on the address, NEVER a row index: the
+    // table now filters, sorts and pages, so an index-keyed selection retargets to whoever happens
+    // to occupy that position after the next keystroke. Same rule, and the same reason, as
+    // selectedBatches.
+    private readonly HashSet<string> selectedMailboxes = new(StringComparer.OrdinalIgnoreCase);
+
+    // R5b. The pinned block's own page, separate from the list below it.
+    private const int PinnedMailboxPageSize = 40;
+    private int pinnedMailboxPage;
     // Download CSV had no flag of its own. Without one the predicate below cannot see the
     // JS interop round-trip, and every other control stays live while the file is built.
     private bool isDownloadingCsv = false;
@@ -1180,6 +1317,13 @@
     // rendered.
     private MigrationBatchAction? pendingBatchAction;
     private MigrationBatchActionPlan? pendingActionPlan;
+
+    // S5 step 2b. The mailbox twins. Separate rather than a shared abstraction because the two
+    // planners key on different things - a batch name and an address - and one nullable pair that
+    // could hold either would make "which list is this preview about" a runtime question on a page
+    // that renders both lists at once.
+    private MigrationUserAction? pendingUserAction;
+    private MigrationUserActionPlan? pendingUserActionPlan;
 
     // Bulk selection on the batches table. Keyed on BatchName, NEVER row index: the table
     // re-sorts on every header click and reloads after every action, so an index-keyed
@@ -1818,6 +1962,13 @@
                 u.EmailAddress?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true);
         }
 
+        return SortMailboxes(rows);
+    }
+
+    // Split out so the pinned block can sort without filtering (R11). One ordering definition, or
+    // the pinned rows and the rows below them would sort by different rules and read as two lists.
+    private IEnumerable<MigrationUserInfo> SortMailboxes(IEnumerable<MigrationUserInfo> rows)
+    {
         return mailboxSortColumn switch
         {
             "Status" => mailboxSortAsc
@@ -1837,10 +1988,51 @@
         };
     }
 
-    private IEnumerable<MigrationUserInfo> GetPagedMailboxes() =>
-        ListWindow.Slice(FilteredSortedMailboxes(), mailboxPage, MailboxPageSize);
+    // R5a. Ticked mailboxes are PINNED above an "OTHER MAILBOXES" divider. R5 forbids this for
+    // batches because the selection has its own pane there; mailboxes have no equivalent second
+    // surface, so pinning is how R11 is met for them.
+    //
+    // NOT filtered. R11 says no selected item may be hidden by a filter or a page change, and a
+    // ticked mailbox that vanishes when the operator types is exactly that - they would act on a
+    // selection they can no longer see. Sorted, so the pinned block reads in the same order as
+    // the list below it.
+    private IEnumerable<MigrationUserInfo> PinnedMailboxes()
+    {
+        if (batchUsers == null || selectedMailboxes.Count == 0)
+            return Enumerable.Empty<MigrationUserInfo>();
 
-    private int MailboxTotalCount => FilteredSortedMailboxes().Count();
+        return SortMailboxes(batchUsers.Where(u => selectedMailboxes.Contains(u.EmailAddress)));
+    }
+
+    // Everything else: filtered, sorted, and with the pinned rows removed so a ticked mailbox is
+    // not rendered twice.
+    private IEnumerable<MigrationUserInfo> OtherMailboxes() =>
+        FilteredSortedMailboxes().Where(u => !selectedMailboxes.Contains(u.EmailAddress));
+
+    // R5b. The pinned block pages too, or R5a, R8 and R20 cannot all hold at once: select-all has
+    // no cap, every ticked mailbox is pinned, and no view may render the full set - so ticking all
+    // 2000 would pin 2000 rows and reproduce the Defender failure exactly. Its own pager, the way
+    // the batch selection got one in R4.
+    private IEnumerable<MigrationUserInfo> GetPinnedMailboxesPage() =>
+        ListWindow.Slice(PinnedMailboxes(), pinnedMailboxPage, PinnedMailboxPageSize);
+
+    private int PinnedMailboxTotalCount => selectedMailboxes.Count;
+
+    private int PinnedMailboxPageCount =>
+        ListWindow.PageCount(PinnedMailboxTotalCount, PinnedMailboxPageSize);
+
+    private string PinnedMailboxPagerLabel =>
+        ListWindow.Label(pinnedMailboxPage, PinnedMailboxTotalCount, PinnedMailboxPageSize,
+            "ticked", "None ticked");
+
+    private void StepPinnedMailboxPage(int delta) =>
+        pinnedMailboxPage = ListWindow.ClampPage(
+            pinnedMailboxPage + delta, PinnedMailboxTotalCount, PinnedMailboxPageSize);
+
+    private IEnumerable<MigrationUserInfo> GetPagedMailboxes() =>
+        ListWindow.Slice(OtherMailboxes(), mailboxPage, MailboxPageSize);
+
+    private int MailboxTotalCount => OtherMailboxes().Count();
 
     private int MailboxPageCount => ListWindow.PageCount(MailboxTotalCount, MailboxPageSize);
 
@@ -1878,6 +2070,144 @@
         mailboxSortAsc = !mailboxSortAsc;
         ResetMailboxPage();
     }
+
+    // ---- S5 step 2b: the mailbox selection (R7, R8, R10) ----------------------------------------
+
+    private bool IsMailboxSelected(string email) => selectedMailboxes.Contains(email);
+
+    // NO handler guard and NO disabled attribute, matching the batch tick boxes and for the same
+    // reason (D2(a)): a tick box is an input to the confirm step, not a value in flight. Both
+    // refusals would be wrong here - the registry's rule is that a handler guard on a DOM-synced
+    // control corrupts data, because the browser keeps a tick the server refused.
+    //
+    // Safe because this writes only to selectedMailboxes and clamps two pagers. It calls nothing
+    // and awaits nothing, which is precisely the condition that stops being true the moment a
+    // selection change starts a fetch - see the note on ToggleBatchSelected.
+    private void ToggleMailboxSelected(string email, bool selected)
+    {
+        if (selected)
+            selectedMailboxes.Add(email);
+        else
+            selectedMailboxes.Remove(email);
+
+        batchActionResult = null;
+        ClearStagedPreview();
+
+        // The row moves between the pinned block and the list below it, so both pagers can now be
+        // pointing past their end.
+        ClampMailboxPages();
+    }
+
+    // R8 applied to mailboxes: every mailbox matching the FILTER, not just the rendered page, and
+    // no cap. Safe alongside R20 only because the pinned block pages (R5b) - ticking 2000 pins
+    // 2000, and without its own pager that is the Defender failure again.
+    private void ToggleSelectAllMailboxes(ChangeEventArgs e)
+    {
+        selectedMailboxes.Clear();
+
+        if (e.Value is bool check && check)
+        {
+            foreach (var user in FilteredSortedMailboxes())
+                selectedMailboxes.Add(user.EmailAddress);
+        }
+
+        batchActionResult = null;
+        ClearStagedPreview();
+        ClampMailboxPages();
+    }
+
+    // Matching the filter, not matching the page: the tick box above a filtered list that only
+    // took the visible 50 would quietly do less than it says.
+    private bool AllMailboxesSelected
+    {
+        get
+        {
+            var visible = FilteredSortedMailboxes().ToList();
+            return visible.Count > 0 && visible.All(u => selectedMailboxes.Contains(u.EmailAddress));
+        }
+    }
+
+    // R10. "Untick all" where the tick boxes are.
+    private void ClearMailboxSelection()
+    {
+        selectedMailboxes.Clear();
+        batchActionResult = null;
+        ClearStagedPreview();
+        ClampMailboxPages();
+    }
+
+    private void ClampMailboxPages()
+    {
+        mailboxPage = ListWindow.ClampPage(mailboxPage, MailboxTotalCount, MailboxPageSize);
+        pinnedMailboxPage = ListWindow.ClampPage(
+            pinnedMailboxPage, PinnedMailboxTotalCount, PinnedMailboxPageSize);
+    }
+
+    // R12. The mailbox bar reaches the planner exactly as the batch bar does - same staged ticket,
+    // same eligible/skipped split, same preview. Five actions, matching the five per-row buttons
+    // they replace.
+    private void StageCompleteMailboxes() => StageMailboxAction(
+        MigrationUserAction.Complete, "Complete", e => MigrationSvc.CompleteMigrationUserAsync(e),
+        "CompleteMigrationUser", "Migration_CompleteMailboxes", "Queued completion of");
+
+    private void StageApproveMailboxes() => StageMailboxAction(
+        MigrationUserAction.Approve, "Approve", e => MigrationSvc.ApproveMigrationUserAsync(e),
+        "ApproveMigrationUser", "Migration_ApproveMailboxes", "Queued approval of");
+
+    private void StagePauseMailboxes() => StageMailboxAction(
+        MigrationUserAction.Pause, "Pause", e => MigrationSvc.StopMigrationUserAsync(e),
+        "StopMigrationUser", "Migration_PauseMailboxes", "Queued pause of");
+
+    private void StageResumeMailboxes() => StageMailboxAction(
+        MigrationUserAction.Resume, "Resume", e => MigrationSvc.ResumeMigrationUserAsync(e),
+        "ResumeMigrationUser", "Migration_ResumeMailboxes", "Queued resume of");
+
+    private void StageRemoveMailboxes() => StageMailboxAction(
+        MigrationUserAction.Clear, "Remove", e => MigrationSvc.RemoveMigrationUserAsync(e),
+        "RemoveMigrationUser", "Migration_RemoveMailboxes", "Queued removal of");
+
+    private void StageMailboxAction(
+        MigrationUserAction action,
+        string label,
+        Func<string, Task<PermissionResult>> call,
+        string auditAction,
+        string notifyAction,
+        string verb)
+    {
+        var staged = MigrationUserActionPlanner.Plan(batchUsers, selectedMailboxes, action);
+
+        StageBatchAction(label, $"{staged.Eligible.Count} mailbox(es)", ticket =>
+        {
+            // Re-planned at execution time for the same reason the batch bar re-plans: the
+            // operator can sit at the ticket field while the rows reload underneath them.
+            var current = MigrationUserActionPlanner.Plan(batchUsers, selectedMailboxes, action);
+            return ExecuteBulkMailboxAction(current, call, auditAction, notifyAction, verb, ticket);
+        });
+
+        pendingUserAction = action;
+        pendingUserActionPlan = staged;
+    }
+
+    private string MailboxActionButtonClass(MigrationUserAction action, string tone) =>
+        pendingUserAction == action ? $"btn btn-sm btn-{tone}" : $"btn btn-sm btn-outline-{tone}";
+
+    // The preview for one mailbox row, the mailbox twin of StagedOutcomeFor.
+    private string? StagedMailboxOutcomeFor(string email)
+    {
+        if (pendingUserActionPlan == null)
+            return null;
+
+        if (pendingUserActionPlan.Eligible.Contains(email, StringComparer.OrdinalIgnoreCase))
+            return "Will run";
+
+        var skip = pendingUserActionPlan.Skipped
+            .FirstOrDefault(s => string.Equals(s.EmailAddress, email, StringComparison.OrdinalIgnoreCase));
+
+        return skip == null ? null : $"Skipped ({skip.Status})";
+    }
+
+    private bool StagedMailboxOutcomeIsGo(string email) =>
+        pendingUserActionPlan?.Eligible.Contains(email, StringComparer.OrdinalIgnoreCase) == true;
 
     // Delete's staged target carries the per-status breakdown (D5): it is the only action that
     // accepts in-progress batches, so the operator must see how many of those they are about to
@@ -1979,6 +2309,8 @@
     {
         pendingBatchAction = null;
         pendingActionPlan = null;
+        pendingUserAction = null;
+        pendingUserActionPlan = null;
     }
 
     // S4, R12. What the preview answers for one row, so the markup asks rather than recomputes.
@@ -2349,6 +2681,147 @@
         {
             actionInProgress = null;
             isLoadingStatus = false;
+        }
+    }
+
+    // The mailbox twin of ExecuteBulkBatchAction, and deliberately the same shape rather than a
+    // shared generic: R12 says both bars behave identically, and every rule below is one this page
+    // learned the hard way, so they are restated where they apply rather than abstracted into a
+    // place where a later change to one silently changes the other.
+    //
+    // Known Failure Class 2 (success aggregation) is answered the same way: per-item results,
+    // never a blanket banner; audit failures are warnings and cannot make a completed action read
+    // as failed; nothing eligible is "nothing to do" and touches Exchange not at all.
+    private async Task ExecuteBulkMailboxAction(
+        MigrationUserActionPlan plan,
+        Func<string, Task<PermissionResult>> action,
+        string auditAction,
+        string notificationAction,
+        string verb,
+        string ticket)
+    {
+        // Set before the first await - see CreateSingleMigrationBatch for why.
+        actionInProgress = "mailboxes";
+        batchActionResult = null;
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
+            {
+                batchActionResult = PermissionResult.Fail("Authorization denied.");
+                try
+                {
+                    Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied",
+                        notificationAction, false, ticket,
+                        errorDetail: "MigrationManage authorization denied");
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Failed to write audit for {Action} denial", auditAction);
+                }
+                return;
+            }
+
+            if (batchUsers == null) return;
+
+            var skippedSuffix = MigrationUserActionPlanner.DescribeSkipped(plan.Skipped);
+
+            if (plan.Eligible.Count == 0)
+            {
+                batchActionResult = new PermissionResult
+                {
+                    Success = true,
+                    Message = $"No mailboxes to act on.{skippedSuffix}"
+                };
+                return;
+            }
+
+            var succeeded = 0;
+            var accepted = new List<string>();
+            var errors = new List<string>();
+            var auditWarnings = new List<string>();
+
+            foreach (var email in plan.Eligible)
+            {
+                var result = await action(email);
+                try
+                {
+                    Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, email,
+                        result.Success, ticket, errorDetail: result.Success ? null : result.Message);
+                }
+                catch (Exception ex)
+                {
+                    auditWarnings.Add($"{email}: audit logging failed: {ex.Message}");
+                }
+
+                if (result.Success)
+                {
+                    succeeded++;
+                    accepted.Add(email);
+                }
+                else
+                {
+                    errors.Add($"{email}: {result.Message}");
+                }
+            }
+
+            // Same rule as the batch executor: everything Exchange ACCEPTED is unticked, because
+            // leaving it ticked invites a second click on work already in flight and the row stays
+            // visible for several refreshes. Failures and skips stay ticked - nothing was queued
+            // for them, and retrying or picking a different action is the likely next move.
+            foreach (var email in accepted)
+                selectedMailboxes.Remove(email);
+
+            var warningSuffix = auditWarnings.Count > 0
+                ? $" (warning - {string.Join("; ", auditWarnings)})"
+                : "";
+
+            if (errors.Count == 0)
+            {
+                batchActionResult = new PermissionResult
+                {
+                    Success = true,
+                    Message = $"{verb} {succeeded} mailbox(es). Exchange processes this in the "
+                              + $"background - use Refresh to follow it.{skippedSuffix}{warningSuffix}"
+                };
+            }
+            else
+            {
+                batchActionResult = PermissionResult.Fail(
+                    $"{verb} {succeeded} mailbox(es); {errors.Count} refused: "
+                    + $"{string.Join("; ", errors)}{skippedSuffix}{warningSuffix}");
+            }
+
+            try
+            {
+                await Email.SendAdminNotificationAsync(
+                    currentUser, clientIpAddress, notificationAction,
+                    $"{succeeded} mailbox(es)", "N/A", "Migration",
+                    errors.Count == 0, ticket, errors.Any() ? string.Join("; ", errors) : null);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to send admin notification for {Action}", notificationAction);
+            }
+
+            // Refresh THIS pane only (R30). The catalogue has not changed - these actions move
+            // mailboxes inside one batch - so reloading it would be the batch pane silently doing
+            // the mailbox pane's work.
+            var savedResult = batchActionResult;
+            if (expandedBatch != null)
+                await LoadMailboxesFor(expandedBatch);
+            batchActionResult ??= savedResult;
+
+            ClampMailboxPages();
+        }
+        catch (Exception ex)
+        {
+            batchActionResult = PermissionResult.Fail(ex.Message);
+        }
+        finally
+        {
+            actionInProgress = null;
         }
     }
 

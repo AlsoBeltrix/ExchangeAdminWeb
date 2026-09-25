@@ -233,7 +233,22 @@ public sealed class ModuleCatalog
             // whether the staged action will run on it or skip it and why, Confirm carries the
             // eligible count, and the picked action is highlighted
             // (docs/MigrationInterfaceRedesign-Plan.md S4, R12).
-            Version = "1.13.0",
+            // 1.14.0: the mailbox table gets the filter, sort and paging it never had, both over
+            // the whole set rather than the rendered page, so a 2000-mailbox batch no longer
+            // renders 2000 rows over the circuit
+            // (docs/MigrationInterfaceRedesign-Plan.md S5 step 1, R20, R21).
+            //
+            // 1.14.0 SHIPPED IN 2a0dd6a WITHOUT THIS LINE. The bump was made and then clobbered
+            // before it was staged: two sessions share this working tree, and the other one
+            // rewrote this file from its own copy between the edit and the commit. That commit's
+            // message claims the bump it does not contain. Recorded rather than rewritten -
+            // history rewrites need explicit authority, and the version is correct again below.
+            //
+            // 1.15.0: mailbox checkboxes, a mailbox action bar that reaches its own planner
+            // exactly as the batch bar reaches its own, and ticked mailboxes pinned above an
+            // OTHER MAILBOXES divider with their own pager, so a selection is never hidden by the
+            // filter (S5 step 2b, R5a, R5b, R7, R10, R11, R12).
+            Version = "1.15.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

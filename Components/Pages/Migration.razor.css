@@ -198,3 +198,17 @@
 .mig-batch-row:has(.mig-outcome-skip) .mig-batch-name {
     opacity: .7;
 }
+
+/* R5a. The divider between the pinned ticked mailboxes and the rest, carrying the pinned block's
+   own pager (R5b) so the selection always has a visible home of bounded size. */
+.mig-divider td {
+    background: var(--ui-header);
+    color: var(--ui-fg2);
+    font-size: .72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    border-top: 2px solid var(--ui-line);
+    border-bottom: 1px solid var(--ui-line);
+    padding: .25rem .5rem;
+}
