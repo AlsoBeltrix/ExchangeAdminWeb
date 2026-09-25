@@ -1,7 +1,17 @@
 # Sidebar -- The Scrollbar That Never Leaves
 
-Status: **Draft, awaiting owner approval.** No code written. One open question (Q1) is a
-genuine owner gate and blocks part of S1; the scrollbar fix itself does not depend on it.
+Status: **Implemented 2026-09-25, unverified in a browser.** S1 landed: the CSS change, four
+source-level tripwires, and the base app bump `2.23.0` -> `2.23.1`. **The owner's go is queue item
+16** - *"See plans written in another session for mods to risky users and the left pane scroll bar
+and implement them each"* - which is the approval this file previously said it was waiting for.
+
+**Q1 was NOT answered by the owner and was taken as a coder-side call: the version footer MOVES to
+the bottom of the sidebar.** It is a one-line revert if that is wrong - see Q1 below. Nothing else
+in the slice depends on it.
+
+**Nothing here has been seen in a browser.** No test in this repo renders a page, so the four
+tripwires prove the CSS rules exist and nothing more. The manual checks under `## Verification`
+are the only evidence an operator sees the scrollbar go away.
 
 ## The reported defect, and the evidence
 
@@ -261,26 +271,26 @@ writing a stale number would downgrade three version fields -- the trap
 
 ## Open questions
 
-**Q1 (owner). Does the version footer move to the bottom of the sidebar?**
+**Q1 - TAKEN AS A CODER-SIDE CALL 2026-09-25, option (a): the footer moves.** It was put to the
+owner twice and not answered, and queue item 16 said to implement. Shipping (b) would have meant
+writing a markup change to suppress behaviour the markup itself asks for, on no instruction.
 
-Making `nav` a flex container is what fixes the scrollbar, and it also makes the existing
-`mt-auto` on the footer start working. That would move `v2.20.2 | Issues?` from just below
-the Administration block to the bottom of the sidebar.
+*Does the version footer move to the bottom of the sidebar?* Making `nav` a flex container is what
+fixes the scrollbar, and it also makes the existing `mt-auto` on the footer start working - moving
+`v2.20.2 | Issues?` from just below the Administration block to the bottom of the sidebar.
 
-- **(a) Let it move.** The markup already says `mt-auto` and `flex-column`; honouring them
-  restores what the code was written to do, and a version stamp pinned to the bottom is
-  the conventional place for one. Costs nothing extra.
-- **(b) Keep it where it is.** The scrollbar fix is unaffected either way. But this costs
-  a markup change, not a one-line CSS override: Bootstrap declares
-  `.mt-auto{margin-top:auto!important}`, so a plain `margin-top: 0` in the isolated
-  stylesheet loses to it. Do it by **removing `mt-auto` from
-  `Components/Layout/NavMenu.razor:130`**, which states the intent in the one place a
-  reader will look, rather than by fighting `!important` from a stylesheet.
+- **(a) TAKEN. Let it move.** The markup already says `mt-auto` and `flex-column`; honouring them
+  restores what the code was written to do, and a version stamp pinned to the bottom is the
+  conventional place for one. Costs nothing extra. The current position is not a design decision
+  anyone made - it is the same missing `display: flex` reported as a bug, surfacing in a second
+  place.
+- **(b) Not taken. Keep it where it is.** The scrollbar fix is unaffected either way. **If the
+  owner wants this, it is one line:** remove `mt-auto` from
+  `Components/Layout/NavMenu.razor:130`. Do NOT try it from the stylesheet - Bootstrap declares
+  `.mt-auto{margin-top:auto!important}`, so `margin-top: 0` in the isolated sheet loses to it.
 
-Recommendation: **(a)**. The current position is not a design decision anyone made -- it
-is the same missing `display: flex` reported as a bug, showing up somewhere else. But it
-is a visible change that was not requested, which is why it is being asked rather than
-assumed.
+**This is the one part of the slice that changes something the owner did not report**, so it is
+called out in the manual checks rather than left to be noticed.
 
 ## Review
 

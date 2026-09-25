@@ -58,6 +58,13 @@ main {
         height: 100vh;
         position: sticky;
         top: 0;
+
+        /* Flex column so .nav-scrollable can take the height the brand row leaves, instead of
+           NavMenu.razor.css subtracting a hardcoded copy of the brand's height from 100vh.
+           Desktop only: below 641px the sidebar is a collapsible drawer with no 100vh, and
+           making it a flex column there would change a layout nobody reported a problem with. */
+        display: flex;
+        flex-direction: column;
     }
 
     .top-row {

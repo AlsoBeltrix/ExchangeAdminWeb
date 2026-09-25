@@ -205,16 +205,41 @@
         display: none;
     }
 
+    /* The brand row keeps its 2.9rem and is never squeezed by the flex sibling below it. */
+    .sidebar-brand {
+        flex: none;
+    }
+
     .nav-scrollable {
         /* Never collapse the sidebar for wide screens */
         display: block;
 
-        /* Allow sidebar to scroll for tall menus */
-        height: calc(100vh - 2.9rem);
+        /* Take whatever height the brand row leaves, rather than subtracting a copy of the
+           brand's height from 100vh. The old rule was `height: calc(100vh - 2.9rem)`, which
+           hardcoded .sidebar-brand's height as a literal 190 lines away from the rule that
+           sets it - change one and the other silently desynchronises. */
+        flex: 1;
+
+        /* Required. Without it a flex item refuses to shrink below its content, so the pane
+           grows past the sidebar instead of scrolling inside it. */
+        min-height: 0;
+
         overflow-y: auto;
     }
 
     .nav-scrollable nav {
+        /* display:flex is load-bearing and is NOT cosmetic. As a block box, nav collapsed its
+           first child's margin-top (.nav-category, 0.7rem) into its own; .nav-scrollable is a
+           block formatting context, so that margin could not escape and instead offset nav
+           0.7rem down INSIDE a container nav was already min-height:100% of. The result was a
+           constant ~11px overflow at every viewport height - a scrollbar that never went away
+           however tall the window was. Flex containers do not collapse margins with their
+           children. Deleting this line brings the bug back.
+
+           It also makes the `mt-auto` on the version footer work, which is what the markup
+           always asked for and never got. */
+        display: flex;
+        flex-direction: column;
         min-height: 100%;
     }
 }
