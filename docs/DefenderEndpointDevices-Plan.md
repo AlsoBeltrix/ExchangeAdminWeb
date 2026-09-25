@@ -1129,21 +1129,16 @@ the rare branch it is, and do not let it shape the common path.
   the partition order, not out of risk, recency or anything an operator would choose. The notice
   must not imply otherwise, and nothing may sort a partial set in a way that suggests a ranking.
 
-#### 3. The CSV carries the stamp, because the CSV is what travels
+#### 3. The export says it was partial. The audit record says so too.
 
-The screen notice dies with the page. The file gets emailed, filed and read weeks later by someone
-who was never told. So a partial export states its own incompleteness **in the file**: a per-row
-marker plus the ceiling and the truncation in the export's own header block, following whatever
-`docs/ModuleCsvExport-Plan.md` already establishes here.
+The export carries the same fact the screen does, via the filename - exports already land as
+`<module>_yyyyMMdd_HHmmss.csv`, so a partial run marks itself there. No new format, no preamble
+row (the shared `CsvExport.Write` puts column names on line 1 and a test pins it), and **no
+per-row column**: an identical value repeated on every row is metadata about the file wearing the
+costume of data about a device.
 
-**This is T3's argument surviving its own conclusion.** T3 said *a partial CSV that looks complete
-is the one result this module must never produce*, and that is still exactly right. Refusing was
-one way to guarantee it. Stamping is another, and stamping keeps the rows. What is forbidden is not
-partial data - it is partial data that cannot be told apart from complete data, which is the same
-rule the owner applied to Risky Users the day before (`.agents/decisions.md` 2026-09-24).
-
-The export's audit record carries the same distinction: it already logs a row count, and a count
-means nothing later unless the record also says whether the run was complete.
+The export's audit record already logs a row count. It must also log whether the run was complete,
+because a count cannot be interpreted later without it.
 
 #### Why a ceiling exists at all
 
@@ -1153,30 +1148,6 @@ follows from the page size rather than from a number written here: at
 `$top = min(MaxDevices + 1, 10000)` the default of 20000 costs **one** request when the endpoint
 emits no cursor, and at most `ceil(MaxDevices / pageSize)` when it does, where `pageSize` is
 whatever the service actually returns - which R1(g) observes rather than this file asserting.
-
-Separately, and unchanged: a **`404`** from the first page is the documented empty result, not a
-failure (T5).
-   does. A partial export must carry its own incompleteness **in the file**, so that someone who
-   receives it by email three weeks later can see it without being told. Both of:
-   - a column on every row marking the run partial, and
-   - the ceiling and the fact of truncation in the export's own metadata row or header block,
-     following whatever `docs/ModuleCsvExport-Plan.md` already establishes for this repo.
-   A file whose partialness exists only in the UI that produced it is the exact failure T3 named.
-3. **The audit record says which it was.** The existing export audit entry carries a row count; it
-   must also carry whether the run was complete or truncated, or the count cannot be interpreted
-   later.
-4. **The order matters now, in a way it did not when this refused.** A partial set is a subset, and
-   which subset is decided by the partition and the API's own ordering - it is NOT the "most
-   interesting" N devices. The notice must not imply the operator is looking at the most important
-   ones, and nothing may sort the partial set in a way that suggests a ranking.
-
-The ceiling still exists, for reasons about the API rather than about any deployment: the endpoint
-allows 100 calls per minute, and an unbounded loop against a paged API is how a read module becomes
-an outage. The request count follows from the page size rather than from a number written here: at
-`$top = min(MaxDevices + 1, 10000)` the default ceiling of 20000 costs **one** request when the
-endpoint emits no cursor, and at most `ceil(MaxDevices / pageSize)` when it does, where `pageSize`
-is whatever the service actually returns per page - which R1(g) observes rather than this file
-asserting.
 
 Separately, and unchanged: a **`404`** from the first page is the documented empty result, not a
 failure (T5).
@@ -1656,10 +1627,8 @@ automatable today.
     - the table renders the devices that WERE collected - nothing is discarded;
     - a notice says how far it got and that more match;
     - **Keep going** resumes and the report completes;
-    - **export while partial, open the CSV, and confirm the file says so on its own** - per-row
-      marker and header block. This is the half that matters: a screen notice does not survive
-      being emailed, and a partial CSV that reads as complete is the failure this check exists to
-      catch. Restore the value and confirm a complete run carries no marker at all.
+    - export while partial: the downloaded filename marks it, and the audit record says the run
+      was not complete. Restore the value and confirm a complete run marks neither.
 15. Compare the row count against the same filters in the Defender portal's device inventory. They
     should agree, modulo the update-frequency caveat Learn states. A count that stops suspiciously
     near a round number is the signature of paging that stopped early.
