@@ -533,8 +533,14 @@
                             {
                                 <div class="mig-pane-actions d-flex align-items-center flex-wrap gap-1">
                                     <strong class="small me-1">@selectedBatches.Count selected</strong>
+                                    @* The second sentence is the owner's, 2026-09-25. Operators were
+                                       ticking a batch with failures, pressing Complete and seeing
+                                       it skipped with no hint of what to do next. One line on the
+                                       control, not a banner: the per-batch answer is already in
+                                       the confirm step, which names every skipped batch with the
+                                       status that skipped it. *@
                                     <button class="btn btn-sm btn-outline-success" disabled="@(IsBusy || pendingActionLabel != null)"
-                                            title="Completes the selected batches that have finished syncing"
+                                            title="Completes selected batches that have finished syncing. A batch with errors cannot complete until they are fixed or removed."
                                             @onclick="StageCompleteSelected">
                                         Complete
                                     </button>

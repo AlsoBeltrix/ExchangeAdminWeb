@@ -116,10 +116,14 @@ public class MigrationBatchActionPlannerTests
         // slice's job was to relocate a control, not to change which batches it will finalise.
         //
         // It is an allowlist, which D4 says is how CompletedWithErrors became invisible. Narrow on
-        // purpose here: Complete FINALISES a move, so offering it on an unanticipated status bets
-        // that Exchange will refuse, and a wrongly-accepted Complete cuts mailboxes over. Whether
-        // CompletedWithErrors belongs in this list is the owner's question, recorded in
-        // docs/MigrationInterfaceRedesign-Plan.md and deliberately not answered here.
+        // purpose: Complete FINALISES a move, so offering it on an unanticipated status bets that
+        // Exchange will refuse, and a wrongly-accepted Complete cuts mailboxes over.
+        //
+        // CompletedWithErrors is settled and stays false (owner, 2026-09-25). It is what a
+        // single-user batch reads when that user failed, and on a multi-user batch it means the
+        // batch holds errors that cannot complete - there is nothing there to finalise until they
+        // are remediated or removed. D4's lesson was an allowlist hiding a status that SHOULD have
+        // been actionable; this one is not, so it is not the same defect wearing the same clothes.
         Assert.Equal(expected, MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, status));
     }
 

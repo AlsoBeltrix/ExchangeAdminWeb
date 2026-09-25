@@ -121,9 +121,13 @@ public static class MigrationBatchActionPlanner
             //   - Complete FINALISES a move and Stop HALTS one. Offering either on a status nobody
             //     anticipated bets that Exchange will refuse it, and a wrongly-accepted Complete
             //     cuts over mailboxes. That is the harmful direction, so these stay narrow.
-            // Whether CompletedWithErrors should be completable is a real question and it is the
-            // owner's, recorded in docs/MigrationInterfaceRedesign-Plan.md rather than answered
-            // here by a slice whose job was to move a button.
+            //
+            // CompletedWithErrors is SETTLED and is not an exception to be added later (owner,
+            // 2026-09-25). It is what a single-user batch reads when that user failed, and on a
+            // multi-user batch it means the batch holds errors that cannot complete. There is
+            // nothing there to finalise: the errors have to be remediated or removed first, and
+            // only then does the batch reach a status Complete applies to. D4's lesson was that an
+            // allowlist hid a status that SHOULD have been actionable; this one is not.
             MigrationBatchAction.Complete =>
                 string.Equals(trimmed, SyncedStatus, StringComparison.OrdinalIgnoreCase),
 

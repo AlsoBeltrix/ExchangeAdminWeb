@@ -5,6 +5,40 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-25 - A migration batch with errors is not completable, and the UI says so on the control
+
+Status: Active. Owner ruling, 2026-09-25.
+
+Decision:
+`CompletedWithErrors` is NOT eligible for Complete, and this is settled rather than an
+exception to be added later. `MigrationBatchActionPlanner.Applies` keeps Complete to
+exactly `Synced`.
+
+Reason:
+`CompletedWithErrors` is what a single-user batch reads when that user failed, and on a
+multi-user batch it means the batch holds errors that cannot complete. There is nothing
+there to finalise. The errors must be remediated or removed first; only then does the
+batch reach a status Complete applies to.
+
+This is NOT the defect D4 in `Services/MigrationBatchActionPlanner.cs` warns about.
+D4 exists because an allowlist hid `CompletedWithErrors` from Delete and Resume, which
+SHOULD have been offered on it. The same status failing the Complete predicate is the
+predicate being right, not an allowlist hiding something actionable. The distinction to
+carry: Delete and Resume use exclusion because hiding a ticked row is worse than Exchange
+refusing one; Complete and Stop stay narrow because accepting an unanticipated status is
+the harmful direction - a wrongly-accepted Complete cuts mailboxes over.
+
+The interface half, and the standing rule it applies:
+The operator was left to infer all of this from a skip line. The Complete control now
+carries one sentence saying a batch with errors cannot complete until they are fixed or
+removed. **On the control, not as a banner, a caption or a help panel.** There is one
+Complete button, so the text is not repeated per row, and the per-batch answer already
+exists at the confirm step, which names every skipped batch with the status that skipped
+it. Owner, 2026-09-25: help text may not be added by "ruining the UI", and context must
+not be dumped into UI elements. This extends the 2026-09-24 Risky Users ruling - a control
+repeated on every row carries only what differs - to a control that appears once: it may
+carry the shared fact, in one line, and no more.
+
 ### 2026-09-24 - Long result tables are PAGED, and a fetch limit is a notice, not a refusal
 
 Status: Active. Scope: `RiskyUsers` now; read as the default shape for any module table

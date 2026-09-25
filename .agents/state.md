@@ -28,6 +28,10 @@ stale when written.
 - **QUEUE ITEM 14: PLAN APPROVED. S1, mir-1, S2 AND S3 ARE ALL LANDED. S4 IS NEXT.**
   `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In progress`. Module `1.9.1` ->
   `1.10.0` (S1) -> `1.10.1` (mir-1) -> `1.11.0` (S2) -> `1.12.0` (S3), no base app bump.
+  - **`CompletedWithErrors` IS SETTLED (owner, 2026-09-25): not completable, and the Complete
+    control now says why in one sentence** - a batch with errors cannot complete until they are
+    fixed or removed. `.agents/decisions.md` 2026-09-25. It is not the D4 defect; D4 was an
+    allowlist hiding a status that should have been actionable.
   - **S3 DID NOT DELIVER MAILBOX CHECKBOXES, AND ITS OWN SLICE TEXT SAYS "CHECKBOXES ON BOTH
     LISTS".** Batch checkboxes, select-all with no cap, the batch operation bar and the
     multi-batch selection pane with its own pager are done. The mailbox half of R7 - and the

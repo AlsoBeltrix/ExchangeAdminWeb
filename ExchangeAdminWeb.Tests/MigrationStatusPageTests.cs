@@ -245,6 +245,33 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void CompleteSaysWhatToDoAboutABatchWithErrors()
+    {
+        // Owner, 2026-09-25. A CompletedWithErrors batch is skipped by Complete and always will be
+        // - the errors have to be remediated or removed before there is anything to finalise - but
+        // the operator was left to infer that from a skip line. The control says it.
+        //
+        // On the control, not as a banner or a caption: one Complete button exists, so the text
+        // is not repeated per row, and the per-batch answer already lives in the confirm step,
+        // which names every skipped batch with the status that skipped it.
+        var toolbar = ExtractBlock(
+            StripRazorComments(ReadPage()), "@if (canManage && selectedBatches.Count > 0)");
+
+        var complete = GetButtonTags(toolbar)
+            .Single(tag => tag.Contains("StageCompleteSelected", StringComparison.Ordinal));
+
+        var title = Regex.Match(complete, @"title=""(?<text>[^""]*)""").Groups["text"].Value;
+
+        Assert.Contains("errors", title, StringComparison.OrdinalIgnoreCase);
+        Assert.Matches(@"fixed or removed|remediated or removed", title);
+
+        // Short enough to be a tooltip. The owner's standing rule is that a control carries what
+        // differs and nothing more; a paragraph on a button is context leaking into the product.
+        Assert.True(title.Length <= 160,
+            $"the Complete tooltip is {title.Length} characters; it is a hint, not a help page");
+    }
+
+    [Fact]
     public void TheStandaloneClearCompletedSweepIsGone()
     {
         // D6. It removed every completed batch in the table regardless of selection - an

@@ -406,10 +406,14 @@ file, with the derivation written into the test comment - not nudged down until 
 green. A floor exists to catch a call site vanishing unnoticed, so a silently lowered one stops
 guarding the thing it is for. Do the same if a later slice consolidates further.
 
-**Open owner question from step 1:** should `CompletedWithErrors` be completable? Complete and Stop
-kept the per-row buttons' allowlists character for character, which is the shape D4 warns about;
-kept narrow on purpose because Complete finalises a move and Stop halts one, so accepting an
-unanticipated status is the harmful direction rather than hiding one.
+**The step-1 question is CLOSED, 2026-09-25: `CompletedWithErrors` is not completable, and that is
+settled rather than an exception to add later.** It is the status of a single-user batch whose user
+failed, and on a multi-user batch it means the batch holds errors that cannot complete - there is
+nothing to finalise until they are remediated or removed. Not the D4 defect: D4 was an allowlist
+hiding a status that SHOULD have been actionable. **The operator now learns this from the Complete
+control itself**, in one sentence, because inferring it from a skip line is not an interface.
+`.agents/decisions.md` 2026-09-25 carries the ruling and the standing rule about where help text
+may live.
 
 **S4 -- Outcome preview.** Per-row eligibility annotation and the eligible count on Confirm,
 replacing the current blanket staging. This is where Known Failure Class 2 (success
