@@ -137,11 +137,16 @@ public class RiskyUsersPageTests
     [Fact]
     public void RiskyUsers_CeilingNoticeNamesTheFiltersThatActuallyShrinkTheFetch()
     {
-        var text = File.ReadAllText(
-            AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "RiskyUsers.razor"));
+        var text = PageCode();
+
+        // Whitespace-normalised: this asserts what the notice SAYS, not how the markup happens to
+        // wrap. It failed once purely because a reword moved a line break into the middle of the
+        // phrase, which is a test breaking on layout - the kind that gets loosened rather than
+        // believed the next time it fires.
+        var prose = Regex.Replace(text, @"\s+", " ");
 
         Assert.Contains("@if (truncated)", text);
-        Assert.Contains("Risk level and Risk", text);
+        Assert.Contains("Risk level and Risk state narrow the search itself", prose);
         Assert.DoesNotContain("Narrow the filter.", text);
     }
 
@@ -845,5 +850,58 @@ public class RiskyUsersPageTests
         Assert.Contains("RiskyUsers_Lookup", body);
         Assert.Contains("SafeAudit", body);
         Assert.DoesNotContain("SendAdminNotificationAsync", body);
+    }
+
+    // ---- codex review findings, 2026-09-25 -----------------------------------------------------
+
+    /// <summary>
+    /// Finding 3: a history response can outlive the row it was opened for.
+    ///
+    /// Open History for user A, page away before it returns, open History for user B - A's
+    /// response arrives last and writes into the shared historyEntries, putting A's timeline under
+    /// B's name. A risk timeline attributed to the wrong account is what a remediation decision
+    /// gets made from.
+    ///
+    /// Keying on expandedUserId alone would not close it: reopening the SAME user matches again.
+    /// A generation counter does, and it has to rise on page change as well as on toggle.
+    /// </summary>
+    [Fact]
+    public void RiskyUsers_StaleHistoryResponsesAreDiscarded()
+    {
+        var toggle = Regex.Replace(MethodBody("ToggleHistoryAsync"), @"//[^\n]*", string.Empty);
+
+        Assert.Contains("var generation = ++historyGeneration;", toggle);
+        Assert.Contains("if (generation != historyGeneration) return;", toggle);
+
+        Assert.Contains("historyGeneration++;", Regex.Replace(MethodBody("SetPage"), @"//[^\n]*", string.Empty));
+    }
+
+    /// <summary>
+    /// Finding 3, second half: an in-flight timeline read must not be abandoned mid-await by
+    /// paging or by another action.
+    /// </summary>
+    [Fact]
+    public void RiskyUsers_ActionsAreDisabledWhileHistoryIsLoading()
+    {
+        Assert.Contains("historyLoading", Regex.Replace(
+            Between(PageCode(), "private bool ActionsDisabled", ";"), @"//[^\n]*", string.Empty));
+    }
+
+    /// <summary>
+    /// Finding 2: the notice reported the CEILING as though it were the number of rows on screen.
+    ///
+    /// They are different numbers. Rows arrive a page at a time, so the run stops on the first
+    /// page that takes the total past the limit and overshoots it - with MaxTotalRows at 50 and a
+    /// 500-row page, the operator saw 500 rows under the words "stopped after 50". A wrong number
+    /// in the one sentence whose entire job is to be trusted about completeness.
+    /// </summary>
+    [Fact]
+    public void RiskyUsers_TheCeilingNoticeReportsWhatWasRetrievedNotTheConfiguredLimit()
+    {
+        var text = PageCode();
+
+        Assert.Contains("@retrievedCount risky users and stopped", text);
+        Assert.DoesNotContain("Stopped after @ceiling", text);
+        Assert.DoesNotContain("@ceiling risky users retrieved", text);
     }
 }

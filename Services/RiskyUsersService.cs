@@ -170,12 +170,18 @@ public sealed class RiskyUsersService
         // this collection and a filter it rejects is a 400 that the rule above turns into a hard
         // failure. It now runs over the COMPLETE set rather than over an arbitrary first page,
         // which is what makes the reported "charles" case work.
+        // Captured BEFORE the UPN filter narrows the list. The notice's job is to say how much of
+        // the TENANT was retrieved, which is not the same as how many rows matched the operator's
+        // text - and the ceiling is a third number again, since rows arrive a page at a time and
+        // the run overshoots the limit on the page that crosses it.
+        var retrieved = users.Count;
+
         if (!string.IsNullOrWhiteSpace(filter.UpnContains))
             users = users.Where(u => u.UserPrincipalName.Contains(filter.UpnContains!, StringComparison.OrdinalIgnoreCase)).ToList();
 
         users = SortRiskyUsers(users);
 
-        return new RiskyUserPage(users, outcome, ceiling, pages);
+        return new RiskyUserPage(users, outcome, ceiling, pages, retrieved);
     }
 
 
@@ -528,7 +534,8 @@ public sealed record RiskyUserPage(
     IReadOnlyList<RiskyUser> Users,
     RiskyUserFetchOutcome Outcome,
     int Ceiling,
-    int PagesFetched)
+    int PagesFetched,
+    int RetrievedCount)
 {
     /// <summary>True when rows exist that this fetch did not retrieve.</summary>
     public bool Truncated => Outcome == RiskyUserFetchOutcome.CeilingReached;

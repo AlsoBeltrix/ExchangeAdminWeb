@@ -329,6 +329,10 @@ public class GraphTokenClientTests
     [InlineData("https://graph.microsoft.com/beta/users")]
     // Credentials in the authority - the userinfo is not the host, and must not be read as one.
     [InlineData("https://graph.microsoft.com@evil.test/v1.0/users")]
+    // Segment-boundary cases. A bare StartsWith("/v1.0") waves both of these through, and a
+    // codex review found exactly that: the guard was weaker than the comment claimed.
+    [InlineData("https://graph.microsoft.com/v1.0beta/users")]
+    [InlineData("https://graph.microsoft.com/v1.0.evil/users")]
     public async Task GetWithStatusAsync_RefusesTheUrlAndNeverMintsAToken(string url)
     {
         var (client, handler) = CreateRecordingClient();

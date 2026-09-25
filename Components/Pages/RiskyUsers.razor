@@ -179,12 +179,19 @@
                matches when the truth is that it stopped looking. That is the reported bug in a new
                costume. The outcome decides what empty means; the count never decides alone. *@
             @if (truncated)
+            @if (truncated)
             {
+                @* Reports what was actually RETRIEVED, not the configured ceiling. Those differ:
+                   rows arrive a page at a time, so the fetch stops on the first page that takes
+                   the total past the limit and the real count overshoots it. Printing the ceiling
+                   told the operator "stopped after 50" while 500 rows sat underneath - a wrong
+                   number in the one sentence whose job is to be trusted about completeness. *@
                 <div class="alert alert-warning py-2">
                     <small>
-                        Stopped after @ceiling risky users; the tenant has more. This list is
-                        partial, so the highest-risk users may not be in it. Risk level and Risk
-                        state narrow the search itself - use them for a complete result.
+                        Retrieved @retrievedCount risky users and stopped; the tenant has more.
+                        This list is partial, so the highest-risk users may not be in it. Risk
+                        level and Risk state narrow the search itself - use them for a complete
+                        result.
                     </small>
                 </div>
             }
@@ -194,7 +201,7 @@
                 @if (truncated)
                 {
                     <div class="alert alert-secondary">
-                        No match in the @ceiling risky users retrieved. More exist that were not
+                        No match in the @retrievedCount risky users retrieved. More exist that were not
                         searched.
                     </div>
                 }
@@ -450,6 +457,11 @@
     private bool truncated;
     private int ceiling;
 
+    // What the fetch actually returned, which is NOT the ceiling: rows arrive a page at a time, so
+    // the run stops on the first page that takes the total past the limit and overshoots it. The
+    // notice reports this; reporting the ceiling printed a number the operator could see was wrong.
+    private int retrievedCount;
+
     // Pagination (owner ruling 2026-09-24: long tables page; .agents/decisions.md). The fetch and
     // the severity sort stay tenant-wide, so page 1 genuinely holds the highest-risk users -
     // only the rendering is bounded. 50 matches AdminEventLog.razor and the Entra portal.
@@ -484,11 +496,16 @@
         expandedUserId = null;
         historyEntries = [];
         historyError = null;
+        historyGeneration++;
     }
 
     private string? expandedUserId;
     private bool historyLoading;
     private string? historyError;
+
+    // Rises on every history toggle and every page change. A response whose generation is stale
+    // is discarded: the await can outlive the row it was opened for.
+    private int historyGeneration;
     private List<RiskyUserHistoryEntry> historyEntries = [];
 
     // ---- write path (S6) ----------------------------------------------------------------------
@@ -511,7 +528,10 @@
     private RowOutcome? OutcomeFor(string userId) =>
         rowOutcomes.TryGetValue(userId, out var outcome) ? outcome : null;
 
-    private bool ActionsDisabled => isLoading || actingUserId != null;
+    // historyLoading is included: an in-flight timeline read must not be abandoned mid-await by
+    // paging or by another action. Its absence is what let a stale response land under the wrong
+    // row; the generation counter in ToggleHistoryAsync is the second half of that fix.
+    private bool ActionsDisabled => isLoading || actingUserId != null || historyLoading;
 
     /// <summary>Column count for a full-width detail row; tracks the conditional Remediate column.</summary>
     private int DetailColspan => canRemediate ? 9 : 8;
@@ -661,13 +681,29 @@
         }
     }
 
+    /// <summary>
+    /// Loads one user's risk timeline beneath their row.
+    ///
+    /// **Guarded by a generation counter**, because the await can outlive the row it belongs to.
+    /// Open History for user A, change page before it returns, open History for user B, and A's
+    /// response arrives last and writes into the shared `historyEntries` - putting A's timeline
+    /// under B's name. A risk timeline attributed to the wrong account is not a cosmetic bug: it
+    /// is what a remediation decision is made from.
+    ///
+    /// The counter rises on every toggle and on every page change, so any response whose
+    /// generation is stale is discarded rather than rendered. Keying on `expandedUserId` alone
+    /// would not be enough - reopening the SAME user would match again.
+    /// </summary>
     private async Task ToggleHistoryAsync(RiskyUser user)
     {
         if (expandedUserId == user.Id)
         {
             expandedUserId = null;
+            historyGeneration++;
             return;
         }
+
+        var generation = ++historyGeneration;
 
         expandedUserId = user.Id;
         historyLoading = true;
@@ -677,20 +713,27 @@
 
         try
         {
-            historyEntries = [.. await RiskyUsersService.GetHistoryAsync(user.Id)];
+            var entries = await RiskyUsersService.GetHistoryAsync(user.Id);
+
+            if (generation != historyGeneration) return;
+            historyEntries = [.. entries];
 
             SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_History", "RiskyUsers", user.UserPrincipalName, true));
         }
         catch (Exception ex)
         {
-            historyError = ex.Message;
+            // The audit is written whatever happened - the read was attempted and that is a fact
+            // about this operator. Only the RENDERING is suppressed for a superseded request.
             Logger.LogError(ex, "Failed to load risky user history for {UserId}.", user.Id);
 
             SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_History", "RiskyUsers", user.UserPrincipalName, false, errorDetail: ex.Message));
+
+            if (generation != historyGeneration) return;
+            historyError = ex.Message;
         }
         finally
         {
-            historyLoading = false;
+            if (generation == historyGeneration) historyLoading = false;
         }
     }
 

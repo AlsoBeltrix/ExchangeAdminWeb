@@ -87,7 +87,17 @@ public sealed class GraphTokenClient
         if (!string.Equals(absolute.Host, GraphBaseUri.Host, StringComparison.OrdinalIgnoreCase))
             return false;
 
-        if (!absolute.AbsolutePath.StartsWith(GraphBaseUri.AbsolutePath, StringComparison.OrdinalIgnoreCase))
+        // Segment boundary, not a string prefix. A bare StartsWith("/v1.0") also accepts
+        // "/v1.0beta/..." and "/v1.0.anything/...", which are different Graph surfaces reached
+        // with this client's token - the guard would have been weaker than the comment above it
+        // claims. Either the path IS the base, or the base is followed by a separator.
+        var path = absolute.AbsolutePath;
+        var basePath = GraphBaseUri.AbsolutePath;
+
+        if (!path.StartsWith(basePath, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (path.Length != basePath.Length && path[basePath.Length] != '/')
             return false;
 
         uri = absolute;
