@@ -105,7 +105,7 @@ public class PasswordGeneratorWordListTests
         // record measured - and an unverified character could be one Entra rejects.
         // The accented entry is written as an escape, not as a literal: this repo's CI fails on
         // any non-ASCII byte in a tracked .cs file, comments included.
-        foreach (var bad in new[] { "ABC", "wo3rd", "café", "wo_rd" })
+        foreach (var bad in new[] { "ABC", "wo3rd", "caf\u00e9", "wo_rd" })
         {
             var words = ValidList();
             words[7] = bad;
