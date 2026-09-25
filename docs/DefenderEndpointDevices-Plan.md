@@ -630,14 +630,63 @@ Three things to hold while reading the table:
 | L2 | Subnet and address space | `DeviceNetworkInfo.IPAddresses` - "JSON array containing all the IP addresses assigned to the adapter, along with their respective subnet prefix and IP address space, such as public, private, or link-local" | **Strong, conditional** - a subnet is a site only if an IPAM or subnet-to-site map exists to read it against (Q7) | Yes, for the **observer**; for the target only if discovery populated a row for it | Carries the prefix, not just the address, which is what makes it a site key rather than a number |
 | L3 | Default gateway | `DeviceNetworkInfo.DefaultGateways` - "Default gateway addresses in JSON array format" | **Strong.** A gateway is typically per-VLAN or per-wiring-closet, so it is effectively a site key even without an IPAM | Same as L2 | The single highest-value field after L1 if no IPAM exists |
 | L4 | DHCP server | `DeviceNetworkInfo.IPv4Dhcp`, `DeviceNetworkInfo.IPv6Dhcp` - "IPv4 address of DHCP server" / "IPv6 address of DHCP server" | **Strong.** Microsoft's own corporate-network heuristic keys on network name plus default gateway plus DHCP server, which is a statement that these three together identify a network | Same as L2 | Pairs with L3; two independent site keys agreeing is worth more than either alone |
-| L5 | Adapter DNS suffix | `DeviceNetworkInfo.NetworkAdapterDnsSuffix` - "Domain suffix assigned to the device's network adapter, indicating the network environment the network adapter is connected to" | **Strong where suffixes are site-scoped, weak where one flat suffix is used everywhere** (Q7) | Same as L2 | Learn's own description says "indicating the network environment", which is the claim being relied on |
+| ~~L5~~ | **STRUCK (owner, Q7): no site-scoped suffix scheme.** Adapter DNS suffix | `DeviceNetworkInfo.NetworkAdapterDnsSuffix` - "Domain suffix assigned to the device's network adapter, indicating the network environment the network adapter is connected to" | **Strong where suffixes are site-scoped, weak where one flat suffix is used everywhere** (Q7) | Same as L2 | Learn's own description says "indicating the network environment", which is the claim being relied on |
 | L6 | DNS servers | `DeviceNetworkInfo.DnsAddresses` - "DNS server addresses in JSON array format" | **Medium-strong.** DNS resolvers are usually regional rather than per-site | Same as L2 | Narrows to a region, rarely to a building |
 | L7 | Connected networks | `DeviceNetworkInfo.ConnectedNetworks` - each JSON element carries "the network name, category (public, private or domain), a description, and a flag indicating if it's connected publicly to the internet" | **Medium.** The name is operator-chosen, so its usefulness is exactly the discipline behind it | Same as L2 | Learn's discovered-devices article has a worked query filtering on network name |
 | L8 | MAC and adapter vendor | `DeviceNetworkInfo.MacAddress`, `DeviceNetworkInfo.NetworkAdapterVendor`; the machines API also returns MACs on `ipAddresses[].macAddress` | **Weak for location, strong for identity - and useful mainly as an EXCLUSION** | Yes | **This is not a footnote.** The owner's own screenshot shows the example device with vendor `VMware`: a virtual machine, which has **no physical location to find**. Vendor is therefore the field that keeps VMs out of a report about walking to a machine. Without it the report is a list padded with things nobody can go and look at |
 | L9 | Site | `DeviceInfo.Site` - "Represents the physical location where the device is located" | **Strong on its face** - it is literally the field being asked for | Yes, when populated | **Licence-gated and must not be assumed.** The DeviceInfo reference gives no licence note, and the claim that it is populated by Defender for IoT Site security (public preview) is an **assumption** (see Assumptions 9). Whether it is populated in this tenant is **R1(k)** - one query answers it, and if the answer is yes it outranks most of this table |
-| L10 | Device FQDN | `DeviceInfo.DeviceName` - "Fully qualified domain name (FQDN) of the device"; `machine.computerDnsName` on the REST side, already in the report | **Medium, entirely conditional on a naming convention** | Yes | The owner's examples look like a convention exists. **This plan does not assert what any part of a name means**, and no code may parse one - that would be invariant 7 in source. Q7 asks the owner whether a documented convention exists and whether decoding it is wanted |
-| L11 | Machine group and tags | `DeviceInfo.MachineGroup` - "Machine group of the device. This group is used by role-based access control"; `DeviceInfo.DeviceManualTags`; `DeviceInfo.DeviceDynamicTags` | **Medium IF the organisation tags or groups by geography, nil otherwise** (Q7) | Yes | Worth knowing before relying on dynamic tags: a dynamic rule "can be based on device name, domain, OS platform, internet facing status, onboarding status and manual device tags" - **there is no IP-range or subnet condition**, so a dynamic tag can never be derived from where a device sits on the network |
+| ~~L10~~ | **STRUCK (owner, Q7): no coherent naming convention.** Device FQDN | `DeviceInfo.DeviceName` - "Fully qualified domain name (FQDN) of the device"; `machine.computerDnsName` on the REST side, already in the report | **Medium, entirely conditional on a naming convention** | Yes | The owner's examples look like a convention exists. **This plan does not assert what any part of a name means**, and no code may parse one - that would be invariant 7 in source. Q7 asks the owner whether a documented convention exists and whether decoding it is wanted |
+| L11 | Machine group and tags | `DeviceInfo.MachineGroup` - "Machine group of the device. This group is used by role-based access control"; `DeviceInfo.DeviceManualTags`; `DeviceInfo.DeviceDynamicTags` | **Unknown - demoted to recon item R1(n), not an owner question.** Medium IF groups or tags encode geography, nil otherwise | Yes | Worth knowing before relying on dynamic tags: a dynamic rule "can be based on device name, domain, OS platform, internet facing status, onboarding status and manual device tags" - **there is no IP-range or subnet condition**, so a dynamic tag can never be derived from where a device sits on the network |
 | L12 | Hardware identity | `DeviceInfo.Model`, `DeviceInfo.Vendor`, `DeviceInfo.DeviceType`, `DeviceInfo.DeviceSubtype` | **Weak for location; useful for recognising the thing once you are in the room** | Yes, partially | Learn flags `Model`, `Vendor` and `DeviceSubtype` as "only available if device discovery finds enough information about this attribute" - expect blanks, and never let a blank read as a finding |
+
+### L17 - the AD site, derived locally. Not a Defender field at all.
+
+**Added 2026-09-24 on the owner's answer to Q7**, and it is the strongest location signal in this
+document after L1, because it is the only one that yields a **name a human recognises** rather
+than a number someone has to look up.
+
+Defender has no AD site field and never will - that is still true and is still recorded below
+under "not documented anywhere". But this application is an on-prem Active Directory admin tool,
+and **Active Directory already holds an authoritative subnet-to-site map**: the configuration
+partition's `CN=Subnets,CN=Sites,CN=Configuration,...`, where each subnet object carries
+`siteObject` (the site it belongs to) and frequently `location` (a free-text physical location,
+which is exactly what the owner is trying to recover). This is maintained by the network and
+directory teams as a matter of course, because AD itself depends on it for replication and client
+affinity.
+
+So the derivation is local, and needs nothing new from Microsoft:
+
+```
+device IP (L2, or the observer's IP from L1)
+  -> longest-prefix match against AD's subnet objects
+  -> site name, and the subnet's `location` string if set
+```
+
+**The repo can already reach it.** `Services/SectionAccessGroupDirectory.cs:86-93` reads
+`configurationNamingContext` from RootDSE via `Get-ADRootDSE` - the same partition, the same
+discovery route, an existing pattern in this codebase rather than a new capability.
+
+**This is invariant-7 compliant, and the distinction matters.** Invariant 7 forbids naming a
+domain, host, OU, group or subnet as behaviour, and forbids a safety argument resting on this
+environment's shape. It does **not** forbid reading the directory the host is already joined to.
+The subnet table is *discovered at runtime from the host's own forest membership*, which is the
+exact phrasing invariant 7 uses to describe the permitted shape. No subnet, site or location
+string appears in source. If the forest has no subnet objects, or a device's IP matches none, the
+column is empty and says so - it must fail closed and visibly, never guess a nearest match.
+
+| # | Field | Exact source | Location strength | Non-onboarded? | Notes |
+| --- | --- | --- | --- | --- | --- |
+| L17 | AD site and subnet location | AD configuration partition, `CN=Subnets,CN=Sites,CN=Configuration,...`: subnet object `cn` (the CIDR), `siteObject`, `location`. Matched against the device IP from L2 or the observer IP from L1 | **Strongest human-readable signal.** Turns an IP into a site name the organisation already uses, and often a literal location string | **Yes** - it depends only on having an IP for the device, not on a sensor | Needs no Defender licence, no new Graph permission and no network-team deliverable. **Open: does this module read AD directly, or is the correlation left to the operator?** That is Q10 |
+
+**Q10, which L17 creates and the owner should settle before a slice is written:** this module is
+currently a pure Defender-API module with one credential. L17 adds a second, unrelated data source
+- on-prem AD - and the two failure modes do not resemble each other. Three shapes: **(a)** the
+module reads AD itself and renders the site column; **(b)** it exports the IP and the operator
+correlates outside; **(c)** it reads AD but treats a directory failure as an empty column rather
+than a failed report, which is the T7 rule applied to a second source. Recommendation: **(c)**,
+because a site name is an enrichment and the device list is still useful without it - but (a)
+versus (c) is a real difference in what a failed AD read does to the report, and T7 exists
+precisely because that question has been got wrong here before.
 
 ### ONBOARDED-only - these describe the OBSERVER, not the target
 
@@ -1311,6 +1360,21 @@ Answers are recorded **in this file** before any code is written against them.
   and said to "add it to R1's list if that gate is still open". It is still open, so here it is,
   numbered. The module is correct either way today; the answer lets the defensive branch be
   simplified and confirmed rather than left as a guess.
+- **(n) Do `MachineGroup`, `DeviceManualTags` or `DeviceDynamicTags` encode geography?** Added
+  2026-09-24. The owner's answer to Q7 on tags was "no idea", which makes this a query rather than
+  an owner question. `DeviceInfo | summarize count() by MachineGroup` and the same for each tag
+  column. L11 is built only if the answer is yes, and a handful of geographic values among mostly
+  non-geographic ones is a no, not a yes - a column that is right for 5 percent of rows is worse
+  than no column.
+- **(o) Does the forest's AD configuration partition actually hold subnet objects, and do they
+  carry `siteObject` and `location`?** Added 2026-09-24 with L17. This is the one recon item that
+  is NOT a Defender query: it reads
+  `CN=Subnets,CN=Sites,CN=Configuration,<configurationNamingContext>` the same way
+  `Services/SectionAccessGroupDirectory.cs:86-93` reaches that partition. Three things to record:
+  how many subnet objects exist, what fraction carry a non-empty `location`, and whether the
+  subnets look like they cover the address space the can-be-onboarded devices sit in. **If the
+  forest has few subnet objects or they are stale, L17 collapses and the recommendation in Q8
+  changes** - so this runs before any slice is written, not during one.
 
 ### S3 - CSV export (starts after R1's answers are recorded)
 
@@ -1631,23 +1695,43 @@ Listed separately so none of them is mistaken for a citation.
 **Q2, Q3, Q4 and Q5 above are still unanswered.** The three below are new, and Q8 is the one the
 owner explicitly asked to be given.
 
-7. **Do the local conventions that several candidate fields depend on actually exist?** Three
-   fields in the L1-L16 table are strong only if something outside Defender exists to read them
-   against: a **subnet-to-site or IPAM map** (L2), a **site-scoped DNS suffix scheme** (L5), and a
-   **device naming convention** (L10) - and L11 is only useful if machine groups or tags encode
-   geography. This is one question with four parts because they share an answer shape: which of
-   these exist, and is the report meant to *decode* them or just *show the raw value and let a
-   human decode it*? **The plan's own recommendation is show-the-raw-value**: decoding needs a map
-   or a rule, a map or a rule is a fact about this environment, and
-   `.agents/repo-guidance.md` invariant 7 keeps those out of source unless they arrive as operator
-   configuration with a plan of their own.
-8. **Which of L1-L16 goes in the report?** This is the approval the owner asked for. Strike any
-   row and it is not built. The plan's **recommendation, offered as a recommendation and not as a
-   decision:** take **L1** (the requirement), **L3** and **L4** (two independent site keys that
-   need no local map), **L8** (which keeps virtual machines out of a report about walking to a
-   machine), and **L9** if R1(k) says it is populated. Hold L2, L5, L10 and L11 behind Q7. Leave
-   L13-L16 out until L1 is working, since all four describe the observer and are meaningless
-   without it.
+7. **ANSWERED by the owner, 2026-09-24 - and one part of the answer opened a better route than
+   any field in the L-table.**
+   - **Subnet-to-site / IPAM map (L2): the owner has none, and the network team may.** But the
+     owner named the thing that settles it: **Active Directory Sites and Services**, which is an
+     authoritative subnet-to-site map the organisation already maintains. See L17 below; it
+     changes the recommendation.
+   - **Site-scoped DNS suffix scheme (L5): no.** L5 is **STRUCK**. Do not build it.
+   - **Device naming convention (L10): no coherent one.** Owner, verbatim: *"not a coherent one
+     that would help here, else we wouldn't need you."* L10 is **STRUCK**. This also retires the
+     earlier note that the owner's examples "look like a convention exists" - they do not, and no
+     code may parse a device name.
+   - **Geographic machine groups or tags (L11): the owner does not know.** That is not an owner
+     question, it is a query. Demoted to recon item **R1(n)**: enumerate the distinct
+     `MachineGroup`, `DeviceManualTags` and `DeviceDynamicTags` values and see whether any encode
+     geography. Build L11 only if they do.
+   - The **show-the-raw-value** default stands for anything that survives, for the invariant-7
+     reason: a map or a rule is a fact about this environment and does not belong in source unless
+     it arrives as operator configuration or from the directory at runtime. **L17 is the second
+     of those, not the first**, which is why it is permitted.
+8. **Which of L1-L17 goes in the report?** This is the approval the owner asked for. Strike any
+   row and it is not built. **Revised after Q7 was answered on 2026-09-24**, which struck two
+   candidates and added one better than any that remained:
+   - **L1** - the requirement. Recently Seen By.
+   - **L17** - AD site and the subnet's `location` string, derived locally from the directory this
+     host is already joined to. **The strongest human-readable signal here**, and the answer to
+     the subnet-to-site map the owner does not have. Settle **Q10** before it is sliced.
+   - **L2** - subnet. Was "conditional on a map existing"; L17 **is** that map, so L2 becomes
+     L17's input as well as a column. Show both - the subnet is the evidence for the site name.
+   - **L3**, **L4** - default gateway and DHCP server. Two independent site keys needing no map,
+     and the fallback when an IP matches no AD subnet.
+   - **L8** - MAC vendor, to keep virtual machines out of a report about walking to a machine.
+   - **L9** - only if R1(k) says `DeviceInfo.Site` is populated here.
+   - **L11** - only if R1(n) finds geography in the machine groups or tags.
+   - **STRUCK by the owner:** L5 (no site-scoped DNS suffixes), L10 (no coherent naming
+     convention).
+   - **L13-L16** stay out until L1 works; all four describe the observer and are meaningless
+     without it.
 9. **`SeenBy()` takes at most 1,000 devices per call. Batch, or narrow the report?** The shipped
    module enriches **once per refresh** over the whole matching set, which for this tenant's
    can-be-onboarded population cannot be one call. Two shapes, and they are different products:
