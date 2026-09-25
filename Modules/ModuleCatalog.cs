@@ -220,7 +220,11 @@ public sealed class ModuleCatalog
             // 1.10.1: making the URL an entry point let two batch-user loads overlap, so the one
             // that lost the race could publish one batch opened over another batch's mailboxes.
             // A generation counter discards it (mir-1, openreview of S1).
-            Version = "1.10.1",
+            // 1.11.0: two panes. Batches left, the open batch's mailboxes right, each with its own
+            // scroll region and the batch list paged 40 at a time, so opening a batch no longer
+            // injects a second table into the first and no view renders the whole catalogue
+            // (docs/MigrationInterfaceRedesign-Plan.md S2).
+            Version = "1.11.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

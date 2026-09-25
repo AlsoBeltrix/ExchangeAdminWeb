@@ -385,6 +385,9 @@
             <div class="card-body">
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <h5 class="card-title mb-0">Migration Batches</h5>
+                    @* R26: finding a person searches every batch, so it sits above both panes
+                       rather than inside the one that lists batch names. Splitting it from a
+                       batch-name filter is S6; today this control is the only search there is. *@
                     <div class="d-flex align-items-center gap-2">
                         <div class="input-group input-group-sm" style="width: 280px;">
                             <input type="text" class="form-control" placeholder="Search batch or user email..."
@@ -443,20 +446,21 @@
                     </div>
                 }
 
-                @* The top-of-table confirm bar, for pending actions that name no rendered row: Clear
-                   Completed and the two bulk selection actions, whose target is "N batch(es)". A
-                   per-ROW action - batch or user - renders this same fragment beneath its own row
-                   instead; see PendingActionNamesALoadedRow. *@
+                @* The top-of-panes confirm bar, for pending actions that name no rendered row: the
+                   bulk selection actions, whose target is "N batch(es)". A per-ROW action - batch
+                   or mailbox - renders this same fragment beneath its own row instead; see
+                   PendingActionNamesALoadedRow. *@
                 @if (pendingActionLabel != null && !PendingActionNamesALoadedRow)
                 {
                     @PendingActionConfirm
                 }
 
-                @* Selection toolbar. Sits immediately above the checkboxes it acts on, so the
-                   proximity problem the per-row confirm bar has does not apply here. The buttons
-                   are enabled whenever anything is ticked and never conditioned on eligibility:
-                   under owner ruling D2(a) a mixed or wholly-ineligible selection has a defined,
-                   useful outcome, and disabling would be the D2(b) that was rejected. *@
+                @* Selection toolbar. S3 moves this to the top of the batch pane (R3, R6) and adds
+                   the actions the per-row buttons used to carry; S2 leaves it exactly where and
+                   what it was, so this slice changes layout and nothing else. The buttons are
+                   enabled whenever anything is ticked and never conditioned on eligibility: under
+                   owner ruling D2(a) a mixed or wholly-ineligible selection has a defined, useful
+                   outcome, and disabling would be the D2(b) that was rejected. *@
                 @if (canManage && selectedBatches.Count > 0)
                 {
                     <div class="alert alert-secondary d-flex align-items-center gap-2 mb-3 py-2">
@@ -511,56 +515,82 @@
                 }
                 else
                 {
-                    <div class="table-responsive">
-                        <table class="table table-hover">
-                            <thead>
-                                <tr>
-                                    @if (canManage)
-                                    {
-                                        <th style="width: 2.5rem;">
-                                            <input type="checkbox" class="form-check-input" title="Select all loaded batches"
-                                                   checked="@AllBatchesSelected" @onchange="ToggleSelectAllBatches" />
-                                        </th>
-                                    }
-                                    <th role="button" @onclick='() => ToggleBatchSort("Name")'>Batch Name @SortIndicator("Name")</th>
-                                    <th role="button" @onclick='() => ToggleBatchSort("Status")'>Status @SortIndicator("Status")</th>
-                                    <th role="button" @onclick='() => ToggleBatchSort("Direction")'>Direction @SortIndicator("Direction")</th>
-                                    <th role="button" @onclick='() => ToggleBatchSort("Created")'>Created @SortIndicator("Created")</th>
-                                    <th role="button" class="text-center" @onclick='() => ToggleBatchSort("Total")'>Total @SortIndicator("Total")</th>
-                                    <th role="button" class="text-center" @onclick='() => ToggleBatchSort("Synced")'>Synced @SortIndicator("Synced")</th>
-                                    <th role="button" class="text-center" @onclick='() => ToggleBatchSort("Failed")'>Failed @SortIndicator("Failed")</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var batch in GetSortedBatches())
+                    @* R1: batches left, the open batch's mailboxes right. Each pane owns its own
+                       scroll region, so neither list can push the other's controls off the screen
+                       (R11) and opening a batch no longer moves everything below it down the page. *@
+                    <div class="mig-split">
+
+                        <div class="mig-pane mig-pane-left">
+                            <div class="mig-pane-head d-flex align-items-center gap-2">
+                                @if (canManage)
                                 {
-                                    @* Captured per iteration: the lambda below must close over THIS row's name. *@
+                                    <input type="checkbox" class="form-check-input mt-0 flex-shrink-0"
+                                           title="Select all loaded batches"
+                                           checked="@AllBatchesSelected" @onchange="ToggleSelectAllBatches" />
+                                }
+                                @* ONE sort control, not clickable headers as well (R18, R19): two
+                                   ways to set one value is the ambiguity R19 says to fix by
+                                   structure. It carries all seven keys the old table header
+                                   carried, so no sort is lost even though the row now shows the
+                                   four columns R16 names. Sorting is over the whole set, never the
+                                   rendered page (R21). *@
+                                <label class="small text-muted mb-0 flex-shrink-0" for="batchSortColumn">Sort</label>
+                                <select id="batchSortColumn" class="form-select form-select-sm"
+                                        value="@batchSortColumn" @onchange="OnBatchSortColumnChanged" disabled="@IsBusy">
+                                    <option value="Name">Batch name</option>
+                                    <option value="Status">Status</option>
+                                    <option value="Direction">Direction</option>
+                                    <option value="Created">Created</option>
+                                    <option value="Total">Total</option>
+                                    <option value="Synced">Synced</option>
+                                    <option value="Failed">Failed</option>
+                                </select>
+                                <button class="btn btn-sm btn-outline-secondary flex-shrink-0" type="button"
+                                        disabled="@IsBusy" @onclick="ToggleBatchSortDirection"
+                                        title="@(batchSortAsc ? "Ascending. Click for descending." : "Descending. Click for ascending.")">
+                                    @((MarkupString)(batchSortAsc ? "&#x25B2;" : "&#x25BC;"))
+                                </button>
+                            </div>
+
+                            <div class="mig-pane-scroll">
+                                @* R16: the header row is inside the scrolling box, so the scrollbar
+                                   narrows it by exactly as much as it narrows the rows. R17: every
+                                   number below has a name here. *@
+                                <div class="mig-batch-row mig-batch-head">
+                                    <span></span>
+                                    <span>Batch</span>
+                                    <span>Status</span>
+                                    <span class="mig-count">Synced</span>
+                                    <span class="mig-count">Failed</span>
+                                </div>
+
+                                @foreach (var batch in GetPagedBatches())
+                                {
+                                    @* Captured per iteration: the lambdas below must close over
+                                       THIS row's name. *@
                                     var batchName = batch.BatchName;
-                                    <tr class="@(expandedBatch == batch.BatchName && highlightedUser == null ? "table-info" : "")">
+                                    <div class="mig-batch-row mig-clickable @(expandedBatch == batchName ? "mig-open" : "")"
+                                         @onclick="() => ToggleBatchDetails(batchName)">
                                         @if (canManage)
                                         {
-                                            <td>
-                                                <input type="checkbox" class="form-check-input" title="Select for a bulk action"
-                                                       checked="@IsBatchSelected(batchName)"
-                                                       @onchange="e => ToggleBatchSelected(batchName, e.Value is bool v && v)" />
-                                            </td>
+                                            @* stopPropagation: ticking a batch must not also open
+                                               it. They are different acts until R9 merges them in
+                                               S3, and merging them here by accident would be a
+                                               behaviour change this slice is not allowed. *@
+                                            <input type="checkbox" class="form-check-input mt-0"
+                                                   title="Select for a bulk action"
+                                                   checked="@IsBatchSelected(batchName)"
+                                                   @onclick:stopPropagation="true"
+                                                   @onchange="e => ToggleBatchSelected(batchName, e.Value is bool v && v)" />
                                         }
-                                        <td>
-                                            <strong>@batch.BatchName</strong>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-@GetStatusColor(batch.Status)">@batch.Status</span>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-secondary">@batch.Direction</span>
-                                        </td>
-                                        <td>
-                                            <small>@batch.CreatedDateTime.ToLocalTime().ToString("MMM dd, HH:mm")</small>
-                                        </td>
-                                        <td class="text-center">@batch.TotalCount</td>
-                                        <td class="text-center"><span class="text-success fw-bold">@batch.SyncedCount</span></td>
-                                        <td class="text-center">
+                                        else
+                                        {
+                                            <span></span>
+                                        }
+                                        <span class="mig-batch-name" title="@batchName">@batchName</span>
+                                        <span><span class="badge bg-@GetStatusColor(batch.Status)" title="@batch.Status">@batch.Status</span></span>
+                                        <span class="mig-count text-success fw-bold">@batch.SyncedCount</span>
+                                        <span class="mig-count">
                                             @if (batch.FailedCount > 0)
                                             {
                                                 <span class="text-danger fw-bold">@batch.FailedCount</span>
@@ -569,240 +599,229 @@
                                             {
                                                 <span class="text-muted">0</span>
                                             }
-                                        </td>
-                                        <td class="text-end text-nowrap">
-                                            @if (canManage && batch.Status.Equals("Synced", StringComparison.OrdinalIgnoreCase))
-                                            {
-                                                <button class="btn btn-sm btn-success me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                        @onclick="() => CompleteBatch(batch.BatchName)">
-                                                    Complete
-                                                </button>
-                                            }
-                                            @if (canManage && (batch.Status.Equals("Syncing", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Synced", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Starting", StringComparison.OrdinalIgnoreCase)))
-                                            {
-                                                <button class="btn btn-sm btn-outline-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                        @onclick="() => StopBatch(batch.BatchName)">
-                                                    Stop
-                                                </button>
-                                            }
-                                            @* Resume and Delete read the planner's predicates, the same definition the bulk
-                                               actions use. Two copies of "which statuses may be deleted" is how a row button
-                                               and a bulk action come to disagree about the same batch - and an allowlist
-                                               written from the statuses a developer has seen is how CompletedWithErrors
-                                               became invisible to every button on this page. *@
-                                            @if (canManage && MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, batch.Status))
-                                            {
-                                                <button class="btn btn-sm btn-outline-success me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                        @onclick="() => ResumeBatch(batch.BatchName)">
-                                                    Resume
-                                                </button>
-                                            }
-                                            @* Delete is offered on every row, whatever the status (D3): Exchange decides
-                                               what it will remove, and a refusal comes back as this row's own error. *@
-                                            @if (canManage && MigrationBatchActionPlanner.Applies(MigrationBatchAction.Delete, batch.Status))
-                                            {
-                                                <button class="btn btn-sm btn-outline-danger me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                        @onclick="() => DeleteBatch(batch.BatchName)">
-                                                    Delete
-                                                </button>
-                                            }
-                                            <button class="btn btn-sm btn-outline-primary" disabled="@IsBusy"
-                                                    @onclick="() => ToggleBatchDetails(batch.BatchName)">
-                                                @if (expandedBatch == batch.BatchName && batchUsers != null)
-                                                {
-                                                    <span>Hide</span>
-                                                }
-                                                else if (loadingBatchUsers == batch.BatchName)
-                                                {
-                                                    <span class="spinner-border spinner-border-sm"></span>
-                                                }
-                                                else
-                                                {
-                                                    <span>Details</span>
-                                                }
-                                            </button>
-                                            @if (expandedBatch == batch.BatchName && batchUsers != null)
-                                            {
-                                                <button class="btn btn-sm btn-outline-secondary ms-1" title="Refresh batch users"
-                                                        disabled="@IsBusy"
-                                                        @onclick="() => RefreshBatchUsers(batch.BatchName)">
-                                                    @if (loadingBatchUsers == batch.BatchName)
-                                                    {
-                                                        <span class="spinner-border spinner-border-sm"></span>
-                                                    }
-                                                    else
-                                                    {
-                                                        <span>&#x21bb;</span>
-                                                    }
-                                                </button>
-                                            }
-                                        </td>
-                                    </tr>
-                                    @* The ticket field for THIS row's action, rendered directly beneath it.
-                                       It used to live above the table: with 50+ batches in flight, clicking
-                                       Resume on a row near the bottom put the input off-screen while every
-                                       button in the row went disabled, so the only visible feedback was that
-                                       the buttons had stopped working. *@
+                                        </span>
+                                    </div>
+                                    @* The ticket field for THIS row's action, directly beneath it.
+                                       It used to live above the table: with 50+ batches in flight,
+                                       acting on a row near the bottom put the input off-screen
+                                       while every button in the row went disabled, so the only
+                                       visible feedback was that the buttons had stopped working. *@
                                     @if (pendingActionTarget == batchName && pendingActionLabel != null)
                                     {
-                                        <tr class="table-warning">
-                                            <td colspan="@(canManage ? 9 : 8)" class="py-2">
-                                                @PendingActionConfirm
-                                            </td>
-                                        </tr>
-                                    }
-                                    @if (expandedBatch == batch.BatchName && batchUsers != null)
-                                    {
-                                        <tr>
-                                            @* Follows the checkbox column: 8 base columns, 9 when the selection column renders. *@
-                                            <td colspan="@(canManage ? 9 : 8)" class="p-0">
-                                                <div class="bg-light p-3 border-top">
-                                                    <div class="row mb-3">
-                                                        <div class="col-md-12">
-                                                            <small class="text-muted d-block">
-                                                                <strong>Created:</strong> @batch.CreatedDateTime.ToLocalTime().ToString("MMM dd, yyyy HH:mm")
-                                                                @if (batch.StartDateTime.HasValue)
-                                                                {
-                                                                    <span class="ms-3"><strong>Started:</strong> @batch.StartDateTime.Value.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
-                                                                }
-                                                                @if (batch.CompletedDateTime.HasValue)
-                                                                {
-                                                                    <span class="ms-3"><strong>Completed:</strong> @batch.CompletedDateTime.Value.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
-                                                                }
-                                                            </small>
-                                                        </div>
-                                                    </div>
-                                                    @if (batchUsers.Any())
-                                                    {
-                                                        <table class="table table-sm table-bordered bg-white mb-0">
-                                                            <thead class="table-light">
-                                                                <tr>
-                                                                    <th>Email</th>
-                                                                    <th>Status</th>
-                                                                    <th>Synced</th>
-                                                                    <th>Last Sync</th>
-                                                                    <th>Error</th>
-                                                                    <th></th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody>
-                                                                @foreach (var user in batchUsers)
-                                                                {
-                                                                    <tr class="@(highlightedUser != null && user.EmailAddress.Contains(highlightedUser, StringComparison.OrdinalIgnoreCase) ? "table-warning" : "")">
-                                                                        <td>@user.EmailAddress</td>
-                                                                        <td><span class="badge bg-@GetUserStatusColor(user.Status)">@user.Status</span></td>
-                                                                        <td>@user.ItemsSynced.ToString("N0")</td>
-                                                                        <td><small>@(user.LastSyncDateTime?.ToLocalTime().ToString("MMM dd HH:mm") ?? "-")</small></td>
-                                                                        <td>
-                                                                            @if (!string.IsNullOrEmpty(user.ErrorSummary))
-                                                                            {
-                                                                                <small class="text-danger">@user.ErrorSummary</small>
-                                                                            }
-                                                                            else
-                                                                            {
-                                                                                <small class="text-muted">-</small>
-                                                                            }
-                                                                        </td>
-                                                                        <td class="text-end text-nowrap">
-                                                                            @{ var s = user.Status; var e = user.EmailAddress; }
-                                                                            @if (canManage)
-                                                                            {
-                                                                                @if (s.Equals("Synced", StringComparison.OrdinalIgnoreCase))
-                                                                                {
-                                                                                    <button class="btn btn-sm btn-success me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                                                            @onclick="() => CompleteUser(e)">Complete</button>
-                                                                                }
-                                                                                @if (s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase))
-                                                                                {
-                                                                                    <button class="btn btn-sm btn-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                                                            @onclick="() => ApproveUser(e)">Approve</button>
-                                                                                }
-                                                                                @if (s.Equals("Syncing", StringComparison.OrdinalIgnoreCase))
-                                                                                {
-                                                                                    <button class="btn btn-sm btn-outline-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                                                            @onclick="() => PauseUser(e)">Pause</button>
-                                                                                }
-                                                                                @if (s.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
-                                                                                    || s.Equals("Failed", StringComparison.OrdinalIgnoreCase))
-                                                                                {
-                                                                                    <button class="btn btn-sm btn-primary me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                                                            @onclick="() => ResumeUser(e)">Resume</button>
-                                                                                }
-                                                                                @if (s.Equals("Completed", StringComparison.OrdinalIgnoreCase))
-                                                                                {
-                                                                                    <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(IsBusy || pendingActionLabel != null)"
-                                                                                            @onclick="() => ClearUser(e)">Clear</button>
-                                                                                }
-                                                                            }
-                                                                            @* Report is offered on EVERY user row. It was gated on Failed /
-                                                                               NeedsApproval / a non-empty ErrorSummary, so it appeared only on rows
-                                                                               that already looked broken - and a CompletedWithErrors user, whose
-                                                                               report is the one worth reading, often matched none of those. It is a
-                                                                               read-only diagnostic: nothing is gained by hiding it, and the third
-                                                                               status allowlist on this page to hide something the operator wanted. *@
-                                                                            <button class="btn btn-sm btn-outline-danger"
-                                                                                    disabled="@IsBusy"
-                                                                                    @onclick="() => LoadUserReport(e)">
-                                                                                @if (loadingReport == e)
-                                                                                {
-                                                                                    <span class="spinner-border spinner-border-sm"></span>
-                                                                                }
-                                                                                else
-                                                                                {
-                                                                                    <span>Report</span>
-                                                                                }
-                                                                            </button>
-                                                                            <button class="btn btn-sm btn-outline-secondary ms-1" title="Refresh user status"
-                                                                                    disabled="@IsBusy"
-                                                                                    @onclick="() => RefreshBatchUsers(expandedBatch!)">
-                                                                                &#x21bb;
-                                                                            </button>
-                                                                            @if (actionInProgress == e)
-                                                                            {
-                                                                                <span class="spinner-border spinner-border-sm ms-1"></span>
-                                                                            }
-                                                                        </td>
-                                                                    </tr>
-                                                                    @* The ticket field for THIS user's action, beneath the user row - the
-                                                                       same placement the batch rows get. Missing until mbs-1, which left
-                                                                       every per-user action prompting at the top of the OUTER table. *@
-                                                                    @if (pendingActionTarget == user.EmailAddress && pendingActionLabel != null)
-                                                                    {
-                                                                        <tr class="table-warning">
-                                                                            <td colspan="6" class="py-2">
-                                                                                @PendingActionConfirm
-                                                                            </td>
-                                                                        </tr>
-                                                                    }
-                                                                    @if (reportUser == user.EmailAddress && userReport != null)
-                                                                    {
-                                                                        <tr>
-                                                                            <td colspan="6" class="p-0">
-                                                                                <div class="bg-white border-top p-3">
-                                                                                    <div class="d-flex justify-content-between align-items-center mb-2">
-                                                                                        <strong>Report for @user.EmailAddress</strong>
-                                                                                        <button class="btn btn-sm btn-outline-secondary" @onclick="CloseUserReport">Close</button>
-                                                                                    </div>
-                                                                                    <pre class="bg-light p-2 rounded" style="max-height: 400px; overflow-y: auto; font-size: 0.8rem; white-space: pre-wrap;">@userReport</pre>
-                                                                                </div>
-                                                                            </td>
-                                                                        </tr>
-                                                                    }
-                                                                }
-                                                            </tbody>
-                                                        </table>
-                                                    }
-                                                    else
-                                                    {
-                                                        <p class="text-muted mb-0">No user details available</p>
-                                                    }
-                                                </div>
-                                            </td>
-                                        </tr>
+                                        <div class="border-bottom px-3 py-2 bg-warning-subtle">
+                                            @PendingActionConfirm
+                                        </div>
                                     }
                                 }
-                            </tbody>
-                        </table>
+                            </div>
+
+                            @* R20: the catalogue pages, and the pager states the whole size so the
+                               operator can see that page 1 of 40 is not the whole story. Never a
+                               footer for ACTIONS (R6) - this is a position indicator. *@
+                            <div class="mig-pane-foot d-flex align-items-center gap-2">
+                                <button class="btn btn-sm btn-outline-secondary" type="button"
+                                        disabled="@(IsBusy || batchPage <= 0)"
+                                        title="Previous page of batches" @onclick="() => StepBatchPage(-1)">
+                                    @((MarkupString)"&lsaquo;")
+                                </button>
+                                <span class="small text-muted">@BatchPagerLabel</span>
+                                <button class="btn btn-sm btn-outline-secondary" type="button"
+                                        disabled="@(IsBusy || batchPage >= BatchPageCount - 1)"
+                                        title="Next page of batches" @onclick="() => StepBatchPage(1)">
+                                    @((MarkupString)"&rsaquo;")
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="mig-pane mig-pane-right">
+                            @if (expandedBatch == null)
+                            {
+                                <div class="mig-pane-head"><strong>Mailboxes</strong></div>
+                                <div class="mig-pane-scroll d-flex align-items-center justify-content-center">
+                                    <p class="text-muted my-5">Select a batch on the left to see its mailboxes.</p>
+                                </div>
+                            }
+                            else
+                            {
+                                @* R2: this pane is about the selection. The batch's own identifying
+                                   facts are here because they describe what you are looking at;
+                                   batch OPERATIONS stay in the batch pane (R3). *@
+                                var openBatch = migrationBatches?.FirstOrDefault(b => b.BatchName == expandedBatch);
+                                <div class="mig-pane-head d-flex align-items-center gap-2 flex-wrap">
+                                    <strong class="text-truncate" title="@expandedBatch">@expandedBatch</strong>
+                                    @if (openBatch != null)
+                                    {
+                                        <span class="badge bg-@GetStatusColor(openBatch.Status)">@openBatch.Status</span>
+                                        <span class="badge bg-secondary">@openBatch.Direction</span>
+                                        <small class="text-muted">
+                                            <strong>Total:</strong> @openBatch.TotalCount
+                                            <span class="ms-2"><strong>Created:</strong> @openBatch.CreatedDateTime.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
+                                            @if (openBatch.StartDateTime.HasValue)
+                                            {
+                                                <span class="ms-2"><strong>Started:</strong> @openBatch.StartDateTime.Value.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
+                                            }
+                                            @if (openBatch.CompletedDateTime.HasValue)
+                                            {
+                                                <span class="ms-2"><strong>Completed:</strong> @openBatch.CompletedDateTime.Value.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
+                                            }
+                                        </small>
+                                    }
+                                    @* R30: refreshing this pane's mailboxes is a different act from
+                                       refreshing the batch catalogue, and each button does only
+                                       its own. *@
+                                    <button class="btn btn-sm btn-outline-secondary ms-auto flex-shrink-0"
+                                            title="Refresh these mailboxes" disabled="@IsBusy"
+                                            @onclick="() => RefreshBatchUsers(expandedBatch!)">
+                                        @if (loadingBatchUsers == expandedBatch)
+                                        {
+                                            <span class="spinner-border spinner-border-sm"></span>
+                                        }
+                                        else
+                                        {
+                                            @((MarkupString)"&#x21bb;")
+                                        }
+                                    </button>
+                                </div>
+
+                                <div class="mig-pane-scroll">
+                                    @if (loadingBatchUsers == expandedBatch && batchUsers == null)
+                                    {
+                                        @* R27: the pane that is loading says so, rather than the
+                                           whole page freezing. *@
+                                        <div class="text-center py-5">
+                                            <div class="spinner-border text-primary" role="status">
+                                                <span class="visually-hidden">Loading...</span>
+                                            </div>
+                                            <p class="mt-2 text-muted">Loading mailboxes...</p>
+                                        </div>
+                                    }
+                                    else if (batchUsers == null)
+                                    {
+                                        <p class="text-muted text-center my-5">No mailbox details available.</p>
+                                    }
+                                    else if (!batchUsers.Any())
+                                    {
+                                        <p class="text-muted text-center my-5">This batch contains no mailboxes.</p>
+                                    }
+                                    else
+                                    {
+                                        <table class="table table-sm table-hover mig-mailboxes mb-0">
+                                            <thead>
+                                                <tr>
+                                                    <th>Email</th>
+                                                    <th>Status</th>
+                                                    <th>Synced</th>
+                                                    <th>Last Sync</th>
+                                                    <th>Error</th>
+                                                    <th></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var user in batchUsers)
+                                                {
+                                                    <tr class="@(highlightedUser != null && user.EmailAddress.Contains(highlightedUser, StringComparison.OrdinalIgnoreCase) ? "table-warning" : "")">
+                                                        <td>@user.EmailAddress</td>
+                                                        <td><span class="badge bg-@GetUserStatusColor(user.Status)">@user.Status</span></td>
+                                                        <td>@user.ItemsSynced.ToString("N0")</td>
+                                                        <td><small>@(user.LastSyncDateTime?.ToLocalTime().ToString("MMM dd HH:mm") ?? "-")</small></td>
+                                                        <td>
+                                                            @if (!string.IsNullOrEmpty(user.ErrorSummary))
+                                                            {
+                                                                <small class="text-danger">@user.ErrorSummary</small>
+                                                            }
+                                                            else
+                                                            {
+                                                                <small class="text-muted">-</small>
+                                                            }
+                                                        </td>
+                                                        <td class="text-end text-nowrap">
+                                                            @{ var s = user.Status; var e = user.EmailAddress; }
+                                                            @if (canManage)
+                                                            {
+                                                                @if (s.Equals("Synced", StringComparison.OrdinalIgnoreCase))
+                                                                {
+                                                                    <button class="btn btn-sm btn-success me-1" disabled="@(IsBusy || pendingActionLabel != null)"
+                                                                            @onclick="() => CompleteUser(e)">Complete</button>
+                                                                }
+                                                                @if (s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase))
+                                                                {
+                                                                    <button class="btn btn-sm btn-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
+                                                                            @onclick="() => ApproveUser(e)">Approve</button>
+                                                                }
+                                                                @if (s.Equals("Syncing", StringComparison.OrdinalIgnoreCase))
+                                                                {
+                                                                    <button class="btn btn-sm btn-outline-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
+                                                                            @onclick="() => PauseUser(e)">Pause</button>
+                                                                }
+                                                                @if (s.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
+                                                                    || s.Equals("Failed", StringComparison.OrdinalIgnoreCase))
+                                                                {
+                                                                    <button class="btn btn-sm btn-primary me-1" disabled="@(IsBusy || pendingActionLabel != null)"
+                                                                            @onclick="() => ResumeUser(e)">Resume</button>
+                                                                }
+                                                                @if (s.Equals("Completed", StringComparison.OrdinalIgnoreCase))
+                                                                {
+                                                                    <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(IsBusy || pendingActionLabel != null)"
+                                                                            @onclick="() => ClearUser(e)">Clear</button>
+                                                                }
+                                                            }
+                                                            @* Report is offered on EVERY user row. It was gated on Failed /
+                                                               NeedsApproval / a non-empty ErrorSummary, so it appeared only on rows
+                                                               that already looked broken - and a CompletedWithErrors user, whose
+                                                               report is the one worth reading, often matched none of those. It is a
+                                                               read-only diagnostic: nothing is gained by hiding it, and the third
+                                                               status allowlist on this page to hide something the operator wanted. *@
+                                                            <button class="btn btn-sm btn-outline-danger"
+                                                                    disabled="@IsBusy"
+                                                                    @onclick="() => LoadUserReport(e)">
+                                                                @if (loadingReport == e)
+                                                                {
+                                                                    <span class="spinner-border spinner-border-sm"></span>
+                                                                }
+                                                                else
+                                                                {
+                                                                    <span>Report</span>
+                                                                }
+                                                            </button>
+                                                            @if (actionInProgress == e)
+                                                            {
+                                                                <span class="spinner-border spinner-border-sm ms-1"></span>
+                                                            }
+                                                        </td>
+                                                    </tr>
+                                                    @* The ticket field for THIS mailbox's action, beneath its row - the
+                                                       same placement the batch rows get. Missing until mbs-1, which left
+                                                       every per-user action prompting at the top of the OUTER table. *@
+                                                    @if (pendingActionTarget == user.EmailAddress && pendingActionLabel != null)
+                                                    {
+                                                        <tr class="table-warning">
+                                                            <td colspan="6" class="py-2">
+                                                                @PendingActionConfirm
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                    @if (reportUser == user.EmailAddress && userReport != null)
+                                                    {
+                                                        <tr>
+                                                            <td colspan="6" class="p-0">
+                                                                <div class="border-top p-3">
+                                                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                                                        <strong>Report for @user.EmailAddress</strong>
+                                                                        <button class="btn btn-sm btn-outline-secondary" @onclick="CloseUserReport">Close</button>
+                                                                    </div>
+                                                                    <pre class="bg-body-tertiary p-2 rounded" style="max-height: 400px; overflow-y: auto; font-size: 0.8rem; white-space: pre-wrap;">@userReport</pre>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                }
+                                            </tbody>
+                                        </table>
+                                    }
+                                </div>
+                            }
+                        </div>
+
                     </div>
                 }
             </div>
@@ -922,6 +941,11 @@
     private string? highlightedUser;
     private string batchSortColumn = "Created";
     private bool batchSortAsc = false;
+
+    // R20. Zero-based page into the SORTED catalogue. 40 rows matches the size the owner settled
+    // against the mockup; the pane is sized so a full page fills it without the window scrolling.
+    private const int BatchPageSize = 40;
+    private int batchPage;
     // Download CSV had no flag of its own. Without one the predicate below cannot see the
     // JS interop round-trip, and every other control stays live while the file is built.
     private bool isDownloadingCsv = false;
@@ -1353,6 +1377,7 @@
     {
         tabIndex = 2;
         isLoadingStatus = true;
+        ResetBatchPage();
 
         try
         {
@@ -1471,6 +1496,12 @@
 
     private async Task ToggleBatchDetails(string batchName)
     {
+        // The gate moved into the handler in S2 because the control did. This used to be a Details
+        // button carrying disabled="@IsBusy"; the batch row is now a div, and a div ignores the
+        // disabled attribute exactly as the tab strip's anchors do - see SelectTab, which is here
+        // for the same reason. The greying is styling only and must never be mistaken for it.
+        if (IsBusy) return;
+
         // If clicking the same batch, collapse it
         if (expandedBatch == batchName)
         {
@@ -2024,23 +2055,54 @@
         }
     }
 
-    private void ToggleBatchSort(string column)
+    // S2 replaced seven clickable table headers with one select and one direction toggle. Two
+    // controls that set the same two values is the ambiguity R19 says to fix by structure rather
+    // than by labelling, and the batch row now shows the four columns R16 names - so clickable
+    // headers could only have reached four of the seven keys. Every key the old header row
+    // carried is still here.
+    private void OnBatchSortColumnChanged(ChangeEventArgs e)
     {
-        if (batchSortColumn == column)
-            batchSortAsc = !batchSortAsc;
-        else
-        {
-            batchSortColumn = column;
-            batchSortAsc = column is "Name" or "Status" or "Direction";
-        }
+        var column = e.Value?.ToString();
+        if (string.IsNullOrEmpty(column) || column == batchSortColumn)
+            return;
+
+        batchSortColumn = column;
+
+        // Text ascending, magnitudes and dates descending: the same defaults the old header
+        // click applied when it moved to a new column.
+        batchSortAsc = column is "Name" or "Status" or "Direction";
+        ResetBatchPage();
     }
 
-    private MarkupString SortIndicator(string column)
+    private void ToggleBatchSortDirection()
     {
-        if (batchSortColumn != column)
-            return new MarkupString("<span class=\"text-muted opacity-25\">↕</span>");
-        return new MarkupString(batchSortAsc ? "▲" : "▼");
+        batchSortAsc = !batchSortAsc;
+        ResetBatchPage();
     }
+
+    // Page 9 of a 3-page result renders nothing and looks like an empty catalogue, so every
+    // change to the ordering or the membership of the list goes back to the first page.
+    private void ResetBatchPage() => batchPage = 0;
+
+    // R20. The catalogue pages; the whole set is still what sorts, what select-all ticks and what
+    // the CSV exports. Blazor Server pushes a render diff per row over the circuit, and rendering
+    // 2000 of them is how the Defender page died - so no view may render the full set, with no
+    // exception, including a select-all of every batch.
+    // The windowing itself lives in ListWindow, where it is a pure function that tests can run
+    // against 2000 batches. Nothing in this repo can render a Blazor component, so a test here
+    // could only have anchored the markup; the count that R20 is about is proved there instead.
+    private IEnumerable<MigrationBatchInfo> GetPagedBatches() =>
+        ListWindow.Slice(GetSortedBatches(), batchPage, BatchPageSize);
+
+    private int BatchTotalCount => migrationBatches?.Count ?? 0;
+
+    private int BatchPageCount => ListWindow.PageCount(BatchTotalCount, BatchPageSize);
+
+    private string BatchPagerLabel =>
+        ListWindow.Label(batchPage, BatchTotalCount, BatchPageSize, "batches", "No batches");
+
+    private void StepBatchPage(int delta) =>
+        batchPage = ListWindow.ClampPage(batchPage + delta, BatchTotalCount, BatchPageSize);
 
     private IEnumerable<MigrationBatchInfo> GetSortedBatches()
     {

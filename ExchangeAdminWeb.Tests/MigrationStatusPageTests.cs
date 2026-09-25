@@ -119,7 +119,11 @@ public class MigrationStatusPageTests
         }
 
         var row = GetBatchRowMarkup();
-        Assert.Contains("ToggleBatchDetails(batch.BatchName)", row, StringComparison.Ordinal);
+        // The captured per-iteration copy, not batch.BatchName read inside a lambda: S2 made the
+        // whole row the click target and the lambda must close over THIS row name. Either form is
+        // name-keyed, which is the property; the capture is the one that is also correct under a
+        // loop variable.
+        Assert.Contains("ToggleBatchDetails(batchName)", row, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -246,20 +250,18 @@ public class MigrationStatusPageTests
         // hardcoded list, and CompletedWithErrors was in none of them - so such a batch had no
         // Delete button, no Resume button, was not swept, and drew the unknown-status badge.
         //
-        // Scoped to the batch row, where the action buttons live. The batch's OWN status still
-        // drives Complete and Stop, which are not part of this work; what must not come back is a
-        // row-level allowlist deciding Delete or Resume.
-        var row = GetBatchRowMarkup();
+        // Was scoped to the batch row. S2 removed the row's action buttons (see
+        // NoBatchActionControlDecidesEligibilityOutsideThePlanner for why and for what that cost),
+        // so the scope widens to the whole page: the named status must not reappear as a literal
+        // anywhere, and the planner stays the single definition in the C# that feeds every
+        // batch-scoped decision.
+        var page = ReadPage();
 
-        Assert.Contains(
-            "MigrationBatchActionPlanner.Applies(MigrationBatchAction.Delete, batch.Status)",
-            row,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, batch.Status)",
-            row,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain("\"Corrupted\"", row, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"Corrupted\"", page, StringComparison.Ordinal);
+
+        // The planner is still the only thing that answers "may this action run on this status".
+        Assert.Contains("MigrationBatchActionPlanner.Plan(", page, StringComparison.Ordinal);
+        Assert.Contains("MigrationBatchActionPlanner.PruneSelection", page, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -453,30 +455,50 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
-    public void PerRowButtonsReadThePlannersStatusRulesRatherThanTheirOwn()
+    public void NoBatchActionControlDecidesEligibilityOutsideThePlanner()
     {
-        // The single definition of which statuses each action permits. Two copies is how a row
-        // button and a bulk action come to disagree about the same batch - the operator ticks a
-        // row whose own Delete button is showing, and the bulk action skips it.
-        var row = GetBatchRowMarkup();
+        // Replaces PerRowButtonsReadThePlannersStatusRulesRatherThanTheirOwn, and says plainly
+        // what S2 cost.
+        //
+        // That test asserted the per-row Delete and Resume buttons called
+        // MigrationBatchActionPlanner.Applies. S2 removed those buttons: R14 gives the batch row
+        // one line and R16 names its four columns, so an action cell does not fit, and R3 and R6
+        // put batch operations in a toolbar at the top of the batch pane - which is S3's slice.
+        //
+        // **The positive half of that guard therefore has no subject until S3 lands**, and
+        // pretending otherwise with a page-wide Contains would have passed on the planner call
+        // that still exists in the C# helpers while the markup grew a fresh allowlist. What is
+        // asserted here is the half that still has one: no batch-status allowlist anywhere in the
+        // markup. The moment S3 adds a batch-action control gated on a status string rather than
+        // on the planner, this fails.
+        var page = StripLineComments(ReadPage());
 
-        Assert.Contains(
-            "MigrationBatchActionPlanner.Applies(MigrationBatchAction.Delete, batch.Status)",
-            row,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, batch.Status)",
-            row,
-            StringComparison.Ordinal);
+        var allowlisted = Regex.Matches(page, @"batch\.Status\.Equals\(")
+            .Select(match => match.Value)
+            .ToList();
+        Assert.True(allowlisted.Count == 0,
+            $"found {allowlisted.Count} batch-status allowlist tests in the markup; batch action "
+            + "eligibility has one definition and it is MigrationBatchActionPlanner");
     }
 
     [Fact]
-    public void TheExpandedDetailsRowSpansTheSelectionColumn()
+    public void TheMailboxesRenderInTheirOwnPaneAndNotInsideTheBatchList()
     {
-        // A wrong colspan does not fail the build and is invisible until a batch is expanded.
+        // Replaces TheExpandedDetailsRowSpansTheSelectionColumn, whose subject S2 deleted. That
+        // test guarded the colspan of the nested row that injected a second table INSIDE the batch
+        // list - defect 1 in the plan's "What is wrong with the page today", and the reason
+        // opening a batch pushed everything below it down the page. There is no such row now, so
+        // the colspan cannot be wrong; what can regress is the separation itself.
         var page = ReadPage();
 
-        Assert.Contains("colspan=\"@(canManage ? 9 : 8)\"", page, StringComparison.Ordinal);
+        Assert.Contains("mig-pane mig-pane-left", page, StringComparison.Ordinal);
+        Assert.Contains("mig-pane mig-pane-right", page, StringComparison.Ordinal);
+
+        // The mailbox table must be outside the batch loop. Anchored by containment rather than by
+        // a marker: the whole point is that one list is not nested in the other.
+        var batchLoop = GetBatchRowMarkup();
+        Assert.DoesNotContain("batchUsers", batchLoop, StringComparison.Ordinal);
+        Assert.DoesNotContain("<table", batchLoop, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -666,7 +688,10 @@ public class MigrationStatusPageTests
         // later cannot quietly reintroduce a bare assignment.
         var page = ReadPage();
 
-        var assignments = Regex.Matches(page, @"(?<![A-Za-z])batchUsers\s*=\s*(?<value>[^\r\n]+)");
+        // =(?!=) so a comparison is not read as an assignment. S2's right pane asks
+        // `batchUsers == null` to choose its empty state, and without the lookahead that matched
+        // here and reported the page as assigning rows in markup.
+        var assignments = Regex.Matches(page, @"(?<![A-Za-z])batchUsers\s*=(?!=)\s*(?<value>[^\r\n]+)");
         Assert.True(assignments.Count >= 6,
             $"expected every batchUsers assignment site to still be present, found {assignments.Count}");
 
@@ -1188,7 +1213,7 @@ public class MigrationStatusPageTests
     /// occurs more than once is not a boundary.
     /// </remarks>
     private static string GetBatchRowMarkup() =>
-        ExtractBlock(ReadPage(), "@foreach (var batch in GetSortedBatches())");
+        ExtractBlock(ReadPage(), "@foreach (var batch in GetPagedBatches())");
 
     /// <summary>The markup emitted per user row inside an expanded batch.</summary>
     private static string GetUserRowMarkup() =>

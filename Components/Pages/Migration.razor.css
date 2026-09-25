@@ -1,0 +1,159 @@
+/* Two-pane Migration Status layout - docs/MigrationInterfaceRedesign-Plan.md S2 (R1, R6,
+   R14-R17, R20).
+
+   Ported from .agents/mockups/migration-v3.html, which settled the geometry with the owner.
+   Every literal hex in that mockup is mapped onto the app's theme tokens here, the same rule
+   ServiceHealth.razor.css follows: the mockup was written against a light page, and nine of the
+   ten themes are not that page. Nothing below may reintroduce a literal colour. */
+
+/* The split. min-height: 0 on both the flex container and each pane is what actually lets the
+   inner scroll regions scroll: without it a flex item's min-height defaults to auto, the panes
+   grow to fit their content, and the page scrolls instead of the lists - which is the exact
+   failure R11 exists to prevent, because the action bars then leave the screen. */
+.mig-split {
+    display: flex;
+    gap: 1rem;
+    align-items: stretch;
+    min-height: 0;
+    /* Tall enough to be worth splitting, short enough to leave the page chrome visible. */
+    height: calc(100vh - 21rem);
+    min-height: 26rem;
+}
+
+.mig-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border: 1px solid var(--ui-line);
+    border-radius: .5rem;
+    background: var(--ui-surface);
+}
+
+/* Fixed width, not a percentage: the batch row's columns are sized for real magnitudes (R15,
+   four-digit counts and three-digit failure counts) and a proportional pane would clip them on a
+   narrow window, which is the one thing R15 names. */
+.mig-pane-left {
+    flex: 0 0 30rem;
+    min-width: 0;
+}
+
+.mig-pane-right {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.mig-pane-head {
+    padding: .6rem .75rem;
+    background: var(--ui-header);
+    border-bottom: 1px solid var(--ui-line);
+    border-radius: .5rem .5rem 0 0;
+}
+
+.mig-pane-foot {
+    padding: .5rem .75rem;
+    background: var(--ui-header);
+    border-top: 1px solid var(--ui-line);
+    border-radius: 0 0 .5rem .5rem;
+}
+
+.mig-pane-scroll {
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/* One line per batch (R14), fixed columns so counts align on every row (R14, R16). The grid is
+   declared once and shared by the header row and the data rows, which is what keeps them in
+   alignment - two separate column definitions is how a header drifts off its column. */
+.mig-batch-row {
+    display: grid;
+    grid-template-columns: 1.25rem minmax(0, 1fr) 6rem 3.5rem 3.5rem;
+    gap: .5rem;
+    align-items: center;
+    padding: .4rem .75rem;
+    border-bottom: 1px solid var(--ui-grid);
+    font-size: .875rem;
+}
+
+/* R16: the header lives INSIDE the scrolling box, so the scrollbar narrows it by exactly as much
+   as it narrows the rows and the columns cannot fall out of alignment. Sticky so it is still
+   readable at row 500. */
+.mig-batch-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--ui-header);
+    color: var(--ui-fg2);
+    font-size: .72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    border-bottom: 1px solid var(--ui-line);
+}
+
+.mig-batch-row.mig-clickable {
+    cursor: pointer;
+}
+
+.mig-batch-row.mig-clickable:hover {
+    background: var(--ui-zebra);
+}
+
+.mig-batch-row.mig-open {
+    background: var(--ui-selected);
+    box-shadow: inset 3px 0 0 var(--ui-brand);
+}
+
+.mig-batch-row.mig-open:hover {
+    background: var(--ui-selected);
+}
+
+/* R15: nothing clipped. The name gets the flexible column and truncates with an ellipsis only
+   when the window itself is too narrow, and carries its full value as a title so the trailing
+   identifier is always recoverable. */
+.mig-batch-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+/* Tabular figures so a column of counts lines up digit for digit rather than drifting. */
+.mig-count {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.mig-batch-row .badge {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* The mailbox table's own header, sticky inside the right pane's scroll region for the same
+   reason the batch header is. */
+.mig-pane-scroll table.mig-mailboxes thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--ui-header);
+}
+
+/* Under a phone or a narrow window the two panes stack rather than squeezing the batch columns
+   past the magnitudes R15 sizes them for. */
+@media (max-width: 991.98px) {
+    .mig-split {
+        flex-direction: column;
+        height: auto;
+    }
+
+    .mig-pane-left {
+        flex: 0 0 auto;
+    }
+
+    .mig-pane-scroll {
+        max-height: 24rem;
+    }
+}

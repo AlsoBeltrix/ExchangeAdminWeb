@@ -120,7 +120,7 @@ public static class ClickGateRegistry
     private static PageGateEntry Migration => new()
     {
         Page = "Migration.razor",
-        ExpectedLineCount = 2166,
+        ExpectedLineCount = 2228,
 
         Predicates =
         [
@@ -161,12 +161,12 @@ public static class ClickGateRegistry
                 "serves a compile-time constant; touches no page state and no in-flight operation",
                 ConditionThatKeepsItTrue:
                 "DownloadSampleCsv must not grow a call into Exchange; asserted separately"),
-            new ExemptControl(442, "@onclick=\"() => batchActionResult = null\"",
+            new ExemptControl(445, "@onclick=\"() => batchActionResult = null\"",
                 "dismisses a result banner; gating it would trap the message on screen for the "
                 + "whole of the next operation"),
-            new ExemptControl(784, "@onclick=\"CloseUserReport\"",
+            new ExemptControl(810, "@onclick=\"CloseUserReport\"",
                 "rendered only once a report has landed, so there is no pull for it to interrupt"),
-            new ExemptControl(836, "@onclick=\"CancelPendingAction\"",
+            new ExemptControl(855, "@onclick=\"CancelPendingAction\"",
                 "the operator must always be able to back out of a staged action. It keeps a "
                 + "narrower guard of its own instead of IsBusy",
                 KeepsItsOwnGuard: "disabled=\"@(actionInProgress != null)\""),
@@ -184,6 +184,18 @@ public static class ClickGateRegistry
                 RefusalMechanism.HandlerGuard, "SelectTab"),
             new NonButtonTarget(36, "@onclick=\"SelectStatusTab\"", "a",
                 RefusalMechanism.HandlerGuard, "SelectStatusTab"),
+
+            // S2. The batch row became the click target that opens a batch, replacing a Details
+            // button that carried disabled="@IsBusy". A div ignores the disabled attribute exactly
+            // as the tab-strip anchors above do, so the refusal moved into ToggleBatchDetails and
+            // the greying is styling only.
+            //
+            // A handler guard is the RIGHT mechanism here and not merely the only one: the row
+            // renders no server state into an attribute. Its checkbox does, and that checkbox is
+            // registered separately at 580 with @onclick:stopPropagation, so refusing the row
+            // click cannot desync the tick box - the two events do not share a handler.
+            new NonButtonTarget(572, "@onclick=\"() => ToggleBatchDetails(batchName)\"", "div",
+                RefusalMechanism.HandlerGuard, "ToggleBatchDetails"),
         ],
 
         // Sixteen DOM-synced controls, censused against the file when DomSyncedControls was added.
@@ -211,39 +223,46 @@ public static class ClickGateRegistry
 
             // Gated 2026-09-18, closing the two Enter-key holes this entry had recorded as found
             // rather than granted. Each input carries an @onkeydown whose handler reaches the very
-            // operation the button beside it refuses - HandleSearchKeyDown (1868) calls SearchUser
-            // with no busy guard while Find at 400 is gated, and HandleConfirmKeyDown (1554) calls
-            // ConfirmPendingAction with no busy guard while Confirm at 825 is gated. A disabled
+            // operation the button beside it refuses - HandleSearchKeyDown (1899) calls SearchUser
+            // with no busy guard while Find at 403 is gated, and HandleConfirmKeyDown (1585) calls
+            // ConfirmPendingAction with no busy guard while Confirm at 844 is gated. A disabled
             // input fires no keydown, so the attribute closes the handler path as well as the
             // typing path; a handler guard would not, and on a control that renders server state it
             // would leave the browser holding a change the server refused (docs/ClickGatingAudit-
             // Plan.md Revision 1, falsification 2). Neither input had a gate to widen or OR - both
             // were bare - so both take the page predicate whole.
             //
-            // IsBusy and not IsBusy || pendingActionLabel != null for 821: pendingActionLabel is a
+            // IsBusy and not IsBusy || pendingActionLabel != null for 840: pendingActionLabel is a
             // registered ExcludedField, and folding it in would disable the ticket box at the only
-            // moment it is ever rendered. The gate matches Confirm at 825 exactly, less that
+            // moment it is ever rendered. The gate matches Confirm at 844 exactly, less that
             // button's own emptiness clause, which a field cannot apply to itself.
-            new DomSyncedControl(390, "placeholder=\"Search batch or user email...\"", "input",
+            new DomSyncedControl(393, "placeholder=\"Search batch or user email...\"", "input",
                 "disabled=\"@IsBusy\""),
-            new DomSyncedControl(821, "placeholder=\"Ticket # (required)\"", "input",
+            new DomSyncedControl(840, "placeholder=\"Ticket # (required)\"", "input",
                 "disabled=\"@IsBusy\""),
+
+            // S2. The batch pane's sort control, which replaced seven clickable table headers.
+            // It renders batchSortColumn back into the DOM, so it takes the disabled attribute
+            // rather than a handler guard: a refusing handler would leave the browser showing a
+            // sort key the server never adopted, and the next sort would read the stale one.
+            // IsBusy whole, matching the direction toggle beside it.
+            new DomSyncedControl(538, "id=\"batchSortColumn\"", "select", "disabled=\"@IsBusy\""),
         ],
 
         UngatedDomSyncedControls =
         [
-            new UngatedDomSyncedControl(521, "title=\"Select all loaded batches\"", "input",
+            new UngatedDomSyncedControl(527, "title=\"Select all loaded batches\"", "input",
                 "left live on purpose, and the purpose is written into the page. The selection "
-                + "toolbar comment at 455-459 records owner ruling D2(a): the bulk-action buttons "
+                + "toolbar comment at 458-464 records owner ruling D2(a): the bulk-action buttons "
                 + "are never conditioned on eligibility, and the staged callback re-plans from the "
-                + "LIVE selection (1467) rather than from a snapshot, so the tick boxes are an input "
+                + "LIVE selection (1492) rather than from a snapshot, so the tick boxes are an input "
                 + "to the confirm step and not a value in flight. Nothing can be executed from this "
                 + "state while the page is busy - all three action buttons carry "
-                + "disabled=\"@(IsBusy || pendingActionLabel != null)\" (464, 469, 474)"),
+                + "disabled=\"@(IsBusy || pendingActionLabel != null)\" (468, 473, 478)"),
 
-            new UngatedDomSyncedControl(544, "title=\"Select for a bulk action\"", "input",
+            new UngatedDomSyncedControl(580, "title=\"Select for a bulk action\"", "input",
                 "the per-row half of the same selection, on the same owner ruling and the same "
-                + "re-plan at 1467. ToggleBatchSelected (1402) writes only to selectedBatches and "
+                + "re-plan at 1492. ToggleBatchSelected (1427) writes only to selectedBatches and "
                 + "nulls the result banner; it makes no call and awaits nothing"),
         ],
 
@@ -260,27 +279,27 @@ public static class ClickGateRegistry
         // were bare - so both take the page predicate whole.
         KeyboardPaths =
         [
-            new KeyboardPath(390, "placeholder=\"Search batch or user email...\"", "input",
+            new KeyboardPath(393, "placeholder=\"Search batch or user email...\"", "input",
                 "keydown", "HandleSearchKeyDown", "SearchUser",
                 KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
-                "Enter runs the batch/user search that the Find button at 400 refuses while the page "
+                "Enter runs the batch/user search that the Find button at 403 refuses while the page "
                 + "is busy. SearchUser raises isSearching, replaces the expanded batch's user rows "
                 + "and calls into Exchange twice, so a second one started from the keyboard during "
                 + "the first races it and the later reply wins",
-                GatedTwinButtonLine: 400),
+                GatedTwinButtonLine: 403),
 
-            new KeyboardPath(821, "placeholder=\"Ticket # (required)\"", "input",
+            new KeyboardPath(840, "placeholder=\"Ticket # (required)\"", "input",
                 "keydown", "HandleConfirmKeyDown", "ConfirmPendingAction",
                 KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
                 "Enter EXECUTES the staged action - a batch start, stop or remove, the destructive "
-                + "half of this page - which the Confirm button at 825 refuses while busy. It "
+                + "half of this page - which the Confirm button at 844 refuses while busy. It "
                 + "avoided double execution only by accident, and the accident is worth writing "
-                + "down: ConfirmPendingAction calls CancelPendingAction (1560) BEFORE awaiting the "
+                + "down: ConfirmPendingAction calls CancelPendingAction (1591) BEFORE awaiting the "
                 + "staged callback, which nulls pendingActionLabel and so unrenders the whole "
                 + "PendingActionConfirm fragment, and blanks pendingActionTicket so a second press "
                 + "fails the handler's own emptiness check. Nothing in that is a busy gate, and "
                 + "nothing in it survives a handler that stages differently",
-                GatedTwinButtonLine: 825),
+                GatedTwinButtonLine: 844),
         ],
 
         ForbiddenGuardSites =
