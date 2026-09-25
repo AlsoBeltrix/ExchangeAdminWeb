@@ -206,6 +206,16 @@ every gate behind it.
        reachable. Fixed with a generation counter rising on toggle AND page change, plus
        `historyLoading` in `ActionsDisabled` - a gap this file already recorded for this page.
     Suite **3206 / 0 failed / 3 skipped**, format clean.
+    **All three closed on coder-side guard proof** (the CRITICAL-only rule, `.agents/decisions.md`
+    2026-08-31 - none was CRITICAL, so none needs a verification round). Four mutations, each
+    failing only its own test: drop the segment-boundary check (both `/v1.0beta` and `/v1.0.evil`
+    cases fail), print the ceiling instead of the retrieved count, remove the generation check,
+    remove `historyLoading` from `ActionsDisabled`.
+    **One proof nearly recorded a vacuous test.** The first mutation attempt used a multi-line
+    perl substitution that silently did not match, so the suite passed and it looked as though the
+    guard did not bite. Re-checking that the mutation had actually applied is what caught it. A
+    mutation that did not apply and a test that does not bite produce the identical result; verify
+    the source changed before believing a green run.
     **TWO THINGS OUTSTANDING, BOTH THE OWNER'S:**
     1. **`User.Read.All` on the Risky Users app registration, admin-consented.** Graph app role -
        needs a Privileged Role Administrator, not an Application Administrator. Until granted, S5's
