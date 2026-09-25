@@ -225,16 +225,56 @@ public sealed class RiskyUsersService
     };
 
     /// <summary>
-    /// Owner-approved (2026-09-02) L2-plain wording, matching RiskyUsers.razor's ActionLabel, so
-    /// the outcome message and audit record echo the same label the operator saw and clicked
-    /// rather than the Graph verb.
+    /// The operator-facing label for an action. **The single source** - `RiskyUsers.razor` calls
+    /// this rather than keeping its own copy.
+    ///
+    /// It used to be duplicated, page and service, kept in step by a comment. The service's copy
+    /// reaches the outcome message and the admin notification while the page's reaches the button,
+    /// so a half-done rename would have had an operator click one name and a different one
+    /// reported back. Delegation removes the failure mode instead of testing for it.
+    ///
+    /// **One word each, and it is the word that DIFFERS in Microsoft's three labels.** The owner,
+    /// 2026-09-25, on a draft that put Microsoft's full toolbar strings on every button: *"we do
+    /// not need the same long string on every button. that's not UI, that's your context leaking
+    /// into the product."* Two of those three open with "Confirm" and all three contain "user", so
+    /// the distinguishing token landed last, on every row. Entra can afford them because its
+    /// toolbar acts on a selection and renders once; a per-row group cannot.
+    ///
+    /// The subject comes from the row and the verb category from the column header. What a person
+    /// needs to match this against the Entra portal is <see cref="ActionAccessibleName"/>, which
+    /// rides along as the accessible name and costs no pixels.
+    ///
+    /// This supersedes the 2026-09-02 L2-plain wording ("Close as handled" / "This was the real
+    /// user" / "Account was breached"). That ruling's REASON still holds - Microsoft's vocabulary
+    /// is ambiguous to an L2 operator - but it was answered by making one string do two jobs. The
+    /// consequence sentence now does the explaining, once, at the confirmation step.
     /// </summary>
-    private static string ActionDisplayName(RiskyUserAction action) => action switch
+    internal static string ActionDisplayName(RiskyUserAction action) => action switch
     {
-        RiskyUserAction.Dismiss => "Close as handled",
-        RiskyUserAction.ConfirmSafe => "This was the real user",
-        RiskyUserAction.ConfirmCompromised => "Account was breached",
-        _ => action.ToString()
+        RiskyUserAction.Dismiss => "Dismiss",
+        RiskyUserAction.ConfirmSafe => "Safe",
+        RiskyUserAction.ConfirmCompromised => "Compromised",
+        // Fail loud. A member added to RiskyUserAction without updating this map must not
+        // reach an operator, an outcome message or an admin notification under a generic name
+        // that hides which action ran.
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown risky user action.")
+    };
+
+    /// <summary>
+    /// Microsoft's own name for the action, as the Entra admin center toolbar writes it.
+    ///
+    /// Rendered as the button's `aria-label` and `title` rather than its text: a screen reader
+    /// gets the whole phrase, a person can match the control to the portal and to Microsoft's
+    /// documentation, and the row costs no extra width. This is the mapping whose absence the
+    /// owner reported - *"it's unclear what specific, mapped to Microsoft's page, these options
+    /// are"* - and nothing rendered on the page carried it before.
+    /// </summary>
+    internal static string ActionAccessibleName(RiskyUserAction action) => action switch
+    {
+        RiskyUserAction.Dismiss => "Dismiss user risk",
+        RiskyUserAction.ConfirmSafe => "Confirm user safe",
+        RiskyUserAction.ConfirmCompromised => "Confirm user compromised",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown risky user action.")
     };
 
     private static InvalidOperationException BuildFailure(HttpStatusCode status, string context)

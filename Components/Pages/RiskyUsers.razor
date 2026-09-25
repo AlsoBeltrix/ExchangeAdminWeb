@@ -180,7 +180,7 @@
                                     <td>@user.UserDisplayName</td>
                                     <td><span class="badge @RiskLevelBadgeClass(user.RiskLevel)">@user.RiskLevel</span></td>
                                     <td>@user.RiskState</td>
-                                    <td><small class="text-muted">@user.RiskDetail</small></td>
+                                    <td><small class="text-muted">@RiskDetailText(user.RiskDetail)</small></td>
                                     <td class="text-nowrap">@(user.RiskLastUpdatedDateTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-")</td>
                                     <td>
                                         @if (user.IsProcessing) { <span class="badge bg-secondary me-1">Processing</span> }
@@ -204,13 +204,27 @@
                                     {
                                         <td class="text-nowrap">
                                             <div class="btn-group btn-group-sm" role="group" aria-label="Remediate">
-                                                <button class="btn btn-outline-success" title="@ActionConsequence(RiskyUserAction.Dismiss)"
+                                                @* One word per button, and it is the word that
+                                                   differs in Microsoft's three labels - so the
+                                                   distinguishing token is what you scan, not a
+                                                   suffix after two identical ones. Microsoft's
+                                                   full name rides as aria-label and title: a
+                                                   screen reader gets the phrase, the control can
+                                                   be matched to the Entra portal, and the row
+                                                   costs no extra width. *@
+                                                <button class="btn btn-outline-success"
+                                                        aria-label="@ActionAccessibleName(RiskyUserAction.Dismiss)"
+                                                        title="@ActionAccessibleName(RiskyUserAction.Dismiss)"
                                                         @onclick="() => BeginAction(user, RiskyUserAction.Dismiss)"
                                                         disabled="@ActionsDisabled">@ActionLabel(RiskyUserAction.Dismiss)</button>
-                                                <button class="btn btn-outline-primary" title="@ActionConsequence(RiskyUserAction.ConfirmSafe)"
+                                                <button class="btn btn-outline-primary"
+                                                        aria-label="@ActionAccessibleName(RiskyUserAction.ConfirmSafe)"
+                                                        title="@ActionAccessibleName(RiskyUserAction.ConfirmSafe)"
                                                         @onclick="() => BeginAction(user, RiskyUserAction.ConfirmSafe)"
                                                         disabled="@ActionsDisabled">@ActionLabel(RiskyUserAction.ConfirmSafe)</button>
-                                                <button class="btn btn-outline-danger" title="@ActionConsequence(RiskyUserAction.ConfirmCompromised)"
+                                                <button class="btn btn-outline-danger"
+                                                        aria-label="@ActionAccessibleName(RiskyUserAction.ConfirmCompromised)"
+                                                        title="@ActionAccessibleName(RiskyUserAction.ConfirmCompromised)"
                                                         @onclick="() => BeginAction(user, RiskyUserAction.ConfirmCompromised)"
                                                         disabled="@ActionsDisabled">@ActionLabel(RiskyUserAction.ConfirmCompromised)</button>
                                             </div>
@@ -315,7 +329,7 @@
                                                             <tr>
                                                                 <td><span class="badge @RiskLevelBadgeClass(entry.RiskLevel)">@entry.RiskLevel</span></td>
                                                                 <td>@entry.RiskState</td>
-                                                                <td><small class="text-muted">@entry.RiskDetail</small></td>
+                                                                <td><small class="text-muted">@RiskDetailText(entry.RiskDetail)</small></td>
                                                                 <td class="text-nowrap">@(entry.RiskLastUpdatedDateTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-")</td>
                                                             </tr>
                                                         }
@@ -840,18 +854,61 @@
     /// vocabulary (Dismiss / Confirm safe / Confirm compromised) rather than reusing it verbatim.
     /// The Graph endpoint, audit action name and enum member behind each label are unchanged.
     /// </summary>
-    internal static string ActionLabel(RiskyUserAction action) => action switch
-    {
-        RiskyUserAction.Dismiss => "Close as handled",
-        RiskyUserAction.ConfirmSafe => "This was the real user",
-        RiskyUserAction.ConfirmCompromised => "Account was breached",
-        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown risky user action.")
-    };
+    /// <summary>
+    /// The button's text. Delegates to the service so ONE string exists per action: the service's
 
     /// <summary>
-    /// Owner-approved (2026-09-02) plain-English consequence line for a remediation action, shown
-    /// as the button tooltip and verbatim in the per-row confirmation bar, so an L2 operator sees
-    /// what will happen before committing rather than a Graph verb.
+    /// Renders Graph's `riskDetail` the way the Entra portal's own timeline writes it.
+    ///
+    /// The raw values are camelCase API tokens - the owner's screenshot showed
+    /// `userPerformedSecuredPasswordReset` sitting in a column a person reads. Same defect class as
+    /// the action buttons: an API token where a person's word belongs.
+    ///
+    /// **An unrecognised value returns UNCHANGED, and that is load-bearing.** S2 rule 4 of
+    /// docs/RiskyUsersModule-Plan.md is binding: Microsoft extends these enums and both carry
+    /// `unknownFutureValue`, so a value this map has never seen must still reach the screen.
+    /// Falling back to "Unknown" or to blank would be a lie about what Graph said, and an
+    /// exhaustive-looking allowlist written from the values one developer happened to see is a
+    /// silent filter, not a safety rail.
+    /// </summary>
+    internal static string RiskDetailText(string riskDetail) => riskDetail switch
+    {
+        "none" => "None",
+        "adminGeneratedTemporaryPassword" => "Admin generated temporary password",
+        "userPerformedSecuredPasswordChange" => "User performed secured password change",
+        "userPerformedSecuredPasswordReset" => "User performed secured password reset",
+        "adminConfirmedSigninSafe" => "Admin confirmed sign-in safe",
+        "aiConfirmedSigninSafe" => "AI confirmed sign-in safe",
+        "userPassedMFADrivenByRiskBasedPolicy" => "User passed MFA driven by risk-based policy",
+        "adminDismissedAllRiskForUser" => "Admin dismissed all risk for user",
+        "adminConfirmedSigninCompromised" => "Admin confirmed sign-in compromised",
+        "adminConfirmedUserCompromised" => "Admin confirmed user compromised",
+        "hidden" => "Hidden",
+        "unknownFutureValue" => "unknownFutureValue",
+        _ => riskDetail
+    };
+    /// copy reaches the outcome message and the admin notification, this one reaches the button,
+    /// and a half-done rename used to be able to make them disagree. See
+    /// RiskyUsersService.ActionDisplayName for why each is a single word.
+    /// </summary>
+    internal static string ActionLabel(RiskyUserAction action) =>
+        RiskyUsersService.ActionDisplayName(action);
+
+    /// <summary>
+    /// Microsoft's own name for the action. The accessible name and tooltip, never the button
+    /// text - it is what lets an operator match this control to the Entra portal, and it costs no
+    /// row width where it sits.
+    /// </summary>
+    internal static string ActionAccessibleName(RiskyUserAction action) =>
+        RiskyUsersService.ActionAccessibleName(action);
+
+    /// <summary>
+    /// Plain-English consequence line for a remediation action (owner ruling 2026-09-02), rendered as
+    /// visible TEXT in the per-row confirmation bar - not as a tooltip, which is invisible on touch,
+    /// to a keyboard and in a screenshot. Shown once, for the action actually chosen, where the
+    /// operator has already stopped and is typing a ticket. The 2026-09-02 ruling wanted an L2
+    /// operator to see the consequence before committing; this is where that belongs, rather than
+    /// on every button on every row.
     /// </summary>
     internal static string ActionConsequence(RiskyUserAction action) => action switch
     {

@@ -307,14 +307,103 @@ public class RiskyUsersPageTests
     // owner ruled it ambiguous for L2 support desk staff. These pin the exact approved strings so
     // a future edit cannot drift the button label or its consequence line without failing loud.
 
+    /// <summary>
+    /// One word per button, and it is the word that DIFFERS in Microsoft's three labels.
+    ///
+    /// Re-pointed 2026-09-25. This used to pin the 2026-09-02 L2-plain wording ("Close as handled"
+    /// / "This was the real user" / "Account was breached") and was named after that ruling. The
+    /// owner reported that nothing on the page mapped those to Microsoft's vocabulary, then
+    /// rejected the first fix - full toolbar strings on every button - as *"the same long string on
+    /// every button... your context leaking into the product."*
+    /// </summary>
     [Theory]
-    [InlineData(RiskyUserAction.Dismiss, "Close as handled")]
-    [InlineData(RiskyUserAction.ConfirmSafe, "This was the real user")]
-    [InlineData(RiskyUserAction.ConfirmCompromised, "Account was breached")]
-    public void ActionLabel_MatchesTheOwnerApprovedL2Wording(RiskyUserAction action, string expected)
+    [InlineData(RiskyUserAction.Dismiss, "Dismiss")]
+    [InlineData(RiskyUserAction.ConfirmSafe, "Safe")]
+    [InlineData(RiskyUserAction.ConfirmCompromised, "Compromised")]
+    public void ActionLabel_IsTheSingleDistinguishingWord(RiskyUserAction action, string expected)
     {
         Assert.Equal(expected, RiskyUsers.ActionLabel(action));
     }
+
+    /// <summary>
+    /// The mechanical form of the rule the owner gave, and the guard that would have caught the
+    /// rejected draft: a control repeated on every row carries only what differs between them.
+    /// </summary>
+    [Fact]
+    public void ActionLabels_ShareNoWordWithEachOther()
+    {
+        var labels = Enum.GetValues<RiskyUserAction>().Select(RiskyUsers.ActionLabel).ToList();
+
+        var words = labels
+            .SelectMany(l => l.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .Select(w => w.ToLowerInvariant())
+            .ToList();
+
+        Assert.Equal(words.Count, words.Distinct().Count());
+    }
+
+    /// <summary>
+    /// Microsoft's own toolbar wording is what an operator matches against the Entra portal, so it
+    /// has to be ON the control - as the accessible name, where it costs no row width.
+    /// </summary>
+    [Theory]
+    [InlineData(RiskyUserAction.Dismiss, "Dismiss user risk")]
+    [InlineData(RiskyUserAction.ConfirmSafe, "Confirm user safe")]
+    [InlineData(RiskyUserAction.ConfirmCompromised, "Confirm user compromised")]
+    public void ActionAccessibleName_IsMicrosoftsOwnTerm(RiskyUserAction action, string expected)
+    {
+        Assert.Equal(expected, RiskyUsers.ActionAccessibleName(action));
+    }
+
+    /// <summary>
+    /// The button text and the string that reaches the outcome message and the admin notification
+    /// are ONE string, not two kept in step by a comment.
+    ///
+    /// They used to be separate copies in the page and the service. A half-done rename would have
+    /// had an operator click one name while a different one was reported back and mailed to
+    /// administrators.
+    /// </summary>
+    [Theory]
+    [InlineData(RiskyUserAction.Dismiss)]
+    [InlineData(RiskyUserAction.ConfirmSafe)]
+    [InlineData(RiskyUserAction.ConfirmCompromised)]
+    public void TheButtonTextAndTheReportedNameAreTheSameString(RiskyUserAction action)
+    {
+        Assert.Equal(RiskyUsersService.ActionDisplayName(action), RiskyUsers.ActionLabel(action));
+    }
+
+    /// <summary>
+    /// Audit action identifiers are STABLE RECORD KEYS and are deliberately not the button text.
+    /// Renaming them would split every existing audit row from its successors, and AC13's
+    /// "the clicked name and the reported name agree" must never be read as licence to do it.
+    /// </summary>
+    [Theory]
+    [InlineData(RiskyUserAction.Dismiss, "RiskyUsers_Dismiss")]
+    [InlineData(RiskyUserAction.ConfirmSafe, "RiskyUsers_ConfirmSafe")]
+    [InlineData(RiskyUserAction.ConfirmCompromised, "RiskyUsers_ConfirmCompromised")]
+    public void AuditActionIdentifiersAreUnchangedByTheRelabelling(RiskyUserAction action, string expected)
+    {
+        Assert.Equal(expected, RiskyUsers.AuditActionFor(action));
+    }
+
+    /// <summary>
+    /// An unrecognised riskDetail renders as ITSELF.
+    ///
+    /// S2 rule 4 of docs/RiskyUsersModule-Plan.md: Microsoft extends these enums and both carry
+    /// unknownFutureValue. "Unknown" or a blank would be a lie about what Graph said, and an
+    /// allowlist written from the values one developer saw is a silent filter, not a safety rail.
+    /// </summary>
+    [Theory]
+    [InlineData("userPerformedSecuredPasswordReset", "User performed secured password reset")]
+    [InlineData("adminConfirmedUserCompromised", "Admin confirmed user compromised")]
+    [InlineData("none", "None")]
+    [InlineData("somethingMicrosoftAddedAfterThisWasWritten", "somethingMicrosoftAddedAfterThisWasWritten")]
+    [InlineData("", "")]
+    public void RiskDetailText_ReadableForKnownValuesAndRawForEverythingElse(string raw, string expected)
+    {
+        Assert.Equal(expected, RiskyUsers.RiskDetailText(raw));
+    }
+
 
     [Theory]
     [InlineData(RiskyUserAction.Dismiss,
@@ -335,7 +424,7 @@ public class RiskyUsersPageTests
         // (S6 item 3).
         var prompt = RiskyUsers.ConfirmPrompt(RiskyUserAction.ConfirmCompromised, "risky@contoso.com", "atRisk");
 
-        Assert.Contains("Account was breached", prompt);
+        Assert.Contains("Compromised", prompt);
         Assert.Contains("risky@contoso.com", prompt);
         Assert.Contains("atRisk", prompt);
     }
@@ -345,7 +434,7 @@ public class RiskyUsersPageTests
     {
         var prompt = RiskyUsers.ConfirmPrompt(RiskyUserAction.Dismiss, "risky@contoso.com", "");
 
-        Assert.Contains("Close as handled", prompt);
+        Assert.Contains("Dismiss", prompt);
         Assert.Contains("unknown", prompt);
     }
 
@@ -550,20 +639,28 @@ public class RiskyUsersPageTests
         Assert.DoesNotContain("IsProcessing", group);
         Assert.DoesNotContain("IsDeleted", group);
     }
-
+    /// <summary>
+    /// Each trigger button shows the one-word label as its text and Microsoft's own term as its
+    /// accessible name and tooltip, both driven off the shared helpers rather than a second,
+    /// driftable copy of the wording.
+    ///
+    /// Re-pointed 2026-09-25. It used to require the CONSEQUENCE paragraph in `title`, which was
+    /// the 2026-09-02 shape: invisible on touch, invisible to a keyboard, and absent from the
+    /// screenshot the owner sent when reporting that nothing mapped these buttons to Microsoft's
+    /// page. The consequence now renders as visible text in the confirm bar instead, and `title`
+    /// carries the mapping.
+    /// </summary>
     [Fact]
-    public void RiskyUsers_ActionButtons_UseTheOwnerApprovedLabelAndTooltip()
+    public void RiskyUsers_ActionButtons_CarryTheShortLabelAndMicrosoftsTermAsTheAccessibleName()
     {
-        // Owner ruling 2026-09-02: each trigger button shows the L2-plain label as its text and
-        // the matching consequence line as its tooltip, driven off the same static helpers the
-        // confirm bar uses - not a second, driftable copy of the wording.
         var group = Between(PageSource(), "<div class=\"btn-group btn-group-sm\"", "</div>");
 
-        Assert.Equal(3, Regex.Matches(group, @"title=""@ActionConsequence\(RiskyUserAction\.").Count);
         Assert.Equal(3, Regex.Matches(group, @">@ActionLabel\(RiskyUserAction\.").Count);
-        Assert.DoesNotContain("Dismiss risk", group);
-        Assert.DoesNotContain("Confirm safe", group);
-        Assert.DoesNotContain("Confirm compromised", group);
+        Assert.Equal(3, Regex.Matches(group, @"aria-label=""@ActionAccessibleName\(RiskyUserAction\.").Count);
+        Assert.Equal(3, Regex.Matches(group, @"title=""@ActionAccessibleName\(RiskyUserAction\.").Count);
+
+        // The consequence paragraph must NOT be back in a tooltip.
+        Assert.DoesNotContain("title=\"@ActionConsequence", group);
     }
 
     [Fact]
