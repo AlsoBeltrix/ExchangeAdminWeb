@@ -185,74 +185,32 @@ every gate behind it.
   REVIEWED AND UNSTARTED.** Both jumped ahead of queue item 14. **Queue item 15 - implement the
   Risky Users plan - is the next code task and nothing blocks it: no open owner questions, five
   slices, all reviewed.**
-  - **`docs/RiskyUsersCompleteResults-Plan.md`** (`dc79994`, revised `fa0dd1b`). The module
-    returns one 500-row Graph page in an unspecified order and runs the UPN search inside it, so
-    a High-risk account visible in the Entra portal is absent from the page. This is the S4a
-    slice `docs/RiskyUsersModule-Plan.md` deferred; both halves of its trigger have fired.
-    Server-side UPN matching is ruled out on the Graph v1.0 reference (`$filter`/`$select` only,
-    no documented `contains()`), so paging is the only route, and it needs `GraphTokenClient` to
-    accept a guarded absolute `@odata.nextLink`. **FIVE slices.** Base app bump in S1; module
-    bumps in S2 (`1.2.0`), S4 (`1.3.0`) and S5 (`1.4.0`).
-    **Q1 IS RULED and the plan has NO open owner questions left.** Owner 2026-09-24, offered a
-    render cap or a top-N render: *"neither? just page them."* Both options threw rows away to
-    protect the circuit; pagination bounds what is RENDERED without bounding what is REACHABLE.
-    50 rows a page, following `AdminEventLog.razor` - but not its numbered-button loop, which at
-    this ceiling would be 200 buttons. Fetch and sort stay tenant-wide. Recorded in
-    `.agents/decisions.md` as the default shape for any long module table, and it answers by
-    precedent the still-open Defender browsing fork (which still needs its own go).
-    **The same ruling was extended the same day: hitting the 10,000 fetch limit is a VISIBLE
-    CONSTRAINT NOTICE over the rows, not a refusal that withholds them** - *"retrieving and
-    working with 10,000 risky users in a web portal is unmanageable anyway. make it a visible
-    constraint notice."* This OVERRULES an earlier codex finding this plan had admitted (refusal
-    with zero rows, on the Defender precedent); that precedent predates pagination here. **The
-    notice must admit the ORDER is partial, not only the list** - a ceiling-limited fetch holds
-    an arbitrary subset and the severity sort runs over that subset, so the first page is the
-    worst of a sample, not the worst in the tenant. It must not contain the words "narrow the
-    filter": UPN contains does not shrink the fetch, and that string is the defect.
-    **S4 was added 2026-09-24 on a second owner report** (`b5052d8`, redesigned `71c5390`). The
-    Remediate buttons read "Close as handled" / "This was the real user" / "Account was breached"
-    and nothing on the page maps them to Entra's "Dismiss user(s) risk" / "Confirm user(s) safe" /
-    "Confirm user(s) compromised" - the consequence text exists but only as a `title` attribute,
-    so it is invisible on touch, to a keyboard and in a screenshot. This REFINES the 2026-09-02
-    L2-wording ruling rather than reversing it: one string was doing two jobs.
-    **The first S4 draft was rejected by the owner and the rule that replaced it is the durable
-    part:** it proposed Microsoft's full toolbar strings on every button, and the owner answered
-    *"we do not need the same long string on every button. that's not UI, that's your context
-    leaking into the product."* **A control repeated on every row carries only what differs;
-    everything shared belongs to the column header, the row, or the confirmation step.** So:
-    `Dismiss` / `Safe` / `Compromised`, full Microsoft term as the accessible name, consequence
-    sentence at the confirm step only. A test asserts no two labels share a word.
-    `riskDetail` renders raw camelCase in the next column - same defect, also in scope, with the
-    raw value as the fallback for anything unrecognised.
-    **The hazard to carry: the three label strings live in TWO files** (`RiskyUsers.razor:759`
-    and `RiskyUsersService.cs:165`) kept in step by a comment, and the service's copy reaches the
-    outcome message. A half-rename makes the operator click one name while another is reported.
-    Separately, `AuditActionFor` (`RiskyUsers.razor:745`) produces the STABLE ids
-    `RiskyUsers_Dismiss` etc. that `AuditService.cs:215` stores - those are record keys and must
-    NOT be swept into a rename.
-    **Q3 is CLOSED coder-side** (relabel in place; the one-control-per-row restructure is
-    recorded as deliberately not taken - it is a redesign and overlaps queue 14).
-    **S5 WAS ADDED 2026-09-24 AND IS THE BEST ANSWER TO THE ORIGINAL BUG.** The owner asked
-    whether user 10,001 is reachable at all; the answer exposed that the plan had conflated two
-    questions. "Show me matching rows" needs a list scan and can be capped. **"Is this person
-    risky?" needs `GET /identityProtection/riskyUsers/{objectId}`** - v1.0, needs only
-    `IdentityRiskyUser.Read.All` which the module ALREADY holds, already used for History
-    (`RiskyUsersService.cs:119`), and no ceiling can touch it. A separate "Look up a user"
-    control, deliberately NOT merged into the `UPN contains` box.
-    **`User.Read.All` MUST be added to the Risky Users app registration and consented - owner
-    action, blocking S5 and nothing else.** Not probe-dependent: a `riskyUsers` query returning
-    nothing means "no risk record for this UPN" and cannot say whether the UPN belongs to
-    anyone, so only a directory read separates "Entra says they are fine" from "you mistyped".
-    Two calls by design: `/users/<upn>?$select=id`, then `/riskyUsers/<id>`. The
-    `$filter=userPrincipalName eq` probe survives only as a positive-path shortcut.
-    **`startswith` was considered and DELETED** - it cannot serve a contains match, and the
-    reported case is typing `charles` to find `Paul.Charles@analog.com`. Do not borrow another
-    module's registration; the Developer Guide forbids it.
-    **404 from the lookup is a CLEAN NEGATIVE, not an error and not "no risky users found".**
-    Three distinguishable outcomes: risky / exists but no risk record / no such user. This is
-    the Cloud Password Reset lesson inverted - there an unanswered question was read as a
-    negative answer; here a real negative must not be dressed up as a failure.
-    Module `1.3.0` -> `1.4.0`. **S5 is unreviewed.**
+  - **`docs/RiskyUsersCompleteResults-Plan.md` - S1 THROUGH S4 ARE LANDED. Only S5 remains and it
+    is BLOCKED ON THE OWNER.** Go was queue item 15. `fa108d3` (S1), `7715780` (S2+S3 notice),
+    `0f89272` (termination fix + pagination), `873c052` (S4). Base app `2.23.1` -> `2.24.0`;
+    module `1.1.0` -> `1.2.0` -> `1.3.0`. Suite 3161 / 0 failed / 3 skipped at `873c052`.
+    **NOTHING HAS BEEN SEEN IN A BROWSER** - no test here renders a page.
+    **S5 BLOCKER, and it is the only thing left: `User.Read.All` must be added to the Risky Users
+    Entra app registration and admin-consented.** Not probe-dependent - a `riskyUsers` query
+    returning nothing means "no risk record for this UPN" and cannot say whether the UPN belongs
+    to anyone, so only a directory read separates "Entra says they are fine" from "you mistyped".
+    **THE DEFECT WORTH CARRYING, because this work introduced it and nearly shipped it.** S2's
+    first form looped on `@odata.nextLink` and stopped only on the ROW ceiling. A page carrying a
+    continuation link with an empty `value` advances the link but not the count, so the ceiling is
+    never reached and the loop runs until the process dies. **It took a test host to 29 GB twice
+    and had to be killed by hand.** The existing test stub returns exactly that shape. Fixed with
+    a page budget independent of the row count - the page count rises every iteration whatever the
+    body contains, which is what makes termination provable; the row ceiling never could.
+    Guard-proved by removing the budget and watching the mutant run away to 3 GB.
+    **Three process failures in the same stretch, all mine, all worth not repeating:** I named a
+    cause twice without measuring it (blamed a regex - 10 ms when timed; then the page tests - all
+    passed in isolation), and only isolating the service class found it. And an unanchored `sed`
+    bumped FOUR modules' versions instead of one, after an earlier unanchored `sed` had rewired
+    four unrelated tests to a new helper. Anchor line-scoped edits or check the diff before
+    committing.
+    **Two source-scanning guards failed by matching their own explanatory comments** - an ordering
+    assertion tripped on the comment explaining that ordering. Both readers strip comments now. A
+    test a comment can fail gets silenced rather than fixed.
   - **`docs/SidebarScrollbar-Plan.md` - IMPLEMENTED AND LANDED 2026-09-25, `970b6fd`.** The go was
     queue item 16. Base app `2.23.0` -> `2.23.1` (PATCH, shared UI defect); `ModuleCatalog.cs`
     byte-identical, verified by diff. Suite 3122 passed / 0 failed / 3 skipped, format clean.

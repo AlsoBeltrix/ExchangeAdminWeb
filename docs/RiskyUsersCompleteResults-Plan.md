@@ -1,20 +1,27 @@
 # Risky Users -- Complete Results, Findable Users, Identifiable Actions
 
-Status: **S1 and S2 are LANDED (`fa108d3`, `7715780`); S3's pagination, S4 and S5 remain.** Five
-slices, no open owner questions. The go is queue item 15.
+Status: **S1-S4 are LANDED. Only S5 remains, and it is blocked on an owner action.** The go was
+queue item 15.
 
-- **S1 landed.** `GraphTokenClient` follows an absolute `@odata.nextLink` behind a scheme/host/base-path
-  guard. Base app `2.23.1` -> `2.24.0`. The developer guide's self-contradiction is fixed.
-- **S2 landed, with the half of S3 that could not be split from it** - the page reads the record S2
-  reshapes, so separating them yields a commit that does not build. Module `1.1.0` -> `1.2.0`. The
-  fetch pages to exhaustion, the ceiling reads the NEW `MaxTotalRows` key, and the constraint notice
-  plus the two distinct empty states are in.
-- **S3's remaining half: pagination.** 50 rows a page, per the owner's ruling. Not started.
-- **S4: the action labels and `riskDetail`.** Not started.
-- **S5: the direct lookup. BLOCKED on an owner action** - `User.Read.All` must be added to the Risky
-  Users app registration and admin-consented.
+| Slice | State |
+| --- | --- |
+| S1 | Landed `fa108d3`. `GraphTokenClient` follows an absolute `@odata.nextLink` behind a scheme/host/base-path guard. Base app `2.23.1` -> `2.24.0`. Developer guide's self-contradiction fixed. |
+| S2 | Landed `7715780`, with a **non-termination defect fixed in `0f89272`** - see below. Fetch pages to exhaustion; ceiling reads the NEW `MaxTotalRows` key. Module `1.1.0` -> `1.2.0`. |
+| S3 | Landed across `7715780` (notice, two empty states) and `0f89272` (pagination, 50 a page). |
+| S4 | Landed `873c052`. `Dismiss` / `Safe` / `Compromised`, Microsoft's term as the accessible name, `riskDetail` mapped with a raw fallback. Module `1.2.0` -> `1.3.0`. |
+| S5 | **NOT STARTED. Blocked: `User.Read.All` must be added to the Risky Users app registration and admin-consented.** |
 
-Suite 3039 passed / 0 failed at `7715780`; format clean. **Nothing has been seen in a browser.**
+**The defect worth carrying, because it was introduced by this work and nearly shipped.** S2's
+first form looped on `@odata.nextLink` and stopped only on the ROW ceiling. A page carrying a
+continuation link and an empty `value` advances the link without advancing the count, so the
+ceiling is never reached and the loop runs until the process dies. It took a test host to 29 GB
+twice. The fix is a page budget independent of the row count - the page count rises every
+iteration whatever the body contains, which is what makes termination provable. Guard-proved by
+removing the budget and watching the mutant run away to 3 GB.
+
+Suite 3161 passed / 0 failed / 3 skipped at `873c052`; format clean. **Nothing has been seen in a
+browser** - no test here renders a page, so the manual checks are the only evidence an operator
+sees any of it.
 
 **One owner action blocks S5 and nothing else in this plan:** `User.Read.All` must be added
 to the Risky Users Entra app registration and admin-consented. S1-S4 need no new
