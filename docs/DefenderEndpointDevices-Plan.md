@@ -1,6 +1,6 @@
 # Defender for Endpoint Devices Module - Plan
 
-Status: In progress (2026-09-24). S1-S5 landed and the module ships at `1.1.0`; the owner then ran it against the live service, which answered R1(g) (no continuation cursor) and R1(f) (the tenant exceeds the old 20000 ceiling) and forced the rebuild recorded in Revision 3 of the second series. **The owner has now REVISED queue item 8 - the quote below is the new text, and Revision 5 folds it in.** The app-registration blocker earlier revisions carried is gone: the registration exists, Revision 3 records both permissions as granted and consented, and the Delinea Secret ID is **657**. Still open: R1 (a), (b), (c), (d), (e) and the new items (h) through (l); the manual acceptance checklist; Q2, Q3, Q4, Q5 and the new Q7, Q8 and Q9. Queue 8's park and the two defects open against the shipped module are recorded in `.agents/state.md`, which owns them - not here. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
+Status: In progress (2026-09-24). S1-S5 landed and the module ships at `1.1.0`; the owner then ran it against the live service, which answered R1(g) (no continuation cursor) and R1(f) (the tenant exceeds the old 20000 ceiling) and forced the rebuild recorded in Revision 3 of the second series. **The owner has now REVISED queue item 8 - the quote below is the new text, and Revision 5 folds it in.** The app-registration blocker earlier revisions carried is gone: the registration exists, Revision 3 records both permissions as granted and consented, and the Delinea Secret ID is **657**. Owner rulings of 2026-09-24/25 closed Q7 and Q10, and R1(o) is measured (the AD subnet-to-site map is real: 531 subnets, 515 mapped, 167 sites, `location` empty everywhere). Still open: R1 (a), (b), (c), (d), (e) and (h) through (n); the manual acceptance checklist; Q2, Q3, Q4, Q5, Q8 and Q9. Queue 8's park and the two defects open against the shipped module are recorded in `.agents/state.md`, which owns them - not here. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
 
 Owner request, verbatim from the queue as revised on 2026-09-24. **This supersedes the original
 queue text, which asked for "3. other important info" and said the app registration still had to be
@@ -700,17 +700,31 @@ building, which is worse than a blank in a report whose entire purpose is findin
 
 | # | Field | Exact source | Location strength | Non-onboarded? | Notes |
 | --- | --- | --- | --- | --- | --- |
-| L17 | AD site name | AD configuration partition, `CN=Subnets,CN=Sites,<configurationNamingContext>`: subnet object `cn` (the CIDR) and `siteObject`, resolved to the site's `cn`. Matched against the device IP from L2, or the observer IP from L1 | **Strongest human-readable signal.** Turns an IP into a site name the organisation already uses. **Measured in this forest (R1(o), 2026-09-25): 531 subnets, 515 with a site, 167 sites, names structured region / country / state / city** | **Yes** - it depends only on having an IP, not on a sensor | Needs no Defender licence, no new Graph permission and no network-team deliverable. **The subnet `location` attribute is empty on all 531 and is NOT used** - the site name carries the location instead. Rendered raw, never parsed. Q10 decides what an AD read failure does to the report |
+| L17 | AD site name | AD configuration partition, `CN=Subnets,CN=Sites,<configurationNamingContext>`: subnet object `cn` (the CIDR) and `siteObject`, resolved to the site's `cn`. Matched against the device IP from L2, or the observer IP from L1 | **Strongest human-readable signal.** Turns an IP into a site name the organisation already uses. **Measured in this forest (R1(o), 2026-09-25): 531 subnets, 515 with a site, 167 sites, names structured region / country / state / city** | **Yes** - it depends only on having an IP, not on a sensor | Needs no Defender licence, no new Graph permission and no network-team deliverable. **The subnet `location` attribute is empty on all 531 and is NOT used** - the site name carries the location instead. Rendered raw, never parsed. **Q10 ruled 2026-09-25: an AD read failure FAILS the report** - but an IP that matches no subnet is a blank cell, not a failure |
 
-**Q10, which L17 creates and the owner should settle before a slice is written:** this module is
-currently a pure Defender-API module with one credential. L17 adds a second, unrelated data source
-- on-prem AD - and the two failure modes do not resemble each other. Three shapes: **(a)** the
-module reads AD itself and renders the site column; **(b)** it exports the IP and the operator
-correlates outside; **(c)** it reads AD but treats a directory failure as an empty column rather
-than a failed report, which is the T7 rule applied to a second source. Recommendation: **(c)**,
-because a site name is an enrichment and the device list is still useful without it - but (a)
-versus (c) is a real difference in what a failed AD read does to the report, and T7 exists
-precisely because that question has been got wrong here before.
+**Q10 - RULED by the owner, 2026-09-25. The module reads AD itself, and an AD read failure FAILS
+THE REPORT.** Verbatim: *"if AD read fails, the report fails. we have bigger problems if none of
+our 40+ DCs are reachable."*
+
+This overrules the plan's own recommendation, which was to degrade to an empty column on the
+reasoning that a site name is an enrichment. The owner's argument is better and is about this
+forest rather than about API etiquette: **with 40-plus domain controllers, a failed directory read
+is not a flaky dependency, it is an outage.** Rendering a report with a silently missing column in
+that situation would hide a far larger problem behind a cosmetic gap - and would hand an operator
+a location report with no locations in it, at exactly the moment they most need to trust it.
+
+**The asymmetry with T7 is deliberate and must not be "harmonised" later.** T7 requires a failed
+hunting enrichment NOT to take the page down. AD is the opposite. They differ because the
+dependencies differ: hunting is one cloud service with documented per-tenant quotas and throttling
+that can fail transiently on a healthy day, while the directory is dozens of servers the entire
+environment already depends on. A future reader who notices the two rules disagree should read
+this paragraph, not reconcile them.
+
+**What this does NOT mean, and it is the easy mistake:** "the AD read failed" is not "the IP
+matched no subnet". The three empty cases listed above stay empty cases - they are answers, and
+the report renders normally with those cells blank. Only an actual failure to read the directory
+fails the report. A slice that collapses "no match" into "failure" turns 16 unmapped subnets into
+a broken module.
 
 ### ONBOARDED-only - these describe the OBSERVER, not the target
 
@@ -1755,7 +1769,7 @@ owner explicitly asked to be given.
    - **L1** - the requirement. Recently Seen By.
    - **L17** - AD site and the subnet's `location` string, derived locally from the directory this
      host is already joined to. **The strongest human-readable signal here**, and the answer to
-     the subnet-to-site map the owner does not have. Settle **Q10** before it is sliced.
+     the subnet-to-site map the owner does not have. **Q10 is ruled** - an AD read failure fails the report.
    - **L2** - subnet. Was "conditional on a map existing"; L17 **is** that map, so L2 becomes
      L17's input as well as a column. Show both - the subnet is the evidence for the site name.
    - **L3**, **L4** - default gateway and DHCP server. Two independent site keys needing no map,
@@ -2891,7 +2905,7 @@ URLs are in Sources. Every `file:line` cited was read from the file at the time 
 ## Still outstanding
 
 R1 (a), (b), (c), (d), (e) and the new (h), (i), (j), (k), (l), (m). The manual acceptance
-checklist. Q2, Q3, Q4, Q5 and the new Q7, Q8, Q9. **The pending step is the owner's: approve or
+checklist. Q2, Q3, Q4, Q5, Q8 and Q9. Q7 and Q10 are RULED (2026-09-24/25) and R1(o) is measured. **The pending step is the owner's: approve or
 strike the L1-L16 candidate table (Q8) and answer Q9.** The proposed next action after that is to
 draft S6 against the answers. Queue 8's park, and the unresolved fork about the page being unusable
 at tenant scale, are `.agents/state.md`'s and are not re-asked here.
