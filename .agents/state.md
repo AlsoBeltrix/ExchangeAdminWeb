@@ -29,7 +29,49 @@ stale when written.
   S2 INCURRED - SEE BELOW.** `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In
   progress`. Module `1.9.1` -> `1.10.0` (S1) -> `1.10.1` (mir-1) -> `1.11.0` (S2), no base app
   bump.
-  - **S2 LEFT COMPLETE AND STOP REACHABLE FROM NOWHERE, AND S3 MUST RESTORE THEM FIRST.** The
+  - **S3 STEP 1 IS LANDED (`ac3e567`): Complete and Stop are planner actions now.** The rules
+    were ported from the per-row buttons character for character. **They are allowlists and D4
+    says allowlists caused the CompletedWithErrors defect** - kept narrow on purpose because
+    Complete finalises a move and Stop halts one, so the harmful direction is accepting an
+    unanticipated status, not hiding it. **OPEN OWNER QUESTION: should `CompletedWithErrors` be
+    completable?** Same shape as the question that produced D4; not answered by a slice whose job
+    was to move a button.
+  - **S3 STEP 2 IS THE SELECTION MODEL AND IT IS NOT STARTED. The working tree is clean.** The
+    design below was worked out and is recorded so the next session does not redo it. It rewires
+    the exact machinery mir-1 just fixed, on the page's destructive surface, which is why it was
+    not begun at the end of a long session.
+    - **R9 collapses two concepts into one.** `expandedBatch` stops being independent state and
+      becomes a derivation: the open batch IS the selection when the selection has exactly one
+      member, and is null otherwise (R2). Row click = select only that row. Checkbox = add or
+      remove. Select-all = all, no cap (R8), which means count > 1 and so no open batch.
+    - **Shape that keeps the S1 and mir-1 guards intact.** Keep exactly two writers of
+      `expandedBatch`: `AdoptSelectionAsOpenBatch` replaces `OpenBatch` as the outbound one
+      (derive from the selection, bump `batchUsersGeneration`, clear rows, close the report,
+      navigate, then load), and `SyncOpenBatchFromUrl` stays the inbound one but must ALSO set
+      the selection from the address, or R9 is broken the moment someone presses Back. A shared
+      `LoadMailboxesFor(batchName)` should own the generation capture and the
+      `if (loadingBatchUsers == batchName)` clear, so the mir-1 pattern exists once.
+    - **Consolidating the load paths lowers a guard threshold, which needs stating rather than
+      quietly editing.** `EveryRowLoadCapturesTheGenerationBeforeItsAwait` asserts
+      `calls.Count >= 8`; fewer call sites means a lower floor. Re-derive it and say why in the
+      test, since a floor that is silently reduced stops guarding against sites disappearing.
+    - **`LoadMigrationStatus` must stop collapsing the open batch.** Under R9 a catalogue refresh
+      is not a selection act, so the selection survives the reload minus whatever `PruneSelection`
+      drops, and the open batch's mailboxes are refetched. Known consequence: if pruning takes
+      the selection from N to exactly 1, Adopt and the explicit refetch can both fire for the same
+      batch. The mir-1 generation guard discards the loser, and the flag un-busies a moment early -
+      the residual already recorded for mir-1.
+    - **Still to do in step 2:** remove the old bulk bar above the panes; batch operation bar at
+      the top of the LEFT pane carrying Delete, Remove Completed, Resume AND the restored Complete
+      and Stop (R3, R6); the multi-batch selection view in the right pane with its own pager
+      labelled "1-40 of N selected batches" (R4), reusing `Services/ListWindow.cs`; "Open" and
+      "Remove from selection" per row there (R9, R10); mailbox checkboxes and their action bar
+      (R7, R12). Then the ClickGateRegistry has to be re-derived again - every markup coordinate
+      moves - and `ToggleBatchDetails` is the wrong name under R9, so renaming it touches the
+      registry's NonButtonTarget and two page tests.
+    - **The guard S2 owes back lands here:** restore the positive assertion that a batch action
+      control reads `MigrationBatchActionPlanner`, now against the toolbar.
+  - **S2 LEFT COMPLETE AND STOP REACHABLE FROM NOWHERE, AND S3 STEP 2 RESTORES THEM.** The
     batch row is now one line with the four columns R16 names, so it has no action cell, and R3
     and R6 put batch operations in a toolbar at the top of the batch pane - which is S3. Delete,
     Remove Completed and Resume still work through the existing selection toolbar. No operator
