@@ -27,9 +27,20 @@ every gate behind it.
 **Both remotes are at `2026293` as of 2026-09-25 and match local `master`,** verified with
 `git ls-remote`. Push policy remains ask.
 
-- **QUEUE ITEM 14: PLAN APPROVED. S1, mir-1, S2 AND S3 ARE ALL LANDED. S4 IS NEXT.**
+- **QUEUE ITEM 14: PLAN APPROVED. S1, mir-1, S2, S3 AND S4 ARE LANDED. S5 IS NEXT.**
   `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In progress`. Module `1.9.1` ->
-  `1.10.0` (S1) -> `1.10.1` (mir-1) -> `1.11.0` (S2) -> `1.12.0` (S3), no base app bump.
+  `1.10.0` (S1) -> `1.10.1` (mir-1) -> `1.11.0` (S2) -> `1.12.0` (S3) -> `1.13.0` (S4), no base
+  app bump.
+  - **S5 CARRIES S3'S DEBT AS WELL AS ITS OWN.** Its own scope is filter, sort and paging on the
+    mailbox table (R21). It must ALSO deliver the mailbox checkboxes and the mailbox action bar
+    that S3's "checkboxes on both lists" did not - that is the second half of R7 and R12, and
+    item 13's per-mailbox actions need it. Reuse `Services/ListWindow.cs` for the paging rather
+    than writing the off-by-one a third time.
+  - **S4 landed the outcome preview.** Confirm carries the ELIGIBLE count, every ticked row shows
+    "Will run" or "Skipped (Status)" before the ticket is typed, the skipped list is named in
+    full, and the picked action is highlighted. **`pendingActionPlan` is a PREVIEW and never the
+    authority** - the callback re-plans at execution time, because the operator can sit at the
+    ticket field while the table reloads underneath them. A test pins both `Plan(` calls.
   - **`CompletedWithErrors` IS SETTLED (owner, 2026-09-25): not completable, and the Complete
     control now says why in one sentence** - a batch with errors cannot complete until they are
     fixed or removed. `.agents/decisions.md` 2026-09-25. It is not the D4 defect; D4 was an

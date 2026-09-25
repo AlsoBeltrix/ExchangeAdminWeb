@@ -540,6 +540,71 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void ConfirmCarriesTheEligibleCountAndNamesWhatWillBeSkipped()
+    {
+        // S4, R12, and the plan's test obligation 4. Known Failure Class 2 is success aggregation:
+        // a loop over N items reporting blanket success. This answers it BEFORE the fact - the
+        // operator agreeing to an action sees how many rows it will actually touch, on the button
+        // they press, and which rows it will not.
+        //
+        // The count must be of the ELIGIBLE rows, not the ticked ones. Ticking twelve, agreeing to
+        // "12 batches" and having three run is precisely the surprise this removes.
+        var confirm = ExtractSpan(ReadPage(), "private RenderFragment PendingActionConfirm", "</div>;");
+
+        Assert.Contains("pendingActionPlan.Eligible.Count", confirm, StringComparison.Ordinal);
+        Assert.Contains("MigrationBatchActionPlanner.DescribeSkipped", confirm, StringComparison.Ordinal);
+
+        // DescribeSkipped names each skipped batch and its status; a bare count cannot be acted on.
+        var describe = ReadServiceSource("MigrationBatchActionPlanner.cs");
+        Assert.Contains("s.BatchName} ({s.Status}", describe, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheStagedPreviewIsNeverTheAuthorityOnWhatRuns()
+    {
+        // The trap this slice could have walked into. The operator can sit at the ticket field
+        // indefinitely while the table reloads underneath them, so a plan captured at staging time
+        // is stale by the time Confirm is pressed - the same staleness class as pps-1(b), where an
+        // on-prem write used a protection verdict computed before a confirmation dialog.
+        //
+        // pendingActionPlan therefore feeds the PREVIEW only. The callback re-plans.
+        var stage = GetMethodBody("StageSelectionAction");
+
+        Assert.Contains("pendingActionPlan = staged;", stage, StringComparison.Ordinal);
+        Assert.Equal(2, Regex.Matches(stage, @"MigrationBatchActionPlanner\.Plan\(").Count);
+
+        // And the preview is torn down when the action starts, not left over rows it is changing.
+        Assert.Contains("ClearStagedPreview();", GetMethodBody("CancelPendingAction"), StringComparison.Ordinal);
+        Assert.Contains("CancelPendingAction();", GetMethodBody("ConfirmPendingAction"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EveryAffectedRowCarriesItsOwnOutcomeBeforeTheTicketIsTyped()
+    {
+        // R12: a per-row outcome written against every affected row. Written, not implied by a
+        // colour - R17 refuses an unlabelled value, and a skip the operator cannot explain is one
+        // they cannot act on, so the status that caused it travels with the word.
+        var row = GetBatchRowMarkup();
+
+        Assert.Contains("StagedOutcomeFor(batchName)", row, StringComparison.Ordinal);
+        Assert.Contains("mig-outcome", row, StringComparison.Ordinal);
+
+        var outcome = GetMethodBody("StagedOutcomeFor");
+        Assert.Contains("Will run", outcome, StringComparison.Ordinal);
+        Assert.Contains("Skipped ({skip.Status})", outcome, StringComparison.Ordinal);
+
+        // A row that is not part of the staged plan says nothing. Annotating an unticked row would
+        // claim an outcome for an action that will never look at it.
+        Assert.Contains("return null;", outcome, StringComparison.Ordinal);
+
+        // R12: the picked action is highlighted, so the ticket field is visibly tied to one of the
+        // five buttons rather than floating beneath all of them.
+        var highlight = GetMemberSource(
+            @"private\s+string\s+BatchActionButtonClass\s*\(", "BatchActionButtonClass");
+        Assert.Contains("pendingBatchAction == action", highlight, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheOpenBatchIsDerivedFromTheSelectionAndNeverSetBesideIt()
     {
         // R9, and the plan's test obligation 3. There is ONE concept: ticked, highlighted, shown

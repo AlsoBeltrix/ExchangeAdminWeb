@@ -415,10 +415,26 @@ control itself**, in one sentence, because inferring it from a skip line is not 
 `.agents/decisions.md` 2026-09-25 carries the ruling and the standing rule about where help text
 may live.
 
-**S4 -- Outcome preview.** Per-row eligibility annotation and the eligible count on Confirm,
+**S4 -- Outcome preview. LANDED 2026-09-25, module `1.12.0` -> `1.13.0`.** Per-row eligibility annotation and the eligible count on Confirm,
 replacing the current blanket staging. This is where Known Failure Class 2 (success
 aggregation) is addressed in the UI: the operator sees per-row outcomes before committing,
 and the result banner must report per-row outcomes after. Module version bump.
+
+**What landed.** Confirm reads "Confirm 3 batches" and counts the ELIGIBLE rows, not the ticked
+ones - agreeing to twelve and having three run is the surprise this removes. Every ticked row
+carries its own chip while an action is staged: "Will run", or "Skipped (Syncing)" with the status
+that caused it, because a skip the operator cannot explain is one they cannot act on. The skipped
+list is named in full beside Confirm. The picked action is filled and the other four are outline
+(R12), so the ticket field is visibly tied to one button. Rows outside the staged plan say
+nothing: claiming an outcome for a row the action will never look at is worse than silence.
+
+**The trap it had to avoid, and the test that pins it.** `pendingActionPlan` is a PREVIEW and
+never the authority. The operator can sit at the ticket field indefinitely while the table reloads
+underneath them, so a plan captured at staging time is stale by the time Confirm is pressed - the
+same staleness class as pps-1(b), where an on-prem write used a protection verdict computed before
+a confirmation dialog. `StageSelectionAction` therefore plans TWICE: once for the preview, once
+inside the callback at execution time. A test asserts both calls exist, and it bites when the
+second is replaced by the first.
 
 **S5 -- Filter, sort and paging on the mailbox table.** Currently absent entirely. Module
 version bump. Satisfies R21.

@@ -539,27 +539,27 @@
                                        control, not a banner: the per-batch answer is already in
                                        the confirm step, which names every skipped batch with the
                                        status that skipped it. *@
-                                    <button class="btn btn-sm btn-outline-success" disabled="@(IsBusy || pendingActionLabel != null)"
+                                    <button class="@BatchActionButtonClass(MigrationBatchAction.Complete, "success")" disabled="@(IsBusy || pendingActionLabel != null)"
                                             title="Completes selected batches that have finished syncing. A batch with errors cannot complete until they are fixed or removed."
                                             @onclick="StageCompleteSelected">
                                         Complete
                                     </button>
-                                    <button class="btn btn-sm btn-outline-warning" disabled="@(IsBusy || pendingActionLabel != null)"
+                                    <button class="@BatchActionButtonClass(MigrationBatchAction.Stop, "warning")" disabled="@(IsBusy || pendingActionLabel != null)"
                                             title="Stops the selected batches that are still moving"
                                             @onclick="StageStopSelected">
                                         Stop
                                     </button>
-                                    <button class="btn btn-sm btn-outline-success" disabled="@(IsBusy || pendingActionLabel != null)"
+                                    <button class="@BatchActionButtonClass(MigrationBatchAction.Resume, "success")" disabled="@(IsBusy || pendingActionLabel != null)"
                                             title="Restarts the selected batches that are idle but restartable"
                                             @onclick="StageResumeSelected">
                                         Resume/Retry
                                     </button>
-                                    <button class="btn btn-sm btn-outline-danger" disabled="@(IsBusy || pendingActionLabel != null)"
+                                    <button class="@BatchActionButtonClass(MigrationBatchAction.RemoveCompleted, "danger")" disabled="@(IsBusy || pendingActionLabel != null)"
                                             title="Removes only the selected batches whose status is Completed"
                                             @onclick="StageRemoveCompletedSelected">
                                         Remove Completed
                                     </button>
-                                    <button class="btn btn-sm btn-danger" disabled="@(IsBusy || pendingActionLabel != null)"
+                                    <button class="@BatchActionButtonClass(MigrationBatchAction.Delete, "danger")" disabled="@(IsBusy || pendingActionLabel != null)"
                                             title="Removes every selected batch, whatever its status"
                                             @onclick="StageDeleteSelected">
                                         Delete
@@ -611,7 +611,21 @@
                                         {
                                             <span></span>
                                         }
-                                        <span class="mig-batch-name" title="@batchName">@batchName</span>
+                                        <span class="mig-batch-name" title="@batchName">
+                                            @batchName
+                                            @* S4, R12. A per-row outcome written against every
+                                               affected row, BEFORE the ticket is typed. Only rows
+                                               in the staged plan are annotated: an unticked row is
+                                               not part of this action and saying nothing about it
+                                               is the honest answer. Rendered only while an action
+                                               is staged, so the row is one clean line the rest of
+                                               the time (R14). *@
+                                            @{ var outcome = StagedOutcomeFor(batchName); }
+                                            @if (outcome != null)
+                                            {
+                                                <span class="mig-outcome @(StagedOutcomeIsGo(batchName) ? "mig-outcome-go" : "mig-outcome-skip")">@outcome</span>
+                                            }
+                                        </span>
                                         <span><span class="badge bg-@GetStatusColor(batch.Status)" title="@batch.Status">@batch.Status</span></span>
                                         <span class="mig-count text-success fw-bold">@batch.SyncedCount</span>
                                         <span class="mig-count">
@@ -938,11 +952,26 @@
             {
                 <span class="spinner-border spinner-border-sm"></span>
             }
+            else if (pendingActionPlan != null)
+            {
+                @* R12: Confirm carries the eligible count, so the number the operator agrees to is
+                   on the button they press rather than somewhere above it. It counts the ELIGIBLE
+                   rows, not the ticked ones - agreeing to "12 batches" and having 3 run is the
+                   surprise this removes. *@
+                <span>Confirm @pendingActionPlan.Eligible.Count batch@(pendingActionPlan.Eligible.Count == 1 ? "" : "es")</span>
+            }
             else
             {
                 <span>Confirm</span>
             }
         </button>
+        @if (pendingActionPlan is { Skipped.Count: > 0 })
+        {
+            @* R12: ineligible rows are listed as skipped and nothing is sent for them. Named
+               individually, because a bare count cannot be acted on - the operator needs to know
+               WHICH batch and why before deciding whether to go ahead. *@
+            <span class="text-muted small">@MigrationBatchActionPlanner.DescribeSkipped(pendingActionPlan.Skipped).Trim()</span>
+        }
         <button class="btn btn-sm btn-outline-secondary" @onclick="CancelPendingAction"
                 disabled="@(actionInProgress != null)">Cancel</button>
     </div>;
@@ -1066,6 +1095,21 @@
     private string? pendingActionLabel;
     private string? pendingActionTarget;
     private Func<string, Task>? pendingActionCallback;
+
+    // S4. The outcome preview: which action is staged, and the eligible/skipped split it will act
+    // on. Both are null unless a SELECTION action is staged - a per-mailbox action annotates no
+    // batch row.
+    //
+    // A PREVIEW, never the authority. The callback re-plans at execution time because the operator
+    // can sit at the ticket field indefinitely while the table reloads underneath them; this pair
+    // exists so they can see the split before typing, which is Known Failure Class 2 (success
+    // aggregation) answered before the fact rather than only after it.
+    //
+    // Excluded from IsBusy for the same reason pendingActionLabel is: they mean "waiting for a
+    // ticket", not "busy", and folding them in would disable Confirm at the only moment it is
+    // rendered.
+    private MigrationBatchAction? pendingBatchAction;
+    private MigrationBatchActionPlan? pendingActionPlan;
 
     // Bulk selection on the batches table. Keyed on BatchName, NEVER row index: the table
     // re-sorts on every header click and reloads after every action, so an index-keyed
@@ -1720,6 +1764,13 @@
             var current = MigrationBatchActionPlanner.Plan(migrationBatches, selectedBatches, action);
             return execute(current, ticket);
         });
+
+        // S4. StageBatchAction clears these, so they are set after it. The preview is what the
+        // operator reads before typing a ticket; the callback above re-plans at execution time
+        // because they can sit at that field while the table reloads underneath them, so this is
+        // a preview and never the authority on what runs.
+        pendingBatchAction = action;
+        pendingActionPlan = staged;
     }
 
     // R30. Refreshing this pane's mailboxes and refreshing the batch catalogue are different acts;
@@ -1751,6 +1802,7 @@
         pendingActionTicket = "";
         pendingActionCallback = callback;
         batchActionResult = null;
+        ClearStagedPreview();
     }
 
     private void StageUserAction(string label, string email, Func<string, Task> callback)
@@ -1760,7 +1812,45 @@
         pendingActionTicket = "";
         pendingActionCallback = callback;
         batchActionResult = null;
+
+        // A per-mailbox action annotates no batch row. Leaving a previous batch preview up would
+        // mark rows "will run" for an action that is no longer the one staged.
+        ClearStagedPreview();
     }
+
+    private void ClearStagedPreview()
+    {
+        pendingBatchAction = null;
+        pendingActionPlan = null;
+    }
+
+    // S4, R12. What the preview answers for one row, so the markup asks rather than recomputes.
+    // Only rows in the staged plan are annotated: an unticked row is not part of this action and
+    // saying nothing about it is the honest answer.
+    private string? StagedOutcomeFor(string batchName)
+    {
+        if (pendingActionPlan == null)
+            return null;
+
+        if (pendingActionPlan.Eligible.Contains(batchName, StringComparer.OrdinalIgnoreCase))
+            return "Will run";
+
+        var skip = pendingActionPlan.Skipped
+            .FirstOrDefault(s => string.Equals(s.BatchName, batchName, StringComparison.OrdinalIgnoreCase));
+
+        // The status is the whole point: "Skipped" alone tells the operator nothing they can act
+        // on, and the status is what they would have to go and look up.
+        return skip == null ? null : $"Skipped ({skip.Status})";
+    }
+
+    private bool StagedOutcomeIsGo(string batchName) =>
+        pendingActionPlan?.Eligible.Contains(batchName, StringComparer.OrdinalIgnoreCase) == true;
+
+    // R12: the picked action is highlighted. Filled while it is the staged one, outline otherwise,
+    // so the bar shows which of five buttons the ticket field belongs to - the confirm bar can sit
+    // several rows away once a skipped row is annotated between them.
+    private string BatchActionButtonClass(MigrationBatchAction action, string tone) =>
+        pendingBatchAction == action ? $"btn btn-sm btn-{tone}" : $"btn btn-sm btn-outline-{tone}";
 
     private async Task HandleConfirmKeyDown(KeyboardEventArgs e)
     {
@@ -1774,6 +1864,11 @@
         pendingActionTarget = null;
         pendingActionTicket = "";
         pendingActionCallback = null;
+
+        // The row annotations go with it. ConfirmPendingAction calls this BEFORE awaiting the
+        // staged callback, so the preview is cleared the moment the action starts rather than
+        // lingering over rows the operation is already changing.
+        ClearStagedPreview();
     }
 
     private async Task ConfirmPendingAction()

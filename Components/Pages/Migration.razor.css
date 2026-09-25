@@ -166,3 +166,35 @@
     background: var(--ui-zebra);
     border-bottom: 1px solid var(--ui-line);
 }
+
+/* S4 outcome preview (R12). A per-row chip that appears only while an action is staged, so the
+   row is one clean line the rest of the time (R14). Text, not colour alone: R17 refuses an
+   unlabelled value, and a colour-blind operator reading "Skipped (Syncing)" learns the same thing
+   a green pill would have hidden. */
+.mig-outcome {
+    display: inline-block;
+    margin-left: .4rem;
+    padding: 0 .35rem;
+    border-radius: .25rem;
+    font-size: .7rem;
+    font-weight: 600;
+    white-space: nowrap;
+    vertical-align: baseline;
+}
+
+.mig-outcome-go {
+    background: var(--ui-on-bg);
+    color: var(--ui-on);
+    border: 1px solid var(--ui-on);
+}
+
+.mig-outcome-skip {
+    background: var(--ui-zebra);
+    color: var(--ui-fg2);
+    border: 1px solid var(--ui-line);
+}
+
+/* A skipped row is dimmed as a second, redundant signal - never the only one. */
+.mig-batch-row:has(.mig-outcome-skip) .mig-batch-name {
+    opacity: .7;
+}
