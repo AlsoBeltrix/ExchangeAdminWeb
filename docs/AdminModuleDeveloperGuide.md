@@ -643,11 +643,19 @@ Rules:
 - Do not cache unconfigured clients.
 - Do not log raw token endpoint bodies or client secrets.
 - Graph endpoints passed to `GraphTokenClient` must start with `/`, for example
-  `/identity/conditionalAccess/namedLocations`.
+  `/identity/conditionalAccess/namedLocations` -- **with one exception: an
+  `@odata.nextLink` returned by Graph may be passed through absolute and
+  unmodified.** Nothing else absolute is accepted; the client checks scheme,
+  host and the `/v1.0` base path and refuses anything else before it acquires a
+  token. Do not re-encode a continuation token before passing it: a re-escaped
+  skiptoken is not the token the service issued.
 - OData filter values must be escaped and the final query string must be
   URI-encoded.
 - Follow `@odata.nextLink` for list operations that can return more than one
-  page.
+  page. **These two rules used to contradict each other** -- a nextLink is
+  absolute, so no module could obey both -- which is why
+  `M365GroupManagementService` and `NamedLocationsService` each hand-strip the
+  base URL to satisfy them. New code should pass the nextLink straight through.
 
 ## Protected Principals
 

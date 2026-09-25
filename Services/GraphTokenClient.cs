@@ -31,8 +31,11 @@ public sealed class GraphTokenClient
     /// </summary>
     public async Task<(JsonDocument? Document, System.Net.HttpStatusCode StatusCode)> GetWithStatusAsync(string endpoint)
     {
+        if (!TryResolveRequestUri(endpoint, out var uri))
+            return (null, System.Net.HttpStatusCode.BadRequest);
+
         var token = await GetAccessTokenAsync();
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"{GraphBaseUrl}{endpoint}");
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var response = await _httpClient.SendAsync(request);
@@ -40,6 +43,55 @@ public sealed class GraphTokenClient
 
         var content = await response.Content.ReadAsStringAsync();
         return (JsonDocument.Parse(content), response.StatusCode);
+    }
+
+    private static readonly Uri GraphBaseUri = new(GraphBaseUrl, UriKind.Absolute);
+
+    /// <summary>
+    /// Resolves what a caller handed us into the URI actually sent.
+    ///
+    /// A relative path keeps the behaviour every existing caller depends on: it is appended to
+    /// <see cref="GraphBaseUrl"/> unchanged.
+    ///
+    /// An ABSOLUTE url is accepted only so a caller can follow an <c>@odata.nextLink</c>, which
+    /// Graph returns absolute and which no relative-only client can therefore follow. It is sent
+    /// byte-for-byte as given: a continuation token that has been re-encoded is not the token the
+    /// service issued.
+    ///
+    /// Three things must all match before that happens, and the third is not belt-and-braces.
+    /// Following a URL out of a response body while attaching a bearer token is an exfiltration
+    /// route, so the scheme must be https and the host must EQUAL the Graph host - never
+    /// <c>EndsWith</c>, which <c>graph.microsoft.com.evil.test</c> satisfies. The path must also
+    /// start with the <c>/v1.0</c> base path, because this client is confined to v1.0 by
+    /// construction today and a host-only check would silently widen every existing caller's reach
+    /// to all of graph.microsoft.com.
+    ///
+    /// Anything else is refused BEFORE a token is acquired, so no credential is minted for a
+    /// request that will not be sent, and the rejected URL is never echoed to a caller.
+    /// </summary>
+    private static bool TryResolveRequestUri(string endpoint, out Uri? uri)
+    {
+        uri = null;
+
+        if (string.IsNullOrWhiteSpace(endpoint)) return false;
+
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var absolute))
+        {
+            if (!endpoint.StartsWith('/')) return false;
+            uri = new Uri(GraphBaseUrl + endpoint, UriKind.Absolute);
+            return true;
+        }
+
+        if (absolute.Scheme != Uri.UriSchemeHttps) return false;
+
+        if (!string.Equals(absolute.Host, GraphBaseUri.Host, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!absolute.AbsolutePath.StartsWith(GraphBaseUri.AbsolutePath, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        uri = absolute;
+        return true;
     }
 
     // Null collapses failure and "no content" into one value - prefer
