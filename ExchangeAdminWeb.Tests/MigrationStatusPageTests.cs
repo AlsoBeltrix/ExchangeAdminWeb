@@ -638,6 +638,76 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void TheMailboxTableFiltersAndSortsTheWholeSetBeforeItPages()
+    {
+        // R21, and the ordering is the whole assertion. Filtering the rendered PAGE would mean a
+        // mailbox the operator is searching for is absent because it happens to sit on page 7 -
+        // which makes a filter worse than no filter, because absence then looks like proof.
+        //
+        // Slice() takes FilteredSortedMailboxes(), so the narrowing happens first by construction.
+        var page = ReadPage();
+
+        Assert.Contains("ListWindow.Slice(FilteredSortedMailboxes(), mailboxPage, MailboxPageSize)",
+            page, StringComparison.Ordinal);
+        Assert.Contains("ListWindow.Label(mailboxPage, MailboxTotalCount, MailboxPageSize, \"mailboxes\"",
+            page, StringComparison.Ordinal);
+
+        // The count the pager reports is the count AFTER filtering: paging through 340 matches of
+        // 2000 is what the operator is doing, so 2000 would be the wrong number to show.
+        Assert.Contains("private int MailboxTotalCount => FilteredSortedMailboxes().Count();",
+            page, StringComparison.Ordinal);
+
+        var body = StripLineComments(GetMethodBody("FilteredSortedMailboxes"));
+        Assert.Contains("rows.Where(", body, StringComparison.Ordinal);
+        Assert.Contains("OrderBy", body, StringComparison.Ordinal);
+
+        // The loop renders the page, never the set.
+        Assert.Contains("@foreach (var user in GetPagedMailboxes())", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("@foreach (var user in batchUsers)", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ChangingTheFilterOrTheSortSendsTheMailboxListBackToPageOne()
+    {
+        // The failure: the operator is on page 7, types a filter that leaves two pages, and the
+        // table renders nothing. An empty page and an empty batch look identical, so it reads as
+        // "this batch has no mailboxes" - which is why ListWindow.ClampPage exists and why every
+        // control that changes the membership or the order has to use it.
+        foreach (var handler in new[] { "OnMailboxFilterChanged", "OnMailboxSortColumnChanged", "ToggleMailboxSortDirection" })
+        {
+            Assert.Contains("ResetMailboxPage();", GetMethodBody(handler), StringComparison.Ordinal);
+        }
+
+        // Opening a different batch is a different list again: carrying the filter would show "no
+        // mailbox matches" for a batch just opened, and carrying the page would land on row 350 of
+        // a 40-row batch.
+        var adopt = GetMethodBody("AdoptSelectionAsOpenBatch");
+        Assert.Contains("mailboxFilter = \"\";", adopt, StringComparison.Ordinal);
+        Assert.Contains("ResetMailboxPage();", adopt, StringComparison.Ordinal);
+
+        // A refresh of the SAME batch clamps instead of resetting, so the operator is not thrown
+        // back to page one every time the rows reload.
+        Assert.Contains("mailboxPage = ListWindow.ClampPage(mailboxPage, MailboxTotalCount, MailboxPageSize);",
+            GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEmptyBatchAndAnEmptyFilterResultSayDifferentThings()
+    {
+        // R28. "Nothing matches" for both hides whether the filter or the data is the problem, and
+        // the operator's next move is different in each case - clear the filter, or go and look at
+        // why the batch is empty.
+        var page = StripRazorComments(ReadPage());
+
+        Assert.Contains("This batch contains no mailboxes.", page, StringComparison.Ordinal);
+        Assert.Contains("No mailbox in this batch matches", page, StringComparison.Ordinal);
+
+        // The filter-result state is reached only when there IS data, or it would swallow the
+        // empty-batch case and the distinction would exist in the source and not on screen.
+        Assert.Contains("else if (MailboxTotalCount == 0)", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheSelectionPaneIsBoundedAndSaysWhatItIsPaging()
     {
         // R4 and R5b's reasoning applied to batches. R5 forbids pinning ticked rows into the batch
@@ -1480,7 +1550,7 @@ public class MigrationStatusPageTests
 
     /// <summary>The markup emitted per user row inside an expanded batch.</summary>
     private static string GetUserRowMarkup() =>
-        ExtractBlock(ReadPage(), "@foreach (var user in batchUsers)");
+        ExtractBlock(ReadPage(), "@foreach (var user in GetPagedMailboxes())");
 
     /// <summary>The text from <paramref name="opener"/> through the first <paramref name="closer"/>.</summary>
     private static string ExtractSpan(string source, string opener, string closer)

@@ -788,6 +788,34 @@
                                     </button>
                                 </div>
 
+                                @* R21. Filter and sort over the WHOLE set, never the rendered page.
+                                   The mailbox table had neither before S5; the batch table had sort
+                                   only. Same shape as the batch pane's controls so the two panes do
+                                   not teach different habits. *@
+                                @if (batchUsers is { Count: > 0 })
+                                {
+                                    <div class="mig-pane-actions d-flex align-items-center gap-2 flex-wrap">
+                                        <input type="text" class="form-control form-control-sm" style="width: 14rem;"
+                                               placeholder="Filter these mailboxes"
+                                               value="@mailboxFilter" @oninput="OnMailboxFilterChanged"
+                                               disabled="@IsBusy" />
+                                        <label class="small text-muted mb-0 flex-shrink-0" for="mailboxSortColumn">Sort</label>
+                                        <select id="mailboxSortColumn" class="form-select form-select-sm" style="width: 9rem;"
+                                                value="@mailboxSortColumn" @onchange="OnMailboxSortColumnChanged"
+                                                disabled="@IsBusy">
+                                            <option value="Email">Email</option>
+                                            <option value="Status">Status</option>
+                                            <option value="Synced">Synced</option>
+                                            <option value="LastSync">Last sync</option>
+                                        </select>
+                                        <button class="btn btn-sm btn-outline-secondary flex-shrink-0" type="button"
+                                                disabled="@IsBusy" @onclick="ToggleMailboxSortDirection"
+                                                title="@(mailboxSortAsc ? "Ascending. Click for descending." : "Descending. Click for ascending.")">
+                                            @((MarkupString)(mailboxSortAsc ? "&#x25B2;" : "&#x25BC;"))
+                                        </button>
+                                    </div>
+                                }
+
                                 <div class="mig-pane-scroll">
                                     @if (loadingBatchUsers == expandedBatch && batchUsers == null)
                                     {
@@ -808,6 +836,16 @@
                                     {
                                         <p class="text-muted text-center my-5">This batch contains no mailboxes.</p>
                                     }
+                                    else if (MailboxTotalCount == 0)
+                                    {
+                                        @* R28. Distinct empty states. "No mailbox matches the
+                                           filter" and "this batch has no mailboxes" are different
+                                           facts, and one message for both hides whether the filter
+                                           or the data is the problem. *@
+                                        <p class="text-muted text-center my-5">
+                                            No mailbox in this batch matches <strong>@mailboxFilter</strong>.
+                                        </p>
+                                    }
                                     else
                                     {
                                         <table class="table table-sm table-hover mig-mailboxes mb-0">
@@ -822,7 +860,7 @@
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                @foreach (var user in batchUsers)
+                                                @foreach (var user in GetPagedMailboxes())
                                                 {
                                                     <tr class="@(highlightedUser != null && user.EmailAddress.Contains(highlightedUser, StringComparison.OrdinalIgnoreCase) ? "table-warning" : "")">
                                                         <td>@user.EmailAddress</td>
@@ -924,6 +962,28 @@
                                         </table>
                                     }
                                 </div>
+
+                                @* R20. The mailbox list pages too. 2000 mailboxes in a batch is the
+                                   magnitude the plan names, and Blazor Server pushes a render diff
+                                   per row over the circuit - rendering all of them is how the
+                                   Defender page died. Same ListWindow as the two batch lists, so
+                                   the off-by-one exists once. *@
+                                @if (batchUsers is { Count: > 0 } && MailboxTotalCount > 0)
+                                {
+                                    <div class="mig-pane-foot d-flex align-items-center gap-2">
+                                        <button class="btn btn-sm btn-outline-secondary" type="button"
+                                                disabled="@(IsBusy || mailboxPage <= 0)"
+                                                title="Previous page of mailboxes" @onclick="() => StepMailboxPage(-1)">
+                                            @((MarkupString)"&lsaquo;")
+                                        </button>
+                                        <span class="small text-muted">@MailboxPagerLabel</span>
+                                        <button class="btn btn-sm btn-outline-secondary" type="button"
+                                                disabled="@(IsBusy || mailboxPage >= MailboxPageCount - 1)"
+                                                title="Next page of mailboxes" @onclick="() => StepMailboxPage(1)">
+                                            @((MarkupString)"&rsaquo;")
+                                        </button>
+                                    </div>
+                                }
                             }
                         </div>
 
@@ -1072,6 +1132,16 @@
     // would jump the other pane every time.
     private const int SelectionPageSize = 40;
     private int selectionPage;
+
+    // S5, R21. The mailbox table had no filter and no sort at all before this slice, and no paging
+    // - so a 2000-mailbox batch rendered 2000 rows, which is the Defender hazard R20 names. 50 a
+    // page matches the size the owner settled against the mockup. Its own page index for the same
+    // reason the selection pane has one: these are three different lists.
+    private const int MailboxPageSize = 50;
+    private int mailboxPage;
+    private string mailboxFilter = "";
+    private string mailboxSortColumn = "Email";
+    private bool mailboxSortAsc = true;
     // Download CSV had no flag of its own. Without one the predicate below cannot see the
     // JS interop round-trip, and every other control stays live while the file is built.
     private bool isDownloadingCsv = false;
@@ -1166,6 +1236,12 @@
         batchUsersGeneration++;
         batchUsers = null;
         CloseUserReport();
+
+        // S5. A different batch is a different list. Carrying the previous batch's filter over
+        // would show "no mailbox matches" for a batch the operator has only just opened, and
+        // carrying its page would open them at row 350 of a batch with 40 rows.
+        mailboxFilter = "";
+        ResetMailboxPage();
 
         var uri = Navigation.GetUriWithQueryParameter(BatchQueryParameter, open);
         if (!string.Equals(uri, Navigation.Uri, StringComparison.Ordinal))
@@ -1721,6 +1797,87 @@
 
     private void StepSelectionPage(int delta) =>
         selectionPage = ListWindow.ClampPage(selectionPage + delta, SelectionTotalCount, SelectionPageSize);
+
+    // ---- S5: the mailbox table's filter, sort and paging (R21, R20) -----------------------------
+
+    // R21: over the WHOLE set, not the rendered page. Filtering a page would mean a mailbox the
+    // operator is looking for is missing because it happens to be on page 7, which is the failure
+    // that makes a filter worse than no filter.
+    private IEnumerable<MigrationUserInfo> FilteredSortedMailboxes()
+    {
+        if (batchUsers == null)
+            return Enumerable.Empty<MigrationUserInfo>();
+
+        IEnumerable<MigrationUserInfo> rows = batchUsers;
+
+        var filter = mailboxFilter.Trim();
+        if (filter.Length > 0)
+        {
+            // The address is what an operator has in hand - a ticket names a person, not a status.
+            rows = rows.Where(u =>
+                u.EmailAddress?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true);
+        }
+
+        return mailboxSortColumn switch
+        {
+            "Status" => mailboxSortAsc
+                ? rows.OrderBy(u => u.Status, StringComparer.OrdinalIgnoreCase)
+                : rows.OrderByDescending(u => u.Status, StringComparer.OrdinalIgnoreCase),
+            "Synced" => mailboxSortAsc
+                ? rows.OrderBy(u => u.ItemsSynced)
+                : rows.OrderByDescending(u => u.ItemsSynced),
+            // Nulls last in both directions: a mailbox that has never synced is not "earliest",
+            // it is unknown, and sorting it to the top of an ascending list reads as a fact.
+            "LastSync" => mailboxSortAsc
+                ? rows.OrderBy(u => u.LastSyncDateTime == null).ThenBy(u => u.LastSyncDateTime)
+                : rows.OrderBy(u => u.LastSyncDateTime == null).ThenByDescending(u => u.LastSyncDateTime),
+            _ => mailboxSortAsc
+                ? rows.OrderBy(u => u.EmailAddress, StringComparer.OrdinalIgnoreCase)
+                : rows.OrderByDescending(u => u.EmailAddress, StringComparer.OrdinalIgnoreCase),
+        };
+    }
+
+    private IEnumerable<MigrationUserInfo> GetPagedMailboxes() =>
+        ListWindow.Slice(FilteredSortedMailboxes(), mailboxPage, MailboxPageSize);
+
+    private int MailboxTotalCount => FilteredSortedMailboxes().Count();
+
+    private int MailboxPageCount => ListWindow.PageCount(MailboxTotalCount, MailboxPageSize);
+
+    // Says "of 340 mailboxes" when a filter is narrowing 2000 down, because the number that matters
+    // is the size of what the operator is paging through, not the size of the batch.
+    private string MailboxPagerLabel =>
+        ListWindow.Label(mailboxPage, MailboxTotalCount, MailboxPageSize, "mailboxes", "No mailboxes");
+
+    private void StepMailboxPage(int delta) =>
+        mailboxPage = ListWindow.ClampPage(mailboxPage + delta, MailboxTotalCount, MailboxPageSize);
+
+    // Every change to the ordering or the membership goes back to page one, or the operator is
+    // left on page 9 of a 3-page result staring at nothing and reading it as an empty batch.
+    private void ResetMailboxPage() => mailboxPage = 0;
+
+    private void OnMailboxFilterChanged(ChangeEventArgs e)
+    {
+        mailboxFilter = e.Value?.ToString() ?? "";
+        ResetMailboxPage();
+    }
+
+    private void OnMailboxSortColumnChanged(ChangeEventArgs e)
+    {
+        var column = e.Value?.ToString();
+        if (string.IsNullOrEmpty(column) || column == mailboxSortColumn)
+            return;
+
+        mailboxSortColumn = column;
+        mailboxSortAsc = column is "Email" or "Status";
+        ResetMailboxPage();
+    }
+
+    private void ToggleMailboxSortDirection()
+    {
+        mailboxSortAsc = !mailboxSortAsc;
+        ResetMailboxPage();
+    }
 
     // Delete's staged target carries the per-status breakdown (D5): it is the only action that
     // accepts in-progress batches, so the operator must see how many of those they are about to
@@ -2317,6 +2474,12 @@
 
         CloseUserReport();
         batchUsers = users;
+
+        // S5. The rows just changed under the pager. Clamp rather than reset: a refresh of the
+        // same batch should leave the operator where they were, and only a shrink that puts them
+        // past the end moves them - onto the last page, never onto a blank one that reads as an
+        // empty batch.
+        mailboxPage = ListWindow.ClampPage(mailboxPage, MailboxTotalCount, MailboxPageSize);
     }
 
     private async Task LoadUserReport(string emailAddress)

@@ -120,7 +120,7 @@ public static class ClickGateRegistry
     private static PageGateEntry Migration => new()
     {
         Page = "Migration.razor",
-        ExpectedLineCount = 2528,
+        ExpectedLineCount = 2691,
 
         Predicates =
         [
@@ -164,9 +164,9 @@ public static class ClickGateRegistry
             new ExemptControl(445, "@onclick=\"() => batchActionResult = null\"",
                 "dismisses a result banner; gating it would trap the message on screen for the "
                 + "whole of the next operation"),
-            new ExemptControl(915, "@onclick=\"CloseUserReport\"",
+            new ExemptControl(953, "@onclick=\"CloseUserReport\"",
                 "rendered only once a report has landed, so there is no pull for it to interrupt"),
-            new ExemptControl(975, "@onclick=\"CancelPendingAction\"",
+            new ExemptControl(1035, "@onclick=\"CancelPendingAction\"",
                 "the operator must always be able to back out of a staged action. It keeps a "
                 + "narrower guard of its own instead of IsBusy",
                 KeepsItsOwnGuard: "disabled=\"@(actionInProgress != null)\""),
@@ -226,22 +226,22 @@ public static class ClickGateRegistry
 
             // Gated 2026-09-18, closing the two Enter-key holes this entry had recorded as found
             // rather than granted. Each input carries an @onkeydown whose handler reaches the very
-            // operation the button beside it refuses - HandleSearchKeyDown (2198) calls SearchUser
-            // with no busy guard while Find at 403 is gated, and HandleConfirmKeyDown (1855) calls
-            // ConfirmPendingAction with no busy guard while Confirm at 949 is gated. A disabled
+            // operation the button beside it refuses - HandleSearchKeyDown (2355) calls SearchUser
+            // with no busy guard while Find at 403 is gated, and HandleConfirmKeyDown (2012) calls
+            // ConfirmPendingAction with no busy guard while Confirm at 1009 is gated. A disabled
             // input fires no keydown, so the attribute closes the handler path as well as the
             // typing path; a handler guard would not, and on a control that renders server state it
             // would leave the browser holding a change the server refused (docs/ClickGatingAudit-
             // Plan.md Revision 1, falsification 2). Neither input had a gate to widen or OR - both
             // were bare - so both take the page predicate whole.
             //
-            // IsBusy and not IsBusy || pendingActionLabel != null for 945: pendingActionLabel is a
+            // IsBusy and not IsBusy || pendingActionLabel != null for 1005: pendingActionLabel is a
             // registered ExcludedField, and folding it in would disable the ticket box at the only
-            // moment it is ever rendered. The gate matches Confirm at 949 exactly, less that
+            // moment it is ever rendered. The gate matches Confirm at 1009 exactly, less that
             // button's own emptiness clause, which a field cannot apply to itself.
             new DomSyncedControl(393, "placeholder=\"Search batch or user email...\"", "input",
                 "disabled=\"@IsBusy\""),
-            new DomSyncedControl(945, "placeholder=\"Ticket # (required)\"", "input",
+            new DomSyncedControl(1005, "placeholder=\"Ticket # (required)\"", "input",
                 "disabled=\"@IsBusy\""),
 
             // S2. The batch pane's sort control, which replaced seven clickable table headers.
@@ -250,6 +250,15 @@ public static class ClickGateRegistry
             // sort key the server never adopted, and the next sort would read the stale one.
             // IsBusy whole, matching the direction toggle beside it.
             new DomSyncedControl(505, "id=\"batchSortColumn\"", "select", "disabled=\"@IsBusy\""),
+
+            // S5. The mailbox table gained a filter and a sort where it had neither. Both render
+            // server state back into the DOM - the filter text and the chosen key - so both take
+            // the disabled attribute rather than a handler guard: a refusing handler would leave
+            // the browser showing a filter the server never applied, and the next keystroke would
+            // extend a string the server does not have.
+            new DomSyncedControl(798, "placeholder=\"Filter these mailboxes\"", "input",
+                "disabled=\"@IsBusy\""),
+            new DomSyncedControl(803, "id=\"mailboxSortColumn\"", "select", "disabled=\"@IsBusy\""),
         ],
 
         UngatedDomSyncedControls =
@@ -258,14 +267,14 @@ public static class ClickGateRegistry
                 "left live on purpose, and the purpose is written into the page. The selection "
                 + "toolbar comment at 524-533 records owner ruling D2(a): the bulk-action buttons "
                 + "are never conditioned on eligibility, and the staged callback re-plans from the "
-                + "LIVE selection (1764) rather than from a snapshot, so the tick boxes are an input "
+                + "LIVE selection (1921) rather than from a snapshot, so the tick boxes are an input "
                 + "to the confirm step and not a value in flight. Nothing can be executed from this "
                 + "state while the page is busy - all three action buttons carry "
                 + "disabled=\"@(IsBusy || pendingActionLabel != null)\" (542, 547, 552, 557, 562)"),
 
             new UngatedDomSyncedControl(604, "title=\"Select for a bulk action\"", "input",
                 "the per-row half of the same selection, on the same owner ruling and the same "
-                + "re-plan at 1764. ToggleBatchSelected (1622) writes only to selectedBatches and "
+                + "re-plan at 1921. ToggleBatchSelected (1698) writes only to selectedBatches and "
                 + "nulls the result banner; it makes no call and awaits nothing"),
         ],
 
@@ -291,18 +300,18 @@ public static class ClickGateRegistry
                 + "the first races it and the later reply wins",
                 GatedTwinButtonLine: 403),
 
-            new KeyboardPath(945, "placeholder=\"Ticket # (required)\"", "input",
+            new KeyboardPath(1005, "placeholder=\"Ticket # (required)\"", "input",
                 "keydown", "HandleConfirmKeyDown", "ConfirmPendingAction",
                 KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
                 "Enter EXECUTES the staged action - a batch start, stop or remove, the destructive "
-                + "half of this page - which the Confirm button at 949 refuses while busy. It "
+                + "half of this page - which the Confirm button at 1009 refuses while busy. It "
                 + "avoided double execution only by accident, and the accident is worth writing "
-                + "down: ConfirmPendingAction calls CancelPendingAction (1861) BEFORE awaiting the "
+                + "down: ConfirmPendingAction calls CancelPendingAction (2018) BEFORE awaiting the "
                 + "staged callback, which nulls pendingActionLabel and so unrenders the whole "
                 + "PendingActionConfirm fragment, and blanks pendingActionTicket so a second press "
                 + "fails the handler's own emptiness check. Nothing in that is a busy gate, and "
                 + "nothing in it survives a handler that stages differently",
-                GatedTwinButtonLine: 949),
+                GatedTwinButtonLine: 1009),
         ],
 
         ForbiddenGuardSites =
