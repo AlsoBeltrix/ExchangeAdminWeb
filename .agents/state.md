@@ -278,13 +278,39 @@ unblocked.
     `IncludeDiscoverySources`; requirement 3 is reachable only through hunting. Verify the consent
     on the new registration - it needs a Privileged Role Administrator, not an Application
     Administrator.
-  **WAITING ON THE OWNER: Q8, approve or strike the sixteen proposed location-narrowing fields
-  (L1-L16 in the plan), plus Q7 (do local subnet/naming/tagging conventions exist) and Q9
-  (`SeenBy()` caps at 1,000 devices per call - batch, or narrow the report).** No slice is written
-  for requirement 3 and none should be until Q8 is answered.
-  **R1 gained (h)-(m); (h), (i), (k), (l) and (m) can be run in the Defender portal now without
-  deploying anything.** R1(i) - what fraction of the Windows/can-be-onboarded set actually returns
-  a `SeenBy()` result - is the one that most changes what the slice looks like.
+  **EVERY OWNER QUESTION IS RULED AND S6, S7 AND S8 ARE WRITTEN. The plan is buildable; nothing
+  waits on the owner.** Owner rulings 2026-09-25: the column set approved (Q8), one app
+  registration (Q2), no ticket on CSV export (Q3), no per-read admin alert (Q4), and a partial
+  report kept and marked rather than refused (Q5).
+  **Q5 overturned T3, which four codex rounds had let stand, and the owner's question is why:**
+  *"if it's before, then refuse to waste the time. if it's after, DO NOT waste what's already been
+  collected."* It is always after - this API has no count endpoint - so a ceiling can only ever
+  fire on rows already fetched and paid for. The ceiling is now a runaway guard that should never
+  fire (~12,900 devices costs about 12 requests against a 250-request budget); if it does, the
+  rows render, a notice says how far it got, and a **Keep going** control resumes the partition
+  loop. T3's argument survives - a cut-short result must never be indistinguishable from a
+  complete one - only its refusal conclusion is gone.
+  **Q9 was ruled coder-side: batch.** 13 `SeenBy()` calls against a 45-per-minute budget.
+  **S6** Recently Seen By plus hunting-side location columns. **Its real risk is Known Failure
+  Class 2:** 13 calls means 12 ways to be partly enriched, so a failed batch must not blank the
+  successful ones nor let the report claim completeness. **S7** the AD site column, kept separate
+  because Q10 gave it the OPPOSITE failure rule - an AD read failure fails the whole report where
+  a hunting failure does not, and one commit holding two contradictory failure behaviours is how
+  one of them quietly wins. **S8** docs, or the `DeviceNetworkEvents` fallback if R1(i) shows
+  `SeenBy()` coverage is too thin - which would come back as a decision, not an absorbed change.
+  Module bumps `1.1.0` -> `1.2.0` -> `1.3.0`, no base app bump.
+  **R1 (a)-(e) and (h)-(n) are unrun and no longer block anything** - they run in the Defender
+  portal and branch the slices rather than gating them. R1(o) IS answered, by a live LDAP read of
+  this forest: 531 subnets, 515 with a site, 167 sites, `location` empty on every one - so the
+  site NAME carries the location and no column is built for the attribute.
+  **The plan was audited 2026-09-25: 2,911 lines -> 1,916**, with 1,036 lines of revision history
+  rotated to `docs/history/defender-plan-revisions.md` after checking the body carries every
+  measured fact independently. The audit also found Revision 5 had no heading at all, so its
+  subsections floated at top level - which is what produced the "two revision series" confusion,
+  three `## Verification` sections and two `## Versioning`.
+  **The post-audit plan is UNDER CODEX REVIEW as of 2026-09-25 and no slice may start until that
+  returns.** Everything since 2026-09-24 is unreviewed: the revised requirement, `SeenBy()`, the
+  L-table, AD Sites, the five rulings, the ceiling reversal, the audit and the new slices.
   **Two defects are open against the shipped module and neither is fixed:**
   1. *The page is unusable at tenant scale.* It renders every device row, so the Blazor circuit
      dies ("Rejoining the server...") and nothing can be scrolled. The owner rejected virtualised
