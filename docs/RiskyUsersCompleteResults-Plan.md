@@ -1,8 +1,20 @@
 # Risky Users -- Complete Results, Findable Users, Identifiable Actions
 
-Status: **Draft, awaiting owner approval.** No code written. Five slices. **No open owner
-questions remain.** Q1 was ruled by the owner on 2026-09-24 (paginate the table), Q3 was
-closed coder-side the same day, and Q2 is a recommendation rather than a gate.
+Status: **S1 and S2 are LANDED (`fa108d3`, `7715780`); S3's pagination, S4 and S5 remain.** Five
+slices, no open owner questions. The go is queue item 15.
+
+- **S1 landed.** `GraphTokenClient` follows an absolute `@odata.nextLink` behind a scheme/host/base-path
+  guard. Base app `2.23.1` -> `2.24.0`. The developer guide's self-contradiction is fixed.
+- **S2 landed, with the half of S3 that could not be split from it** - the page reads the record S2
+  reshapes, so separating them yields a commit that does not build. Module `1.1.0` -> `1.2.0`. The
+  fetch pages to exhaustion, the ceiling reads the NEW `MaxTotalRows` key, and the constraint notice
+  plus the two distinct empty states are in.
+- **S3's remaining half: pagination.** 50 rows a page, per the owner's ruling. Not started.
+- **S4: the action labels and `riskDetail`.** Not started.
+- **S5: the direct lookup. BLOCKED on an owner action** - `User.Read.All` must be added to the Risky
+  Users app registration and admin-consented.
+
+Suite 3039 passed / 0 failed at `7715780`; format clean. **Nothing has been seen in a browser.**
 
 **One owner action blocks S5 and nothing else in this plan:** `User.Read.All` must be added
 to the Risky Users Entra app registration and admin-consented. S1-S4 need no new
