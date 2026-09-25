@@ -14,7 +14,13 @@ public enum MigrationBatchAction
     RemoveCompleted,
 
     /// <summary>Start-MigrationBatch against selected batches that are idle but restartable.</summary>
-    Resume
+    Resume,
+
+    /// <summary>Complete-MigrationBatch against selected batches that have finished syncing.</summary>
+    Complete,
+
+    /// <summary>Stop-MigrationBatch against selected batches that are still moving.</summary>
+    Stop
 }
 
 /// <summary>A selected batch the action cannot apply to, with the status that disqualified it.</summary>
@@ -49,6 +55,14 @@ public static class MigrationBatchActionPlanner
 {
     /// <summary>The one status Remove Completed will act on (D3).</summary>
     private const string CompletedStatus = "Completed";
+
+    /// <summary>The one status Complete will act on, ported from the per-row button in S3.</summary>
+    private const string SyncedStatus = "Synced";
+
+    // Statuses Stop is offered on, ported from the per-row button in S3: a batch Exchange is
+    // actively moving, or one that has finished moving and has not yet been completed. An
+    // allowlist on purpose - see Applies.
+    private static readonly string[] StoppableStatuses = ["Syncing", SyncedStatus, "Starting"];
 
     // Statuses Resume/Retry is NOT offered on (D4). Defined by exclusion, deliberately.
     //
@@ -93,6 +107,29 @@ public static class MigrationBatchActionPlanner
             MigrationBatchAction.Resume =>
                 !string.IsNullOrWhiteSpace(trimmed)
                 && !NonResumableStatuses.Contains(trimmed, StringComparer.OrdinalIgnoreCase),
+
+            // Complete and Stop arrived here in S3, when the per-row buttons that used to own these
+            // rules became a toolbar acting on the selection. The predicates are the buttons'
+            // OWN, ported character for character, because S3 moves controls and must not change
+            // which batches an action will run on.
+            //
+            // They are allowlists, and D4 above says allowlists are how CompletedWithErrors became
+            // invisible. That tension is deliberate and narrow, not an oversight:
+            //   - Delete and Resume take exclusion because hiding a row the operator ticked is
+            //     worse than Exchange refusing one. The refusal comes back as that row's own named
+            //     failure.
+            //   - Complete FINALISES a move and Stop HALTS one. Offering either on a status nobody
+            //     anticipated bets that Exchange will refuse it, and a wrongly-accepted Complete
+            //     cuts over mailboxes. That is the harmful direction, so these stay narrow.
+            // Whether CompletedWithErrors should be completable is a real question and it is the
+            // owner's, recorded in docs/MigrationInterfaceRedesign-Plan.md rather than answered
+            // here by a slice whose job was to move a button.
+            MigrationBatchAction.Complete =>
+                string.Equals(trimmed, SyncedStatus, StringComparison.OrdinalIgnoreCase),
+
+            MigrationBatchAction.Stop =>
+                !string.IsNullOrWhiteSpace(trimmed)
+                && StoppableStatuses.Contains(trimmed, StringComparer.OrdinalIgnoreCase),
 
             _ => false
         };

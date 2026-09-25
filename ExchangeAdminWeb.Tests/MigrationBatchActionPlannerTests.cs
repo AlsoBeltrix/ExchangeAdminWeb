@@ -98,6 +98,84 @@ public class MigrationBatchActionPlannerTests
         Assert.False(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, status));
     }
 
+    [Theory]
+    [InlineData("Synced", true)]
+    [InlineData("synced", true)]
+    [InlineData("  Synced  ", true)]
+    [InlineData("Syncing", false)]
+    [InlineData("Completed", false)]
+    [InlineData("CompletedWithErrors", false)]
+    [InlineData("Starting", false)]
+    [InlineData("Stopped", false)]
+    [InlineData("SomeStatusNobodyHasSeenYet", false)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    public void Applies_Complete_MatchesExactlySynced(string? status, bool expected)
+    {
+        // S3 moved this rule out of the per-row Complete button, character for character. The
+        // slice's job was to relocate a control, not to change which batches it will finalise.
+        //
+        // It is an allowlist, which D4 says is how CompletedWithErrors became invisible. Narrow on
+        // purpose here: Complete FINALISES a move, so offering it on an unanticipated status bets
+        // that Exchange will refuse, and a wrongly-accepted Complete cuts mailboxes over. Whether
+        // CompletedWithErrors belongs in this list is the owner's question, recorded in
+        // docs/MigrationInterfaceRedesign-Plan.md and deliberately not answered here.
+        Assert.Equal(expected, MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, status));
+    }
+
+    [Theory]
+    [InlineData("Syncing", true)]
+    [InlineData("Synced", true)]
+    [InlineData("Starting", true)]
+    [InlineData("starting", true)]
+    [InlineData("Completed", false)]
+    [InlineData("CompletedWithErrors", false)]
+    [InlineData("Stopped", false)]
+    [InlineData("Failed", false)]
+    [InlineData("SomeStatusNobodyHasSeenYet", false)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    public void Applies_Stop_MatchesTheMovingStatusesTheRowButtonUsed(string? status, bool expected)
+    {
+        // Same port, same reasoning as Complete: Stop halts a move in progress, and the harmful
+        // direction is stopping something whose state we could not read.
+        Assert.Equal(expected, MigrationBatchActionPlanner.Applies(MigrationBatchAction.Stop, status));
+    }
+
+    [Fact]
+    public void Applies_CompleteAndStop_DisagreeAboutSyncedInTheDirectionTheButtonsDid()
+    {
+        // The one status both offer, and the reason the two lists are not one list. A batch that
+        // has finished syncing can be finalised OR abandoned; anything still moving can only be
+        // stopped. Collapsing these into a single "actionable" predicate is how the toolbar would
+        // come to offer Complete on a Starting batch.
+        Assert.True(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, "Synced"));
+        Assert.True(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Stop, "Synced"));
+
+        Assert.False(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, "Starting"));
+        Assert.True(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Stop, "Starting"));
+    }
+
+    [Fact]
+    public void Plan_PartitionsACompleteSelectionTheSameWayItPartitionsTheOthers()
+    {
+        // Complete and Stop reach Plan through the same toolbar path as Delete and Resume, so the
+        // eligible/skipped split has to behave identically for them - R12 says both action bars
+        // are identical, and "identical" includes naming every row that will not be touched.
+        var loaded = new List<MigrationBatchInfo>
+        {
+            new() { BatchName = "a", Status = "Synced" },
+            new() { BatchName = "b", Status = "Syncing" },
+            new() { BatchName = "c", Status = "Completed" },
+        };
+
+        var plan = MigrationBatchActionPlanner.Plan(loaded, ["a", "b", "c"], MigrationBatchAction.Complete);
+
+        Assert.Equal(["a"], plan.Eligible);
+        Assert.Equal(["b", "c"], plan.Skipped.Select(s => s.BatchName));
+        Assert.Equal(["Syncing", "Completed"], plan.Skipped.Select(s => s.Status));
+    }
+
     [Fact]
     public void Plan_SplitsAMixedSelectionIntoEligibleAndSkipped()
     {
