@@ -791,4 +791,59 @@ public class RiskyUsersPageTests
         Assert.True(end > start, $"'{endMarker}' was not found after '{startMarker}'.");
         return source[start..end];
     }
+
+    // ---- S5: the direct lookup, page side ------------------------------------------------------
+
+    /// <summary>
+    /// The lookup is its own control, not folded into the browse filter. They answer different
+    /// questions, and one box guessing which was meant from the shape of the text would make the
+    /// tool untrustworthy.
+    /// </summary>
+    [Fact]
+    public void RiskyUsers_LookupIsASeparateControlFromTheBrowseFilter()
+    {
+        var text = PageCode();
+
+        Assert.Contains("id=\"lookupUpn\"", text);
+        Assert.Contains("id=\"upnContains\"", text);
+        Assert.Contains("LookupUserAsync", text);
+    }
+
+    /// <summary>
+    /// The three outcomes reach three different branches, and NEITHER negative is styled as an
+    /// error. "No risk record" is the answer the operator came for; "no such user" is a typo.
+    /// A failed request is the only thing that may look like a failure.
+    /// </summary>
+    [Fact]
+    public void RiskyUsers_LookupRendersThreeOutcomesAndNeitherNegativeIsAnError()
+    {
+        var text = PageCode();
+
+        Assert.Contains("RiskyUserLookupOutcome.NoSuchUser", text);
+        Assert.Contains("RiskyUserLookupOutcome.NoRiskRecord", text);
+        Assert.Contains("RiskyUserLookupOutcome.Risky", text);
+
+        var noSuch = text.IndexOf("RiskyUserLookupOutcome.NoSuchUser", StringComparison.Ordinal);
+        var noRisk = text.IndexOf("RiskyUserLookupOutcome.NoRiskRecord", StringComparison.Ordinal);
+        var errorBlock = text.IndexOf("lookupError != null", StringComparison.Ordinal);
+
+        Assert.True(errorBlock >= 0, "the lookup must have its own failure branch.");
+        Assert.True(noSuch >= 0 && noRisk >= 0);
+
+        // alert-danger is the failure styling. Neither negative branch may sit inside it: the
+        // failure branch is rendered first and separately.
+        Assert.True(errorBlock < noSuch && errorBlock < noRisk,
+            "the failure branch must be distinct from, and precede, the two negative outcomes.");
+    }
+
+    /// <summary>A lookup is a read, so it is audited - and, like every read here, never alerted.</summary>
+    [Fact]
+    public void RiskyUsers_LookupIsAudited()
+    {
+        var body = MethodBody("LookupUserAsync");
+
+        Assert.Contains("RiskyUsers_Lookup", body);
+        Assert.Contains("SafeAudit", body);
+        Assert.DoesNotContain("SendAdminNotificationAsync", body);
+    }
 }

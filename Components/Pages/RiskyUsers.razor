@@ -44,6 +44,68 @@
         return;
     }
 
+    @* Deliberately separate from "UPN contains" below, and deliberately not merged with it.
+       They answer different questions - "show me matching rows in this list" versus "tell me
+       about this person" - and a single box guessing which was meant from whether the text looks
+       like a complete address is the kind of cleverness that makes a tool untrustworthy.
+       This one cannot be capped: it asks Graph about one user rather than searching a list. *@
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-6">
+                    <label class="form-label mb-1" for="lookupUpn">Look up one user</label>
+                    <input id="lookupUpn" class="form-control" @bind="lookupUpn" @bind:event="oninput"
+                           @onkeydown="OnLookupKeyDown" disabled="@isLoading"
+                           placeholder="Full user principal name" />
+                </div>
+                <div class="col-md-3">
+                    <button class="btn btn-primary w-100" @onclick="LookupUserAsync"
+                            disabled="@(isLoading || string.IsNullOrWhiteSpace(lookupUpn))">Look up</button>
+                </div>
+                <div class="col-md-3">
+                    <button class="btn btn-outline-secondary w-100" @onclick="ClearLookup"
+                            disabled="@(isLoading || lookup == null)">Clear</button>
+                </div>
+            </div>
+
+            @if (lookupError != null)
+            {
+                <div class="alert alert-danger mt-2 mb-0">@lookupError</div>
+            }
+            else if (lookup != null)
+            {
+                @* The two negatives read differently on purpose. "No user matches that name"
+                   usually means a typo; "no risk record" is the reassurance the operator came
+                   for. Neither is styled as an error, because neither is one. *@
+                @switch (lookup.Outcome)
+                {
+                    case RiskyUserLookupOutcome.NoSuchUser:
+                        <div class="alert alert-secondary mt-2 mb-0">
+                            No user matches <strong>@lookup.UserPrincipalName</strong>. Check the spelling.
+                        </div>
+                        break;
+
+                    case RiskyUserLookupOutcome.NoRiskRecord:
+                        <div class="alert alert-success mt-2 mb-0">
+                            No risk record for <strong>@lookup.UserPrincipalName</strong>. Entra ID Protection
+                            holds nothing on this user.
+                        </div>
+                        break;
+
+                    case RiskyUserLookupOutcome.Risky:
+                        <div class="alert alert-warning mt-2 mb-0">
+                            <strong>@lookup.User!.UserPrincipalName</strong> -
+                            risk level <strong>@lookup.User.RiskLevel</strong>,
+                            state <strong>@lookup.User.RiskState</strong>,
+                            @RiskDetailText(lookup.User.RiskDetail).
+                            Last updated @(lookup.User.RiskLastUpdatedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "unknown").
+                        </div>
+                        break;
+                }
+            }
+        </div>
+    </div>
+
     <div class="card mb-3">
         <div class="card-body">
             <div class="row g-2 align-items-end">
@@ -375,6 +437,12 @@
     private string riskStateFilter = "";
     private string upnContains = "";
 
+    // The direct lookup (S5). Separate state from the browse view on purpose: a lookup result and
+    // a list result answer different questions and must not overwrite each other.
+    private string lookupUpn = "";
+    private RiskyUserLookup? lookup;
+    private string? lookupError;
+
     private bool isLoading;
     private bool hasQueried;
     private string? errorMessage;
@@ -486,6 +554,57 @@
     {
         if (e.Key == "Enter" && !isLoading)
             await LoadRiskyUsersAsync();
+    }
+
+    private async Task OnLookupKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !isLoading && !string.IsNullOrWhiteSpace(lookupUpn))
+            await LookupUserAsync();
+    }
+
+    private void ClearLookup()
+    {
+        lookup = null;
+        lookupError = null;
+        lookupUpn = "";
+    }
+
+    /// <summary>
+    /// Asks Graph about one named user. Audited like every other read on this page, and like them
+    /// never alert-emailed (D2, 2026-08-31).
+    /// </summary>
+    private async Task LookupUserAsync()
+    {
+        if (string.IsNullOrWhiteSpace(lookupUpn)) return;
+
+        isLoading = true;
+        lookup = null;
+        lookupError = null;
+        await Task.Yield();
+
+        var target = lookupUpn.Trim();
+
+        try
+        {
+            lookup = await RiskyUsersService.LookupAsync(target);
+
+            SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_Lookup", "RiskyUsers",
+                target, true));
+        }
+        catch (Exception ex)
+        {
+            // A failed lookup is NOT "no risk record". The service returns the two negatives as
+            // outcomes precisely so that this branch only ever holds real failures.
+            lookupError = ex.Message;
+            Logger.LogError(ex, "Risky Users lookup failed for {Upn}", target);
+
+            SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_Lookup", "RiskyUsers",
+                target, false, errorDetail: ex.Message));
+        }
+        finally
+        {
+            isLoading = false;
+        }
     }
 
     private async Task LoadRiskyUsersAsync()

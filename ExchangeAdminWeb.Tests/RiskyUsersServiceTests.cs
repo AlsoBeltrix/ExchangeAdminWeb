@@ -364,4 +364,126 @@ public class RiskyUsersServiceTests
         Assert.Equal(RiskyUsersService.MaxPages, page.PagesFetched);
         Assert.Equal(RiskyUsersService.MaxPages, calls);
     }
+
+    // ---- S5: the direct lookup -----------------------------------------------------------------
+    //
+    // The point of a lookup is a DEFINITIVE answer, including a definitive negative. Two of the
+    // three outcomes are negatives and they mean opposite things to an operator: "Entra holds
+    // nothing on this person" is reassurance, "no such person" is a typo. Collapsing them turns a
+    // mistyped name into a clean bill of health, which is the worst thing this method could do.
+
+    /// <summary>Routes the response by which of the two endpoints was asked.</summary>
+    private static void RouteLookup(StubHandler handler, HttpStatusCode userStatus, string userBody,
+                                    HttpStatusCode riskStatus, string riskBody)
+    {
+        handler.GraphResponse = () =>
+        {
+            var path = handler.LastGraphRequestUri!.AbsolutePath;
+            return path.Contains("/identityProtection/riskyUsers/", StringComparison.Ordinal)
+                ? new HttpResponseMessage(riskStatus) { Content = new StringContent(riskBody) }
+                : new HttpResponseMessage(userStatus) { Content = new StringContent(userBody) };
+        };
+    }
+
+    [Fact]
+    public async Task LookupAsync_UserExistsAndIsRisky_ReturnsTheRecord()
+    {
+        var (service, handler) = CreateService();
+        RouteLookup(handler,
+            HttpStatusCode.OK, """{"id":"obj-1"}""",
+            HttpStatusCode.OK, """{"id":"obj-1","userPrincipalName":"paul@contoso.com","riskLevel":"high","riskState":"atRisk"}""");
+
+        var result = await service.LookupAsync("paul@contoso.com");
+
+        Assert.Equal(RiskyUserLookupOutcome.Risky, result.Outcome);
+        Assert.Equal("high", result.User!.RiskLevel);
+        Assert.Equal(2, handler.GraphRequests.Count);
+    }
+
+    /// <summary>A 404 from the RISK read is the answer the operator came for, not a failure.</summary>
+    [Fact]
+    public async Task LookupAsync_UserExistsButHasNoRiskRecord_IsACleanNegativeNotAnError()
+    {
+        var (service, handler) = CreateService();
+        RouteLookup(handler, HttpStatusCode.OK, """{"id":"obj-1"}""", HttpStatusCode.NotFound, "");
+
+        var result = await service.LookupAsync("safe@contoso.com");
+
+        Assert.Equal(RiskyUserLookupOutcome.NoRiskRecord, result.Outcome);
+        Assert.Null(result.User);
+    }
+
+    /// <summary>A 404 from the DIRECTORY read is a different answer, and no risk query is made.</summary>
+    [Fact]
+    public async Task LookupAsync_NoSuchUser_IsDistinctAndSkipsTheRiskQuery()
+    {
+        var (service, handler) = CreateService();
+        RouteLookup(handler, HttpStatusCode.NotFound, "", HttpStatusCode.OK, "{}");
+
+        var result = await service.LookupAsync("nobody@contoso.com");
+
+        Assert.Equal(RiskyUserLookupOutcome.NoSuchUser, result.Outcome);
+        Assert.Single(handler.GraphRequests);
+        Assert.DoesNotContain("identityProtection", handler.GraphRequests[0].Uri.AbsolutePath, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The two negatives must not be the same value. This is the whole guard: if they ever
+    /// collapse, a typo reads as "this person is fine".
+    /// </summary>
+    [Fact]
+    public async Task LookupAsync_TheTwoNegativesAreNotTheSameOutcome()
+    {
+        var (a, handlerA) = CreateService();
+        RouteLookup(handlerA, HttpStatusCode.OK, """{"id":"obj-1"}""", HttpStatusCode.NotFound, "");
+        var noRisk = await a.LookupAsync("safe@contoso.com");
+
+        var (b, handlerB) = CreateService();
+        RouteLookup(handlerB, HttpStatusCode.NotFound, "", HttpStatusCode.OK, "{}");
+        var noUser = await b.LookupAsync("typo@contoso.com");
+
+        Assert.NotEqual(noRisk.Outcome, noUser.Outcome);
+    }
+
+    /// <summary>
+    /// A 403 on the directory read must name User.Read.All, not the risky-user permission. Sending
+    /// an administrator to grant the wrong scope costs a round trip and their trust in the message.
+    /// </summary>
+    [Fact]
+    public async Task LookupAsync_DirectoryForbidden_NamesTheDirectoryPermissionNotTheRiskOne()
+    {
+        var (service, handler) = CreateService();
+        RouteLookup(handler, HttpStatusCode.Forbidden, "", HttpStatusCode.OK, "{}");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.LookupAsync("x@contoso.com"));
+
+        Assert.Contains("User.Read.All", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("IdentityRiskyUser.Read.All", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A 200 carrying no id must fail, not fall through. Querying /riskyUsers/ with an empty key
+    /// would 404 and render as "no risk record" - a wrong negative wearing a real one's clothes.
+    /// </summary>
+    [Fact]
+    public async Task LookupAsync_DirectoryReturnsNoObjectId_FailsRatherThanReadingAsNoRiskRecord()
+    {
+        var (service, handler) = CreateService();
+        RouteLookup(handler, HttpStatusCode.OK, """{}""", HttpStatusCode.NotFound, "");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.LookupAsync("x@contoso.com"));
+
+        Assert.Contains("no object id", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(handler.GraphRequests);
+    }
+
+    /// <summary>Any other status on the risk read is still a failure, not a negative.</summary>
+    [Fact]
+    public async Task LookupAsync_RiskReadFailsWithNon404_Throws()
+    {
+        var (service, handler) = CreateService();
+        RouteLookup(handler, HttpStatusCode.OK, """{"id":"obj-1"}""", HttpStatusCode.InternalServerError, "");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.LookupAsync("x@contoso.com"));
+    }
 }

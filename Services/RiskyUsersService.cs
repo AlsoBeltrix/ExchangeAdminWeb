@@ -179,6 +179,84 @@ public sealed class RiskyUsersService
     }
 
 
+    /// <summary>
+    /// Answers "is this one named person risky?" directly, instead of searching a list for them
+    /// (docs/RiskyUsersCompleteResults-Plan.md S5).
+    ///
+    /// This is the better answer to the defect that opened the plan. A list can be capped, its
+    /// order is unspecified, and the UPN match runs in memory; asking Graph about one user is
+    /// none of those things and costs two calls at any tenant size. No ceiling can hide anybody
+    /// from it.
+    ///
+    /// **Two calls, by design, and the first one is not optional.** A `riskyUsers` query that
+    /// returns nothing means *this UPN has no risk record* - it cannot say whether the UPN belongs
+    /// to anybody. Only the directory read separates "Entra says this person is fine" from "you
+    /// mistyped the name", and a typo silently reading as a clean bill of health is the worst
+    /// outcome this method could produce. That is why it needs `User.Read.All` unconditionally.
+    /// </summary>
+    public async Task<RiskyUserLookup> LookupAsync(string userPrincipalName)
+    {
+        var client = await _graphClientFactory() ?? throw new InvalidOperationException("Risky Users Graph credentials not available.");
+
+        var upn = userPrincipalName.Trim();
+        if (upn.Length == 0)
+            return new RiskyUserLookup(RiskyUserLookupOutcome.NoSuchUser, null, upn);
+
+        // Step 1: does this person exist? 404 stops here and no risk query is made.
+        var (userDoc, userStatus) = await client.GetWithStatusAsync($"/users/{Uri.EscapeDataString(upn)}?$select=id");
+
+        if (userStatus == HttpStatusCode.NotFound)
+            return new RiskyUserLookup(RiskyUserLookupOutcome.NoSuchUser, null, upn);
+
+        if (userDoc == null)
+            throw BuildDirectoryFailure(userStatus);
+
+        string objectId;
+        using (userDoc)
+        {
+            objectId = GetString(userDoc.RootElement, "id");
+        }
+
+        // A 200 with no id is not an answer. Failing here beats querying /riskyUsers/ with an
+        // empty key, which would 404 and render as "this person has no risk record" - a wrong
+        // negative dressed as a real one.
+        if (objectId.Length == 0)
+            throw new InvalidOperationException($"The directory returned no object id for {upn}, so their risk state could not be looked up.");
+
+        // Step 2: does Entra hold a risk record for them?
+        var (riskDoc, riskStatus) = await client.GetWithStatusAsync($"{RiskyUsersEndpoint}/{Uri.EscapeDataString(objectId)}");
+
+        // **404 here is an ANSWER, not a failure.** It is the answer an operator came for: Entra
+        // holds no risk record for this person. Rendering it as an error, or as "no risky users
+        // found", is the Cloud Password Reset failure class inverted - there an unanswered
+        // question was read as a negative answer; here a real negative must not be dressed up as
+        // a failure.
+        if (riskStatus == HttpStatusCode.NotFound)
+            return new RiskyUserLookup(RiskyUserLookupOutcome.NoRiskRecord, null, upn);
+
+        if (riskDoc == null)
+            throw BuildFailure(riskStatus, "risky user");
+
+        using (riskDoc)
+        {
+            return new RiskyUserLookup(RiskyUserLookupOutcome.Risky, ParseRiskyUser(riskDoc.RootElement), upn);
+        }
+    }
+
+    /// <summary>
+    /// A failure of the DIRECTORY read, which names a different missing permission than a failure
+    /// of the risk read. Reporting `IdentityRiskyUser.Read.All` when `User.Read.All` is what is
+    /// absent sends an administrator to grant the wrong thing and then to disbelieve the message.
+    /// </summary>
+    private static InvalidOperationException BuildDirectoryFailure(HttpStatusCode status)
+    {
+        if (status == HttpStatusCode.Forbidden)
+            return new InvalidOperationException(
+                "The directory lookup was refused - verify the app registration's User.Read.All consent. This is a different permission from the one the risky-user list uses.");
+
+        return new InvalidOperationException($"Graph request for the directory lookup failed: {(int)status} {status}.");
+    }
+
     public async Task<IReadOnlyList<RiskyUserHistoryEntry>> GetHistoryAsync(string userId)
     {
         var client = await _graphClientFactory() ?? throw new InvalidOperationException("Risky Users Graph credentials not available.");
@@ -422,6 +500,29 @@ public enum RiskyUserFetchOutcome
     /// </summary>
     CeilingReached
 }
+
+/// <summary>
+/// What a direct lookup found. Three outcomes, and two of them are NEGATIVES that must read
+/// differently: "this person exists and Entra holds nothing on them" is a clean answer, while
+/// "no such person" usually means a typo. Collapsing them turns a mistyped name into a clean
+/// bill of health.
+/// </summary>
+public enum RiskyUserLookupOutcome
+{
+    /// <summary>Entra holds a risk record. <c>User</c> is populated.</summary>
+    Risky,
+
+    /// <summary>The person exists; Entra holds no risk record for them. A clean no.</summary>
+    NoRiskRecord,
+
+    /// <summary>No directory user matches that name.</summary>
+    NoSuchUser
+}
+
+public sealed record RiskyUserLookup(
+    RiskyUserLookupOutcome Outcome,
+    RiskyUser? User,
+    string UserPrincipalName);
 
 public sealed record RiskyUserPage(
     IReadOnlyList<RiskyUser> Users,
