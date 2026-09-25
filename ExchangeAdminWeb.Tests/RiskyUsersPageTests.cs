@@ -125,18 +125,61 @@ public class RiskyUsersPageTests
         Assert.Contains("hasQueried = true;", body);
     }
 
+    /// <summary>
+    /// AC5: reaching the ceiling renders a visible notice over the rows it DID retrieve.
+    ///
+    /// Re-pointed 2026-09-25. This test used to pin the literal string
+    /// "more exist. Narrow the filter." - which is the exact copy the fix exists to delete. The
+    /// advice was wrong: `UPN contains` is applied after the fetch, so narrowing on it cannot
+    /// recover a row the fetch never retrieved. Only Risk level and Risk state reach Graph as
+    /// `$filter` and actually shrink the fetch, so those are what the notice must name.
+    /// </summary>
     [Fact]
-    public void RiskyUsers_RendersVisibleTruncationNotice()
+    public void RiskyUsers_CeilingNoticeNamesTheFiltersThatActuallyShrinkTheFetch()
     {
-        // AC7: a response carrying @odata.nextLink must render a visible truncation notice naming
-        // the cap - a silently truncated risky-user list is the BitLocker cap-before-match defect
-        // class recurring on a security surface.
         var text = File.ReadAllText(
             AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "RiskyUsers.razor"));
 
         Assert.Contains("@if (truncated)", text);
-        Assert.Contains("more exist. Narrow the filter.", text);
+        Assert.Contains("Risk level and Risk", text);
+        Assert.DoesNotContain("Narrow the filter.", text);
     }
+
+    /// <summary>
+    /// The notice must be rendered BEFORE the empty-results branch, and the two empty states must
+    /// read differently.
+    ///
+    /// This is the defect the fix nearly reintroduced into its own fix. Keyed on
+    /// `results.Count == 0` first, a ceiling-limited fetch whose UPN filter matched none of the
+    /// retrieved rows would render "No risky users found" - the module telling an operator nobody
+    /// matches when the truth is that it stopped looking. That is the reported bug in new words.
+    /// The outcome decides what empty means; the count never decides alone.
+    /// </summary>
+    [Fact]
+    public void RiskyUsers_AnEmptyResultCannotHideAnIncompleteFetch()
+    {
+        // Razor comments are stripped first. An ORDERING assertion over raw text is defeated by
+        // any comment that mentions the thing being ordered - and the comment explaining exactly
+        // this hazard, sitting above the branch, is what failed this test on its first run. The
+        // sidebar CSS guards hit the same trap the same day. A test a comment can fail gets
+        // silenced rather than fixed.
+        var text = Regex.Replace(
+            File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "RiskyUsers.razor")),
+            @"@\*.*?\*@", string.Empty, RegexOptions.Singleline);
+
+        var notice = text.IndexOf("@if (truncated)", StringComparison.Ordinal);
+        var empty = text.IndexOf("results.Count == 0", StringComparison.Ordinal);
+
+        Assert.True(notice >= 0 && empty >= 0, "Both the ceiling notice and the empty branch must exist.");
+        Assert.True(notice < empty,
+            "The ceiling notice must render BEFORE the empty-results branch. Rendered after, a\n" +
+            "ceiling-limited fetch that filtered down to nothing shows 'No risky users found' -\n" +
+            "which says nobody matches when the module simply stopped looking.");
+
+        Assert.Contains("No match in the", text);
+        Assert.Contains("No risky users found.", text);
+    }
+
 
     [Fact]
     public void RiskyUsers_DisplaysModuleVersionNextToHeading()

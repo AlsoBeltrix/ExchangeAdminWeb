@@ -229,7 +229,11 @@ public sealed class ModuleCatalog
             // (Complete and Stop among them, back from the per-row buttons S2 removed), and a
             // multi-batch selection gets its own paged pane
             // (docs/MigrationInterfaceRedesign-Plan.md S3).
-            Version = "1.12.0",
+            // 1.13.0: the outcome preview. Before the ticket is typed, every ticked batch says
+            // whether the staged action will run on it or skip it and why, Confirm carries the
+            // eligible count, and the picked action is highlighted
+            // (docs/MigrationInterfaceRedesign-Plan.md S4, R12).
+            Version = "1.13.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -707,7 +711,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.1.0",
+            Version = "1.2.0",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
@@ -720,7 +724,7 @@ public sealed class ModuleCatalog
             ],
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires IdentityRiskyUser.Read.All, plus IdentityRiskyUser.ReadWrite.All for remediation). Requires Microsoft Entra ID P2."),
-                new("MaxRows", "Max Rows", "Maximum risky users fetched per query (Graph caps at 500)", Required: false, DefaultValue: "500")
+                new("MaxTotalRows", "Maximum Total Rows", "Safety ceiling on one query, across all pages. The module follows Graph's paging until the matching set is complete; if more risky users match than this, it shows what it retrieved and says the list is partial. Defaults to 10000. Deliberately a NEW key: the old MaxRows meant page size, and a stored value would have silently capped the fetch at 500.", Required: false, DefaultValue: "10000")
             ]
         },
         new()

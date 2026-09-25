@@ -173,19 +173,55 @@ public class RiskyUsersServiceTests
         Assert.DoesNotContain("filter", handler.LastGraphRequestUri!.Query, StringComparison.OrdinalIgnoreCase);
     }
 
-    // Rules 2/5 (S2): $top is always clamped to Graph's 500 cap; unparseable/non-positive falls
-    // back to the same cap rather than an unbounded or zero-row request.
+    // The ceiling replaced the old $top clamp. $top is now a constant 500 (Graph's documented
+    // maximum) and this value bounds the TOTAL across all pages. Unparseable or non-positive falls
+    // back to the default rather than meaning "unbounded" - an unbounded loop against a paged API
+    // is how a read module becomes an outage.
     [Theory]
-    [InlineData("5000", 500)]
-    [InlineData("0", 500)]
-    [InlineData("not-a-number", 500)]
-    [InlineData(null, 500)]
+    [InlineData("0", RiskyUsersService.DefaultCeiling)]
+    [InlineData("-1", RiskyUsersService.DefaultCeiling)]
+    [InlineData("not-a-number", RiskyUsersService.DefaultCeiling)]
+    [InlineData(null, RiskyUsersService.DefaultCeiling)]
     [InlineData("50", 50)]
     [InlineData("1", 1)]
-    public void ClampMaxRows_ClampsOrFallsBackTo500(string? rawMaxRows, int expected)
+    [InlineData("25000", 25000)]
+    [InlineData("999999999", RiskyUsersService.MaxCeiling)]
+    public void ClampCeiling_ClampsOrFallsBackToTheDefault(string? raw, int expected)
     {
-        Assert.Equal(expected, RiskyUsersService.ClampMaxRows(rawMaxRows));
+        Assert.Equal(expected, RiskyUsersService.ClampCeiling(raw));
     }
+
+    /// <summary>
+    /// The ceiling is read from `MaxTotalRows`, and a value stored under the OLD `MaxRows` key must
+    /// NOT be consulted.
+    ///
+    /// This is the guard against the trap that made the whole fix a no-op: `MaxRows` meant page
+    /// size, this deployment has 500 stored against it from 2026-09-02, and
+    /// `ModuleConfigService.GetValue` returns the stored row rather than the descriptor default.
+    /// Redefining the key instead of adding one would have read back 500, stopped after one page,
+    /// and reproduced the exact defect - from code that is otherwise correct.
+    /// </summary>
+    [Fact]
+    public void TheCeilingKeyIsMaxTotalRowsAndNotTheOldMaxRows()
+    {
+        var source = File.ReadAllText(Path.Combine(RepoRoot(), "Services", "RiskyUsersService.cs"));
+
+        Assert.Contains("\"MaxTotalRows\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"MaxRows\"", source, StringComparison.Ordinal);
+    }
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "ExchangeAdminWeb.csproj"))) return dir.FullName;
+            dir = dir.Parent;
+        }
+
+        throw new InvalidOperationException("Could not locate the repository root from the test assembly.");
+    }
+
 
     // Rule 3 (S2): server-side filter fields only, combined with "and".
     [Fact]

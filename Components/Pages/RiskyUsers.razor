@@ -108,18 +108,41 @@
         {
             <div class="alert alert-danger">@errorMessage</div>
         }
-        else if (results.Count == 0)
-        {
-            <div class="alert alert-secondary">No risky users found.</div>
-        }
         else
         {
+            @* The constraint notice is rendered BEFORE the empty check, and that ordering is the
+               fix for a defect this plan nearly reintroduced. Keyed on results.Count == 0 first,
+               a ceiling-limited fetch whose UPN filter matched none of the rows it retrieved would
+               have rendered "No risky users found" - the module telling the operator nobody
+               matches when the truth is that it stopped looking. That is the reported bug in a new
+               costume. The outcome decides what empty means; the count never decides alone. *@
             @if (truncated)
             {
                 <div class="alert alert-warning py-2">
-                    <small>Showing the first @requestedMax; more exist. Narrow the filter.</small>
+                    <small>
+                        Stopped after @ceiling risky users; the tenant has more. This list is
+                        partial, so the highest-risk users may not be in it. Risk level and Risk
+                        state narrow the search itself - use them for a complete result.
+                    </small>
                 </div>
             }
+
+            @if (results.Count == 0)
+            {
+                @if (truncated)
+                {
+                    <div class="alert alert-secondary">
+                        No match in the @ceiling risky users retrieved. More exist that were not
+                        searched.
+                    </div>
+                }
+                else
+                {
+                    <div class="alert alert-secondary">No risky users found.</div>
+                }
+            }
+            else
+            {
 
             <div class="card">
                 <div class="card-header">
@@ -301,6 +324,7 @@
                     </table>
                 </div>
             </div>
+            }
         }
     }
 </div>
@@ -319,7 +343,7 @@
     private string? errorMessage;
     private List<RiskyUser> results = [];
     private bool truncated;
-    private int requestedMax;
+    private int ceiling;
 
     private string? expandedUserId;
     private bool historyLoading;
@@ -423,7 +447,7 @@
             var page = await RiskyUsersService.GetRiskyUsersAsync(filter);
             results = [.. page.Users];
             truncated = page.Truncated;
-            requestedMax = page.RequestedMax;
+            ceiling = page.Ceiling;
 
             SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_List", "RiskyUsers", target, true));
         }

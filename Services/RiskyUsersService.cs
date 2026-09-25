@@ -72,45 +72,88 @@ public sealed class RiskyUsersService
     private const string RiskyUsersEndpoint = "/identityProtection/riskyUsers";
     private const string SelectFields = "id,isDeleted,isProcessing,riskLastUpdatedDateTime,riskLevel,riskState,riskDetail,userDisplayName,userPrincipalName";
 
+    /// <summary>
+    /// Graph's documented maximum page size on this collection. Always asked for: there is no
+    /// reason to request smaller pages when the ceiling governs the total.
+    /// </summary>
+    private const int GraphPageSize = 500;
+
+    /// <summary>
+    /// Retrieves the COMPLETE set of risky users matching the server-side filters, following
+    /// <c>@odata.nextLink</c> to exhaustion (docs/RiskyUsersCompleteResults-Plan.md S2).
+    ///
+    /// Before this, the module asked for one page of 500 and stopped. Graph documents no default
+    /// order for this collection and supports no <c>$orderby</c>, so those 500 were an arbitrary
+    /// slice - and `UpnContains` then searched only that slice. A High-risk account visible in the
+    /// Entra portal was absent from the page, which is the defect this method exists to fix.
+    /// </summary>
     public async Task<RiskyUserPage> GetRiskyUsersAsync(RiskyUserFilter filter)
     {
         var client = await _graphClientFactory() ?? throw new InvalidOperationException("Risky Users Graph credentials not available.");
 
-        var top = ClampMaxRows(_moduleConfig?.GetValue("RiskyUsers", "MaxRows"));
+        var ceiling = ClampCeiling(_moduleConfig?.GetValue("RiskyUsers", "MaxTotalRows"));
 
-        var query = $"$top={top}&$select={SelectFields}";
+        var query = $"$top={GraphPageSize}&$select={SelectFields}";
         var filterExpression = BuildFilterExpression(filter);
         if (filterExpression != null)
             query += $"&$filter={Uri.EscapeDataString(filterExpression)}";
 
-        var (doc, status) = await client.GetWithStatusAsync($"{RiskyUsersEndpoint}?{query}");
-
-        // A failed request must never render as "no risky users" - rule 1 (S2). 403 is the
-        // expected shape on a tenant with no P2 or without consent, and gets its own message
-        // because it is the single most likely first-run outcome.
-        if (doc == null)
-            throw BuildFailure(status, "risky users");
-
-        using var responseDoc = doc;
-
-        // @odata.nextLink is absolute and GraphTokenClient prepends a relative path to a
-        // hardcoded base URL, so it cannot be followed (S2 rule 2). Its presence must still be
-        // surfaced so a capped list never looks like a complete one.
-        var truncated = responseDoc.RootElement.TryGetProperty("@odata.nextLink", out _);
-
         var users = new List<RiskyUser>();
-        foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
-            users.Add(ParseRiskyUser(item));
+        var outcome = RiskyUserFetchOutcome.Complete;
+        var pages = 0;
+        string? next = $"{RiskyUsersEndpoint}?{query}";
 
-        // UpnContains is not documented as a supported $filter on this resource, so it is applied
-        // client-side after the fetch (S2 rule 3).
+        while (next != null)
+        {
+            var (doc, status) = await client.GetWithStatusAsync(next);
+
+            // A failed request must never render as "no risky users" - S2 rule 1 of the module
+            // plan. This holds on page 7 exactly as it holds on page 1: a run that failed partway
+            // has NOT produced a complete list, and returning the pages that did arrive would be
+            // the same defect wearing a smaller number. 403 keeps its own message because it is
+            // the likely first-run outcome on a tenant without P2 or consent.
+            if (doc == null)
+                throw BuildFailure(status, pages == 0 ? "risky users" : $"risky users (page {pages + 1})");
+
+            using var responseDoc = doc;
+            pages++;
+
+            foreach (var item in responseDoc.RootElement.GetProperty("value").EnumerateArray())
+                users.Add(ParseRiskyUser(item));
+
+            next = null;
+            if (responseDoc.RootElement.TryGetProperty("@odata.nextLink", out var link)
+                && link.ValueKind == JsonValueKind.String)
+            {
+                // The ceiling is checked AFTER accumulating, because it can only ever be reached
+                // on rows already fetched and already paid for - this API exposes no count, so
+                // there is no way to know the size without asking. Nothing is discarded.
+                if (users.Count >= ceiling)
+                {
+                    outcome = RiskyUserFetchOutcome.CeilingReached;
+                }
+                else
+                {
+                    // Passed through absolutely and unmodified. GraphTokenClient accepts a Graph
+                    // /v1.0 absolute URL for exactly this, and re-encoding a skiptoken would make
+                    // it a different token than the one the service issued.
+                    next = link.GetString();
+                }
+            }
+        }
+
+        // UpnContains is applied here, after the fetch, because Graph documents no contains() on
+        // this collection and a filter it rejects is a 400 that the rule above turns into a hard
+        // failure. It now runs over the COMPLETE set rather than over an arbitrary first page,
+        // which is what makes the reported "charles" case work.
         if (!string.IsNullOrWhiteSpace(filter.UpnContains))
             users = users.Where(u => u.UserPrincipalName.Contains(filter.UpnContains!, StringComparison.OrdinalIgnoreCase)).ToList();
 
         users = SortRiskyUsers(users);
 
-        return new RiskyUserPage(users, truncated, top);
+        return new RiskyUserPage(users, outcome, ceiling, pages);
     }
+
 
     public async Task<IReadOnlyList<RiskyUserHistoryEntry>> GetHistoryAsync(string userId)
     {
@@ -180,17 +223,29 @@ public sealed class RiskyUsersService
     }
 
     /// <summary>
-    /// $top clamp for the risky users list. Graph caps $top at 500 on this resource; an
-    /// unparseable or non-positive MaxRows config value falls back to the same cap rather than a
-    /// silently unbounded or zero-row request.
+    /// Total-row ceiling across all pages, read from <c>MaxTotalRows</c>.
+    ///
+    /// **This is a NEW config key on purpose and must not be folded back into the old
+    /// <c>MaxRows</c>.** `MaxRows` meant "$top page size" and this deployment has a stored value
+    /// of 500 saved on 2026-09-02. `ModuleConfigService.GetValue` returns the stored row and a
+    /// descriptor default never overwrites one, so redefining `MaxRows` as the ceiling would read
+    /// back 500, stop after one page and reproduce the exact defect this work removes - from code
+    /// that is otherwise correct. A new key has no stored row, so the default below is what is
+    /// read on the first query after deploy.
+    ///
+    /// An unparseable or non-positive value falls back to the default rather than meaning
+    /// "unbounded": an unbounded loop against a paged API is how a read module becomes an outage.
     /// </summary>
-    internal static int ClampMaxRows(string? rawMaxRows)
+    internal static int ClampCeiling(string? rawMaxTotalRows)
     {
-        if (!int.TryParse(rawMaxRows, out var parsed) || parsed <= 0)
-            parsed = 500;
+        if (!int.TryParse(rawMaxTotalRows, out var parsed) || parsed <= 0)
+            parsed = DefaultCeiling;
 
-        return Math.Clamp(parsed, 1, 500);
+        return Math.Clamp(parsed, 1, MaxCeiling);
     }
+
+    internal const int DefaultCeiling = 10000;
+    internal const int MaxCeiling = 200000;
 
     /// <summary>
     /// Builds the $filter expression from the server-side-supported fields only (riskLevel,
@@ -285,10 +340,34 @@ public enum RiskyUserAction
     ConfirmCompromised
 }
 
+/// <summary>
+/// How a fetch ended. Three outcomes, never collapsed into two: an incomplete answer must be
+/// distinguishable from a complete one, and a failure from both.
+/// </summary>
+public enum RiskyUserFetchOutcome
+{
+    /// <summary>Graph stopped offering pages. The set is the whole tenant, for these filters.</summary>
+    Complete,
+
+    /// <summary>
+    /// More exist; the module stopped asking at the ceiling. The rows fetched are KEPT and
+    /// rendered - nothing is discarded, because this API has no count endpoint, so the ceiling can
+    /// only ever be reached on rows already retrieved. But the set is a partial one AND the
+    /// severity sort ran only over that partial set, so the top of the list is the worst of a
+    /// sample rather than the worst in the tenant. Both facts have to reach the operator.
+    /// </summary>
+    CeilingReached
+}
+
 public sealed record RiskyUserPage(
     IReadOnlyList<RiskyUser> Users,
-    bool Truncated,
-    int RequestedMax);
+    RiskyUserFetchOutcome Outcome,
+    int Ceiling,
+    int PagesFetched)
+{
+    /// <summary>True when rows exist that this fetch did not retrieve.</summary>
+    public bool Truncated => Outcome == RiskyUserFetchOutcome.CeilingReached;
+}
 
 public sealed class RiskyUser
 {
