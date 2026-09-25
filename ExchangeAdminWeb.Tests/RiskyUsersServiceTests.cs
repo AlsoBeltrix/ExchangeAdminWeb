@@ -329,4 +329,39 @@ public class RiskyUsersServiceTests
         Assert.True(r3.Success);
         Assert.Equal(3, handler.GraphRequests.Count);
     }
+
+    /// <summary>
+    /// A service that keeps offering a continuation link while returning no rows must not spin
+    /// forever.
+    ///
+    /// This is a regression test for a real hang, not a hypothetical. The first version of the
+    /// paging loop stopped only on the ROW ceiling, and rows are not what a nextLink advances: an
+    /// empty page with a link raises neither the count nor anything else the loop looked at, so it
+    /// ran until the process died. It took a test host to 24 GB and had to be killed by hand.
+    ///
+    /// The page budget is the guard, because the page count rises on every iteration whatever the
+    /// body contains. Termination is provable from that; it is not provable from the row ceiling.
+    /// </summary>
+    [Fact]
+    public async Task AnEndlessEmptyPageChainTerminatesInsteadOfSpinning()
+    {
+        var (service, handler) = CreateService();
+        var calls = 0;
+        handler.GraphResponse = () =>
+        {
+            calls++;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"value":[],"@odata.nextLink":"https://graph.microsoft.com/v1.0/identityProtection/riskyUsers?$skiptoken=abc"}""")
+            };
+        };
+
+        var page = await service.GetRiskyUsersAsync(NoFilter);
+
+        Assert.Equal(RiskyUserFetchOutcome.CeilingReached, page.Outcome);
+        Assert.Empty(page.Users);
+        Assert.Equal(RiskyUsersService.MaxPages, page.PagesFetched);
+        Assert.Equal(RiskyUsersService.MaxPages, calls);
+    }
 }

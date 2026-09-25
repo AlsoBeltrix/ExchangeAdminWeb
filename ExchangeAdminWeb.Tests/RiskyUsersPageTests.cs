@@ -180,6 +180,86 @@ public class RiskyUsersPageTests
         Assert.Contains("No risky users found.", text);
     }
 
+    // ---- Pagination (owner ruling 2026-09-24; .agents/decisions.md) ----------------------------
+
+    /// <summary>
+    /// The table renders a page, but the COUNT reports every match. Those are different facts and
+    /// showing the page's count as the answer would understate the result by up to 50x.
+    /// </summary>
+    [Fact]
+    public void RiskyUsers_RendersAPageOfRowsButCountsThemAll()
+    {
+        var text = PageCode();
+
+        Assert.Contains("@foreach (var user in PageOfResults)", text);
+        Assert.Contains("@results.Count risky user(s)", text);
+        Assert.DoesNotContain("@foreach (var user in results)", text);
+    }
+
+    /// <summary>
+    /// Deliberately Prev/Next, not a button per page. AdminEventLog.razor renders one numbered
+    /// button per page; against this module's 10,000-row ceiling that is 200 buttons, which is a
+    /// worse density problem than the one paging solves.
+    /// </summary>
+    [Fact]
+    public void RiskyUsers_PagerIsPrevAndNextRatherThanAButtonPerPage()
+    {
+        var text = PageCode();
+
+        Assert.Contains("Page @currentPage of @TotalPages", text);
+        Assert.DoesNotContain("for (int i = 1; i <= TotalPages", text);
+    }
+
+    /// <summary>
+    /// Changing page retracts what belongs to a row leaving the screen, and keeps what does not.
+    ///
+    /// The confirm bar and history expander render beneath their own row: page away with one open
+    /// and it is orphaned, or sits under a different user with a ticket typed for somebody else.
+    /// `rowOutcomes` is the opposite case - keyed by user id, it is the only per-row record that an
+    /// action completed, and paging back should still show it.
+    /// </summary>
+    [Fact]
+    public void RiskyUsers_ChangingPageClearsTheConfirmBarButNotTheOutcomes()
+    {
+        var body = SetPageBody();
+
+        Assert.Contains("confirmUserId = null;", body);
+        Assert.Contains("actionTicket = \"\";", body);
+        Assert.Contains("expandedUserId = null;", body);
+        Assert.DoesNotContain("rowOutcomes.Clear()", body);
+    }
+
+    /// <summary>Paging mid-write would orphan the confirm bar, so the guard is inside SetPage too.</summary>
+    [Fact]
+    public void RiskyUsers_PagingIsRefusedWhileAnActionIsInFlight()
+    {
+        Assert.Contains("ActionsDisabled", SetPageBody());
+    }
+
+    [Fact]
+    public void RiskyUsers_ANewQueryReturnsToPageOne()
+    {
+        Assert.Contains("currentPage = 1;", PageCode());
+    }
+
+    /// <summary>
+    /// The page source with Razor and C# comments removed.
+    ///
+    /// Distinct from <see cref="PageSource"/>, which returns the raw text. Any assertion about
+    /// ORDER or ABSENCE needs this one: two guards written today failed by matching the comment
+    /// that explained the very thing they were guarding, and a test a comment can fail gets
+    /// silenced rather than fixed.
+    /// </summary>
+    private static string PageCode() =>
+        Regex.Replace(PageSource(), @"@\*.*?\*@|//[^\n]*", string.Empty, RegexOptions.Singleline);
+
+    /// <summary>
+    /// SetPage's body, scoped to the method because these same field assignments also appear in
+    /// the per-query reset block for a different reason - a whole-file assertion would pass on it.
+    /// </summary>
+    private static string SetPageBody() =>
+        Regex.Replace(MethodBody("SetPage"), @"@\*.*?\*@|//[^\n]*", string.Empty, RegexOptions.Singleline);
+
 
     [Fact]
     public void RiskyUsers_DisplaysModuleVersionNextToHeading()
@@ -275,7 +355,7 @@ public class RiskyUsersPageTests
     public void RiskyUsers_ActionControls_AreRenderedOnlyWithTheRemediateGrant()
     {
         // AC13, rendering half: the granular grant is read at page load and gates the action cell.
-        var text = PageSource();
+        var text = PageCode();
 
         Assert.Contains(
             "canRemediate = (await AuthorizationService.AuthorizeAsync(user, \"RiskyUsersRemediate\")).Succeeded;",
@@ -492,7 +572,7 @@ public class RiskyUsersPageTests
         // Owner ruling 2026-09-02, item 2: the exact confirmation line for the chosen action must
         // appear above the ticket/confirm controls, not folded into or paraphrased by the
         // action+user prompt line.
-        var text = PageSource();
+        var text = PageCode();
 
         var promptIndex = text.IndexOf("@ConfirmPrompt(confirmAction.Value", StringComparison.Ordinal);
         var consequenceIndex = text.IndexOf("@ActionConsequence(confirmAction.Value)", StringComparison.Ordinal);
@@ -509,10 +589,10 @@ public class RiskyUsersPageTests
         // docs/MigrationBatchSelection-Plan.md slice 3: a top-of-table confirm for row 47 puts the
         // ticket box off-screen while that row's buttons go disabled, which reads as the buttons
         // breaking. Anchored to the confirm bar being inside the per-row loop.
-        var text = PageSource();
+        var text = PageCode();
 
         var tbody = text.IndexOf("<tbody>", StringComparison.Ordinal);
-        var loop = text.IndexOf("@foreach (var user in results)", StringComparison.Ordinal);
+        var loop = text.IndexOf("@foreach (var user in PageOfResults)", StringComparison.Ordinal);
         var confirmBar = text.IndexOf("confirmUserId == user.Id", StringComparison.Ordinal);
 
         Assert.True(tbody >= 0 && loop > tbody, "the results loop was not found inside the table body.");
@@ -526,7 +606,7 @@ public class RiskyUsersPageTests
         // Known Failure Class 2 / AC10: acting on three rows must leave three separately named
         // verdicts. A single shared result field is how a refusal on one row reads as a verdict on
         // another, so the outcome is keyed by user id and rendered with its own UPN.
-        var text = PageSource();
+        var text = PageCode();
 
         Assert.Contains("Dictionary<string, RowOutcome> rowOutcomes", text);
         Assert.Contains("record RowOutcome(string UserPrincipalName, bool Success, string Message)", text);

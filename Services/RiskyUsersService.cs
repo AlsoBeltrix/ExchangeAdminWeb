@@ -79,6 +79,20 @@ public sealed class RiskyUsersService
     private const int GraphPageSize = 500;
 
     /// <summary>
+    /// Hard bound on requests per query, independent of the row ceiling.
+    ///
+    /// The row ceiling cannot guarantee the loop ends: a page carrying a continuation link and an
+    /// empty <c>value</c> advances the link without advancing the row count, so the ceiling is
+    /// never reached and the loop runs until the process dies. This bound rises on every
+    /// iteration regardless of what the body contains, which is what makes termination provable.
+    ///
+    /// 2,000 pages is 1,000,000 rows at the 500 Graph allows - far above any usable ceiling, so it
+    /// never fires on a healthy service and never truncates a legitimate result. It exists for the
+    /// unhealthy one.
+    /// </summary>
+    internal const int MaxPages = 2000;
+
+    /// <summary>
     /// Retrieves the COMPLETE set of risky users matching the server-side filters, following
     /// <c>@odata.nextLink</c> to exhaustion (docs/RiskyUsersCompleteResults-Plan.md S2).
     ///
@@ -125,10 +139,20 @@ public sealed class RiskyUsersService
             if (responseDoc.RootElement.TryGetProperty("@odata.nextLink", out var link)
                 && link.ValueKind == JsonValueKind.String)
             {
-                // The ceiling is checked AFTER accumulating, because it can only ever be reached
-                // on rows already fetched and already paid for - this API exposes no count, so
-                // there is no way to know the size without asking. Nothing is discarded.
-                if (users.Count >= ceiling)
+                // TWO independent stops, because the row ceiling alone does not guarantee
+                // termination and an earlier version of this loop did not terminate.
+                //
+                // A page that carries a continuation link but NO rows advances the link without
+                // advancing the count, so a service that keeps offering one spins forever - the
+                // row ceiling is never reached because rows never arrive. That is not
+                // hypothetical: it hung a test host at 24 GB before this guard existed. The page
+                // budget is what makes progress monotonic, since the page count rises on every
+                // iteration whatever the body contains.
+                //
+                // The row ceiling is checked AFTER accumulating on purpose: this API exposes no
+                // count, so it can only ever be reached on rows already fetched and already paid
+                // for. Nothing is discarded.
+                if (users.Count >= ceiling || pages >= MaxPages)
                 {
                     outcome = RiskyUserFetchOutcome.CeilingReached;
                 }

@@ -146,7 +146,13 @@
 
             <div class="card">
                 <div class="card-header">
+                    @* The full match count, never the page's. The table shows 50 at a time; the
+                       number of users found is a different fact and the operator needs both. *@
                     <strong>@results.Count risky user(s)</strong>
+                    @if (TotalPages > 1)
+                    {
+                        <span class="text-muted ms-2">showing @(((currentPage - 1) * PageSize) + 1)-@Math.Min(currentPage * PageSize, results.Count)</span>
+                    }
                 </div>
                 <div class="card-body p-0">
                     <table class="table table-sm mb-0">
@@ -167,7 +173,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var user in results)
+                            @foreach (var user in PageOfResults)
                             {
                                 <tr>
                                     <td>@user.UserPrincipalName</td>
@@ -323,6 +329,23 @@
                         </tbody>
                     </table>
                 </div>
+                @* Prev / Next and a position, deliberately NOT one button per page.
+                   AdminEventLog.razor renders a numbered button per page, which is fine at its
+                   volumes; against a 10,000-row ceiling that is 200 buttons - a worse density
+                   problem than the one paging solves. The controls take ActionsDisabled like every
+                   other control on this page: paging away mid-write would orphan the confirm bar. *@
+                @if (TotalPages > 1)
+                {
+                    <div class="card-footer d-flex align-items-center gap-2 py-2">
+                        <button class="btn btn-sm btn-outline-secondary"
+                                @onclick="() => SetPage(currentPage - 1)"
+                                disabled="@(ActionsDisabled || currentPage == 1)">Previous</button>
+                        <span class="text-muted small">Page @currentPage of @TotalPages</span>
+                        <button class="btn btn-sm btn-outline-secondary"
+                                @onclick="() => SetPage(currentPage + 1)"
+                                disabled="@(ActionsDisabled || currentPage == TotalPages)">Next</button>
+                    </div>
+                }
             </div>
             }
         }
@@ -344,6 +367,42 @@
     private List<RiskyUser> results = [];
     private bool truncated;
     private int ceiling;
+
+    // Pagination (owner ruling 2026-09-24: long tables page; .agents/decisions.md). The fetch and
+    // the severity sort stay tenant-wide, so page 1 genuinely holds the highest-risk users -
+    // only the rendering is bounded. 50 matches AdminEventLog.razor and the Entra portal.
+    private const int PageSize = 50;
+    private int currentPage = 1;
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(results.Count / (double)PageSize));
+
+    private IEnumerable<RiskyUser> PageOfResults =>
+        results.Skip((currentPage - 1) * PageSize).Take(PageSize);
+
+    /// <summary>
+    /// Changes page, and retracts the state that belongs to a row about to leave the screen.
+    ///
+    /// The confirm bar and the history expander both render BENEATH their own row. Page away with
+    /// either open and it is orphaned - or worse, sitting under a different user, with a ticket
+    /// typed for somebody else still in the box.
+    ///
+    /// `rowOutcomes` is deliberately NOT cleared. It is keyed by user id, so paging back to a row
+    /// that was acted on should still show what happened to it; clearing here would destroy the
+    /// only per-row record of a completed action.
+    /// </summary>
+    private void SetPage(int page)
+    {
+        if (page < 1 || page > TotalPages || ActionsDisabled) return;
+
+        currentPage = page;
+
+        confirmUserId = null;
+        confirmAction = null;
+        actionTicket = "";
+        expandedUserId = null;
+        historyEntries = [];
+        historyError = null;
+    }
 
     private string? expandedUserId;
     private bool historyLoading;
@@ -424,6 +483,7 @@
         errorMessage = null;
         results = [];
         truncated = false;
+        currentPage = 1;
         expandedUserId = null;
         historyEntries = [];
         historyError = null;
