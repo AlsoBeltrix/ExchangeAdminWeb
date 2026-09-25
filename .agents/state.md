@@ -185,32 +185,36 @@ every gate behind it.
   REVIEWED AND UNSTARTED.** Both jumped ahead of queue item 14. **Queue item 15 - implement the
   Risky Users plan - is the next code task and nothing blocks it: no open owner questions, five
   slices, all reviewed.**
-  - **`docs/RiskyUsersCompleteResults-Plan.md` - S1 THROUGH S4 ARE LANDED. Only S5 remains and it
-    is BLOCKED ON THE OWNER.** Go was queue item 15. `fa108d3` (S1), `7715780` (S2+S3 notice),
-    `0f89272` (termination fix + pagination), `873c052` (S4). Base app `2.23.1` -> `2.24.0`;
-    module `1.1.0` -> `1.2.0` -> `1.3.0`. Suite 3161 / 0 failed / 3 skipped at `873c052`.
-    **NOTHING HAS BEEN SEEN IN A BROWSER** - no test here renders a page.
-    **S5 BLOCKER, and it is the only thing left: `User.Read.All` must be added to the Risky Users
-    Entra app registration and admin-consented.** Not probe-dependent - a `riskyUsers` query
-    returning nothing means "no risk record for this UPN" and cannot say whether the UPN belongs
-    to anyone, so only a directory read separates "Entra says they are fine" from "you mistyped".
+  - **`docs/RiskyUsersCompleteResults-Plan.md` - IMPLEMENTED. ALL FIVE SLICES LANDED 2026-09-25.**
+    Go was queue item 15. `fa108d3` S1, `7715780` S2+notice, `0f89272` termination fix +
+    pagination, `873c052` S4, `8df9ae1` S5. Base app `2.23.1` -> `2.24.0`; module `1.1.0` ->
+    `1.4.0`, one bump per behaviour slice. Suite **3199 / 0 failed / 3 skipped**, format clean.
+    **TWO THINGS OUTSTANDING, BOTH THE OWNER'S:**
+    1. **`User.Read.All` on the Risky Users app registration, admin-consented.** Graph app role -
+       needs a Privileged Role Administrator, not an Application Administrator. Until granted, S5's
+       lookup returns a 403 naming exactly that permission; everything else works without it.
+    2. **NOTHING HAS BEEN SEEN IN A BROWSER.** No test here renders a page, so pagination, the
+       constraint notice, the two empty states, the relabelled buttons and the lookup are all
+       unproven to an operator. The plan's manual checks are the only evidence.
     **THE DEFECT WORTH CARRYING, because this work introduced it and nearly shipped it.** S2's
     first form looped on `@odata.nextLink` and stopped only on the ROW ceiling. A page carrying a
     continuation link with an empty `value` advances the link but not the count, so the ceiling is
     never reached and the loop runs until the process dies. **It took a test host to 29 GB twice
-    and had to be killed by hand.** The existing test stub returns exactly that shape. Fixed with
-    a page budget independent of the row count - the page count rises every iteration whatever the
-    body contains, which is what makes termination provable; the row ceiling never could.
-    Guard-proved by removing the budget and watching the mutant run away to 3 GB.
-    **Three process failures in the same stretch, all mine, all worth not repeating:** I named a
-    cause twice without measuring it (blamed a regex - 10 ms when timed; then the page tests - all
-    passed in isolation), and only isolating the service class found it. And an unanchored `sed`
-    bumped FOUR modules' versions instead of one, after an earlier unanchored `sed` had rewired
-    four unrelated tests to a new helper. Anchor line-scoped edits or check the diff before
-    committing.
-    **Two source-scanning guards failed by matching their own explanatory comments** - an ordering
-    assertion tripped on the comment explaining that ordering. Both readers strip comments now. A
-    test a comment can fail gets silenced rather than fixed.
+    and had to be killed by hand**; the existing test stub returns exactly that shape. Fixed with a
+    page budget independent of the row count - the page count rises every iteration whatever the
+    body contains, which is what makes termination provable. Guard-proved.
+    **Four process failures in one session, all mine, all worth not repeating:**
+    - **Named a cause twice without measuring it.** Blamed a regex (10 ms when timed), then the
+      page tests (all passed in isolation). Only isolating the service class found it.
+    - **Two unanchored `sed` commands did collateral damage** - one bumped FOUR modules' versions
+      instead of one, an earlier one rewired four unrelated tests to a new helper. Anchor
+      line-scoped edits, or read the diff before staging.
+    - **Two source-scanning guards failed by matching their own explanatory comments** - an
+      ordering assertion tripped on the comment explaining that ordering. Both readers strip
+      comments now. A test a comment can fail gets silenced rather than fixed.
+    - **Conflated "cannot verify" with "cannot build"** and nearly left S5 unwritten: the missing
+      permission blocks the feature at runtime, not the code, which is unit-testable through the
+      existing seam.
   - **`docs/SidebarScrollbar-Plan.md` - IMPLEMENTED AND LANDED 2026-09-25, `970b6fd`.** The go was
     queue item 16. Base app `2.23.0` -> `2.23.1` (PATCH, shared UI defect); `ModuleCatalog.cs`
     byte-identical, verified by diff. Suite 3122 passed / 0 failed / 3 skipped, format clean.

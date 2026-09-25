@@ -1,20 +1,35 @@
 # Risky Users -- Complete Results, Findable Users, Identifiable Actions
 
-Status: **S1-S4 are LANDED. Only S5 remains, and it is blocked on an owner action.** The go was
-queue item 15.
+Status: **IMPLEMENTED. All five slices are landed.** The go was queue item 15.
 
-| Slice | State |
-| --- | --- |
-| S1 | Landed `fa108d3`. `GraphTokenClient` follows an absolute `@odata.nextLink` behind a scheme/host/base-path guard. Base app `2.23.1` -> `2.24.0`. Developer guide's self-contradiction fixed. |
-| S2 | Landed `7715780`, with a **non-termination defect fixed in `0f89272`** - see below. Fetch pages to exhaustion; ceiling reads the NEW `MaxTotalRows` key. Module `1.1.0` -> `1.2.0`. |
-| S3 | Landed across `7715780` (notice, two empty states) and `0f89272` (pagination, 50 a page). |
-| S4 | Landed `873c052`. `Dismiss` / `Safe` / `Compromised`, Microsoft's term as the accessible name, `riskDetail` mapped with a raw fallback. Module `1.2.0` -> `1.3.0`. |
-| S5 | **NOT STARTED. Blocked: `User.Read.All` must be added to the Risky Users app registration and admin-consented.** |
+| Slice | Commit | What |
+| --- | --- | --- |
+| S1 | `fa108d3` | `GraphTokenClient` follows an absolute `@odata.nextLink` behind a scheme/host/base-path guard. Base app `2.23.1` -> `2.24.0`. Developer guide's self-contradiction fixed. |
+| S2 | `7715780`, fixed in `0f89272` | Fetch pages to exhaustion; ceiling reads the NEW `MaxTotalRows` key. Module `-> 1.2.0`. |
+| S3 | `7715780` + `0f89272` | Constraint notice, two distinct empty states, pagination at 50 a page. |
+| S4 | `873c052` | `Dismiss` / `Safe` / `Compromised`, Microsoft's term as the accessible name, `riskDetail` mapped with a raw fallback. Module `-> 1.3.0`. |
+| S5 | `8df9ae1` | Direct lookup: `/users/<upn>` then `/riskyUsers/<id>`, three outcomes. Module `-> 1.4.0`. |
 
-**The defect worth carrying, because it was introduced by this work and nearly shipped.** S2's
-first form looped on `@odata.nextLink` and stopped only on the ROW ceiling. A page carrying a
-continuation link and an empty `value` advances the link without advancing the count, so the
-ceiling is never reached and the loop runs until the process dies. It took a test host to 29 GB
+Suite **3199 passed / 0 failed / 3 skipped**; format clean; `ModuleCatalog.cs` bumped once per
+slice and `ExchangeAdminWeb.csproj` only in S1.
+
+**TWO THINGS ARE OUTSTANDING AND BOTH ARE THE OWNER'S.**
+
+1. **`User.Read.All` must be added to the Risky Users app registration and admin-consented.** It
+   is a Graph app role, so it needs a Privileged Role Administrator or Global Administrator. Until
+   it is granted, S5's lookup returns a 403 that names exactly that permission. Everything else
+   works without it.
+2. **Nothing here has been seen in a browser.** No test in this repo renders a page, so the
+   pagination, the constraint notice, the two empty states, the relabelled buttons and the lookup
+   are all unproven to an operator. The manual checks below are the only evidence.
+
+**The defect worth carrying, because this work introduced it and nearly shipped it.** S2's first
+form looped on `@odata.nextLink` and stopped only on the ROW ceiling. A page carrying a
+continuation link with an empty `value` advances the link without advancing the count, so the
+ceiling is never reached and the loop runs until the process dies - it took a test host to 29 GB
+twice. The fix is a page budget independent of the row count: the page count rises every iteration
+whatever the body contains, which is what makes termination provable. Guard-proved by removing the
+budget and watching the mutant run away.
 twice. The fix is a page budget independent of the row count - the page count rises every
 iteration whatever the body contains, which is what makes termination provable. Guard-proved by
 removing the budget and watching the mutant run away to 3 GB.
