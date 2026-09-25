@@ -1,6 +1,6 @@
 # Defender for Endpoint Devices Module - Plan
 
-Status: In progress (2026-09-24). S1-S5 landed and the module ships at `1.1.0`; the owner then ran it against the live service, which answered R1(g) (no continuation cursor) and R1(f) (the tenant exceeds the old 20000 ceiling) and forced the rebuild recorded in Revision 3 of the second series. **The owner has now REVISED queue item 8 - the quote below is the new text, and Revision 5 folds it in.** The app-registration blocker earlier revisions carried is gone: the registration exists, Revision 3 records both permissions as granted and consented, and the Delinea Secret ID is **657**. Owner rulings of 2026-09-24/25 closed Q7 and Q10, and R1(o) is measured (the AD subnet-to-site map is real: 531 subnets, 515 mapped, 167 sites, `location` empty everywhere). Still open: R1 (a), (b), (c), (d), (e) and (h) through (n); the manual acceptance checklist; Q2, Q3, Q4, Q5, Q8 and Q9. Queue 8's park and the two defects open against the shipped module are recorded in `.agents/state.md`, which owns them - not here. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
+Status: In progress (2026-09-24). S1-S5 landed and the module ships at `1.1.0`; the owner then ran it against the live service, which answered R1(g) (no continuation cursor) and R1(f) (the tenant exceeds the old 20000 ceiling) and forced the rebuild recorded in Revision 3 of the second series. **The owner has now REVISED queue item 8 - the quote below is the new text, and Revision 5 folds it in.** The app-registration blocker earlier revisions carried is gone: the registration exists, Revision 3 records both permissions as granted and consented, and the Delinea Secret ID is **657**. Owner rulings of 2026-09-24/25 closed Q7 and Q10, and R1(o) is measured (the AD subnet-to-site map is real: 531 subnets, 515 mapped, 167 sites, `location` empty everywhere). **All owner questions are now ruled or closed** (Q1-Q8 and Q10; Q8 approved the column set on 2026-09-25). Still open and none of it needs the owner: Q9 (how to batch the 1,000-device `SeenBy()` cap - a design call), R1 (a)-(e) and (h)-(o), the manual acceptance checklist, and the fact that NO SLICE IS WRITTEN for the revised requirement. Queue 8's park and the two defects open against the shipped module are recorded in `.agents/state.md`, which owns them - not here. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
 
 Owner request, verbatim from the queue as revised on 2026-09-24. **This supersedes the original
 queue text, which asked for "3. other important info" and said the app registration still had to be
@@ -979,7 +979,13 @@ performance option. **This module uses the global host and nothing else.** A reg
 fact about where the tenant is, which is exactly what `.agents/repo-guidance.md` invariant 7
 forbids baking into source. If latency ever justifies it, it becomes a config field then.
 
-### T3 - the report is complete or it refuses; there is no quiet first-N
+### T3 - there is no quiet first-N
+
+**Heading corrected 2026-09-25.** It used to read "the report is complete or it refuses", and the
+refusal half was overturned by the owner the same day - see "The ceiling is a runaway guard" below,
+which is the current rule. **What survives is the half this trap was always about:** a result that
+has been cut short must never be indistinguishable from a complete one. Refusing was one way to
+guarantee that; stamping the partial set is another, and it keeps the rows.
 
 The owner asked to "List & Export **all** devices". A single bounded page silently redefines that
 as "the first N devices", and a CSV that has been handed on to someone else carries no hint that
@@ -1079,22 +1085,98 @@ probe reopens only the narrow question of whether an offset is stable under a mo
 not by itself the cited source this section asks for. The partition design (Revision 3, second
 series) is unaffected either way - it does not need `$skip` and is not waiting on this answer.
 
-### When the ceiling is hit, the listing FAILS - it does not truncate
+### The ceiling is a runaway guard, not a limit the report is expected to meet - owner ruling 2026-09-25
 
-The page renders no table and no export button, and says in words: more devices match than the
-configured maximum of N, so the report would be incomplete; raise Maximum Devices in Module
-Config, or narrow the filters. That is the loud outcome. A partial CSV that looks complete is the
-one result this module must never produce, and `.agents/repo-guidance.md` Known Failure Class 2 -
-never report blanket success over an incomplete run - is the rule it would break.
+**This overturns T3 above, whose heading is now wrong on purpose until a slice rewrites it.** T3
+said the report is complete or it refuses. It refuses no longer.
 
-The ceiling exists at all for two reasons that are about the API and not about any particular
-deployment: the endpoint allows 100 calls per minute, and an unbounded loop against a paged API is
-how a read module becomes an outage. The request count follows from the page size rather than
-from a number written here: at `$top = min(MaxDevices + 1, 10000)` the default ceiling of 20000
-costs **one** request when the endpoint emits no cursor, and at most `ceil(MaxDevices / pageSize)`
-when it does, where `pageSize` is whatever the service actually returns per page - which R1(g)
-observes rather than this file asserting. Whether refusal or a clearly-marked partial is the right
-behaviour at the ceiling is Q5.
+**The ruling came out of the owner asking a question neither the plan nor its reviewer had asked:
+when does the ceiling trip, before the query or after?** Owner, verbatim: *"if it's before, then
+refuse to waste the time. if it's after, DO NOT waste what's already been collected."*
+
+**It is always after, and that settles it.** This API exposes no count: `$count` is not supported,
+so there is no way to learn how many devices match without fetching them. A ceiling can therefore
+only ever trip on rows already retrieved and already paid for. Discarding them buys nothing - the
+requests have been spent either way - and hands the operator nothing in exchange for the wait.
+
+Three consequences, and the first is the one that makes the other two small.
+
+#### 1. In practice this should never fire
+
+The fetch divides the question rather than paging the answer: partition on `lastSeen`, and any
+partition returning at the cap is split and re-asked (see T3's completion rule). The measured cost
+is driven by the ratio of matching devices to the per-request cap, not by tenant size - a 4.3x
+ratio measured at **12 requests against a 250-request budget**. This module's target set is
+Windows devices in "can be onboarded", which `.agents/state.md` records as roughly 12,900 of this
+tenant's 113,102. That is about a dozen requests.
+
+So the ceiling is a guard against a pathological case - a filter that matches nearly everything, an
+API that starts returning tiny pages - **not a limit the report is expected to meet.** Design it as
+the rare branch it is, and do not let it shape the common path.
+
+#### 2. If it does fire: keep what was collected, and offer to continue
+
+- **Render everything fetched.** No refusal, no discarding.
+- **Say how far it got** and that more match: what happened, in the 2026-09-21 user-facing-strings
+  shape.
+- **Offer a "Keep going" control that resumes the partition loop from where it stopped.** This is
+  the part worth stating plainly, because it sounds harder than it is: *there is no second query to
+  compose.* "The remaining results" is not a different question - it is the same recursion,
+  continued. The stopping state is a set of unsplit partitions; resuming means popping them and
+  carrying on. If the design cannot resume cheaply, that is a reason to revisit the design, not to
+  hide the button.
+- **A partial set is a subset, and not an interesting one.** Which devices are in it falls out of
+  the partition order, not out of risk, recency or anything an operator would choose. The notice
+  must not imply otherwise, and nothing may sort a partial set in a way that suggests a ranking.
+
+#### 3. The CSV carries the stamp, because the CSV is what travels
+
+The screen notice dies with the page. The file gets emailed, filed and read weeks later by someone
+who was never told. So a partial export states its own incompleteness **in the file**: a per-row
+marker plus the ceiling and the truncation in the export's own header block, following whatever
+`docs/ModuleCsvExport-Plan.md` already establishes here.
+
+**This is T3's argument surviving its own conclusion.** T3 said *a partial CSV that looks complete
+is the one result this module must never produce*, and that is still exactly right. Refusing was
+one way to guarantee it. Stamping is another, and stamping keeps the rows. What is forbidden is not
+partial data - it is partial data that cannot be told apart from complete data, which is the same
+rule the owner applied to Risky Users the day before (`.agents/decisions.md` 2026-09-24).
+
+The export's audit record carries the same distinction: it already logs a row count, and a count
+means nothing later unless the record also says whether the run was complete.
+
+#### Why a ceiling exists at all
+
+Reasons about the API, not about any deployment: the endpoint allows 100 calls per minute, and an
+unbounded loop against a paged API is how a read module becomes an outage. The request count
+follows from the page size rather than from a number written here: at
+`$top = min(MaxDevices + 1, 10000)` the default of 20000 costs **one** request when the endpoint
+emits no cursor, and at most `ceil(MaxDevices / pageSize)` when it does, where `pageSize` is
+whatever the service actually returns - which R1(g) observes rather than this file asserting.
+
+Separately, and unchanged: a **`404`** from the first page is the documented empty result, not a
+failure (T5).
+   does. A partial export must carry its own incompleteness **in the file**, so that someone who
+   receives it by email three weeks later can see it without being told. Both of:
+   - a column on every row marking the run partial, and
+   - the ceiling and the fact of truncation in the export's own metadata row or header block,
+     following whatever `docs/ModuleCsvExport-Plan.md` already establishes for this repo.
+   A file whose partialness exists only in the UI that produced it is the exact failure T3 named.
+3. **The audit record says which it was.** The existing export audit entry carries a row count; it
+   must also carry whether the run was complete or truncated, or the count cannot be interpreted
+   later.
+4. **The order matters now, in a way it did not when this refused.** A partial set is a subset, and
+   which subset is decided by the partition and the API's own ordering - it is NOT the "most
+   interesting" N devices. The notice must not imply the operator is looking at the most important
+   ones, and nothing may sort the partial set in a way that suggests a ranking.
+
+The ceiling still exists, for reasons about the API rather than about any deployment: the endpoint
+allows 100 calls per minute, and an unbounded loop against a paged API is how a read module becomes
+an outage. The request count follows from the page size rather than from a number written here: at
+`$top = min(MaxDevices + 1, 10000)` the default ceiling of 20000 costs **one** request when the
+endpoint emits no cursor, and at most `ceil(MaxDevices / pageSize)` when it does, where `pageSize`
+is whatever the service actually returns per page - which R1(g) observes rather than this file
+asserting.
 
 Separately, and unchanged: a **`404`** from the first page is the documented empty result, not a
 failure (T5).
@@ -1568,11 +1650,16 @@ automatable today.
 12. Sign in as a user in no section-access group for `DefenderEndpointDevices`: `/defender-endpoint-devices`
     denies by **direct URL**, not merely by a hidden nav link.
 13. Disable the module in Admin Settings: it disappears from nav and the direct URL denies.
-14. **The ceiling, which is the check that proves T3.** Set `MaxDevices` to something smaller than
-    the number of devices that match the default filters - a handful will do. The page must refuse
-    in words, name the ceiling, and show **no table and no export button**. Restore the value and
-    confirm the full report returns. A short table, or an export button offered in the refusal
-    state, is the failure this check exists to catch.
+14. **The ceiling. Rewritten 2026-09-25 - it used to check for a refusal, which the owner
+    overturned.** Set `MaxDevices` to something smaller than the number of devices matching the
+    default filters; a handful will do. Then confirm all four:
+    - the table renders the devices that WERE collected - nothing is discarded;
+    - a notice says how far it got and that more match;
+    - **Keep going** resumes and the report completes;
+    - **export while partial, open the CSV, and confirm the file says so on its own** - per-row
+      marker and header block. This is the half that matters: a screen notice does not survive
+      being emailed, and a partial CSV that reads as complete is the failure this check exists to
+      catch. Restore the value and confirm a complete run carries no marker at all.
 15. Compare the row count against the same filters in the Defender portal's device inventory. They
     should agree, modulo the update-frequency caveat Learn states. A count that stops suspiciously
     near a round number is the signature of paging that stopped early.
@@ -1739,27 +1826,34 @@ Listed separately so none of them is mistaken for a citation.
    Administrator or Global Administrator. The owner answered yes. **It would now be unaskable
    anyway**: "Recently Seen By" is obtainable only through hunting, so declining the permission
    would decline requirement 3.
-2. **One app registration for both permissions, or two?** This plan assumes one registration and
-   one Delinea secret carrying both grants. Two would isolate the broad hunting permission from the
-   device read, at the cost of a second secret and a second config field.
-3. **Should the CSV export require a ticket number?** The export leaves the app carrying IP and MAC
-   addresses for unmanaged machines. `BitLockerRecovery` requires a ticket to search; the other
-   export modules do not. Require one, or not?
-4. **Is this module a security-response surface?** If yes, every read sends an administrator alert
-   on top of the audit record (Constitution, Notifications). Proposed answer is no - audit only.
-   Confirm or overturn.
-5. **At the `MaxDevices` ceiling: refuse the whole report, or return a clearly-marked partial
-   one?** The plan proposes refuse - no table, no export, and a message naming the ceiling - on
-   the grounds that a partial CSV handed to someone else looks complete. The alternative is a
-   partial report stamped as partial on screen and in a CSV column. Which?
+2. **RULED 2026-09-25: ONE app registration.** Owner: *"one"*. One registration and one Delinea
+   secret (**657**) carry both `Machine.Read.All` and `ThreatHunting.Read.All`. The alternative was
+   a second registration isolating the broad hunting grant, at the cost of a second secret and a
+   second config field; it is not taken. The least-privilege reasoning in section 7 stands
+   unchanged - the hunting grant is tenant-wide and that is the accepted price of requirement 3.
+3. **RULED 2026-09-25: NO ticket required for CSV export.** Owner: *"no"*. The export carries IP
+   and MAC addresses for unmanaged machines, and `BitLockerRecovery` requires a ticket to search -
+   but the owner's call puts this module with the other export modules, which do not. The export
+   is still audited with its row count and, after Q5, with whether the run was complete.
+4. **RULED 2026-09-25: NOT a security-response surface. Audit only, no administrator alert per
+   read.** Owner: *"no"*, confirming the plan's proposal. Reads are audited and never alert-emailed
+   - the same shape the Risky Users module ships (`.agents/decisions.md` 2026-08-31). Write actions
+   do not arise here; the module is read-only by design (see Out of scope).
+5. **RULED 2026-09-25, then refined by the owner's follow-up question: a PARTIAL report, kept and
+   stamped - and the ceiling should almost never fire.** Owner: *"partial marked as partial"*, then
+   *"if it's before, then refuse to waste the time. if it's after, DO NOT waste what's already been
+   collected."* It is always after - this API has no count endpoint - so nothing is discarded. The
+   full design, including the **Keep going** control and why the CSV carries the stamp rather than
+   the screen, is under "The ceiling is a runaway guard" in Design constraints and traps. T3's
+   heading was corrected to match.
 6. **CLOSED, 2026-09-21 (Revision 5, first series).** *Module display name: "Defender for Endpoint
    Devices"?* Shipped verbatim, with route `defender-endpoint-devices` and section-access alias
    `DefenderEndpointDevices`.
 
 ### Added 2026-09-24 by the revised requirement - these are the ones waiting
 
-**Q2, Q3, Q4 and Q5 above are still unanswered.** The three below are new, and Q8 is the one the
-owner explicitly asked to be given.
+**Q1 through Q7 and Q10 are now all ruled or closed.** The two below are what remains, and Q8 is
+the approval the owner explicitly asked to be given.
 
 7. **ANSWERED by the owner, 2026-09-24 - and one part of the answer opened a better route than
    any field in the L-table.**
@@ -1780,9 +1874,11 @@ owner explicitly asked to be given.
      reason: a map or a rule is a fact about this environment and does not belong in source unless
      it arrives as operator configuration or from the directory at runtime. **L17 is the second
      of those, not the first**, which is why it is permitted.
-8. **Which of L1-L17 goes in the report?** This is the approval the owner asked for. Strike any
-   row and it is not built. **Revised after Q7 was answered on 2026-09-24**, which struck two
-   candidates and added one better than any that remained:
+8. **APPROVED BY THE OWNER, 2026-09-25.** *Which of L1-L17 goes in the report?* The owner approved
+   the recommended set below as written. **This is the column contract for the slice; a field not
+   listed here is not built, and adding one goes back through this question.** Two entries remain
+   conditional on a recon query, and that conditionality is part of what was approved - neither is
+   built if its query says the data is not there.
    - **L1** - the requirement. Recently Seen By.
    - **L17** - AD site and the subnet's `location` string, derived locally from the directory this
      host is already joined to. **The strongest human-readable signal here**, and the answer to
