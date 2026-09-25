@@ -13,17 +13,19 @@ Gates are green on the migration commits: build 0 errors, `dotnet test` **3072 p
 3 skipped**, format clean, `git diff --check HEAD` clean, ASCII scan clean. Pester and
 PSScriptAnalyzer were NOT re-run - no PowerShell changed. Nothing is half-finished.
 
-**A PRE-EXISTING CI GATE IS RED ON `master` AND IT IS NOT FROM THIS WORK.** `tools/Test-AsciiOnly.ps1`
-fails on `ExchangeAdminWeb.Tests/PasswordGeneratorWordListTests.cs:108`, which has carried a
-non-ASCII literal since `5d2913e` (2026-09-23). CI runs that script, so the `powershell` job has
-been failing since then. **Not swept into a migration commit:** the word is test data proving the
-generator rejects non-ASCII input, so changing it changes what the test covers - an owner call,
-not a typo fix. Every migration commit since states the gate as failing for this reason.
+**THE CI GATE THAT WAS RED FOR TWO DAYS IS FIXED (`2026293`).** `tools/Test-AsciiOnly.ps1` had
+failed since `5d2913e` (2026-09-23) on a literal accented character in
+`PasswordGeneratorWordListTests.cs:108`. **It was never a tradeoff, and an earlier note here
+saying it was the owner's call was wrong:** the comment three lines above that array already
+promised the entry was "written as an escape, not as a literal", and it simply was not.
+`"caf00e9"` is the same string at runtime and pure ASCII in the source, so the coverage is
+identical - proved by swapping it for a plain-ASCII `"cafe"` and watching the test fail.
+**Worth carrying: that lint failure also aborted the `powershell` job before PSScriptAnalyzer and
+Pester ran, so neither had executed in CI since 2026-09-23.** A red gate early in a job hides
+every gate behind it.
 
-**Both remotes sit at `9b85957`; everything after it is unpushed and push policy is ask.** Stated
-as a position rather than a count on purpose: two sessions are committing to `master`, so any
-number written here is wrong within the hour. The 2026-09-24 handoff's "56 unpushed" was already
-stale when written.
+**Both remotes are at `2026293` as of 2026-09-25 and match local `master`,** verified with
+`git ls-remote`. Push policy remains ask.
 
 - **QUEUE ITEM 14: PLAN APPROVED. S1, mir-1, S2 AND S3 ARE ALL LANDED. S4 IS NEXT.**
   `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In progress`. Module `1.9.1` ->
