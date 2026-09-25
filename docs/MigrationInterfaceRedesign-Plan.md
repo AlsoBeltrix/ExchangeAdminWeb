@@ -350,13 +350,39 @@ recorded because three of these are not obvious from the slice description:
   real route derivation, with a path-segment counterweight that must NOT resolve), name-not-index
   keying, the two-writer rule, and the prerender/authorization guard.
 
-**S2 -- Split the panes, and page the batch list.** Replace the nested-row expansion with the
+**S2 -- Split the panes, and page the batch list. LANDED 2026-09-25 (`d70ba40`), module `1.10.1` -> `1.11.0`.** Replace the nested-row expansion with the
 two-pane layout: batch list left, mailbox table right, each with its own scroll region, sticky
 header and pinned footer. **This slice owns the batch catalogue paging** -- page state, page
 size, the pager, and resetting to the first page whenever the filter or sort changes so the
 operator is never left on page 9 of a 3-page result. R20 is otherwise only assigned for
 mailboxes (S5) and for the selection pane (S3), which would leave the list this page opens on
 unpaged. Same data, same actions, same gating, no new operations. Module version bump.
+
+**What S2 actually cost, and S3 owes it back.** The per-row batch action buttons are gone: a
+one-line row with the four columns R16 names has no action cell, and R3 and R6 put batch
+operations in a toolbar at the top of the batch pane. Delete, Remove Completed and Resume stay
+reachable through the existing selection toolbar. **Complete and Stop are reachable from nowhere
+until S3.** No operator sees that state - nothing ships until 12, 13 and 14 are done - but it is
+S3's first job, not a detail.
+
+**And one guard lost its subject.** `PerRowButtonsReadThePlannersStatusRulesRatherThanTheirOwn`
+asserted the row's Delete and Resume read `MigrationBatchActionPlanner.Applies`. With no such
+control the positive half has no subject, so it was replaced by
+`NoBatchActionControlDecidesEligibilityOutsideThePlanner`, which asserts the surviving half - no
+batch-status allowlist anywhere in the markup - and fails the moment a control appears gated on a
+status string. **S3 must restore the positive assertion when the toolbar lands**; that is a
+requirement of S3, written here so it cannot be lost.
+
+**One sort control, not clickable headers as well** (R18, R19). Once the row shows four columns,
+seven clickable headers could only reach four of the seven sort keys; a select plus a direction
+toggle keeps every key the old header row had.
+
+**The windowing lives in `Services/ListWindow.cs`,** not on the component, because test obligation
+2 asks how many rows render for 2000 batches on page 9 and no tripwire can answer that. As a pure
+function it is answerable, and 18 tests do - including that selecting every row does not change
+what renders, that the pages tile the list exactly once, and that a page past the end clamps
+rather than rendering an empty catalogue that reads as "all my batches are gone". S3 and S5 reuse
+it rather than writing the off-by-one twice more.
 
 **S3 -- Selection model.** Checkboxes on both lists, select-all over the whole filter with no
 cap, the batch operation bar at the top of the left pane, and the multi-batch selection view
