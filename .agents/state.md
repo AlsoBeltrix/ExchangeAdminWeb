@@ -44,6 +44,17 @@ no PowerShell changed. Nothing is half-finished. **3 commits are unpushed on bot
     and S1 must switch to writing the address without navigating. **This is the app's first
     query-parameter route, so there is no precedent here to read the answer off - it needs a dev
     deploy and a browser.**
+  - **S1 WAS OPENREVIEWED 2026-09-25 AND CAME BACK `acceptable with changes` WITH ONE ADMITTED
+    HIGH FINDING, `mir-1`, NOT YET FIXED.** codex (`@azure-openai-eus2-global/gpt-5.5-dzs` @
+    xhigh, fallback) over `69980f1..f43fc11`. It endorsed the approach as what it would itself
+    have built. The finding: **two batch-user loads can now overlap and the loser renders one
+    batch opened with another batch's mailboxes** - open A, open B, press browser Back before B's
+    Exchange call returns, and if B's lands last the page shows A expanded over B's rows, whose
+    per-mailbox action buttons then act on B. **S1 caused it.** Every pre-S1 entry point sat
+    behind `disabled="@IsBusy"`; the browser's Back button is not a control this page can gate.
+    The fix shape is the `reportGeneration` pattern already in this file, applied to the rows.
+    Open findings index: `.agents/review/index.md`; detail in
+    `.agents/review/findings/mir-1.md`. **`mir-1` closes before S2 starts.**
   - **Two things S1 had to touch that the next slices will too.** `ClickGateRegistry` pins
     Migration's line count (now 2127) and cites handler coordinates in its rationale; every slice
     will fail `TheRegisteredLineCountStillMatchesTheFile` until both are re-checked and updated.
