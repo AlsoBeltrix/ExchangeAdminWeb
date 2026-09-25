@@ -648,19 +648,30 @@ than a number someone has to look up.
 Defender has no AD site field and never will - that is still true and is still recorded below
 under "not documented anywhere". But this application is an on-prem Active Directory admin tool,
 and **Active Directory already holds an authoritative subnet-to-site map**: the configuration
-partition's `CN=Subnets,CN=Sites,CN=Configuration,...`, where each subnet object carries
-`siteObject` (the site it belongs to) and frequently `location` (a free-text physical location,
-which is exactly what the owner is trying to recover). This is maintained by the network and
-directory teams as a matter of course, because AD itself depends on it for replication and client
-affinity.
+partition's `CN=Subnets,CN=Sites,<configurationNamingContext>`, where each subnet object carries
+`siteObject`, the site it belongs to. This is maintained by the network and directory teams as a
+matter of course, because AD itself depends on it for replication and client affinity - so it is
+kept current for a reason that has nothing to do with this report, which is what makes it
+trustworthy.
+
+**This was measured in this forest on 2026-09-25, not assumed - R1(o) records it: 531 subnet
+objects, 515 carrying a site, 167 sites.** The subnet `location` attribute, which an earlier draft
+of this section expected to be the prize, is **empty on every one of the 531** and is not used.
+The site NAME carries the location instead, and carries it better: the names are structured
+region / country / state-or-province / city.
 
 So the derivation is local, and needs nothing new from Microsoft:
 
 ```
 device IP (L2, or the observer's IP from L1)
   -> longest-prefix match against AD's subnet objects
-  -> site name, and the subnet's `location` string if set
+  -> siteObject -> the site's own cn, rendered as-is
 ```
+
+**Rendered raw. Nothing parses it.** The name is already readable, so splitting it into region and
+city would buy nothing and would be precisely the environment-specific format-parsing invariant 7
+keeps out of source. Displaying a string the directory returned is not parsing it. **No part of
+this plan records what a segment of a site name means, and no test may assert a shape for one.**
 
 **The repo can already reach it.** `Services/SectionAccessGroupDirectory.cs:86-93` reads
 `configurationNamingContext` from RootDSE via `Get-ADRootDSE` - the same partition, the same
@@ -671,12 +682,25 @@ domain, host, OU, group or subnet as behaviour, and forbids a safety argument re
 environment's shape. It does **not** forbid reading the directory the host is already joined to.
 The subnet table is *discovered at runtime from the host's own forest membership*, which is the
 exact phrasing invariant 7 uses to describe the permitted shape. No subnet, site or location
-string appears in source. If the forest has no subnet objects, or a device's IP matches none, the
-column is empty and says so - it must fail closed and visibly, never guess a nearest match.
+string appears in source.
+
+**Three ways this column can be empty, and they must not be collapsed into one.** R1(o) found
+that two of them are real in this forest today, so this is not defensive hypothesising:
+
+1. **The device has no IP to match.** Nothing to look up.
+2. **The IP matches no subnet object.** 531 subnets do not cover every address in a global
+   network, and an unmatched IP is a real answer - it says the device is somewhere the directory
+   does not describe.
+3. **The IP matches a subnet that carries no `siteObject`.** Measured: **16 of the 531**. The
+   subnet is known; its site is not.
+
+None may render as a guess, none may render as another, and **a nearest-match or
+shortest-prefix fallback is forbidden** - a confidently wrong city sends someone to the wrong
+building, which is worse than a blank in a report whose entire purpose is finding a machine.
 
 | # | Field | Exact source | Location strength | Non-onboarded? | Notes |
 | --- | --- | --- | --- | --- | --- |
-| L17 | AD site and subnet location | AD configuration partition, `CN=Subnets,CN=Sites,CN=Configuration,...`: subnet object `cn` (the CIDR), `siteObject`, `location`. Matched against the device IP from L2 or the observer IP from L1 | **Strongest human-readable signal.** Turns an IP into a site name the organisation already uses, and often a literal location string | **Yes** - it depends only on having an IP for the device, not on a sensor | Needs no Defender licence, no new Graph permission and no network-team deliverable. **Open: does this module read AD directly, or is the correlation left to the operator?** That is Q10 |
+| L17 | AD site name | AD configuration partition, `CN=Subnets,CN=Sites,<configurationNamingContext>`: subnet object `cn` (the CIDR) and `siteObject`, resolved to the site's `cn`. Matched against the device IP from L2, or the observer IP from L1 | **Strongest human-readable signal.** Turns an IP into a site name the organisation already uses. **Measured in this forest (R1(o), 2026-09-25): 531 subnets, 515 with a site, 167 sites, names structured region / country / state / city** | **Yes** - it depends only on having an IP, not on a sensor | Needs no Defender licence, no new Graph permission and no network-team deliverable. **The subnet `location` attribute is empty on all 531 and is NOT used** - the site name carries the location instead. Rendered raw, never parsed. Q10 decides what an AD read failure does to the report |
 
 **Q10, which L17 creates and the owner should settle before a slice is written:** this module is
 currently a pure Defender-API module with one credential. L17 adds a second, unrelated data source
@@ -1366,15 +1390,26 @@ Answers are recorded **in this file** before any code is written against them.
   column. L11 is built only if the answer is yes, and a handful of geographic values among mostly
   non-geographic ones is a no, not a yes - a column that is right for 5 percent of rows is worse
   than no column.
-- **(o) Does the forest's AD configuration partition actually hold subnet objects, and do they
-  carry `siteObject` and `location`?** Added 2026-09-24 with L17. This is the one recon item that
-  is NOT a Defender query: it reads
-  `CN=Subnets,CN=Sites,CN=Configuration,<configurationNamingContext>` the same way
-  `Services/SectionAccessGroupDirectory.cs:86-93` reaches that partition. Three things to record:
-  how many subnet objects exist, what fraction carry a non-empty `location`, and whether the
-  subnets look like they cover the address space the can-be-onboarded devices sit in. **If the
-  forest has few subnet objects or they are stale, L17 collapses and the recommendation in Q8
-  changes** - so this runs before any slice is written, not during one.
+- **(o) ANSWERED 2026-09-25 by a live read of this forest's configuration partition. L17 holds.**
+  Measured, not inferred, by an LDAP read of
+  `CN=Subnets,CN=Sites,<configurationNamingContext>` - the same partition and the same discovery
+  route `Services/SectionAccessGroupDirectory.cs:86-93` uses:
+  - **531 subnet objects.**
+  - **515 of them carry `siteObject` - 97 percent.** The map exists and is maintained.
+  - **`location` is empty on all 531.** Zero. **Do not build a column for it** and do not treat a
+    blank as a data-quality problem to chase; the attribute is simply unused here.
+  - **167 sites, and the site NAME is the location.** The names are structured
+    region / country / state-or-province / city. That is more than the empty `location` attribute
+    would have given, so L17 is stronger than it was written, not weaker.
+  **Two consequences for the design:**
+  1. **Render the site name raw. Parse nothing.** The name is already human-readable, so there is
+     no reason to split it into parts - and splitting it would be exactly the environment-specific
+     format-parsing that `.agents/repo-guidance.md` invariant 7 forbids in source. Showing a
+     string the directory returned is not parsing it. **This plan does not record what any segment
+     of a site name means**, and no test may assert a shape for one.
+  2. **Two blank cases exist and they are different.** 16 subnets carry no `siteObject`, and a
+     device whose IP matches no subnet at all matches nothing. Neither may render as a guess and
+     neither may render as the other. Fail closed and visibly, per L17's own rule.
 
 ### S3 - CSV export (starts after R1's answers are recorded)
 
