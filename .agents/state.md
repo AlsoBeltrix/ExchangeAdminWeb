@@ -185,10 +185,27 @@ every gate behind it.
   REVIEWED AND UNSTARTED.** Both jumped ahead of queue item 14. **Queue item 15 - implement the
   Risky Users plan - is the next code task and nothing blocks it: no open owner questions, five
   slices, all reviewed.**
-  - **`docs/RiskyUsersCompleteResults-Plan.md` - IMPLEMENTED. ALL FIVE SLICES LANDED 2026-09-25.**
+  - **`docs/RiskyUsersCompleteResults-Plan.md` - IMPLEMENTED AND REVIEWED. ALL FIVE SLICES LANDED 2026-09-25, plus three review fixes.**
     Go was queue item 15. `fa108d3` S1, `7715780` S2+notice, `0f89272` termination fix +
     pagination, `873c052` S4, `8df9ae1` S5. Base app `2.23.1` -> `2.24.0`; module `1.1.0` ->
     `1.4.0`, one bump per behaviour slice. Suite **3199 / 0 failed / 3 skipped**, format clean.
+    **REVIEWED 2026-09-25, `3d0099e`.** codex codereview over `d0c2406..6a093b5`, paths scoped:
+    three findings, all MEDIUM, all real, all admitted. **This was the review the CODE had not
+    had** - the plans were reviewed, the implementation was not, and the repo forbids self-review.
+    1. **The URL guard was weaker than its own comment.** `StartsWith("/v1.0")` also accepts
+       `/v1.0beta/` and `/v1.0.evil/` - different Graph surfaces reached with the shared client's
+       bearer token. My tests covered `/beta` and a lookalike host but not the segment boundary,
+       which is exactly the gap a prefix check leaves.
+    2. **The ceiling notice printed a number the operator could see was wrong.** Rows arrive a page
+       at a time, so the run overshoots the limit on the page that crosses it: `MaxTotalRows=50`
+       against a 500-row page rendered "Stopped after 50" above 500 rows. It now reports what was
+       actually retrieved, captured BEFORE the UPN filter narrows the list.
+    3. **A history response could land under the wrong user.** Open History for A, page away before
+       it returns, open History for B - A's response arrives last and writes into the shared field
+       under B's name, which is what a remediation decision gets made from. My pagination made it
+       reachable. Fixed with a generation counter rising on toggle AND page change, plus
+       `historyLoading` in `ActionsDisabled` - a gap this file already recorded for this page.
+    Suite **3206 / 0 failed / 3 skipped**, format clean.
     **TWO THINGS OUTSTANDING, BOTH THE OWNER'S:**
     1. **`User.Read.All` on the Risky Users app registration, admin-consented.** Graph app role -
        needs a Privileged Role Administrator, not an Application Administrator. Until granted, S5's
