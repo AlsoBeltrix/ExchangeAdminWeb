@@ -1,6 +1,6 @@
 # Defender for Endpoint Devices Module - Plan
 
-Status: In progress (2026-09-24). S1-S5 landed and the module ships at `1.1.0`; the owner then ran it against the live service, which answered R1(g) (no continuation cursor) and R1(f) (the tenant exceeds the old 20000 ceiling) and forced the rebuild recorded in Revision 3 of the second series. **The owner has now REVISED queue item 8 - the quote below is the new text, and Revision 5 folds it in.** The app-registration blocker earlier revisions carried is gone: the registration exists, Revision 3 records both permissions as granted and consented, and the Delinea Secret ID is **657**. Owner rulings of 2026-09-24/25 closed Q7 and Q10, and R1(o) is measured (the AD subnet-to-site map is real: 531 subnets, 515 mapped, 167 sites, `location` empty everywhere). **All owner questions are now ruled or closed** (Q1-Q8 and Q10; Q8 approved the column set on 2026-09-25). Still open and none of it needs the owner: Q9 (how to batch the 1,000-device `SeenBy()` cap - a design call), R1 (a)-(e) and (h)-(o), the manual acceptance checklist, and the fact that NO SLICE IS WRITTEN for the revised requirement. Queue 8's park and the two defects open against the shipped module are recorded in `.agents/state.md`, which owns them - not here. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
+Status: In progress (2026-09-24). S1-S5 landed and the module ships at `1.1.0`; the owner then ran it against the live service, which answered R1(g) (no continuation cursor) and R1(f) (the tenant exceeds the old 20000 ceiling) and forced the rebuild recorded in Revision 3 of the second series. **The owner has now REVISED queue item 8 - the quote below is the new text, and Revision 5 folds it in.** The app-registration blocker earlier revisions carried is gone: the registration exists, Revision 3 records both permissions as granted and consented, and the Delinea Secret ID is **657**. Owner rulings of 2026-09-24/25 closed Q7 and Q10, and R1(o) is measured (the AD subnet-to-site map is real: 531 subnets, 515 mapped, 167 sites, `location` empty everywhere). **All owner questions are now ruled or closed** (Q1-Q8 and Q10; Q8 approved the column set on 2026-09-25). Q9 was ruled coder-side (batch) on 2026-09-25 and **S6, S7 and S8 are now written**. Still open, none of it needing the owner: R1 (a)-(e) and (h)-(n), which run in the Defender portal and branch the slices rather than blocking them, and the manual acceptance checklist. Queue 8's park and the two defects open against the shipped module are recorded in `.agents/state.md`, which owns them - not here. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
 
 Owner request, verbatim from the queue as revised on 2026-09-24. **This supersedes the original
 queue text, which asked for "3. other important info" and said the app registration still had to be
@@ -1517,30 +1517,123 @@ Answers are recorded **in this file** before any code is written against them.
 - Module version `1.0.0` confirmed in the descriptor. **No base app version bump** - see
   Versioning.
 
-### S6 - "Recently Seen By" - NOT YET SLICED, and deliberately so
+### Q9 - RULED coder-side 2026-09-25: batch. The enrichment stays one step per refresh.
 
-S1 to S5 are landed and the module shipped; the descriptor now reads `Version = "1.1.0"`
-(`Modules/ModuleCatalog.cs:816`), which supersedes S5's `1.0.0` line above. Requirement 3 is new
-work and has **no slice here yet**, because a slice written now would be written over three
-unanswered questions:
+`SeenBy()` takes at most 1,000 devices per invocation. The two shapes were **batch** (several
+hunting calls per refresh, the report keeps its present meaning) and **narrow** (enrich only the
+rows on screen).
 
-- **Q9** decides the shape, not the detail: whether the enrichment batches within the 1,000-device
-  `SeenBy()` cap or the report narrows to what an operator is looking at. Those are different
-  modules, not different implementations.
-- **Q7 and Q8** decide which of the L1-L16 candidate fields exist at all, and the owner has been
-  asked to approve or strike them.
-- **R1(h) and R1(i)** decide the parser and whether the fallback is live.
+**Batch, and the arithmetic is why.** `.agents/state.md` records roughly 12,900 can-be-onboarded
+devices in this tenant, so 13 invocations. The Graph hunting API allows 45+ calls per minute; 13 is
+not a budget problem, it is a rounding error. Narrowing would buy nothing and cost a second code
+path: the CSV export needs every row enriched regardless, so a narrow design has to re-enrich on
+export anyway, and the column would appear and disappear depending on how the operator got to a
+row.
 
-**The pending step is the owner's, and it is one thing: approve or strike the candidate table and
-answer Q9.** The proposed next action after that is to draft S6 against the answers - not before.
-Writing a slice against guesses is how a plan acquires a design nobody chose, and this file has a
-recorded history of the opposite discipline.
+The page-scale fork that made this look harder than it is has since been settled: long tables page
+(owner, 2026-09-24, `.agents/decisions.md`). Rendering is bounded by paging, so the enrichment does
+not have to bound it too.
 
-Two further things S6 will have to carry, recorded now so they are not rediscovered: the
-`IncludeDiscoverySources` config field is misnamed once hunting feeds requirement 3 (T7 extended),
-and `.agents/state.md` holds an **unresolved owner fork about the page being unusable at tenant
-scale** which touches the same page S6 would edit. Neither is in this revision's scope; both are in
-S6's path.
+### S6 - "Recently Seen By" and the hunting-side location columns
+
+**Unblocked 2026-09-25.** The three things this slice was waiting on are answered: Q7 and Q8 by the
+owner, Q9 above. R1(h) and R1(i) remain unrun, and S6 branches on them rather than waiting - see
+"What R1 still decides" below.
+
+Files: the module-local API client and service, `Components/Pages/DefenderEndpointDevices.razor`,
+`Modules/ModuleCatalog.cs`. **Not** `Services/GraphTokenClient.cs` (T1).
+
+**The query.** One KQL, built from Microsoft's published example
+(`learn.microsoft.com/en-us/defender-endpoint/assess-devices#use-advanced-hunting-on-discovered-devices`),
+issued through `POST /security/runHuntingQuery`:
+
+```kusto
+DeviceInfo
+| where OnboardingStatus != "Onboarded"
+| where DeviceId in (<batch of at most 1000 ids>)
+| summarize arg_max(Timestamp, *) by DeviceId
+| where isempty(MergedToDeviceId)
+| invoke SeenBy()
+```
+
+then a second projection joining the observer id back to `DeviceInfo` for its `DeviceName`, and
+the target id to `DeviceNetworkInfo` for the L2-L4 columns. **Whether that is one query or two is
+an implementation choice; what is fixed is that the operator sees a machine NAME, not a GUID.**
+
+`arg_max(Timestamp, *) by DeviceId` and `isempty(MergedToDeviceId)` are both from Microsoft's
+example and both load-bearing: the first collapses a device's rows to its latest state, the second
+drops records superseded by a merge. Removing either silently duplicates or resurrects devices.
+
+**Batching, and the failure rule that matters.** The device list is chunked into groups of at most
+1,000 and each group is one hunting call. **Known Failure Class 2 applies and is the whole risk of
+this slice:** thirteen calls means twelve ways to be partly enriched. So:
+
+- A failed batch must not blank the batches that succeeded.
+- A failed batch must not let the report claim the column is complete.
+- The devices in a failed batch show the enrichment-unavailable marker, **not** an empty cell -
+  T7's existing rule that a blank and an `(unavailable)` mean opposite things, now applied per
+  batch rather than per run.
+- The banner names how many batches failed. "Some enrichment failed" is not an outcome an operator
+  can act on.
+
+**The `IncludeDiscoverySources` config field is now misnamed and must be renamed in this slice.**
+It gated an optional extra; it now gates the mechanism that delivers requirement 3. Leaving the
+name alone means an operator turns off "discovery sources" and loses Recently Seen By without being
+told. Renaming a descriptor field is not free - it is the storage key - so the slice either keeps
+the key and changes only `DisplayName` and the description (the `MessageTrace` precedent,
+`.agents/state.md`), or migrates deliberately. **Prefer the DisplayName-only change**; a fail-closed
+storage key rename is how the Message Trace split nearly denied everyone.
+
+**Columns this slice adds**, per the Q8 approval: Recently Seen By (observer name), subnet,
+default gateway, DHCP server, MAC vendor. `DeviceInfo.Site` only if R1(k) says it is populated;
+machine group and tags only if R1(n) finds geography.
+
+**Tests.** The service is reachable through the existing test seam. Assert: a 1,001-device input
+produces two calls, not one truncated call; a mid-sequence batch failure leaves the successful
+batches' data intact and marks only the failed batch's devices unavailable; the observer id is
+resolved to a name; an empty `SeenBy()` result renders blank and a failed call renders
+`(unavailable)`, and the two are distinguishable in the rendered output.
+
+**Guard proof:** make batch 2 of 3 fail and confirm the test that batches 1 and 3 survive it
+fails when the per-batch outcome tracking is removed. That single mutation is the slice's real
+risk.
+
+`Modules/ModuleCatalog.cs`: `RiskyUsers`-style minor bump, `1.1.0` -> `1.2.0`. No base app bump -
+verify by diff that `ExchangeAdminWeb.csproj` is byte-identical.
+
+**What R1 still decides, and why it does not block the slice.** R1(h) is whether `SeenBy()` returns
+a column named `DeviceId` or `SeenBy` - Microsoft's own two pages disagree, so the parser reads
+whichever is present and a test covers both shapes. R1(i) is what fraction of the target set
+returns a result; a low number does not change this code, it changes whether the
+`DeviceNetworkEvents` fallback recorded under "Recently Seen By" is worth building as S8. Run both
+before starting, record the answers here, but neither is a reason to hold the slice.
+
+### S7 - the AD site column
+
+Separate from S6 on purpose: a different data source, a different credential path, and **the
+opposite failure rule** - Q10 ruled that an AD read failure fails the whole report, where a hunting
+failure does not. Folding them into one slice would put two contradictory failure behaviours in one
+commit.
+
+Reads `CN=Subnets,CN=Sites,<configurationNamingContext>` for subnet `cn`, `siteObject` and the
+site's own `cn`, discovering the partition at runtime exactly as
+`Services/SectionAccessGroupDirectory.cs:86-93` does. Longest-prefix match of the device IP against
+the subnet list. Measured shape of this forest is under R1(o): 531 subnets, 515 with a site, 167
+sites, `location` empty on all of them.
+
+**Tests.** Longest-prefix selection picks the most specific subnet, not the first match; an IP
+matching nothing yields blank; a subnet with no `siteObject` yields blank; the two blanks are not
+required to differ on screen but must not be a guessed nearest match. A directory read failure
+fails the report - assert the failure path, and assert it is NOT the hunting path's behaviour.
+
+`Modules/ModuleCatalog.cs`: `1.2.0` -> `1.3.0`. No base app bump.
+
+### S8 - documentation and version, and the fallback only if R1(i) says so
+
+`docs/DefenderEndpointDevices.md` and the README section gain the new columns, the AD dependency
+and the ceiling behaviour. If R1(i) showed `SeenBy()` coverage too thin to be useful, this slice is
+instead the `DeviceNetworkEvents` / `AssignedIPAddresses` fallback described under "Recently Seen
+By" - and that is a design decision to bring back to the owner, not an absorbed scope change.
 
 ## Verification
 
@@ -1863,17 +1956,14 @@ the approval the owner explicitly asked to be given.
      convention).
    - **L13-L16** stay out until L1 works; all four describe the observer and are meaningless
      without it.
-9. **`SeenBy()` takes at most 1,000 devices per call. Batch, or narrow the report?** The shipped
-   module enriches **once per refresh** over the whole matching set, which for this tenant's
-   can-be-onboarded population cannot be one call. Two shapes, and they are different products:
-   **(a) batch** - the run makes several hunting calls inside the Graph budget and the report keeps
-   its present meaning, at more requests, more time and more ways to half-fail; **(b) narrow** -
-   enrich only the rows the operator is actually looking at, which is fast and cheap but means the
-   CSV export either loses the column or re-enriches on export. **This interacts with the
-   unresolved page-scale fork recorded in `.agents/state.md`, which is the owner's and is not
-   re-asked here** - if that fork lands on filter-first-and-paged browsing, (b) becomes the natural
-   answer and this question may resolve itself. **Recommendation: answer the state.md fork first,
-   then this one.**
+9. **RULED coder-side 2026-09-25: batch.** *`SeenBy()` takes at most 1,000 devices per call. Batch,
+   or narrow the report?* Not put to the owner, because the arithmetic decides it: ~12,900
+   can-be-onboarded devices is 13 invocations against a 45-plus-per-minute budget. Narrowing would
+   buy nothing and cost a second code path, since the CSV export needs every row enriched and would
+   have to re-enrich anyway. The page-scale interaction this question flagged is also gone - long
+   tables page (owner, 2026-09-24, `.agents/decisions.md`), so rendering is already bounded and the
+   enrichment does not have to bound it. Full reasoning and the batch-failure rule are in the Q9
+   subsection under `## Slices`.
 
 ## Sources
 
