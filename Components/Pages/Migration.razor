@@ -455,39 +455,6 @@
                     @PendingActionConfirm
                 }
 
-                @* Selection toolbar. S3 moves this to the top of the batch pane (R3, R6) and adds
-                   the actions the per-row buttons used to carry; S2 leaves it exactly where and
-                   what it was, so this slice changes layout and nothing else. The buttons are
-                   enabled whenever anything is ticked and never conditioned on eligibility: under
-                   owner ruling D2(a) a mixed or wholly-ineligible selection has a defined, useful
-                   outcome, and disabling would be the D2(b) that was rejected. *@
-                @if (canManage && selectedBatches.Count > 0)
-                {
-                    <div class="alert alert-secondary d-flex align-items-center gap-2 mb-3 py-2">
-                        <strong>@selectedBatches.Count selected</strong>
-                        <button class="btn btn-sm btn-danger" disabled="@(IsBusy || pendingActionLabel != null)"
-                                title="Removes every selected batch, whatever its status"
-                                @onclick="StageDeleteSelected">
-                            Delete
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger" disabled="@(IsBusy || pendingActionLabel != null)"
-                                title="Removes only the selected batches whose status is Completed"
-                                @onclick="StageRemoveCompletedSelected">
-                            Remove Completed
-                        </button>
-                        <button class="btn btn-sm btn-outline-success" disabled="@(IsBusy || pendingActionLabel != null)"
-                                title="Restarts the selected batches that are idle but restartable"
-                                @onclick="StageResumeSelected">
-                            Resume/Retry
-                        </button>
-                        @* Named "Untick all", not "Clear ...": the word "Clear" beside two
-                           destructive buttons is the adjacency the owner rejected. *@
-                        <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@IsBusy"
-                                @onclick="ClearBatchSelection">
-                            Untick all
-                        </button>
-                    </div>
-                }
 
                 @if (isLoadingStatus)
                 {
@@ -552,6 +519,57 @@
                                 </button>
                             </div>
 
+                            @* R3 and R6: batch operations live in the batch pane, whether one batch
+                               is ticked or eight hundred, and they sit at the TOP of the list they
+                               act on rather than in a footer. This is where the per-row Complete,
+                               Stop, Resume and Delete buttons went when R14 gave the row one line.
+                               The buttons are enabled whenever anything is ticked and never
+                               conditioned on eligibility: under owner ruling D2(a) a mixed or
+                               wholly-ineligible selection has a defined, useful outcome, and
+                               disabling would be the D2(b) that was rejected. Every one of them
+                               stages a ticket and reads MigrationBatchActionPlanner for its
+                               eligible/skipped split. *@
+                            @if (canManage && selectedBatches.Count > 0)
+                            {
+                                <div class="mig-pane-actions d-flex align-items-center flex-wrap gap-1">
+                                    <strong class="small me-1">@selectedBatches.Count selected</strong>
+                                    <button class="btn btn-sm btn-outline-success" disabled="@(IsBusy || pendingActionLabel != null)"
+                                            title="Completes the selected batches that have finished syncing"
+                                            @onclick="StageCompleteSelected">
+                                        Complete
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-warning" disabled="@(IsBusy || pendingActionLabel != null)"
+                                            title="Stops the selected batches that are still moving"
+                                            @onclick="StageStopSelected">
+                                        Stop
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-success" disabled="@(IsBusy || pendingActionLabel != null)"
+                                            title="Restarts the selected batches that are idle but restartable"
+                                            @onclick="StageResumeSelected">
+                                        Resume/Retry
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger" disabled="@(IsBusy || pendingActionLabel != null)"
+                                            title="Removes only the selected batches whose status is Completed"
+                                            @onclick="StageRemoveCompletedSelected">
+                                        Remove Completed
+                                    </button>
+                                    <button class="btn btn-sm btn-danger" disabled="@(IsBusy || pendingActionLabel != null)"
+                                            title="Removes every selected batch, whatever its status"
+                                            @onclick="StageDeleteSelected">
+                                        Delete
+                                    </button>
+                                    @* R10. "Untick all" here, where the tick boxes are; the right
+                                       pane says "Clear selection" for the same operation because
+                                       there is nothing to untick there. Named "Untick", not
+                                       "Clear ...": the word "Clear" beside two destructive buttons
+                                       is the adjacency the owner rejected. *@
+                                    <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@IsBusy"
+                                            @onclick="ClearBatchSelection">
+                                        Untick all
+                                    </button>
+                                </div>
+                            }
+
                             <div class="mig-pane-scroll">
                                 @* R16: the header row is inside the scrolling box, so the scrollbar
                                    narrows it by exactly as much as it narrows the rows. R17: every
@@ -570,7 +588,7 @@
                                        THIS row's name. *@
                                     var batchName = batch.BatchName;
                                     <div class="mig-batch-row mig-clickable @(expandedBatch == batchName ? "mig-open" : "")"
-                                         @onclick="() => ToggleBatchDetails(batchName)">
+                                         @onclick="() => SelectOnlyBatch(batchName)">
                                         @if (canManage)
                                         {
                                             @* stopPropagation: ticking a batch must not also open
@@ -634,7 +652,74 @@
                         </div>
 
                         <div class="mig-pane mig-pane-right">
-                            @if (expandedBatch == null)
+                            @* R2. This pane is about the SELECTION. Exactly one ticked batch means
+                               it is entirely and only that batch's mailboxes; more than one means
+                               it lists exactly the ticked batches; none means nothing is chosen.
+                               No batch-scoped OPERATION appears here in any of the three - those
+                               live in the batch pane (R3), which is why there is no action bar
+                               below. *@
+                            @if (selectedBatches.Count > 1)
+                            {
+                                <div class="mig-pane-head d-flex align-items-center gap-2">
+                                    <strong>@selectedBatches.Count batches selected</strong>
+                                    @* R10. No tick boxes in this pane, so it never says "untick". *@
+                                    <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@IsBusy"
+                                            @onclick="ClearBatchSelection">
+                                        Clear selection
+                                    </button>
+                                </div>
+
+                                <div class="mig-pane-scroll">
+                                    <div class="mig-batch-row mig-batch-head">
+                                        <span></span>
+                                        <span>Batch</span>
+                                        <span>Status</span>
+                                        <span class="mig-count">Synced</span>
+                                        <span class="mig-count">Failed</span>
+                                    </div>
+                                    @foreach (var batch in GetSelectedBatchesPage())
+                                    {
+                                        var selectedName = batch.BatchName;
+                                        <div class="mig-batch-row">
+                                            @* R9. Open narrows the selection to this one batch, and
+                                               the pane becomes its mailboxes. *@
+                                            <button class="btn btn-link btn-sm p-0" disabled="@IsBusy"
+                                                    title="Show only this batch" @onclick="() => SelectOnlyBatch(selectedName)">
+                                                Open
+                                            </button>
+                                            <span class="mig-batch-name" title="@selectedName">@selectedName</span>
+                                            <span><span class="badge bg-@GetStatusColor(batch.Status)">@batch.Status</span></span>
+                                            <span class="mig-count text-success fw-bold">@batch.SyncedCount</span>
+                                            <span class="mig-count">
+                                                <button class="btn btn-link btn-sm p-0 text-danger" disabled="@IsBusy"
+                                                        title="Remove this batch from the selection"
+                                                        @onclick="() => RemoveFromSelection(selectedName)">
+                                                    Remove
+                                                </button>
+                                            </span>
+                                        </div>
+                                    }
+                                </div>
+
+                                @* R4. Its own pager, labelled so it is unmistakable that it pages
+                                   the selection and not the catalogue. R5b's reasoning applied to
+                                   batches: the selection has to have a visible home of bounded
+                                   size, or a select-all of 2000 renders 2000 rows here. *@
+                                <div class="mig-pane-foot d-flex align-items-center gap-2">
+                                    <button class="btn btn-sm btn-outline-secondary" type="button"
+                                            disabled="@(IsBusy || selectionPage <= 0)"
+                                            title="Previous page of selected batches" @onclick="() => StepSelectionPage(-1)">
+                                        @((MarkupString)"&lsaquo;")
+                                    </button>
+                                    <span class="small text-muted">@SelectionPagerLabel</span>
+                                    <button class="btn btn-sm btn-outline-secondary" type="button"
+                                            disabled="@(IsBusy || selectionPage >= SelectionPageCount - 1)"
+                                            title="Next page of selected batches" @onclick="() => StepSelectionPage(1)">
+                                        @((MarkupString)"&rsaquo;")
+                                    </button>
+                                </div>
+                            }
+                            else if (expandedBatch == null)
                             {
                                 <div class="mig-pane-head"><strong>Mailboxes</strong></div>
                                 <div class="mig-pane-scroll d-flex align-items-center justify-content-center">
@@ -946,6 +1031,12 @@
     // against the mockup; the pane is sized so a full page fills it without the window scrolling.
     private const int BatchPageSize = 40;
     private int batchPage;
+
+    // R4. The selection pane's own page, independent of the catalogue's: paging the list you are
+    // choosing from and paging what you have chosen are different movements, and sharing one index
+    // would jump the other pane every time.
+    private const int SelectionPageSize = 40;
+    private int selectionPage;
     // Download CSV had no flag of its own. Without one the predicate below cannot see the
     // JS interop round-trip, and every other control stays live while the file is built.
     private bool isDownloadingCsv = false;
@@ -1007,25 +1098,62 @@
     // a setter to the nearest enclosing PRIVATE signature, read the right method body.
     protected override Task OnParametersSetAsync() => SyncOpenBatchFromUrl();
 
-    // The outbound half of the address. Changing which batch is open is a navigation, so the URL
-    // and the rendered page move together and can never disagree; the guard keeps a collapse that
-    // collapses nothing, or a re-open of the batch already open, from stacking a history entry
-    // the operator would have to press Back through twice.
-    private void OpenBatch(string? batchName)
+    // The outbound half of the address, and under R9 the only place the open batch is decided.
+    //
+    // R9 collapses two concepts into one: there is no "open" state beside the selection. The open
+    // batch IS the selection when the selection has exactly one member, and nothing otherwise
+    // (R2) - so every control that changes the selection ends here rather than setting the open
+    // batch itself, and the two can no longer disagree about which batch the operator is looking
+    // at. Changing it is a navigation, so the URL moves with it; the URI guard keeps a no-op
+    // change from stacking a history entry the operator would have to press Back through twice.
+    private async Task AdoptSelectionAsOpenBatch()
     {
-        expandedBatch = batchName;
-        batchUsersGeneration++;
+        var open = selectedBatches.Count == 1 ? selectedBatches.First() : null;
+        if (string.Equals(open, expandedBatch, StringComparison.Ordinal))
+            return;
 
-        var uri = Navigation.GetUriWithQueryParameter(BatchQueryParameter, batchName);
+        expandedBatch = open;
+        batchUsersGeneration++;
+        batchUsers = null;
+        CloseUserReport();
+
+        var uri = Navigation.GetUriWithQueryParameter(BatchQueryParameter, open);
         if (!string.Equals(uri, Navigation.Uri, StringComparison.Ordinal))
             Navigation.NavigateTo(uri);
+
+        if (open != null)
+            await LoadMailboxesFor(open);
+    }
+
+    // Every batch-user load goes through here, so the mir-1 guard exists once instead of once per
+    // caller. The generation is captured before the await and handed to ReplaceBatchUsers, which
+    // discards a result whose open batch has moved on; the flag is cleared only if this load still
+    // owns it, so a superseded load does not un-busy the page while its successor runs.
+    private async Task LoadMailboxesFor(string batchName)
+    {
+        loadingBatchUsers = batchName;
+        var generation = batchUsersGeneration;
+
+        try
+        {
+            ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(batchName));
+        }
+        catch
+        {
+            ReplaceBatchUsers(generation, new List<MigrationUserInfo>());
+        }
+        finally
+        {
+            if (loadingBatchUsers == batchName)
+                loadingBatchUsers = null;
+        }
     }
 
     // The inbound half. Browser Back, a refresh, a circuit reconnect and a pasted link all arrive
     // here with the address already changed and, in the last three cases, no component state at
-    // all. An operator click reaches this too, because OpenBatch navigates - but OpenBatch has
-    // already put expandedBatch in step, so those re-entries fall out at the equality check and
-    // nothing is fetched twice.
+    // all. An operator click reaches this too, because AdoptSelectionAsOpenBatch navigates - but
+    // that method has already put expandedBatch in step, so those re-entries fall out at the
+    // equality check and nothing is fetched twice.
     private async Task SyncOpenBatchFromUrl()
     {
         // Prerendering runs a whole lifecycle on the server before the circuit exists, and the
@@ -1042,6 +1170,13 @@
         batchUsersGeneration++;
         batchUsers = null;
         CloseUserReport();
+
+        // R9: the address names the SELECTION, not a second concept sitting beside it. Without
+        // this, pressing Back would move the pane to another batch while the tick boxes still
+        // showed the old one, which is exactly the tick-versus-open confusion R9 abolishes.
+        selectedBatches.Clear();
+        if (requested != null)
+            selectedBatches.Add(requested);
 
         if (requested == null)
             return;
@@ -1362,13 +1497,23 @@
     // discarded here rather than left to SyncOpenBatchFromUrl, which runs on the renderer's own
     // schedule: leaving the clearing to it would let the reload below land on top of the previous
     // batch's rows and only then wipe them.
+    // What the Refresh buttons, the tab and the bulk executor call.
+    //
+    // Under R9 a catalogue refresh is NOT a selection act, so it no longer collapses the open
+    // batch the way it did before S3: the selection survives the reload, minus whatever
+    // PruneSelection drops because the batch is gone. AdoptSelectionAsOpenBatch then closes the
+    // pane if the open batch was one of those, and otherwise its mailboxes are refetched, because
+    // the reload may well have changed them.
     private async Task LoadMigrationStatus()
     {
-        OpenBatch(null);
-        batchUsers = null;
-        CloseUserReport();
-
         await LoadBatchList();
+
+        var openBefore = expandedBatch;
+        await AdoptSelectionAsOpenBatch();
+
+        // Only when Adopt left it alone; Adopt loads the pane itself when it changes it.
+        if (expandedBatch != null && string.Equals(expandedBatch, openBefore, StringComparison.Ordinal))
+            await LoadMailboxesFor(expandedBatch);
     }
 
     // The catalogue reload on its own, with no opinion about which batch is open. Split out so a
@@ -1424,40 +1569,108 @@
 
     private bool IsBatchSelected(string batchName) => selectedBatches.Contains(batchName);
 
-    private void ToggleBatchSelected(string batchName, bool selected)
+    private async Task ToggleBatchSelected(string batchName, bool selected)
     {
+        if (IsBusy) return;
+
         if (selected)
             selectedBatches.Add(batchName);
         else
             selectedBatches.Remove(batchName);
 
         batchActionResult = null;
+
+        // R9. Ticking is not a second act beside opening: the pane follows the selection, so
+        // ticking down to one batch opens it and ticking a second one turns the pane into the
+        // list of what is ticked.
+        await AdoptSelectionAsOpenBatch();
+    }
+
+    // R9. The row click sets the selection to exactly this batch, which is what opens it. There is
+    // no separate "details" state to fall out of step with the tick boxes.
+    private async Task SelectOnlyBatch(string batchName)
+    {
+        // The gate is in the handler because the control is a div, and a div ignores the disabled
+        // attribute exactly as the tab-strip anchors do - see SelectTab, here for the same reason.
+        // The greying is styling only and must never be mistaken for the guard.
+        if (IsBusy) return;
+
+        selectedBatches.Clear();
+        selectedBatches.Add(batchName);
+        batchActionResult = null;
+
+        await AdoptSelectionAsOpenBatch();
+    }
+
+    // R10. Said only in the right pane, where there are no tick boxes to "untick".
+    private async Task RemoveFromSelection(string batchName)
+    {
+        if (IsBusy) return;
+
+        selectedBatches.Remove(batchName);
+        batchActionResult = null;
+
+        await AdoptSelectionAsOpenBatch();
     }
 
     private bool AllBatchesSelected =>
         migrationBatches is { Count: > 0 }
         && migrationBatches.All(b => selectedBatches.Contains(b.BatchName));
 
-    private void ToggleSelectAllBatches(ChangeEventArgs e)
+    private async Task ToggleSelectAllBatches(ChangeEventArgs e)
     {
+        if (IsBusy) return;
+
         selectedBatches.Clear();
 
         if (e.Value is bool check && check && migrationBatches != null)
         {
-            // Select-all means every LOADED batch. The search box highlights and jumps; it does
-            // not filter the table, so there are no hidden rows to sweep up unseen.
+            // R8. Select-all means every batch in the catalogue, with NO cap - "select up to the
+            // cap" is not select-all. That is safe alongside R20 only because selection and
+            // rendering are different things: ListWindow bounds what is drawn by the page index
+            // alone and knows nothing about what is ticked, which ListWindowTests asserts.
             foreach (var batch in migrationBatches)
                 selectedBatches.Add(batch.BatchName);
         }
 
         batchActionResult = null;
+
+        await AdoptSelectionAsOpenBatch();
     }
 
-    private void ClearBatchSelection()
+    // R10. "Untick all" in the batch pane, where the tick boxes are; the right pane says "Clear
+    // selection" for the same operation, because there is nothing to untick there.
+    private async Task ClearBatchSelection()
     {
+        if (IsBusy) return;
+
         selectedBatches.Clear();
         batchActionResult = null;
+
+        await AdoptSelectionAsOpenBatch();
     }
+
+    // R4. The selection gets its own pager so the right pane never renders 2000 ticked batches -
+    // R5 forbids pinning them into the left list, so this pane is where the selection is visible,
+    // and a pane with no bound is the Defender failure again. Ordered by the catalogue, not by the
+    // set, so it reads in the same order as the list beside it.
+    private IEnumerable<MigrationBatchInfo> GetSelectedBatchesPage() =>
+        ListWindow.Slice(SelectedBatchesInListOrder(), selectionPage, SelectionPageSize);
+
+    private IEnumerable<MigrationBatchInfo> SelectedBatchesInListOrder() =>
+        GetSortedBatches().Where(b => selectedBatches.Contains(b.BatchName));
+
+    private int SelectionTotalCount => SelectedBatchesInListOrder().Count();
+
+    private int SelectionPageCount => ListWindow.PageCount(SelectionTotalCount, SelectionPageSize);
+
+    // Labelled so it is unmistakable that it pages the SELECTION and not the catalogue (R4).
+    private string SelectionPagerLabel =>
+        ListWindow.Label(selectionPage, SelectionTotalCount, SelectionPageSize,
+            "selected batches", "No batches selected");
+
+    private void StepSelectionPage(int delta) =>
+        selectionPage = ListWindow.ClampPage(selectionPage + delta, SelectionTotalCount, SelectionPageSize);
 
     // Delete's staged target carries the per-status breakdown (D5): it is the only action that
     // accepts in-progress batches, so the operator must see how many of those they are about to
@@ -1474,6 +1687,15 @@
 
     private void StageResumeSelected() => StageSelectionAction(
         MigrationBatchAction.Resume, "Resume/Retry", ResumeSelectedBatches);
+
+    // S3. The two that used to be per-row buttons. They reach the same planner, the same ticket
+    // step and the same aggregating executor as the other three - R12 says both action bars are
+    // identical, and that starts with them not having their own private paths.
+    private void StageCompleteSelected() => StageSelectionAction(
+        MigrationBatchAction.Complete, "Complete", CompleteSelectedBatches);
+
+    private void StageStopSelected() => StageSelectionAction(
+        MigrationBatchAction.Stop, "Stop", StopSelectedBatches);
 
     // The plan is computed at STAGING time so the confirm bar can say how many batches the ticket
     // is about to cover, and re-computed at execution time inside the callback - the operator can
@@ -1494,64 +1716,16 @@
         });
     }
 
-    private async Task ToggleBatchDetails(string batchName)
-    {
-        // The gate moved into the handler in S2 because the control did. This used to be a Details
-        // button carrying disabled="@IsBusy"; the batch row is now a div, and a div ignores the
-        // disabled attribute exactly as the tab strip's anchors do - see SelectTab, which is here
-        // for the same reason. The greying is styling only and must never be mistaken for it.
-        if (IsBusy) return;
-
-        // If clicking the same batch, collapse it
-        if (expandedBatch == batchName)
-        {
-            OpenBatch(null);
-            batchUsers = null;
-            CloseUserReport();
-            return;
-        }
-
-        // Expand this batch and load users
-        OpenBatch(batchName);
-        loadingBatchUsers = batchName;
-        batchUsers = null;
-        CloseUserReport();
-        var generation = batchUsersGeneration;
-
-        try
-        {
-            ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(batchName));
-        }
-        catch
-        {
-            ReplaceBatchUsers(generation, new List<MigrationUserInfo>());
-        }
-        finally
-        {
-            if (loadingBatchUsers == batchName)
-                loadingBatchUsers = null;
-        }
-    }
-
+    // R30. Refreshing this pane's mailboxes and refreshing the batch catalogue are different acts;
+    // neither silently does the other. The report closes first because it describes the rows about
+    // to be replaced, and LoadMailboxesFor closes it again after the fetch lands - see
+    // ReplaceBatchUsers for why closing before the await is not enough.
     private async Task RefreshBatchUsers(string batchName)
     {
-        loadingBatchUsers = batchName;
-        CloseUserReport();
-        var generation = batchUsersGeneration;
+        if (IsBusy) return;
 
-        try
-        {
-            ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(batchName));
-        }
-        catch
-        {
-            ReplaceBatchUsers(generation, new List<MigrationUserInfo>());
-        }
-        finally
-        {
-            if (loadingBatchUsers == batchName)
-                loadingBatchUsers = null;
-        }
+        CloseUserReport();
+        await LoadMailboxesFor(batchName);
     }
 
     private void CompleteBatch(string name) => StageBatchAction("Complete Batch", name, t => ExecuteBatchAction(() => MigrationSvc.CompleteMigrationBatchAsync(name), "CompleteMigrationBatch", name, t));
@@ -1731,6 +1905,30 @@
             "RemoveMigrationBatch",
             "Migration_DeleteSelected",
             "Queued removal of",
+            ticket);
+
+    // S3. Same executor, so per-item failures aggregate and skipped rows are named, exactly as
+    // they do for the other three. The verbs say QUEUED for the same reason the others do:
+    // Exchange returns when it ACCEPTS the request, and the batch then sits at Completing or
+    // Stopping for a while.
+    private Task CompleteSelectedBatches(MigrationBatchActionPlan plan, string ticket) =>
+        ExecuteBulkBatchAction(
+            plan.Eligible,
+            plan.Skipped,
+            name => MigrationSvc.CompleteMigrationBatchAsync(name),
+            "CompleteMigrationBatch",
+            "Migration_CompleteSelected",
+            "Queued completion of",
+            ticket);
+
+    private Task StopSelectedBatches(MigrationBatchActionPlan plan, string ticket) =>
+        ExecuteBulkBatchAction(
+            plan.Eligible,
+            plan.Skipped,
+            name => MigrationSvc.StopMigrationBatchAsync(name),
+            "StopMigrationBatch",
+            "Migration_StopSelected",
+            "Queued stop of",
             ticket);
 
     private Task RemoveCompletedSelectedBatches(MigrationBatchActionPlan plan, string ticket) =>
@@ -1925,14 +2123,16 @@
 
             if (matchedBatch != null)
             {
-                OpenBatch(matchedBatch.BatchName);
-                loadingBatchUsers = matchedBatch.BatchName;
+                // R9 and R26. Finding takes the operator TO the batch, and arriving at a batch is
+                // selecting it - there is no third state where the pane shows one thing and the
+                // tick boxes another. Adopt navigates and loads, so nothing is fetched here.
+                selectedBatches.Clear();
+                selectedBatches.Add(matchedBatch.BatchName);
                 batchUsers = null;
                 CloseUserReport();
                 StateHasChanged();
-                var batchGeneration = batchUsersGeneration;
 
-                ReplaceBatchUsers(batchGeneration, await MigrationSvc.GetMigrationBatchUsersAsync(matchedBatch.BatchName));
+                await AdoptSelectionAsOpenBatch();
                 return;
             }
 
@@ -1957,14 +2157,13 @@
             }
 
             highlightedUser = searchResult.Email;
-            OpenBatch(searchResult.BatchId);
-            loadingBatchUsers = searchResult.BatchId;
+            selectedBatches.Clear();
+            selectedBatches.Add(searchResult.BatchId!);
             batchUsers = null;
             CloseUserReport();
             StateHasChanged();
-            var userGeneration = batchUsersGeneration;
 
-            ReplaceBatchUsers(userGeneration, await MigrationSvc.GetMigrationBatchUsersAsync(searchResult.BatchId!));
+            await AdoptSelectionAsOpenBatch();
         }
         catch (Exception ex)
         {
@@ -1974,7 +2173,7 @@
         {
             // Both of the branches above set loadingBatchUsers before an await and the catch
             // swallows the exception, so clearing it on the success path only left it stuck for
-            // the life of the circuit whenever Exchange failed. ToggleBatchDetails and
+            // the life of the circuit whenever Exchange failed. SelectOnlyBatch and
             // RefreshBatchUsers already clear it here; this method now matches them.
             isSearching = false;
             loadingBatchUsers = null;

@@ -224,7 +224,12 @@ public sealed class ModuleCatalog
             // scroll region and the batch list paged 40 at a time, so opening a batch no longer
             // injects a second table into the first and no view renders the whole catalogue
             // (docs/MigrationInterfaceRedesign-Plan.md S2).
-            Version = "1.11.0",
+            // 1.12.0: one concept, selection. The open batch is derived from what is ticked rather
+            // than held beside it, batch operations moved to a toolbar at the top of the batch pane
+            // (Complete and Stop among them, back from the per-row buttons S2 removed), and a
+            // multi-batch selection gets its own paged pane
+            // (docs/MigrationInterfaceRedesign-Plan.md S3).
+            Version = "1.12.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

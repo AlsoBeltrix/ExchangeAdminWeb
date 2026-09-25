@@ -157,3 +157,12 @@
         max-height: 24rem;
     }
 }
+
+/* R3 and R6: the batch operation bar sits at the top of the list it acts on, between the pane
+   head and the scroll region, so it is always on screen while the operator ticks rows below it -
+   R11. The old bar scrolled away with the page, which is defect 2 in the plan. */
+.mig-pane-actions {
+    padding: .5rem .75rem;
+    background: var(--ui-zebra);
+    border-bottom: 1px solid var(--ui-line);
+}

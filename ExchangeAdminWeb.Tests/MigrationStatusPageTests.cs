@@ -102,28 +102,34 @@ public class MigrationStatusPageTests
         // that gets pasted into a ticket and reopened tomorrow.
         var page = StripLineComments(ReadPage());
 
-        // Call sites only. The trailing semicolon excludes the declaration, whose parameter list
-        // would otherwise be read as an argument and fail the shape check below.
-        var arguments = Regex.Matches(page, @"(?<![A-Za-z0-9_])OpenBatch\((?<value>[^)]*)\);")
+        // S3 replaced OpenBatch(name) with membership of selectedBatches - under R9 the open batch
+        // IS the selection when the selection has one member - so what to check is what goes INTO
+        // the selection. Every write must be a batch name or a captured copy of one; an index or a
+        // computed position anywhere here retargets the address on the next reorder.
+        var writes = Regex.Matches(page, @"selectedBatches\.Add\((?<value>[^)]*)\);")
             .Select(match => match.Groups["value"].Value.Trim())
             .ToList();
-        Assert.True(arguments.Count >= 5,
-            $"expected every open-batch site to still be present, found {arguments.Count}");
+        Assert.True(writes.Count >= 4,
+            $"expected every selection write to still be present, found {writes.Count}");
 
-        foreach (var argument in arguments)
+        foreach (var write in writes)
         {
             Assert.True(
-                argument == "null" || Regex.IsMatch(argument, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$"),
-                $"OpenBatch({argument}) is not a plain batch-name expression; an index or a "
-                + "computed position here retargets the address on the next reorder");
+                Regex.IsMatch(write, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*!?$"),
+                $"selectedBatches.Add({write}) is not a plain batch-name expression; an index or "
+                + "a computed position here retargets the address on the next reorder");
         }
 
+        // And the selection is still a name-keyed set, not a set of positions.
+        Assert.Contains(
+            "private readonly HashSet<string> selectedBatches = new(StringComparer.OrdinalIgnoreCase);",
+            ReadPage(),
+            StringComparison.Ordinal);
+
         var row = GetBatchRowMarkup();
-        // The captured per-iteration copy, not batch.BatchName read inside a lambda: S2 made the
-        // whole row the click target and the lambda must close over THIS row name. Either form is
-        // name-keyed, which is the property; the capture is the one that is also correct under a
-        // loop variable.
-        Assert.Contains("ToggleBatchDetails(batchName)", row, StringComparison.Ordinal);
+        // The captured per-iteration copy, not batch.BatchName read inside a lambda: the whole row
+        // is the click target and the lambda must close over THIS row name.
+        Assert.Contains("SelectOnlyBatch(batchName)", row, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -141,11 +147,18 @@ public class MigrationStatusPageTests
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToList();
 
-        Assert.Equal(new[] { "OpenBatch", "SyncOpenBatchFromUrl" }, writers);
+        // S3 renamed the outbound writer. OpenBatch set the open batch directly; under R9 there
+        // is no such act - AdoptSelectionAsOpenBatch DERIVES it from the selection, which is why
+        // ticking, clicking a row, searching and Back all end in the same place and cannot
+        // disagree. Still exactly two writers, which is the property.
+        Assert.Equal(new[] { "AdoptSelectionAsOpenBatch", "SyncOpenBatchFromUrl" }, writers);
 
-        var open = GetMethodBody("OpenBatch");
-        Assert.Contains("GetUriWithQueryParameter(BatchQueryParameter, batchName)", open, StringComparison.Ordinal);
+        var open = GetMethodBody("AdoptSelectionAsOpenBatch");
+        Assert.Contains("GetUriWithQueryParameter(BatchQueryParameter, open)", open, StringComparison.Ordinal);
         Assert.Contains("Navigation.NavigateTo(uri)", open, StringComparison.Ordinal);
+
+        // The derivation itself: one ticked batch is the open batch, any other count is none (R2).
+        Assert.Contains("selectedBatches.Count == 1", open, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -206,17 +219,28 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
-    public void TheToolbarOffersAllThreeActionsWithDistinctNames()
+    public void TheToolbarOffersEveryBatchActionWithDistinctNames()
     {
-        // D3: three actions, three targets. And the naming half of the owner's complaint - "Clear
-        // Completed" sat beside "Clear selection" sharing a word, one irreversible and one
-        // harmless. No two buttons in this toolbar may share a leading verb.
-        var toolbar = ExtractBlock(ReadPage(), "@if (canManage && selectedBatches.Count > 0)");
+        // D3, plus the naming half of the owner's complaint: "Clear Completed" sat beside "Clear
+        // selection" sharing a word, one irreversible and one harmless.
+        //
+        // FIVE actions now, not three. S3 moved Complete and Stop here from the per-row buttons S2
+        // removed, which is the debt S2 recorded. Comments are stripped first because this block's
+        // own prose explains the "Clear selection" adjacency and would otherwise trip the check
+        // that the phrase is absent - a guard failing on the comment that documents it.
+        var toolbar = StripLineComments(
+            ExtractBlock(StripRazorComments(ReadPage()), "@if (canManage && selectedBatches.Count > 0)"));
 
         Assert.Contains("StageDeleteSelected", toolbar, StringComparison.Ordinal);
         Assert.Contains("StageRemoveCompletedSelected", toolbar, StringComparison.Ordinal);
         Assert.Contains("StageResumeSelected", toolbar, StringComparison.Ordinal);
+        Assert.Contains("StageCompleteSelected", toolbar, StringComparison.Ordinal);
+        Assert.Contains("StageStopSelected", toolbar, StringComparison.Ordinal);
+
         Assert.Contains("Untick all", toolbar, StringComparison.Ordinal);
+
+        // "Clear selection" belongs to the right pane, which has no tick boxes to untick (R10).
+        // The two must never appear in the same bar, which is the adjacency that was rejected.
         Assert.DoesNotContain("Clear selection", toolbar, StringComparison.Ordinal);
     }
 
@@ -455,6 +479,99 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void EveryBatchActionInTheToolbarRoutesThroughThePlanner()
+    {
+        // The debt S2 recorded, paid. When the per-row Delete and Resume buttons went, the
+        // assertion that a batch action reads MigrationBatchActionPlanner lost its subject; S3's
+        // toolbar gives it one back, and this is the positive half restored.
+        //
+        // Five actions now. Each must reach the planner through StageSelectionAction rather than
+        // carrying its own status rule - two copies of "which statuses may be stopped" is how a
+        // toolbar button and the executor come to disagree about the same batch.
+        var page = ReadPage();
+
+        string[] stagers =
+        [
+            "StageDeleteSelected", "StageRemoveCompletedSelected", "StageResumeSelected",
+            "StageCompleteSelected", "StageStopSelected",
+        ];
+
+        foreach (var stager in stagers)
+        {
+            var body = GetMemberSource(
+                $@"private\s+void\s+{Regex.Escape(stager)}\s*\(", stager);
+
+            Assert.Contains("StageSelectionAction(", body, StringComparison.Ordinal);
+            Assert.Contains("MigrationBatchAction.", body, StringComparison.Ordinal);
+        }
+
+        // And the one place they all land still asks the planner, twice: once to describe the
+        // staged target and once more inside the callback, because the operator can sit at the
+        // ticket field while the table reloads underneath them.
+        var stage = GetMethodBody("StageSelectionAction");
+        Assert.Equal(2, Regex.Matches(stage, @"MigrationBatchActionPlanner\.Plan\(").Count);
+    }
+
+    [Fact]
+    public void TheOpenBatchIsDerivedFromTheSelectionAndNeverSetBesideIt()
+    {
+        // R9, and the plan's test obligation 3. There is ONE concept: ticked, highlighted, shown
+        // in the right pane and acted on are always the same set. The failure this prevents is the
+        // one the owner named - "tick vs select vs left vs right is confusing and annoying" - and
+        // it returns the moment any handler sets the open batch without going through the
+        // derivation, because then the pane can show one batch while the tick boxes show another.
+        var page = StripLineComments(ReadPage());
+
+        // Every handler that changes the selection must end at the derivation.
+        string[] selectionHandlers =
+        [
+            "SelectOnlyBatch", "ToggleBatchSelected", "ToggleSelectAllBatches",
+            "ClearBatchSelection", "RemoveFromSelection",
+        ];
+
+        foreach (var handler in selectionHandlers)
+        {
+            var body = StripLineComments(GetMethodBody(handler));
+
+            Assert.Contains("selectedBatches", body, StringComparison.Ordinal);
+            Assert.Contains("AdoptSelectionAsOpenBatch()", body, StringComparison.Ordinal);
+        }
+
+        // And the inbound direction: an address arriving from Back or a pasted link sets the
+        // SELECTION, not a second value beside it. Without this, Back moves the pane while the
+        // tick boxes stay where they were.
+        var sync = StripLineComments(GetMethodBody("SyncOpenBatchFromUrl"));
+        Assert.Contains("selectedBatches.Clear();", sync, StringComparison.Ordinal);
+        Assert.Contains("selectedBatches.Add(requested);", sync, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheSelectionPaneIsBoundedAndSaysWhatItIsPaging()
+    {
+        // R4 and R5b's reasoning applied to batches. R5 forbids pinning ticked rows into the batch
+        // list, so this pane is where the selection is visible - and a pane with no bound renders
+        // 2000 rows on a select-all, which is the Defender failure R20 exists for.
+        //
+        // It reuses ListWindow rather than repeating the arithmetic: a second copy of the
+        // off-by-one is a second chance to render a blank page that reads as an empty selection.
+        var page = ReadPage();
+
+        Assert.Contains("ListWindow.Slice(SelectedBatchesInListOrder(), selectionPage, SelectionPageSize)",
+            page, StringComparison.Ordinal);
+        Assert.Contains("ListWindow.PageCount(SelectionTotalCount, SelectionPageSize)",
+            page, StringComparison.Ordinal);
+
+        // The label names the selection, so it cannot be mistaken for the catalogue's pager.
+        var label = GetMemberBody("SelectionPagerLabel");
+        Assert.Contains("\"selected batches\"", label, StringComparison.Ordinal);
+
+        // Its own page index, not the catalogue's: paging what you are choosing from and paging
+        // what you have chosen are different movements, and one index would jump both panes.
+        Assert.Contains("private int selectionPage;", page, StringComparison.Ordinal);
+        Assert.Contains("private int batchPage;", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NoBatchActionControlDecidesEligibilityOutsideThePlanner()
     {
         // Replaces PerRowButtonsReadThePlannersStatusRulesRatherThanTheirOwn, and says plainly
@@ -619,8 +736,13 @@ public class MigrationStatusPageTests
         // one of them is guarded.
         var page = ReadPage();
 
+        // Floor lowered from 5 to 4 in S3, and openly. The load paths consolidated into
+        // LoadMailboxesFor, so there are genuinely fewer discard sites. A floor exists to catch a
+        // site vanishing unnoticed, so it is re-derived from the new structure - left high the
+        // suite fails forever, dropped it guards nothing. Sites now: AdoptSelectionAsOpenBatch,
+        // SyncOpenBatchFromUrl, and both branches of SearchUser.
         var discards = Regex.Matches(page, @"batchUsers = null;[ \t]*\r?\n[ \t]*(?<next>[^\r\n]+)");
-        Assert.True(discards.Count >= 5,
+        Assert.True(discards.Count >= 4,
             $"expected every batchUsers discard site to still be present, found {discards.Count}");
 
         foreach (Match discard in discards)
@@ -633,18 +755,25 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
-    public void BothBranchesOfToggleBatchDetailsCloseTheReport()
+    public void ChangingTheOpenBatchClosesTheReportBeforeLoadingTheNewRows()
     {
-        // Collapse discards the rows; expand replaces them with another batch's. Both leave a
-        // rendered report pointing at rows that are gone or belong to someone else.
-        var body = GetMethodBody("ToggleBatchDetails");
+        // Was BothBranchesOfToggleBatchDetailsCloseTheReport, which had two branches to check
+        // because ToggleBatchDetails collapsed on one path and expanded on the other. R9 removed
+        // that method: there is no collapse/expand pair any more, only a selection that the pane
+        // follows, and AdoptSelectionAsOpenBatch is the single place it changes.
+        //
+        // Fewer branches, same property, and the ordering matters as much as the presence: the
+        // rows and the report must both be discarded BEFORE the new batch is loaded, or the
+        // operator reads the old batch report under the new batch name.
+        var body = GetMethodBody("AdoptSelectionAsOpenBatch");
 
-        var collapse = ExtractBlock(body, "if (expandedBatch == batchName)");
-        Assert.Contains("CloseUserReport();", collapse, StringComparison.Ordinal);
+        var discard = body.IndexOf("batchUsers = null;", StringComparison.Ordinal);
+        var close = body.IndexOf("CloseUserReport();", StringComparison.Ordinal);
+        var load = body.IndexOf("LoadMailboxesFor(", StringComparison.Ordinal);
 
-        var expand = body[(body.IndexOf(collapse, StringComparison.Ordinal) + collapse.Length)..];
-        Assert.Contains("CloseUserReport();", expand, StringComparison.Ordinal);
-        Assert.Contains("GetMigrationBatchUsersAsync", expand, StringComparison.Ordinal);
+        Assert.True(discard > 0, "the open batch changing must discard the rows");
+        Assert.True(close > discard, "the discard must be followed by the report close");
+        Assert.True(load > close, "both must precede the load of the new batch");
     }
 
     [Fact]
@@ -659,7 +788,13 @@ public class MigrationStatusPageTests
 
         var userMatch = body[(body.IndexOf(batchMatch, StringComparison.Ordinal) + batchMatch.Length)..];
         Assert.Contains("CloseUserReport();", userMatch, StringComparison.Ordinal);
-        Assert.Contains("GetMigrationBatchUsersAsync", userMatch, StringComparison.Ordinal);
+
+        // S3: neither branch fetches for itself any more. Under R9 arriving at a batch IS
+        // selecting it, so both hand off to AdoptSelectionAsOpenBatch, which navigates and loads.
+        // Asserting the handoff is what keeps this guard pointed at the behaviour rather than at a
+        // call that has moved one level down.
+        Assert.Contains("AdoptSelectionAsOpenBatch()", batchMatch, StringComparison.Ordinal);
+        Assert.Contains("AdoptSelectionAsOpenBatch()", userMatch, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -670,9 +805,14 @@ public class MigrationStatusPageTests
         var body = GetMethodBody("RefreshBatchUsers");
 
         var close = body.IndexOf("CloseUserReport();", StringComparison.Ordinal);
-        var fetch = body.IndexOf("GetMigrationBatchUsersAsync", StringComparison.Ordinal);
+        var fetch = body.IndexOf("LoadMailboxesFor(", StringComparison.Ordinal);
         Assert.True(close > 0, "RefreshBatchUsers must close the open report");
         Assert.True(fetch > close, "the close must precede the refetch");
+
+        // The refetch itself is LoadMailboxesFor, which closes the report AGAIN after its await -
+        // see ReplaceBatchUsers for why closing before the await is not enough on a path that
+        // leaves the old rows, and their enabled Report button, rendered for the whole call.
+        Assert.Contains("CloseUserReport();", GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
     }
     [Fact]
     public void NoCodePathAssignsBatchUsersWithoutClosingTheReport()
@@ -692,7 +832,9 @@ public class MigrationStatusPageTests
         // `batchUsers == null` to choose its empty state, and without the lookahead that matched
         // here and reported the page as assigning rows in markup.
         var assignments = Regex.Matches(page, @"(?<![A-Za-z])batchUsers\s*=(?!=)\s*(?<value>[^\r\n]+)");
-        Assert.True(assignments.Count >= 6,
+        // 4 discards plus the single permitted replacement; see the discard guard above for why
+        // this floor moved in S3.
+        Assert.True(assignments.Count >= 5,
             $"expected every batchUsers assignment site to still be present, found {assignments.Count}");
 
         var replacements = assignments
@@ -730,7 +872,10 @@ public class MigrationStatusPageTests
         // awaited fetch straight in, with exactly one captured token in front of it.
         var fetches = Regex.Matches(page, @"GetMigrationBatchUsersAsync\(");
         var wrapped = Regex.Matches(page, @"ReplaceBatchUsers\([A-Za-z_][A-Za-z0-9_]*, await MigrationSvc\.GetMigrationBatchUsersAsync\(");
-        Assert.True(fetches.Count >= 5,
+        // Three now, not five: LoadMailboxesFor owns the refetch for every caller that used to
+        // write its own. Re-derived, not relaxed - the assertion that every fetch is wrapped is
+        // unchanged and is the part that bites.
+        Assert.True(fetches.Count >= 3,
             $"expected every row refetch site to still be present, found {fetches.Count}");
         Assert.Equal(fetches.Count, wrapped.Count);
     }
@@ -791,7 +936,8 @@ public class MigrationStatusPageTests
 
         var calls = Regex.Matches(page, @"(?<![A-Za-z0-9_])ReplaceBatchUsers\((?<token>[A-Za-z_][A-Za-z0-9_]*),")
             .ToList();
-        Assert.True(calls.Count >= 8,
+        // Five now, not eight, for the same consolidation. Each is still checked individually.
+        Assert.True(calls.Count >= 5,
             $"expected every row replacement call site to still be present, found {calls.Count}");
 
         foreach (var call in calls)
@@ -830,7 +976,11 @@ public class MigrationStatusPageTests
             .Where(m => m.Groups["value"].Value.Trim() != "null;")
             .ToList();
 
-        Assert.True(setters.Count >= 4,
+        // TWO now, not four. S3 consolidated every batch-user load into LoadMailboxesFor, so only
+        // it and SyncOpenBatchFromUrl raise this flag - verified by reading the file, not guessed
+        // down until the suite went green. Every setter is still required to clear in a finally,
+        // which is the assertion that bites; the floor only catches a setter disappearing.
+        Assert.True(setters.Count >= 2,
             $"expected every row-loading setter to still be present, found {setters.Count}");
 
         foreach (var setter in setters)
@@ -864,9 +1014,19 @@ public class MigrationStatusPageTests
     [Fact]
     public void ReloadingTheBatchTableClosesTheReport()
     {
+        // S3 changed HOW, not whether. Under R9 a catalogue refresh is no longer a selection act,
+        // so LoadMigrationStatus stops collapsing the open batch by hand and routes through
+        // AdoptSelectionAsOpenBatch, which discards the rows and closes the report when the
+        // selection no longer names one batch - and through LoadMailboxesFor, which closes it
+        // again after the refetch lands, when it still does.
         var body = GetMethodBody("LoadMigrationStatus");
 
-        Assert.Contains("CloseUserReport();", body, StringComparison.Ordinal);
+        Assert.Contains("AdoptSelectionAsOpenBatch()", body, StringComparison.Ordinal);
+        Assert.Contains("LoadMailboxesFor(", body, StringComparison.Ordinal);
+
+        // Both of those close it; neither may stop doing so.
+        Assert.Contains("CloseUserReport();", GetMethodBody("AdoptSelectionAsOpenBatch"), StringComparison.Ordinal);
+        Assert.Contains("CloseUserReport();", GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1149,6 +1309,17 @@ public class MigrationStatusPageTests
     /// </summary>
     private static string StripLineComments(string source) =>
         Regex.Replace(source, @"//[^\r\n]*", "");
+
+    /// <summary>
+    /// <paramref name="source"/> with Razor <c>@* *@</c> comments removed.
+    /// </summary>
+    /// <remarks>
+    /// The markup's prose explains the very rules these guards assert - which phrase must not sit
+    /// beside which - so a comment documenting a rule would otherwise be read as code breaking it.
+    /// Same reasoning as <see cref="StripLineComments"/>, for the other comment syntax on the page.
+    /// </remarks>
+    private static string StripRazorComments(string source) =>
+        Regex.Replace(source, @"@\*.*?\*@", "", RegexOptions.Singleline);
 
     /// <summary>A regex matching <paramref name="identifier"/> only as a whole identifier.</summary>
     private static string WholeWord(string identifier) =>
