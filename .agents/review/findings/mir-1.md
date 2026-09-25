@@ -4,9 +4,9 @@
 operator can act on batch B's mailboxes while the page says batch A is open. It is silent: no
 error, no spinner, and the audit records the mailbox actually touched, which is the wrong one for
 the batch the operator believes they are in.
-**Status**: Open
+**Status**: Verified
 **Branch**: - (direct-to-main)
-**Commit**: -
+**Commit**: `1e8a9e6`
 
 ## Evidence
 
@@ -43,16 +43,30 @@ this page can disable.
 
 ## Approach
 
-Not yet implemented. The shape the reviewer proposes, and the one this file already uses for the
-same class of problem: a monotonic generation counter, bumped whenever the open batch changes or
-collapses. Each load captures the value it started under and discards its result - and declines to
-clear `loadingBatchUsers` - if the generation has moved on. `reportGeneration`
-(`Migration.razor:1932`) is the precedent; it guards the report against exactly this shape, and
-the rows it describes were left unguarded.
+`batchUsersGeneration` counts changes of open batch. Both writers of `expandedBatch` - `OpenBatch`
+outbound and `SyncOpenBatchFromUrl` inbound - bump it. Each load captures it before its await, and
+`ReplaceBatchUsers` refuses any result whose capture has been overtaken.
 
-Open question for implementation, not yet settled: whether the row guard is a second counter or
-the existing `reportGeneration`. They are bumped by overlapping but not identical sets of events,
-so reusing one for both needs proving rather than assuming.
+**The guard is inside `ReplaceBatchUsers`, not at the two cited call sites.** That is the one place
+rows may be assigned, so all six load paths are covered by construction. Only two are reachable
+from browser Back today; the other four are not, and that is exactly the kind of fact that stops
+being true one slice later.
+
+**Resolved: a SECOND counter, not `reportGeneration`.** They are bumped by overlapping but not
+identical events - `ReplaceBatchUsers` bumps the report generation without changing the open batch
+- so sharing one would make every row refresh look like a batch change and discard rows that are
+perfectly current.
+
+**The in-flight flag is keyed on the batch name, not the generation.** Its `finally` clears
+`loadingBatchUsers` only when this load still owns it, so a superseded load no longer un-busies the
+page while its successor runs. Keying it on the generation instead looked tidier and was wrong: on
+the collapse path the superseding act starts no load at all, so nothing would ever clear the flag
+and the page would stay busy for the life of the circuit. A stuck flag is the worse failure, and
+the repo already has a test class for it.
+
+Residual, stated rather than hidden: A -> B -> Back(A) -> Forward(B) leaves the first B load
+owning the name, so it clears the flag while the second B load runs. The rows are still correct -
+the generation discards the stale one - and the page merely un-busies a moment early.
 
 ## Files changed
 
@@ -62,9 +76,28 @@ Declared before repair: `Components/Pages/Migration.razor`,
 
 ## Guard proof
 
-Pending. The tripwire must fail without the guard and pass with it. Note the honest limit already
-recorded for S1: no test in this repo renders a Blazor component, so a source-anchored guard is
-what is available here and it must be anchored on the await sites themselves, not on the file.
+Three tests in `ExchangeAdminWeb.Tests/MigrationStatusPageTests.cs`, each proved to bite by
+mutating the fix and watching the named test fail, then restoring:
+
+1. `ARowLoadThatLostTheRaceIsDiscardedRatherThanPublished` - guard removed from
+   `ReplaceBatchUsers`. FAILED.
+2. `EveryChangeOfTheOpenBatchBumpsTheRowGeneration` - the bump removed from `OpenBatch`. FAILED.
+3. `EveryRowLoadCapturesTheGenerationBeforeItsAwait` - the capture in `RefreshBatchUsers` moved to
+   AFTER the await. FAILED. **This is the test worth having:** that mutation compiles, reads almost
+   identically to the correct code, and compares the counter with itself, so the guard can never
+   fire and every other test still passes.
+
+**One probe is not counted and is recorded rather than quietly redone.** The first attempt at (3)
+moved the capture inside the `try` while the `catch` still referenced it - `error CS0103` - so it
+proved nothing about the test. It was rewritten to compile and then bit.
+
+Honest limit, unchanged from S1: no test in this repo renders a Blazor component, so none of these
+exercises the race. They are source-anchored tripwires on the await sites themselves, and the
+failure they describe can only be seen in a browser.
+
+Gates: build Release 0 errors, `dotnet test` 3072 passed / 0 failed / 3 skipped (+3, exactly the
+new tests), format exit 0, `git diff --check HEAD` exit 0, ASCII scan clean. Pester and
+PSScriptAnalyzer not run - no PowerShell changed.
 
 ## Coder dispute
 
@@ -74,10 +107,14 @@ real rather than theoretical.
 
 ## Known gaps
 
-`RefreshBatchUsers` and `ExecuteUserAction` contain the same unguarded
-`ReplaceBatchUsers(await ...)` shape. Neither is reachable from the URL, so neither is part of the
-predicted failure, but a generation guard that covers only the two cited sites leaves the same
-trap for the next slice to fall into.
+Closed by putting the guard in `ReplaceBatchUsers`: `RefreshBatchUsers`, `ExecuteUserAction` and
+both `SearchUser` branches carried the same unguarded shape and are now covered, though none is
+reachable from the URL today.
+
+Still open, and not this finding: the enhanced-navigation question S1 recorded. If the interactive
+component is torn down on each `NavigateTo` rather than preserved, `SyncOpenBatchFromUrl` never
+races anything because there is no surviving instance to race in - the fix is still correct, but
+the defect it closes would have been unreachable. That needs a browser either way.
 
 ## Reviewer comments
 
@@ -103,4 +140,8 @@ model id, so this records what was sent rather than what the provider chose.
 
 ## Closeout
 
-Pending step: the owner's go to implement. No code is written.
+Fixed on `master` in `1e8a9e6`, record in the commit that follows it. Per repo policy
+(`.agents/repo-guidance.md`, "Earned Practices") a reviewer verification round is CRITICAL-only
+and needs its own owner go; this is HIGH, so it closes on the coder-side guard proof above.
+
+Pending step: push. Push policy is ask, and these commits are unpushed.

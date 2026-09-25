@@ -8,16 +8,20 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**2026-09-24 (third session of the day).** On `master`, working tree clean. Gates are green at
-this head: build 0 errors, `dotnet test` **3069 passed / 0 failed / 3 skipped**, format clean,
-`git diff --check HEAD` clean, ASCII scan clean. Pester and PSScriptAnalyzer were NOT re-run -
-no PowerShell changed. Nothing is half-finished. **3 commits are unpushed on both remotes**
-(`origin` and `github` both sit at `9b85957`) and push policy is ask. The previous handoff's
-"56 unpushed" and head `9b85957` were already stale when written; a push had landed.
+**2026-09-25.** On `master`, working tree clean apart from another session's in-flight plan work.
+Gates are green on the migration commits: build 0 errors, `dotnet test` **3072 passed / 0 failed /
+3 skipped**, format clean, `git diff --check HEAD` clean, ASCII scan clean. Pester and
+PSScriptAnalyzer were NOT re-run - no PowerShell changed. Nothing is half-finished.
 
-- **QUEUE ITEM 14: THE PLAN IS APPROVED (owner, 2026-09-24) AND S1 IS LANDED. S2 IS NEXT.**
+**Both remotes sit at `9b85957`; everything after it is unpushed and push policy is ask.** Stated
+as a position rather than a count on purpose: two sessions are committing to `master`, so any
+number written here is wrong within the hour. The 2026-09-24 handoff's "56 unpushed" was already
+stale when written.
+
+- **QUEUE ITEM 14: THE PLAN IS APPROVED (owner, 2026-09-24), S1 IS LANDED AND ITS OPENREVIEW
+  FINDING IS FIXED. S2 IS NEXT, AND NOTHING BLOCKS IT.**
   `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In progress`. Module `1.9.1` ->
-  `1.10.0`, no base app bump.
+  `1.10.0` (S1) -> `1.10.1` (mir-1), no base app bump.
   **Read the plan's `## Requirements` section before anything else - all 31 rules with their
   sub-rules. It is the contract, not a summary.** The mockup
   `.agents/mockups/migration-v3.html` is the reference for layout and interaction only; the
@@ -44,19 +48,26 @@ no PowerShell changed. Nothing is half-finished. **3 commits are unpushed on bot
     and S1 must switch to writing the address without navigating. **This is the app's first
     query-parameter route, so there is no precedent here to read the answer off - it needs a dev
     deploy and a browser.**
-  - **S1 WAS OPENREVIEWED 2026-09-25 AND CAME BACK `acceptable with changes` WITH ONE ADMITTED
-    HIGH FINDING, `mir-1`, NOT YET FIXED.** codex (`@azure-openai-eus2-global/gpt-5.5-dzs` @
+  - **S1 WAS OPENREVIEWED 2026-09-25, CAME BACK `acceptable with changes`, AND ITS ONE HIGH
+    FINDING `mir-1` IS FIXED AND CLOSED (`1e8a9e6`).** codex (`@azure-openai-eus2-global/gpt-5.5-dzs` @
     xhigh, fallback) over `69980f1..f43fc11`. It endorsed the approach as what it would itself
     have built. The finding: **two batch-user loads can now overlap and the loser renders one
     batch opened with another batch's mailboxes** - open A, open B, press browser Back before B's
     Exchange call returns, and if B's lands last the page shows A expanded over B's rows, whose
     per-mailbox action buttons then act on B. **S1 caused it.** Every pre-S1 entry point sat
     behind `disabled="@IsBusy"`; the browser's Back button is not a control this page can gate.
-    The fix shape is the `reportGeneration` pattern already in this file, applied to the rows.
-    Open findings index: `.agents/review/index.md`; detail in
-    `.agents/review/findings/mir-1.md`. **`mir-1` closes before S2 starts.**
+    **The fix, and the two judgement calls inside it worth carrying into S2.** A second counter,
+    `batchUsersGeneration`, bumped by both writers of `expandedBatch`; each load captures it before
+    its await and `ReplaceBatchUsers` refuses an overtaken result. (a) The guard lives INSIDE
+    `ReplaceBatchUsers`, not at the two cited call sites, so all six load paths are covered by
+    construction - four are unreachable from the URL today and that stops being true one slice
+    later. (b) It is NOT `reportGeneration`: that one is bumped by `ReplaceBatchUsers` itself
+    without the open batch changing, so sharing it would make every row refresh look like a batch
+    change. The in-flight flag is keyed on the batch NAME instead, because keying it on the
+    generation strands it forever on the collapse path, which starts no successor load.
+    Detail in `.agents/review/findings/mir-1.md`; index `.agents/review/index.md`, no open rows.
   - **Two things S1 had to touch that the next slices will too.** `ClickGateRegistry` pins
-    Migration's line count (now 2127) and cites handler coordinates in its rationale; every slice
+    Migration's line count (now 2166) and cites handler coordinates in its rationale; every slice
     will fail `TheRegisteredLineCountStillMatchesTheFile` until both are re-checked and updated.
     And `LoadMigrationStatus` is now a two-part split (`LoadBatchList` is the shared reload);
     `SelectionIsPrunedWhenTheTableReloads` is anchored on the shared half.
