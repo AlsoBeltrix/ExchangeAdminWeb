@@ -384,10 +384,32 @@ what renders, that the pages tile the list exactly once, and that a page past th
 rather than rendering an empty catalogue that reads as "all my batches are gone". S3 and S5 reuse
 it rather than writing the off-by-one twice more.
 
-**S3 -- Selection model.** Checkboxes on both lists, select-all over the whole filter with no
+**S3 -- Selection model. LANDED 2026-09-25 (`ac3e567` service, `07f0341` UI), module `1.11.0` -> `1.12.0`.** Checkboxes on both lists, select-all over the whole filter with no
 cap, the batch operation bar at the top of the left pane, and the multi-batch selection view
 with its own pager in the right pane. Remove the old bulk bar at `:460`. Module version bump.
-Satisfies R2-R12.
+Satisfies R2-R12 **except the mailbox half**: see below.
+
+**What S3 did NOT deliver, stated rather than counted as done.** Its own text says "checkboxes on
+both lists". Batch checkboxes, select-all with no cap, the batch operation bar and the multi-batch
+selection pane with its own pager are all in. **The mailbox half of R7 is not, and neither is the
+mailbox action bar R12 pairs with it.** They belong with item 13's per-mailbox bulk actions and
+the natural home is S5, which already reworks that table. So R12 is half satisfied: "both bars are
+identical" also needs S4's outcome preview and eligible count, and needs the second bar to exist.
+
+**Complete and Stop came back here,** as planner actions (S3 step 1) reaching the toolbar, which
+closes the gap S2 opened. The guard S2 owed back is paid by
+`EveryBatchActionInTheToolbarRoutesThroughThePlanner`.
+
+**The judgement worth carrying into S4-S8: consolidating the six batch-user load paths into one
+`LoadMailboxesFor` lowered five guard floors at once.** Every one was re-derived by reading the
+file, with the derivation written into the test comment - not nudged down until the suite went
+green. A floor exists to catch a call site vanishing unnoticed, so a silently lowered one stops
+guarding the thing it is for. Do the same if a later slice consolidates further.
+
+**Open owner question from step 1:** should `CompletedWithErrors` be completable? Complete and Stop
+kept the per-row buttons' allowlists character for character, which is the shape D4 warns about;
+kept narrow on purpose because Complete finalises a move and Stop halts one, so accepting an
+unanticipated status is the harmful direction rather than hiding one.
 
 **S4 -- Outcome preview.** Per-row eligibility annotation and the eligible count on Confirm,
 replacing the current blanket staging. This is where Known Failure Class 2 (success

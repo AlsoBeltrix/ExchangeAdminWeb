@@ -25,10 +25,27 @@ as a position rather than a count on purpose: two sessions are committing to `ma
 number written here is wrong within the hour. The 2026-09-24 handoff's "56 unpushed" was already
 stale when written.
 
-- **QUEUE ITEM 14: PLAN APPROVED, S1 AND S2 LANDED, mir-1 FIXED. S3 IS NEXT AND IT OWES A DEBT
-  S2 INCURRED - SEE BELOW.** `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In
-  progress`. Module `1.9.1` -> `1.10.0` (S1) -> `1.10.1` (mir-1) -> `1.11.0` (S2), no base app
-  bump.
+- **QUEUE ITEM 14: PLAN APPROVED. S1, mir-1, S2 AND S3 ARE ALL LANDED. S4 IS NEXT.**
+  `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In progress`. Module `1.9.1` ->
+  `1.10.0` (S1) -> `1.10.1` (mir-1) -> `1.11.0` (S2) -> `1.12.0` (S3), no base app bump.
+  - **S3 DID NOT DELIVER MAILBOX CHECKBOXES, AND ITS OWN SLICE TEXT SAYS "CHECKBOXES ON BOTH
+    LISTS".** Batch checkboxes, select-all with no cap, the batch operation bar and the
+    multi-batch selection pane with its own pager are done. The mailbox half of R7 - and the
+    mailbox action bar R12 pairs with it - are NOT. They belong with item 13's per-mailbox bulk
+    actions, and the natural home is S5, which already reworks that table for filter, sort and
+    paging. **Recorded as a gap, not quietly counted as done.**
+  - **R12 is therefore half satisfied.** "Both action bars are identical" needs the per-row
+    outcome preview and the eligible count on Confirm (S4) and needs the second bar to exist (the
+    gap above). S3 delivered the batch bar and the routing behind it.
+  - **Complete and Stop are reachable again** (`ac3e567` + `07f0341`), which closes the gap S2
+    opened, and the guard S2 owed back is paid:
+    `EveryBatchActionInTheToolbarRoutesThroughThePlanner`.
+  - **Five guard floors dropped when six load paths became one `LoadMailboxesFor`, and each was
+    re-derived from the file rather than nudged down until the suite went green** - discard sites
+    5 to 4, batchUsers assignments 6 to 5, refetch sites 5 to 3, generation captures 8 to 5,
+    row-loading flag setters 4 to 2. The derivation is in each test's comment. **If a later slice
+    consolidates further, do the same: a floor quietly lowered stops catching the thing it is
+    for.**
   - **S3 STEP 1 IS LANDED (`ac3e567`): Complete and Stop are planner actions now.** The rules
     were ported from the per-row buttons character for character. **They are allowlists and D4
     says allowlists caused the CompletedWithErrors defect** - kept narrow on purpose because
