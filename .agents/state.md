@@ -168,9 +168,10 @@ stale when written.
     `MigrationService.cs:490` and `:698` pass a **past** timestamp and `:596` reads the property
     as an auto-complete boolean. Schedule cannot work until S8 separates those.
 
-- **TWO OWNER-REPORTED DEFECTS WERE PLANNED AND REVIEWED 2026-09-24. BOTH PLANS ARE DRAFT AND
-  AWAIT APPROVAL; NO CODE IS WRITTEN.** They jumped ahead of queue item 14. Only the sidebar
-  plan still has an open owner question.
+- **TWO OWNER-REPORTED DEFECTS, 2026-09-24. THE SIDEBAR ONE IS LANDED; RISKY USERS IS PLANNED,
+  REVIEWED AND UNSTARTED.** Both jumped ahead of queue item 14. **Queue item 15 - implement the
+  Risky Users plan - is the next code task and nothing blocks it: no open owner questions, five
+  slices, all reviewed.**
   - **`docs/RiskyUsersCompleteResults-Plan.md`** (`dc79994`, revised `fa0dd1b`). The module
     returns one 500-row Graph page in an unspecified order and runs the UPN search inside it, so
     a High-risk account visible in the Entra portal is absent from the page. This is the S4a
@@ -239,13 +240,27 @@ stale when written.
     the Cloud Password Reset lesson inverted - there an unanswered question was read as a
     negative answer; here a real negative must not be dressed up as a failure.
     Module `1.3.0` -> `1.4.0`. **S5 is unreviewed.**
-  - **`docs/SidebarScrollbar-Plan.md`** (`941cd77`, revised `afdacaa`). The sidebar scrollbar
-    never leaves because the scroll pane overflows by a constant 0.7rem: the first category
-    heading's `margin-top` collapses out of a `nav` that has no padding-top, `.nav-scrollable` is
-    a BFC so it cannot escape, and `nav` is `min-height: 100%`. `nav` is a block, not flex -
-    Bootstrap's `.flex-column` sets `flex-direction` only - which is also why `mt-auto` on the
-    version footer does nothing. One slice, CSS only, base app PATCH bump. **Open Q1: may the
-    version footer move to the bottom** (making `nav` flex activates the existing `mt-auto`).
+  - **`docs/SidebarScrollbar-Plan.md` - IMPLEMENTED AND LANDED 2026-09-25, `970b6fd`.** The go was
+    queue item 16. Base app `2.23.0` -> `2.23.1` (PATCH, shared UI defect); `ModuleCatalog.cs`
+    byte-identical, verified by diff. Suite 3122 passed / 0 failed / 3 skipped, format clean.
+    **Cause, worth keeping because it is not guessable from the symptom:** the scroll pane
+    overflowed by a CONSTANT 0.7rem at every viewport height, which is why a taller window never
+    helped. The first `.nav-category`'s `margin-top` collapsed out of a `nav` with no padding-top;
+    `.nav-scrollable` is a BFC so it could not escape and instead offset `nav` inside a container
+    `nav` was already `min-height: 100%` of. `nav` was a block because Bootstrap's `.flex-column`
+    sets `flex-direction` ONLY.
+    Fixed at the container, not at `.nav-category` - that rule is mirrored into `wwwroot/app.css`
+    and a one-copy edit is invisible to the build.
+    **Q1 was taken as a CODER-SIDE CALL, not answered: the version footer now sits at the bottom**
+    (making `nav` flex switches on the `mt-auto` the markup always carried). Put to the owner
+    twice unanswered. **One line to revert: remove `mt-auto` from `NavMenu.razor:130`** - not a
+    stylesheet override, Bootstrap declares it `!important`.
+    **Four tripwires, all four proven to bite**, including deleting the category margin from
+    `app.css` ALONE - the mirror half-edit. One of them caught a defect in itself on its first
+    run: it read the whole file, so the comment explaining the removed `calc()` tripped it. The
+    readers strip comments now - a test a comment can fail gets silenced rather than fixed.
+    **NOT verified in a browser.** Nothing here renders a page; the plan's manual checks are the
+    only evidence an operator sees the scrollbar go.
   - **Both were openreviewed by codex** (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh,
     fallback, codex-cli 0.154.0), both `acceptable_with_changes`, **three material changes each,
     all six admitted and folded in**. Each plan's `## Review` section owns the detail.
@@ -312,9 +327,20 @@ unblocked.
   measured fact independently. The audit also found Revision 5 had no heading at all, so its
   subsections floated at top level - which is what produced the "two revision series" confusion,
   three `## Verification` sections and two `## Versioning`.
-  **The post-audit plan is UNDER CODEX REVIEW as of 2026-09-25 and no slice may start until that
-  returns.** Everything since 2026-09-24 is unreviewed: the revised requirement, `SeenBy()`, the
-  L-table, AD Sites, the five rulings, the ceiling reversal, the audit and the new slices.
+  **REVIEWED AND CLOSED, 2026-09-25** (`7945556`). codex openreview over `f43fc11..d496ac0`,
+  paths scoped: `acceptable_with_changes`, approach endorsed. Its finding was that the ceiling
+  ruling had been written in two places and contradicted in **sixteen** others - Scope, CSV
+  export, the descriptor string, the completion rule, S1, S2, R1(f), R1(g) and Verification all
+  still said "complete or refuse". All sixteen now agree.
+  **The distinction that mattered while fixing them, and it is worth carrying:** the CEILING
+  stopped being a refusal, but the **full-page-without-a-cursor guard did not** - that is an
+  ambiguous state, not a bounded one. R1(g) had conflated the two in one sentence.
+  **Four gaps the fix exposed that the review did not see:** the two rule sections contradicted
+  each other; the audit-completeness half of the ruling existed only in the ruling and not in the
+  CSV or S3 sections; **nothing held the resume state** that "Keep going" needs, so S6 or S7 must
+  add it or the control cannot exist; and the shipped code still refuses in two named places
+  (`ModuleCatalog.cs:841`, `DefenderEndpointDeviceService.cs:307`), recorded as part of the
+  implementing slice rather than as drift.
   **Two defects are open against the shipped module and neither is fixed:**
   1. *The page is unusable at tenant scale.* It renders every device row, so the Blazor circuit
      dies ("Rejoining the server...") and nothing can be scrolled. The owner rejected virtualised
