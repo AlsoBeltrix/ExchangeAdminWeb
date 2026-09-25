@@ -57,10 +57,12 @@ Three consequences, each of which contradicts something written below it in earl
 1. List **every** Defender for Endpoint device matching the active filters, paging the API to
    completion - defaulting to the two filters the owner asked for: onboarding status "can be
    onboarded", operating system Windows. Both filters are operator-changeable on the page.
-   "Every" is load-bearing and is what T3 exists to guarantee: the module either returns the
-   complete matching set or refuses in words. It never returns a partial set that looks whole.
+   "Every" is load-bearing and is what T3 exists to guarantee: the module returns the complete
+   matching set, or everything it collected before the ceiling stopped it, marked partial in
+   words on screen and in the export filename. It never returns a partial set that looks whole.
 2. Show the per-device fields listed under "Field mapping" in a table.
-3. Export that complete result set to CSV.
+3. Export that result set to CSV - a run the ceiling stopped short is marked partial in the
+   filename.
 
 ## Out of scope
 
@@ -774,7 +776,7 @@ this plan cannot name.
 neutralises spreadsheet-formula injection. Downloaded through the existing
 `JS.InvokeVoidAsync("downloadFile", ...)` path, filename
 `DefenderEndpointDevices_yyyyMMdd_HHmmss.csv`, exactly as `BlockedSenders.razor:236-256` does,
-and audited the same way (`ExportCsv`, with the row count).
+and audited the same way (`ExportCsv`, with the row count **and whether the run was complete** - a row count cannot be interpreted later without it).
 
 Proposed columns, in order. Multi-valued cells are joined with `"; "`, matching
 `NamedLocations.razor`.
@@ -824,12 +826,12 @@ config switch off) or failed, every cell in them reads `(unavailable)` and the p
 above the table. An empty cell must never be the way the operator learns that half the report did
 not execute - that is Known Failure Class 2 in `.agents/repo-guidance.md`.
 
-The export writes the rows currently on screen, with the active filters, and those rows are by
-construction the **complete** matching set: a run that could not be completed within `MaxDevices`
-renders no table and offers no export button at all (T3). So the CSV needs no truncation marker,
-because a truncated CSV is never produced. That is the design, and it is the point - a truncated
-export that looks complete is the failure mode that matters, and the way to prevent it is to not
-have that state rather than to annotate it.
+The export writes the rows currently on screen, with the active filters. Those rows are the
+complete matching set unless the ceiling stopped the run short, in which case they are everything
+that was collected and **the CSV does need a marker**. It goes in the **filename**, beside the
+timestamp - not a preamble row and not a per-row column; the reasoning for both is under "The
+ceiling is a runaway guard" (T3). A truncated export that looks complete is the failure mode that
+matters, and the filename stamp is what prevents it.
 
 ## Module descriptor
 
@@ -861,8 +863,8 @@ new()
         new("GraphDelineaSecretId", "Graph App Delinea Secret ID",
             "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields (the app registration needs Machine.Read.All on WindowsDefenderATP, plus ThreatHunting.Read.All on Microsoft Graph if discovery sources are wanted)"),
         new("MaxDevices", "Maximum Devices",
-            "Safety ceiling on one run. The module pages the API until the matching set is complete; if more devices match than this, it REFUSES the report rather than returning a partial one. Defaults to 20000. Raise it, or narrow the filters.",
-            Required: false, DefaultValue: "20000"),
+            "Safety ceiling on one run. The module pages the API until the matching set is complete; if more devices match than this, it renders what it collected, says the report is partial and offers to keep going. Defaults to 100000. Raise it, or narrow the filters.",
+            Required: false, DefaultValue: "100000"),
         new("IncludeDiscoverySources", "Include Discovery Sources",
             "Run the advanced hunting query that supplies the discovery sources, device type, vendor and model columns. Turn off when the app registration does not hold ThreatHunting.Read.All.",
             Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean)
@@ -1004,15 +1006,20 @@ collection. R1(g) settles it before any multi-page behaviour ships.
 ### The completion rule
 
 A run is complete only on a **positive proof of exhaustion**. Absence of evidence is never
-treated as proof, and every ambiguous state takes the same exit as the ceiling: refusal.
+treated as proof, and every ambiguous state exits by refusing. The ceiling is not one of them:
+it stops a run that was going fine, so it keeps its rows and says the set is partial (see "The
+ceiling is a runaway guard").
 
 - **P1 - single request.** The request asked for `$top = N`, the response returned **fewer than
   N** rows, and carried no `@odata.nextLink`. Complete.
 - **P2 - cursor chain.** Every continuation was an `@odata.nextLink` followed as an absolute URL,
   and the final response carried no `@odata.nextLink` and was short in the P1 sense. Complete.
-- **Refuse** when any of these holds: a response returns **exactly** the `$top` it was asked for
-  and carries **no** `@odata.nextLink`; accumulating the next page would exceed `MaxDevices`; or
-  any request in the chain fails. No table, no export button, and a message saying which.
+- **Refuse** when either of these holds: a response returns **exactly** the `$top` it was asked
+  for and carries **no** `@odata.nextLink`; or any request in the chain fails. No table, no
+  export button, and a message saying which.
+- **Stop, and keep what was fetched**, when accumulating the next page would exceed
+  `MaxDevices`. This is not a refusal: the rows render, the set is marked partial, and a
+  **Keep going** control resumes it.
 
 The full-page-without-a-cursor case is the one worth spelling out, because it is the case that
 looks like success: a response holding exactly as many rows as we asked for is indistinguishable
@@ -1024,7 +1031,7 @@ The mechanics:
 1. Ask for `$top = min(MaxDevices + 1, 10000)` in one request, with the server-side
    `onboardingStatus` filter from D1. Asking for one more than the ceiling is what makes the
    ceiling test decisive in a single round trip: if `MaxDevices + 1` rows come back, more than
-   `MaxDevices` match, and that is a refusal without a second call.
+   `MaxDevices` match, and the run is known to be partial without a second call.
 2. **If the response carries `@odata.nextLink`, follow it as an absolute URL.** The module-local
    client can do this and the shared `GraphTokenClient` cannot: `GraphTokenClient` prepends its
    base URL to whatever path it is handed (`GraphTokenClient.cs:35`), so concatenating an absolute
@@ -1035,7 +1042,7 @@ The mechanics:
    absolute URL is sent unmodified.
 3. Accumulate, **de-duplicating on device `id`**. This is cheap insurance against a duplicate row
    inside a cursor chain. **It is explicitly NOT a completeness argument** - see below.
-4. Stop on P1, P2, or a refusal condition. Never on "the page looked short enough".
+4. Stop on P1, P2, the ceiling, or a refusal condition. Never on "the page looked short enough".
 
 ### Why `$skip` is not used - rejected alternative, with the argument
 
@@ -1087,7 +1094,7 @@ series) is unaffected either way - it does not need `$skip` and is not waiting o
 
 ### The ceiling is a runaway guard, not a limit the report is expected to meet - owner ruling 2026-09-25
 
-**This overturns T3 above, whose heading is now wrong on purpose until a slice rewrites it.** T3
+**This overturns T3 above; T3's heading was corrected the same day to match.** T3
 said the report is complete or it refuses. It refuses no longer.
 
 **The ruling came out of the owner asking a question neither the plan nor its reviewer had asked:
@@ -1140,12 +1147,25 @@ costume of data about a device.
 The export's audit record already logs a row count. It must also log whether the run was complete,
 because a count cannot be interpreted later without it.
 
+#### What the SHIPPED code says today, so the divergence is not mistaken for drift
+
+The module is deployed and still refuses. Two places say so in words and **both are part of the
+slice that implements this ruling**, not separate cleanup:
+
+- `Modules/ModuleCatalog.cs:841` - the `MaxDevices` description ends *"it REFUSES the report
+  rather than returning a partial one"*. That string is what an operator reads on the config page,
+  so leaving it would have the product contradict itself.
+- `Services/DefenderEndpointDeviceService.cs:307` - documents the refusal in the service.
+
+The shipped default is **100000**, which is what the descriptor snippet in `## Module descriptor`
+now shows; an earlier version of that snippet said 20000 and was already stale before this ruling.
+
 #### Why a ceiling exists at all
 
 Reasons about the API, not about any deployment: the endpoint allows 100 calls per minute, and an
 unbounded loop against a paged API is how a read module becomes an outage. The request count
 follows from the page size rather than from a number written here: at
-`$top = min(MaxDevices + 1, 10000)` the default of 20000 costs **one** request when the endpoint
+`$top = min(MaxDevices + 1, 10000)` the default of 100000 costs **one** request when the endpoint
 emits no cursor, and at most `ceil(MaxDevices / pageSize)` when it does, where `pageSize` is
 whatever the service actually returns - which R1(g) observes rather than this file asserting.
 
@@ -1299,16 +1319,26 @@ drawn on compilation order, not on conceptual grouping.
   file. Never logs the token, the secret or a raw auth response body.
 - `Models/DefenderDeviceModels.cs`: `DefenderDevice`, `DefenderDeviceIpAddress`,
   `DefenderDeviceListResult` (`Devices`, `DistinctCount`, `PagesFetched`, `CeilingExceeded` +
-  the ceiling that was exceeded, `DiscoveryEnrichment` state + reason). **There is deliberately
-  no `Truncated` flag**: the only two outcomes are a complete set and a refusal (T3), and a flag
-  that says "some of the data" is how a partial result gets rendered as a table by the next
-  person to touch the page.
+  the ceiling that was exceeded, `DiscoveryEnrichment` state + reason). **A completeness flag is
+  required**: there are three outcomes - complete, partial at the ceiling, and failure (T3) - and
+  the page, the export and the audit record all have to tell the first two apart.
+  `CeilingExceeded` is that flag. An earlier revision banned a `Truncated` flag on the ground
+  that only a complete set and a refusal existed; the owner overturned the refusal on 2026-09-25,
+  so the ban goes with it. What must never happen is a partial set rendered as though it were
+  whole.
+  **The resume state has to live somewhere, and nothing here holds it yet.** "Keep going" resumes
+  the partition loop, which means the stopping point - the set of partitions that were never split
+  and never fetched - has to survive the call that stopped. `DefenderDeviceListResult` carries no
+  such field today. **S6 or S7 must add one, or the Keep going control cannot exist and the
+  ceiling ruling is unimplementable.** Named here rather than designed here: the shape depends on
+  how the partition loop actually represents its work queue, which is S1 code an implementer will
+  be reading anyway.
 - `Services/DefenderEndpointDeviceService.cs`: `GetApiClientAsync()` in the exact shape of
   `ServiceHealthService.GetGraphClientAsync()` (`ServiceHealthService.cs:50-71`) but reading
   `DefenderEndpointDevices` / `GraphDelineaSecretId` and never another module's config;
   `IsAvailable`; `ListDevicesAsync(filters)`. 404 on the first page handled per T5, other
   non-success per T7's reporting rule, and the **P1/P2 completion rule with the `MaxDevices`
-  refusal per T3**.
+  stop-and-mark-partial per T3**.
 - **Every test in S1 runs against a stub `HttpMessageHandler`. S1 makes no live call** - the
   client, the response parser and the query builder are all exercised against canned responses,
   and the live questions belong to R1.
@@ -1317,7 +1347,8 @@ drawn on compilation order, not on conceptual grouping.
     completes, and the absolute URL is asserted to be sent unmodified;
   - a single short cursor-free page completes (P1);
   - a duplicate row spanning two pages is de-duplicated on `id`;
-  - a chain that would exceed `MaxDevices` **refuses**;
+  - a chain that would exceed `MaxDevices` **stops, keeps the rows it fetched and reports the
+    set as partial** - it neither refuses nor discards;
   - **the guard test: a full page - exactly the `$top` that was asked for - carrying no
     `@odata.nextLink` must produce a refusal, not a list.**
 - **Why that guard is not vacuous, which is the part worth keeping.** Against the committed
@@ -1357,8 +1388,8 @@ R1 confirms or triggers a revision; it does not unblock the writing.
   authorization re-check, `<ModuleVersion />` inside the `<h1>` (required, and enforced by
   `tools/validate-module-package.ps1`), the two filter controls (onboarding status, Windows only),
   a results table and a detail panel rendered from the already-fetched row (T4).
-- The ceiling refusal, unavailability and every failure state rendered in words, never as an
-  empty table and never as a short one.
+- The partial-at-the-ceiling notice and its **Keep going** control, unavailability and every
+  failure state rendered in words, never as an empty table and never as a short one.
 - Read auditing via `Audit.LogLookupAction`.
 - Updates the catalog count and alias assertions in `ModuleCatalogTests.cs` (T8).
 - Ships `EnabledByDefault = false` and fail-closed, so landing S2 makes the module *configurable*
@@ -1384,10 +1415,10 @@ config page. Its answers are recorded **in this file** before S3 starts.
 - (e) Whether `ipAddresses` is populated on list responses (Assumptions 3). If not,
   `IpAddresses` and `MacAddresses` leave the CSV before S3 writes it.
 - (f) Whether the result set on this deployment approaches `MaxDevices`, and therefore whether
-  the ceiling default needs raising before anyone relies on the report. Asked because T3 refuses
-  rather than truncates, so the failure mode is visible rather than silent - this is verifying an
-  environment fact, which `.agents/repo-guidance.md` invariant 7 requires, not resting a design
-  on an assumed one.
+  the ceiling default needs raising before anyone relies on the report. Asked because T3 marks a
+  short run partial rather than truncating quietly, so the outcome is visible rather than
+  silent - this is verifying an environment fact, which `.agents/repo-guidance.md` invariant 7
+  requires, not resting a design on an assumed one.
 - **(g) The paging contract. This is the decisive one and it has a designed experiment, because
   no Learn page states the answer (T3).** Issue `GET /api/machines?$top=1` with a filter known to
   match more than one device, and record two things: (i) does the response carry
@@ -1400,10 +1431,11 @@ config page. Its answers are recorded **in this file** before S3 starts.
     multi-page runs ship, and the observed per-page row count is recorded here so the request
     budget in T3 can be computed rather than guessed.
   - **No cursor** - the endpoint has no continuation token. The module stays **single-request**,
-    asking for `$top = min(MaxDevices + 1, 10000)`, completing on P1 and refusing on a full page
-    exactly as T3 says. `MaxDevices` above 10,000 then cannot be satisfied and the refusal message
-    says so. This file is revised to state that the endpoint emits no cursor, so the next reader
-    does not re-litigate it.
+    asking for `$top = min(MaxDevices + 1, 10000)`, completing on P1 and taking T3's exit for a
+    full page: partial and marked when the ceiling is what stopped it, a refusal when the page is
+    the ambiguous full-page-without-a-cursor state. `MaxDevices` above 10,000 then cannot be
+    satisfied and the message says so. This file is revised to state that the endpoint emits no
+    cursor, so the next reader does not re-litigate it.
 
   **No multi-page behaviour ships that R1(g) has not observed.** Following a cursor that has never
   been seen to exist is speculative code on a read path that must not silently under-report, and
@@ -1483,7 +1515,7 @@ Answers are recorded **in this file** before any code is written against them.
 - `BuildCsv` as a `static internal` method taking the row list, so tests call it without a page
   instance (`DhcpAuthorization.razor:174` is the pattern), over `CsvExport.Write`.
 - `DownloadCsvAsync` through the existing `downloadFile` JS interop, timestamped filename, audited
-  as `ExportCsv` with the row count, audit failure caught and logged without failing the export.
+  as `ExportCsv` with the row count AND whether the run was complete, audit failure caught and logged without failing the export.
 - Tests: header order; a device name containing a comma, a quote and a newline round-trips; a
   value starting with `=` is neutralised; the multi-value join; a row count mismatch throws.
 
@@ -1649,17 +1681,19 @@ No PowerShell changes are planned, so PSScriptAnalyzer and Pester are not expect
 if a slice does touch a `.ps1`, both run.
 
 **Non-vacuity, per the repo standard.** For each of: the 404-is-empty mapping (T5), the
-`MaxDevices` refusal and the full-page-without-a-cursor refusal (T3), the token scope literal
-(T2), and the three distinct enrichment-failure reasons (T7) - revert the
+`MaxDevices` partial-and-marked stop and the full-page-without-a-cursor refusal (T3), the token
+scope literal (T2), and the three distinct enrichment-failure reasons (T7) - revert the
 behaviour, confirm the specific test fails by name, restore, confirm green. Confirm the revert
 actually landed on disk before trusting the verdict, and **touch the file after restoring**: a
 `Copy-Item` restore carries the backup's timestamp and MSBuild will happily keep testing the
 mutant (`.agents/state.md`, mutation-probe timestamp trap).
 
 **What tests cannot cover here, stated so nobody reads green as proof.** There is no bUnit harness,
-so nothing in this repo renders the page. The page authorization re-check, the ceiling-refusal
-wording, the `(unavailable)` banner, the Windows-only toggle and the export button's gating - in
-particular that the button is **absent** in the refusal state - are all unproven by the suite. The manual checklist below is the only evidence for them.
+so nothing in this repo renders the page. The page authorization re-check, the ceiling's
+partial-result notice and its **Keep going** control, the `(unavailable)` banner, the Windows-only
+toggle and the export button's gating - in particular that the button is **absent** in a refusal
+state and **present, with a filename marking the run partial**, at the ceiling - are all unproven
+by the suite. The manual checklist below is the only evidence for them.
 
 ## Manual acceptance checklist
 
@@ -1942,7 +1976,7 @@ the approval the owner explicitly asked to be given.
    conditional on a recon query, and that conditionality is part of what was approved - neither is
    built if its query says the data is not there.
    - **L1** - the requirement. Recently Seen By.
-   - **L17** - AD site and the subnet's `location` string, derived locally from the directory this
+   - **L17** - AD site NAME, derived locally from the directory this
      host is already joined to. **The strongest human-readable signal here**, and the answer to
      the subnet-to-site map the owner does not have. **Q10 is ruled** - an AD read failure fails the report.
    - **L2** - subnet. Was "conditional on a map existing"; L17 **is** that map, so L2 becomes
