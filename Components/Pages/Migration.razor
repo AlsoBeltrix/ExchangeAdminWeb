@@ -891,6 +891,21 @@
     // else puts the page and the URL out of step, and the URL is the one that survives a
     // reconnect; a test enforces that no such assignment exists.
     private string? expandedBatch;
+
+    // mir-1. Bumped by both writers of expandedBatch above, so it counts changes of open batch.
+    // A batch-user load captures it before its await and ReplaceBatchUsers refuses any result whose
+    // capture has since been overtaken.
+    //
+    // The race this closes exists because S1 made the URL an entry point. Before that, every way
+    // into a batch-user load was a control carrying disabled="@IsBusy", so two loads could not
+    // overlap; the browser's Back button is not a control this page can disable. Open A, open B,
+    // press Back before B's Exchange call returns, and B's result would otherwise land on top of A.
+    //
+    // Distinct from reportGeneration, which counts discards of the REPORT. The two are bumped by
+    // overlapping but not identical events - ReplaceBatchUsers bumps the report generation without
+    // changing the open batch - so sharing one counter would make every row refresh look like a
+    // batch change.
+    private int batchUsersGeneration;
     private List<MigrationUserInfo>? batchUsers;
     private string? loadingBatchUsers;
     private string? actionInProgress;
@@ -975,6 +990,7 @@
     private void OpenBatch(string? batchName)
     {
         expandedBatch = batchName;
+        batchUsersGeneration++;
 
         var uri = Navigation.GetUriWithQueryParameter(BatchQueryParameter, batchName);
         if (!string.Equals(uri, Navigation.Uri, StringComparison.Ordinal))
@@ -999,6 +1015,7 @@
             return;
 
         expandedBatch = requested;
+        batchUsersGeneration++;
         batchUsers = null;
         CloseUserReport();
 
@@ -1008,21 +1025,23 @@
         // Set before the first await - see CreateSingleMigrationBatch for why - and it covers the
         // batch-list load below as well, because a pasted link lands with no list behind it.
         loadingBatchUsers = requested;
+        var generation = batchUsersGeneration;
 
         try
         {
             if (!batchesLoaded)
                 await LoadBatchList();
 
-            ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(requested));
+            ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(requested));
         }
         catch
         {
-            ReplaceBatchUsers(new List<MigrationUserInfo>());
+            ReplaceBatchUsers(generation, new List<MigrationUserInfo>());
         }
         finally
         {
-            loadingBatchUsers = null;
+            if (loadingBatchUsers == requested)
+                loadingBatchUsers = null;
         }
     }
 
@@ -1466,18 +1485,20 @@
         loadingBatchUsers = batchName;
         batchUsers = null;
         CloseUserReport();
+        var generation = batchUsersGeneration;
 
         try
         {
-            ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(batchName));
+            ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(batchName));
         }
         catch
         {
-            ReplaceBatchUsers(new List<MigrationUserInfo>());
+            ReplaceBatchUsers(generation, new List<MigrationUserInfo>());
         }
         finally
         {
-            loadingBatchUsers = null;
+            if (loadingBatchUsers == batchName)
+                loadingBatchUsers = null;
         }
     }
 
@@ -1485,18 +1506,20 @@
     {
         loadingBatchUsers = batchName;
         CloseUserReport();
+        var generation = batchUsersGeneration;
 
         try
         {
-            ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(batchName));
+            ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(batchName));
         }
         catch
         {
-            ReplaceBatchUsers(new List<MigrationUserInfo>());
+            ReplaceBatchUsers(generation, new List<MigrationUserInfo>());
         }
         finally
         {
-            loadingBatchUsers = null;
+            if (loadingBatchUsers == batchName)
+                loadingBatchUsers = null;
         }
     }
 
@@ -1652,7 +1675,8 @@
             if (result.Success && expandedBatch != null)
             {
                 CloseUserReport();
-                ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(expandedBatch));
+                var generation = batchUsersGeneration;
+                ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(expandedBatch));
             }
         }
         catch (Exception ex)
@@ -1875,8 +1899,9 @@
                 batchUsers = null;
                 CloseUserReport();
                 StateHasChanged();
+                var batchGeneration = batchUsersGeneration;
 
-                ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(matchedBatch.BatchName));
+                ReplaceBatchUsers(batchGeneration, await MigrationSvc.GetMigrationBatchUsersAsync(matchedBatch.BatchName));
                 return;
             }
 
@@ -1906,8 +1931,9 @@
             batchUsers = null;
             CloseUserReport();
             StateHasChanged();
+            var userGeneration = batchUsersGeneration;
 
-            ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(searchResult.BatchId!));
+            ReplaceBatchUsers(userGeneration, await MigrationSvc.GetMigrationBatchUsersAsync(searchResult.BatchId!));
         }
         catch (Exception ex)
         {
@@ -1943,8 +1969,21 @@
     // call, so a report opened inside that window captures the already-bumped generation and would
     // survive the swap. Bumping again here discards it. Assigning batchUsers directly anywhere else
     // reopens that hole; a test enforces that no such assignment exists.
-    private void ReplaceBatchUsers(List<MigrationUserInfo> users)
+    private void ReplaceBatchUsers(int generation, List<MigrationUserInfo> users)
     {
+        // mir-1. The caller captured `generation` before its await; if the open batch has changed
+        // since, these rows belong to a batch the operator has already left and publishing them
+        // would render one batch's name over another batch's mailboxes - whose per-mailbox action
+        // buttons would then act on the wrong batch, silently.
+        //
+        // The guard is HERE rather than at the call sites because this is the one place rows may be
+        // assigned, so every path is covered by construction and a seventh load path added later
+        // cannot forget it. The two the openreview cited are reachable from browser Back; the other
+        // four are not today, and that is exactly the kind of fact that stops being true one slice
+        // later.
+        if (generation != batchUsersGeneration)
+            return;
+
         CloseUserReport();
         batchUsers = users;
     }

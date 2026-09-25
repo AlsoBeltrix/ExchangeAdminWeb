@@ -700,11 +700,95 @@ public class MigrationStatusPageTests
         // still leave a window; every fetch occurrence has to be wrapped.
         var page = ReadPage();
 
+        // The generation argument mir-1 added sits before the await, so the pattern names it
+        // rather than allowing anything: `ReplaceBatchUsers(x, await ...)` must still hand the
+        // awaited fetch straight in, with exactly one captured token in front of it.
         var fetches = Regex.Matches(page, @"GetMigrationBatchUsersAsync\(");
-        var wrapped = Regex.Matches(page, @"ReplaceBatchUsers\(await MigrationSvc\.GetMigrationBatchUsersAsync\(");
+        var wrapped = Regex.Matches(page, @"ReplaceBatchUsers\([A-Za-z_][A-Za-z0-9_]*, await MigrationSvc\.GetMigrationBatchUsersAsync\(");
         Assert.True(fetches.Count >= 5,
             $"expected every row refetch site to still be present, found {fetches.Count}");
         Assert.Equal(fetches.Count, wrapped.Count);
+    }
+
+    [Fact]
+    public void ARowLoadThatLostTheRaceIsDiscardedRatherThanPublished()
+    {
+        // mir-1. Two batch-user loads can overlap now that the URL is an entry point: open A, open
+        // B, press browser Back before B's Exchange call returns. If B's lands last, publishing it
+        // renders A's row over B's mailboxes, whose per-mailbox action buttons then act on B. The
+        // refusal must come before the assignment AND before the report close, or a superseded load
+        // still discards a report it has no business touching.
+        var body = GetMethodBody("ReplaceBatchUsers");
+
+        var guard = body.IndexOf("if (generation != batchUsersGeneration)", StringComparison.Ordinal);
+        var bail = body.IndexOf("return;", StringComparison.Ordinal);
+        var close = body.IndexOf("CloseUserReport();", StringComparison.Ordinal);
+        var assign = body.IndexOf("batchUsers = users;", StringComparison.Ordinal);
+
+        Assert.True(guard >= 0, "ReplaceBatchUsers must refuse a result from an overtaken load");
+        Assert.True(bail > guard, "the guard must bail out");
+        Assert.True(close > bail, "the guard must precede the report close");
+        Assert.True(assign > close, "the guard must precede the row assignment");
+    }
+
+    [Fact]
+    public void EveryChangeOfTheOpenBatchBumpsTheRowGeneration()
+    {
+        // The counter is only a guard if it actually counts. Both writers of expandedBatch - the
+        // outbound OpenBatch and the inbound SyncOpenBatchFromUrl - have to bump it, or a load
+        // started before the change still compares equal and publishes into the wrong batch.
+        var page = StripLineComments(ReadPage());
+
+        var writers = Regex.Matches(page, @"(?<![A-Za-z0-9_])expandedBatch\s*=(?!=)")
+            .Select(match => EnclosingMethodName(page, match.Index))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.NotEmpty(writers);
+
+        foreach (var writer in writers)
+        {
+            Assert.Contains(
+                "batchUsersGeneration++",
+                StripLineComments(GetMethodBody(writer)),
+                StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void EveryRowLoadCapturesTheGenerationBeforeItsAwait()
+    {
+        // The half of mir-1 that a signature change alone does not buy. Capturing AFTER the await -
+        // `ReplaceBatchUsers(batchUsersGeneration, users)` on a value read once the fetch returned -
+        // compiles, reads almost identically, and compares the counter with itself, so the guard
+        // can never fire. Every call site must pass a local read earlier in the same method.
+        var page = StripLineComments(ReadPage());
+
+        var calls = Regex.Matches(page, @"(?<![A-Za-z0-9_])ReplaceBatchUsers\((?<token>[A-Za-z_][A-Za-z0-9_]*),")
+            .ToList();
+        Assert.True(calls.Count >= 8,
+            $"expected every row replacement call site to still be present, found {calls.Count}");
+
+        foreach (var call in calls)
+        {
+            var method = EnclosingMethodName(page, call.Index);
+            var body = GetMethodBody(method);
+            var token = call.Groups["token"].Value;
+
+            var capture = body.IndexOf($"var {token} = batchUsersGeneration;", StringComparison.Ordinal);
+            Assert.True(capture >= 0,
+                $"{method} passes {token} to ReplaceBatchUsers but never captures it from "
+                + "batchUsersGeneration; the guard compares the counter with itself and cannot fire");
+
+            var callInBody = body.IndexOf($"ReplaceBatchUsers({token},", StringComparison.Ordinal);
+            Assert.True(callInBody > capture,
+                $"{method} captures {token} after it uses it");
+
+            var awaitAt = body.IndexOf("await ", capture, StringComparison.Ordinal);
+            Assert.True(awaitAt > capture,
+                $"{method} captures {token} with no await after it; a capture that cannot be "
+                + "overtaken is a guard that proves nothing");
+        }
     }
 
     [Fact]

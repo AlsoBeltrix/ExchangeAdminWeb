@@ -217,7 +217,10 @@ public sealed class ModuleCatalog
             // 1.10.0: the open batch is addressable as /migration?batch=<name>, so browser Back, a
             // refresh and a circuit reconnect restore it instead of collapsing the page
             // (docs/MigrationInterfaceRedesign-Plan.md S1).
-            Version = "1.10.0",
+            // 1.10.1: making the URL an entry point let two batch-user loads overlap, so the one
+            // that lost the race could publish one batch opened over another batch's mailboxes.
+            // A generation counter discards it (mir-1, openreview of S1).
+            Version = "1.10.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
