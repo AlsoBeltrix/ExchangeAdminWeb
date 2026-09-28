@@ -1,7 +1,7 @@
 # Comms-10k At Full Size - Plan
 
 Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
-review findings and 17 through 21 the findings of rounds 14 to 18, all within that approved
+review findings and 17 through 22 the findings of rounds 14 to 19, all within that approved
 scope. No code written.
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). **No base app bump** - this work is module-scoped.
 `ExchangeAdminWeb.csproj` is at `2.24.0` as of 2026-09-28 and must be byte-identical after every
@@ -185,7 +185,8 @@ Consequences that follow, and must be handled rather than hoped away:
   clear landing midway through the other's fill. That is strictly worse than the single atomic
   write it replaces, so the lock is required, not optional.
 
-  `SelfServiceGroupService.cs:46,523` is the in-process precedent: a `SemaphoreSlim(1, 1)` from a
+  `Services/SelfServiceGroups/SelfServiceGroupService.cs:46,523` is the in-process precedent:
+  a `SemaphoreSlim(1, 1)` from a
   `ConcurrentDictionary` keyed on the group's objectGUID. **It is insufficient for this sequence.**
   Dev and prod run as separate processes against the same directory (`.agents/repo-guidance.md`
   Architectural Invariant 2 has them sharing one configuration database, and both can hold this
@@ -386,7 +387,25 @@ The linked `member` attribute omits members whose membership comes from their pr
 (`GroupManagementService.cs:414-448`, pinned by `GroupMemberListingTests.cs:172-209`); the same
 `(primaryGroupID=<rid>)` union applies here. It affects the listing only.
 
-### Slice 3 - Delete the protected-principal path
+### Slice 3 - Add the distribution-group guard, THEN delete the protected-principal path
+
+**Order within this slice is a security property, and the two halves must not be separated into
+two commits.** Every slice here is independently deployable, so a commit that removes the
+member check while the guard is still in Slice 4 leaves the module, for as long as that build is
+live, with neither the protected-principal check nor the constraint that makes its absence safe
+- pointing it at a security group in that window would rewrite privileged membership unguarded.
+That is precisely the gap the exemption's condition exists to prevent, and the slice order as
+first written created it.
+
+So this slice lands, in one commit:
+
+1. **The group resolution and the distribution-group guard** described in the write design -
+   resolve the configured name to objectGUID and DN, refuse unless the category is Distribution,
+   refuse if the category cannot be read. At this point the guard runs ahead of the existing
+   protected-principal path; both are active, which is safe in the other direction.
+2. **Then the deletion** below.
+
+Slice 4 consumes the resolved identity this slice introduces rather than adding it.
 
 Remove from `Comms10k.razor`: the per-member loop (`:319-358`), the servicing block (`:362-377`)
 and the `extra:` argument it fed the audit call (`:389`), `ServicerModuleId` (`:172`), and both
@@ -442,7 +461,9 @@ paths changes that count deliberately.
 ### Slice 4 - Rewrite the write as clear-then-fill with read-back
 
 Replace the single `Set-ADGroup -Replace` (`Comms10kService.cs:220-228`) with clear, then batched
-add, then read-back, per the write design above. Testability:
+add, then read-back, per the write design above. **The group resolution and the
+distribution-group guard already landed in Slice 3** - this slice consumes that resolved identity
+for the lock key and every write, and does not reintroduce it. Testability:
 
 - **Batching is pure**: given the resolved list, produce the batches. No directory access, so the
   10,001-member case is directly unit-testable.
