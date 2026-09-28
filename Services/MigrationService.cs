@@ -488,6 +488,11 @@ public class MigrationService : ExchangeServiceBase
             {
                 ps.AddCommand("Set-MigrationBatch")
                   .AddParameter("Identity", batchName)
+                  // A PAST time is the Exchange idiom for "finalise at the first opportunity".
+                  // Deliberate here: this is the auto-complete the operator ticked at creation.
+                  // S8 separated this from a real schedule - see
+                  // ScheduleMigrationBatchCompletionAsync, which is the only writer of a FUTURE
+                  // CompleteAfter and refuses a past one.
                   .AddParameter("CompleteAfter", DateTime.Now.AddHours(-1))
                   .AddParameter("ErrorAction", "Stop");
                 Invoke(ps, tracker);
@@ -593,7 +598,12 @@ https://admin.exchange.microsoft.com/#/migration";
                         var completedDateTime = batchObj.Properties["CompletionDateTime"]?.Value as DateTime?;
                         var targetEndpoint = batchObj.Properties["TargetEndpoint"]?.Value?.ToString();
                         var autoStartVal = Convert.ToBoolean(batchObj.Properties["AutoStart"]?.Value ?? false);
-                        var autoCompleteVal = Convert.ToBoolean(batchObj.Properties["CompleteAfter"]?.Value != null);
+                        // S8. The VALUE, not a boolean derived from its presence. A batch told to
+                        // complete now and a batch scheduled for 22:00 both have a non-null
+                        // CompleteAfter, and collapsing them here is what made queue item 12
+                        // impossible to represent. MigrationBatchInfo derives AutoComplete from
+                        // this, so the flag and the time cannot disagree.
+                        var completeAfterVal = batchObj.Properties["CompleteAfter"]?.Value as DateTime?;
 
                         // Determine direction based on endpoint (hybrid = ToOnPrem, null/cloud = ToCloud)
                         var direction = targetEndpoint?.Contains("hybrid", StringComparison.OrdinalIgnoreCase) == true
@@ -613,7 +623,7 @@ https://admin.exchange.microsoft.com/#/migration";
                             FailedCount = failedCount,
                             TargetEndpoint = targetEndpoint,
                             AutoStart = autoStartVal,
-                            AutoComplete = autoCompleteVal,
+                            CompleteAfter = completeAfterVal,
                             Direction = direction
                         });
                     }
@@ -689,12 +699,70 @@ https://admin.exchange.microsoft.com/#/migration";
         }, () => ($"Migration batch '{batchName}' completion initiated.", (string?)null), allowRetry: true);
     }
 
+    /// <summary>
+    /// Schedules <paramref name="batchName"/> to finalise at <paramref name="completeAfterUtc"/>,
+    /// or cancels an existing schedule when it is null.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>S8, and the reason queue item 12 could not be built before it.</b> This codebase used
+    /// <c>CompleteAfter</c> in two incompatible ways. Four call sites pass a time already in the
+    /// PAST - <c>AddHours(-1)</c>, <c>AddDays(-1)</c>, <c>UtcNow</c> - as the idiom for "finalise
+    /// at the first opportunity", and the batch reader turned any non-null value into a boolean.
+    /// So "complete now" and "complete at 22:00" were the same thing to this app, and a real
+    /// schedule had nowhere to live.
+    /// </para>
+    /// <para>
+    /// This method is the only one that writes a FUTURE CompleteAfter, and it refuses a past one
+    /// rather than silently performing an immediate completion. An operator who mistypes a date
+    /// and gets an instant cutover instead of an error is the failure that matters here - the
+    /// mailboxes move, and nothing undoes that. Use
+    /// <see cref="CompleteMigrationBatchAsync(string)"/> to complete now, deliberately.
+    /// </para>
+    /// </remarks>
+    public Task<PermissionResult> ScheduleMigrationBatchCompletionAsync(
+        string batchName, DateTime? completeAfterUtc)
+    {
+        if (completeAfterUtc is { } when && when.ToUniversalTime() <= DateTime.UtcNow)
+        {
+            return Task.FromResult(PermissionResult.Fail(
+                "That time has already passed. To finalise the batch now, use Complete instead - "
+                + "scheduling refuses a past time rather than cutting the mailboxes over "
+                + "immediately."));
+        }
+
+        return RunAsync((ps, tracker) =>
+        {
+            var command = ps.AddCommand("Set-MigrationBatch")
+                            .AddParameter("Identity", batchName)
+                            .AddParameter("ErrorAction", "Stop");
+
+            if (completeAfterUtc is { } scheduled)
+            {
+                command.AddParameter("CompleteAfter", scheduled.ToUniversalTime());
+            }
+            else
+            {
+                // Cancelling a schedule, not setting one to "now". $null is what clears the
+                // property; passing a past date here would finalise the batch, which is the
+                // opposite of what "cancel the schedule" means.
+                command.AddParameter("CompleteAfter", null);
+            }
+
+            Invoke(ps, tracker);
+        }, () => completeAfterUtc is { } at
+            ? ($"Migration batch '{batchName}' will complete after {at.ToUniversalTime():yyyy-MM-dd HH:mm} UTC.", (string?)null)
+            : ($"Scheduled completion cleared for migration batch '{batchName}'.", (string?)null),
+        allowRetry: true);
+    }
+
     public Task<PermissionResult> CompleteMigrationUserAsync(string emailAddress)
     {
         return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Set-MigrationUser")
               .AddParameter("Identity", emailAddress)
+              // "Complete now" for one mailbox, using the same past-time idiom. Not a schedule.
               .AddParameter("CompleteAfter", DateTime.UtcNow)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");

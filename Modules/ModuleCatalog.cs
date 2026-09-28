@@ -260,7 +260,11 @@ public sealed class ModuleCatalog
             // refused. It used to join every refusal and every skip into one alert, which over
             // fifty batches is an error log in a banner (owner, 2026-09-28)
             // (docs/MigrationInterfaceRedesign-Plan.md S6, R25).
-            Version = "1.18.0",
+            // 1.18.1: "complete now" and "complete at T" stop being the same value. CompleteAfter
+            // is read as the timestamp it is instead of a boolean, and scheduling refuses a past
+            // time rather than cutting mailboxes over immediately
+            // (docs/MigrationInterfaceRedesign-Plan.md S8).
+            Version = "1.18.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

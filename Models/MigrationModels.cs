@@ -65,7 +65,44 @@ public class MigrationBatchInfo
     public int FailedCount { get; set; }
     public string? TargetEndpoint { get; set; }
     public bool AutoStart { get; set; }
-    public bool AutoComplete { get; set; }
+
+    /// <summary>
+    /// True when Exchange holds ANY CompleteAfter value for this batch - which means the batch is
+    /// set to finalise without a further instruction, whether that was requested at creation or
+    /// scheduled for a time.
+    /// </summary>
+    /// <remarks>
+    /// Derived from <see cref="CompleteAfter"/> rather than read separately, so the flag and the
+    /// time cannot disagree. Before S8 this was the ONLY thing read from CompleteAfter, which is
+    /// what made scheduling impossible to represent: a batch told to complete now and a batch
+    /// scheduled for 22:00 were both just "true".
+    /// </remarks>
+    public bool AutoComplete => CompleteAfter != null;
+
+    /// <summary>
+    /// The CompleteAfter timestamp Exchange holds, or null when there is none.
+    /// </summary>
+    /// <remarks>
+    /// <b>A PAST value means "complete now".</b> That is the idiom this codebase and Exchange both
+    /// use: Set-MigrationBatch -CompleteAfter with a time already gone tells Exchange to finalise
+    /// at the first opportunity. A FUTURE value is a real schedule.
+    /// <para>
+    /// Reading the two apart is the whole point of S8 and the reason queue item 12 could not be
+    /// built before it. <see cref="ScheduledCompletionUtc"/> is the safe way to ask.
+    /// </para>
+    /// </remarks>
+    public DateTime? CompleteAfter { get; set; }
+
+    /// <summary>
+    /// The future time this batch is scheduled to complete, or null when it is not scheduled -
+    /// including when CompleteAfter holds a past value, which means "complete now" and is not a
+    /// schedule at all.
+    /// </summary>
+    public DateTime? ScheduledCompletionUtc =>
+        CompleteAfter is { } when && when.ToUniversalTime() > DateTime.UtcNow
+            ? when.ToUniversalTime()
+            : null;
+
     public MigrationDirection Direction { get; set; }
     public List<MigrationUserInfo> Users { get; set; } = new();
 }
