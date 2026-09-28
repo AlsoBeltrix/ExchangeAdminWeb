@@ -439,6 +439,23 @@ second is replaced by the first.
 **S5 -- Filter, sort and paging on the mailbox table.** Currently absent entirely. Module
 version bump. Satisfies R21.
 
+**S6 -- Output destinations. LANDED 2026-09-28** across four commits: `3f35cab` and `c63dc18`
+(the report store), `d8f8d1f` (the dialog), `b24e805` (filter, empty states, export scope) and
+`1b4f48b` (per-row results). Module `1.15.0` -> `1.18.0`.
+
+**R27 IS HALF DONE AND THE OTHER HALF CONTRADICTS A LATER OWNER RULING. NOT RESOLVED HERE.**
+R27 has two clauses. "Loading is shown in the pane that is loading" is done - the mailbox pane
+has its own spinner and its own refresh, and the mailbox executor reloads only its own pane. The
+second clause, that `IsBusy` should stop "disabling everything", is in direct conflict with the
+click-gating work stream that landed afterwards: `docs/ClickGatingAudit-Plan.md` and
+`ExchangeAdminWeb.Tests/ClickGateRegistry.cs` are built on the owner ruling that ONE page-level
+predicate answers "may this be clicked" for every control, and the whole suite enforces it.
+
+Splitting the busy signal per pane would mean re-deriving that contract for this page alone.
+**That is an owner decision, not a slice's**, so the indication half is delivered and the gating
+half is flagged. The question: should a batch-pane operation leave the mailbox pane clickable,
+given the click-gate ruling says one predicate gates everything?
+
 **S6 -- Output destinations.** The mailbox report as a modal with Export and a kept copy
 instead of an injected row, per-row action results replacing the single banner, person-search distinct from
 batch filtering, per-pane loading and refresh, distinct empty states, and a named export

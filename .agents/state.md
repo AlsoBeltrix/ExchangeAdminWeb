@@ -79,7 +79,27 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     and add are both measured idempotent), which reduces but cannot eliminate it.
   - `Test-WebApp` holds 10,001 test members; the owner is removing it.
 
-- **QUEUE ITEM 14: PLAN APPROVED. S1, mir-1, S2, S3, S4 AND S5 ARE ALL LANDED. S6 IS NEXT.**
+- **QUEUE ITEM 14: PLAN APPROVED. S1 THROUGH S6 ARE LANDED. ONLY S7 AND S8 REMAIN.**
+  Module is at `1.18.0`. S6 shipped in four commits: `c63dc18` + `3f35cab` the report store,
+  `d8f8d1f` the dialog that keeps what it fetched, `b24e805` the batch filter and the three
+  distinct empty states, `1b4f48b` per-row action results.
+  - **OWNER QUESTION, from S6: R27 conflicts with the click-gating ruling and is HALF DONE.**
+    R27 says loading must not be "a page-wide freeze". The indication half is delivered - the
+    mailbox pane has its own spinner and its own refresh, and the mailbox executor reloads only
+    its own pane. The other half, that `IsBusy` should stop disabling everything, contradicts the
+    LATER owner ruling that one page-level predicate gates every control, which
+    `ExchangeAdminWeb.Tests/ClickGateRegistry.cs` enforces across nine pages. Re-deriving that
+    contract for this page alone is an owner decision, so it is flagged rather than taken.
+  - **OWNER QUESTION, from S5, still open:** `ToggleBatchSelected` is registered as an ungated
+    DOM-synced control on ruling D2(a), whose stated rationale was that it makes no call and
+    awaits nothing. S3 made that false - ticking down to one batch now fetches from Exchange.
+  - **OWNER RULING APPLIED 2026-09-28: a banner is for a glance, not an error log.** Both bulk
+    executors used to join every refusal, skip and audit warning into one alert string. The
+    banner now carries counts; the reason is a chip on the row that refused, truncated with the
+    full text in its tooltip. **I had been reading R25 backwards** - it says results are reported
+    per row and NEVER as a blanket banner, and I had treated "the banner names every row" as
+    compliance.
+  - (previous heading follows)
   `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In progress`. Module `1.9.1` ->
   `1.10.0` (S1) -> `1.10.1` (mir-1) -> `1.11.0` (S2) -> `1.12.0` (S3) -> `1.13.0` (S4) ->
   `1.15.0` (S5, covering both its steps - see the `1.14.0` incident above). No base app bump at
