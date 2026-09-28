@@ -50,9 +50,23 @@ generates.** Hold it to as few people as possible. Every reveal is its own audit
    `User.Read.All`, `User-PasswordProfile.ReadWrite.All` and `RoleManagement.Read.Directory`.
    **Do not reuse another module's registration** - each carries an unrelated blast radius, and
    this is the grant that should never be widened by convenience.
-2. **A Delinea Secret Server record** with those three fields, directly readable by the Delinea
+2. **That service principal must ALSO hold the Privileged Authentication Administrator directory
+   role.** The three permissions above are not sufficient on their own - this document said they
+   were until 2026-09-28.
+
+   Graph gates a password reset on a privileged target behind the CALLER's directory role, not
+   the application permission. `User-PasswordProfile.ReadWrite.All` resets ordinary users and is
+   refused on administrators, and **every account this module targets is an administrator**:
+   cloud-only accounts here are admin and tactical accounts only. Without the role the module
+   returns 403 on essentially every real reset.
+
+   Privileged Authentication Administrator is the only role that can reset a Global
+   Administrator. It is still far narrower than running the module on a Global Administrator
+   credential - it resets credentials and MFA, and cannot create app registrations, change
+   conditional access, alter directory policy or read mail.
+3. **A Delinea Secret Server record** with those three fields, directly readable by the Delinea
    bootstrap credential with no checkout workflow. Its id goes in `GraphDelineaSecretId`.
-3. The module ships **disabled**. Enable it and grant its section access.
+4. The module ships **disabled**. Enable it and grant its section access.
 
 The app registration cannot use Graph's documented `resetPassword` action - that API is
 delegated-only and unavailable to an application permission. The module uses

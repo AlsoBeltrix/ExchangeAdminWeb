@@ -813,7 +813,27 @@ Outside the codebase; neither blocks the build, both block the first live call.
    `IntuneDevices` or `M365GroupManagement` registration -- each carries an unrelated blast
    radius, and this is the grant that should never be widened by convenience (Constitution,
    Credential Isolation: module credentials are per-module).
-2. **A Delinea Secret Server record** holding `Tenant ID`, `Application ID`, `Client Secret`,
+
+2. **The service principal must ALSO hold the Privileged Authentication Administrator directory
+   role. The three permissions above are NOT sufficient on their own, and this list said they
+   were until 2026-09-28.**
+
+   Graph gates a password reset on a privileged target behind the CALLER's directory role, not
+   behind the application permission. `User-PasswordProfile.ReadWrite.All` resets ordinary users
+   and is refused on administrators. **Every account this module targets is an administrator** -
+   cloud-only accounts in this tenant are admin and tactical accounts only, and resetting a
+   Global Administrator is the normal operating mode, not a corner case. So an app holding only
+   the three permissions would 403 on essentially every real use.
+
+   Privileged Authentication Administrator is the only role that can reset a Global
+   Administrator. It is still a large reduction from running this on a Global Administrator
+   credential: it can reset credentials and MFA, and it cannot create app registrations, change
+   conditional access, alter directory policy or read mail.
+
+   **How this was missed:** the prerequisite list was written from the API surface - which Graph
+   endpoints are called and what scope each needs - and app-only role gating is not visible in
+   that view. It would have surfaced as a 403 on the first live reset of a real account.
+3. **A Delinea Secret Server record** holding `Tenant ID`, `Application ID`, `Client Secret`,
    directly readable by the Delinea bootstrap credential with no checkout or approval
    workflow. Its id goes in the module's `GraphDelineaSecretId` config field.
 
