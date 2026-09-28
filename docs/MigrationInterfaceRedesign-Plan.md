@@ -1,6 +1,11 @@
 # Migration -- Redesign The Status Interface (queue item 14)
 
-Status: **Approved by the owner 2026-09-24. In progress: S1 landed, S2-S8 to go.** The layout
+Status: **IMPLEMENTED 2026-09-28. All eight slices landed, plus the mir-1 review fix.** Module
+`1.9.1` -> `1.19.0`, no base app bump at any point. **Not yet seen in a browser beyond one owner
+screenshot** - the `## Acceptance` hand checks below are outstanding, and no test in this repo
+renders a Blazor component.
+
+Approved by the owner 2026-09-24. The layout
 was settled by the owner over many rounds against a working mockup (`.agents/mockups/migration-v3.html`), and four
 codex openreviews have run against it. **Every question the reviews raised is closed and no
 question is outstanding.**
@@ -461,13 +466,15 @@ instead of an injected row, per-row action results replacing the single banner, 
 batch filtering, per-pane loading and refresh, distinct empty states, and a named export
 scope. Module version bump. Satisfies R23-R30.
 
-**S7 -- Export Reports.** The ticked-mailbox bulk report export: a background job through the
+**S7 -- Export Reports. LANDED 2026-09-28** (`de47b24` the processor, `8b8b8be` the buttons and
+the zip). Module `1.18.1` -> `1.19.0`.** The ticked-mailbox bulk report export: a background job through the
 existing bulk-job machinery, per-mailbox progress and outcomes, reuse of reports already held,
 and a zip of one text file per report with a named list of any that failed. Module version
 bump. Satisfies R31. This is the only slice that adds a new operation rather than relocating
 an existing one, and it can ship after the rest.
 
-**S8 -- Scheduled completion semantics.** `CompleteAfter` currently means
+**S8 -- Scheduled completion semantics. LANDED 2026-09-28** (`4eb4116`). Module `1.18.0` ->
+`1.18.1`.** `CompleteAfter` currently means
 "complete now": `Services/MigrationService.cs:490` and `:698` pass a past timestamp and `:596`
 reads the property as an auto-complete boolean. A real future schedule needs those three sites
 to separate "complete immediately" from "complete at T", with the boolean reading replaced.

@@ -79,10 +79,20 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     and add are both measured idempotent), which reduces but cannot eliminate it.
   - `Test-WebApp` holds 10,001 test members; the owner is removing it.
 
-- **QUEUE ITEM 14: PLAN APPROVED. S1 THROUGH S6 ARE LANDED. ONLY S7 AND S8 REMAIN.**
-  Module is at `1.18.0`. S6 shipped in four commits: `c63dc18` + `3f35cab` the report store,
-  `d8f8d1f` the dialog that keeps what it fetched, `b24e805` the batch filter and the three
-  distinct empty states, `1b4f48b` per-row action results.
+- **QUEUE ITEM 14 IS IMPLEMENTED. ALL EIGHT SLICES ARE LANDED, PLUS THE mir-1 REVIEW FIX.**
+  `docs/MigrationInterfaceRedesign-Plan.md` is `Implemented`. Module `1.9.1` -> `1.19.0`, no base
+  app bump at any point. Gates green at `8b8b8be`: build 0 errors, **3261 passed / 0 failed /
+  3 skipped**, format, ASCII, `git diff --check`, PSScriptAnalyzer 0 errors, Pester 157/0.
+  - **NOTHING HAS BEEN SEEN IN A BROWSER except one owner screenshot of v1.15.0**, which found a
+    real defect: the selection pane reused the batch grid, whose first column is checkbox-width,
+    so its "Open" button wrapped to three lines. Fixed in `8b8b8be` with the header mislabel the
+    same row carried. **That is one screenshot of nine slices.** The plan's `## Acceptance` hand
+    checks are outstanding and no test here renders a component - this is the largest unverified
+    surface in the module.
+  - **Items 12 and 13 ship with it.** Nothing was released in between: the slices are commits for
+    reviewability, not deliveries.
+  - **S7 needs a deploy to be exercised at all** - the export runs through the bulk-job runner, so
+    a queued job that never runs looks like a hang rather than a wiring error.
   - **OWNER QUESTION, from S6: R27 conflicts with the click-gating ruling and is HALF DONE.**
     R27 says loading must not be "a page-wide freeze". The indication half is delivered - the
     mailbox pane has its own spinner and its own refresh, and the mailbox executor reloads only
