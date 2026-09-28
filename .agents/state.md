@@ -8,29 +8,66 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**2026-09-25.** On `master`, working tree clean apart from another session's in-flight plan work.
-Gates are green on the migration commits: build 0 errors, `dotnet test` **3072 passed / 0 failed /
-3 skipped**, format clean, `git diff --check HEAD` clean, ASCII scan clean. Pester and
-PSScriptAnalyzer were NOT re-run - no PowerShell changed. Nothing is half-finished.
+**2026-09-28. THE SECOND SESSION HAS BEEN KILLED; ONE SESSION OWNS THIS REPO AGAIN.** On
+`master`, head `b6adcce`, tracked tree clean.
+
+**THE FULL CI GATE SET IS GREEN AT `b6adcce`, MEASURED 2026-09-28** - build Release 0 errors,
+`dotnet test` **3206 passed / 0 failed / 3 skipped**, `dotnet format` exit 0, ASCII lint exit 0,
+`git diff --check` exit 0, PSScriptAnalyzer **0 errors**, Pester **157 passed / 0 failed**. This
+is the first measurement covering the Risky Users session's last three commits, which it landed
+without this session gate-checking them. Nothing is half-finished.
+
+**Run the suite with `-- xUnit.MaxParallelThreads=4`.** At full parallelism it spreads over every
+core and each worker holds its own fixtures, which peaked near 27GB and got a run killed by the
+harness for memory pressure on 2026-09-25. Capped, it costs nothing measurable (under 5 minutes).
+
+**TWO SESSIONS SHARED THIS WORKING TREE ON 2026-09-25 AND IT CAUSED REAL DAMAGE. READ THIS
+BEFORE RUNNING TWO AGENTS IN ONE CHECKOUT AGAIN.** Three separate incidents, all on shared
+files: (1) an uncommitted Migration `1.13.0 -> 1.14.0` bump was destroyed by the other session's
+`git checkout -- Modules/ModuleCatalog.cs`, which it ran to undo its own unanchored `sed` after
+explicitly identifying that line as another session's work - so `2a0dd6a` claims a bump it does
+not contain, and `1.14.0` is a version that never existed as a committed state; (2) an earlier
+commit of theirs, `7715780`, swallowed a different uncommitted Migration bump into a Risky Users
+commit whose message says nothing about it; (3) `.agents/state.md` was repeatedly rewritten by
+`head`/`sed` splices through "changed on disk" warnings, so uncommitted edits to it cannot be
+reconstructed from git. **The version history in `Modules/ModuleCatalog.cs` carries the first
+incident inline; none of it was rewritten, because history rewrites need explicit authority.**
 
 **THE CI GATE THAT WAS RED FOR TWO DAYS IS FIXED (`2026293`).** `tools/Test-AsciiOnly.ps1` had
 failed since `5d2913e` (2026-09-23) on a literal accented character in
 `PasswordGeneratorWordListTests.cs:108`. **It was never a tradeoff, and an earlier note here
 saying it was the owner's call was wrong:** the comment three lines above that array already
 promised the entry was "written as an escape, not as a literal", and it simply was not.
-`"caf00e9"` is the same string at runtime and pure ASCII in the source, so the coverage is
+The escape `café` is the same string at runtime and pure ASCII in the source, so coverage is
 identical - proved by swapping it for a plain-ASCII `"cafe"` and watching the test fail.
 **Worth carrying: that lint failure also aborted the `powershell` job before PSScriptAnalyzer and
 Pester ran, so neither had executed in CI since 2026-09-23.** A red gate early in a job hides
 every gate behind it.
 
-**Both remotes are at `2026293` as of 2026-09-25 and match local `master`,** verified with
-`git ls-remote`. Push policy remains ask.
+**Both remotes sit at `d0c2406`; 15 commits are unpushed** (4 Migration slices, 11 Risky Users
+and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask.
 
-- **QUEUE ITEM 14: PLAN APPROVED. S1, mir-1, S2, S3 AND S4 ARE LANDED. S5 IS NEXT.**
+- **QUEUE ITEM 14: PLAN APPROVED. S1, mir-1, S2, S3, S4 AND S5 ARE ALL LANDED. S6 IS NEXT.**
   `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In progress`. Module `1.9.1` ->
-  `1.10.0` (S1) -> `1.10.1` (mir-1) -> `1.11.0` (S2) -> `1.12.0` (S3) -> `1.13.0` (S4), no base
-  app bump.
+  `1.10.0` (S1) -> `1.10.1` (mir-1) -> `1.11.0` (S2) -> `1.12.0` (S3) -> `1.13.0` (S4) ->
+  `1.15.0` (S5, covering both its steps - see the `1.14.0` incident above). No base app bump at
+  any point.
+  - **S5 IS DONE INCLUDING S3'S DEBT.** Step 1 (`2a0dd6a`) gave the mailbox table the filter,
+    sort and paging it never had, all over the whole set rather than the rendered page (R21),
+    through `Services/ListWindow.cs`. Step 2a (`20fbbbc`) added
+    `Services/MigrationUserActionPlanner.cs`. Step 2b (`1042eb8`) added mailbox checkboxes (R7),
+    the mailbox action bar that reaches that planner exactly as the batch bar reaches its own
+    (R12), and ticked mailboxes pinned above an OTHER MAILBOXES divider with their own pager
+    (R5a, R5b) - **pinned rows are sorted but deliberately NOT filtered, because R11 forbids a
+    ticked item being hidden by the filter.**
+  - **OPEN OWNER QUESTION, raised by S5 and not answered:** `ToggleBatchSelected` is registered
+    in `ClickGateRegistry` as an ungated DOM-synced control on owner ruling D2(a), whose stated
+    rationale was that it "makes no call and awaits nothing". **S3 made that false** - under R9
+    the open batch is derived from the selection, so ticking down to one batch now calls
+    `AdoptSelectionAsOpenBatch`, which navigates and fetches from Exchange. It also carries an
+    `if (IsBusy) return;` handler guard, which that registry elsewhere calls the wrong refusal
+    for a DOM-synced control because the browser keeps a tick the server refused. The registry
+    entry states this; the ruling itself is the owner's to revisit.
   - **S5 CARRIES S3'S DEBT AS WELL AS ITS OWN.** Its own scope is filter, sort and paging on the
     mailbox table (R21). It must ALSO deliver the mailbox checkboxes and the mailbox action bar
     that S3's "checkboxes on both lists" did not - that is the second half of R7 and R12, and
