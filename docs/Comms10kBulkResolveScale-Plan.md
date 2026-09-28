@@ -1,8 +1,8 @@
 # Comms-10k At Full Size - Plan
 
 Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
-review findings, 17 the round-14, 18 the round-15, 19 the round-16 and 20 the round-17 findings,
-all within that approved scope. No code written.
+review findings and 17 through 21 the findings of rounds 14 to 18, all within that approved
+scope. No code written.
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). **No base app bump** - this work is module-scoped.
 `ExchangeAdminWeb.csproj` is at `2.24.0` as of 2026-09-28 and must be byte-identical after every
 slice; verify by diff rather than by reading this line, which goes stale whenever another work
@@ -206,11 +206,15 @@ Consequences that follow, and must be handled rather than hoped away:
     **The principals are not known to the code and must not be named in it.** `deploy.ps1:11`
     accepts a single `ServiceAccount` for the pool being deployed, so no source file or script
     today knows both identities, and hardcoding either would violate Architectural Invariant 7.
-    Grant by a rule rather than a list: the group-membership write already runs as the module's
-    Delinea credential, so the natural environment-neutral principal set is the **local
-    Users/Authenticated Users** scope restricted to synchronize-and-modify on this one named
-    object, which both pool identities satisfy without either being named. A mutex confers no
-    privilege beyond ordering, so a broad grant on it is not a broad grant on anything else.
+    Grant by a rule rather than a list, and name the rule exactly so there is one reading:
+    a single `MutexAccessRule` for the well-known **Authenticated Users** SID
+    (`WellKnownSidType.AuthenticatedUserSid`, constructed via `SecurityIdentifier` so no account
+    name is hardcoded and Invariant 7 holds), granting **`MutexRights.Synchronize |
+    MutexRights.Modify`** and nothing else, `AccessControlType.Allow`, applied to this one named
+    object at creation. No `FullControl`, which would let any holder rewrite the descriptor and
+    lock the other instance out. Both pool identities are authenticated, so both satisfy it
+    without either being named. A mutex confers ordering and no data access, so this grant
+    reaches nothing beyond the ability to wait in line for this one group.
     **Settled, not open.** Two alternatives were considered and rejected. A new deploy parameter
     listing the permitted principals is a deploy-script change with its own approval, for no
     security gain over the rule above. A lease row in the shared configuration database would
@@ -446,9 +450,27 @@ add, then read-back, per the write design above. Testability:
   Slice 1's.
 - **An explicit outcome, not a bool.** `Comms10kUpdateResult.Success` cannot express "the group
   is half written" or "completed but these could not be removed", and collapsing them is the
-  success-aggregation failure Known Failure Class 2 names. Outcomes: succeeded, succeeded with
+  success-aggregation failure Known Failure Class 2 names. Outcomes: succeeded, **could not
+  confirm**, succeeded with
   exceptions (unremovable primary-group members), **partly applied - the list is incomplete and
   the same CSV must be re-run**, and refused before any change.
+
+  **"Could not confirm" is a distinct outcome and not a shade of the others.** If the read-back
+  itself fails after the clear or any add has landed, the module does not know what the
+  membership is. So does a clear whose failure cannot establish that nothing changed - a timeout
+  proves neither that it cleared nor that it did not.
+
+  Reporting that as "partly applied" claims knowledge of what applied, which the module does not
+  have. Reporting it as "refused before any change" claims the list is untouched, which may be
+  false and is the more dangerous of the two, because it tells the operator to walk away from a
+  list that might be empty. This repository has the lesson recorded from Cloud Password Reset:
+  four of ten findings there were the same mistake, an unanswered question read as a negative
+  answer.
+
+  Its wording says what is and is not known: the write may or may not have completed, the
+  membership could not be read back, and the operator must check the group directly before
+  deciding. The audit row and notification carry the same, and re-running the CSV is safe and
+  is the repair either way.
 - The partly-applied message is the only one that demands operator action, so it says what state
   the list is in and that re-running the same file repairs it.
 - **Primary-group members survive the clear** - `GroupManagementService.cs:973-974` records that a
@@ -492,8 +514,11 @@ The module has no service tests today.
     message tells the operator to re-run the same file.
 14. A failed clear reports refused-before-any-change and issues no adds - the membership is
     untouched, which is materially different from a half-written list and must not read the same.
-15. The four outcomes are distinguishable in the page message, the audit record and the
-    notification.
+15. All five outcomes are distinguishable in the page message, the audit record and the
+    notification. Specifically: **a read-back that throws after writes have landed reports
+    "could not confirm", not "partly applied" and not "refused before any change"**, and a clear
+    that fails without establishing that nothing changed reports the same. Asserted per outcome,
+    because the whole point is that these must not collapse into each other.
 16. Oversized upload produces a message naming the limit, not a raw stream error.
 17. The lock wraps the clear, every add batch and the read-back, is keyed on objectGUID rather
     than the group name, and is a `Global\` named mutex - not only the in-process semaphore. It
