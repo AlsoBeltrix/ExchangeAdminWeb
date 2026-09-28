@@ -1,7 +1,8 @@
 # Comms-10k At Full Size - Plan
 
 Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
-review findings within that approved scope. No code written.
+review findings, and revision 17 the round-14 findings, both within that approved scope. No
+code written.
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). Base app `2.23.0` unchanged.
 Scope: `Services/Comms10kService.cs`, `Components/Pages/Comms10k.razor`,
 `Components/Pages/ModuleConfig.razor` (one list entry), `Modules/ModuleCatalog.cs` (version bump),
@@ -179,6 +180,23 @@ Consequences that follow, and must be handled rather than hoped away:
   inside it so same-process contention never reaches the mutex. The objectGUID, not the name, so
   a rename cannot split the lock.
 
+  **A named mutex is not shareable by default and the details decide whether it works at all.**
+  Dev and prod run under different app-pool identities, so a mutex created with default security
+  by one is not openable by the other - the lock would silently become per-instance again, which
+  is the exact failure it exists to prevent, and it would look like it was working. Specify:
+  - **Security:** create with an explicit `MutexSecurity` granting synchronize and modify rights
+    to the identities both app pools run as. Create-or-open, never create-only.
+  - **Timeout:** a bounded wait, not `WaitOne()` forever - a replace is a foreground operation
+    behind a spinner. On timeout, **refuse before the clear** and tell the operator another
+    replace of this list is in progress. Never proceed unlocked.
+  - **Abandoned mutex:** a process dying mid-fill leaves the mutex abandoned and the list
+    half-written. The next acquirer receives `AbandonedMutexException`, **owns the lock**, and
+    must log that the previous run did not finish. It then proceeds normally: clear-then-fill is
+    self-correcting, so the recovery is the operation itself. Swallowing that exception without
+    logging would hide the only trace that a list was left incomplete.
+  - **Release in a `finally`**, on the same thread that took it, or the next run inherits an
+    abandoned lock for no reason.
+
   **Residual, stated for the owner to accept or reject rather than buried:** a named mutex is
   host-wide. If the two instances are ever split across hosts, they can still interleave and
   nothing short of a directory-side or database-side lease would prevent it. The read-back is
@@ -214,7 +232,18 @@ Consequences that follow, and must be handled rather than hoped away:
       **every retry logs the exception message**. A non-transient fault being retried three times
       must be visible in the log rather than inferred, and that log line is what tells a future
       reader whether the classifier needs narrowing.
-    - A test pins the classification per type, not per message string.
+    - **Classify the unwrapped exception, not the one `Invoke()` throws.** A cmdlet failing under
+      `-ErrorAction Stop` surfaces through `PowerShell.Invoke()` wrapped - the AD exception is the
+      inner one, or reachable as the error record's exception. This repository already works
+      around it at `Services/ADAttributeEditorService.cs:797`, which reads
+      `ex.InnerException?.Message ?? ex.Message` for exactly this reason. A classifier matching
+      on the outer type would match nothing and **every fault would be treated as
+      non-retryable**, so the retry would silently never fire and nothing would look broken.
+      Normalise first: walk `InnerException`, and fall back to
+      `ps.Streams.Error.FirstOrDefault()?.Exception`, then classify.
+    - Tests pin the classification per type for **both shapes** - a raw `ADException` and one
+      wrapped in the cmdlet-invocation exception - and likewise for `ADServerDownException`, so
+      the unwrap itself is guarded and not just the type list.
   - **The read-back still decides.** A retry that appears to succeed does not make the write
     successful; only the final membership comparison does.
 
@@ -395,7 +424,9 @@ The module has no service tests today.
     notification.
 16. Oversized upload produces a message naming the limit, not a raw stream error.
 17. The lock wraps the clear, every add batch and the read-back, is keyed on objectGUID rather
-    than the group name, and is a `Global\` named mutex - not only the in-process semaphore.
+    than the group name, and is a `Global\` named mutex - not only the in-process semaphore. It
+    is created with explicit security rather than defaults, a failure to acquire within the
+    timeout refuses **before** the clear, and an abandoned mutex is logged and then proceeds.
 18. Retry, classified by exception TYPE not message: an `ADException` on one add batch retries
     that batch and the run completes; `ADServerDownException`, `ADIdentityNotFoundException`,
     `ADInvalidOperationException` and `UnauthorizedAccessException` each fail on the first
