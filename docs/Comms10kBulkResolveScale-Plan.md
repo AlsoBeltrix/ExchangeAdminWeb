@@ -1,7 +1,7 @@
 # Comms-10k At Full Size - Plan
 
 Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
-review findings and 17 through 23 the findings of rounds 14 to 20, all within that approved
+review findings and 17 through 24 the findings of rounds 14 to 21, all within that approved
 scope. No code written.
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). **No base app bump** - this work is module-scoped.
 `ExchangeAdminWeb.csproj` is at `2.24.0` as of 2026-09-28 and must be byte-identical after every
@@ -498,7 +498,30 @@ for the lock key and every write, and does not reintroduce it. Testability:
   itself fails after the clear or any add has landed, the module does not know what the
   membership is.
 
-  **The dividing line is whether the clear was attempted, not whether it reported failure.**
+  **The outcome is DERIVED by one procedure, not assigned per failure site.** Rounds 18, 20 and
+  21 each found a different corner of this taxonomy contradicting another, because outcomes were
+  being decided at each error site. They are not. There is one rule:
+
+  ```
+  if a failure occurs before the clear is issued  -> refused before any change   (stop)
+  otherwise, whatever happened, ATTEMPT THE READ-BACK:
+      read-back fails                             -> could not confirm
+      read-back == expected final set             -> succeeded
+                                                     (with exceptions, if any member was
+                                                      unremovable)
+      read-back != expected final set             -> partly applied, reported FROM THE
+                                                     OBSERVED MEMBERSHIP, never from which
+                                                     batches were thought to have run
+  ```
+
+  Two consequences worth stating because they are what the earlier per-site rules kept getting
+  wrong. A failed add batch is **not** automatically "partly applied" - if the read-back then
+  also fails, the outcome is "could not confirm". And a failed add batch whose read-back matches
+  the target **is a success**: the batch may have applied before the error surfaced, and the
+  membership is what decides, not the error.
+
+  **The dividing line for the first branch is whether the clear was attempted, not whether it
+  reported failure.**
   Everything that refuses *before* the clear command is issued - lock timeout, resolution
   failure, the distribution-group guard, the post-lock re-read mismatch, an empty target list -
   is "refused before any change", and the membership is provably untouched. From the moment the
@@ -555,21 +578,28 @@ The module has no service tests today.
     2,001 and 10,001 members.
 11. The clear is issued exactly once and before every add. Asserted on call order - a second
     clear partway through would wipe what was already written.
-12. Success requires the read-back to equal the target plus any unremovable primary-group
-    members, and the reported count comes from that read, not the input.
-13. A failed add batch stops the remaining batches and reports **partly applied**, naming how many
-    were written and that the list is incomplete; the audit records observed, not intended. The
-    message tells the operator to re-run the same file.
-14. A failure **before the clear is issued** - lock timeout, resolution failure, the
+**Tests 12 to 15 all exercise the single outcome procedure in the write design. Write them
+against that procedure, not against individual error sites - deciding outcomes per error site is
+what produced three rounds of contradictions.**
+
+12. The procedure runs as written: any failure before the clear short-circuits to
+    refused-before-any-change with no read-back attempted; **every** post-clear path attempts
+    the read-back, including one where an add batch threw.
+13. Post-clear outcomes are derived from the read-back and nothing else:
+    - read-back throws -> could not confirm;
+    - read-back equals the expected final set -> succeeded, **even though an add batch
+      reported failure** - the batch applied before the error surfaced and the membership is
+      what decides;
+    - read-back differs -> partly applied, and the counts reported come from the observed
+      membership, not from which batches were believed to have run.
+14. A failure before the clear is issued - lock timeout, resolution failure, the
     distribution-group guard, the post-lock re-read mismatch - reports refused-before-any-change
-    and issues no adds; the membership is provably untouched. A failure **once the clear has
-    been issued** reports could-not-confirm and likewise issues no adds. The two must not read
-    the same, and the dividing line is attempted-or-not, never the error text.
+    and issues no adds; the membership is provably untouched. The dividing line is
+    attempted-or-not, never the error text.
 15. All five outcomes are distinguishable in the page message, the audit record and the
-    notification. Specifically: **a read-back that throws after writes have landed reports
-    "could not confirm", not "partly applied" and not "refused before any change"**, and a clear
-    that fails without establishing that nothing changed reports the same. Asserted per outcome,
-    because the whole point is that these must not collapse into each other.
+    notification, asserted per outcome, because the whole point is that they must not collapse
+    into each other. `FinalCount` comes from the read-back in every outcome that has one, and is
+    absent rather than guessed in could-not-confirm.
 16. Oversized upload produces a message naming the limit, not a raw stream error.
 17. The lock wraps the clear, every add batch and the read-back, is keyed on objectGUID rather
     than the group name, and is a `Global\` named mutex - not only the in-process semaphore. It
@@ -587,7 +617,8 @@ The module has no service tests today.
 20. Retry, classified by exception type NAME as a string - the classifier is a pure function
     over a type name and compiles with no reference to `Microsoft.ActiveDirectory.Management`,
     which this solution does not have; an unrecognised name is not retried. An `ADException` on
-    one add batch retries that batch and the run completes; `ADServerDownException`, `ADIdentityNotFoundException`,
+    one add batch retries that batch and the run completes;
+    `ADServerDownException`, `ADIdentityNotFoundException`,
     `ADInvalidOperationException` and `UnauthorizedAccessException` each fail on the first
     attempt with no retry delay; three consecutive `ADException`s exhaust the retry and report a
     real failure carrying the attempt count. Every retry logs the exception message. A retry
