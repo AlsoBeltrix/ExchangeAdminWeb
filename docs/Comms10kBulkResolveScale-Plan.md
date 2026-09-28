@@ -1,9 +1,12 @@
 # Comms-10k At Full Size - Plan
 
 Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
-review findings, and revision 17 the round-14 findings, both within that approved scope. No
-code written.
-Module: `Comms10k` (`1.2.0` -> `1.3.0`). Base app `2.23.0` unchanged.
+review findings, 17 the round-14 findings and 18 the round-15 findings, all within that approved
+scope. No code written.
+Module: `Comms10k` (`1.2.0` -> `1.3.0`). **No base app bump** - this work is module-scoped.
+`ExchangeAdminWeb.csproj` is at `2.24.0` as of 2026-09-28 and must be byte-identical after every
+slice; verify by diff rather than by reading this line, which goes stale whenever another work
+stream bumps it.
 Scope: `Services/Comms10kService.cs`, `Components/Pages/Comms10k.razor`,
 `Components/Pages/ModuleConfig.razor` (one list entry), `Modules/ModuleCatalog.cs` (version bump),
 `README.md`, one new pure helper, new tests, and the governance records named below.
@@ -14,12 +17,16 @@ Every claim about directory limits below was measured on 2026-09-25 against
 supplied for the purpose. The numbers are in "Measured facts".
 
 **Correction to the record.** Commit `1a957d1`, "docs(comms10k): the scale plan is approved",
-marked this plan approved by the owner. **It was not, and is not.** The owner stated the opposite
-on 2026-09-25 ("this plan is not approved"), and the review verdict that commit cited - codex
-round 12, "best approach, no material changes needed" - was returned against revision 12, whose
-write design this revision replaces on measured evidence. That header was written by another
-session; this line replaces it rather than deleting the trail, because the commit stays in the
-log.
+marked this plan approved by the owner **at a point when it was not**. The owner had stated the
+opposite on 2026-09-25 ("this plan is not approved"), and the review verdict that commit cited -
+codex round 12, "best approach, no material changes needed" - was returned against revision 12,
+whose write design revision 15 replaces on measured evidence. That header was written by another
+session.
+
+**Approval was subsequently given, by the owner, on 2026-09-28, at revision 15** - after the plan
+was rewritten around the measured directory limits. The status line above is that approval, not
+the earlier false one. This paragraph stays because commit `1a957d1` remains in the log and its
+message reads as approval three days before any was given.
 
 ## What this module does
 
@@ -130,7 +137,16 @@ rewrite.
 The directory forbids a single operation at this size, so the write becomes two steps - and they
 are exactly the two the module is described by: **empty the group, populate it from the CSV.**
 
-1. **`Set-ADGroup -Clear member`** - one operation, 2.8s at 10,001. The group is now empty.
+0. **Resolve the configured group name to its objectGUID and distinguished name once**, before
+   the lock is taken, and use that identity for the lock key and for every subsequent operation.
+   The Constitution requires directory mutations to bind to immutable identifiers and re-read
+   before write where practical (`docs/ProjectConstitution.md:91`). Today every call passes the
+   configured **name** (`Comms10kService.cs:207`, `:223`), so a rename or a same-named object in
+   another container between operations would retarget the write mid-sequence - a risk the
+   single atomic write did not have, and one the lock cannot cover because the lock key is
+   derived from the same identity. Resolution failure refuses before anything is written.
+1. **`Set-ADGroup -Clear member`** against that resolved identity - one operation, 2.8s at
+   10,001. The group is now empty.
 2. **`Set-ADGroup -Add` in batches of 2,000** until the resolved list is written - 0.7s to 1.4s
    per batch, because every write lands in a group of 10,000 or less.
 3. **Read back and compare with the target.** Success is reported only on a match, and the
@@ -184,8 +200,22 @@ Consequences that follow, and must be handled rather than hoped away:
   Dev and prod run under different app-pool identities, so a mutex created with default security
   by one is not openable by the other - the lock would silently become per-instance again, which
   is the exact failure it exists to prevent, and it would look like it was working. Specify:
-  - **Security:** create with an explicit `MutexSecurity` granting synchronize and modify rights
-    to the identities both app pools run as. Create-or-open, never create-only.
+  - **Security:** create with an explicit `MutexSecurity`, create-or-open, never create-only.
+    **The principals are not known to the code and must not be named in it.** `deploy.ps1:11`
+    accepts a single `ServiceAccount` for the pool being deployed, so no source file or script
+    today knows both identities, and hardcoding either would violate Architectural Invariant 7.
+    Grant by a rule rather than a list: the group-membership write already runs as the module's
+    Delinea credential, so the natural environment-neutral principal set is the **local
+    Users/Authenticated Users** scope restricted to synchronize-and-modify on this one named
+    object, which both pool identities satisfy without either being named. A mutex confers no
+    privilege beyond ordering, so a broad grant on it is not a broad grant on anything else.
+    If the owner prefers tighter scoping, the alternative is a new deploy parameter listing the
+    principals permitted to share the lock - that is a deploy-script change and goes through its
+    own approval, so **this is the one open implementation question in the plan.**
+  - **Acquisition order, explicitly:** in-process semaphore first, then the global mutex, then
+    the clear, the add batches and the read-back; release in reverse, each in a `finally`.
+    Taking the mutex first would let one process hold a machine-wide lock while queueing on its
+    own semaphore, blocking the other instance behind purely local contention.
   - **Timeout:** a bounded wait, not `WaitOne()` forever - a replace is a foreground operation
     behind a spinner. On timeout, **refuse before the clear** and tell the operator another
     replace of this list is in progress. Never proceed unlocked.
@@ -427,6 +457,9 @@ The module has no service tests today.
     than the group name, and is a `Global\` named mutex - not only the in-process semaphore. It
     is created with explicit security rather than defaults, a failure to acquire within the
     timeout refuses **before** the clear, and an abandoned mutex is logged and then proceeds.
+18a. The group is resolved to objectGUID and DN once before the lock, every write targets that
+    resolved identity rather than the configured name, and a resolution failure refuses before
+    the clear.
 18. Retry, classified by exception TYPE not message: an `ADException` on one add batch retries
     that batch and the run completes; `ADServerDownException`, `ADIdentityNotFoundException`,
     `ADInvalidOperationException` and `UnauthorizedAccessException` each fail on the first
