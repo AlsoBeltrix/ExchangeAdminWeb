@@ -1,6 +1,11 @@
 # Migration -- Redesign The Status Interface (queue item 14)
 
-Status: **IMPLEMENTED 2026-09-28. All eight slices landed, plus the mir-1 review fix.** Module
+Status: **NOT COMPLETE. All eight slices landed, plus the mir-1 review fix - but R13 IS NOT
+DELIVERED and queue item 12 therefore is not either.** S8 built the service method that makes
+scheduling possible (`ScheduleMigrationBatchCompletionAsync`); **nothing on the page calls it**,
+so there is no Schedule control and an operator cannot schedule a completion. Found by auditing
+all 45 requirements against the code on 2026-09-28, after the slices were all marked done -
+finishing every slice is not the same as meeting every requirement. Module
 `1.9.1` -> `1.19.0`, no base app bump at any point. **Not yet seen in a browser beyond one owner
 screenshot** - the `## Acceptance` hand checks below are outstanding, and no test in this repo
 renders a Blazor component.

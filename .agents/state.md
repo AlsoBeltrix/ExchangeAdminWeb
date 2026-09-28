@@ -79,7 +79,22 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     and add are both measured idempotent), which reduces but cannot eliminate it.
   - `Test-WebApp` holds 10,001 test members; the owner is removing it.
 
-- **QUEUE ITEM 14 IS IMPLEMENTED. ALL EIGHT SLICES ARE LANDED, PLUS THE mir-1 REVIEW FIX.**
+- **QUEUE ITEM 14 IS NOT COMPLETE: R13 IS MISSING AND SO IS QUEUE ITEM 12.**
+  All eight slices are landed and every gate is green, but a requirements audit against the code
+  found that **no Schedule control exists on the page.** S8 (`4eb4116`) built
+  `ScheduleMigrationBatchCompletionAsync` and separated "complete now" from "complete at T" in
+  the model - the plumbing is right and tested - but nothing calls it. R13 says scheduled
+  completion must be "reachable without hunting"; it is currently reachable only from C#.
+  **Finishing every slice is not the same as meeting every requirement**, and the slice list is
+  what I had been checking.
+  - **What it needs:** a Schedule action in the batch operation bar beside the other five (R3,
+    R6), staged through the ticket flow like every other mutating action (R12), with a
+    datetime-local field in the confirm step alongside the ticket. The planner needs a Schedule
+    predicate - exclusion, since a batch that is still Syncing can legitimately be scheduled to
+    complete later, and only Completed/Completing/Removing cannot. Then the usual toll: the
+    ClickGateRegistry coordinates move again.
+  - **THE PLAN SAYS NOTHING SHIPS UNTIL 12, 13 AND 14 ARE ALL DONE.** Item 12 is scheduled
+    completion. It is not done.
   `docs/MigrationInterfaceRedesign-Plan.md` is `Implemented`. Module `1.9.1` -> `1.19.0`, no base
   app bump at any point. Gates green at `8b8b8be`: build 0 errors, **3261 passed / 0 failed /
   3 skipped**, format, ASCII, `git diff --check`, PSScriptAnalyzer 0 errors, Pester 157/0.
