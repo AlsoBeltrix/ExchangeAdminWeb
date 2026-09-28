@@ -226,6 +226,7 @@ try
     // Single owner of the export directory, filename convention, and jobId validation, shared by the
     // detail-export writer and the Downloadable Reports page so the two cannot drift apart.
     builder.Services.AddScoped<MessageTraceExportStore>();
+    builder.Services.AddScoped<MigrationReportStore>();
     // Page logic for the Downloadable Reports page, kept out of the markup so it is unit-testable
     // (the repo has no bUnit harness).
     builder.Services.AddScoped<MessageTraceExportListing>();
@@ -354,6 +355,15 @@ try
             var removed = exports.PruneExpired(DateTime.UtcNow, retentionLog);
             if (removed > 0)
                 Log.Information("Export retention: removed {Count} expired Message Analysis export(s)", removed);
+
+            // Migration reports, same pass and the same reasoning (R24d of
+            // docs/MigrationInterfaceRedesign-Plan.md). Their window is twelve hours rather than
+            // thirty days, and the store also sweeps on every write - but a store nobody opens
+            // between restarts would still keep yesterday's, which is what this pass is for.
+            var reports = retentionScope.ServiceProvider.GetRequiredService<MigrationReportStore>();
+            var reportsRemoved = reports.Sweep(DateTime.UtcNow);
+            if (reportsRemoved > 0)
+                Log.Information("Migration report retention: removed {Count} expired report(s)", reportsRemoved);
         }
 
         // Usage-telemetry retention, in the same one-shot startup pass (docs/UsageTelemetry-Plan.md,

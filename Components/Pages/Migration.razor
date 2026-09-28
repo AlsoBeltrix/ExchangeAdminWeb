@@ -12,6 +12,7 @@
 @inject ClientInfoService ClientInfo
 @inject IJSRuntime JS
 @inject ILogger<ExchangeAdminWeb.Components.Pages.Migration> Logger
+@inject MigrationReportStore ReportStore
 @rendermode InteractiveServer
 
 <PageTitle>Exchange Migration</PageTitle>
@@ -998,6 +999,69 @@
     }
 </div>
 
+@* R24. The per-mailbox report is a MODAL DIALOG with an Export button. A drill-down, a panel
+   under the table, a third pane and a new tab were each rejected by the owner (2026-09-24), and
+   the drawer under the row that production used until S6 is out: it replaced the mailbox table's
+   own space and pushed every row below it down the page.
+
+   Rendered OUTSIDE the two panes, at the end of the page, so it cannot be clipped by a pane's
+   scroll region or hidden behind it. It carries the mailbox's status and its row action in the
+   header, so the operator can act on what the report says without dismissing it first.
+
+   Only Close dismisses it - no backdrop click, no Escape. The report may have cost twenty
+   minutes and the operator is reading it; a stray click outside must not be able to take it
+   away. It survives the dismiss anyway (R24a), but the interruption is the cost. *@
+@if (reportUser != null && userReport != null)
+{
+    var reportRow = batchUsers?.FirstOrDefault(u =>
+        string.Equals(u.EmailAddress, reportUser, StringComparison.OrdinalIgnoreCase));
+
+    <div class="mig-modal-backdrop">
+        <div class="mig-modal card shadow">
+            <div class="card-header d-flex align-items-center gap-2 flex-wrap">
+                <strong class="text-truncate" title="@reportUser">@reportUser</strong>
+                @if (reportRow != null)
+                {
+                    <span class="badge bg-@GetUserStatusColor(reportRow.Status)">@reportRow.Status</span>
+                }
+                @if (reportFetchedAtUtc.HasValue)
+                {
+                    @* R24a: the operator has to be able to tell how old this is before deciding
+                       whether another twenty minutes is worth it. *@
+                    <small class="text-muted">
+                        Taken @reportFetchedAtUtc.Value.ToLocalTime().ToString("MMM dd HH:mm")
+                    </small>
+                }
+                <div class="ms-auto d-flex gap-2">
+                    @* Export writes the whole report to a file rather than making anyone select
+                       tens of thousands of lines out of a scroll box. *@
+                    <button class="btn btn-sm btn-outline-secondary" disabled="@IsBusy"
+                            @onclick="ExportOpenReportAsync">Export</button>
+                    @if (reportFetchedAtUtc.HasValue)
+                    {
+                        <button class="btn btn-sm btn-outline-warning" disabled="@IsBusy"
+                                title="Runs Get-MigrationUserStatistics again. On a long or problematic migration this can take twenty minutes or more."
+                                @onclick="() => RefetchUserReport(reportUser)">
+                            @if (loadingReport == reportUser)
+                            {
+                                <span class="spinner-border spinner-border-sm"></span>
+                            }
+                            else
+                            {
+                                <span>Fetch again</span>
+                            }
+                        </button>
+                    }
+                    <button class="btn btn-sm btn-secondary" @onclick="DismissReportModal">Close</button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <pre class="mig-report-text mb-0">@userReport</pre>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
 
     // R12 and the repo's own lesson about two copies of one control: the mailbox row is defined
@@ -1103,20 +1167,6 @@
         <tr class="table-warning">
             <td colspan="@(canManage ? 7 : 6)" class="py-2">
                 @PendingActionConfirm
-            </td>
-        </tr>
-    }
-    @if (reportUser == user.EmailAddress && userReport != null)
-    {
-        <tr>
-            <td colspan="@(canManage ? 7 : 6)" class="p-0">
-                <div class="border-top p-3">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <strong>Report for @user.EmailAddress</strong>
-                        <button class="btn btn-sm btn-outline-secondary" @onclick="CloseUserReport">Close</button>
-                    </div>
-                    <pre class="bg-body-tertiary p-2 rounded" style="max-height: 400px; overflow-y: auto; font-size: 0.8rem; white-space: pre-wrap;">@userReport</pre>
-                </div>
             </td>
         </tr>
     }
@@ -1238,6 +1288,10 @@
     private string? loadingReport;
     private string? reportUser;
     private string? userReport;
+
+    // R24a. When the report on screen was taken, so the dialog can say so and the operator can
+    // judge whether refreshing is worth twenty minutes. Null for an error, which is not a report.
+    private DateTime? reportFetchedAtUtc;
     // Bumped on every close. An in-flight LoadUserReport captures the value it started under and
     // drops its result if the generation has moved on, so a slow fetch cannot repopulate a panel
     // that a reload just cleared.
@@ -1379,7 +1433,7 @@
         expandedBatch = open;
         batchUsersGeneration++;
         batchUsers = null;
-        CloseUserReport();
+        InvalidateStoredReports();
 
         // S5. A different batch is a different list. Carrying the previous batch's filter over
         // would show "no mailbox matches" for a batch the operator has only just opened, and
@@ -1439,7 +1493,7 @@
         expandedBatch = requested;
         batchUsersGeneration++;
         batchUsers = null;
-        CloseUserReport();
+        InvalidateStoredReports();
 
         // R9: the address names the SELECTION, not a second concept sitting beside it. Without
         // this, pressing Back would move the pane to another batch while the tick boxes still
@@ -2268,7 +2322,7 @@
     {
         if (IsBusy) return;
 
-        CloseUserReport();
+        InvalidateStoredReports();
         await LoadMailboxesFor(batchName);
     }
 
@@ -2469,7 +2523,7 @@
 
             if (result.Success && expandedBatch != null)
             {
-                CloseUserReport();
+                InvalidateStoredReports();
                 var generation = batchUsersGeneration;
                 ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(expandedBatch));
             }
@@ -2860,7 +2914,7 @@
                 selectedBatches.Clear();
                 selectedBatches.Add(matchedBatch.BatchName);
                 batchUsers = null;
-                CloseUserReport();
+                InvalidateStoredReports();
                 StateHasChanged();
 
                 await AdoptSelectionAsOpenBatch();
@@ -2891,7 +2945,7 @@
             selectedBatches.Clear();
             selectedBatches.Add(searchResult.BatchId!);
             batchUsers = null;
-            CloseUserReport();
+            InvalidateStoredReports();
             StateHasChanged();
 
             await AdoptSelectionAsOpenBatch();
@@ -2916,12 +2970,45 @@
     // migration with the same key - so the snapshot must not survive the reload. Never render
     // report text that was not just fetched. Every site that reloads or discards batchUsers calls
     // this; the generation bump also invalidates a fetch that is still in flight.
-    private void CloseUserReport()
+    // R24e. DISMISSING the dialog and INVALIDATING the report are two different operations, and
+    // until S6 they were one method. Reusing the invalidating one for the Close button makes R24a
+    // impossible: every close would guarantee a re-fetch, and a re-fetch is twenty minutes of
+    // Get-MigrationUserStatistics.
+    //
+    // This one hides the dialog and touches nothing else. The stored copy survives, so reopening
+    // is instant.
+    private void DismissReportModal()
+    {
+        reportUser = null;
+        userReport = null;
+        reportFetchedAtUtc = null;
+    }
+
+    // The other one. Bumps the generation, so a fetch still in flight discards its own result,
+    // and deletes the stored copies - because the rows this report describes are being replaced.
+    //
+    // R24b, and it is a regression guard for queue item 3: a report open while its batch was
+    // removed and recreated under the same name kept showing the PREVIOUS migration's report. The
+    // batch name is the same, so nothing else distinguishes them. Every site that reloads or
+    // discards batchUsers calls this, never DismissReportModal.
+    private void InvalidateStoredReports()
     {
         reportGeneration++;
         reportUser = null;
         userReport = null;
+        reportFetchedAtUtc = null;
         loadingReport = null;
+
+        // Fail-soft: a store that cannot be swept must not break a row reload. A report that
+        // survives deletion is still refused on read once it expires, and its generation is gone.
+        try
+        {
+            ReportStore.DeleteAll();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Stored migration reports could not be discarded");
+        }
     }
 
     // Every replacement of the rendered rows goes through here, and the close happens AFTER the
@@ -2945,7 +3032,7 @@
         if (generation != batchUsersGeneration)
             return;
 
-        CloseUserReport();
+        InvalidateStoredReports();
         batchUsers = users;
 
         // S5. The rows just changed under the pager. Clamp rather than reset: a refresh of the
@@ -2955,37 +3042,90 @@
         mailboxPage = ListWindow.ClampPage(mailboxPage, MailboxTotalCount, MailboxPageSize);
     }
 
+    // R24a. A fetched report is KEPT, and re-fetching is a deliberate act.
+    // Get-MigrationUserStatistics can take twenty minutes or more on a long or problematic
+    // migration, so opening the dialog a second time must never run it again. That is a
+    // correctness requirement about operator time, not a caching optimisation.
     private async Task LoadUserReport(string emailAddress)
     {
-        // Same row clicked twice: close it.
+        if (IsBusy || expandedBatch == null) return;
+
+        // Same row clicked twice: just hide the dialog. The stored copy stays, so the next click
+        // is instant - this is the whole point of splitting dismiss from invalidate.
         if (reportUser == emailAddress)
         {
-            CloseUserReport();
+            DismissReportModal();
             return;
         }
 
-        CloseUserReport();
+        // Already held? Show it without touching Exchange, and say when it was taken so the
+        // operator can judge whether it is worth the twenty minutes to refresh.
+        var stored = ReportStore.TryRead(expandedBatch, emailAddress, DateTime.UtcNow);
+        if (stored != null)
+        {
+            userReport = stored.Text;
+            reportFetchedAtUtc = stored.FetchedAtUtc;
+            reportUser = emailAddress;
+            return;
+        }
+
+        await FetchUserReport(emailAddress);
+    }
+
+    // R24a's other half: "Fetch again" is its own control and says what it costs. Reached only
+    // from the dialog, never from opening it.
+    private async Task RefetchUserReport(string emailAddress)
+    {
+        if (IsBusy || expandedBatch == null) return;
+
+        ReportStore.Delete(expandedBatch, emailAddress);
+        await FetchUserReport(emailAddress);
+    }
+
+    private async Task FetchUserReport(string emailAddress)
+    {
+        var batch = expandedBatch;
+        if (batch == null) return;
+
         var generation = reportGeneration;
         loadingReport = emailAddress;
+        var takenAtUtc = DateTime.UtcNow;
 
         try
         {
             var text = await MigrationSvc.GetMigrationUserReportAsync(emailAddress);
             if (generation != reportGeneration) return;
+
+            // Stored before it is rendered, so the modal and any later consumer read the same
+            // bytes (R24c, and R31e depends on it). A store failure must not lose the report the
+            // operator just waited twenty minutes for - it is shown either way, just not kept.
+            try
+            {
+                ReportStore.Write(batch, emailAddress, text, takenAtUtc);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Migration report for {Email} could not be stored", emailAddress);
+            }
+
             userReport = text;
+            reportFetchedAtUtc = takenAtUtc;
             reportUser = emailAddress;
         }
         catch (Exception ex)
         {
             if (generation != reportGeneration) return;
+
+            // NOT stored. An error string is not a report, and keeping it would serve the failure
+            // back on the next open as though it were the answer.
             userReport = $"Error: {ex.Message}";
+            reportFetchedAtUtc = null;
             reportUser = emailAddress;
         }
         finally
         {
-            // A superseded continuation leaves loadingReport alone: the CloseUserReport that
-            // superseded it already nulled it, and a late write would resurrect a spinner for a
-            // fetch nobody is waiting on.
+            // A superseded continuation leaves loadingReport alone: whatever superseded it already
+            // nulled it, and a late write would resurrect a spinner for a fetch nobody awaits.
             if (generation == reportGeneration)
                 loadingReport = null;
         }
@@ -3118,6 +3258,53 @@
             catch (Exception auditEx)
             {
                 Logger.LogError(auditEx, "Audit failed for Migration status CSV export");
+            }
+        }
+        finally
+        {
+            isDownloadingCsv = false;
+        }
+    }
+
+    // R24. Export writes the whole report to a file rather than making anyone select tens of
+    // thousands of lines out of a scroll box. It writes the bytes ON SCREEN, which are the bytes
+    // the store holds (R24c) - so the file and the dialog cannot disagree, and neither can the
+    // file and the zip that S7 will build from the same store.
+    //
+    // Audited as a read of migration data: this puts a copy of a mailbox's migration diagnostics
+    // on someone's workstation, and who did that is worth knowing.
+    private async Task ExportOpenReportAsync()
+    {
+        if (reportUser == null || userReport == null)
+            return;
+
+        // Same flag the CSV download uses, set before the first await so the page-wide gate
+        // closes for the whole interop round-trip, cleared in a finally so a failed interop
+        // cannot leave the page dead.
+        isDownloadingCsv = true;
+
+        try
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(userReport);
+            var base64 = Convert.ToBase64String(bytes);
+
+            // The address is operator-supplied text and this becomes a filename, so everything
+            // outside a known-safe set is replaced rather than trusted.
+            var safeName = new string(reportUser.Select(c =>
+                char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_').ToArray());
+            var timestamp = (reportFetchedAtUtc ?? DateTime.UtcNow).ToLocalTime().ToString("yyyyMMdd_HHmmss");
+
+            await JS.InvokeVoidAsync(
+                "downloadFile", $"MigrationReport_{safeName}_{timestamp}.txt", "text/plain", base64);
+
+            try
+            {
+                Audit.LogModuleAction(currentUser, clientIpAddress, "ExportUserReport", "Migration",
+                    reportUser, true);
+            }
+            catch (Exception auditEx)
+            {
+                Logger.LogError(auditEx, "Audit failed for Migration user report export");
             }
         }
         finally

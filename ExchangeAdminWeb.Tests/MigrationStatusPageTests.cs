@@ -987,7 +987,7 @@ public class MigrationStatusPageTests
         foreach (Match discard in discards)
         {
             Assert.StartsWith(
-                "CloseUserReport();",
+                "InvalidateStoredReports();",
                 discard.Groups["next"].Value.Trim(),
                 StringComparison.Ordinal);
         }
@@ -1007,7 +1007,7 @@ public class MigrationStatusPageTests
         var body = GetMethodBody("AdoptSelectionAsOpenBatch");
 
         var discard = body.IndexOf("batchUsers = null;", StringComparison.Ordinal);
-        var close = body.IndexOf("CloseUserReport();", StringComparison.Ordinal);
+        var close = body.IndexOf("InvalidateStoredReports();", StringComparison.Ordinal);
         var load = body.IndexOf("LoadMailboxesFor(", StringComparison.Ordinal);
 
         Assert.True(discard > 0, "the open batch changing must discard the rows");
@@ -1023,10 +1023,10 @@ public class MigrationStatusPageTests
         var body = GetMethodBody("SearchUser");
 
         var batchMatch = ExtractBlock(body, "if (matchedBatch != null)");
-        Assert.Contains("CloseUserReport();", batchMatch, StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports();", batchMatch, StringComparison.Ordinal);
 
         var userMatch = body[(body.IndexOf(batchMatch, StringComparison.Ordinal) + batchMatch.Length)..];
-        Assert.Contains("CloseUserReport();", userMatch, StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports();", userMatch, StringComparison.Ordinal);
 
         // S3: neither branch fetches for itself any more. Under R9 arriving at a batch IS
         // selecting it, so both hand off to AdoptSelectionAsOpenBatch, which navigates and loads.
@@ -1043,7 +1043,7 @@ public class MigrationStatusPageTests
         // cannot see it. The report still describes the pre-refresh state of the row.
         var body = GetMethodBody("RefreshBatchUsers");
 
-        var close = body.IndexOf("CloseUserReport();", StringComparison.Ordinal);
+        var close = body.IndexOf("InvalidateStoredReports();", StringComparison.Ordinal);
         var fetch = body.IndexOf("LoadMailboxesFor(", StringComparison.Ordinal);
         Assert.True(close > 0, "RefreshBatchUsers must close the open report");
         Assert.True(fetch > close, "the close must precede the refetch");
@@ -1051,7 +1051,7 @@ public class MigrationStatusPageTests
         // The refetch itself is LoadMailboxesFor, which closes the report AGAIN after its await -
         // see ReplaceBatchUsers for why closing before the await is not enough on a path that
         // leaves the old rows, and their enabled Report button, rendered for the whole call.
-        Assert.Contains("CloseUserReport();", GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports();", GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
     }
     [Fact]
     public void NoCodePathAssignsBatchUsersWithoutClosingTheReport()
@@ -1092,7 +1092,7 @@ public class MigrationStatusPageTests
         // fetch returns and any report opened mid-reload is discarded.
         var body = GetMethodBody("ReplaceBatchUsers");
 
-        var close = body.IndexOf("CloseUserReport();", StringComparison.Ordinal);
+        var close = body.IndexOf("InvalidateStoredReports();", StringComparison.Ordinal);
         var assign = body.IndexOf("batchUsers = users;", StringComparison.Ordinal);
         Assert.True(close > 0, "ReplaceBatchUsers must close the open report");
         Assert.True(assign > close, "the close must precede the assignment");
@@ -1131,7 +1131,7 @@ public class MigrationStatusPageTests
 
         var guard = body.IndexOf("if (generation != batchUsersGeneration)", StringComparison.Ordinal);
         var bail = body.IndexOf("return;", StringComparison.Ordinal);
-        var close = body.IndexOf("CloseUserReport();", StringComparison.Ordinal);
+        var close = body.IndexOf("InvalidateStoredReports();", StringComparison.Ordinal);
         var assign = body.IndexOf("batchUsers = users;", StringComparison.Ordinal);
 
         Assert.True(guard >= 0, "ReplaceBatchUsers must refuse a result from an overtaken load");
@@ -1246,7 +1246,7 @@ public class MigrationStatusPageTests
         var body = GetMethodBody("ExecuteUserAction");
 
         var reload = ExtractBlock(body, "if (result.Success && expandedBatch != null)");
-        Assert.Contains("CloseUserReport();", reload, StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports();", reload, StringComparison.Ordinal);
         Assert.Contains("GetMigrationBatchUsersAsync", reload, StringComparison.Ordinal);
     }
 
@@ -1264,8 +1264,8 @@ public class MigrationStatusPageTests
         Assert.Contains("LoadMailboxesFor(", body, StringComparison.Ordinal);
 
         // Both of those close it; neither may stop doing so.
-        Assert.Contains("CloseUserReport();", GetMethodBody("AdoptSelectionAsOpenBatch"), StringComparison.Ordinal);
-        Assert.Contains("CloseUserReport();", GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports();", GetMethodBody("AdoptSelectionAsOpenBatch"), StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports();", GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1274,7 +1274,7 @@ public class MigrationStatusPageTests
         // One helper owns the clear, so a new reload path has one call to make rather than four
         // fields to remember. The generation bump is what makes the clear hold: without it a fetch
         // already in flight lands afterwards and repopulates the panel the reload just emptied.
-        var body = GetMethodBody("CloseUserReport");
+        var body = GetMethodBody("InvalidateStoredReports");
 
         Assert.Contains("reportGeneration++", body, StringComparison.Ordinal);
         Assert.Contains("reportUser = null;", body, StringComparison.Ordinal);
@@ -1291,7 +1291,11 @@ public class MigrationStatusPageTests
         //
         // Guarded by ORDER, not presence: the generation check must be the last thing between the
         // await and every write to userReport, on the success path and the error path alike.
-        var body = GetMethodBody("LoadUserReport");
+        //
+        // Anchored on FetchUserReport, not LoadUserReport. S6 split them: opening a report now
+        // consults the store first and only calls the fetch on a miss, so the slow await - and
+        // the staleness it creates - live in the fetch.
+        var body = GetMethodBody("FetchUserReport");
 
         Assert.Contains("var generation = reportGeneration;", body, StringComparison.Ordinal);
 
@@ -1317,7 +1321,7 @@ public class MigrationStatusPageTests
         // finally runs on the superseded continuation too. An unguarded loadingReport = null there
         // is harmless today, but the symmetric bug - writing loadingReport back - is not, and the
         // guard is what documents that the whole continuation is void, not just its assignments.
-        var body = GetMethodBody("LoadUserReport");
+        var body = GetMethodBody("FetchUserReport");
 
         Assert.Matches(
             new Regex(@"if \(generation == reportGeneration\)\s*\r?\n\s*loadingReport = null;"),
@@ -1325,17 +1329,62 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
-    public void TheCloseButtonCallsTheSharedHelper()
+    public void CloseDismissesTheDialogAndDoesNotThrowTheReportAway()
     {
-        // It was an inline lambda nulling two of the four fields. An inline reset cannot bump the
-        // generation, so a manual Close during a slow fetch reopened the panel by itself.
-        var panel = ExtractSpan(
-            GetUserRowMarkup(),
-            "@if (reportUser == user.EmailAddress && userReport != null)",
-            "@userReport");
+        // R24e, and the point of the whole slice. Dismissing and invalidating used to be ONE
+        // method, so Close bumped the generation and deleted the text. That makes R24a impossible:
+        // every close guarantees a re-fetch, and a re-fetch is twenty minutes of
+        // Get-MigrationUserStatistics.
+        //
+        // Close must call the hiding one. The invalidating one belongs to the row-reload paths.
+        var dialog = ExtractSpan(
+            ReadPage(), "@if (reportUser != null && userReport != null)", "</div>\n}");
 
-        Assert.Contains("@onclick=\"CloseUserReport\"", panel, StringComparison.Ordinal);
-        Assert.DoesNotContain("userReport = null", panel, StringComparison.Ordinal);
+        Assert.Contains("@onclick=\"DismissReportModal\"", dialog, StringComparison.Ordinal);
+        Assert.DoesNotContain("InvalidateStoredReports", dialog, StringComparison.Ordinal);
+
+        // And the two really are different: only one bumps the generation and deletes.
+        var dismiss = StripLineComments(GetMethodBody("DismissReportModal"));
+        Assert.DoesNotContain("reportGeneration++", dismiss, StringComparison.Ordinal);
+        Assert.DoesNotContain("Delete", dismiss, StringComparison.Ordinal);
+
+        var invalidate = StripLineComments(GetMethodBody("InvalidateStoredReports"));
+        Assert.Contains("reportGeneration++", invalidate, StringComparison.Ordinal);
+        Assert.Contains("ReportStore.DeleteAll()", invalidate, StringComparison.Ordinal);
+
+        // No inline field reset in the markup: an inline reset cannot bump the generation, which
+        // is how a manual Close during a slow fetch used to reopen the panel by itself.
+        Assert.DoesNotContain("userReport = null", dialog, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReopeningAReportDoesNotRefetchItAndFetchAgainSaysWhatItCosts()
+    {
+        // R24a. Get-MigrationUserStatistics can take twenty minutes or more, so opening the
+        // dialog a second time must never run it again. That is a correctness requirement about
+        // operator time, not a caching optimisation.
+        var open = StripLineComments(GetMethodBody("LoadUserReport"));
+
+        // The stored copy is consulted, and a hit returns WITHOUT reaching the fetch.
+        var read = open.IndexOf("ReportStore.TryRead(", StringComparison.Ordinal);
+        var fetch = open.IndexOf("FetchUserReport(", StringComparison.Ordinal);
+        Assert.True(read > 0, "opening a report must consult the store first");
+        Assert.True(fetch > read, "the fetch must come after the store read, not before it");
+        Assert.Contains("return;", open[read..fetch], StringComparison.Ordinal);
+
+        // Re-fetching is its own deliberate control, and its tooltip states the cost.
+        var dialog = ExtractSpan(
+            ReadPage(), "@if (reportUser != null && userReport != null)", "</div>\n}");
+        Assert.Contains("RefetchUserReport", dialog, StringComparison.Ordinal);
+        Assert.Matches(@"twenty minutes", dialog);
+
+        // An error is NOT stored: keeping it would serve the failure back on the next open as
+        // though it were the answer.
+        var fetchBody = StripLineComments(GetMethodBody("FetchUserReport"));
+        var write = fetchBody.IndexOf("ReportStore.Write(", StringComparison.Ordinal);
+        var errorBranch = fetchBody.IndexOf("$\"Error: {ex.Message}\"", StringComparison.Ordinal);
+        Assert.True(write > 0 && errorBranch > write,
+            "the store write must be on the success path only");
     }
 
     /// <summary>Every flag that means "an async operation is running on this page right now".</summary>
@@ -1354,8 +1403,11 @@ public class MigrationStatusPageTests
             "serves a constant; touches no page state and no in-flight operation",
         ["() => batchActionResult = null"] =
             "dismisses a result banner; gating it would trap the message on screen",
-        ["CloseUserReport"] =
-            "rendered only once a report has landed, so there is no pull for it to interrupt",
+        ["DismissReportModal"] =
+            "rendered only once a report has landed, so there is no pull for it to interrupt - "
+            + "and under R24e it must stay live for a stronger reason than convenience: it now "
+            + "only HIDES the dialog, the report survives, and an operator who cannot close a "
+            + "dialog while the page is busy is trapped behind a report they have finished with",
         ["CancelPendingAction"] =
             "the operator must always be able to back out of a staged action; it keeps its own "
             + "actionInProgress guard instead",
@@ -1442,10 +1494,11 @@ public class MigrationStatusPageTests
             tag => tag.Contains("@onclick=\"CancelPendingAction\"", StringComparison.Ordinal));
         Assert.Contains("disabled=\"@(actionInProgress != null)\"", cancel, StringComparison.Ordinal);
 
-        // Close is rendered only after a report has landed.
-        var panel = ExtractSpan(GetUserRowMarkup(),
-            "@if (reportUser == user.EmailAddress && userReport != null)", "@userReport");
-        Assert.Contains("@onclick=\"CloseUserReport\"", panel, StringComparison.Ordinal);
+        // Close is rendered only once a report has landed, and it lives in the dialog now rather
+        // than in a drawer under the row (R24).
+        var dialog = ExtractSpan(
+            ReadPage(), "@if (reportUser != null && userReport != null)", "mig-report-text");
+        Assert.Contains("@onclick=\"DismissReportModal\"", dialog, StringComparison.Ordinal);
 
         // Sample CSV serves a constant; it must not grow a call into Exchange.
         Assert.DoesNotContain("MigrationSvc", GetMethodBody("DownloadSampleCsv"), StringComparison.Ordinal);
@@ -1518,7 +1571,7 @@ public class MigrationStatusPageTests
     public void TheTabStripRefusesClicksWhileThePageIsBusy()
     {
         // An <a> ignores the disabled attribute entirely, so the button sweep cannot reach the tab
-        // strip - and the Migration Status tab calls CloseUserReport, so clicking it mid-pull
+        // strip - and the Migration Status tab invalidates the stored reports, so clicking it mid-pull
         // discards a report that takes minutes to fetch. The gate has to be in the handler; the
         // greying is styling only and must never be mistaken for the guard.
         var strip = ExtractSpan(ReadPage(), "<ul class=\"nav nav-tabs mb-3\">", "</ul>");

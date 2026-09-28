@@ -248,7 +248,11 @@ public sealed class ModuleCatalog
             // exactly as the batch bar reaches its own, and ticked mailboxes pinned above an
             // OTHER MAILBOXES divider with their own pager, so a selection is never hidden by the
             // filter (S5 step 2b, R5a, R5b, R7, R10, R11, R12).
-            Version = "1.15.0",
+            // 1.16.0: the per-mailbox report is a dialog that KEEPS what it fetched. Dismissing it
+            // and discarding it are now different operations, so closing no longer guarantees
+            // another twenty-minute Get-MigrationUserStatistics, and the text has an Export button
+            // (docs/MigrationInterfaceRedesign-Plan.md S6, R24, R24a, R24c, R24e).
+            Version = "1.16.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -212,3 +212,46 @@
     border-bottom: 1px solid var(--ui-line);
     padding: .25rem .5rem;
 }
+
+/* R24. The report dialog. Rendered outside the two panes so no pane's scroll region can clip it
+   or hide it behind itself, which is what the drawer under the row did. */
+.mig-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1060;
+    background: rgba(0, 0, 0, .5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+}
+
+.mig-modal {
+    width: min(64rem, 100%);
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--ui-surface);
+    border: 1px solid var(--ui-line);
+}
+
+.mig-modal .card-header {
+    background: var(--ui-header);
+    border-bottom: 1px solid var(--ui-line);
+}
+
+/* The report is the reason the dialog exists, so it gets the room. Scrolls inside the dialog
+   rather than growing it past the viewport. */
+.mig-report-text {
+    overflow: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    margin: 0;
+    padding: 1rem;
+    font-size: .8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--ui-zebra);
+    color: var(--ui-fg);
+}
