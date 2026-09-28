@@ -1,6 +1,8 @@
 # Comms-10k At Full Size - Plan
 
-Status: Draft, revision 14. Awaiting owner approval. No code written.
+Status: **APPROVED by the owner, 2026-09-28.** Revision 14, no code written yet. The final review
+(round 12, codex openreview) returned "Best approach: no material changes are needed - the plan is
+ready as a design", and no owner question is outstanding.
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). Base app `2.23.0` unchanged.
 Scope: `Services/Comms10kService.cs`, `Components/Pages/Comms10k.razor`,
 `Components/Pages/ModuleConfig.razor` (one list entry), `Modules/ModuleCatalog.cs` (version bump),
