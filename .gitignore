@@ -66,6 +66,12 @@ Thumbs.db
 .agents/review/*.prompt.txt
 .agents/review/*.schema.json
 .agents/review/*.result.json
+# .result.txt as well as .result.json. The openreview playbook takes prose rather than a pinned
+# schema, so codex is invoked with -o <name>.result.txt and none of those matched the .json
+# pattern above. Seventeen of them had accumulated untracked by 2026-09-28 - exactly the state
+# the comment above says is worth avoiding, because deploy-pipeline.ps1 refuses a dirty tree.
+.agents/review/*.result.txt
+.agents/review/*.stream.log
 
 # Local/private cleanup archive
 _not_for_github/
