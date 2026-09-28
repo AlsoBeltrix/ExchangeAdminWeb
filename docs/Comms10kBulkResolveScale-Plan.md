@@ -1,8 +1,8 @@
 # Comms-10k At Full Size - Plan
 
 Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
-review findings, 17 the round-14 findings and 18 the round-15 findings, all within that approved
-scope. No code written.
+review findings, 17 the round-14, 18 the round-15 and 19 the round-16 findings, all within that
+approved scope. No code written.
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). **No base app bump** - this work is module-scoped.
 `ExchangeAdminWeb.csproj` is at `2.24.0` as of 2026-09-28 and must be byte-identical after every
 slice; verify by diff rather than by reading this line, which goes stale whenever another work
@@ -139,6 +139,8 @@ are exactly the two the module is described by: **empty the group, populate it f
 
 0. **Resolve the configured group name to its objectGUID and distinguished name once**, before
    the lock is taken, and use that identity for the lock key and for every subsequent operation.
+   **Verify at the same moment that the target is a DISTRIBUTION group, and refuse if it is
+   not** - see the guard below, which is a condition of the protected-principal exemption.
    The Constitution requires directory mutations to bind to immutable identifiers and re-read
    before write where practical (`docs/ProjectConstitution.md:91`). Today every call passes the
    configured **name** (`Comms10kService.cs:207`, `:223`), so a rename or a same-named object in
@@ -209,9 +211,13 @@ Consequences that follow, and must be handled rather than hoped away:
     Users/Authenticated Users** scope restricted to synchronize-and-modify on this one named
     object, which both pool identities satisfy without either being named. A mutex confers no
     privilege beyond ordering, so a broad grant on it is not a broad grant on anything else.
-    If the owner prefers tighter scoping, the alternative is a new deploy parameter listing the
-    principals permitted to share the lock - that is a deploy-script change and goes through its
-    own approval, so **this is the one open implementation question in the plan.**
+    **Settled, not open.** Two alternatives were considered and rejected. A new deploy parameter
+    listing the permitted principals is a deploy-script change with its own approval, for no
+    security gain over the rule above. A lease row in the shared configuration database would
+    additionally cover the cross-host case, but it trades the operating system's
+    abandoned-holder signal for a timeout that has to guess whether a holder died - and that
+    signal is what tells this module a previous run left the list half-written. The mutex keeps
+    it. Revisit only if the instances are ever split across hosts.
   - **Acquisition order, explicitly:** in-process semaphore first, then the global mutex, then
     the clear, the add batches and the read-back; release in reverse, each in a `finally`.
     Taking the mutex first would let one process hold a machine-wide lock while queueing on its
@@ -309,6 +315,27 @@ call site needs a comment saying what it bounds.
 
 List membership is not a security boundary and grants access to nothing. Applied here the rules
 produce only false positives and block the module's intended use.
+
+**The exemption is conditional on the target being a DISTRIBUTION group, and the condition must
+be enforced in code.** The justification above is true of a distribution group. It is **false of
+a security group**, whose membership can appear on ACLs and in Kerberos tokens.
+
+Nothing today constrains which kind is configured: `TargetGroupName` is a generic
+`ConfigFieldType.AdGroup` field (`Modules/ModuleCatalog.cs:463`) and the service writes to
+whatever name it holds (`Comms10kService.cs:174`, `:223`). Without a guard, pointing this module
+at a security group would rewrite privileged membership in bulk **with no protected-principal
+check at all** - a privilege-escalation path created by the exemption and not present before it.
+
+**Guard, fail closed, at the group-resolution step of every write:** read the resolved group's
+category and refuse unless it is Distribution. A security group, or a category that cannot be
+read, refuses before the clear and says why. Not a configuration-time check - the configured
+name can be repointed at a different object between runs, so it runs every time.
+
+The refusal states the reason plainly: this module gives up the protected-principal safeguards on
+the assumption its target is a mailing list, so it will not write to a security group. Wanting
+that behaviour needs a different module or a new owner ruling, not a config change.
+
+A test pins the guard and pins that it runs before any write.
 
 **Directory scope is unchanged.** Today's resolve passes no `-Server` and binds to the host's own
 domain. The batching pattern borrowed from `GroupManagementService` adds a global-catalog server,
@@ -460,6 +487,10 @@ The module has no service tests today.
 18a. The group is resolved to objectGUID and DN once before the lock, every write targets that
     resolved identity rather than the configured name, and a resolution failure refuses before
     the clear.
+18b. **The distribution-group guard.** A Distribution target proceeds; a Security target refuses
+    before the clear, naming the reason; a category that cannot be read refuses the same way.
+    The check runs on every replace, not once at configuration. This is the condition the
+    protected-principal exemption rests on, so it is a security test, not a validation nicety.
 18. Retry, classified by exception TYPE not message: an `ADException` on one add batch retries
     that batch and the run completes; `ADServerDownException`, `ADIdentityNotFoundException`,
     `ADInvalidOperationException` and `UnauthorizedAccessException` each fail on the first
