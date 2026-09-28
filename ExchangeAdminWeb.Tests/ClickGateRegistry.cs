@@ -120,7 +120,7 @@ public static class ClickGateRegistry
     private static PageGateEntry Migration => new()
     {
         Page = "Migration.razor",
-        ExpectedLineCount = 3485,
+        ExpectedLineCount = 3619,
 
         Predicates =
         [
@@ -157,16 +157,16 @@ public static class ClickGateRegistry
 
         ExemptControls =
         [
-            new ExemptControl(224, "@onclick=\"DownloadSampleCsv\"",
+            new ExemptControl(225, "@onclick=\"DownloadSampleCsv\"",
                 "serves a compile-time constant; touches no page state and no in-flight operation",
                 ConditionThatKeepsItTrue:
                 "DownloadSampleCsv must not grow a call into Exchange; asserted separately"),
-            new ExemptControl(453, "@onclick=\"() => batchActionResult = null\"",
+            new ExemptControl(454, "@onclick=\"() => batchActionResult = null\"",
                 "dismisses a result banner; gating it would trap the message on screen for the "
                 + "whole of the next operation"),
-            new ExemptControl(1099, "@onclick=\"DismissReportModal\"",
+            new ExemptControl(1112, "@onclick=\"DismissReportModal\"",
                 "rendered only once a report has landed, so there is no pull for it to interrupt"),
-            new ExemptControl(1263, "@onclick=\"CancelPendingAction\"",
+            new ExemptControl(1276, "@onclick=\"CancelPendingAction\"",
                 "the operator must always be able to back out of a staged action. It keeps a "
                 + "narrower guard of its own instead of IsBusy",
                 KeepsItsOwnGuard: "disabled=\"@(actionInProgress != null)\""),
@@ -178,11 +178,11 @@ public static class ClickGateRegistry
         // a refusing handler desyncs the browser from the server. See RefusalMechanism.
         NonButtonTargets =
         [
-            new NonButtonTarget(31, "@onclick=\"() => SelectTab(0)\"", "a",
+            new NonButtonTarget(32, "@onclick=\"() => SelectTab(0)\"", "a",
                 RefusalMechanism.HandlerGuard, "SelectTab"),
-            new NonButtonTarget(34, "@onclick=\"() => SelectTab(1)\"", "a",
+            new NonButtonTarget(35, "@onclick=\"() => SelectTab(1)\"", "a",
                 RefusalMechanism.HandlerGuard, "SelectTab"),
-            new NonButtonTarget(37, "@onclick=\"SelectStatusTab\"", "a",
+            new NonButtonTarget(38, "@onclick=\"SelectStatusTab\"", "a",
                 RefusalMechanism.HandlerGuard, "SelectStatusTab"),
 
             // S2. The batch row became the click target that opens a batch, replacing a Details
@@ -197,7 +197,7 @@ public static class ClickGateRegistry
             // Keyed on the tag's opening line, 590, not on 591 where the @onclick sits: the
             // locator walks elements, and the snippet has to be findable on the line the registry
             // names. The class list is what identifies it there.
-            new NonButtonTarget(630, "class=\"mig-batch-row mig-clickable", "div",
+            new NonButtonTarget(631, "class=\"mig-batch-row mig-clickable", "div",
                 RefusalMechanism.HandlerGuard, "SelectOnlyBatch"),
         ],
 
@@ -209,39 +209,39 @@ public static class ClickGateRegistry
         // because they were gated later to close the keydown paths recorded below.
         DomSyncedControls =
         [
-            new DomSyncedControl(51, "@bind=\"singleEmail\"", "input", "disabled=\"@isLoading\""),
-            new DomSyncedControl(55, "@bind=\"singleMigrationDirection\"", "select",
+            new DomSyncedControl(52, "@bind=\"singleEmail\"", "input", "disabled=\"@isLoading\""),
+            new DomSyncedControl(56, "@bind=\"singleMigrationDirection\"", "select",
                 "disabled=\"@isLoading\""),
-            new DomSyncedControl(62, "@bind=\"singleTicketNumber\"", "input", "disabled=\"@isLoading\""),
-            new DomSyncedControl(155, "@bind=\"singleBatchName\"", "input", "disabled=\"@isCreating\""),
-            new DomSyncedControl(161, "@bind=\"singleAutoStart\"", "input", "disabled=\"@isCreating\""),
-            new DomSyncedControl(165, "@bind=\"singleAutoComplete\"", "input", "disabled=\"@isCreating\""),
-            new DomSyncedControl(223, "OnChange=\"HandleCsvUpload\"", "InputFile",
+            new DomSyncedControl(63, "@bind=\"singleTicketNumber\"", "input", "disabled=\"@isLoading\""),
+            new DomSyncedControl(156, "@bind=\"singleBatchName\"", "input", "disabled=\"@isCreating\""),
+            new DomSyncedControl(162, "@bind=\"singleAutoStart\"", "input", "disabled=\"@isCreating\""),
+            new DomSyncedControl(166, "@bind=\"singleAutoComplete\"", "input", "disabled=\"@isCreating\""),
+            new DomSyncedControl(224, "OnChange=\"HandleCsvUpload\"", "InputFile",
                 "disabled=\"@isLoading\""),
-            new DomSyncedControl(229, "@bind=\"migrationDirection\"", "select", "disabled=\"@isLoading\""),
-            new DomSyncedControl(236, "@bind=\"bulkTicketNumber\"", "input", "disabled=\"@isLoading\""),
-            new DomSyncedControl(325, "@bind=\"bulkBatchName\"", "input", "disabled=\"@isCreating\""),
-            new DomSyncedControl(331, "@bind=\"bulkAutoStart\"", "input", "disabled=\"@isCreating\""),
-            new DomSyncedControl(335, "@bind=\"bulkAutoComplete\"", "input", "disabled=\"@isCreating\""),
+            new DomSyncedControl(230, "@bind=\"migrationDirection\"", "select", "disabled=\"@isLoading\""),
+            new DomSyncedControl(237, "@bind=\"bulkTicketNumber\"", "input", "disabled=\"@isLoading\""),
+            new DomSyncedControl(326, "@bind=\"bulkBatchName\"", "input", "disabled=\"@isCreating\""),
+            new DomSyncedControl(332, "@bind=\"bulkAutoStart\"", "input", "disabled=\"@isCreating\""),
+            new DomSyncedControl(336, "@bind=\"bulkAutoComplete\"", "input", "disabled=\"@isCreating\""),
 
             // Gated 2026-09-18, closing the two Enter-key holes this entry had recorded as found
             // rather than granted. Each input carries an @onkeydown whose handler reaches the very
-            // operation the button beside it refuses - HandleSearchKeyDown (2999) calls SearchUser
-            // with no busy guard while Find at 404 is gated, and HandleConfirmKeyDown (2489) calls
-            // ConfirmPendingAction with no busy guard while Confirm at 1237 is gated. A disabled
+            // operation the button beside it refuses - HandleSearchKeyDown (3133) calls SearchUser
+            // with no busy guard while Find at 405 is gated, and HandleConfirmKeyDown (2623) calls
+            // ConfirmPendingAction with no busy guard while Confirm at 1250 is gated. A disabled
             // input fires no keydown, so the attribute closes the handler path as well as the
             // typing path; a handler guard would not, and on a control that renders server state it
             // would leave the browser holding a change the server refused (docs/ClickGatingAudit-
             // Plan.md Revision 1, falsification 2). Neither input had a gate to widen or OR - both
             // were bare - so both take the page predicate whole.
             //
-            // IsBusy and not IsBusy || pendingActionLabel != null for 1233: pendingActionLabel is a
+            // IsBusy and not IsBusy || pendingActionLabel != null for 1246: pendingActionLabel is a
             // registered ExcludedField, and folding it in would disable the ticket box at the only
-            // moment it is ever rendered. The gate matches Confirm at 1237 exactly, less that
+            // moment it is ever rendered. The gate matches Confirm at 1250 exactly, less that
             // button's own emptiness clause, which a field cannot apply to itself.
-            new DomSyncedControl(394, "placeholder=\"Search batch or user email...\"", "input",
+            new DomSyncedControl(395, "placeholder=\"Search batch or user email...\"", "input",
                 "disabled=\"@IsBusy\""),
-            new DomSyncedControl(1233, "placeholder=\"Ticket # (required)\"", "input",
+            new DomSyncedControl(1246, "placeholder=\"Ticket # (required)\"", "input",
                 "disabled=\"@IsBusy\""),
 
             // S2. The batch pane's sort control, which replaced seven clickable table headers.
@@ -249,14 +249,14 @@ public static class ClickGateRegistry
             // rather than a handler guard: a refusing handler would leave the browser showing a
             // sort key the server never adopted, and the next sort would read the stale one.
             // IsBusy whole, matching the direction toggle beside it.
-            new DomSyncedControl(528, "id=\"batchSortColumn\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(529, "id=\"batchSortColumn\"", "select", "disabled=\"@IsBusy\""),
 
             // S6, R26. The batch-NAME filter. A different control from the person search at 394,
             // which finds a mailbox in any batch and jumps to it rather than narrowing anything.
             // Renders batchFilter back into the DOM, so it takes the disabled attribute: a
             // refusing handler would leave the browser showing a filter the server never applied
             // and the next keystroke would extend a string the server does not have.
-            new DomSyncedControl(517, "placeholder=\"Filter batch names\"", "input",
+            new DomSyncedControl(518, "placeholder=\"Filter batch names\"", "input",
                 "disabled=\"@IsBusy\""),
 
             // S5. The mailbox table gained a filter and a sort where it had neither. Both render
@@ -264,18 +264,18 @@ public static class ClickGateRegistry
             // the disabled attribute rather than a handler guard: a refusing handler would leave
             // the browser showing a filter the server never applied, and the next keystroke would
             // extend a string the server does not have.
-            new DomSyncedControl(898, "placeholder=\"Filter these mailboxes\"", "input",
+            new DomSyncedControl(911, "placeholder=\"Filter these mailboxes\"", "input",
                 "disabled=\"@IsBusy\""),
-            new DomSyncedControl(903, "id=\"mailboxSortColumn\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(916, "id=\"mailboxSortColumn\"", "select", "disabled=\"@IsBusy\""),
         ],
 
         UngatedDomSyncedControls =
         [
-            new UngatedDomSyncedControl(507, "title=\"Select all loaded batches\"", "input",
+            new UngatedDomSyncedControl(508, "title=\"Select all loaded batches\"", "input",
                 "left live on purpose, and the purpose is written into the page. The selection "
                 + "toolbar comment at 524-533 records owner ruling D2(a): the bulk-action buttons "
                 + "are never conditioned on eligibility, and the staged callback re-plans from the "
-                + "LIVE selection (2392) rather than from a snapshot, so the tick boxes are an input "
+                + "LIVE selection (2526) rather than from a snapshot, so the tick boxes are an input "
                 + "to the confirm step and not a value in flight. Nothing can be executed from this "
                 + "state while the page is busy - all three action buttons carry "
                 + "disabled=\"@(IsBusy || pendingActionLabel != null)\" (542, 547, 552, 557, 562)"),
@@ -287,13 +287,13 @@ public static class ClickGateRegistry
             // and not a value in flight. Nothing can be executed from this state while the page is
             // busy - every mailbox action button carries
             // disabled="@(IsBusy || pendingActionLabel != null)".
-            new UngatedDomSyncedControl(893, "title=\"Tick every mailbox matching the filter", "input",
+            new UngatedDomSyncedControl(906, "title=\"Tick every mailbox matching the filter", "input",
                 "the mailbox half of the same selection, on the same owner ruling and the same "
                 + "re-plan. ToggleSelectAllMailboxes writes only to selectedMailboxes, clears the "
                 + "staged preview and clamps the two mailbox pagers; it makes no call and awaits "
                 + "nothing"),
 
-            new UngatedDomSyncedControl(1124, "title=\"Select for a bulk action\"", "input",
+            new UngatedDomSyncedControl(1137, "title=\"Select for a bulk action\"", "input",
                 "the per-row mailbox half, inside the MailboxRow fragment. ToggleMailboxSelected "
                 + "writes only to selectedMailboxes and moves the row between the pinned block and "
                 + "the list below it; it makes no call and awaits nothing"),
@@ -309,9 +309,9 @@ public static class ClickGateRegistry
             // a DOM-synced control, because the browser keeps a tick the server refused. Recorded
             // as an open question for the owner rather than changed here: D2(a) is an owner ruling
             // and S3 changed the fact it rested on.
-            new UngatedDomSyncedControl(638, "title=\"Select for a bulk action\"", "input",
+            new UngatedDomSyncedControl(639, "title=\"Select for a bulk action\"", "input",
                 "the per-row BATCH half of the same selection, on the same owner ruling and the "
-                + "same re-plan at 2392. ToggleBatchSelected (1975) writes to selectedBatches and "
+                + "same re-plan at 2526. ToggleBatchSelected (1992) writes to selectedBatches and "
                 + "nulls the result banner; it makes no call and awaits nothing"),
         ],
 
@@ -328,27 +328,27 @@ public static class ClickGateRegistry
         // were bare - so both take the page predicate whole.
         KeyboardPaths =
         [
-            new KeyboardPath(394, "placeholder=\"Search batch or user email...\"", "input",
+            new KeyboardPath(395, "placeholder=\"Search batch or user email...\"", "input",
                 "keydown", "HandleSearchKeyDown", "SearchUser",
                 KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
-                "Enter runs the batch/user search that the Find button at 404 refuses while the page "
+                "Enter runs the batch/user search that the Find button at 405 refuses while the page "
                 + "is busy. SearchUser raises isSearching, replaces the expanded batch's user rows "
                 + "and calls into Exchange twice, so a second one started from the keyboard during "
                 + "the first races it and the later reply wins",
-                GatedTwinButtonLine: 404),
+                GatedTwinButtonLine: 405),
 
-            new KeyboardPath(1233, "placeholder=\"Ticket # (required)\"", "input",
+            new KeyboardPath(1246, "placeholder=\"Ticket # (required)\"", "input",
                 "keydown", "HandleConfirmKeyDown", "ConfirmPendingAction",
                 KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
                 "Enter EXECUTES the staged action - a batch start, stop or remove, the destructive "
-                + "half of this page - which the Confirm button at 1237 refuses while busy. It "
+                + "half of this page - which the Confirm button at 1250 refuses while busy. It "
                 + "avoided double execution only by accident, and the accident is worth writing "
-                + "down: ConfirmPendingAction calls CancelPendingAction (2495) BEFORE awaiting the "
+                + "down: ConfirmPendingAction calls CancelPendingAction (2629) BEFORE awaiting the "
                 + "staged callback, which nulls pendingActionLabel and so unrenders the whole "
                 + "PendingActionConfirm fragment, and blanks pendingActionTicket so a second press "
                 + "fails the handler's own emptiness check. Nothing in that is a busy gate, and "
                 + "nothing in it survives a handler that stages differently",
-                GatedTwinButtonLine: 1237),
+                GatedTwinButtonLine: 1250),
         ],
 
         ForbiddenGuardSites =

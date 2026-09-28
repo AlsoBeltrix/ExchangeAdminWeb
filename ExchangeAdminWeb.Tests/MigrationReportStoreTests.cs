@@ -322,6 +322,141 @@ public class MigrationReportStoreTests
         finally { Directory.Delete(root, true); }
     }
 
+    private static Dictionary<string, string> ReadZip(byte[] bytes)
+    {
+        using var buffer = new MemoryStream(bytes);
+        using var zip = new System.IO.Compression.ZipArchive(buffer, System.IO.Compression.ZipArchiveMode.Read);
+
+        return zip.Entries.ToDictionary(
+            e => e.Name,
+            e => new StreamReader(e.Open()).ReadToEnd(),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TheZipCarriesTheSameBytesTheDialogRenders()
+    {
+        // R31e. The export packages what the store holds - it writes nothing new - so the file an
+        // operator downloads and the text they were reading cannot be different documents.
+        var (store, root) = TempStore();
+        try
+        {
+            var now = DateTime.UtcNow;
+            store.Write("Wave1", "a@x.com", "REPORT A\r\nline two", now);
+            store.Write("Wave1", "b@x.com", "REPORT B", now);
+
+            var entries = ReadZip(store.BuildExportZip("Wave1", ["a@x.com", "b@x.com"], now)!);
+
+            Assert.Equal("REPORT A\r\nline two", entries["a@x.com.txt"]);
+            Assert.Equal("REPORT B", entries["b@x.com.txt"]);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void AReportThatExpiredBeforeTheDownloadIsNamedRatherThanSilentlyDropped()
+    {
+        // R31f, and the failure it prevents: a zip that quietly contains nine files when ten were
+        // asked for. The operator cannot tell WHICH person is missing, and a gap in migration
+        // diagnostics reads as "nothing to report about them".
+        var (store, root) = TempStore();
+        try
+        {
+            var now = DateTime.UtcNow;
+            store.Write("Wave1", "present@x.com", "here", now);
+            Plant(store, "Wave1", "gone@x.com", "old", now.AddHours(-13));
+
+            var entries = ReadZip(store.BuildExportZip("Wave1", ["present@x.com", "gone@x.com"], now)!);
+
+            Assert.True(entries.ContainsKey("present@x.com.txt"));
+            Assert.False(entries.ContainsKey("gone@x.com.txt"));
+
+            var manifest = entries["manifest.txt"];
+            Assert.Contains("NOT INCLUDED (1)", manifest, StringComparison.Ordinal);
+            Assert.Contains("gone@x.com", manifest, StringComparison.Ordinal);
+            Assert.Contains("expired", manifest, StringComparison.OrdinalIgnoreCase);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void NothingToPackageIsRefusedRatherThanDeliveredAsAnEmptyArchive()
+    {
+        // R31f. An empty zip looks like a successful export of nothing. Returning null lets the
+        // caller say what actually happened.
+        var (store, root) = TempStore();
+        try
+        {
+            Assert.Null(store.BuildExportZip("Wave1", ["nobody@x.com"], DateTime.UtcNow));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void TheManifestAlwaysNamesWhatIsInside()
+    {
+        // Even a complete export carries the list, so the zip is self-describing months later
+        // when nobody remembers which batch it came from.
+        var (store, root) = TempStore();
+        try
+        {
+            var now = DateTime.UtcNow;
+            store.Write("Wave1", "a@x.com", "A", now);
+
+            var manifest = ReadZip(store.BuildExportZip("Wave1", ["a@x.com"], now)!)["manifest.txt"];
+
+            Assert.Contains("Batch: Wave1", manifest, StringComparison.Ordinal);
+            Assert.Contains("Included (1)", manifest, StringComparison.Ordinal);
+            Assert.Contains("a@x.com", manifest, StringComparison.Ordinal);
+            Assert.DoesNotContain("NOT INCLUDED", manifest, StringComparison.Ordinal);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void AnAddressCannotBecomeAPathInsideTheArchive()
+    {
+        // The address is operator-supplied and this becomes a path something will extract.
+        var (store, root) = TempStore();
+        try
+        {
+            var now = DateTime.UtcNow;
+            var hostile = "../../evil@x.com";
+            store.Write("Wave1", hostile, "x", now);
+
+            using var buffer = new MemoryStream(store.BuildExportZip("Wave1", [hostile], now)!);
+            using var zip = new System.IO.Compression.ZipArchive(buffer, System.IO.Compression.ZipArchiveMode.Read);
+
+            // FullName, not Name: Name already strips any path, so asserting on it would pass on
+            // an entry that carries one. The traversal risk is the SEPARATORS, not the dots -
+            // ".._.._evil@x.com" extracts as one harmless filename - so that is what is checked,
+            // along with the entry being a bare filename by the framework's own reckoning.
+            foreach (var entry in zip.Entries)
+            {
+                Assert.DoesNotContain('/', entry.FullName);
+                Assert.DoesNotContain('\\', entry.FullName);
+                Assert.Equal(entry.FullName, Path.GetFileName(entry.FullName));
+            }
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ARequestedMailboxIsPackagedOnceEvenIfAskedForTwice()
+    {
+        var (store, root) = TempStore();
+        try
+        {
+            var now = DateTime.UtcNow;
+            store.Write("Wave1", "a@x.com", "A", now);
+
+            var entries = ReadZip(store.BuildExportZip("Wave1", ["a@x.com", "A@X.COM"], now)!);
+
+            Assert.Equal(2, entries.Count); // the report plus the manifest
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Fact]
     public void AReportFromTheFutureIsNotTreatedAsExpired()
     {

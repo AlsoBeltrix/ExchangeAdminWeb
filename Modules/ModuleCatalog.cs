@@ -264,7 +264,11 @@ public sealed class ModuleCatalog
             // is read as the timestamp it is instead of a boolean, and scheduling refuses a past
             // time rather than cutting mailboxes over immediately
             // (docs/MigrationInterfaceRedesign-Plan.md S8).
-            Version = "1.18.1",
+            // 1.19.0: tick mailboxes and Export reports fetches each one in the background, then
+            // Download reports zips what is held - one text file per report, with a manifest
+            // naming any that expired rather than dropping them silently
+            // (docs/MigrationInterfaceRedesign-Plan.md S7, R31).
+            Version = "1.19.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

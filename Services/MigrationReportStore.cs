@@ -216,6 +216,99 @@ public sealed class MigrationReportStore
     /// </summary>
     public int Sweep(DateTime nowUtc) => SweepInternal(report => IsExpired(report.FetchedAtUtc, nowUtc));
 
+    /// <summary>
+    /// Builds the export zip for <paramref name="emailAddresses"/> from what the store holds, or
+    /// null when it holds none of them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// R31e and R31f. <b>The zip writes nothing new</b> - it packages the same bytes the dialog
+    /// renders, so the file an operator downloads and the text they read cannot disagree. It is
+    /// assembled at CLICK time rather than when the job finished, because the bulk-job runner
+    /// persists row outcomes and not files.
+    /// </para>
+    /// <para>
+    /// <b>A report that expired between the job finishing and the download being clicked is NAMED
+    /// IN THE MANIFEST, not silently omitted.</b> A zip that quietly contains nine files when ten
+    /// were requested is the failure this avoids: the operator has no way to tell which person is
+    /// missing, and a gap in migration diagnostics reads as "nothing to report".
+    /// </para>
+    /// <para>
+    /// <b>Nothing to package returns null</b> so the caller can say so, rather than delivering an
+    /// empty archive that looks like a successful export of nothing.
+    /// </para>
+    /// </remarks>
+    public byte[]? BuildExportZip(string batchName, IEnumerable<string> emailAddresses, DateTime nowUtc)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(batchName);
+        ArgumentNullException.ThrowIfNull(emailAddresses);
+
+        var included = new List<string>();
+        var missing = new List<string>();
+        var reports = new List<MigrationReport>();
+
+        foreach (var email in emailAddresses.Where(e => !string.IsNullOrWhiteSpace(e)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var report = TryRead(batchName, email, nowUtc);
+            if (report == null)
+                missing.Add(email);
+            else
+            {
+                reports.Add(report);
+                included.Add(email);
+            }
+        }
+
+        if (reports.Count == 0)
+            return null;
+
+        using var buffer = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(buffer, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var report in reports)
+            {
+                // One text file per report (R31), which is what makes a partial result
+                // unambiguous: the operator sees which mailboxes are present by looking.
+                var entry = zip.CreateEntry(SafeEntryName(report.EmailAddress) + ".txt");
+                using var writer = new StreamWriter(entry.Open());
+                writer.Write(report.Text);
+            }
+
+            var manifest = zip.CreateEntry("manifest.txt");
+            using var manifestWriter = new StreamWriter(manifest.Open());
+            manifestWriter.WriteLine($"Batch: {batchName}");
+            manifestWriter.WriteLine($"Assembled (UTC): {nowUtc:yyyy-MM-dd HH:mm:ss}");
+            manifestWriter.WriteLine();
+            manifestWriter.WriteLine($"Included ({included.Count}):");
+            foreach (var email in included)
+                manifestWriter.WriteLine($"  {email}");
+
+            if (missing.Count > 0)
+            {
+                manifestWriter.WriteLine();
+                manifestWriter.WriteLine($"NOT INCLUDED ({missing.Count}):");
+                manifestWriter.WriteLine(
+                    "  These reports were not available when the zip was assembled - most likely");
+                manifestWriter.WriteLine(
+                    $"  they expired, since a stored report lives {Retention.TotalHours:0} hours.");
+                manifestWriter.WriteLine("  Re-run the export for these mailboxes to fetch them again.");
+                foreach (var email in missing)
+                    manifestWriter.WriteLine($"  {email}");
+            }
+        }
+
+        return buffer.ToArray();
+    }
+
+    /// <summary>
+    /// A zip entry name derived from an address. The address is operator-supplied text and this
+    /// becomes a path inside an archive that something will extract, so everything outside a
+    /// known-safe set is replaced rather than trusted.
+    /// </summary>
+    private static string SafeEntryName(string emailAddress) =>
+        new(emailAddress.Select(c =>
+            char.IsLetterOrDigit(c) || c is '-' or '_' or '.' or '@' ? c : '_').ToArray());
+
     private int SweepInternal(Func<MigrationReport, bool> shouldDelete)
     {
         var removed = 0;

@@ -778,6 +778,47 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void ExportReportsIsReadOnlyAndTakesNoTicket()
+    {
+        // R31d. The one control in the mailbox bar that changes nothing, sitting beside four that
+        // do. It must not stage a ticket, and it must not run at the mutating permission -
+        // requiring MigrationManage to READ a report would be a quiet privilege escalation of the
+        // page's read surface.
+        var body = StripLineComments(GetMethodBody("StartReportExport"));
+
+        Assert.DoesNotContain("StageBatchAction", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("StageMailboxAction", body, StringComparison.Ordinal);
+        Assert.Contains("Ticket = null", body, StringComparison.Ordinal);
+
+        // R31a: it goes to the background runner, not the circuit. Twenty minutes a report means
+        // fifty ticked mailboxes is potentially a whole day.
+        Assert.Contains("BulkJobs.Enqueue(job)", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("await MigrationSvc", body, StringComparison.Ordinal);
+
+        // And the operator is told the cost before it starts.
+        Assert.Contains("twenty minutes", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TheDownloadBuildsTheZipFromTheStoreAndIsAuditedSeparately()
+    {
+        // R31e and R31f. The zip is assembled at CLICK time from the same store the dialog reads,
+        // because the runner persists row outcomes and not files - so the file and the text on
+        // screen cannot be different documents.
+        var body = StripLineComments(GetMethodBody("DownloadReportExportAsync"));
+
+        Assert.Contains("ReportStore.BuildExportZip(", body, StringComparison.Ordinal);
+
+        // Nothing to package says so rather than delivering an empty archive that looks like a
+        // successful export of nothing.
+        Assert.Contains("No report is held", body, StringComparison.Ordinal);
+
+        // Audited separately from the fetches that produced the reports: this is a second,
+        // distinct read - diagnostics leaving for a workstation.
+        Assert.Contains("DownloadUserReports", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheBannerCountsAndTheRowsCarryTheDetail()
     {
         // R25, and the owner's 2026-09-28 ruling: "banners are for quick, 10ft info, not for
@@ -906,6 +947,30 @@ public class MigrationStatusPageTests
         // The filter-result state is reached only when there IS data, or it would swallow the
         // empty-batch case and the distinction would exist in the source and not on screen.
         Assert.Contains("else if (MailboxTotalCount == 0)", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheSelectionPaneUsesItsOwnColumnWidthsAndItsOwnHeader()
+    {
+        // Reported from dev at v1.15.0: the "Open" button in the selection pane wrapped to three
+        // lines, one letter each. The pane reused the batch-list grid, whose first column is
+        // 1.25rem - sized for a checkbox. The selection pane has a text button there instead.
+        //
+        // Same defect at the other end: the batch header's "Failed" label sat over a Remove
+        // button, which is R17 (no unlabelled value, and no value under the wrong label).
+        var page = ReadPage();
+        var css = File.ReadAllText(Path.Combine(GetPagesDirectory(), "Migration.razor.css"));
+
+        Assert.Contains(".mig-selected-row", css, StringComparison.Ordinal);
+        Assert.Contains("grid-template-columns: 3.5rem", css, StringComparison.Ordinal);
+
+        // Applied to BOTH the header and the rows, or they align with each other and with
+        // nothing else.
+        Assert.Equal(2, Regex.Matches(page, @"mig-batch-row mig-selected-row").Count);
+
+        // The selection header does not claim a Failed column it does not have.
+        var header = ExtractSpan(page, "mig-batch-row mig-selected-row mig-batch-head", "</div>");
+        Assert.DoesNotContain("Failed", header, StringComparison.Ordinal);
     }
 
     [Fact]

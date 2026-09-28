@@ -13,6 +13,7 @@
 @inject IJSRuntime JS
 @inject ILogger<ExchangeAdminWeb.Components.Pages.Migration> Logger
 @inject MigrationReportStore ReportStore
+@inject ExchangeAdminWeb.Services.Jobs.BulkJobService BulkJobs
 @rendermode InteractiveServer
 
 <PageTitle>Exchange Migration</PageTitle>
@@ -735,17 +736,17 @@
                                 </div>
 
                                 <div class="mig-pane-scroll">
-                                    <div class="mig-batch-row mig-batch-head">
+                                    <div class="mig-batch-row mig-selected-row mig-batch-head">
                                         <span></span>
                                         <span>Batch</span>
                                         <span>Status</span>
                                         <span class="mig-count">Synced</span>
-                                        <span class="mig-count">Failed</span>
+                                        <span class="mig-count"></span>
                                     </div>
                                     @foreach (var batch in GetSelectedBatchesPage())
                                     {
                                         var selectedName = batch.BatchName;
-                                        <div class="mig-batch-row">
+                                        <div class="mig-batch-row mig-selected-row">
                                             @* R9. Open narrows the selection to this one batch, and
                                                the pane becomes its mailboxes. *@
                                             <button class="btn btn-link btn-sm p-0" disabled="@IsBusy"
@@ -876,6 +877,18 @@
                                                 title="Removes the selected mailboxes that have completed from the batch"
                                                 @onclick="StageRemoveMailboxes">
                                             Remove
+                                        </button>
+                                        @* R31. Read-only, so it sits apart from the five mutating
+                                           actions: no ticket, no preview, every mailbox eligible. *@
+                                        <button class="btn btn-sm btn-outline-primary" disabled="@IsBusy"
+                                                title="Fetches a report for each ticked mailbox in the background. Reports already open are reused; the rest can take twenty minutes each."
+                                                @onclick="StartReportExport">
+                                            Export reports
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-secondary" disabled="@IsBusy"
+                                                title="Downloads a zip of the reports currently held for the ticked mailboxes, one text file each, with a manifest naming any that are missing."
+                                                @onclick="DownloadReportExportAsync">
+                                            Download reports
                                         </button>
                                         @* R10. "Untick all" here, where the tick boxes are. *@
                                         <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@IsBusy"
@@ -1432,6 +1445,10 @@
     // planners key on different things - a batch name and an address - and one nullable pair that
     // could hold either would make "which list is this preview about" a runtime question on a page
     // that renders both lists at once.
+    // R31. The submitted export job, so the pane can say one is running and offer the download.
+    private string? reportExportJobId;
+    private int reportExportCount;
+
     private MigrationUserAction? pendingUserAction;
     private MigrationUserActionPlan? pendingUserActionPlan;
 
@@ -2327,6 +2344,123 @@
 
         pendingUserAction = action;
         pendingUserActionPlan = staged;
+    }
+
+    // R31. Export Reports: pull a report for every ticked mailbox and deliver a zip, one text
+    // file per report.
+    //
+    // R31d, and this is the one control in the mailbox bar that is NOT like the other five. It is
+    // READ-ONLY - fetching a report changes nothing - so it does not stage, takes no ticket and
+    // shows no eligibility preview: every mailbox is eligible to be read. That exemption is
+    // stated here precisely because it sits beside four mutating actions that all require one.
+    //
+    // It runs at MigrationCheck, the permission that already lets an operator read the batch
+    // list. Requiring MigrationManage would be a quiet privilege escalation of the page's read
+    // surface.
+    private void StartReportExport()
+    {
+        if (IsBusy || expandedBatch == null || selectedMailboxes.Count == 0)
+            return;
+
+        var payload = new ExchangeAdminWeb.Services.Jobs.MigrationReportExportJobPayload
+        {
+            BatchName = expandedBatch,
+            // Table order, so the job record reads the way the operator's screen did.
+            EmailAddresses = FilteredSortedMailboxes()
+                .Where(u => selectedMailboxes.Contains(u.EmailAddress))
+                .Select(u => u.EmailAddress)
+                .ToList(),
+        };
+
+        var job = new ExchangeAdminWeb.Services.Jobs.BulkJob
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            ModuleId = ExchangeAdminWeb.Services.Jobs.MigrationReportExportProcessor.ModuleName,
+            JobType = ExchangeAdminWeb.Services.Jobs.MigrationReportExportJobPayload.JobType,
+            Status = ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued,
+            SubmittedBy = currentUser,
+            SubmittedByDisplay = currentUser,
+            SubmittedIp = clientIpAddress,
+            // No ticket: R31d. A read does not take one.
+            Ticket = null,
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(payload),
+            SubmittedAtUtc = DateTime.UtcNow,
+        };
+
+        BulkJobs.Enqueue(job);
+        reportExportJobId = job.Id;
+        reportExportCount = payload.EmailAddresses.Count;
+
+        try
+        {
+            Audit.LogModuleAction(currentUser, clientIpAddress, "ExportUserReports", "Migration",
+                $"{payload.EmailAddresses.Count} mailbox(es) in {expandedBatch}; job {job.Id}", true);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Audit failed for Migration bulk report export submission");
+        }
+
+        // R31a: the operator is told the cost BEFORE it starts, rather than watching a page that
+        // appears to do nothing.
+        batchActionResult = new PermissionResult
+        {
+            Success = true,
+            Message = $"Fetching {payload.EmailAddresses.Count} report(s) in the background.",
+            Detail = "Each report not already held can take twenty minutes or more. Come back to "
+                     + "this batch and use Download reports when it has finished.",
+        };
+    }
+
+    // R31f. The zip is built at CLICK time from the stored reports, because the bulk-job runner
+    // persists row outcomes and not files. A report that expired between the job finishing and
+    // this click is named in the manifest rather than silently omitted, and nothing to package
+    // says so instead of delivering an empty archive.
+    private async Task DownloadReportExportAsync()
+    {
+        if (isDownloadingCsv || expandedBatch == null || selectedMailboxes.Count == 0)
+            return;
+
+        isDownloadingCsv = true;
+
+        try
+        {
+            var batch = expandedBatch;
+            var bytes = ReportStore.BuildExportZip(batch, selectedMailboxes, DateTime.UtcNow);
+
+            if (bytes == null)
+            {
+                batchActionResult = PermissionResult.Fail(
+                    "No report is held for any ticked mailbox.",
+                    "They may have expired, or the export may not have finished. Run Export "
+                    + "reports and try again once it has.");
+                return;
+            }
+
+            var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var safeBatch = new string(batch.Select(c =>
+                char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_').ToArray());
+
+            await JS.InvokeVoidAsync("downloadFile",
+                $"MigrationReports_{safeBatch}_{stamp}.zip", "application/zip",
+                Convert.ToBase64String(bytes));
+
+            try
+            {
+                // Audited separately from the fetches that produced the reports (R31f): this is a
+                // second, distinct read - migration diagnostics leaving for a workstation.
+                Audit.LogModuleAction(currentUser, clientIpAddress, "DownloadUserReports",
+                    "Migration", $"{selectedMailboxes.Count} mailbox(es) in {batch}", true);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Audit failed for Migration report zip download");
+            }
+        }
+        finally
+        {
+            isDownloadingCsv = false;
+        }
     }
 
     private string MailboxActionButtonClass(MigrationUserAction action, string tone) =>

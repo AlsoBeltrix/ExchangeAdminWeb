@@ -268,3 +268,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+/* The SELECTION pane's rows are not batch-list rows, and reusing the batch grid put an "Open"
+   button in a 1.25rem column meant for a checkbox - it wrapped to three lines, one letter each
+   (owner screenshot, v1.15.0 on dev). Its first and last columns hold text buttons, so they get
+   text-sized columns. Everything between stays aligned with the list on the left. */
+.mig-selected-row {
+    grid-template-columns: 3.5rem minmax(0, 1fr) 6rem 4rem 5rem;
+}
+
+.mig-selected-row .btn-link {
+    white-space: nowrap;
+    text-decoration: none;
+}
