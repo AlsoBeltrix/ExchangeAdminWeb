@@ -2,7 +2,8 @@
 
 Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
 review findings and 17 through 24 the findings of rounds 14 to 21, all within that approved
-scope. No code written.
+scope. **Round 22 returned "best approach - no material changes are needed", ready to implement
+as written.** No code written.
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). **No base app bump** - this work is module-scoped.
 `ExchangeAdminWeb.csproj` is at `2.24.0` as of 2026-09-28 and must be byte-identical after every
 slice; verify by diff rather than by reading this line, which goes stale whenever another work
@@ -665,6 +666,41 @@ before the real list.
   must surface it. Its cause is outside this work.
 - Removing the protected-principal check means a replace can add or remove a protected principal.
   That is the intended effect of the ruling.
+
+## Review
+
+Reviewer throughout: openreview codex, `@azure-openai-eus2-global/gpt-5.5-dzs` at xhigh,
+fallback grade, codex-cli 0.154.0. The resolved model id does not appear in the invocation
+envelope; the dispatched pair is recorded instead.
+
+**Rounds 1 to 12 reviewed designs that no longer exist** - revisions 1 to 12, which assumed an
+inferred write limit, and whose convergence at round 12 was on the add-then-remove shape. That
+verdict does not apply to this plan and is retained only in the retrospective below.
+
+**Rounds 13 to 21 reviewed the current design across nine rounds and produced eighteen material
+changes, every one admitted and folded in.** The ones that mattered, because they were defects
+that would have shipped:
+
+- **Round 16** - the protected-principal exemption opened a privilege-escalation path. Its
+  justification holds only for a distribution group, and `TargetGroupName` accepts any group;
+  pointing the module at a security group would have rewritten privileged membership unguarded.
+- **Round 19** - the slice order created that same gap for real: the check was deleted in one
+  commit and the guard added in the next, and every slice here is independently deployable.
+- **Round 20** - the retry classifier would not have compiled. `Microsoft.ActiveDirectory.Management`
+  is referenced nowhere in this solution, so catching its exception types needed an RSAT
+  assembly the CI agent may not have.
+- **Round 14** - the cross-process mutex would silently not have been shared, because a named
+  mutex with default security is not openable across app-pool identities; and the retry would
+  never have fired, because PowerShell wraps the exception and the classifier read the wrapper.
+- **Rounds 18, 20 and 21** - three separate corners of the outcome taxonomy contradicting each
+  other, because outcomes were being decided per error site. Round 21 replaced them with one
+  derivation procedure.
+
+**Round 22, over the current head: "best approach - no material changes are needed", ready to
+implement as written.** It named one implementation constraint to preserve: Slice 3's internal
+order, guard first and deletion second, in one commit.
+
+**The loop is converged.** What remains is implementation.
 
 ## What the earlier revisions got wrong
 
