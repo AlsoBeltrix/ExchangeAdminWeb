@@ -1,8 +1,8 @@
 # Comms-10k At Full Size - Plan
 
 Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
-review findings, 17 the round-14, 18 the round-15 and 19 the round-16 findings, all within that
-approved scope. No code written.
+review findings, 17 the round-14, 18 the round-15, 19 the round-16 and 20 the round-17 findings,
+all within that approved scope. No code written.
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). **No base app bump** - this work is module-scoped.
 `ExchangeAdminWeb.csproj` is at `2.24.0` as of 2026-09-28 and must be byte-identical after every
 slice; verify by diff rather than by reading this line, which goes stale whenever another work
@@ -395,19 +395,34 @@ Keep authorization (`:307-313`), the ticket field, audit and the admin notificat
 `.agents/repo-guidance.md` Known Failure Class 3, `docs/ProjectConstitution.md`, and
 `docs/AdminModuleDeveloperGuide.md:652-656`, the one a new module author reads.
 
-**The amendment is a named, scoped exception - not a softening of the rule.** The Constitution's
-Protected Principals section (`docs/ProjectConstitution.md:86-87`) states the rule with "no
-group-management or routine change carve-out", then carries exactly one exception in a fixed
-shape: a bolded **Scoped exception (owner ruling DATE, `.agents/decisions.md`)** line naming the
-one module, what is exempt, and why the boundary does not apply there. Follow that shape exactly:
+**The amendment is a named, scoped, CONDITIONAL exception - not a softening of the rule.** The
+Constitution's Protected Principals section (`docs/ProjectConstitution.md:86-87`) states the rule
+with "no group-management or routine change carve-out", then carries exactly one exception in a
+fixed shape: a bolded **Scoped exception (owner ruling DATE, `.agents/decisions.md`)** line naming
+the one module, what is exempt, and why the boundary does not apply there. Follow that shape
+exactly:
 
 - Name Comms-10k specifically. No wording that any other module could read itself into.
 - State that the exemption is from the MEMBER check, and say so explicitly - it is broader than
   the Self-Service Groups exception directly above it, which exempts only Protected Group
   Targets and keeps its member check. A reader must not conflate them.
+- **Carry the distribution-only condition into the exception text itself, in all four places.**
+  The condition is not a note about the implementation; it is what makes the exception sound.
+  Every one of `docs/ProjectConstitution.md`, `.agents/repo-guidance.md`,
+  `docs/AdminModuleDeveloperGuide.md` and the `.agents/decisions.md` entry must say the
+  exemption applies **only while the module's target is a distribution group, enforced
+  fail-closed at write time**.
+
+  This is the difference between a correct record and a dangerous one. `TargetGroupName` is a
+  generic `ConfigFieldType.AdGroup` field (`Modules/ModuleCatalog.cs:463`), so an unqualified
+  "Comms-10k is exempt from the member check" is true of whatever group is configured, including
+  a security group. The Constitution outranks this plan and outranks the code: if its text is
+  broader than the guard, the text is what a future reader and a future reviewer will apply, and
+  the guard will look like an over-implementation somebody may remove.
 - Give the reason: the write target is a broadcast distribution list, membership of which grants
   access to nothing, so the check produces only false positives and blocks the module's intended
-  use.
+  use - and that reason is precisely why the condition belongs in the same sentence, because the
+  reason fails the moment the target is not a distribution list.
 - Leave every other clause in that section untouched, including fail-closed behaviour,
   transitivity, and the cloud-only-by-address rule.
 
@@ -484,14 +499,14 @@ The module has no service tests today.
     than the group name, and is a `Global\` named mutex - not only the in-process semaphore. It
     is created with explicit security rather than defaults, a failure to acquire within the
     timeout refuses **before** the clear, and an abandoned mutex is logged and then proceeds.
-18a. The group is resolved to objectGUID and DN once before the lock, every write targets that
+18. The group is resolved to objectGUID and DN once before the lock, every write targets that
     resolved identity rather than the configured name, and a resolution failure refuses before
     the clear.
-18b. **The distribution-group guard.** A Distribution target proceeds; a Security target refuses
+19. **The distribution-group guard.** A Distribution target proceeds; a Security target refuses
     before the clear, naming the reason; a category that cannot be read refuses the same way.
     The check runs on every replace, not once at configuration. This is the condition the
     protected-principal exemption rests on, so it is a security test, not a validation nicety.
-18. Retry, classified by exception TYPE not message: an `ADException` on one add batch retries
+20. Retry, classified by exception TYPE not message: an `ADException` on one add batch retries
     that batch and the run completes; `ADServerDownException`, `ADIdentityNotFoundException`,
     `ADInvalidOperationException` and `UnauthorizedAccessException` each fail on the first
     attempt with no retry delay; three consecutive `ADException`s exhaust the retry and report a
