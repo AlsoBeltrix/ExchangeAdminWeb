@@ -255,3 +255,16 @@
     background: var(--ui-zebra);
     color: var(--ui-fg);
 }
+
+/* R25. A refusal reason on the row that refused. Distinct from the preview's neutral skip chip:
+   this one reports what happened, and a failure has to look like one at a glance. Truncated with
+   the full text in the title, because a Graph refusal can be a paragraph and the row is one line
+   (R14) - the banner is for the count, the row for which, the tooltip for why. */
+.mig-outcome-bad {
+    background: var(--ui-danger-bg);
+    color: var(--ui-danger);
+    border: 1px solid var(--ui-danger);
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

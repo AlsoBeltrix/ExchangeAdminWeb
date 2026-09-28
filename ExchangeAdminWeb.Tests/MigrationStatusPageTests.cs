@@ -470,12 +470,21 @@ public class MigrationStatusPageTests
     [Fact]
     public void SkippedBatchesAreReportedAndAreNotFailures()
     {
-        // Owner ruling D2(a). Skips travel in the message via the planner's DescribeSkipped and
-        // are never added to the error list - a wholly ineligible selection is "nothing to do".
+        // Owner ruling D2(a): a skip is never a failure, and a wholly ineligible selection is
+        // "nothing to do".
+        //
+        // Skips used to travel in the banner text via the planner's DescribeSkipped. They now
+        // land on the ROWS (R25), after the owner's 2026-09-28 ruling that a banner is for a
+        // glance and not an error log. What must hold either way is that every skipped row is
+        // REPORTED somewhere, and that none of them is counted as an error.
         var body = GetMethodBody("ExecuteBulkBatchAction");
 
-        Assert.Contains("MigrationBatchActionPlanner.DescribeSkipped", body, StringComparison.Ordinal);
+        Assert.Contains("actionOutcomes[earlySkip.BatchName]", body, StringComparison.Ordinal);
+        Assert.Contains("actionOutcomes[skip.BatchName]", body, StringComparison.Ordinal);
         Assert.DoesNotMatch(new Regex(@"errors\.Add\([^)]*[Ss]kip"), body);
+
+        // Nor marked as one on the row, or D2(a) would hold in the counts and fail on the screen.
+        Assert.DoesNotMatch(new Regex(@"actionFailures\.Add\([^)]*[Ss]kip"), body);
     }
 
     [Fact]
@@ -736,7 +745,7 @@ public class MigrationStatusPageTests
         // The executor acts on the plan's ELIGIBLE list only - nothing is sent for a skipped row.
         var exec = GetMethodBody("ExecuteBulkMailboxAction");
         Assert.Contains("foreach (var email in plan.Eligible)", exec, StringComparison.Ordinal);
-        Assert.Contains("MigrationUserActionPlanner.DescribeSkipped(plan.Skipped)", exec, StringComparison.Ordinal);
+        Assert.Contains("actionOutcomes[skip.EmailAddress]", exec, StringComparison.Ordinal);
 
         // Per-item outcomes, never a blanket banner (Known Failure Class 2).
         Assert.Contains("errors.Add(", exec, StringComparison.Ordinal);
@@ -766,6 +775,45 @@ public class MigrationStatusPageTests
         // back to page one every time the rows reload.
         Assert.Contains("mailboxPage = ListWindow.ClampPage(mailboxPage, MailboxTotalCount, MailboxPageSize);",
             GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheBannerCountsAndTheRowsCarryTheDetail()
+    {
+        // R25, and the owner's 2026-09-28 ruling: "banners are for quick, 10ft info, not for
+        // error logs."
+        //
+        // Both executors used to join every refusal reason and every skipped row into ONE alert
+        // string. Over fifty batches that is an error log wedged into an alert box - unreadable
+        // at the moment the operator most needs to read it, and it scrolls the page.
+        //
+        // The banner now states counts. Which row, and why, is written on the row.
+        foreach (var executor in new[] { "ExecuteBulkBatchAction", "ExecuteBulkMailboxAction" })
+        {
+            var body = GetMethodBody(executor);
+
+            // No joined error list and no joined skip list in the operator-facing message.
+            Assert.DoesNotMatch(
+                new Regex(@"Message\s*=[^;]*string\.Join\(""; "", errors\)"), body);
+            Assert.DoesNotContain("skippedSuffix", body, StringComparison.Ordinal);
+
+            // Audit warnings are logged, not appended to a sentence the operator is reading.
+            Assert.DoesNotContain("warningSuffix", body, StringComparison.Ordinal);
+            Assert.Contains("Logger.LogWarning(\"Audit warning during", body, StringComparison.Ordinal);
+
+            // The per-row record exists and is what carries the reason.
+            Assert.Contains("actionOutcomes[", body, StringComparison.Ordinal);
+            Assert.Contains("actionFailures.Add(", body, StringComparison.Ordinal);
+        }
+
+        // Rendered on both row kinds, next to the preview chip so the prediction and the result
+        // appear in the same place.
+        Assert.Contains("OutcomeFor(batchName)", GetBatchRowMarkup(), StringComparison.Ordinal);
+        Assert.Contains("OutcomeFor(user.EmailAddress)", GetUserRowMarkup(), StringComparison.Ordinal);
+
+        // And last run's outcomes are cleared when a new action is staged, or an operator would
+        // read "Refused" from the previous attempt as the result of this one.
+        Assert.Contains("ClearActionOutcomes();", GetMethodBody("StageBatchAction"), StringComparison.Ordinal);
     }
 
     [Fact]

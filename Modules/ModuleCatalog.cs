@@ -256,7 +256,11 @@ public sealed class ModuleCatalog
             // search that jumps to a mailbox in any batch; all three empty states say which one
             // applies; and the CSV button names the scope it exports
             // (docs/MigrationInterfaceRedesign-Plan.md S6, R26, R28, R29).
-            Version = "1.17.0",
+            // 1.18.0: a bulk action reports counts in the banner and the reason on the row that
+            // refused. It used to join every refusal and every skip into one alert, which over
+            // fifty batches is an error log in a banner (owner, 2026-09-28)
+            // (docs/MigrationInterfaceRedesign-Plan.md S6, R25).
+            Version = "1.18.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

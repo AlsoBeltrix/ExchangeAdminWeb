@@ -659,6 +659,17 @@
                                             {
                                                 <span class="mig-outcome @(StagedOutcomeIsGo(batchName) ? "mig-outcome-go" : "mig-outcome-skip")">@outcome</span>
                                             }
+                                            @* R25. What actually HAPPENED to this row, after the
+                                               fact. Same surface as the preview above, because an
+                                               operator should read the result where they read the
+                                               prediction - and because the banner is for a glance,
+                                               not for a log of refusal reasons. *@
+                                            @{ var done = OutcomeFor(batchName); }
+                                            @if (done != null)
+                                            {
+                                                <span class="mig-outcome @(OutcomeIsFailure(batchName) ? "mig-outcome-bad" : "mig-outcome-go")"
+                                                      title="@done">@done</span>
+                                            }
                                         </span>
                                         <span><span class="badge bg-@GetStatusColor(batch.Status)" title="@batch.Status">@batch.Status</span></span>
                                         <span class="mig-count text-success fw-bold">@batch.SyncedCount</span>
@@ -1123,6 +1134,13 @@
             {
                 <span class="mig-outcome @(StagedMailboxOutcomeIsGo(user.EmailAddress) ? "mig-outcome-go" : "mig-outcome-skip")">@mailboxOutcome</span>
             }
+            @* R25, the mailbox half. *@
+            @{ var mailboxDone = OutcomeFor(user.EmailAddress); }
+            @if (mailboxDone != null)
+            {
+                <span class="mig-outcome @(OutcomeIsFailure(user.EmailAddress) ? "mig-outcome-bad" : "mig-outcome-go")"
+                      title="@mailboxDone">@mailboxDone</span>
+            }
         </td>
         <td><span class="badge bg-@GetUserStatusColor(user.Status)">@user.Status</span></td>
         <td>@user.ItemsSynced.ToString("N0")</td>
@@ -1416,6 +1434,29 @@
     // that renders both lists at once.
     private MigrationUserAction? pendingUserAction;
     private MigrationUserActionPlan? pendingUserActionPlan;
+
+    // R25. What happened to each row, keyed by batch name or mailbox address.
+    //
+    // A BANNER IS FOR A GLANCE, NOT A LOG. The result used to be one alert carrying every refusal
+    // reason and every skipped row joined with semicolons - over fifty batches that is an error
+    // log wedged into an alert box, unreadable at the moment the operator most needs to read it.
+    // Owner, 2026-09-28: "banners are for quick, 10ft info, not for error logs."
+    //
+    // So the banner states counts and the DETAIL lives on the rows, which is what R25 asks for and
+    // is the same surface S4's preview uses before the action. The operator reads one line, then
+    // looks at the rows that are marked.
+    private readonly Dictionary<string, string> actionOutcomes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> actionFailures = new(StringComparer.OrdinalIgnoreCase);
+
+    private void ClearActionOutcomes()
+    {
+        actionOutcomes.Clear();
+        actionFailures.Clear();
+    }
+
+    private string? OutcomeFor(string key) => actionOutcomes.GetValueOrDefault(key);
+
+    private bool OutcomeIsFailure(string key) => actionFailures.Contains(key);
 
     // Bulk selection on the batches table. Keyed on BatchName, NEVER row index: the table
     // re-sorts on every header click and reloads after every action, so an index-keyed
@@ -2390,6 +2431,10 @@
         pendingActionCallback = callback;
         batchActionResult = null;
         ClearStagedPreview();
+
+        // Last run's per-row outcomes go when a new action is staged: leaving them would let an
+        // operator read "Refused" from the previous attempt as the result of this one.
+        ClearActionOutcomes();
     }
 
     private void StageUserAction(string label, string email, Func<string, Task> callback)
@@ -2696,7 +2741,10 @@
 
             if (migrationBatches == null) return;
 
-            var skippedSuffix = MigrationBatchActionPlanner.DescribeSkipped(skipped);
+            // The skipped rows are annotated before the early return, so "nothing to do" still
+            // explains itself on the rows rather than in the banner.
+            foreach (var earlySkip in skipped)
+                actionOutcomes[earlySkip.BatchName] = $"Skipped ("+"{earlySkip.Status}"+")";
 
             // Nothing eligible is "nothing to do", not an error (D2(a)). Report the skips and stop
             // without touching Exchange, writing an audit event, or notifying anyone.
@@ -2705,7 +2753,8 @@
                 batchActionResult = new PermissionResult
                 {
                     Success = true,
-                    Message = $"No batches to act on.{skippedSuffix}"
+                    Message = $"Nothing to do: none of {skipped.Count} selected batches is eligible.",
+                    Detail = "Why each one was skipped is on its row."
                 };
                 return;
             }
@@ -2734,12 +2783,22 @@
                 {
                     succeeded++;
                     accepted.Add(batchName);
+                    actionOutcomes[batchName] = "Queued";
                 }
                 else
                 {
                     errors.Add($"{batchName}: {result.Message}");
+
+                    // R25: the reason lands ON THE ROW, not in the banner. The operator sees
+                    // which batch refused and why by looking at it, instead of matching names
+                    // out of a semicolon-joined list.
+                    actionOutcomes[batchName] = result.Message ?? "Refused";
+                    actionFailures.Add(batchName);
                 }
             }
+
+            foreach (var skip in skipped)
+                actionOutcomes[skip.BatchName] = $"Skipped ("+"{skip.Status}"+")";
 
             // Every batch Exchange ACCEPTED is deselected, whatever happens next: leaving it ticked
             // invites a second click on work already in flight, and the row stays visible for
@@ -2749,13 +2808,22 @@
             foreach (var name in accepted)
                 selectedBatches.Remove(name);
 
-            var warningSuffix = auditWarnings.Count > 0
-                ? $" (warning - {string.Join("; ", auditWarnings)})"
-                : "";
-            if (errors.Count == 0)
-                batchActionResult = new PermissionResult { Success = true, Message = $"{verb} {succeeded} batch(es). Exchange processes this in the background - use Refresh to follow it.{skippedSuffix}{warningSuffix}" };
-            else
-                batchActionResult = PermissionResult.Fail($"{verb} {succeeded} batch(es); {errors.Count} refused: {string.Join("; ", errors)}{skippedSuffix}{warningSuffix}");
+            // R25. ONE GLANCEABLE LINE. Counts only - which batch refused and why is written on
+            // that batch's row. The audit warnings are logged rather than appended: an audit
+            // failure is real but it is not what the operator is deciding about in this second,
+            // and it used to arrive as a parenthetical after an already-overlong sentence.
+            foreach (var warning in auditWarnings)
+                Logger.LogWarning("Audit warning during {Action}: {Detail}", auditAction, warning);
+
+            var parts = new List<string> { $"{verb} {succeeded}" };
+            if (errors.Count > 0) parts.Add($"{errors.Count} refused");
+            if (skipped.Count > 0) parts.Add($"{skipped.Count} skipped");
+            if (auditWarnings.Count > 0) parts.Add($"{auditWarnings.Count} audit warning(s)");
+
+            var summary = string.Join(", ", parts) + " of " + (batchNames.Count + skipped.Count) + " batches.";
+            batchActionResult = errors.Count == 0
+                ? new PermissionResult { Success = true, Message = summary, Detail = "Exchange works in the background - use Refresh to follow it. Per-batch results are on the rows." }
+                : PermissionResult.Fail(summary, "Per-batch results are on the rows.");
 
             try
             {
@@ -2825,14 +2893,16 @@
 
             if (batchUsers == null) return;
 
-            var skippedSuffix = MigrationUserActionPlanner.DescribeSkipped(plan.Skipped);
+            foreach (var earlySkip in plan.Skipped)
+                actionOutcomes[earlySkip.EmailAddress] = $"Skipped ("+"{earlySkip.Status}"+")";
 
             if (plan.Eligible.Count == 0)
             {
                 batchActionResult = new PermissionResult
                 {
                     Success = true,
-                    Message = $"No mailboxes to act on.{skippedSuffix}"
+                    Message = $"Nothing to do: none of {plan.Skipped.Count} selected mailboxes is eligible.",
+                    Detail = "Why each one was skipped is on its row."
                 };
                 return;
             }
@@ -2859,12 +2929,18 @@
                 {
                     succeeded++;
                     accepted.Add(email);
+                    actionOutcomes[email] = "Queued";
                 }
                 else
                 {
                     errors.Add($"{email}: {result.Message}");
+                    actionOutcomes[email] = result.Message ?? "Refused";
+                    actionFailures.Add(email);
                 }
             }
+
+            foreach (var skip in plan.Skipped)
+                actionOutcomes[skip.EmailAddress] = $"Skipped ("+"{skip.Status}"+")";
 
             // Same rule as the batch executor: everything Exchange ACCEPTED is unticked, because
             // leaving it ticked invites a second click on work already in flight and the row stays
@@ -2873,25 +2949,20 @@
             foreach (var email in accepted)
                 selectedMailboxes.Remove(email);
 
-            var warningSuffix = auditWarnings.Count > 0
-                ? $" (warning - {string.Join("; ", auditWarnings)})"
-                : "";
+            // R25, same as the batch executor: counts in the banner, detail on the rows.
+            foreach (var warning in auditWarnings)
+                Logger.LogWarning("Audit warning during {Action}: {Detail}", auditAction, warning);
 
-            if (errors.Count == 0)
-            {
-                batchActionResult = new PermissionResult
-                {
-                    Success = true,
-                    Message = $"{verb} {succeeded} mailbox(es). Exchange processes this in the "
-                              + $"background - use Refresh to follow it.{skippedSuffix}{warningSuffix}"
-                };
-            }
-            else
-            {
-                batchActionResult = PermissionResult.Fail(
-                    $"{verb} {succeeded} mailbox(es); {errors.Count} refused: "
-                    + $"{string.Join("; ", errors)}{skippedSuffix}{warningSuffix}");
-            }
+            var parts = new List<string> { $"{verb} {succeeded}" };
+            if (errors.Count > 0) parts.Add($"{errors.Count} refused");
+            if (plan.Skipped.Count > 0) parts.Add($"{plan.Skipped.Count} skipped");
+            if (auditWarnings.Count > 0) parts.Add($"{auditWarnings.Count} audit warning(s)");
+
+            var summary = string.Join(", ", parts) + " of "
+                + (plan.Eligible.Count + plan.Skipped.Count) + " mailboxes.";
+            batchActionResult = errors.Count == 0
+                ? new PermissionResult { Success = true, Message = summary, Detail = "Exchange works in the background - use Refresh to follow it. Per-mailbox results are on the rows." }
+                : PermissionResult.Fail(summary, "Per-mailbox results are on the rows.");
 
             try
             {
