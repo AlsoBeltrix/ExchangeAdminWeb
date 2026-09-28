@@ -99,8 +99,8 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     full text in its tooltip. **I had been reading R25 backwards** - it says results are reported
     per row and NEVER as a blanket banner, and I had treated "the banner names every row" as
     compliance.
-  - (previous heading follows)
-  `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In progress`. Module `1.9.1` ->
+  `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In progress`. Version history:
+  `1.9.1` ->
   `1.10.0` (S1) -> `1.10.1` (mir-1) -> `1.11.0` (S2) -> `1.12.0` (S3) -> `1.13.0` (S4) ->
   `1.15.0` (S5, covering both its steps - see the `1.14.0` incident above). No base app bump at
   any point.
