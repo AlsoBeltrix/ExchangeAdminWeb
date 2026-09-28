@@ -1,18 +1,23 @@
 # Comms-10k At Full Size - Plan
 
-Status: **APPROVED by the owner, 2026-09-28.** Revision 14, no code written yet. The final review
-(round 12, codex openreview) returned "Best approach: no material changes are needed - the plan is
-ready as a design", and no owner question is outstanding.
+Status: **Approved by the owner, 2026-09-28**, at revision 15. No code written.
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). Base app `2.23.0` unchanged.
 Scope: `Services/Comms10kService.cs`, `Components/Pages/Comms10k.razor`,
 `Components/Pages/ModuleConfig.razor` (one list entry), `Modules/ModuleCatalog.cs` (version bump),
 `README.md`, one new pure helper, new tests, and the governance records named below.
 
-Revision 14 replaces guesswork with measurement. Every claim about directory limits below was
-measured on 2026-09-25 against `CN=Test-WebApp,OU=ZZMikeCTest,DC=ad,DC=analog,DC=com` (a
-Distribution, Universal group the owner supplied for the purpose) and the numbers are recorded in
-"Measured facts". Revisions 7 to 12 designed around an inferred limit; revision 13 asserted the
-write was fine. Both were wrong, in opposite directions.
+Revision 15 settles the write shape by measurement: **clear the group, then fill it in batches.**
+Every claim about directory limits below was measured on 2026-09-25 against
+`CN=Test-WebApp,OU=ZZMikeCTest,DC=ad,DC=analog,DC=com`, a Distribution, Universal group the owner
+supplied for the purpose. The numbers are in "Measured facts".
+
+**Correction to the record.** Commit `1a957d1`, "docs(comms10k): the scale plan is approved",
+marked this plan approved by the owner. **It was not, and is not.** The owner stated the opposite
+on 2026-09-25 ("this plan is not approved"), and the review verdict that commit cited - codex
+round 12, "best approach, no material changes needed" - was returned against revision 12, whose
+write design this revision replaces on measured evidence. That header was written by another
+session; this line replaces it rather than deleting the trail, because the commit stays in the
+log.
 
 ## What this module does
 
@@ -52,11 +57,33 @@ So no API offers a single-operation replacement at this size. **Non-atomic is fo
 directory.** This is the fact that revision 13 got wrong by assuming, and revisions 7 to 12 got
 accidentally right for reasons that were not evidence.
 
-**Add and Remove are both idempotent**, which removes most of the complexity a chunked write would
-otherwise need:
+**Write cost scales with the size of the group being written to, not with the size of the batch.**
+This is the measurement that decides the design. The same 2,000-member `-Add` chunk:
 
-- `Set-ADGroup -Add` naming a member already present: silently succeeds.
-- `Set-ADGroup -Remove` naming a member not present: silently succeeds.
+| Group size when the chunk is applied | Time for that chunk |
+| --- | --- |
+| 0 to 8,000 | 0.7s to 1.4s |
+| 10,000 to 20,000 | 9.0s to 10.8s |
+
+**Full-swap comparison, 10,001 members out and a disjoint 10,001 in:**
+
+| Approach | Total | Why |
+| --- | --- | --- |
+| **Clear, then add in batches** | **7.9s** | every write lands in a group of 10,000 or less |
+| Add all, then remove the stale | 53.2s | peaks at 20,002 members; each add chunk costs ~10s |
+
+Both produced exactly the target membership, compared member by member. Add-then-remove is
+**seven times slower** on a full swap and additionally requires reading the current membership
+first. Its one advantage - the list is never incomplete - buys an eight-second window at the cost
+of a 7x slowdown and a mandatory read, so it loses. Clear-then-fill also needs no diff, no removal
+set and no knowledge of what was there.
+
+For the record, on a near-no-op change (12,000 members, only 1,000 in and 1,000 out)
+add-then-remove finishes in 3.8s because unchanged members cost nothing. That case does not
+justify the design: it is the best case, not the one to size against.
+
+**Add and Remove are both idempotent** - `-Add` on a member already present and `-Remove` on one
+absent both succeed silently. Not needed by the chosen design, but it means a re-run is safe.
 
 **Reading 12,000 members takes 0.2s** through the `member` attribute and returns all of them. No
 truncation at this size.
@@ -96,57 +123,83 @@ only the single quote. `SectionAccessGroupDirectory.cs:132` records why that is 
 expands `$` as a PowerShell variable, and `$` is legal in an address. Fixed by the resolve
 rewrite.
 
-## The write: add first, then remove
+## The write: clear, then fill
 
-Since the directory forbids a single operation, the only question is which order leaves the list
-safest while the change is in flight. **Measured, on a 12,000-member target with 1,000 additions
-and 1,000 removals:**
+The directory forbids a single operation at this size, so the write becomes two steps - and they
+are exactly the two the module is described by: **empty the group, populate it from the CSV.**
 
-| Approach | Time | State of the list during the operation |
-| --- | --- | --- |
-| Clear, then fill in chunks | 17.4s | **empty, then a growing subset** |
-| Add all, then remove stale | **3.8s** | **always a superset - nobody is ever missing** |
+1. **`Set-ADGroup -Clear member`** - one operation, 2.8s at 10,001. The group is now empty.
+2. **`Set-ADGroup -Add` in batches of 2,000** until the resolved list is written - 0.7s to 1.4s
+   per batch, because every write lands in a group of 10,000 or less.
+3. **Read back and compare with the target.** Success is reported only on a match, and the
+   reported final count comes from that read, never from the input.
 
-Both end at exactly the right membership; the add-then-remove run was verified member-for-member
-against the target, not just by count.
+Measured end to end at 10,001 members with no overlap: **7.9s**, final membership exactly the
+target.
 
-Add-first wins on both counts, and the safety one is the reason to choose it. For a broadcast
-list, the two failure directions are not equal: somebody missing from it does not receive company
-communications, while somebody briefly extra receives one message they should not. Clear-then-fill
-makes the list a strict subset for the entire operation and leaves it broken if it dies partway.
-Add-then-remove never drops anyone who belongs there, and a failure partway leaves the list
-over-inclusive and complete rather than under-inclusive.
+No read of the existing membership. No comparison. No removal set. Nothing in the write depends on
+what was in the group before, which is what makes it both the fastest option and the smallest
+amount of code.
 
-It is also four and a half times faster, because members already present cost nothing.
+**Batch size is 2,000** - one named constant, with a comment recording that the measured
+single-operation ceiling is 10,000 and that write cost rises steeply with group size, so this is
+not a number to raise casually. It bounds a request; it is not a limit on membership.
 
-The algorithm, in full:
+**What this gives up:** atomicity, and it is not recoverable. The current single operation either
+lands or does not; nothing at this size can, because the directory refuses it. Between the clear
+and the last batch - about eight seconds - the list is empty and then partial, and a failure in
+that window leaves it incomplete. The alternative that avoids the window, adding everyone before
+removing the stale, was measured at 53.2s on the same swap, seven times slower, and needs a read
+of current membership: it buys an eight-second exposure for a 7x slowdown on every run. Rejected.
 
-1. **Read the current membership** - one query, 0.2s at 12,000.
-2. **Add every resolved CSV member**, in chunks of 2,000. No comparison needed: adding an existing
-   member is a silent no-op, so the whole target list is simply added. The list is now a superset
-   of both the old and the new membership.
-3. **Remove the members that were present and are not in the CSV** - a plain filter of step 1's
-   result against the target, in chunks of 2,000.
-4. **Read back and compare with the target.** Success is reported only on a match, and the
-   reported final count comes from this read.
+Consequences that follow, and must be handled rather than hoped away:
 
-Because both operations are idempotent, re-running the same CSV is safe and costs almost nothing -
-which is also the recovery path if a run fails partway.
+- **A partial application is reported exactly** - how many were written, what the membership now
+  is, and that the list is incomplete. The audit record carries the observed outcome, not the
+  intent. This is the one case where the operator must act, so the message says to re-run the
+  same CSV, which fully repairs it.
+- **Re-running is always safe.** The write does not depend on prior state, and `-Add` on an
+  existing member is a silent no-op, so a repeat run of the same file converges.
+- **Serialise per group.** Two operators replacing the same list concurrently would interleave
+  clears and batches and could leave the list holding neither file - a worse outcome here than
+  with a single atomic write, so the lock is required, not optional.
+  `SelfServiceGroupService.cs:46,523` is the precedent: a `SemaphoreSlim(1, 1)` from a
+  `ConcurrentDictionary` keyed on the group's objectGUID. It is per process, so two application
+  instances could still interleave; the read-back is what makes that visible. That limit is true
+  of every membership write in the app and is recorded, not solved here.
+- **Retry each write operation on a transient directory failure.** The directory intermittently
+  refuses writes with "A required audit event could not be generated for the operation" - three
+  of nine large writes during measurement. Without a retry a replace fails for a reason that has
+  nothing to do with the request, and at ten thousand members that means the operator re-uploads
+  and waits again.
 
-**Chunk size is 2,000**, one named constant, with a comment recording that the measured
-single-operation ceiling is 10,000 and this sits well under it. It bounds a request; it is not a
-limit on membership.
+  **A retry is safe here only because both operations are idempotent**, which was measured:
+  clearing an already-empty group succeeds, and `-Add` naming a member already present succeeds
+  silently. A retried batch that had partly applied cannot double-apply. That property is what
+  makes this a two-line change rather than a design problem, and it must be re-checked if the
+  write shape ever changes.
 
-**What this gives up, stated plainly:** atomicity. The current single operation either lands or
-does not. This cannot, and neither can anything else at this size, because the directory refuses
-it. A partial application is reported exactly - how many were added, how many removed, what the
-membership now is - and the audit record carries the observed outcome, not the intent.
+  Constraints:
+  - **Per operation, not per run.** Retry the individual clear or add batch, not the whole
+    sequence - re-running the clear after batches have landed would wipe them.
+  - **Bounded and reported.** Three attempts with a short backoff. Exhausting them is a real
+    failure and reports as one; the attempt count goes in the log, never silently swallowed.
+  - **Not a blanket catch.** Retry transient directory faults only. A permission denial, an
+    unresolvable DN or a malformed request will fail identically three times and must surface
+    immediately, not after three delays. Matching on message text is brittle, so retry on the
+    directory's transient exception types and let anything else through on the first failure.
+  - **The read-back still decides.** A retry that appears to succeed does not make the write
+    successful; only the final membership comparison does.
 
-**Serialise the sequence per group.** Two operators replacing the same list concurrently could
-interleave their chunks. `SelfServiceGroupService.cs:46,523` already does this: a
-`SemaphoreSlim(1, 1)` from a `ConcurrentDictionary` keyed on the group's objectGUID. The lock is
-per process, so two application instances could still interleave; the read-back is what makes that
-visible. That limit is true of every membership write in the app and is recorded, not solved here.
+  **Honest limit:** the fault repeated twice consecutively during measurement, so three attempts
+  will not always clear it. This reduces the failure rate; it does not eliminate it. The
+  underlying domain-controller audit condition is outside this module and worth fixing at source.
+
+- **Primary-group members survive the clear.** Clearing the `member` attribute cannot remove
+  somebody whose membership comes from their primary group
+  (`GroupManagementService.cs:973-974`). The read-back therefore compares against the target plus
+  any such members, and they are named in the result as unremovable. Without this the read-back
+  could never match on a group that has one.
 
 ## The rule every step must satisfy
 
@@ -231,28 +284,36 @@ Keep authorization (`:307-313`), the ticket field, audit and the admin notificat
 `AuditCategoryFilingTests.cs:88-100` asserts six Comms-10k audit call sites; deleting the blocked
 paths changes that count deliberately.
 
-### Slice 4 - Rewrite the write as add-then-remove with read-back
+### Slice 4 - Rewrite the write as clear-then-fill with read-back
 
-Implement the algorithm above. Testability is part of it:
+Replace the single `Set-ADGroup -Replace` (`Comms10kService.cs:220-228`) with clear, then batched
+add, then read-back, per the write design above. Testability:
 
-- **A pure planner**: given the current membership and the target, return the add list, the remove
-  list and the chunk boundaries. No directory access, so the 10,001-member chunking and the
-  removal filter are directly unit-testable.
-- **`internal virtual` seams** for the membership read and the chunked write, matching Slice 1's.
-- **An explicit outcome, not a bool.** `Comms10kUpdateResult.Success` cannot express "applied
-  partly" or "completed but these could not be removed", and collapsing them is the
-  success-aggregation failure Known Failure Class 2 names. Outcomes: nothing to do, succeeded,
-  succeeded with exceptions, partly applied, refused before any change.
-- **Primary-group members cannot be removed** by a `member` write - `GroupManagementService.cs:973-974`
-  records it. They are excluded from the removal list, added to the expected final set so the
-  read-back can match, and named in the result as unremovable. Without this the read-back could
-  never match on a group containing one.
+- **Batching is pure**: given the resolved list, produce the batches. No directory access, so the
+  10,001-member case is directly unit-testable.
+- **`internal virtual` seams** for the clear, the batched add and the read-back, matching
+  Slice 1's.
+- **An explicit outcome, not a bool.** `Comms10kUpdateResult.Success` cannot express "the group
+  is half written" or "completed but these could not be removed", and collapsing them is the
+  success-aggregation failure Known Failure Class 2 names. Outcomes: succeeded, succeeded with
+  exceptions (unremovable primary-group members), **partly applied - the list is incomplete and
+  the same CSV must be re-run**, and refused before any change.
+- The partly-applied message is the only one that demands operator action, so it says what state
+  the list is in and that re-running the same file repairs it.
+- **Primary-group members survive the clear** - `GroupManagementService.cs:973-974` records that a
+  `member` write cannot evict them. The read-back compares against the target plus any such
+  members, and they are named in the result as unremovable.
 
 `README.md:214` documents "Atomic replacement via `Set-ADGroup -Replace` (full member swap in one
-AD operation)" and must change with this slice. Two other README lines are already wrong today and
-become right: `:212` claims a confirmation showing an add/remove diff, and `:836` documents audit
-fields `membersAdded` and `membersRemoved` that the code has never emitted. Emit them from the
-observed counts.
+AD operation)". Both halves stop being true and it must change with this slice, stating the clear
+-then-fill sequence and that the list is briefly incomplete during it.
+
+`README.md:836` documents audit fields `membersAdded` and `membersRemoved` that the code has never
+emitted. Clear-then-fill knows how many it wrote but not how many it removed, since it never reads
+the prior membership. Record `membersWritten` and the observed final count, and correct the README
+line rather than fabricating a removal count. (`README.md:212` claims a confirmation showing an
+add/remove diff; that also cannot be produced without reading current membership first, so correct
+it too - the confirmation states the number of members the list will be set to.)
 
 ## Tests
 
@@ -269,18 +330,25 @@ The module has no service tests today.
    the full count; the primary-group union is applied; an unresolvable DN still produces a row.
 9. `Comms10k.razor` holds no protected-principal reference and `ModuleConfig.razor`'s servicing set
    does not contain `"Comms10k"` - the tripwire against a later sweep re-adding it.
-10. Planner: add list is the whole target, remove list is current-minus-target less primary-group
-    members, chunk boundaries at 1,999 / 2,000 / 2,001 and 12,000.
-11. Adds are issued before removes. Asserted on call order, because the ordering is the safety
-    property and nothing else enforces it.
-12. Success requires the read-back to equal the expected final set - target plus unremovable
-    primary-group members - and the reported count comes from that read, not the input.
-13. A chunk failure stops further chunks and reports partly-applied with the counts that actually
-    applied; the audit records observed, not intended.
-14. The five outcomes are distinguishable in the page message, the audit record and the
+10. Write batching: every resolved member lands in exactly one batch, in order, at 1,999 / 2,000 /
+    2,001 and 10,001 members.
+11. The clear is issued exactly once and before every add. Asserted on call order - a second
+    clear partway through would wipe what was already written.
+12. Success requires the read-back to equal the target plus any unremovable primary-group
+    members, and the reported count comes from that read, not the input.
+13. A failed add batch stops the remaining batches and reports **partly applied**, naming how many
+    were written and that the list is incomplete; the audit records observed, not intended. The
+    message tells the operator to re-run the same file.
+14. A failed clear reports refused-before-any-change and issues no adds - the membership is
+    untouched, which is materially different from a half-written list and must not read the same.
+15. The four outcomes are distinguishable in the page message, the audit record and the
     notification.
-15. Oversized upload produces a message naming the limit, not a raw stream error.
-16. The per-group lock wraps read, adds, removes and read-back, keyed on objectGUID.
+16. Oversized upload produces a message naming the limit, not a raw stream error.
+17. The per-group lock wraps the clear, every add batch and the read-back, keyed on objectGUID.
+18. Retry: a transient directory fault on one add batch retries that batch and the run completes;
+    a permanent fault (permission denied) fails on the first attempt with no retry delay; three
+    consecutive transient faults exhaust the retry and report a real failure with the attempt
+    count. A retry never re-issues the clear once any batch has landed.
 
 Guard proof: revert each fix, confirm the matching test fails, restore, confirm green. Restoring by
 copy keeps the old timestamp and the build skips it - touch the file afterwards.
@@ -300,19 +368,25 @@ than claiming they ran.
 3. Validate and replace a CSV of more than ten thousand addresses against `Test-WebApp`, then
    confirm the count in ADUC or PowerShell rather than from the page. The directory work behind
    this is already proven; this checks the module drives it correctly.
-4. Re-run the same CSV. It reports nothing to do and writes nothing.
+4. Re-run the same CSV. It completes and the membership is unchanged.
 5. A small control file with a known-good address, a repeat, an unknown address and, if one can be
    contrived, an address matching two objects. All four outcomes read as they do today.
 6. A CSV containing a protected principal completes rather than being refused.
 7. The real list last.
 
+**Time the ten-thousand run.** The directory work measures at 7.9s; if the module takes
+dramatically longer, the batching is not doing what this plan says and that is worth knowing
+before the real list.
+
 ## Risks
 
 - **A failed resolve batch read as "not found" would remove those people.** Slice 1's abort rule
   and test 7 exist for this alone.
-- **Partial application is possible** where the single write was atomic. Forced by the directory,
-  not chosen. Mitigated by add-before-remove, which keeps the list over-inclusive rather than
-  under-inclusive, by exact reporting, and by re-running being safe and cheap.
+- **The list is empty or partial for about eight seconds during every replace**, and a failure in
+  that window leaves it incomplete until someone re-runs the file. This is the real cost of the
+  design and the one an operator can be bitten by. It is forced by the directory - no single
+  operation exists at this size - and the alternative that avoids it was measured seven times
+  slower on every run. Mitigated by exact reporting and by re-running being safe, not eliminated.
 - **The intermittent audit-event refusal** will fail writes occasionally at any size. The module
   must surface it. Its cause is outside this work.
 - Removing the protected-principal check means a replace can add or remove a protected principal.
@@ -334,14 +408,23 @@ it as a question.
 **Revision 13** corrected the overreach by declaring the write sound and out of scope. That was the
 same error inverted: another confident claim with no measurement behind it. It was wrong.
 
-**What settled it** was twenty minutes against a test group: a size ladder, a raw-LDAP check to
-locate the limit in the directory rather than the transport, an idempotency probe, and a timed
-comparison of the two orderings. Every number in this plan came from that, and it also produced two
-findings nobody had predicted - that Add and Remove are idempotent, which removes the need for a
-diff on the add side, and the intermittent audit-event refusal.
+**Revision 14** chose add-then-remove on a 3.8s measurement taken from a change where 11,000 of
+12,000 members were unchanged - the best case, presented as the number. On a full swap with no
+overlap the same approach measures 53.2s, because it peaks at 20,002 members and write cost rises
+steeply with group size. Clear-then-fill does that swap in 7.9s. The safety argument for
+add-first - never leaving the list incomplete - was real but bought an eight-second window at 7x
+the cost of every run.
 
-The lesson worth keeping: the measurement cost less than any one of the six review rounds spent
-arguing about the guess.
+**What settled it** was measurement against a test group: a size ladder, a raw-LDAP check to locate
+the limit in the directory rather than the transport, an idempotency probe, and timed runs of all
+three orderings at full swap. Every number in this plan came from that, and it produced findings
+nobody predicted - that write cost scales with the destination group's size rather than the batch's,
+which is the fact the whole design now rests on, and the intermittent audit-event refusal.
+
+Two lessons worth keeping. The measurement cost less than any one of the six review rounds spent
+arguing about the guess. And a benchmark of the easy case is not a benchmark: the 3.8s figure was
+honestly obtained, correctly reported, and still wrong to design on, because nothing established
+that a mostly-unchanged list was the case worth sizing against.
 
 ## Version and commits
 

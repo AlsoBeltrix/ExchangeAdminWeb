@@ -47,6 +47,38 @@ every gate behind it.
 **Both remotes sit at `d0c2406`; 15 commits are unpushed** (4 Migration slices, 11 Risky Users
 and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask.
 
+- **COMMS-10K AT FULL SIZE: PLAN APPROVED BY THE OWNER 2026-09-28 AT REVISION 15. NO CODE
+  WRITTEN. FOUR SLICES, NONE STARTED.** `docs/Comms10kBulkResolveScale-Plan.md`. Reported defect:
+  Validate on a 5,279-row CSV dies with an ADWS "invalid enumeration context" because it issues
+  one `Get-ADUser` per row. Two more defects found behind it - Preview and Download CSV already
+  throw (`Get-ADGroupMember`, ADWS-capped at 5,000), and the write cannot reach the module's
+  target size. Module `1.2.0` -> `1.3.0`, no base app bump.
+  - **The write limits are MEASURED, not inferred** (2026-09-25, against `Test-WebApp`, a
+    Distribution group the owner supplied). A single `Set-ADGroup -Replace` succeeds at 9,500 and
+    **fails instantly at exactly 10,000** - and a raw LDAP modify of 12,000 values is refused by
+    the directory itself (`UNABLE_TO_PROCEED`), so no single-operation replace exists at this
+    size on any API. The module is named for ten thousand and the atomic write dies at ten
+    thousand.
+  - **The shape is clear-then-fill**: `Set-ADGroup -Clear member`, then `-Add` in batches of
+    2,000. **7.9s for a full 10,001 swap.** The key measurement is that write cost scales with
+    the size of the group being written INTO, not the batch - so every batch must land in a small
+    group. Add-then-remove measured 53.2s on the same swap and is recorded as rejected with its
+    number, to stop it being re-proposed.
+  - **Protected principals are OUT OF SCOPE here by owner ruling 2026-09-25** - a distribution
+    list is not a security boundary and the check blocked the module's normal use. Slice 3
+    deletes it and amends all three documents that state the rule, plus a `.agents/decisions.md`
+    entry. A tripwire test stops a later sweep re-adding it.
+  - **Two cautions.** Commit `1a957d1` marked this plan approved when it was not; the plan header
+    carries the correction, and the codex round-12 verdict it cited was against a design since
+    replaced. **Revision 15 itself is unreviewed** - all twelve review rounds predate the current
+    write design.
+  - **Unrelated finding the owner should chase: the DC intermittently refuses writes** with "A
+    required audit event could not be generated for the operation" - three of nine large writes,
+    twice consecutively at one size. Not caused by this module; it will surface as random
+    failures in anything that writes AD. The plan adds a bounded retry (safe only because clear
+    and add are both measured idempotent), which reduces but cannot eliminate it.
+  - `Test-WebApp` holds 10,001 test members; the owner is removing it.
+
 - **QUEUE ITEM 14: PLAN APPROVED. S1, mir-1, S2, S3, S4 AND S5 ARE ALL LANDED. S6 IS NEXT.**
   `docs/MigrationInterfaceRedesign-Plan.md` is `Approved / In progress`. Module `1.9.1` ->
   `1.10.0` (S1) -> `1.10.1` (mir-1) -> `1.11.0` (S2) -> `1.12.0` (S3) -> `1.13.0` (S4) ->
