@@ -124,4 +124,151 @@ public sealed class MigrationReportStore
 
     /// <summary>When a report taken at <paramref name="fetchedAtUtc"/> stops being servable.</summary>
     public static DateTime ExpiresAtUtc(DateTime fetchedAtUtc) => fetchedAtUtc.Add(Retention);
+
+    /// <summary>Stores <paramref name="text"/> as the report for one mailbox, replacing any prior copy.</summary>
+    public void Write(string batchName, string emailAddress, string text, DateTime fetchedAtUtc)
+    {
+        var path = PathFor(batchName, emailAddress);
+        Directory.CreateDirectory(DirectoryPath);
+
+        // R24d: every touch sweeps. There is no scheduler in this app and there will not be one,
+        // so a store nobody opens would otherwise keep last week's reports forever.
+        //
+        // BEFORE the write, not after. Sweeping afterwards deletes the report just stored
+        // whenever its own timestamp is already past the window - which is not hypothetical,
+        // because the caller passes the time the Exchange call STARTED and that call can run for
+        // twenty minutes or more.
+        Sweep(DateTime.UtcNow);
+
+        var report = new MigrationReport(batchName, emailAddress, fetchedAtUtc, text);
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(report));
+    }
+
+    /// <summary>
+    /// The stored report, or null when there is none, it cannot be read, or it has expired.
+    /// </summary>
+    /// <remarks>
+    /// <b>Fail-closed on serving (R24d).</b> Anything that cannot be shown to be a current,
+    /// well-formed report reads as absent - a corrupt file, an unparseable one, an expired one.
+    /// The caller then fetches, which costs twenty minutes of Exchange time but is always
+    /// correct. Rendering a report that cannot be shown to be current is the failure this avoids:
+    /// the operator cannot tell a stale report from a fresh one by looking at it.
+    /// </remarks>
+    public MigrationReport? TryRead(string batchName, string emailAddress, DateTime nowUtc)
+    {
+        string path;
+        try
+        {
+            path = PathFor(batchName, emailAddress);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (!File.Exists(path))
+                return null;
+
+            var report = System.Text.Json.JsonSerializer.Deserialize<MigrationReport>(File.ReadAllText(path));
+            if (report == null || IsExpired(report.FetchedAtUtc, nowUtc))
+                return null;
+
+            return report;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            _logger?.LogWarning(ex, "Migration report at {Path} could not be read; treating as absent", path);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Deletes one mailbox's stored report. R24b: called when the rows it describes are replaced,
+    /// because a batch removed and recreated under the same name is a different migration.
+    /// </summary>
+    public void Delete(string batchName, string emailAddress)
+    {
+        try
+        {
+            var path = PathFor(batchName, emailAddress);
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Fail-soft on purging. A report that could not be deleted is still expired-checked on
+            // read, so the worst case is disk use, never a stale report served as current.
+            _logger?.LogWarning(ex, "Migration report for {Email} could not be deleted", emailAddress);
+        }
+    }
+
+    /// <summary>
+    /// Deletes every stored report. Used when a batch's rows are reloaded and the page cannot
+    /// cheaply enumerate which mailboxes had reports.
+    /// </summary>
+    public void DeleteAll() => SweepInternal(_ => true);
+
+    /// <summary>
+    /// Deletes reports older than <see cref="Retention"/>. Called on every write and once at
+    /// application start. Returns how many were removed.
+    /// </summary>
+    public int Sweep(DateTime nowUtc) => SweepInternal(report => IsExpired(report.FetchedAtUtc, nowUtc));
+
+    private int SweepInternal(Func<MigrationReport, bool> shouldDelete)
+    {
+        var removed = 0;
+
+        try
+        {
+            if (!Directory.Exists(DirectoryPath))
+                return 0;
+
+            foreach (var path in Directory.EnumerateFiles(DirectoryPath, "*.json"))
+            {
+                MigrationReport? report;
+                try
+                {
+                    report = System.Text.Json.JsonSerializer.Deserialize<MigrationReport>(File.ReadAllText(path));
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    // Unparseable, so it can never be served - TryRead fails closed on it - and
+                    // keeping it is pure disk use. Deleted, not skipped. An earlier version caught
+                    // this alongside the IO failures and skipped it, which contradicted the
+                    // comment two lines away and left corrupt files forever.
+                    report = null;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // R24d, fail-soft: a file that cannot even be READ is left alone and the
+                    // sweep continues. It must never fail the read that triggered it.
+                    _logger?.LogWarning(ex, "Migration report at {Path} could not be read during sweep", path);
+                    continue;
+                }
+
+                try
+                {
+                    if (report == null || shouldDelete(report))
+                    {
+                        File.Delete(path);
+                        removed++;
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Fail-soft on purging: logged and skipped. The worst case is disk use,
+                    // never a stale report served as current, because TryRead checks expiry too.
+                    _logger?.LogWarning(ex, "Migration report at {Path} could not be deleted", path);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger?.LogWarning(ex, "Migration report sweep could not enumerate {Directory}", DirectoryPath);
+        }
+
+        return removed;
+    }
 }
