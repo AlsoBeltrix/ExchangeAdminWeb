@@ -15,7 +15,12 @@ slice and `ExchangeAdminWeb.csproj` only in S1.
 
 **TWO THINGS ARE OUTSTANDING AND BOTH ARE THE OWNER'S.**
 
-1. **`User.Read.All` must be added to the Risky Users app registration and admin-consented.** It
+1. **RESOLVED 2026-09-28: `User.ReadBasic.All` was added and admin-consented, and it is ENOUGH.**
+   The plan said `User.Read.All`; that was more privilege than the code needs. The one directory
+   call selects `id` and nothing else - it asks whether the account exists, not who it is - so the
+   basic profile scope covers it. Verified on the live tenant: all three lookup outcomes pass.
+   Original wording follows, kept because the reasoning for needing a directory read at all is
+   still correct. It
    is a Graph app role, so it needs a Privileged Role Administrator or Global Administrator. Until
    it is granted, S5's lookup returns a 403 that names exactly that permission. Everything else
    works without it.
@@ -38,7 +43,9 @@ Suite 3161 passed / 0 failed / 3 skipped at `873c052`; format clean. **Nothing h
 browser** - no test here renders a page, so the manual checks are the only evidence an operator
 sees any of it.
 
-**One owner action blocks S5 and nothing else in this plan:** `User.Read.All` must be added
+**RESOLVED 2026-09-28. Nothing in this plan is blocked.** `User.ReadBasic.All` was added and
+consented, and it is sufficient - see item 1 above. The original text said `User.Read.All` must be
+added
 to the Risky Users Entra app registration and admin-consented. S1-S4 need no new
 permission. Detail and the reason it is not optional are in S5's R1.
 
@@ -629,7 +636,9 @@ populates `EntraObjectId` from `riskyUser.id`, so the two are the same identifie
 
 The gap is turning a typed UPN into that object id.
 
-**`User.Read.All` is required either way. This is not optional and not probe-dependent.**
+**A directory read is required either way. This is not optional and not probe-dependent.** The
+SCOPE is `User.ReadBasic.All`, not `User.Read.All` - corrected 2026-09-28 after the smaller
+permission was granted and all three lookup outcomes passed against the live tenant.
 An earlier version of this section said the first working probe wins and the rest fall
 away. That was wrong, and the reason is the whole point of the slice: a query against
 `riskyUsers` that returns nothing tells you *this UPN has no risk record*, and cannot tell
@@ -647,7 +656,8 @@ So the lookup is:
    - 200 -> the risky user.
    - 404 -> "No risk record for this user." A clean negative.
 
-**The owner action this creates:** `User.Read.All` must be added to the Risky Users app
+**The owner action this creates (DONE 2026-09-28, with `User.ReadBasic.All`):** a directory read
+permission must be added to the Risky Users app
 registration and admin-consented. Do not reach for another module's registration to avoid
 it -- `docs/AdminModuleDeveloperGuide.md:642` forbids falling back to another module's
 Graph config, and reuse is permitted only when the operator deliberately configures the
@@ -889,7 +899,7 @@ Four material changes:
 1. **S5's "first probe that works wins" was wrong, and it cost the slice its best
    property.** A `riskyUsers` query returning nothing means *this UPN has no risk record*
    -- it cannot say whether the UPN belongs to anyone. So the one-call shortcut can never
-   satisfy AC18, and `User.Read.All` is required unconditionally rather than only if the
+   satisfy AC18, and a directory read (`User.ReadBasic.All`) is required unconditionally rather than only if the
    probes fail. R1 is rewritten: two calls by design, the filter probe demoted to a
    positive-path optimisation, and the permission promoted to a blocking owner action named
    in the status header.

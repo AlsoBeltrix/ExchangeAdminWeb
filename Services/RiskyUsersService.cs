@@ -198,7 +198,14 @@ public sealed class RiskyUsersService
     /// returns nothing means *this UPN has no risk record* - it cannot say whether the UPN belongs
     /// to anybody. Only the directory read separates "Entra says this person is fine" from "you
     /// mistyped the name", and a typo silently reading as a clean bill of health is the worst
-    /// outcome this method could produce. That is why it needs `User.Read.All` unconditionally.
+    /// outcome this method could produce. That is why it needs a directory read unconditionally.
+    ///
+    /// **`User.ReadBasic.All` is enough, and that is deliberate.** The call selects `id` and
+    /// nothing else - it asks whether the account exists, not who it belongs to - so the basic
+    /// profile scope covers it. Verified against the live tenant 2026-09-28: all three outcomes
+    /// (no such user, no risk record, risky) pass with `User.ReadBasic.All` alone. The plan
+    /// originally specified `User.Read.All`, which reads every user's full profile tenant-wide
+    /// and is more privilege than one existence check needs.
     /// </summary>
     public async Task<RiskyUserLookup> LookupAsync(string userPrincipalName)
     {
@@ -251,14 +258,19 @@ public sealed class RiskyUsersService
 
     /// <summary>
     /// A failure of the DIRECTORY read, which names a different missing permission than a failure
-    /// of the risk read. Reporting `IdentityRiskyUser.Read.All` when `User.Read.All` is what is
-    /// absent sends an administrator to grant the wrong thing and then to disbelieve the message.
+    /// of the risk read. Reporting `IdentityRiskyUser.Read.All` when the directory scope is what
+    /// is absent sends an administrator to grant the wrong thing and then to disbelieve the
+    /// message.
+    ///
+    /// It names `User.ReadBasic.All` because that is what this call actually requires - see
+    /// LookupAsync. Naming `User.Read.All` here, as it did until 2026-09-28, sent an
+    /// administrator to grant tenant-wide full-profile read for an existence check.
     /// </summary>
     private static InvalidOperationException BuildDirectoryFailure(HttpStatusCode status)
     {
         if (status == HttpStatusCode.Forbidden)
             return new InvalidOperationException(
-                "The directory lookup was refused - verify the app registration's User.Read.All consent. This is a different permission from the one the risky-user list uses.");
+                "The directory lookup was refused - verify the app registration has User.ReadBasic.All consent. This is a different permission from the one the risky-user list uses.");
 
         return new InvalidOperationException($"Graph request for the directory lookup failed: {(int)status} {status}.");
     }

@@ -726,7 +726,12 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.4.0",
+            // 1.4.1: the 403 on the single-user lookup names User.ReadBasic.All, which is what
+            // that call actually needs - it selects `id` and nothing else, asking whether the
+            // account exists. It named User.Read.All, sending an administrator to grant
+            // tenant-wide full-profile read for an existence check. Owner granted and verified
+            // the smaller scope against the live tenant, 2026-09-28.
+            Version = "1.4.1",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",

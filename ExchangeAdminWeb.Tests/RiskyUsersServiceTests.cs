@@ -457,7 +457,11 @@ public class RiskyUsersServiceTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.LookupAsync("x@contoso.com"));
 
-        Assert.Contains("User.Read.All", ex.Message, StringComparison.Ordinal);
+        // Names the permission this call actually needs. It said User.Read.All until 2026-09-28,
+        // which sent an administrator to grant tenant-wide full-profile read for what is only an
+        // existence check - the lookup selects `id` and nothing else. User.ReadBasic.All covers
+        // it, verified against the live tenant on all three lookup outcomes.
+        Assert.Contains("User.ReadBasic.All", ex.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("IdentityRiskyUser.Read.All", ex.Message, StringComparison.Ordinal);
     }
 
