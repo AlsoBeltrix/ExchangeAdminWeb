@@ -1,7 +1,7 @@
 # Comms-10k At Full Size - Plan
 
 Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
-review findings and 17 through 22 the findings of rounds 14 to 19, all within that approved
+review findings and 17 through 23 the findings of rounds 14 to 20, all within that approved
 scope. No code written.
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). **No base app bump** - this work is module-scoped.
 `ExchangeAdminWeb.csproj` is at `2.24.0` as of 2026-09-28 and must be byte-identical after every
@@ -147,6 +147,12 @@ are exactly the two the module is described by: **empty the group, populate it f
    another container between operations would retarget the write mid-sequence - a risk the
    single atomic write did not have, and one the lock cannot cover because the lock key is
    derived from the same identity. Resolution failure refuses before anything is written.
+0b. **After the lock is held and immediately before the clear, re-read the target by its
+   objectGUID and re-check the category.** Step 0 runs before the lock because its objectGUID is
+   the lock key, so an unbounded wait can sit between resolving and writing. The Constitution
+   requires a re-read before write where practical (`docs/ProjectConstitution.md:91`), and here
+   it is one cheap query that also confirms the object still exists and is still a Distribution
+   group. A mismatch - gone, or no longer Distribution - refuses before the clear.
 1. **`Set-ADGroup -Clear member`** against that resolved identity - one operation, 2.8s at
    10,001. The group is now empty.
 2. **`Set-ADGroup -Add` in batches of 2,000** until the resolved list is written - 0.7s to 1.4s
@@ -264,11 +270,23 @@ Consequences that follow, and must be handled rather than hoped away:
     the live assembly: `Microsoft.ActiveDirectory.Management.ADServerDownException` derives
     **directly from `System.Exception`, not from `ADException`**, so the two are cleanly
     separable by type. The observed audit fault surfaces as exactly `ADException`.
-    - **Retry:** `ADException` only.
-    - **Never retry:** `ADServerDownException` - that is the signature an oversized request
+    - **Match on type NAME, never on the type itself.** `Microsoft.ActiveDirectory.Management`
+      appears nowhere in this solution - not a `PackageReference`, not a `Reference`, not a
+      `using` (verified 2026-09-28). The app reaches AD entirely through the PowerShell SDK and
+      command strings. A `catch (ADException)` would require referencing an assembly that ships
+      with RSAT rather than NuGet, which may not be present on the CI agent, so it would be both
+      a build risk and an architectural departure. The classifier therefore takes the normalized
+      exception's `GetType().FullName` and compares strings.
+    - **Shape:** a pure `static bool IsRetryable(string exceptionTypeName)` plus a normalizer
+      that walks to the innermost exception and returns its full type name. Both are testable
+      with no directory and no RSAT present, which is the point.
+    - **Retry:** `Microsoft.ActiveDirectory.Management.ADException` only.
+    - **Never retry:** `...ADServerDownException` - that is the signature an oversized request
       produced during measurement, and retrying it would repeat a request the directory will
-      refuse every time - nor `ADIdentityNotFoundException`, `ADInvalidOperationException` or
-      `UnauthorizedAccessException`.
+      refuse every time - nor `...ADIdentityNotFoundException`, `...ADInvalidOperationException`
+      or `System.UnauthorizedAccessException`.
+    - An unrecognised type name is **not** retried. An unknown fault is not evidence of a
+      transient one, and the log line names the type so the list can be extended deliberately.
     - `ADException` is a broad base type and some permanent faults will also land there, so
       **every retry logs the exception message**. A non-transient fault being retried three times
       must be visible in the log rather than inferred, and that log line is what tells a future
@@ -478,8 +496,17 @@ for the lock key and every write, and does not reintroduce it. Testability:
 
   **"Could not confirm" is a distinct outcome and not a shade of the others.** If the read-back
   itself fails after the clear or any add has landed, the module does not know what the
-  membership is. So does a clear whose failure cannot establish that nothing changed - a timeout
-  proves neither that it cleared nor that it did not.
+  membership is.
+
+  **The dividing line is whether the clear was attempted, not whether it reported failure.**
+  Everything that refuses *before* the clear command is issued - lock timeout, resolution
+  failure, the distribution-group guard, the post-lock re-read mismatch, an empty target list -
+  is "refused before any change", and the membership is provably untouched. From the moment the
+  clear is issued, a failure whose effect cannot be established is "could not confirm": a
+  timeout or a dropped connection proves neither that it cleared nor that it did not. Only a
+  refusal the directory returns *without applying anything*, which this module cannot reliably
+  distinguish, would be the former - so anything after the clear is attempted defaults to "could
+  not confirm".
 
   Reporting that as "partly applied" claims knowledge of what applied, which the module does not
   have. Reporting it as "refused before any change" claims the list is untouched, which may be
@@ -533,8 +560,11 @@ The module has no service tests today.
 13. A failed add batch stops the remaining batches and reports **partly applied**, naming how many
     were written and that the list is incomplete; the audit records observed, not intended. The
     message tells the operator to re-run the same file.
-14. A failed clear reports refused-before-any-change and issues no adds - the membership is
-    untouched, which is materially different from a half-written list and must not read the same.
+14. A failure **before the clear is issued** - lock timeout, resolution failure, the
+    distribution-group guard, the post-lock re-read mismatch - reports refused-before-any-change
+    and issues no adds; the membership is provably untouched. A failure **once the clear has
+    been issued** reports could-not-confirm and likewise issues no adds. The two must not read
+    the same, and the dividing line is attempted-or-not, never the error text.
 15. All five outcomes are distinguishable in the page message, the audit record and the
     notification. Specifically: **a read-back that throws after writes have landed reports
     "could not confirm", not "partly applied" and not "refused before any change"**, and a clear
@@ -550,10 +580,14 @@ The module has no service tests today.
     the clear.
 19. **The distribution-group guard.** A Distribution target proceeds; a Security target refuses
     before the clear, naming the reason; a category that cannot be read refuses the same way.
-    The check runs on every replace, not once at configuration. This is the condition the
-    protected-principal exemption rests on, so it is a security test, not a validation nicety.
-20. Retry, classified by exception TYPE not message: an `ADException` on one add batch retries
-    that batch and the run completes; `ADServerDownException`, `ADIdentityNotFoundException`,
+    The check runs on every replace, not once at configuration, and **again after the lock is
+    taken** - a target that is Distribution at resolve time and not at re-read time refuses.
+    This is the condition the protected-principal exemption rests on, so it is a security test,
+    not a validation nicety.
+20. Retry, classified by exception type NAME as a string - the classifier is a pure function
+    over a type name and compiles with no reference to `Microsoft.ActiveDirectory.Management`,
+    which this solution does not have; an unrecognised name is not retried. An `ADException` on
+    one add batch retries that batch and the run completes; `ADServerDownException`, `ADIdentityNotFoundException`,
     `ADInvalidOperationException` and `UnauthorizedAccessException` each fail on the first
     attempt with no retry delay; three consecutive `ADException`s exhaust the retry and report a
     real failure carrying the attempt count. Every retry logs the exception message. A retry
