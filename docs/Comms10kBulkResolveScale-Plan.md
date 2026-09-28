@@ -1,6 +1,7 @@
 # Comms-10k At Full Size - Plan
 
-Status: **Approved by the owner, 2026-09-28**, at revision 15. No code written.
+Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
+review findings within that approved scope. No code written.
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). Base app `2.23.0` unchanged.
 Scope: `Services/Comms10kService.cs`, `Components/Pages/Comms10k.razor`,
 `Components/Pages/ModuleConfig.razor` (one list entry), `Modules/ModuleCatalog.cs` (version bump),
@@ -160,13 +161,29 @@ Consequences that follow, and must be handled rather than hoped away:
   same CSV, which fully repairs it.
 - **Re-running is always safe.** The write does not depend on prior state, and `-Add` on an
   existing member is a silent no-op, so a repeat run of the same file converges.
-- **Serialise per group.** Two operators replacing the same list concurrently would interleave
-  clears and batches and could leave the list holding neither file - a worse outcome here than
-  with a single atomic write, so the lock is required, not optional.
-  `SelfServiceGroupService.cs:46,523` is the precedent: a `SemaphoreSlim(1, 1)` from a
-  `ConcurrentDictionary` keyed on the group's objectGUID. It is per process, so two application
-  instances could still interleave; the read-back is what makes that visible. That limit is true
-  of every membership write in the app and is recorded, not solved here.
+- **Serialise per group, and a per-process lock is not enough here.** Two concurrent replaces
+  would interleave clears and batches and could leave the list holding neither file - one run's
+  clear landing midway through the other's fill. That is strictly worse than the single atomic
+  write it replaces, so the lock is required, not optional.
+
+  `SelfServiceGroupService.cs:46,523` is the in-process precedent: a `SemaphoreSlim(1, 1)` from a
+  `ConcurrentDictionary` keyed on the group's objectGUID. **It is insufficient for this sequence.**
+  Dev and prod run as separate processes against the same directory (`.agents/repo-guidance.md`
+  Architectural Invariant 2 has them sharing one configuration database, and both can hold this
+  module enabled), so two processes writing the same group is a real configuration, not a
+  hypothetical. For a single atomic write that interleaving is survivable - last writer wins,
+  with a coherent membership either way. For clear-then-fill it is not.
+
+  **Use a system-wide named mutex (`Global\`) keyed on the target group's objectGUID**, taken
+  around the clear, every add batch and the read-back, with the in-process semaphore retained
+  inside it so same-process contention never reaches the mutex. The objectGUID, not the name, so
+  a rename cannot split the lock.
+
+  **Residual, stated for the owner to accept or reject rather than buried:** a named mutex is
+  host-wide. If the two instances are ever split across hosts, they can still interleave and
+  nothing short of a directory-side or database-side lease would prevent it. The read-back is
+  what makes the damage visible rather than silent. Both instances are presently on one deploy
+  host, so the mutex closes the case that actually exists today.
 - **Retry each write operation on a transient directory failure.** The directory intermittently
   refuses writes with "A required audit event could not be generated for the operation" - three
   of nine large writes during measurement. Without a retry a replace fails for a reason that has
@@ -184,10 +201,20 @@ Consequences that follow, and must be handled rather than hoped away:
     sequence - re-running the clear after batches have landed would wipe them.
   - **Bounded and reported.** Three attempts with a short backoff. Exhausting them is a real
     failure and reports as one; the attempt count goes in the log, never silently swallowed.
-  - **Not a blanket catch.** Retry transient directory faults only. A permission denial, an
-    unresolvable DN or a malformed request will fail identically three times and must surface
-    immediately, not after three delays. Matching on message text is brittle, so retry on the
-    directory's transient exception types and let anything else through on the first failure.
+  - **Not a blanket catch, and the classifier is named rather than described.** Verified against
+    the live assembly: `Microsoft.ActiveDirectory.Management.ADServerDownException` derives
+    **directly from `System.Exception`, not from `ADException`**, so the two are cleanly
+    separable by type. The observed audit fault surfaces as exactly `ADException`.
+    - **Retry:** `ADException` only.
+    - **Never retry:** `ADServerDownException` - that is the signature an oversized request
+      produced during measurement, and retrying it would repeat a request the directory will
+      refuse every time - nor `ADIdentityNotFoundException`, `ADInvalidOperationException` or
+      `UnauthorizedAccessException`.
+    - `ADException` is a broad base type and some permanent faults will also land there, so
+      **every retry logs the exception message**. A non-transient fault being retried three times
+      must be visible in the log rather than inferred, and that log line is what tells a future
+      reader whether the classifier needs narrowing.
+    - A test pins the classification per type, not per message string.
   - **The read-back still decides.** A retry that appears to succeed does not make the write
     successful; only the final membership comparison does.
 
@@ -281,6 +308,29 @@ Keep authorization (`:307-313`), the ticket field, audit and the admin notificat
 **Three documents state the rule and all three change here**, with a `.agents/decisions.md` entry:
 `.agents/repo-guidance.md` Known Failure Class 3, `docs/ProjectConstitution.md`, and
 `docs/AdminModuleDeveloperGuide.md:652-656`, the one a new module author reads.
+
+**The amendment is a named, scoped exception - not a softening of the rule.** The Constitution's
+Protected Principals section (`docs/ProjectConstitution.md:86-87`) states the rule with "no
+group-management or routine change carve-out", then carries exactly one exception in a fixed
+shape: a bolded **Scoped exception (owner ruling DATE, `.agents/decisions.md`)** line naming the
+one module, what is exempt, and why the boundary does not apply there. Follow that shape exactly:
+
+- Name Comms-10k specifically. No wording that any other module could read itself into.
+- State that the exemption is from the MEMBER check, and say so explicitly - it is broader than
+  the Self-Service Groups exception directly above it, which exempts only Protected Group
+  Targets and keeps its member check. A reader must not conflate them.
+- Give the reason: the write target is a broadcast distribution list, membership of which grants
+  access to nothing, so the check produces only false positives and blocks the module's intended
+  use.
+- Leave every other clause in that section untouched, including fail-closed behaviour,
+  transitivity, and the cloud-only-by-address rule.
+
+The existing sentence "Never bypass protected-principal checks in privileged modules unless the
+bypass is narrowly scoped, documented, and required for compensation cleanup"
+(`ProjectConstitution.md:92`) is the test this amendment must satisfy: narrowly scoped and
+documented. It does not fit "compensation cleanup", so that clause needs the owner ruling named
+alongside it rather than being stretched to cover this.
+
 `AuditCategoryFilingTests.cs:88-100` asserts six Comms-10k audit call sites; deleting the blocked
 paths changes that count deliberately.
 
@@ -344,11 +394,14 @@ The module has no service tests today.
 15. The four outcomes are distinguishable in the page message, the audit record and the
     notification.
 16. Oversized upload produces a message naming the limit, not a raw stream error.
-17. The per-group lock wraps the clear, every add batch and the read-back, keyed on objectGUID.
-18. Retry: a transient directory fault on one add batch retries that batch and the run completes;
-    a permanent fault (permission denied) fails on the first attempt with no retry delay; three
-    consecutive transient faults exhaust the retry and report a real failure with the attempt
-    count. A retry never re-issues the clear once any batch has landed.
+17. The lock wraps the clear, every add batch and the read-back, is keyed on objectGUID rather
+    than the group name, and is a `Global\` named mutex - not only the in-process semaphore.
+18. Retry, classified by exception TYPE not message: an `ADException` on one add batch retries
+    that batch and the run completes; `ADServerDownException`, `ADIdentityNotFoundException`,
+    `ADInvalidOperationException` and `UnauthorizedAccessException` each fail on the first
+    attempt with no retry delay; three consecutive `ADException`s exhaust the retry and report a
+    real failure carrying the attempt count. Every retry logs the exception message. A retry
+    never re-issues the clear once any batch has landed.
 
 Guard proof: revert each fix, confirm the matching test fails, restore, confirm green. Restoring by
 copy keeps the old timestamp and the build skips it - touch the file afterwards.
