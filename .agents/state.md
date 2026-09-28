@@ -254,12 +254,18 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     mutation that did not apply and a test that does not bite produce the identical result; verify
     the source changed before believing a green run.
     **TWO THINGS OUTSTANDING, BOTH THE OWNER'S:**
-    1. **`User.Read.All` on the Risky Users app registration, admin-consented.** Graph app role -
-       needs a Privileged Role Administrator, not an Application Administrator. Until granted, S5's
-       lookup returns a 403 naming exactly that permission; everything else works without it.
-    2. **NOTHING HAS BEEN SEEN IN A BROWSER.** No test here renders a page, so pagination, the
-       constraint notice, the two empty states, the relabelled buttons and the lookup are all
-       unproven to an operator. The plan's manual checks are the only evidence.
+    1. **DONE 2026-09-28, and with LESS privilege than the plan asked for.** The plan specified
+       `User.Read.All`; the code makes one directory call, `/users/{upn}?$select=id`, which asks
+       whether the account exists and nothing else. `User.ReadBasic.All` covers that and was
+       granted instead. **Verified on the live tenant: all three lookup outcomes pass** - no such
+       user, no risk record, and risky. The plan, the service comments and the operator-facing
+       403 message all said `User.Read.All` and now say `User.ReadBasic.All`; naming the larger
+       scope sent an administrator to grant tenant-wide full-profile read for an existence check.
+    2. **PARTLY SEEN IN A BROWSER NOW (dev, 2026-09-28).** The owner deployed and exercised the
+       LOOKUP: all three outcomes render correctly. Still unproven to an operator: pagination,
+       the constraint notice, the two empty states and the relabelled Remediate buttons. No test
+       here renders a page, so the plan's manual checks remain the only possible evidence for
+       those.
     **THE DEFECT WORTH CARRYING, because this work introduced it and nearly shipped it.** S2's
     first form looped on `@odata.nextLink` and stopped only on the ROW ceiling. A page carrying a
     continuation link with an empty `value` advances the link but not the count, so the ceiling is
