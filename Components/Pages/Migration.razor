@@ -418,7 +418,14 @@
                        loaded rows - no control before then (the plan's failure-behavior table). *@
                     @if (migrationBatches is { Count: > 0 })
                     {
-                        <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadCsvAsync" disabled="@IsBusy">Download CSV</button>
+                        @* R29. Export says WHAT it exports. "Download CSV" was ambiguous the
+                           moment a selection and a filter existed: all batches, the ticked ones,
+                           or the open batch's mailboxes? It writes the batch list as currently
+                           filtered and sorted, and the label and tooltip both say so. *@
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadCsvAsync" disabled="@IsBusy"
+                                title="Writes the batch list exactly as filtered and sorted here - not the selection, and not any batch's mailboxes.">
+                            Export batch list (@BatchTotalCount)
+                        </button>
                     }
                     @* The standalone "Clear Completed" sweep was REMOVED (D6): it acted on every
                        completed batch in the table regardless of selection, and it sat beside
@@ -476,6 +483,11 @@
                 }
                 else if ((migrationBatches == null || !migrationBatches.Any()) && batchActionResult == null)
                 {
+                    @* R28. Three distinct empty states, and this is the first: no batches AT ALL.
+                       The other two are "no batch matches the filter" (in the left pane, below)
+                       and "no mailbox matches the filter" (in the right pane). One message for
+                       all three would hide whether the filter or the data is the problem, and
+                       the operator's next move differs in each case. *@
                     <div class="alert alert-info">
                         <strong>No migration batches found</strong>
                         <p class="mb-0 mt-2">There are currently no migration batches. Create one using the Single User Check or Bulk CSV Check tabs.</p>
@@ -496,6 +508,16 @@
                                            title="Select all loaded batches"
                                            checked="@AllBatchesSelected" @onchange="ToggleSelectAllBatches" />
                                 }
+                                @* R26. FILTERING batch names and FINDING a person are different
+                                   controls doing different jobs, and conflating them is the defect.
+                                   This narrows the list in place. The box above both panes searches
+                                   every batch for a mailbox and takes the operator TO it - it does
+                                   not narrow anything. Over the whole catalogue, never the rendered
+                                   page (R21). *@
+                                <input type="text" class="form-control form-control-sm" style="width: 11rem;"
+                                       placeholder="Filter batch names"
+                                       value="@batchFilter" @oninput="OnBatchFilterChanged"
+                                       disabled="@IsBusy" />
                                 @* ONE sort control, not clickable headers as well (R18, R19): two
                                    ways to set one value is the ambiguity R19 says to fix by
                                    structure. It carries all seven keys the old table header
@@ -588,6 +610,17 @@
                                     <span class="mig-count">Synced</span>
                                     <span class="mig-count">Failed</span>
                                 </div>
+
+                                @* R28, the second of the three empty states: the catalogue has
+                                   batches, this filter matches none of them. Distinct from "no
+                                   batches at all", because the next move is to clear the filter
+                                   rather than to go and find out why nothing exists. *@
+                                @if (BatchTotalCount == 0)
+                                {
+                                    <p class="text-muted text-center my-4 px-3">
+                                        No batch name matches <strong>@batchFilter</strong>.
+                                    </p>
+                                }
 
                                 @foreach (var batch in GetPagedBatches())
                                 {
@@ -1308,6 +1341,11 @@
     private const int BatchPageSize = 40;
     private int batchPage;
 
+    // R26. The batch-NAME filter, which is not the person search above both panes. That one finds
+    // a mailbox in any batch and takes the operator to it; this narrows what the left pane lists.
+    // Both must exist, and conflating them was the defect.
+    private string batchFilter = "";
+
     // R4. The selection pane's own page, independent of the catalogue's: paging the list you are
     // choosing from and paging what you have chosen are different movements, and sharing one index
     // would jump the other pane every time.
@@ -1937,9 +1975,14 @@
         await AdoptSelectionAsOpenBatch();
     }
 
-    private bool AllBatchesSelected =>
-        migrationBatches is { Count: > 0 }
-        && migrationBatches.All(b => selectedBatches.Contains(b.BatchName));
+    private bool AllBatchesSelected
+    {
+        get
+        {
+            var visible = GetSortedBatches().ToList();
+            return visible.Count > 0 && visible.All(b => selectedBatches.Contains(b.BatchName));
+        }
+    }
 
     private async Task ToggleSelectAllBatches(ChangeEventArgs e)
     {
@@ -1953,7 +1996,10 @@
             // cap" is not select-all. That is safe alongside R20 only because selection and
             // rendering are different things: ListWindow bounds what is drawn by the page index
             // alone and knows nothing about what is ticked, which ListWindowTests asserts.
-            foreach (var batch in migrationBatches)
+            // Every batch MATCHING THE FILTER, not every batch in the catalogue. A tick box above
+            // a filtered list that silently swept up the hidden 760 would be the worst kind of
+            // select-all: it acts on rows the operator cannot see.
+            foreach (var batch in GetSortedBatches())
                 selectedBatches.Add(batch.BatchName);
         }
 
@@ -3170,7 +3216,10 @@
     private IEnumerable<MigrationBatchInfo> GetPagedBatches() =>
         ListWindow.Slice(GetSortedBatches(), batchPage, BatchPageSize);
 
-    private int BatchTotalCount => migrationBatches?.Count ?? 0;
+    // The FILTERED count, so the pager says "1-40 of 12 batches" while a filter is narrowing 800
+    // down. Reporting the catalogue size there would describe a list the operator is not looking
+    // at.
+    private int BatchTotalCount => GetSortedBatches().Count();
 
     private int BatchPageCount => ListWindow.PageCount(BatchTotalCount, BatchPageSize);
 
@@ -3180,22 +3229,36 @@
     private void StepBatchPage(int delta) =>
         batchPage = ListWindow.ClampPage(batchPage + delta, BatchTotalCount, BatchPageSize);
 
+    // R21 and R26. Filter and sort over the WHOLE catalogue, never the rendered page - and the
+    // filter is the batch-NAME one, which is a different control from the person search above
+    // both panes. That search finds a mailbox anywhere and jumps to its batch; this narrows what
+    // is listed.
     private IEnumerable<MigrationBatchInfo> GetSortedBatches()
     {
         if (migrationBatches == null) return Enumerable.Empty<MigrationBatchInfo>();
 
-        IOrderedEnumerable<MigrationBatchInfo> sorted = batchSortColumn switch
-        {
-            "Name" => batchSortAsc ? migrationBatches.OrderBy(b => b.BatchName) : migrationBatches.OrderByDescending(b => b.BatchName),
-            "Status" => batchSortAsc ? migrationBatches.OrderBy(b => b.Status) : migrationBatches.OrderByDescending(b => b.Status),
-            "Direction" => batchSortAsc ? migrationBatches.OrderBy(b => b.Direction) : migrationBatches.OrderByDescending(b => b.Direction),
-            "Total" => batchSortAsc ? migrationBatches.OrderBy(b => b.TotalCount) : migrationBatches.OrderByDescending(b => b.TotalCount),
-            "Synced" => batchSortAsc ? migrationBatches.OrderBy(b => b.SyncedCount) : migrationBatches.OrderByDescending(b => b.SyncedCount),
-            "Failed" => batchSortAsc ? migrationBatches.OrderBy(b => b.FailedCount) : migrationBatches.OrderByDescending(b => b.FailedCount),
-            _ => batchSortAsc ? migrationBatches.OrderBy(b => b.CreatedDateTime) : migrationBatches.OrderByDescending(b => b.CreatedDateTime),
-        };
+        IEnumerable<MigrationBatchInfo> rows = migrationBatches;
 
-        return sorted;
+        var filter = batchFilter.Trim();
+        if (filter.Length > 0)
+            rows = rows.Where(b => b.BatchName?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true);
+
+        return batchSortColumn switch
+        {
+            "Name" => batchSortAsc ? rows.OrderBy(b => b.BatchName) : rows.OrderByDescending(b => b.BatchName),
+            "Status" => batchSortAsc ? rows.OrderBy(b => b.Status) : rows.OrderByDescending(b => b.Status),
+            "Direction" => batchSortAsc ? rows.OrderBy(b => b.Direction) : rows.OrderByDescending(b => b.Direction),
+            "Total" => batchSortAsc ? rows.OrderBy(b => b.TotalCount) : rows.OrderByDescending(b => b.TotalCount),
+            "Synced" => batchSortAsc ? rows.OrderBy(b => b.SyncedCount) : rows.OrderByDescending(b => b.SyncedCount),
+            "Failed" => batchSortAsc ? rows.OrderBy(b => b.FailedCount) : rows.OrderByDescending(b => b.FailedCount),
+            _ => batchSortAsc ? rows.OrderBy(b => b.CreatedDateTime) : rows.OrderByDescending(b => b.CreatedDateTime),
+        };
+    }
+
+    private void OnBatchFilterChanged(ChangeEventArgs e)
+    {
+        batchFilter = e.Value?.ToString() ?? "";
+        ResetBatchPage();
     }
 
     /// <summary>

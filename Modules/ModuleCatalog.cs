@@ -252,7 +252,11 @@ public sealed class ModuleCatalog
             // and discarding it are now different operations, so closing no longer guarantees
             // another twenty-minute Get-MigrationUserStatistics, and the text has an Export button
             // (docs/MigrationInterfaceRedesign-Plan.md S6, R24, R24a, R24c, R24e).
-            Version = "1.16.0",
+            // 1.17.0: batch names can be filtered, which is a different control from the person
+            // search that jumps to a mailbox in any batch; all three empty states say which one
+            // applies; and the CSV button names the scope it exports
+            // (docs/MigrationInterfaceRedesign-Plan.md S6, R26, R28, R29).
+            Version = "1.17.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

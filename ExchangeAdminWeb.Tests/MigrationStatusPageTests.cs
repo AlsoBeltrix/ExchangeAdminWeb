@@ -769,6 +769,82 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void FindingAPersonAndFilteringBatchNamesAreTwoDifferentControls()
+    {
+        // R26. Conflating them was the defect. The page had ONE box that searched for a mailbox
+        // across every batch and jumped to it; it never narrowed the list, so an operator looking
+        // for "all the Finance waves" had no way to ask.
+        //
+        // Both must exist and they must not be the same control: one takes you somewhere, the
+        // other changes what is listed.
+        var page = ReadPage();
+
+        Assert.Contains("placeholder=\"Search batch or user email...\"", page, StringComparison.Ordinal);
+        Assert.Contains("placeholder=\"Filter batch names\"", page, StringComparison.Ordinal);
+
+        // The finder navigates; it must not narrow.
+        var search = StripLineComments(GetMethodBody("SearchUser"));
+        Assert.Contains("AdoptSelectionAsOpenBatch()", search, StringComparison.Ordinal);
+        Assert.DoesNotContain("batchFilter", search, StringComparison.Ordinal);
+
+        // The filter narrows over the WHOLE catalogue (R21), never the rendered page, and resets
+        // to page one so the operator is not left staring at an empty page 9.
+        Assert.Contains("b.BatchName?.Contains(filter", GetMethodBody("GetSortedBatches"), StringComparison.Ordinal);
+        Assert.Contains("ResetBatchPage();", GetMethodBody("OnBatchFilterChanged"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelectAllTakesTheFilteredSetAndNotTheHiddenRest()
+    {
+        // R8 says select-all means all, with no cap. Once a filter exists, "all" has to mean all
+        // MATCHING - a tick box above a filtered list that silently swept up the hidden 760 would
+        // act on rows the operator cannot see, which is the worst reading of select-all.
+        var body = StripLineComments(GetMethodBody("ToggleSelectAllBatches"));
+
+        Assert.Contains("foreach (var batch in GetSortedBatches())", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var batch in migrationBatches)", body, StringComparison.Ordinal);
+
+        // And the tick box's own checked state agrees with what it would do.
+        Assert.Contains("GetSortedBatches()", GetMemberSource(
+            @"private\s+bool\s+AllBatchesSelected", "AllBatchesSelected"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheExportSaysWhatItExports()
+    {
+        // R29. "Download CSV" became ambiguous the moment a selection and a filter existed: all
+        // batches, the ticked ones, or the open batch's mailboxes? The label and the tooltip both
+        // name the scope, and the count makes the claim checkable against the list beside it.
+        var page = StripRazorComments(ReadPage());
+
+        var button = GetButtonTags(page)
+            .Single(tag => tag.Contains("DownloadCsvAsync", StringComparison.Ordinal));
+
+        var title = Regex.Match(button, @"title=""(?<text>[^""]*)""").Groups["text"].Value;
+        Assert.Contains("filtered and sorted", title, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not the selection", title, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("Export batch list (@BatchTotalCount)", page, StringComparison.Ordinal);
+
+        // And the claim is true: the export writes the same filtered, sorted set the pane lists.
+        Assert.Contains("GetSortedBatches().ToList()", GetMethodBody("DownloadCsvAsync"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AllThreeEmptyStatesSayWhichOneApplies()
+    {
+        // R28. "Nothing matches" for all three hides whether the filter or the data is the
+        // problem, and the operator's next move differs in each: create a batch, clear the batch
+        // filter, or clear the mailbox filter.
+        var page = StripRazorComments(ReadPage());
+
+        Assert.Contains("No migration batches found", page, StringComparison.Ordinal);
+        Assert.Contains("No batch name matches", page, StringComparison.Ordinal);
+        Assert.Contains("No mailbox in this batch matches", page, StringComparison.Ordinal);
+        Assert.Contains("This batch contains no mailboxes.", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AnEmptyBatchAndAnEmptyFilterResultSayDifferentThings()
     {
         // R28. "Nothing matches" for both hides whether the filter or the data is the problem, and
