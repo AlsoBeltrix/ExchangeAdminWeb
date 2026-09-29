@@ -1286,6 +1286,34 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void TheMailboxDetailRowSpansEveryColumnOfItsTable()
+    {
+        // The last hand-maintained count on this page. The mailbox table is an HTML table, so it
+        // sizes itself and cannot suffer the header/row mismatch the two CSS grids beside it
+        // both did - a grid declares its track count separately from its cells, which is exactly
+        // why both of those defects were grids. But the colspan on the detail row is still a number
+        // someone has to remember, and a column added to the table without touching it leaves
+        // the detail row short.
+        //
+        // Checked against the header rather than asserted as 7 and 6, so adding a column fixes
+        // this test by construction instead of failing it.
+        var page = StripRazorComments(ReadPage());
+
+        var at = page.IndexOf("mig-mailboxes", StringComparison.Ordinal);
+        Assert.True(at >= 0, "the mailbox table is gone");
+
+        var thead = page[at..(at + page[at..].IndexOf("</thead>", StringComparison.Ordinal))];
+
+        // "<th" also matches "<thead", which counted one column too many on the first run. The
+        // character after the tag name is what separates them.
+        var columns = Regex.Matches(thead, @"<th[ >]").Count;
+        var withoutTickBox = columns - CountOf(thead, "@if (canManage)");
+
+        Assert.Contains($"colspan=\"@(canManage ? {columns} : {withoutTickBox})\"",
+            page, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AllThreeEmptyStatesSayWhichOneApplies()
     {
         // R28. "Nothing matches" for all three hides whether the filter or the data is the
