@@ -655,7 +655,23 @@
                                 @* R16: the header row is inside the scrolling box, so the scrollbar
                                    narrows it by exactly as much as it narrows the rows. R17: every
                                    number below has a name here. *@
-                                <div class="mig-batch-row mig-batch-head">
+                                <div class="mig-batch-row mig-batch-head @BatchGridClass">
+                                    @* The spacer for the tick-box column, and it renders on
+                                       exactly the condition the tick box itself does. It used to
+                                       be unconditional while the tick box in the row was gated on
+                                       canManage, so a read-only operator read every value one
+                                       column left of its heading - the name under the blank,
+                                       Failed under a heading that was not there. R14 asks for
+                                       fixed columns that align on every row; a permission is not
+                                       an exception to that. *@
+                                    @if (canManage)
+                                    {
+                                        <span></span>
+                                    }
+                                    @* Direction gets its own narrow track. It was inside the name
+                                       cell, which was wrong for the reason the owner gave: that
+                                       cell is the one thing here with variable width, so anything
+                                       parked in it is taken straight out of the batch name. *@
                                     <span></span>
                                     <span>Batch</span>
                                     <span>Status</span>
@@ -666,8 +682,12 @@
                                        Failed are fractions; without the denominator "0 synced"
                                        says nothing about whether the batch holds one mailbox or
                                        five hundred. *@
-                                    <span class="mig-count">Total</span>
-                                    <span class="mig-count">Synced</span>
+                                    @* Synced and Total in ONE cell, as the fraction they
+                                       always were. Three 3.5rem columns held single digits while
+                                       a thirty-character address got 115px - the widths were
+                                       spent where nothing varies. R17 still holds: the header
+                                       names both numbers and the cell shows both. *@
+                                    <span class="mig-count" title="Mailboxes synced, of the batch total">Synced/Total</span>
                                     <span class="mig-count">Failed</span>
                                 </div>
 
@@ -687,7 +707,7 @@
                                     @* Captured per iteration: the lambdas below must close over
                                        THIS row's name. *@
                                     var batchName = batch.BatchName;
-                                    <div class="mig-batch-row mig-clickable @(expandedBatch == batchName ? "mig-open" : "")"
+                                    <div class="mig-batch-row mig-clickable @BatchGridClass @(expandedBatch == batchName ? "mig-open" : "")"
                                          @onclick="() => SelectOnlyBatch(batchName)">
                                         @if (canManage)
                                         {
@@ -705,8 +725,9 @@
                                         {
                                             <span></span>
                                         }
+                                        <span class="mig-dir-cell">@DirectionIcon(batch.Direction)</span>
                                         <span class="mig-batch-name" title="@batchName">
-                                            @DirectionIcon(batch.Direction)@batchName
+                                            @batchName
                                             @* S4, R12. A per-row outcome written against every
                                                affected row, BEFORE the ticket is typed. Only rows
                                                in the staged plan are annotated: an unticked row is
@@ -732,8 +753,9 @@
                                             }
                                         </span>
                                         <span><span class="badge bg-@GetStatusColor(batch.Status)" title="@batch.Status">@batch.Status</span></span>
-                                        <span class="mig-count">@batch.TotalCount</span>
-                                        <span class="mig-count text-success fw-bold">@batch.SyncedCount</span>
+                                        <span class="mig-count">
+                                            <span class="text-success fw-bold">@batch.SyncedCount</span><span class="text-muted">/@batch.TotalCount</span>
+                                        </span>
                                         <span class="mig-count">
                                             @if (batch.FailedCount > 0)
                                             {
@@ -800,8 +822,7 @@
                                         <span></span>
                                         <span>Batch</span>
                                         <span>Status</span>
-                                        <span class="mig-count">Total</span>
-                                        <span class="mig-count">Synced</span>
+                                        <span class="mig-count" title="Mailboxes synced, of the batch total">Synced/Total</span>
                                         <span class="mig-count"></span>
                                     </div>
                                     @foreach (var batch in GetSelectedBatchesPage())
@@ -814,10 +835,12 @@
                                                     title="Show only this batch" @onclick="() => SelectOnlyBatch(selectedName)">
                                                 Open
                                             </button>
-                                            <span class="mig-batch-name" title="@selectedName">@DirectionIcon(batch.Direction)@selectedName</span>
+                                            <span class="mig-dir-cell">@DirectionIcon(batch.Direction)</span>
+                                            <span class="mig-batch-name" title="@selectedName">@selectedName</span>
                                             <span><span class="badge bg-@GetStatusColor(batch.Status)">@batch.Status</span></span>
-                                            <span class="mig-count">@batch.TotalCount</span>
-                                            <span class="mig-count text-success fw-bold">@batch.SyncedCount</span>
+                                            <span class="mig-count">
+                                                <span class="text-success fw-bold">@batch.SyncedCount</span><span class="text-muted">/@batch.TotalCount</span>
+                                            </span>
                                             <span class="mig-count">
                                                 <button class="btn btn-link btn-sm p-0 text-danger" disabled="@IsBusy"
                                                         title="Remove this batch from the selection"
@@ -1447,6 +1470,11 @@
         <button class="btn btn-sm btn-outline-secondary" @onclick="CancelPendingAction"
                 disabled="@(actionInProgress != null)">Cancel</button>
     </div>;
+
+    // The batch grid drops its first column when the operator cannot select. Named once and
+    // applied to the header AND the rows, because the defect this replaces was precisely those
+    // two disagreeing about whether the tick-box column exists.
+    private string BatchGridClass => canManage ? "" : "mig-no-tick";
 
     private int tabIndex = 0;
     private bool isLoading = false;

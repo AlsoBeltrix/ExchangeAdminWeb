@@ -1092,18 +1092,25 @@ public class MigrationStatusPageTests
             if (exempt.ContainsKey(column))
                 continue;
 
-            var header = column;
+            // Substring, not an exact cell, because Synced and Total share one header - they are
+            // a fraction, and three fixed columns holding single digits were eating the width
+            // the batch name needed (owner, 2026-09-29: "batch names are cutoff ... not enough
+            // space where it is actually useful"). What matters is that the word appears in a
+            // heading, not that it owns a cell of its own.
+            var headers = Regex.Matches(page, @"<span(?: [^>]*)?>([A-Za-z/ ]+)</span>")
+                .Select(m => m.Groups[1].Value)
+                .ToArray();
+
             Assert.True(
-                page.Contains($"<span class=\"mig-count\">{header}</span>", StringComparison.Ordinal)
-                || page.Contains($"<span>{header}</span>", StringComparison.Ordinal),
-                $"the batch sort offers {column} but no column header shows it, so the list can "
+                headers.Any(h => h.Contains(column, StringComparison.OrdinalIgnoreCase)),
+                $"the batch sort offers {column} but no column header names it, so the list can "
                 + "be ordered by something the operator cannot see - which is exactly what "
                 + "'where is the total?' turned out to mean");
         }
 
         // Both batch views show it - the selection pane lists the same batches, and a total that
         // appears in one and not the other is the same omission wearing a different hat.
-        Assert.Equal(2, CountOf(page, "<span class=\"mig-count\">@batch.TotalCount</span>"));
+        Assert.Equal(2, CountOf(page, "@batch.SyncedCount</span><span class=\"text-muted\">/@batch.TotalCount"));
     }
 
     [Fact]
@@ -1187,6 +1194,68 @@ public class MigrationStatusPageTests
         // Inline SVG rather than a Bootstrap Icons class: a webfont that has not loaded leaves
         // an unlabelled row instead of a visibly broken one.
         Assert.DoesNotContain("bi-cloud", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheBatchGridHasTheSameColumnsInTheHeaderAndTheRows()
+    {
+        // R14 asks for fixed columns that align on every row, and a permission is not an
+        // exception to that. The header drew an unconditional spacer for the tick-box column
+        // while the row only drew a tick box when canManage, so an operator WITHOUT
+        // MigrationManage read every value one column left of its heading: the batch name under
+        // the blank, Status under "Batch", and Failed under a heading that was not rendered.
+        //
+        // Invisible to everyone who built it, because they all had the permission. The mailbox
+        // table beside it already handled this - colspan="@(canManage ? 7 : 6)" - which is what
+        // makes the batch grid an oversight rather than an open question.
+        var page = StripRazorComments(ReadPage());
+
+        // The spacer renders on exactly the condition the tick box does. Matched inside the
+        // header block rather than as one indented literal: the indentation here is not the
+        // thing under test, and pinning it makes the test fail on a reformat.
+        var headAt = page.IndexOf("mig-batch-head", StringComparison.Ordinal);
+        Assert.True(headAt > 0, "the batch header row is gone");
+
+        var head = page[headAt..(headAt + page[headAt..].IndexOf("<span>Status</span>",
+            StringComparison.Ordinal))];
+
+        Assert.Contains("@if (canManage)", head, StringComparison.Ordinal);
+        Assert.Contains("<span></span>", head, StringComparison.Ordinal);
+        Assert.True(
+            head.IndexOf("@if (canManage)", StringComparison.Ordinal)
+                < head.IndexOf("<span></span>", StringComparison.Ordinal),
+            "the tick-box spacer is not inside the canManage guard, so a read-only operator "
+            + "reads every value one column left of its heading");
+
+        // Header and rows take the grid from ONE property, so they cannot disagree again.
+        Assert.Equal(2, CountOf(page, "@BatchGridClass"));
+
+        var cls = StripLineComments(GetMemberSource(
+            @"private\s+string\s+BatchGridClass", "BatchGridClass"));
+        Assert.Contains("canManage", cls, StringComparison.Ordinal);
+        Assert.Contains("mig-no-tick", cls, StringComparison.Ordinal);
+
+        // And the read-only variant actually drops a track rather than only renaming the class.
+        var css = File.ReadAllText(Path.Combine(GetPagesDirectory(), "Migration.razor.css"));
+
+        Assert.Equal(TrackCount(css, ".mig-batch-row {") - 1,
+            TrackCount(css, ".mig-batch-row.mig-no-tick {"));
+    }
+
+    // The tracks in the grid-template-columns of one CSS rule. minmax(0, 1fr) holds a comma and
+    // a space, so it is collapsed before splitting or it would count as two.
+    private static int TrackCount(string css, string selector)
+    {
+        var at = css.IndexOf(selector, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"{selector} is gone from Migration.razor.css");
+
+        var rule = css[at..(at + css[at..].IndexOf('}'))];
+        var decl = rule[rule.IndexOf("grid-template-columns:", StringComparison.Ordinal)..];
+        decl = decl[..decl.IndexOf(';')]
+            .Replace("grid-template-columns:", "")
+            .Replace("minmax(0, 1fr)", "minmax");
+
+        return decl.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
     }
 
     [Fact]

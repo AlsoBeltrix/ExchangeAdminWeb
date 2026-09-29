@@ -302,7 +302,19 @@ public sealed class ModuleCatalog
             // name cell (owner, 2026-09-29: icons in the list, and do not clog the columns). No
             // seventh column, so the batch name keeps its width and R15 holds. Labelled with a
             // title and an aria-label, because an icon is where R17 is easiest to break.
-            Version = "1.20.5",
+            // 1.20.6: read-only operators saw every batch row one column left of its
+            // heading. The header drew an unconditional spacer for the tick-box column while
+            // the row only drew a tick box when canManage, so without MigrationManage the name
+            // sat under the blank and Failed under a heading that was not rendered.
+            // Pre-existing; invisible to everyone who built it, because they all had the
+            // permission.
+            // 1.20.7: the batch list gave its width to the wrong columns. Three fixed count
+            // columns held single digits while a thirty-character address was cut to 115px.
+            // Synced and Total are now one cell as the fraction they always were, the direction
+            // icon has its own narrow track instead of being a passenger in the name cell, and
+            // the name takes what is left (owner, 2026-09-29: "batch names are cutoff ... not
+            // enough space where it is actually useful").
+            Version = "1.20.7",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

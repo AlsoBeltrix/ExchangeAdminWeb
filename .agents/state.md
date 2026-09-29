@@ -149,6 +149,17 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     if a large batch ever feels sluggish while typing in the mailbox filter, this is where to
     look first**, and the fix is to compute the filtered-sorted list once per render rather
     than to cache it across renders.
+  - **Two more from dev screenshots (modules `1.20.6`, `1.20.7`).**
+    - Read-only operators saw every batch row one column left of its heading: the header drew
+      an unconditional spacer for the tick-box column while the row only drew a tick box when
+      `canManage`. Pre-existing, and invisible to everyone who built it because they all had
+      the permission.
+    - The list gave its width to the wrong columns. Three fixed count columns held single
+      digits while a thirty-character address was cut to 115px, and the direction icon was
+      parked in the name cell - the one cell with variable width - which I had argued "costs
+      no column". It cost exactly the column that mattered. Synced and Total are now one cell
+      as the fraction they always were, the icon has its own 1.1rem track, and the name takes
+      the remainder.
   - **Still not fully verified in a browser.** Remaining `## Acceptance` hand checks: the
     batch-open page-reset risk the plan flags, the Actions menu opening and closing on an
     outside click, and the schedule time field resolving to the UTC it displays.
