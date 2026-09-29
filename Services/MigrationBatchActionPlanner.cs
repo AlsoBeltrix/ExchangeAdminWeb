@@ -20,7 +20,10 @@ public enum MigrationBatchAction
     Complete,
 
     /// <summary>Stop-MigrationBatch against selected batches that are still moving.</summary>
-    Stop
+    Stop,
+
+    /// <summary>Set-MigrationBatch -CompleteAfter with a FUTURE time, on batches that can still finish.</summary>
+    Schedule
 }
 
 /// <summary>A selected batch the action cannot apply to, with the status that disqualified it.</summary>
@@ -58,6 +61,18 @@ public static class MigrationBatchActionPlanner
 
     /// <summary>The one status Complete will act on, ported from the per-row button in S3.</summary>
     private const string SyncedStatus = "Synced";
+
+    // Statuses Schedule is NOT offered on (R13). By exclusion, unlike Complete and Stop beside it,
+    // and the difference is the point: scheduling does not act now, it records an intention for
+    // later. A batch still Syncing is the COMMON case - schedule it at 16:00 and it finalises at
+    // 22:00 when it has caught up - so an allowlist of "ready" statuses would refuse exactly the
+    // batches an operator most wants to schedule.
+    //
+    // What is excluded is where a future completion is meaningless: already finished, finishing
+    // now, or being torn down. A missing status is refused, because we cannot tell which of those
+    // it is.
+    private static readonly string[] NonSchedulableStatuses =
+        ["Completed", "Completing", "Removing"];
 
     // Statuses Stop is offered on, ported from the per-row button in S3: a batch Exchange is
     // actively moving, or one that has finished moving and has not yet been completed. An
@@ -134,6 +149,10 @@ public static class MigrationBatchActionPlanner
             MigrationBatchAction.Stop =>
                 !string.IsNullOrWhiteSpace(trimmed)
                 && StoppableStatuses.Contains(trimmed, StringComparer.OrdinalIgnoreCase),
+
+            MigrationBatchAction.Schedule =>
+                !string.IsNullOrWhiteSpace(trimmed)
+                && !NonSchedulableStatuses.Contains(trimmed, StringComparer.OrdinalIgnoreCase),
 
             _ => false
         };

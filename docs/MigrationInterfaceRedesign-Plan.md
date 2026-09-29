@@ -1,11 +1,21 @@
 # Migration -- Redesign The Status Interface (queue item 14)
 
-Status: **NOT COMPLETE. All eight slices landed, plus the mir-1 review fix - but R13 IS NOT
-DELIVERED and queue item 12 therefore is not either.** S8 built the service method that makes
-scheduling possible (`ScheduleMigrationBatchCompletionAsync`); **nothing on the page calls it**,
-so there is no Schedule control and an operator cannot schedule a completion. Found by auditing
-all 45 requirements against the code on 2026-09-28, after the slices were all marked done -
-finishing every slice is not the same as meeting every requirement. Module
+Status: **IMPLEMENTED 2026-09-29. All eight slices, the mir-1 review fix, and R13.**
+
+R13 was missing when the slices were all marked done: S8 built
+`ScheduleMigrationBatchCompletionAsync` and nothing on the page ever called it, so queue item 12
+existed only in C#. Found on 2026-09-28 by auditing all 45 requirements against the code rather
+than checking off slices - **finishing every slice is not the same as meeting every
+requirement**, and the slice list is what had been tracked. Closed 2026-09-29 with a Schedule
+item in the batch action bar, a `MigrationBatchAction.Schedule` predicate (exclusion: a batch
+still Syncing is the common thing to schedule), and a date/time field in the existing ticket
+step.
+
+The same commit replaced the batch action bar with a single Actions menu. Owner, 2026-09-29, on
+a screenshot: one line, no differently sized buttons, "4 selected" too wide, colours that do not
+mean anything. Six labelled buttons do not fit on one line - the fifth already wrapped before
+R13 added a sixth - so the count rides on one `Actions (n)` button and the only colour left is
+the red on Delete. Module
 `1.9.1` -> `1.19.0`, no base app bump at any point. **Not yet seen in a browser beyond one owner
 screenshot** - the `## Acceptance` hand checks below are outstanding, and no test in this repo
 renders a Blazor component.

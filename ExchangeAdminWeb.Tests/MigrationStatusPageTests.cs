@@ -606,11 +606,16 @@ public class MigrationStatusPageTests
         // claim an outcome for an action that will never look at it.
         Assert.Contains("return null;", outcome, StringComparison.Ordinal);
 
-        // R12: the picked action is highlighted, so the ticket field is visibly tied to one of the
-        // five buttons rather than floating beneath all of them.
-        var highlight = GetMemberSource(
-            @"private\s+string\s+BatchActionButtonClass\s*\(", "BatchActionButtonClass");
-        Assert.Contains("pendingBatchAction == action", highlight, StringComparison.Ordinal);
+        // R12: the ticket field is visibly tied to ONE named action rather than floating beneath
+        // a row of them. This used to be asserted as a highlighted button - BatchActionButtonClass
+        // switched the picked one from outline to solid - and that is gone with the button row
+        // itself (owner, 2026-09-29: one line, and six labelled buttons do not fit on one line).
+        // The guarantee did not go with it; it moved. The confirm bar states the staged action in
+        // bold, which is strictly more legible than a tint and survives a menu that has already
+        // closed.
+        var confirm = GetMemberSource(
+            @"private\s+RenderFragment\s+PendingActionConfirm", "PendingActionConfirm");
+        Assert.Contains("<strong>@pendingActionLabel</strong>", confirm, StringComparison.Ordinal);
     }
 
     [Fact]

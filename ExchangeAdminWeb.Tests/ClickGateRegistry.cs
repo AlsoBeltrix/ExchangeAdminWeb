@@ -120,7 +120,7 @@ public static class ClickGateRegistry
     private static PageGateEntry Migration => new()
     {
         Page = "Migration.razor",
-        ExpectedLineCount = 3619,
+        ExpectedLineCount = 3785,
 
         Predicates =
         [
@@ -164,9 +164,9 @@ public static class ClickGateRegistry
             new ExemptControl(454, "@onclick=\"() => batchActionResult = null\"",
                 "dismisses a result banner; gating it would trap the message on screen for the "
                 + "whole of the next operation"),
-            new ExemptControl(1112, "@onclick=\"DismissReportModal\"",
+            new ExemptControl(1163, "@onclick=\"DismissReportModal\"",
                 "rendered only once a report has landed, so there is no pull for it to interrupt"),
-            new ExemptControl(1276, "@onclick=\"CancelPendingAction\"",
+            new ExemptControl(1347, "@onclick=\"CancelPendingAction\"",
                 "the operator must always be able to back out of a staged action. It keeps a "
                 + "narrower guard of its own instead of IsBusy",
                 KeepsItsOwnGuard: "disabled=\"@(actionInProgress != null)\""),
@@ -197,7 +197,18 @@ public static class ClickGateRegistry
             // Keyed on the tag's opening line, 590, not on 591 where the @onclick sits: the
             // locator walks elements, and the snippet has to be findable on the line the registry
             // names. The class list is what identifies it there.
-            new NonButtonTarget(631, "class=\"mig-batch-row mig-clickable", "div",
+            // The sheet that closes the Actions menu on an outside click. It reaches no
+            // operation - CloseBatchActionsMenu sets one bool and awaits nothing - so there is
+            // nothing for a busy state to refuse. Registered rather than left out, because "it
+            // only closes a menu" has to be written down to be checked.
+            new NonButtonTarget(582, "@onclick=\"CloseBatchActionsMenu\"", "div",
+                RefusalMechanism.NoneNeeded, "CloseBatchActionsMenu",
+                WhyNotHandlerGuard:
+                    "reaches no operation: it flips batchActionsMenuOpen to false and nothing "
+                    + "else. A guard here would be worse than none - refusing the close while "
+                    + "busy would leave the menu stuck open over the confirm bar"),
+
+            new NonButtonTarget(682, "class=\"mig-batch-row mig-clickable", "div",
                 RefusalMechanism.HandlerGuard, "SelectOnlyBatch"),
         ],
 
@@ -241,7 +252,7 @@ public static class ClickGateRegistry
             // button's own emptiness clause, which a field cannot apply to itself.
             new DomSyncedControl(395, "placeholder=\"Search batch or user email...\"", "input",
                 "disabled=\"@IsBusy\""),
-            new DomSyncedControl(1246, "placeholder=\"Ticket # (required)\"", "input",
+            new DomSyncedControl(1297, "placeholder=\"Ticket # (required)\"", "input",
                 "disabled=\"@IsBusy\""),
 
             // S2. The batch pane's sort control, which replaced seven clickable table headers.
@@ -264,9 +275,15 @@ public static class ClickGateRegistry
             // the disabled attribute rather than a handler guard: a refusing handler would leave
             // the browser showing a filter the server never applied, and the next keystroke would
             // extend a string the server does not have.
-            new DomSyncedControl(911, "placeholder=\"Filter these mailboxes\"", "input",
+            // R13. The scheduled-completion time. Bound by hand rather than with @bind - Blazor
+            // coerces a datetime-local to DateTime - but it is still a control whose value the
+            // server re-renders, so the disabled attribute is the only safe refusal.
+            new DomSyncedControl(1314, "<input type=\"datetime-local\" class=\"form-control\"",
+                "input", "disabled=\"@IsBusy\""),
+
+            new DomSyncedControl(962, "placeholder=\"Filter these mailboxes\"", "input",
                 "disabled=\"@IsBusy\""),
-            new DomSyncedControl(916, "id=\"mailboxSortColumn\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(967, "id=\"mailboxSortColumn\"", "select", "disabled=\"@IsBusy\""),
         ],
 
         UngatedDomSyncedControls =
@@ -287,13 +304,13 @@ public static class ClickGateRegistry
             // and not a value in flight. Nothing can be executed from this state while the page is
             // busy - every mailbox action button carries
             // disabled="@(IsBusy || pendingActionLabel != null)".
-            new UngatedDomSyncedControl(906, "title=\"Tick every mailbox matching the filter", "input",
+            new UngatedDomSyncedControl(957, "title=\"Tick every mailbox matching the filter", "input",
                 "the mailbox half of the same selection, on the same owner ruling and the same "
                 + "re-plan. ToggleSelectAllMailboxes writes only to selectedMailboxes, clears the "
                 + "staged preview and clamps the two mailbox pagers; it makes no call and awaits "
                 + "nothing"),
 
-            new UngatedDomSyncedControl(1137, "title=\"Select for a bulk action\"", "input",
+            new UngatedDomSyncedControl(1188, "title=\"Select for a bulk action\"", "input",
                 "the per-row mailbox half, inside the MailboxRow fragment. ToggleMailboxSelected "
                 + "writes only to selectedMailboxes and moves the row between the pinned block and "
                 + "the list below it; it makes no call and awaits nothing"),
@@ -309,7 +326,7 @@ public static class ClickGateRegistry
             // a DOM-synced control, because the browser keeps a tick the server refused. Recorded
             // as an open question for the owner rather than changed here: D2(a) is an owner ruling
             // and S3 changed the fact it rested on.
-            new UngatedDomSyncedControl(639, "title=\"Select for a bulk action\"", "input",
+            new UngatedDomSyncedControl(690, "title=\"Select for a bulk action\"", "input",
                 "the per-row BATCH half of the same selection, on the same owner ruling and the "
                 + "same re-plan at 2526. ToggleBatchSelected (1992) writes to selectedBatches and "
                 + "nulls the result banner; it makes no call and awaits nothing"),
@@ -337,7 +354,7 @@ public static class ClickGateRegistry
                 + "the first races it and the later reply wins",
                 GatedTwinButtonLine: 405),
 
-            new KeyboardPath(1246, "placeholder=\"Ticket # (required)\"", "input",
+            new KeyboardPath(1297, "placeholder=\"Ticket # (required)\"", "input",
                 "keydown", "HandleConfirmKeyDown", "ConfirmPendingAction",
                 KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
                 "Enter EXECUTES the staged action - a batch start, stop or remove, the destructive "
@@ -348,7 +365,7 @@ public static class ClickGateRegistry
                 + "PendingActionConfirm fragment, and blanks pendingActionTicket so a second press "
                 + "fails the handler's own emptiness check. Nothing in that is a busy gate, and "
                 + "nothing in it survives a handler that stages differently",
-                GatedTwinButtonLine: 1250),
+                GatedTwinButtonLine: 1320),
         ],
 
         ForbiddenGuardSites =
@@ -4949,6 +4966,19 @@ public enum RefusalMechanism
     /// instead; narrowing the window is not the same as closing it.
     /// </summary>
     SnapshotNotGate,
+
+    /// <summary>
+    /// The target reaches no operation, so there is nothing for a busy state to refuse - it
+    /// toggles a purely presentational bool and awaits nothing. The counterpart of
+    /// <see cref="HarmlessKeyboardPath"/>, which has always admitted this shape for key presses;
+    /// the click side simply had no word for it until the Migration Actions menu needed one.
+    ///
+    /// It still requires a written reason, for the same purpose as the two above: the claim
+    /// "reaches no operation" is checkable, and an unwritten one cannot be checked. Never use it
+    /// for a target that merely LOOKS harmless - if the handler awaits anything or touches server
+    /// state, it is a HandlerGuard.
+    /// </summary>
+    NoneNeeded,
 }
 
 /// <param name="WhyNotHandlerGuard">Required whenever the mechanism is not a handler guard.</param>

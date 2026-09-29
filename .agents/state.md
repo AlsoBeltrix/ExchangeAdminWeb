@@ -79,22 +79,25 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     and add are both measured idempotent), which reduces but cannot eliminate it.
   - `Test-WebApp` holds 10,001 test members; the owner is removing it.
 
-- **QUEUE ITEM 14 IS NOT COMPLETE: R13 IS MISSING AND SO IS QUEUE ITEM 12.**
-  All eight slices are landed and every gate is green, but a requirements audit against the code
-  found that **no Schedule control exists on the page.** S8 (`4eb4116`) built
-  `ScheduleMigrationBatchCompletionAsync` and separated "complete now" from "complete at T" in
-  the model - the plumbing is right and tested - but nothing calls it. R13 says scheduled
-  completion must be "reachable without hunting"; it is currently reachable only from C#.
-  **Finishing every slice is not the same as meeting every requirement**, and the slice list is
-  what I had been checking.
-  - **What it needs:** a Schedule action in the batch operation bar beside the other five (R3,
-    R6), staged through the ticket flow like every other mutating action (R12), with a
-    datetime-local field in the confirm step alongside the ticket. The planner needs a Schedule
-    predicate - exclusion, since a batch that is still Syncing can legitimately be scheduled to
-    complete later, and only Completed/Completing/Removing cannot. Then the usual toll: the
-    ClickGateRegistry coordinates move again.
-  - **THE PLAN SAYS NOTHING SHIPS UNTIL 12, 13 AND 14 ARE ALL DONE.** Item 12 is scheduled
-    completion. It is not done.
+- **QUEUE ITEM 14 IS IMPLEMENTED, AND SO ARE ITEMS 12 AND 13.** All eight slices, the mir-1
+  review fix, and R13. Every gate green: build 0 errors, full suite pass, format 0, ASCII 0,
+  `git diff --check` 0. Module `1.19.0` -> `1.20.0`.
+  - **R13 was missed until a requirements audit caught it.** S8 built
+    `ScheduleMigrationBatchCompletionAsync` and nothing called it, so scheduled completion was
+    reachable only from C# - the exact "buried" R13 forbids. Every slice was marked done and the
+    module was reported complete twice before the audit. The lesson is recorded in the plan:
+    finishing every slice is not the same as meeting every requirement, and only a requirement
+    walk finds the difference.
+  - The batch action bar is now one `Actions (n)` menu rather than six buttons over two lines
+    (owner, 2026-09-29, on a screenshot). `BatchActionButtonClass` went with it; the "which
+    action is staged" guarantee moved to the bold label in the confirm bar, and the test that
+    pinned the highlight was repointed there rather than deleted.
+  - `RefusalMechanism.NoneNeeded` is new in the click-gate contract: the menu-closing sheet
+    reaches no operation, and the vocabulary had no honest word for that on the click side
+    (`HarmlessKeyboardPath` already had one for key presses). It still requires a written reason.
+  - **Not yet verified in a browser.** The plan's `## Acceptance` hand checks still need a dev
+    deploy - in particular the Actions menu opening, closing on an outside click, and the
+    schedule time field resolving to the UTC it displays.
   `docs/MigrationInterfaceRedesign-Plan.md` is `Implemented`. Module `1.9.1` -> `1.19.0`, no base
   app bump at any point. Gates green at `8b8b8be`: build 0 errors, **3261 passed / 0 failed /
   3 skipped**, format, ASCII, `git diff --check`, PSScriptAnalyzer 0 errors, Pester 157/0.

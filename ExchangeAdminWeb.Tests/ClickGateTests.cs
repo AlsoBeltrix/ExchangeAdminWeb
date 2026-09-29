@@ -455,6 +455,7 @@ public class ClickGateTests
 
                 case RefusalMechanism.SharedComponentContract:
                 case RefusalMechanism.SnapshotNotGate:
+                case RefusalMechanism.NoneNeeded:
                     Assert.False(string.IsNullOrWhiteSpace(target.WhyNotHandlerGuard),
                         $"{page}:{target.Line} declares {target.Mechanism} but records no reason");
                     break;

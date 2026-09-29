@@ -167,6 +167,49 @@
     border-bottom: 1px solid var(--ui-line);
 }
 
+/* Owner, 2026-09-29: one line, and it stays one line. The bar holds two controls whatever the
+   selection count, so there is nothing left to wrap - but no-wrap is stated rather than assumed,
+   because the failure it prevents (a second row shoving the table down) is the reported defect. */
+.mig-pane-actions {
+    flex-wrap: nowrap;
+}
+
+/* The invisible sheet that closes the menu on an outside click. Above the page, below the menu:
+   a click anywhere except the menu itself lands here. Replaces the Bootstrap dropdown JS, which
+   would otherwise be the only reason this page loads that bundle. */
+.mig-menu-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 1020;
+}
+
+.mig-actions-menu {
+    z-index: 1021;
+    min-width: 13rem;
+}
+
+/* The menu is a popup, so it takes the theme explicitly - it is not inside anything that already
+   sets these, and a default-white Bootstrap menu over the dark pane was the readability problem
+   this file exists to avoid. */
+.mig-actions-menu {
+    background: var(--ui-surface);
+    border: 1px solid var(--ui-line);
+}
+
+    .mig-actions-menu .dropdown-item {
+        color: var(--ui-fg);
+    }
+
+        .mig-actions-menu .dropdown-item:hover,
+        .mig-actions-menu .dropdown-item:focus {
+            background: var(--ui-zebra);
+            color: var(--ui-fg);
+        }
+
+    .mig-actions-menu .dropdown-divider {
+        border-top-color: var(--ui-line);
+    }
+
 /* S4 outcome preview (R12). A per-row chip that appears only while an action is staged, so the
    row is one clean line the rest of the time (R14). Text, not colour alone: R17 refuses an
    unlabelled value, and a colour-blind operator reading "Skipped (Syncing)" learns the same thing

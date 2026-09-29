@@ -496,6 +496,62 @@ public class MigrationBatchActionPlannerTests
         Assert.DoesNotContain("error", text, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    // The point of the exclusion: a batch still moving is the COMMON thing to schedule. Set it at
+    // 16:00, it finalises at 22:00 when it has caught up. An allowlist of "ready" statuses would
+    // have refused every one of these.
+    [InlineData("Syncing", true)]
+    [InlineData("Synced", true)]
+    [InlineData("Starting", true)]
+    [InlineData("Stopped", true)]
+    [InlineData("CompletedWithErrors", true)]
+    [InlineData("SomeStatusNobodyHasSeenYet", true)]
+    // Where a future completion means nothing: already done, finishing right now, or being torn
+    // down.
+    [InlineData("Completed", false)]
+    [InlineData("Completing", false)]
+    [InlineData("Removing", false)]
+    [InlineData("completed", false)]
+    [InlineData(" Removing ", false)]
+    // Unknown means we cannot tell which of the three it is, so it is refused.
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    public void Schedule_OffersEveryStatusAFutureCompletionStillMeansSomethingFor(
+        string? status, bool expected)
+    {
+        Assert.Equal(expected, MigrationBatchActionPlanner.Applies(MigrationBatchAction.Schedule, status));
+    }
+
+    [Fact]
+    public void Schedule_AndComplete_DisagreeOnPurpose()
+    {
+        // These two sit side by side in the toolbar and mean different things, so the difference
+        // is asserted rather than left to whoever reads the two predicates. Complete finalises
+        // NOW and needs a batch that has finished syncing; Schedule records an intention and does
+        // not.
+        Assert.False(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, "Syncing"));
+        Assert.True(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Schedule, "Syncing"));
+
+        // And they agree where it matters: neither touches a batch that is already finished.
+        Assert.False(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, "Completed"));
+        Assert.False(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Schedule, "Completed"));
+    }
+
+    [Fact]
+    public void Schedule_PartitionsASelectionAndNamesWhatItSkipped()
+    {
+        var plan = MigrationBatchActionPlanner.Plan(
+            Batches(("moving", "Syncing"), ("done", "Completed"), ("ready", "Synced")),
+            ["moving", "done", "ready"],
+            MigrationBatchAction.Schedule);
+
+        Assert.Equal(["moving", "ready"], plan.Eligible);
+        var skip = Assert.Single(plan.Skipped);
+        Assert.Equal("done", skip.BatchName);
+        Assert.Equal("Completed", skip.Status);
+    }
+
     private static List<MigrationBatchInfo> Batches(params (string Name, string Status)[] rows) =>
         rows.Select(r => new MigrationBatchInfo { BatchName = r.Name, Status = r.Status }).ToList();
 }

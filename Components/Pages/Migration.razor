@@ -555,46 +555,97 @@
                                eligible/skipped split. *@
                             @if (canManage && selectedBatches.Count > 0)
                             {
-                                <div class="mig-pane-actions d-flex align-items-center flex-wrap gap-1">
-                                    <strong class="small me-1">@selectedBatches.Count selected</strong>
-                                    @* The second sentence is the owner's, 2026-09-25. Operators were
-                                       ticking a batch with failures, pressing Complete and seeing
-                                       it skipped with no hint of what to do next. One line on the
-                                       control, not a banner: the per-batch answer is already in
-                                       the confirm step, which names every skipped batch with the
-                                       status that skipped it. *@
-                                    <button class="@BatchActionButtonClass(MigrationBatchAction.Complete, "success")" disabled="@(IsBusy || pendingActionLabel != null)"
-                                            title="Completes selected batches that have finished syncing. A batch with errors cannot complete until they are fixed or removed."
-                                            @onclick="StageCompleteSelected">
-                                        Complete
-                                    </button>
-                                    <button class="@BatchActionButtonClass(MigrationBatchAction.Stop, "warning")" disabled="@(IsBusy || pendingActionLabel != null)"
-                                            title="Stops the selected batches that are still moving"
-                                            @onclick="StageStopSelected">
-                                        Stop
-                                    </button>
-                                    <button class="@BatchActionButtonClass(MigrationBatchAction.Resume, "success")" disabled="@(IsBusy || pendingActionLabel != null)"
-                                            title="Restarts the selected batches that are idle but restartable"
-                                            @onclick="StageResumeSelected">
-                                        Resume/Retry
-                                    </button>
-                                    <button class="@BatchActionButtonClass(MigrationBatchAction.RemoveCompleted, "danger")" disabled="@(IsBusy || pendingActionLabel != null)"
-                                            title="Removes only the selected batches whose status is Completed"
-                                            @onclick="StageRemoveCompletedSelected">
-                                        Remove Completed
-                                    </button>
-                                    <button class="@BatchActionButtonClass(MigrationBatchAction.Delete, "danger")" disabled="@(IsBusy || pendingActionLabel != null)"
-                                            title="Removes every selected batch, whatever its status"
-                                            @onclick="StageDeleteSelected">
-                                        Delete
-                                    </button>
+                                @* Owner, 2026-09-29, on a screenshot of the previous version: one
+                                   line, no differently sized buttons, and colours that mean
+                                   something. Six actions cannot fit as six labelled buttons in
+                                   this pane - the fifth already wrapped, and R13 adds a sixth -
+                                   so they collapse into one menu. That answers all four
+                                   complaints at once: the row cannot wrap, there is one button so
+                                   nothing can be a different size, the count rides on that button
+                                   instead of a "4 selected" block, and the only colour left is
+                                   the red on Delete, which is the only item that needs one. *@
+                                <div class="mig-pane-actions d-flex align-items-center gap-2">
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm btn-outline-primary dropdown-toggle"
+                                                type="button"
+                                                disabled="@(IsBusy || pendingActionLabel != null)"
+                                                @onclick="ToggleBatchActionsMenu">
+                                            Actions (@selectedBatches.Count)
+                                        </button>
+                                        @if (batchActionsMenuOpen)
+                                        {
+                                            @* Closes on any outside click without JS interop: a
+                                               transparent sheet under the menu and over
+                                               everything else. The Bootstrap dropdown needs its
+                                               JS bundle, and this page has no other reason to
+                                               take that dependency. *@
+                                            <div class="mig-menu-sheet" @onclick="CloseBatchActionsMenu"></div>
+                                            <div class="dropdown-menu show mig-actions-menu">
+                                                @* Every item is enabled whenever anything is
+                                                   ticked, never conditioned on eligibility: under
+                                                   D2(a) a mixed or wholly-ineligible selection
+                                                   has a defined, useful outcome, and disabling is
+                                                   the D2(b) that was rejected. Each stages a
+                                                   ticket and reads MigrationBatchActionPlanner
+                                                   for its eligible/skipped split. *@
+                                                <button class="dropdown-item" type="button"
+                                                        disabled="@(IsBusy || pendingActionLabel != null)"
+                                                        title="Completes selected batches that have finished syncing. A batch with errors cannot complete until they are fixed or removed."
+                                                        @onclick="StageCompleteSelected">
+                                                    Complete now
+                                                </button>
+                                                @* R13, queue item 12. The service method has
+                                                   existed since S8; until this item it was
+                                                   reachable only from C#, which is exactly the
+                                                   "buried" R13 forbids. It sits under Complete
+                                                   because it IS Complete with a time on it. *@
+                                                <button class="dropdown-item" type="button"
+                                                        disabled="@(IsBusy || pendingActionLabel != null)"
+                                                        title="Sets a future time for the selected batches to finalise. A batch still syncing can be scheduled."
+                                                        @onclick="StageScheduleSelected">
+                                                    Schedule completion...
+                                                </button>
+                                                <div class="dropdown-divider"></div>
+                                                <button class="dropdown-item" type="button"
+                                                        disabled="@(IsBusy || pendingActionLabel != null)"
+                                                        title="Stops the selected batches that are still moving"
+                                                        @onclick="StageStopSelected">
+                                                    Stop
+                                                </button>
+                                                <button class="dropdown-item" type="button"
+                                                        disabled="@(IsBusy || pendingActionLabel != null)"
+                                                        title="Restarts the selected batches that are idle but restartable"
+                                                        @onclick="StageResumeSelected">
+                                                    Resume / Retry
+                                                </button>
+                                                <div class="dropdown-divider"></div>
+                                                <button class="dropdown-item" type="button"
+                                                        disabled="@(IsBusy || pendingActionLabel != null)"
+                                                        title="Removes only the selected batches whose status is Completed"
+                                                        @onclick="StageRemoveCompletedSelected">
+                                                    Remove completed
+                                                </button>
+                                                @* The one coloured item, because it is the one
+                                                   that destroys a batch whatever its status. A
+                                                   toolbar where four of six controls were tinted
+                                                   taught the operator to ignore the tint. *@
+                                                <button class="dropdown-item text-danger" type="button"
+                                                        disabled="@(IsBusy || pendingActionLabel != null)"
+                                                        title="Removes every selected batch, whatever its status"
+                                                        @onclick="StageDeleteSelected">
+                                                    Delete
+                                                </button>
+                                            </div>
+                                        }
+                                    </div>
+
                                     @* R10. "Untick all" here, where the tick boxes are; the right
                                        pane says "Clear selection" for the same operation because
                                        there is nothing to untick there. Named "Untick", not
-                                       "Clear ...": the word "Clear" beside two destructive buttons
+                                       "Clear ...": the word "Clear" beside a destructive action
                                        is the adjacency the owner rejected. *@
-                                    <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@IsBusy"
-                                            @onclick="ClearBatchSelection">
+                                    <button class="btn btn-sm btn-outline-secondary ms-auto flex-shrink-0"
+                                            disabled="@IsBusy" @onclick="ClearBatchSelection">
                                         Untick all
                                     </button>
                                 </div>
@@ -1247,8 +1298,28 @@
                    @bind="pendingActionTicket" @bind:event="oninput"
                    @onkeydown="HandleConfirmKeyDown" disabled="@IsBusy" />
         </div>
+        @if (ScheduleTimeIsRequired)
+        {
+            @* R13. Scheduling needs a time as well as a ticket, so it is asked for in the same
+               step rather than in a dialog of its own - R13's other half. The resolved UTC is
+               shown live beside the box: the operator types wall-clock time, Exchange is told
+               UTC, and the conversion uses this server's zone rather than the browser's. Showing
+               the result is what stops that difference from being silent. *@
+            <div class="input-group input-group-sm" style="width: 230px;">
+                <span class="input-group-text">Complete after</span>
+                @* Bound by hand, not with @bind. Blazor special-cases type="datetime-local" and
+                   coerces the field to DateTime/TimeOnly, which is exactly the typed binding this
+                   wants to avoid: a half-typed value has to mean "not valid yet", not a binding
+                   error. value + oninput keeps it a plain string and leaves the native picker. *@
+                <input type="datetime-local" class="form-control"
+                       value="@pendingScheduleAtLocal" disabled="@IsBusy"
+                       @oninput="e => pendingScheduleAtLocal = e.Value?.ToString() ?? string.Empty" />
+            </div>
+            <span class="text-muted small">@ScheduleTimePreview</span>
+        }
         <button class="btn btn-sm btn-primary" @onclick="ConfirmPendingAction"
-                disabled="@(IsBusy || string.IsNullOrWhiteSpace(pendingActionTicket))">
+                disabled="@(IsBusy || string.IsNullOrWhiteSpace(pendingActionTicket)
+                            || (ScheduleTimeIsRequired && PendingScheduleUtc == null))">
             @if (actionInProgress != null)
             {
                 <span class="spinner-border spinner-border-sm"></span>
@@ -1422,6 +1493,19 @@
 
     // Per-action ticket confirmation
     private string pendingActionTicket = "";
+
+    // Open state of the batch Actions menu. Deliberately NOT part of IsBusy: it is a menu, not an
+    // operation.
+    private bool batchActionsMenuOpen;
+
+    // R13. The typed wall-clock time, as the browser's datetime-local gives it. Held as a string
+    // rather than a DateTime so a half-typed value is just "not valid yet" instead of a binding
+    // error under the oninput binding.
+    private string pendingScheduleAtLocal = "";
+
+    // Captured at Confirm, because CancelPendingAction blanks the box before the staged callback
+    // runs. See ConfirmPendingAction.
+    private DateTime? confirmedScheduleUtc;
     private string? pendingActionLabel;
     private string? pendingActionTarget;
     private Func<string, Task>? pendingActionCallback;
@@ -2509,6 +2593,11 @@
     private void StageStopSelected() => StageSelectionAction(
         MigrationBatchAction.Stop, "Stop", StopSelectedBatches);
 
+    // R13. Same planner, same ticket step, same aggregating executor as the other five. The only
+    // difference is the extra field the confirm bar grows while this one is staged.
+    private void StageScheduleSelected() => StageSelectionAction(
+        MigrationBatchAction.Schedule, "Schedule completion", ScheduleSelectedBatches);
+
     // The plan is computed at STAGING time so the confirm bar can say how many batches the ticket
     // is about to cover, and re-computed at execution time inside the callback - the operator can
     // sit at the ticket field indefinitely, and the table reloads underneath them.
@@ -2557,11 +2646,57 @@
     private void ResumeUser(string email) => StageUserAction("Resume User", email, t => ExecuteUserAction(() => MigrationSvc.ResumeMigrationUserAsync(email), "ResumeMigrationUser", email, t));
     private void ClearUser(string email) => StageUserAction("Clear User", email, t => ExecuteUserAction(() => MigrationSvc.RemoveMigrationUserAsync(email), "RemoveMigrationUser", email, t));
 
+    // R13. True while a Schedule is staged: the confirm step then asks for a time as well as a
+    // ticket, and Confirm stays disabled until both are present.
+    private bool ScheduleTimeIsRequired => pendingBatchAction == MigrationBatchAction.Schedule;
+
+    // The typed time as UTC, or null when it is unparseable, blank, or already past. Null is what
+    // the Confirm gate reads, so all three cases refuse in the same direction.
+    //
+    // The wall-clock time is interpreted in THIS SERVER'S zone, not the browser's. The service
+    // refuses a past time outright (it will not silently cut mailboxes over), so the worst a zone
+    // difference can do is schedule a batch some hours off - and ScheduleTimePreview puts the
+    // resolved UTC on screen before the operator commits.
+    private DateTime? PendingScheduleUtc
+    {
+        get
+        {
+            if (!DateTime.TryParse(pendingScheduleAtLocal, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var wallClock))
+                return null;
+
+            var utc = DateTime.SpecifyKind(wallClock, DateTimeKind.Local).ToUniversalTime();
+            return utc > DateTime.UtcNow ? utc : null;
+        }
+    }
+
+    private string ScheduleTimePreview
+    {
+        get
+        {
+            if (PendingScheduleUtc is { } utc)
+                return $"= {utc:yyyy-MM-dd HH:mm} UTC";
+
+            return string.IsNullOrWhiteSpace(pendingScheduleAtLocal)
+                ? "Pick a future time."
+                : "That time has already passed.";
+        }
+    }
+
+    private void ToggleBatchActionsMenu() => batchActionsMenuOpen = !batchActionsMenuOpen;
+
+    private void CloseBatchActionsMenu() => batchActionsMenuOpen = false;
+
     private void StageBatchAction(string label, string target, Func<string, Task> callback)
     {
+        // The menu closes the moment an action is staged: the confirm bar renders directly below
+        // it, and a menu left open would cover the ticket field the operator has to reach next.
+        batchActionsMenuOpen = false;
+
         pendingActionLabel = label;
         pendingActionTarget = target;
         pendingActionTicket = "";
+        pendingScheduleAtLocal = "";
         pendingActionCallback = callback;
         batchActionResult = null;
         ClearStagedPreview();
@@ -2617,9 +2752,6 @@
     // R12: the picked action is highlighted. Filled while it is the staged one, outline otherwise,
     // so the bar shows which of five buttons the ticket field belongs to - the confirm bar can sit
     // several rows away once a skipped row is annotated between them.
-    private string BatchActionButtonClass(MigrationBatchAction action, string tone) =>
-        pendingBatchAction == action ? $"btn btn-sm btn-{tone}" : $"btn btn-sm btn-outline-{tone}";
-
     private async Task HandleConfirmKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(pendingActionTicket))
@@ -2631,6 +2763,7 @@
         pendingActionLabel = null;
         pendingActionTarget = null;
         pendingActionTicket = "";
+        pendingScheduleAtLocal = "";
         pendingActionCallback = null;
 
         // The row annotations go with it. ConfirmPendingAction calls this BEFORE awaiting the
@@ -2642,6 +2775,16 @@
     private async Task ConfirmPendingAction()
     {
         if (pendingActionCallback == null || string.IsNullOrWhiteSpace(pendingActionTicket)) return;
+
+        // R13. Confirm is disabled without a valid time, but Enter arrives here through
+        // HandleConfirmKeyDown, which never reads that disabled state. Re-checked rather than
+        // assumed.
+        if (ScheduleTimeIsRequired && PendingScheduleUtc == null) return;
+
+        // Captured BEFORE CancelPendingAction, which blanks pendingScheduleAtLocal. The staged
+        // callback runs after that clear, so an executor reading the getter would find an empty
+        // box and schedule nothing.
+        confirmedScheduleUtc = PendingScheduleUtc;
 
         var callback = pendingActionCallback;
         var ticket = pendingActionTicket.Trim();
@@ -2789,6 +2932,29 @@
             "Migration_CompleteSelected",
             "Queued completion of",
             ticket);
+
+    // R13. Fail-closed on a missing time: scheduling nothing is the safe direction, and the
+    // alternative - passing null to the service - CLEARS an existing schedule rather than setting
+    // one, which is the opposite of what the operator pressed.
+    private Task ScheduleSelectedBatches(MigrationBatchActionPlan plan, string ticket)
+    {
+        if (confirmedScheduleUtc is not { } when)
+        {
+            batchActionResult = PermissionResult.Fail(
+                "No completion time was captured, so nothing was scheduled. Pick a future time "
+                + "and confirm again.");
+            return Task.CompletedTask;
+        }
+
+        return ExecuteBulkBatchAction(
+            plan.Eligible,
+            plan.Skipped,
+            name => MigrationSvc.ScheduleMigrationBatchCompletionAsync(name, when),
+            "ScheduleMigrationBatchCompletion",
+            "Migration_ScheduleSelected",
+            $"Scheduled completion ({when:yyyy-MM-dd HH:mm} UTC) for",
+            ticket);
+    }
 
     private Task StopSelectedBatches(MigrationBatchActionPlan plan, string ticket) =>
         ExecuteBulkBatchAction(

@@ -268,7 +268,14 @@ public sealed class ModuleCatalog
             // Download reports zips what is held - one text file per report, with a manifest
             // naming any that expired rather than dropping them silently
             // (docs/MigrationInterfaceRedesign-Plan.md S7, R31).
-            Version = "1.19.0",
+            // 1.20.0: scheduled completion is reachable. S8 built the service method and stopped
+            // there, so until now queue item 12 existed only in C# - which is exactly the
+            // "buried" R13 forbids, and it survived every slice being marked done. The batch
+            // action bar also became a single Actions menu: six labelled buttons could not fit on
+            // one line, and the fifth already wrapped (owner, 2026-09-29, on a screenshot -
+            // one line, uniform controls, and colour reserved for Delete)
+            // (docs/MigrationInterfaceRedesign-Plan.md R13, queue items 12 and 14).
+            Version = "1.20.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
