@@ -655,130 +655,122 @@
                                 @* R16: the header row is inside the scrolling box, so the scrollbar
                                    narrows it by exactly as much as it narrows the rows. R17: every
                                    number below has a name here. *@
-                                <div class="mig-batch-row mig-batch-head @BatchGridClass">
-                                    @* The spacer for the tick-box column, and it renders on
-                                       exactly the condition the tick box itself does. It used to
-                                       be unconditional while the tick box in the row was gated on
-                                       canManage, so a read-only operator read every value one
-                                       column left of its heading - the name under the blank,
-                                       Failed under a heading that was not there. R14 asks for
-                                       fixed columns that align on every row; a permission is not
-                                       an exception to that. *@
-                                    @if (canManage)
-                                    {
-                                        <span></span>
-                                    }
-                                    @* Direction gets its own narrow track. It was inside the name
-                                       cell, which was wrong for the reason the owner gave: that
-                                       cell is the one thing here with variable width, so anything
-                                       parked in it is taken straight out of the batch name. *@
-                                    <span></span>
-                                    <span>Batch</span>
-                                    <span>Status</span>
-                                    @* R16, amended 2026-09-29. Total was missing from the column
-                                       list and therefore from the table, while the sort dropdown
-                                       offered "Total" and sorted by it - so the list could be
-                                       ordered by a column that was not on screen. Synced and
-                                       Failed are fractions; without the denominator "0 synced"
-                                       says nothing about whether the batch holds one mailbox or
-                                       five hundred. *@
-                                    @* Synced and Total in ONE cell, as the fraction they
-                                       always were. Three 3.5rem columns held single digits while
-                                       a thirty-character address got 115px - the widths were
-                                       spent where nothing varies. R17 still holds: the header
-                                       names both numbers and the cell shows both. *@
-                                    <span class="mig-count" title="Synced / Total - mailboxes synced, of the batch total">Sync</span>
-                                    <span class="mig-count" title="Failed - mailboxes that could not move">Fail</span>
-                                </div>
+                                @* R14/R16 as a TABLE, not a CSS grid. The grid needed a width
+                                   for every column and kept the header in step with the rows by
+                                   hand; that produced two header-shift defects and four wrong
+                                   width guesses in one day. A table sizes each column to its own
+                                   widest cell across every row and aligns header to body
+                                   structurally, so there is no width to get wrong and a missing
+                                   cell is not expressible. The mailbox table below has always
+                                   worked this way and had none of those faults.
 
-                                @* R28, the second of the three empty states: the catalogue has
-                                   batches, this filter matches none of them. Distinct from "no
-                                   batches at all", because the next move is to clear the filter
-                                   rather than to go and find out why nothing exists. *@
-                                @if (BatchTotalCount == 0)
-                                {
-                                    <p class="text-muted text-center my-4 px-3">
-                                        No batch name matches <strong>@batchFilter</strong>.
-                                    </p>
-                                }
+                                   R16: the header is inside the scrolling box, sticky, so the
+                                   scrollbar narrows it by exactly as much as it narrows the
+                                   rows. *@
+                                <table class="mig-batches">
+                                    <thead>
+                                        <tr>
+                                            @if (canManage)
+                                            {
+                                                <th class="mig-tick"></th>
+                                            }
+                                            <th class="mig-dir-cell"></th>
+                                            <th class="mig-batch-name">Batch</th>
+                                            <th>Status</th>
+                                            @* Synced and Total in one cell, as the fraction they
+                                               always were. Short labels with the full name on
+                                               hover: the heading must not set the width of a
+                                               column whose data reads "0/1". *@
+                                            <th class="mig-count" title="Synced / Total - mailboxes synced, of the batch total">Sync</th>
+                                            <th class="mig-count" title="Failed - mailboxes that could not move">Fail</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @if (BatchTotalCount == 0)
+                                        {
+                                            @* R28, the second of the three empty states: the
+                                               catalogue has batches, this filter matches none of
+                                               them. Distinct from "no batches at all", because
+                                               the next move is to clear the filter rather than to
+                                               go and find out why nothing exists. *@
+                                            <tr>
+                                                <td colspan="@BatchColumnCount" class="text-muted text-center py-4">
+                                                    No batch name matches <strong>@batchFilter</strong>.
+                                                </td>
+                                            </tr>
+                                        }
 
-                                @foreach (var batch in GetPagedBatches())
-                                {
-                                    @* Captured per iteration: the lambdas below must close over
-                                       THIS row's name. *@
-                                    var batchName = batch.BatchName;
-                                    <div class="mig-batch-row mig-clickable @BatchGridClass @(expandedBatch == batchName ? "mig-open" : "")"
-                                         @onclick="() => SelectOnlyBatch(batchName)">
-                                        @if (canManage)
+                                        @foreach (var batch in GetPagedBatches())
                                         {
-                                            @* stopPropagation: ticking a batch must not also open
-                                               it. They are different acts until R9 merges them in
-                                               S3, and merging them here by accident would be a
-                                               behaviour change this slice is not allowed. *@
-                                            <input type="checkbox" class="form-check-input mt-0"
-                                                   title="Select for a bulk action"
-                                                   checked="@IsBatchSelected(batchName)"
-                                                   @onclick:stopPropagation="true"
-                                                   @onchange="e => ToggleBatchSelected(batchName, e.Value is bool v && v)" />
+                                            @* Captured per iteration: the lambdas below must
+                                               close over THIS row's name. *@
+                                            var batchName = batch.BatchName;
+                                            <tr class="mig-clickable @(expandedBatch == batchName ? "mig-open" : "")"
+                                                @onclick="() => SelectOnlyBatch(batchName)">
+                                                @if (canManage)
+                                                {
+                                                    <td class="mig-tick">
+                                                        @* stopPropagation: ticking a batch must
+                                                           not also open it. *@
+                                                        <input type="checkbox" class="form-check-input mt-0"
+                                                               title="Select for a bulk action"
+                                                               checked="@IsBatchSelected(batchName)"
+                                                               @onclick:stopPropagation="true"
+                                                               @onchange="e => ToggleBatchSelected(batchName, e.Value is bool v && v)" />
+                                                    </td>
+                                                }
+                                                <td class="mig-dir-cell">@DirectionIcon(batch.Direction)</td>
+                                                <td class="mig-batch-name" title="@batchName">
+                                                    @batchName
+                                                    @* S4, R12. A per-row outcome written against
+                                                       every affected row, BEFORE the ticket is
+                                                       typed. Only rows in the staged plan are
+                                                       annotated. *@
+                                                    @{ var outcome = StagedOutcomeFor(batchName); }
+                                                    @if (outcome != null)
+                                                    {
+                                                        <span class="mig-outcome @(StagedOutcomeIsGo(batchName) ? "mig-outcome-go" : "mig-outcome-skip")">@outcome</span>
+                                                    }
+                                                    @* R25. What actually HAPPENED to this row,
+                                                       read where the prediction was read. *@
+                                                    @{ var done = OutcomeFor(batchName); }
+                                                    @if (done != null)
+                                                    {
+                                                        <span class="mig-outcome @(OutcomeIsFailure(batchName) ? "mig-outcome-bad" : "mig-outcome-go")"
+                                                              title="@done">@done</span>
+                                                    }
+                                                </td>
+                                                <td><span class="badge bg-@GetStatusColor(batch.Status)" title="@batch.Status">@batch.Status</span></td>
+                                                <td class="mig-count">
+                                                    <span class="text-success fw-bold">@batch.SyncedCount</span><span class="text-muted">/@batch.TotalCount</span>
+                                                </td>
+                                                <td class="mig-count">
+                                                    @if (batch.FailedCount > 0)
+                                                    {
+                                                        <span class="text-danger fw-bold">@batch.FailedCount</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="text-muted">0</span>
+                                                    }
+                                                </td>
+                                            </tr>
+                                            @* The ticket field for THIS row's action, directly
+                                               beneath it. It used to live above the table: with
+                                               50+ batches in flight, acting on a row near the
+                                               bottom put the input off-screen while every button
+                                               in the row went disabled. *@
+                                            @if (pendingActionTarget == batchName && pendingActionLabel != null)
+                                            {
+                                                <tr class="mig-confirm-row">
+                                                    <td colspan="@BatchColumnCount" class="px-3 py-2 bg-warning-subtle">
+                                                        @PendingActionConfirm
+                                                    </td>
+                                                </tr>
+                                            }
                                         }
-                                        else
-                                        {
-                                            <span></span>
-                                        }
-                                        <span class="mig-dir-cell">@DirectionIcon(batch.Direction)</span>
-                                        <span class="mig-batch-name" title="@batchName">
-                                            @batchName
-                                            @* S4, R12. A per-row outcome written against every
-                                               affected row, BEFORE the ticket is typed. Only rows
-                                               in the staged plan are annotated: an unticked row is
-                                               not part of this action and saying nothing about it
-                                               is the honest answer. Rendered only while an action
-                                               is staged, so the row is one clean line the rest of
-                                               the time (R14). *@
-                                            @{ var outcome = StagedOutcomeFor(batchName); }
-                                            @if (outcome != null)
-                                            {
-                                                <span class="mig-outcome @(StagedOutcomeIsGo(batchName) ? "mig-outcome-go" : "mig-outcome-skip")">@outcome</span>
-                                            }
-                                            @* R25. What actually HAPPENED to this row, after the
-                                               fact. Same surface as the preview above, because an
-                                               operator should read the result where they read the
-                                               prediction - and because the banner is for a glance,
-                                               not for a log of refusal reasons. *@
-                                            @{ var done = OutcomeFor(batchName); }
-                                            @if (done != null)
-                                            {
-                                                <span class="mig-outcome @(OutcomeIsFailure(batchName) ? "mig-outcome-bad" : "mig-outcome-go")"
-                                                      title="@done">@done</span>
-                                            }
-                                        </span>
-                                        <span><span class="badge bg-@GetStatusColor(batch.Status)" title="@batch.Status">@batch.Status</span></span>
-                                        <span class="mig-count">
-                                            <span class="text-success fw-bold">@batch.SyncedCount</span><span class="text-muted">/@batch.TotalCount</span>
-                                        </span>
-                                        <span class="mig-count">
-                                            @if (batch.FailedCount > 0)
-                                            {
-                                                <span class="text-danger fw-bold">@batch.FailedCount</span>
-                                            }
-                                            else
-                                            {
-                                                <span class="text-muted">0</span>
-                                            }
-                                        </span>
-                                    </div>
-                                    @* The ticket field for THIS row's action, directly beneath it.
-                                       It used to live above the table: with 50+ batches in flight,
-                                       acting on a row near the bottom put the input off-screen
-                                       while every button in the row went disabled, so the only
-                                       visible feedback was that the buttons had stopped working. *@
-                                    @if (pendingActionTarget == batchName && pendingActionLabel != null)
-                                    {
-                                        <div class="border-bottom px-3 py-2 bg-warning-subtle">
-                                            @PendingActionConfirm
-                                        </div>
-                                    }
-                                }
+                                    </tbody>
+                                </table>
                             </div>
 
                             @* R20: the catalogue pages, and the pager states the whole size so the
@@ -818,45 +810,47 @@
                                 </div>
 
                                 <div class="mig-pane-scroll">
-                                    <div class="mig-batch-row mig-selected-row mig-batch-head">
-                                        <span></span>
-                                        @* The direction track. Added to the ROWS of this pane and
-                                           not to its header when the icon moved out of the name
-                                           cell, which shifted every heading here one column left
-                                           of its data - the same defect just fixed in the list
-                                           beside it, reintroduced in the same change that fixed
-                                           it. The test now counts both grids. *@
-                                        <span></span>
-                                        <span>Batch</span>
-                                        <span>Status</span>
-                                        <span class="mig-count" title="Synced / Total - mailboxes synced, of the batch total">Sync</span>
-                                        <span class="mig-count"></span>
-                                    </div>
-                                    @foreach (var batch in GetSelectedBatchesPage())
-                                    {
-                                        var selectedName = batch.BatchName;
-                                        <div class="mig-batch-row mig-selected-row">
-                                            @* R9. Open narrows the selection to this one batch, and
-                                               the pane becomes its mailboxes. *@
-                                            <button class="btn btn-link btn-sm p-0" disabled="@IsBusy"
-                                                    title="Show only this batch" @onclick="() => SelectOnlyBatch(selectedName)">
-                                                Open
-                                            </button>
-                                            <span class="mig-dir-cell">@DirectionIcon(batch.Direction)</span>
-                                            <span class="mig-batch-name" title="@selectedName">@selectedName</span>
-                                            <span><span class="badge bg-@GetStatusColor(batch.Status)">@batch.Status</span></span>
-                                            <span class="mig-count">
-                                                <span class="text-success fw-bold">@batch.SyncedCount</span><span class="text-muted">/@batch.TotalCount</span>
-                                            </span>
-                                            <span class="mig-count">
-                                                <button class="btn btn-link btn-sm p-0 text-danger" disabled="@IsBusy"
-                                                        title="Remove this batch from the selection"
-                                                        @onclick="() => RemoveFromSelection(selectedName)">
-                                                    Remove
-                                                </button>
-                                            </span>
-                                        </div>
-                                    }
+                                    <table class="mig-batches">
+                                        <thead>
+                                            <tr>
+                                                <th></th>
+                                                <th class="mig-dir-cell"></th>
+                                                <th class="mig-batch-name">Batch</th>
+                                                <th>Status</th>
+                                                <th class="mig-count" title="Synced / Total - mailboxes synced, of the batch total">Sync</th>
+                                                <th></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var batch in GetSelectedBatchesPage())
+                                            {
+                                                var selectedName = batch.BatchName;
+                                                <tr>
+                                                    @* R9. Open narrows the selection to this one
+                                                       batch, and the pane becomes its mailboxes. *@
+                                                    <td>
+                                                        <button class="btn btn-link btn-sm p-0" disabled="@IsBusy"
+                                                                title="Show only this batch" @onclick="() => SelectOnlyBatch(selectedName)">
+                                                            Open
+                                                        </button>
+                                                    </td>
+                                                    <td class="mig-dir-cell">@DirectionIcon(batch.Direction)</td>
+                                                    <td class="mig-batch-name" title="@selectedName">@selectedName</td>
+                                                    <td><span class="badge bg-@GetStatusColor(batch.Status)">@batch.Status</span></td>
+                                                    <td class="mig-count">
+                                                        <span class="text-success fw-bold">@batch.SyncedCount</span><span class="text-muted">/@batch.TotalCount</span>
+                                                    </td>
+                                                    <td class="mig-count">
+                                                        <button class="btn btn-link btn-sm p-0 text-danger" disabled="@IsBusy"
+                                                                title="Remove this batch from the selection"
+                                                                @onclick="() => RemoveFromSelection(selectedName)">
+                                                            Remove
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
                                 </div>
 
                                 @* R4. Its own pager, labelled so it is unmistakable that it pages
@@ -1140,7 +1134,12 @@
                                                        2000 mailboxes pins 2000 rows and the
                                                        Defender failure is back. *@
                                                     <tr class="mig-divider">
-                                                        <td colspan="7">
+                                                        @* Same count as the detail row below and
+                                                           for the same reason: a read-only
+                                                           operator gets no tick column, and a
+                                                           hardcoded 7 spans one column more than
+                                                           the table has. *@
+                                                        <td colspan="@(canManage ? 7 : 6)">
                                                             <div class="d-flex align-items-center gap-2">
                                                                 <button class="btn btn-sm btn-outline-secondary py-0" type="button"
                                                                         disabled="@(IsBusy || pinnedMailboxPage <= 0)"
@@ -1478,10 +1477,10 @@
                 disabled="@(actionInProgress != null)">Cancel</button>
     </div>;
 
-    // The batch grid drops its first column when the operator cannot select. Named once and
-    // applied to the header AND the rows, because the defect this replaces was precisely those
-    // two disagreeing about whether the tick-box column exists.
-    private string BatchGridClass => canManage ? "" : "mig-no-tick";
+    // The column count of the batch table, for the colspan of the full-width rows. Derived from the
+    // one condition that changes it, so a colspan cannot fall out of step with the header the
+    // way the track count of the old grid did.
+    private int BatchColumnCount => canManage ? 6 : 5;
 
     private int tabIndex = 0;
     private bool isLoading = false;

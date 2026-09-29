@@ -1104,11 +1104,11 @@ public class MigrationStatusPageTests
             // Scoped to the header rows: searching the whole page would let any tooltip
             // anywhere satisfy this, and "Total:" in the right-hand pane would answer for a
             // column that is not there.
-            var headAt = page.IndexOf("mig-batch-row mig-batch-head", StringComparison.Ordinal);
-            var headRow = page[headAt..(headAt + page[headAt..].IndexOf("</div>",
+            var headAt = page.IndexOf("<table class=\"mig-batches\">", StringComparison.Ordinal);
+            var headRow = page[headAt..(headAt + page[headAt..].IndexOf("</thead>",
                 StringComparison.Ordinal))];
 
-            var headers = Regex.Matches(headRow, @"<span(?: [^>]*)?>([A-Za-z/ ]+)</span>")
+            var headers = Regex.Matches(headRow, @"<th(?: [^>]*)?>([A-Za-z/ ]+)</th>")
                 .Select(m => m.Groups[1].Value)
                 .Concat(Regex.Matches(headRow, @"title=""([^""]+)""").Select(m => m.Groups[1].Value))
                 .ToArray();
@@ -1209,92 +1209,56 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
-    public void TheBatchGridHasTheSameColumnsInTheHeaderAndTheRows()
+    public void TheTickColumnLeavesTheHeaderAndTheRowTogether()
     {
-        // R14 asks for fixed columns that align on every row, and a permission is not an
-        // exception to that. The header drew an unconditional spacer for the tick-box column
-        // while the row only drew a tick box when canManage, so an operator WITHOUT
-        // MigrationManage read every value one column left of its heading: the batch name under
-        // the blank, Status under "Batch", and Failed under a heading that was not rendered.
+        // R14 asks for columns that align on every row, and a permission is not an exception.
+        // The grid version of this drew an unconditional header spacer while the tick box in the row
+        // was gated on canManage, so a read-only operator read every value one column left of
+        // its heading.
         //
-        // Invisible to everyone who built it, because they all had the permission. The mailbox
-        // table beside it already handled this - colspan="@(canManage ? 7 : 6)" - which is what
-        // makes the batch grid an oversight rather than an open question.
+        // A table cannot misalign a header against its body - that part is now structural. What
+        // remains checkable is that the tick CELL and the tick HEADER appear and disappear on
+        // the same condition, and that the colspan of the full-width rows is derived from that
+        // same condition rather than typed twice.
         var page = StripRazorComments(ReadPage());
 
-        // The spacer renders on exactly the condition the tick box does. Matched inside the
-        // header block rather than as one indented literal: the indentation here is not the
-        // thing under test, and pinning it makes the test fail on a reformat.
-        var headAt = page.IndexOf("mig-batch-head", StringComparison.Ordinal);
-        Assert.True(headAt > 0, "the batch header row is gone");
+        // One of each, and each inside a canManage guard. Counting "@if (canManage)" across the
+        // whole page also found the seven unrelated ones, which is how the first version of
+        // this assertion failed.
+        Assert.Equal(1, CountOf(page, "<th class=\"mig-tick\">"));
+        Assert.Equal(1, CountOf(page, "<td class=\"mig-tick\">"));
 
-        var head = page[headAt..(headAt + page[headAt..].IndexOf("<span>Status</span>",
-            StringComparison.Ordinal))];
+        foreach (var cell in new[] { "<th class=\"mig-tick\">", "<td class=\"mig-tick\">" })
+        {
+            var at = page.IndexOf(cell, StringComparison.Ordinal);
+            var before = page[Math.Max(0, at - 400)..at];
+            Assert.True(
+                before.LastIndexOf("@if (canManage)", StringComparison.Ordinal)
+                    > before.LastIndexOf("</tr>", StringComparison.Ordinal),
+                $"{cell} is not inside a canManage guard, so the tick column could appear in "
+                + "one of the header and the row without the other");
+        }
 
-        Assert.Contains("@if (canManage)", head, StringComparison.Ordinal);
-        Assert.Contains("<span></span>", head, StringComparison.Ordinal);
-        Assert.True(
-            head.IndexOf("@if (canManage)", StringComparison.Ordinal)
-                < head.IndexOf("<span></span>", StringComparison.Ordinal),
-            "the tick-box spacer is not inside the canManage guard, so a read-only operator "
-            + "reads every value one column left of its heading");
+        // Full-width rows take the count from one place, so a column added later cannot leave
+        // them short.
+        var count = StripLineComments(GetMemberSource(
+            @"private\s+int\s+BatchColumnCount", "BatchColumnCount"));
+        Assert.Contains("canManage", count, StringComparison.Ordinal);
 
-        // Header and rows take the grid from ONE property, so they cannot disagree again.
-        Assert.Equal(2, CountOf(page, "@BatchGridClass"));
+        // Scoped to the batch tables. Scanning the whole page also caught the mailbox table's
+        // own colspans, which answer to a different column count.
+        var tables = string.Concat(Regex.Matches(page,
+            @"<table class=""mig-batches"">.*?</table>", RegexOptions.Singleline)
+            .Select(m => m.Value));
 
-        // BOTH batch grids: a header cell for every track the CSS declares. Counting only the
-        // main list is what let the selection pane header lose a cell in the very change that
-        // fixed the main one - the icon went into its rows and not its header, and every
-        // heading there sat one column left of its data.
-        AssertHeaderFillsItsGrid(page, "mig-batch-row mig-batch-head", ".mig-batch-row {");
-        AssertHeaderFillsItsGrid(page, "mig-batch-row mig-selected-row mig-batch-head",
-            ".mig-selected-row {");
-
-        var cls = StripLineComments(GetMemberSource(
-            @"private\s+string\s+BatchGridClass", "BatchGridClass"));
-        Assert.Contains("canManage", cls, StringComparison.Ordinal);
-        Assert.Contains("mig-no-tick", cls, StringComparison.Ordinal);
-
-        // And the read-only variant actually drops a track rather than only renaming the class.
-        var css = File.ReadAllText(Path.Combine(GetPagesDirectory(), "Migration.razor.css"));
-
-        Assert.Equal(TrackCount(css, ".mig-batch-row {") - 1,
-            TrackCount(css, ".mig-batch-row.mig-no-tick {"));
-    }
-
-    // A header row must supply one cell per declared grid track, or every label sits over the
-    // wrong value. The conditional tick-box spacer is counted once, which is correct: the
-    // read-only grid drops a track to match.
-    private static void AssertHeaderFillsItsGrid(string page, string headClass, string cssRule)
-    {
-        var css = File.ReadAllText(Path.Combine(GetPagesDirectory(), "Migration.razor.css"));
-        var tracks = TrackCount(css, cssRule);
-
-        var at = page.IndexOf(headClass, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"the header row '{headClass}' is gone");
-
-        var head = page[at..(at + page[at..].IndexOf("</div>", StringComparison.Ordinal))];
-        var cells = CountOf(head, "<span");
-
-        Assert.True(cells == tracks,
-            $"'{headClass}' supplies {cells} header cells for the {tracks} tracks in "
-            + $"'{cssRule}', so every heading after the missing one sits over the wrong value");
-    }
-
-    // The tracks in the grid-template-columns of one CSS rule. minmax(0, 1fr) holds a comma and
-    // a space, so it is collapsed before splitting or it would count as two.
-    private static int TrackCount(string css, string selector)
-    {
-        var at = css.IndexOf(selector, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"{selector} is gone from Migration.razor.css");
-
-        var rule = css[at..(at + css[at..].IndexOf('}'))];
-        var decl = rule[rule.IndexOf("grid-template-columns:", StringComparison.Ordinal)..];
-        decl = decl[..decl.IndexOf(';')]
-            .Replace("grid-template-columns:", "")
-            .Replace("minmax(0, 1fr)", "minmax");
-
-        return decl.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+        foreach (Match m in Regex.Matches(tables, @"colspan=""([^""]+)"""))
+        {
+            Assert.True(
+                m.Groups[1].Value.Contains("BatchColumnCount", StringComparison.Ordinal)
+                || m.Groups[1].Value.Contains("canManage", StringComparison.Ordinal),
+                $"colspan=\"{m.Groups[1].Value}\" is a hand-typed number; derive it from the "
+                + "column count so adding a column cannot leave the row short");
+        }
     }
 
     [Fact]
@@ -1362,27 +1326,33 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
-    public void TheSelectionPaneUsesItsOwnColumnWidthsAndItsOwnHeader()
+    public void TheSelectionPaneUsesItsOwnColumnsAndItsOwnHeader()
     {
         // Reported from dev at v1.15.0: the "Open" button in the selection pane wrapped to three
-        // lines, one letter each. The pane reused the batch-list grid, whose first column is
-        // 1.25rem - sized for a checkbox. The selection pane has a text button there instead.
+        // lines, one letter each, because the pane reused the batch-list grid whose first column
+        // was sized for a checkbox. Same defect at the other end - the batch header's "Failed"
+        // label sat over a Remove button.
         //
-        // Same defect at the other end: the batch header's "Failed" label sat over a Remove
-        // button, which is R17 (no unlabelled value, and no value under the wrong label).
-        var page = ReadPage();
+        // Both lists are now tables, so a column is as wide as its own widest cell and neither
+        // pane can inherit the widths of the other. The original defect is not fixed here so much as
+        // made inexpressible; what is still worth pinning is that this pane has its own header
+        // and does not claim a column it lacks.
+        var page = StripRazorComments(ReadPage());
         var css = File.ReadAllText(Path.Combine(GetPagesDirectory(), "Migration.razor.css"));
 
-        Assert.Contains(".mig-selected-row", css, StringComparison.Ordinal);
-        Assert.Contains("grid-template-columns: 3.5rem", css, StringComparison.Ordinal);
+        // No declared column widths anywhere for these lists. This is the whole point: four
+        // wrong width guesses and two header shifts came from having numbers here at all.
+        Assert.DoesNotContain("grid-template-columns", css, StringComparison.Ordinal);
 
-        // Applied to BOTH the header and the rows, or they align with each other and with
-        // nothing else.
-        Assert.Equal(2, Regex.Matches(page, @"mig-batch-row mig-selected-row").Count);
+        // Two tables, each with its own header.
+        // Two batch tables, each with its own header. Counting bare "<thead>" would also find
+        // the mailbox table beside them.
+        Assert.Equal(2, CountOf(page, "<table class=\"mig-batches\">"));
 
         // The selection header does not claim a Failed column it does not have.
-        var header = ExtractSpan(page, "mig-batch-row mig-selected-row mig-batch-head", "</div>");
-        Assert.DoesNotContain("Failed", header, StringComparison.Ordinal);
+        var at = page.LastIndexOf("<table class=\"mig-batches\">", StringComparison.Ordinal);
+        var header = page[at..(at + page[at..].IndexOf("</thead>", StringComparison.Ordinal))];
+        Assert.DoesNotContain("Fail", header, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -324,7 +324,13 @@ public sealed class ModuleCatalog
             // characters over data that reads "0/0" - nine wasted character widths taken from
             // the batch name. Short labels with the full name on hover, and the count tracks
             // shrink to fit the numbers rather than the headings (owner, 2026-09-29).
-            Version = "1.20.9",
+            // 1.21.0: both batch lists are HTML tables instead of CSS grids. The grid needed
+            // a width for every column and the header had to supply a cell per track by hand -
+            // which produced two header-shift defects and four wrong width guesses in a day.
+            // A table sizes each column to its own widest cell across all rows, so there is no
+            // width to get wrong and a header cannot misalign against its body. The mailbox
+            // table beside it always worked this way and had none of those faults.
+            Version = "1.21.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

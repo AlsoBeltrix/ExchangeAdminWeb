@@ -86,6 +86,13 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     and the reasoning for each is in its commit. Not copied here.
   - **The owner's UI rulings of 2026-09-29 are in `.agents/decisions.md`** (one menu per
     action bar, sortable means visible, icons carry labels). Not copied here.
+  - **1.21.0: both batch lists are HTML tables, not CSS grids.** The grid required a width
+    for every column and a header cell per declared track, kept in step by hand. That is where
+    two header-shift defects and four wrong width guesses came from. A table sizes each column
+    to its own widest cell across all rows and aligns header to body structurally, so neither
+    failure is expressible and there is no width left to guess. The mailbox table beside it
+    always worked this way and had none of those faults - which was visible for days before
+    anyone drew the conclusion.
   - **WHAT IS ACTUALLY OUTSTANDING: the plan's `## Acceptance` hand checks.** Nothing in this
     repo renders a Blazor component, so none of the below is covered by any test:
     - the batch-open page-reset risk the plan flags as a genuine risk rather than a formality;

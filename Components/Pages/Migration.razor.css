@@ -63,23 +63,27 @@
     min-height: 0;
 }
 
-/* One line per batch (R14), fixed columns so counts align on every row (R14, R16). The grid is
-   declared once and shared by the header row and the data rows, which is what keeps them in
-   alignment - two separate column definitions is how a header drifts off its column. */
-.mig-batch-row {
-    display: grid;
-    grid-template-columns: 1.25rem 1.1rem minmax(0, 1fr) 5.25rem 3.5rem 2.5rem;
-    gap: .4rem;
-    align-items: center;
-    padding: .4rem .6rem;
-    border-bottom: 1px solid var(--ui-grid);
+/* R14/R16 as a table. The previous CSS grid declared a width for every column and required
+   the header row to supply a cell per track by hand - which produced two header-shift defects
+   and four wrong width guesses in a day. A table sizes each column to its own widest cell
+   across every row, so there is no width here to get wrong, and header-to-body alignment is a
+   property of the markup rather than something a test has to enforce. */
+.mig-batches {
+    width: 100%;
+    border-collapse: collapse;
     font-size: .875rem;
 }
 
-/* R16: the header lives INSIDE the scrolling box, so the scrollbar narrows it by exactly as much
-   as it narrows the rows and the columns cannot fall out of alignment. Sticky so it is still
-   readable at row 500. */
-.mig-batch-head {
+    .mig-batches th,
+    .mig-batches td {
+        padding: .4rem .5rem;
+        border-bottom: 1px solid var(--ui-grid);
+        vertical-align: middle;
+    }
+
+/* R16: the header lives INSIDE the scrolling box, sticky, so the scrollbar narrows it by
+   exactly as much as it narrows the rows. */
+.mig-batches thead th {
     position: sticky;
     top: 0;
     z-index: 2;
@@ -89,34 +93,50 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: .03em;
+    white-space: nowrap;
     border-bottom: 1px solid var(--ui-line);
 }
 
-.mig-batch-row.mig-clickable {
-    cursor: pointer;
-}
-
-.mig-batch-row.mig-clickable:hover {
-    background: var(--ui-zebra);
-}
-
-.mig-batch-row.mig-open {
-    background: var(--ui-selected);
-    box-shadow: inset 3px 0 0 var(--ui-brand);
-}
-
-.mig-batch-row.mig-open:hover {
-    background: var(--ui-selected);
-}
-
-/* R15: nothing clipped. The name gets the flexible column and truncates with an ellipsis only
-   when the window itself is too narrow, and carries its full value as a title so the trailing
-   identifier is always recoverable. */
-.mig-batch-name {
+/* The only flexible column. max-width:0 with width:100% is what makes an auto-layout table
+   give this cell every pixel the other columns do not need, and truncate rather than push the
+   table wider - which is the behaviour the fixed grid was trying and failing to approximate. */
+.mig-batches .mig-batch-name {
+    width: 100%;
+    max-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-weight: 600;
+}
+
+.mig-batches .mig-tick,
+.mig-batches .mig-dir-cell {
+    width: 1px;
+    white-space: nowrap;
+    text-align: center;
+}
+
+.mig-batches tr.mig-clickable {
+    cursor: pointer;
+}
+
+    .mig-batches tr.mig-clickable:hover {
+        background: var(--ui-zebra);
+    }
+
+.mig-batches tr.mig-open {
+    background: var(--ui-selected);
+    box-shadow: inset 3px 0 0 var(--ui-brand);
+}
+
+    .mig-batches tr.mig-open:hover {
+        background: var(--ui-selected);
+    }
+
+/* Uniform badge width within the status column, which itself is only as wide as the longest
+   status. */
+.mig-batches td .badge {
+    width: 100%;
 }
 
 /* Tabular figures so a column of counts lines up digit for digit rather than drifting. */
@@ -124,12 +144,6 @@
     text-align: right;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-}
-
-.mig-batch-row .badge {
-    width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 /* The mailbox table's own header, sticky inside the right pane's scroll region for the same
@@ -238,7 +252,7 @@
 }
 
 /* A skipped row is dimmed as a second, redundant signal - never the only one. */
-.mig-batch-row:has(.mig-outcome-skip) .mig-batch-name {
+.mig-batches tr:has(.mig-outcome-skip) .mig-batch-name {
     opacity: .7;
 }
 
@@ -316,11 +330,7 @@
    button in a 1.25rem column meant for a checkbox - it wrapped to three lines, one letter each
    (owner screenshot, v1.15.0 on dev). Its first and last columns hold text buttons, so they get
    text-sized columns. Everything between stays aligned with the list on the left. */
-.mig-selected-row {
-    grid-template-columns: 3.5rem 1.1rem minmax(0, 1fr) 5.25rem 3.5rem 4.5rem;
-}
-
-.mig-selected-row .btn-link {
+.mig-batches .btn-link {
     white-space: nowrap;
     text-decoration: none;
 }
@@ -334,19 +344,7 @@
     vertical-align: -.15em;
 }
 
-/* Its own track, not a passenger in the name cell. */
-.mig-dir-cell {
-    display: flex;
-    justify-content: center;
-    overflow: visible;
-}
 
-/* Read-only operators get no tick-box column, so the grid loses its first track rather than
-   leaving an empty one the header also has to remember to draw. Applied to the header and the
-   rows from one property - see BatchGridClass. */
-.mig-batch-row.mig-no-tick {
-    grid-template-columns: 1.1rem minmax(0, 1fr) 5.25rem 3.5rem 2.5rem;
-}
 
 /* Abbreviated column headings carry the full name in a title. The dotted underline is the only
    hint that hovering will say more - without it a short label just reads as a truncation. */
