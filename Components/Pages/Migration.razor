@@ -1004,7 +1004,19 @@
                                     }
                                     else if (!batchUsers.Any())
                                     {
-                                        <p class="text-muted text-center my-5">This batch contains no mailboxes.</p>
+                                        @if (openBatch is { PendingCount: > 0, StartDateTime: null }
+                                            && string.Equals(openBatch.WorkflowStage, "Injection", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <p class="text-muted text-center my-5">@openBatch.PendingCount @(openBatch.PendingCount == 1 ? "mailbox" : "mailboxes") pending. Batch not started.</p>
+                                        }
+                                        else if (openBatch is { TotalCount: 0 })
+                                        {
+                                            <p class="text-muted text-center my-5">This batch contains no mailboxes.</p>
+                                        }
+                                        else
+                                        {
+                                            <p class="text-muted text-center my-5">Mailbox details are not available yet.</p>
+                                        }
                                     }
                                     else if (!AnyMailboxRowRenders)
                                     {

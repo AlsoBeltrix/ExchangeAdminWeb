@@ -120,7 +120,7 @@ public static class ClickGateRegistry
     private static PageGateEntry Migration => new()
     {
         Page = "Migration.razor",
-        ExpectedLineCount = 3981,
+        ExpectedLineCount = 3993,
 
         Predicates =
         [
@@ -164,9 +164,9 @@ public static class ClickGateRegistry
             new ExemptControl(454, "@onclick=\"() => batchActionResult = null\"",
                 "dismisses a result banner; gating it would trap the message on screen for the "
                 + "whole of the next operation"),
-            new ExemptControl(1198, "@onclick=\"DismissReportModal\"",
+            new ExemptControl(1210, "@onclick=\"DismissReportModal\"",
                 "rendered only once a report has landed, so there is no pull for it to interrupt"),
-            new ExemptControl(1486, "@onclick=\"CancelPendingAction\"",
+            new ExemptControl(1498, "@onclick=\"CancelPendingAction\"",
                 "the operator must always be able to back out of a staged action. It keeps a "
                 + "narrower guard of its own instead of IsBusy",
                 KeepsItsOwnGuard: "disabled=\"@(actionInProgress != null)\""),
@@ -201,7 +201,7 @@ public static class ClickGateRegistry
             // operation - CloseBatchActionsMenu sets one bool and awaits nothing - so there is
             // nothing for a busy state to refuse. Registered rather than left out, because "it
             // only closes a menu" has to be written down to be checked.
-            new NonButtonTarget(1379, "@onclick=\"CloseBatchActionsMenu\"", "div",
+            new NonButtonTarget(1391, "@onclick=\"CloseBatchActionsMenu\"", "div",
                 RefusalMechanism.NoneNeeded, "CloseBatchActionsMenu",
                 WhyNotHandlerGuard:
                     "reaches no operation: it clears openBatchMenu and nothing "
@@ -261,7 +261,7 @@ public static class ClickGateRegistry
             // button's own emptiness clause, which a field cannot apply to itself.
             new DomSyncedControl(395, "placeholder=\"Search batch or user email...\"", "input",
                 "disabled=\"@IsBusy\""),
-            new DomSyncedControl(1436, "placeholder=\"Ticket # (required)\"", "input",
+            new DomSyncedControl(1448, "placeholder=\"Ticket # (required)\"", "input",
                 "disabled=\"@IsBusy\""),
 
             // S2. The batch pane's sort control, which replaced seven clickable table headers.
@@ -287,7 +287,7 @@ public static class ClickGateRegistry
             // R13. The scheduled-completion time. Bound by hand rather than with @bind - Blazor
             // coerces a datetime-local to DateTime - but it is still a control whose value the
             // server re-renders, so the disabled attribute is the only safe refusal.
-            new DomSyncedControl(1453, "<input type=\"datetime-local\" class=\"form-control\"",
+            new DomSyncedControl(1465, "<input type=\"datetime-local\" class=\"form-control\"",
                 "input", "disabled=\"@IsBusy\""),
 
             new DomSyncedControl(964, "placeholder=\"Filter these mailboxes\"", "input",
@@ -319,7 +319,7 @@ public static class ClickGateRegistry
                 + "staged preview and clamps the two mailbox pagers; it makes no call and awaits "
                 + "nothing"),
 
-            new UngatedDomSyncedControl(1223, "title=\"Select for a bulk action\"", "input",
+            new UngatedDomSyncedControl(1235, "title=\"Select for a bulk action\"", "input",
                 "the per-row mailbox half, inside the MailboxRow fragment. ToggleMailboxSelected "
                 + "writes only to selectedMailboxes and moves the row between the pinned block and "
                 + "the list below it; it makes no call and awaits nothing"),
@@ -363,7 +363,7 @@ public static class ClickGateRegistry
                 + "the first races it and the later reply wins",
                 GatedTwinButtonLine: 405),
 
-            new KeyboardPath(1436, "placeholder=\"Ticket # (required)\"", "input",
+            new KeyboardPath(1448, "placeholder=\"Ticket # (required)\"", "input",
                 "keydown", "HandleConfirmKeyDown", "ConfirmPendingAction",
                 KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
                 "Enter EXECUTES the staged action - a batch start, stop or remove, the destructive "
@@ -374,7 +374,7 @@ public static class ClickGateRegistry
                 + "PendingActionConfirm fragment, and blanks pendingActionTicket so a second press "
                 + "fails the handler's own emptiness check. Nothing in that is a busy gate, and "
                 + "nothing in it survives a handler that stages differently",
-                GatedTwinButtonLine: 1459),
+                GatedTwinButtonLine: 1471),
         ],
 
         ForbiddenGuardSites =

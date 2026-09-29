@@ -51,9 +51,16 @@
        This one cannot be capped: it asks Graph about one user rather than searching a list. *@
     <div class="card mb-3">
         <div class="card-body py-2">
+            @* Owner, 2026-09-29: this page was not coherent. Each card now states what it is
+               FOR, because "Look up one user" and "Risk level" are labels on the first FIELD of
+               each card, and a first-field label reads as the heading of the whole box when
+               there is no heading above it. That is what made the second card unreadable - its
+               first field is "Risk level", so the card appeared to be a risk-level control with
+               an unexplained Refresh button attached. *@
+            <h2 class="h6 text-muted mb-2">Ask about one person</h2>
             <div class="row g-2 align-items-end">
                 <div class="col-md-6">
-                    <label class="form-label mb-1" for="lookupUpn">Look up one user</label>
+                    <label class="form-label mb-1" for="lookupUpn">User principal name</label>
                     <input id="lookupUpn" class="form-control" @bind="lookupUpn" @bind:event="oninput"
                            @onkeydown="OnLookupKeyDown" disabled="@isLoading"
                            placeholder="Full user principal name" />
@@ -108,6 +115,11 @@
 
     <div class="card mb-3">
         <div class="card-body">
+            @* The card the owner could not read. Its heading says it browses the LIST, which is
+               what distinguishes it from the single-person lookup above and what makes the
+               Refresh button make sense: Refresh re-runs this query, it does not refresh the
+               page. *@
+            <h2 class="h6 text-muted mb-2">Browse all risky users</h2>
             <div class="row g-2 align-items-end">
                 <div class="col-md-3">
                     <label class="form-label mb-1" for="riskLevelFilter">Risk level</label>
@@ -138,12 +150,16 @@
                            @onkeydown="OnFilterKeyDown" disabled="@isLoading" placeholder="Part of a user principal name" />
                 </div>
                 <div class="col-md-2">
-                    <button class="btn btn-primary w-100" @onclick="LoadRiskyUsersAsync" disabled="@isLoading">
+                    @* "Refresh" said nothing about what it refreshes, which is half of why this
+                       card was unreadable - it runs the query above with the filters beside it.
+                       "Search" says that. *@
+                    <button class="btn btn-primary w-100" @onclick="LoadRiskyUsersAsync" disabled="@isLoading"
+                            title="Runs the search with the filters on this row">
                         @if (isLoading)
                         {
                             <span class="spinner-border spinner-border-sm me-1"></span>
                         }
-                        Refresh
+                        Search
                     </button>
                 </div>
             </div>
@@ -358,7 +374,7 @@
                                                 <strong>@outcome.UserPrincipalName</strong> - @outcome.Message
                                                 @if (outcome.Success)
                                                 {
-                                                    <span class="text-muted"> Refresh to see the updated risk state.</span>
+                                                    <span class="text-muted"> Search again to see the updated risk state.</span>
                                                 }
                                             </div>
                                         </td>

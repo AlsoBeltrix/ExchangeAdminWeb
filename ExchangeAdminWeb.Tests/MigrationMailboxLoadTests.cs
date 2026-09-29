@@ -82,6 +82,50 @@ public sealed class MigrationMailboxLoadTests : IDisposable
         Assert.Null(PageField("loadingBatchUsers").GetValue(page));
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(6)]
+    public async Task AnUnstartedBatchRendersItsPendingCountWithoutInventingMailboxRows(int pendingCount)
+    {
+        var service = CreateService(failQuery: false, pendingCount: pendingCount);
+        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var page = CreatePage(service);
+        PageField("migrationBatches").SetValue(page, new List<MigrationBatchInfo> { batch });
+
+        await LoadPageMailboxes(page);
+        var rendered = page.RenderText();
+
+        Assert.Contains($"{pendingCount} {(pendingCount == 1 ? "mailbox" : "mailboxes")} pending. Batch not started.", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("contains no mailboxes", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("Unable to load mailboxes", rendered, StringComparison.Ordinal);
+        Assert.Empty((List<MigrationUserInfo>)PageField("batchUsers").GetValue(page)!);
+        Assert.Null(PageField("loadingBatchUsers").GetValue(page));
+    }
+
+    [Theory]
+    [InlineData(0, "Injection", false, "This batch contains no mailboxes.")]
+    [InlineData(1, "Processing", false, "Mailbox details are not available yet.")]
+    [InlineData(1, "Injection", true, "Mailbox details are not available yet.")]
+    public async Task EmptyUserResultsUseTheBatchState(int totalCount, string stage, bool started, string expected)
+    {
+        var service = CreateService(failQuery: false, pendingCount: 1);
+        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        batch.TotalCount = totalCount;
+        batch.PendingCount = totalCount;
+        batch.WorkflowStage = stage;
+        batch.StartDateTime = started ? DateTime.UtcNow : null;
+        var page = CreatePage(service);
+        PageField("migrationBatches").SetValue(page, new List<MigrationBatchInfo> { batch });
+
+        await LoadPageMailboxes(page);
+        var rendered = page.RenderText();
+
+        Assert.Contains(expected, rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("Batch not started", rendered, StringComparison.Ordinal);
+        if (totalCount > 0)
+            Assert.DoesNotContain("contains no mailboxes", rendered, StringComparison.Ordinal);
+    }
+
     private RenderableMigration CreatePage(MigrationService service)
     {
         var page = new RenderableMigration();
@@ -130,7 +174,7 @@ public sealed class MigrationMailboxLoadTests : IDisposable
 #pragma warning restore BL0006
     }
 
-    private MigrationService CreateService(bool failQuery)
+    private MigrationService CreateService(bool failQuery, int pendingCount = 0)
     {
         Directory.CreateDirectory(_directory);
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -159,11 +203,21 @@ public sealed class MigrationMailboxLoadTests : IDisposable
                 // binds to a USER identity when piped; BatchId must be supplied explicitly.
                 var state = InitialSessionState.CreateDefault2();
                 state.Variables.Add(new SessionStateVariableEntry("FailMailboxQuery", failQuery, null));
+                state.Variables.Add(new SessionStateVariableEntry("PendingMailboxCount", pendingCount, null));
                 state.Commands.Add(new SessionStateFunctionEntry("Disconnect-ExchangeOnline", "[CmdletBinding()] param([switch] $Confirm)"));
                 state.Commands.Add(new SessionStateFunctionEntry("Get-MigrationBatch", """
                     [CmdletBinding()]
                     param([string] $Identity)
-                    [pscustomobject]@{ Identity = $Identity; TotalCount = 1205 }
+                    # Captured server shape: a stopped batch can still be awaiting initial
+                    # CSV injection, with pending rows but no migration-user objects yet.
+                    [pscustomobject]@{
+                        Identity = 'Wave 12 / Operations'
+                        Status = if ($PendingMailboxCount -gt 0) { 'Stopped' } else { 'Synced' }
+                        TotalCount = if ($PendingMailboxCount -gt 0) { $PendingMailboxCount } else { 1205 }
+                        PendingCount = $PendingMailboxCount
+                        WorkflowStage = if ($PendingMailboxCount -gt 0) { 'Injection' } else { 'Processing' }
+                        StartDateTime = $null
+                    }
                     """));
                 state.Commands.Add(new SessionStateFunctionEntry("Get-MigrationUser", """
                     [CmdletBinding()]
@@ -176,6 +230,7 @@ public sealed class MigrationMailboxLoadTests : IDisposable
                         if ($FailMailboxQuery) { Write-Error 'Mailbox query unavailable'; return }
                         if ($Identity) { Write-Error 'A batch name is not a migration user identity'; return }
                         if ($BatchId -ne 'Wave 12 / Operations') { throw 'Wrong batch requested' }
+                        if ($PendingMailboxCount -gt 0) { return }
                         $count = if ($ResultSize -eq 'Unlimited') { 1205 } else { 1000 }
                         foreach ($index in 1..$count) {
                             [pscustomobject]@{ Identity = "user$index@contoso.com"; Status = 'Synced' }

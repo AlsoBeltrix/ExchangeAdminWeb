@@ -621,6 +621,8 @@ https://admin.exchange.microsoft.com/#/migration";
                             StartDateTime = startDateTime,
                             CompletedDateTime = completedDateTime,
                             TotalCount = totalCount,
+                            PendingCount = Convert.ToInt32(batchObj.Properties["PendingCount"]?.Value ?? 0),
+                            WorkflowStage = batchObj.Properties["WorkflowStage"]?.Value?.ToString(),
                             SyncedCount = syncedCount,
                             FinalizedCount = finalizedCount,
                             FailedCount = failedCount,

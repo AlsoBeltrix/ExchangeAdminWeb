@@ -60,6 +60,8 @@ public class MigrationBatchInfo
     public DateTime? StartDateTime { get; set; }
     public DateTime? CompletedDateTime { get; set; }
     public int TotalCount { get; set; }
+    public int PendingCount { get; set; }
+    public string? WorkflowStage { get; set; }
     public int SyncedCount { get; set; }
     public int FinalizedCount { get; set; }
     public int FailedCount { get; set; }

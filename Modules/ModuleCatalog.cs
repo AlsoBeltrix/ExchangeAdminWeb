@@ -354,7 +354,8 @@ public sealed class ModuleCatalog
             // 1.22.1: restore explicit BatchId mailbox loading, retrieve the complete set,
             // and report query failures instead of showing an empty batch. The 1.22.0 query
             // diagnosis above was disproven by same-credential live comparisons.
-            Version = "1.22.1",
+            // 1.22.2: distinguish never-started pending batches from genuinely empty batches.
+            Version = "1.22.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -837,7 +838,12 @@ public sealed class ModuleCatalog
             // account exists. It named User.Read.All, sending an administrator to grant
             // tenant-wide full-profile read for an existence check. Owner granted and verified
             // the smaller scope against the live tenant, 2026-09-28.
-            Version = "1.4.1",
+            // 1.5.0: the page said what each FIELD was and never what either CARD was for, so
+            // the first field's label read as the card's heading - and the browse card's first
+            // field is "Risk level", which made it look like a risk-level control with an
+            // unexplained Refresh button bolted on. Each card now states its purpose, and
+            // Refresh is "Search", which is what it does (queue item 19, owner 2026-09-29).
+            Version = "1.5.0",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",

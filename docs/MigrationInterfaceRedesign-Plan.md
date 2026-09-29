@@ -2,6 +2,42 @@
 
 Status: **Implementation landed; dev acceptance pending. Mailbox-loading recovery 2026-09-29.**
 
+### Follow-up: never-started batches (2026-09-29)
+
+The owner deployed `94d9173` (deployment manifest and DLL SHA256 both confirmed), then supplied
+screenshots of `Saoborey.Ly@analog.com`, `Sarah.Lonn@analog.com` and `Navuth.Tan@analog.com`, each
+with Total 1 and an empty mailbox pane. These examples disprove the earlier claim that the
+query correction alone resolved the reported incident.
+
+Read-only checks under the configured app identity, including the actual compiled
+`MigrationService` and its public `ExoConnectionPool` connection path, found:
+
+- All three: TotalCount 1, PendingCount 1, Status/State Stopped, WorkflowStage Injection,
+  StartDateTime null. Diagnostics also show totalRowCount 1, no started timestamp and no
+  lastProcessedRowIndex. Their batch inputs have not been processed into migration-user rows.
+- Get-MigrationUser returns 0 by batch name, by BatchGuid, and with IncludeAssociatedUsers.
+  Get-MoveRequest for the exact MigrationService batch name also returns 0. An identity query
+  for the first supplied address reports that the migration user does not exist.
+- The same actual service returns 6 users for `09-22-2026-Part2` and 9 for `09-22-2026_Move`,
+  matching their batch totals. The probe read shared configuration through a read-only SQLite
+  connection and wrote diagnostic logs only to local ignored scratch space. No batch was
+  started, resumed, stopped, completed, or otherwise modified.
+
+The correction carries PendingCount and WorkflowStage into the page. An empty user result
+at Injection with pending input and no start timestamp displays the pending count and
+"Batch not started." Only a batch whose total is zero is labelled empty; other missing details
+remain unavailable. This does not manufacture mailbox rows from a batch name. Starting these
+live batches to cause Exchange to create those records is a separate migration operation,
+not authorized as part of debugging the display.
+
+Regression coverage uses the observed server shape through the service and compiled Razor.
+Live probe receipts are in ignored `TestResults/migration-live-probe.log` and
+`TestResults/migration-pending-probe.log`. Raw diagnostic XML was removed after extracting the
+relevant state. Verification results are owned by `.agents/state.md`; dev browser acceptance
+of this correction remains pending.
+
+### Earlier query correction (2026-09-29)
+
 The owner requested immediate recovery of the empty mailbox pane on 2026-09-29. The query
 introduced by `1a09f90` was tested with the app's configured Exchange identity: piping a batch
 into `Get-MigrationUser` failed on a four-mailbox batch because its batch name was treated as a

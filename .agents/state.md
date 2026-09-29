@@ -13,9 +13,12 @@ immediately; other module implementation is not part of this recovery. Work is o
 starting from `3a1644d`. One session owns the checkout. See the queue 12/13/14 entry below for
 the fix and remaining deployment step. Catchup cleanup was explicitly skipped.
 
-**Recovery verification is green; the measured results are in Verification below.** No
-deployment or live migration writes have been performed by this session. The remaining step
-is an elevated dev deployment and a browser check of the affected batch.
+**The owner deployed `94d9173`, and the three supplied screenshots still showed no mailboxes.**
+The deployed DLL matched the verified local DLL byte for byte. Read-only diagnosis now proves
+these particular batches are stopped before initial processing: one pending input row each,
+no start timestamp, WorkflowStage Injection, and no migration-user or move-request records.
+The current correction distinguishes this pending state from an empty batch. No live migration
+writes have been performed by this session. See the plan's recovery evidence and Verification.
 
 **Run the suite with `-- xUnit.MaxParallelThreads=4`.** At full parallelism it spreads over every
 core and each worker holds its own fixtures, which peaked near 27GB and got a run killed by the
@@ -80,7 +83,7 @@ blocked by the sandbox proxy and its retry was interrupted. Push policy remains 
     and add are both measured idempotent), which reduces but cannot eliminate it.
   - `Test-WebApp` holds 10,001 test members; the owner is removing it.
 
-- **QUEUE ITEMS 12, 13 AND 14: MAILBOX-LOADING FIX VERIFIED, AWAITING DEV DEPLOY.**
+- **QUEUE ITEMS 12, 13 AND 14: NEVER-STARTED BATCH STATE DIAGNOSED; CORRECTION IN PROGRESS.**
   `docs/MigrationInterfaceRedesign-Plan.md` opens with the measured recovery evidence. The
   piped query introduced by `1a09f90` can bind a batch name as a migration-user identity;
   the explicit BatchId query returned the expected mailbox counts under the app's credentials.
@@ -94,10 +97,16 @@ blocked by the sandbox proxy and its retry was interrupted. Push policy remains 
     local PowerShell runspace and executes the compiled Razor mailbox render tree. This is
     behavioral coverage of loading, rendering, paging selected rows and displaying failure;
     it does not exercise browser navigation or live mutation controls.
-  - **NEXT ACTION: deploy the verified recovery to dev, then open a populated batch.** The
-    read-only pipeline preflight could not start: `tools/deploy-pipeline.ps1` requires an
-    Administrator Windows PowerShell session and this session is not elevated. No deployment
-    authority was inferred from the implementation go. Push is still ask.
+  - The owner deployed `94d9173` and supplied three failing examples. The real compiled service
+    with its actual Exchange connection reproduces 0 users for all three, and 6/9 users for the
+    two started comparison batches. Exchange diagnostics show the three input rows have never
+    been processed. This is not a discarded UI load or an old deployment. The pane must show
+    pending batch input, not claim the batch contains no mailboxes or invent user identities
+    from the batch name. Detailed evidence is in the plan, not copied here.
+  - **NEXT ACTION: finish verification of the pending-state correction, then deploy to dev.**
+    Deployment still requires an elevated Windows PowerShell session; this session is not
+    elevated. Do not start/resume these live batches as a diagnostic: that changes migration
+    state and is outside the recovery implementation authority. Push is still ask.
   - The owner's priority remains recovery of this pane, then other modules. No broader
     Migration redesign or independent review was started.
 
