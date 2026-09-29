@@ -281,7 +281,14 @@ public sealed class ModuleCatalog
             // and announced "No mailbox in this batch matches" with no filter set. It hid exactly
             // the rows the operator had selected, which is the R11 failure pinning exists to
             // prevent. Found on dev; a test had pinned the faulty condition and read as coverage.
-            Version = "1.20.1",
+            // 1.20.2: the batch-name filter hid ticked batches from the selection pane. R5
+            // forbids pinning selected batches into the left list BECAUSE the right pane shows
+            // them, so that pane is the only surface a ticked batch appears on - and it read the
+            // filtered list. Four ticked, type in the filter, and the header still said "4
+            // batches selected" over however many survived, with the rest still armed. Same
+            // shape as 1.20.1, found by sweeping for it; the mailbox side had been written
+            // correctly and the batch side had no equivalent test.
+            Version = "1.20.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

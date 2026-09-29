@@ -105,6 +105,16 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
       asserted `else if (MailboxTotalCount == 0)`) and read as coverage for months. Quoting the
       implementation back to itself can only ever agree with it. That assertion now names the
       corrected condition and carries the lesson.
+  - **A sweep for the same shape found a second one (module `1.20.2`).** The batch-name filter
+    hid ticked batches from the selection pane. R5 forbids pinning selected batches into the
+    left list BECAUSE the right pane shows them, so that pane is the only surface a ticked batch
+    appears on - and it read the filtered list. The header said "4 batches selected" over
+    however many survived the filter, with the rest still armed for the next action. The
+    mailbox side had been written correctly and carried a test asserting it; the batch side had
+    neither. Both now do.
+  - **Defect class to keep in mind here: a count or a list that silently drops selected rows.**
+    Two instances in one day, in the two panes that show a selection. The batch list and the
+    selection pager were checked and are clean - they each read one source.
   - **Still not fully verified in a browser.** Remaining `## Acceptance` hand checks: the
     batch-open page-reset risk the plan flags, the Actions menu opening and closing on an
     outside click, and the schedule time field resolving to the UTC it displays.

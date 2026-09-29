@@ -2193,8 +2193,20 @@
     private IEnumerable<MigrationBatchInfo> GetSelectedBatchesPage() =>
         ListWindow.Slice(SelectedBatchesInListOrder(), selectionPage, SelectionPageSize);
 
+    // NOT filtered, and that is the whole point. R11: no ticked row may be hidden by a filter or
+    // a page change. R5 forbids pinning selected batches into the left list, so THIS pane is the
+    // only place a ticked batch is visible - and it used to read GetSortedBatches(), which
+    // applies the batch-name filter. Ticking four batches and then typing in the filter box left
+    // the header saying "4 batches selected" above one row, with the other three still armed for
+    // whatever the Actions menu ran next.
+    //
+    // Same failure as the pinned-mailbox one found on dev the same day, and the mailbox side had
+    // already been written correctly: SortMailboxes is split out of FilteredSortedMailboxes so
+    // the pinned block can sort without filtering. This is that split, for batches.
     private IEnumerable<MigrationBatchInfo> SelectedBatchesInListOrder() =>
-        GetSortedBatches().Where(b => selectedBatches.Contains(b.BatchName));
+        migrationBatches == null
+            ? Enumerable.Empty<MigrationBatchInfo>()
+            : SortBatches(migrationBatches.Where(b => selectedBatches.Contains(b.BatchName)));
 
     private int SelectionTotalCount => SelectedBatchesInListOrder().Count();
 
@@ -3647,6 +3659,14 @@
         if (filter.Length > 0)
             rows = rows.Where(b => b.BatchName?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true);
 
+        return SortBatches(rows);
+    }
+
+    // Split out so the selection pane can order without filtering (R11), exactly as SortMailboxes
+    // is split out for the pinned mailbox block. One ordering definition, or the selection pane
+    // and the list beside it would sort by different rules and read as two unrelated lists.
+    private IEnumerable<MigrationBatchInfo> SortBatches(IEnumerable<MigrationBatchInfo> rows)
+    {
         return batchSortColumn switch
         {
             "Name" => batchSortAsc ? rows.OrderBy(b => b.BatchName) : rows.OrderByDescending(b => b.BatchName),

@@ -695,6 +695,35 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void ATickedBatchIsNeverHiddenByTheBatchNameFilter()
+    {
+        // R11, batch side - the half that was missing while its mailbox twin below was carefully
+        // asserted. R5 forbids pinning selected batches into the left list precisely BECAUSE the
+        // right pane shows them, so that pane is the only surface a ticked batch appears on.
+        //
+        // It read GetSortedBatches(), which applies the batch-name filter. Tick four batches,
+        // type in the filter, and the header still said "4 batches selected" above however many
+        // survived the filter - with the rest still armed for whatever the Actions menu ran next.
+        // A selection you cannot see is what R11 exists to prevent, and the mailbox test below
+        // even states "batches have a whole pane showing the selection" as its premise.
+        //
+        // Found by sweeping for the same shape after the pinned-mailbox defect turned up on dev:
+        // a count or a list that silently drops selected rows.
+        var selection = StripLineComments(GetMethodBody("SelectedBatchesInListOrder"));
+
+        Assert.Contains("selectedBatches.Contains", selection, StringComparison.Ordinal);
+        Assert.Contains("SortBatches(", selection, StringComparison.Ordinal);
+
+        // The whole fix: order without filtering. GetSortedBatches is the filtered one.
+        Assert.DoesNotContain("GetSortedBatches", selection, StringComparison.Ordinal);
+
+        // And the ordering is still ONE definition, or the pane and the list beside it drift into
+        // two different sort orders.
+        var sorted = StripLineComments(GetMethodBody("GetSortedBatches"));
+        Assert.Contains("SortBatches(rows)", sorted, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ATickedMailboxIsNeverHiddenByTheFilterOrByAPageChange()
     {
         // R11, and R5a is how it is met for mailboxes. Batches have a whole pane showing the
