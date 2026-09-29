@@ -160,8 +160,15 @@ R14. **One line per batch row.** Fixed columns so counts and badges align on eve
 R15. **Nothing clipped** -- not the counts, and not the trailing identifier in a batch name.
 Columns are sized for real magnitudes: four-digit counts, three-digit failure counts.
 
-R16. **A column header row** naming Batch / Synced / Failed / Status, rendered inside the
-scrolling box so the scrollbar cannot shift it out of alignment with the rows.
+R16. **A column header row** naming Batch / Status / Total / Synced / Failed, rendered inside
+the scrolling box so the scrollbar cannot shift it out of alignment with the rows. Both batch
+views carry the same columns.
+
+> Amended 2026-09-29. This listed Batch / Synced / Failed / Status and the table was built to
+> it exactly, so there was no Total anywhere - while the sort dropdown offered "Total" and
+> ordered by it. The list could be sorted by a column that was not on screen, and Synced and
+> Failed were fractions with no denominator. Caught by the owner on a dev screenshot, not by
+> any test: the tests checked the columns the plan named.
 
 R17. **No unlabelled values.** A bare coloured number with no header is not acceptable.
 

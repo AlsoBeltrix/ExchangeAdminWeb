@@ -122,6 +122,12 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     checks the "identical" clause - nothing ever had, which is how they came apart. R12 in the
     plan is amended: the "identical" half stands, the "outline buttons" styling it named does
     not.
+  - **No Total column (module `1.20.4`).** R16 named Batch/Synced/Failed/Status and the table
+    was built to that list exactly, so Total appeared nowhere - while the sort dropdown offered
+    it and SortBatches ordered by it. The list could be sorted by a column that was not on
+    screen, and Synced/Failed were fractions with no denominator. Added to both batch views,
+    R16 amended, and the new test asserts the general rule (every sortable column is visible)
+    rather than the one missing name.
   - **Still not fully verified in a browser.** Remaining `## Acceptance` hand checks: the
     batch-open page-reset risk the plan flags, the Actions menu opening and closing on an
     outside click, and the schedule time field resolving to the UTC it displays.

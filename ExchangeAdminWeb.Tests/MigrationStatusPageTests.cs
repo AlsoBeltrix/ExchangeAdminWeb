@@ -1033,6 +1033,49 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void EveryColumnTheSortOffersIsAColumnYouCanSee()
+    {
+        // Owner, 2026-09-29, on a screenshot of the batch list: "where is the total?"
+        //
+        // It was nowhere. R16 named Batch / Synced / Failed / Status and the table was built to
+        // that list - while the sort dropdown offered "Total" and SortBatches ordered by
+        // TotalCount. The list could be sorted by a column that was not on screen, and Synced
+        // and Failed were fractions with no denominator: "0 synced" reads the same for a batch
+        // of one and a batch of five hundred.
+        //
+        // Asserted as the general rule rather than as "Total exists", because the specific
+        // omission was never the interesting part - a sort option with no matching column is.
+        var page = StripRazorComments(ReadPage());
+        var sorted = StripLineComments(GetMethodBody("SortBatches"));
+
+        string[] sortable = ["Name", "Status", "Total", "Synced", "Failed"];
+        foreach (var column in sortable)
+        {
+            Assert.True(
+                page.Contains($"<option value=\"{column}\">", StringComparison.Ordinal),
+                $"the batch sort no longer offers {column}; this test needs updating with it");
+
+            Assert.True(
+                sorted.Contains($"\"{column}\" =>", StringComparison.Ordinal),
+                $"the batch sort offers {column} but SortBatches does not order by it");
+        }
+
+        // Name is the batch name column, which carries no "Total"-style header of its own.
+        foreach (var column in new[] { "Status", "Total", "Synced", "Failed" })
+        {
+            Assert.True(
+                page.Contains($"<span class=\"mig-count\">{column}</span>", StringComparison.Ordinal)
+                || page.Contains($"<span>{column}</span>", StringComparison.Ordinal),
+                $"the batch sort offers {column} but no column header shows it, so the list can "
+                + "be ordered by something the operator cannot see");
+        }
+
+        // Both batch views show it - the selection pane lists the same batches, and a total that
+        // appears in one and not the other is the same omission wearing a different hat.
+        Assert.Equal(2, CountOf(page, "<span class=\"mig-count\">@batch.TotalCount</span>"));
+    }
+
+    [Fact]
     public void AllThreeEmptyStatesSayWhichOneApplies()
     {
         // R28. "Nothing matches" for all three hides whether the filter or the data is the

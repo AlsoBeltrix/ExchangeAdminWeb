@@ -293,7 +293,12 @@ public sealed class ModuleCatalog
             // still had EIGHT controls in five colours and the same flex-wrap - the layout just
             // rejected on the other pane. Both are now one Actions (n) menu with one red item.
             // Nothing had ever checked the "identical" clause, which is how they came apart.
-            Version = "1.20.3",
+            // 1.20.4: the batch list had no Total column. R16 named Batch/Synced/Failed/Status
+            // and the table was built to that list exactly - while the sort dropdown offered
+            // "Total" and ordered by it, so the list could be sorted by a column that was not on
+            // screen, and Synced and Failed were fractions with no denominator. Added to both
+            // batch views; R16 amended. Owner caught it on a dev screenshot.
+            Version = "1.20.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -68,7 +68,7 @@
    alignment - two separate column definitions is how a header drifts off its column. */
 .mig-batch-row {
     display: grid;
-    grid-template-columns: 1.25rem minmax(0, 1fr) 6rem 3.5rem 3.5rem;
+    grid-template-columns: 1.25rem minmax(0, 1fr) 6rem 3.5rem 3.5rem 3.5rem;
     gap: .5rem;
     align-items: center;
     padding: .4rem .75rem;
@@ -317,7 +317,7 @@
    (owner screenshot, v1.15.0 on dev). Its first and last columns hold text buttons, so they get
    text-sized columns. Everything between stays aligned with the list on the left. */
 .mig-selected-row {
-    grid-template-columns: 3.5rem minmax(0, 1fr) 6rem 4rem 5rem;
+    grid-template-columns: 3.5rem minmax(0, 1fr) 6rem 3.5rem 3.5rem 5rem;
 }
 
 .mig-selected-row .btn-link {

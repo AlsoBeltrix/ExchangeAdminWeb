@@ -659,6 +659,14 @@
                                     <span></span>
                                     <span>Batch</span>
                                     <span>Status</span>
+                                    @* R16, amended 2026-09-29. Total was missing from the column
+                                       list and therefore from the table, while the sort dropdown
+                                       offered "Total" and sorted by it - so the list could be
+                                       ordered by a column that was not on screen. Synced and
+                                       Failed are fractions; without the denominator "0 synced"
+                                       says nothing about whether the batch holds one mailbox or
+                                       five hundred. *@
+                                    <span class="mig-count">Total</span>
                                     <span class="mig-count">Synced</span>
                                     <span class="mig-count">Failed</span>
                                 </div>
@@ -724,6 +732,7 @@
                                             }
                                         </span>
                                         <span><span class="badge bg-@GetStatusColor(batch.Status)" title="@batch.Status">@batch.Status</span></span>
+                                        <span class="mig-count">@batch.TotalCount</span>
                                         <span class="mig-count text-success fw-bold">@batch.SyncedCount</span>
                                         <span class="mig-count">
                                             @if (batch.FailedCount > 0)
@@ -791,6 +800,7 @@
                                         <span></span>
                                         <span>Batch</span>
                                         <span>Status</span>
+                                        <span class="mig-count">Total</span>
                                         <span class="mig-count">Synced</span>
                                         <span class="mig-count"></span>
                                     </div>
@@ -806,6 +816,7 @@
                                             </button>
                                             <span class="mig-batch-name" title="@selectedName">@selectedName</span>
                                             <span><span class="badge bg-@GetStatusColor(batch.Status)">@batch.Status</span></span>
+                                            <span class="mig-count">@batch.TotalCount</span>
                                             <span class="mig-count text-success fw-bold">@batch.SyncedCount</span>
                                             <span class="mig-count">
                                                 <button class="btn btn-link btn-sm p-0 text-danger" disabled="@IsBusy"
