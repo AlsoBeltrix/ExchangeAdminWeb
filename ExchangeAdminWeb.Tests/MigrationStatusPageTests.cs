@@ -1290,6 +1290,37 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void NoStyleRuleTargetsAClassThePageNoLongerRenders()
+    {
+        // Found by the codex review of the table refactor, not by me: converting the grid to a
+        // table deleted the `mig-batch-head` class, and the rule that gave the abbreviated
+        // `Sync` / `Fail` headers their dotted underline and help cursor still pointed at it.
+        // The tooltip survived, the only hint that a tooltip EXISTS did not - so a short label
+        // would have read as a truncation, which is the thing that affordance was added to
+        // prevent.
+        //
+        // A dead selector breaks nothing and compiles fine, which is exactly why a refactor
+        // leaves them behind. Scoped to this page's own `mig-` prefix: Bootstrap's classes are
+        // not ours to account for.
+        var page = ReadPage();
+        var css = File.ReadAllText(Path.Combine(GetPagesDirectory(), "Migration.razor.css"));
+
+        var used = Regex.Matches(css, @"\.(mig-[a-z0-9-]+)")
+            .Select(m => m.Groups[1].Value)
+            .Distinct()
+            .OrderBy(c => c, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(used.Length > 10, $"expected this page's own classes, found {used.Length}");
+
+        var dead = used.Where(c => !page.Contains(c, StringComparison.Ordinal)).ToArray();
+
+        Assert.True(dead.Length == 0,
+            "these style rules target classes the page no longer renders, so whatever they were "
+            + "doing is silently not happening: " + string.Join(", ", dead));
+    }
+
+    [Fact]
     public void AllThreeEmptyStatesSayWhichOneApplies()
     {
         // R28. "Nothing matches" for all three hides whether the filter or the data is the

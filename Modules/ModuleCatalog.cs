@@ -330,7 +330,11 @@ public sealed class ModuleCatalog
             // A table sizes each column to its own widest cell across all rows, so there is no
             // width to get wrong and a header cannot misalign against its body. The mailbox
             // table beside it always worked this way and had none of those faults.
-            Version = "1.21.0",
+            // 1.21.1: the table refactor left the abbreviated Sync/Fail headers without their
+            // dotted-underline hover affordance - the rule still named the deleted
+            // mig-batch-head class. Found by the codex review, not by the gates: a dead CSS
+            // selector compiles and breaks nothing visible except the thing it was doing.
+            Version = "1.21.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

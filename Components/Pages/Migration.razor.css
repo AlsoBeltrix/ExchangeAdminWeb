@@ -348,7 +348,7 @@
 
 /* Abbreviated column headings carry the full name in a title. The dotted underline is the only
    hint that hovering will say more - without it a short label just reads as a truncation. */
-.mig-batch-head .mig-count[title] {
+.mig-batches thead .mig-count[title] {
     text-decoration: underline dotted;
     text-underline-offset: .2em;
     cursor: help;
