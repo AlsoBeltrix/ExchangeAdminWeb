@@ -1048,26 +1048,56 @@ public class MigrationStatusPageTests
         var page = StripRazorComments(ReadPage());
         var sorted = StripLineComments(GetMethodBody("SortBatches"));
 
-        string[] sortable = ["Name", "Status", "Total", "Synced", "Failed"];
+        // DERIVED from the dropdown, never listed here. The first version of this test hardcoded
+        // five of the seven options and passed while two of them still had no column - which is
+        // the same mistake it was written to catch, one level up: a check seeded from memory
+        // rather than from the thing it checks. If a sort option is added later, this test sees
+        // it without anyone remembering to come back.
+        var sortable = Regex.Matches(
+                page[page.IndexOf("id=\"batchSortColumn\"", StringComparison.Ordinal)..],
+                @"<option value=""(?<v>[A-Za-z]+)""")
+            .Select(m => m.Groups["v"].Value)
+            .TakeWhile(v => v != "Email")
+            .ToArray();
+
+        Assert.True(sortable.Length >= 7,
+            $"expected to find every batch sort option, found {sortable.Length}");
+
+        // Two are sortable without a column of their own, on purpose. Written down with the
+        // reason, in the spirit of ClickGateRegistry exemptions: the gap is fine, the silence is
+        // not. Any OTHER option must be a visible column.
+        var exempt = new Dictionary<string, string>
+        {
+            ["Name"] = "the batch name IS the first column; it carries no separate count header",
+            ["Direction"] = "shown per batch in the right-hand pane as a ToCloud/FromCloud badge. "
+                + "A seventh column in this pane would squeeze the name column, and R15 forbids "
+                + "clipping the trailing identifier in a batch name",
+            ["Created"] = "shown per batch in the right-hand pane header (Created: ...), and the "
+                + "sort control itself names the ordering on screen. Same width argument as "
+                + "Direction: the fixed columns already take most of a narrow pane. UNLIKE those "
+                + "two, Total earned a column because it is a DENOMINATOR - Synced and Failed "
+                + "mean nothing without it, and it is compared row to row while scanning",
+        };
         foreach (var column in sortable)
         {
+            // Every option must actually sort, or it is a control that does nothing.
             Assert.True(
-                page.Contains($"<option value=\"{column}\">", StringComparison.Ordinal),
-                $"the batch sort no longer offers {column}; this test needs updating with it");
-
-            Assert.True(
-                sorted.Contains($"\"{column}\" =>", StringComparison.Ordinal),
+                sorted.Contains($"\"{column}\" =>", StringComparison.Ordinal)
+                || column == "Created",
                 $"the batch sort offers {column} but SortBatches does not order by it");
-        }
+            // Created is the switch default rather than a named case, which is why it is the one
+            // option allowed to be absent from the case list above.
 
-        // Name is the batch name column, which carries no "Total"-style header of its own.
-        foreach (var column in new[] { "Status", "Total", "Synced", "Failed" })
-        {
+            if (exempt.ContainsKey(column))
+                continue;
+
+            var header = column;
             Assert.True(
-                page.Contains($"<span class=\"mig-count\">{column}</span>", StringComparison.Ordinal)
-                || page.Contains($"<span>{column}</span>", StringComparison.Ordinal),
+                page.Contains($"<span class=\"mig-count\">{header}</span>", StringComparison.Ordinal)
+                || page.Contains($"<span>{header}</span>", StringComparison.Ordinal),
                 $"the batch sort offers {column} but no column header shows it, so the list can "
-                + "be ordered by something the operator cannot see");
+                + "be ordered by something the operator cannot see - which is exactly what "
+                + "'where is the total?' turned out to mean");
         }
 
         // Both batch views show it - the selection pane lists the same batches, and a total that

@@ -128,6 +128,16 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     screen, and Synced/Failed were fractions with no denominator. Added to both batch views,
     R16 amended, and the new test asserts the general rule (every sortable column is visible)
     rather than the one missing name.
+  - **The Total test was itself partial, now derived.** It hardcoded five of the SEVEN batch
+    sort options and passed while Direction and Created still had no column - the same mistake
+    it was written to catch, one level up: a check seeded from memory rather than from the
+    thing it checks. It now reads the options out of the markup, so a sort option added later
+    is covered without anyone remembering.
+    - **OPEN, owner call:** Direction and Created are sortable with no column of their own.
+      Both are recorded as written exemptions - each is shown per batch in the right-hand pane,
+      and a seventh column would squeeze the batch name past what R15 allows. Total earned a
+      column because it is a denominator compared row to row; those two are not. If the owner
+      wants them visible, the columns go in and the name column narrows.
   - **Still not fully verified in a browser.** Remaining `## Acceptance` hand checks: the
     batch-open page-reset risk the plan flags, the Actions menu opening and closing on an
     outside click, and the schedule time field resolving to the UTC it displays.
