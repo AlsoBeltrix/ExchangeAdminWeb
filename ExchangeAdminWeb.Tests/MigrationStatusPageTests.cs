@@ -925,6 +925,45 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void TickingEveryMailboxDoesNotEmptyThePane()
+    {
+        // Found on dev, 2026-09-29, on a one-mailbox batch whose mailbox was ticked: the pane
+        // rendered "No mailbox in this batch matches ." - with a blank filter name - and drew no
+        // rows at all, while Get-CMigrationUser confirmed the mailbox was there and the header
+        // beside it said Total: 1.
+        //
+        // The cause is that the pinned rows (R5a) render INSIDE the table, and the empty state
+        // that short-circuits that table asked MailboxTotalCount, which counts the UNPINNED rows
+        // only. Tick everything - select-all does it in one click, and a one-mailbox batch does
+        // it by accident - and the count is zero while every row sits in the pinned block. So the
+        // pane hid exactly the rows the operator had selected, which is the R11 failure that R5a
+        // pinning was introduced to prevent, and it hid them at the moment they mattered most.
+        //
+        // A source tripwire, not a render: no test in this repo can render a Blazor component,
+        // which is the whole reason this defect reached a browser to be found.
+        var page = StripRazorComments(ReadPage());
+
+        Assert.DoesNotContain("else if (MailboxTotalCount == 0)", page, StringComparison.Ordinal);
+        Assert.Contains("else if (!AnyMailboxRowRenders)", page, StringComparison.Ordinal);
+
+        var predicate = GetMemberSource(
+            @"private\s+bool\s+AnyMailboxRowRenders", "AnyMailboxRowRenders");
+        Assert.Contains("PinnedMailboxTotalCount > 0", predicate, StringComparison.Ordinal);
+        Assert.Contains("MailboxTotalCount > 0", predicate, StringComparison.Ordinal);
+
+        // The filtered wording is only honest when a filter is set. Naming an empty filter is how
+        // the defect announced itself.
+        Assert.Contains("@if (MailboxFilterIsSet)", page, StringComparison.Ordinal);
+
+        // And the pinned block is counted by the rows it renders, not by the selection set: a
+        // selection holding a mailbox from another batch drew a divider over nothing and a pager
+        // promising pages that could not render.
+        var pinned = GetMemberSource(
+            @"private\s+int\s+PinnedMailboxTotalCount", "PinnedMailboxTotalCount");
+        Assert.Contains("PinnedMailboxes().Count()", pinned, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AllThreeEmptyStatesSayWhichOneApplies()
     {
         // R28. "Nothing matches" for all three hides whether the filter or the data is the
@@ -951,7 +990,13 @@ public class MigrationStatusPageTests
 
         // The filter-result state is reached only when there IS data, or it would swallow the
         // empty-batch case and the distinction would exist in the source and not on screen.
-        Assert.Contains("else if (MailboxTotalCount == 0)", page, StringComparison.Ordinal);
+        //
+        // This assertion USED to name "else if (MailboxTotalCount == 0)" and passed for months
+        // while that very condition blanked the pane for any batch with every mailbox ticked
+        // (see TickingEveryMailboxDoesNotEmptyThePane). It pinned the defect in place and read as
+        // coverage. Pinning a condition is not the same as checking what the condition decides,
+        // and a test that quotes the implementation back to itself can only ever agree with it.
+        Assert.Contains("else if (!AnyMailboxRowRenders)", page, StringComparison.Ordinal);
     }
 
     [Fact]

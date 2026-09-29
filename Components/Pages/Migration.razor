@@ -1000,15 +1000,39 @@
                                     {
                                         <p class="text-muted text-center my-5">This batch contains no mailboxes.</p>
                                     }
-                                    else if (MailboxTotalCount == 0)
+                                    else if (!AnyMailboxRowRenders)
                                     {
                                         @* R28. Distinct empty states. "No mailbox matches the
                                            filter" and "this batch has no mailboxes" are different
                                            facts, and one message for both hides whether the filter
-                                           or the data is the problem. *@
-                                        <p class="text-muted text-center my-5">
-                                            No mailbox in this batch matches <strong>@mailboxFilter</strong>.
-                                        </p>
+                                           or the data is the problem.
+
+                                           Found on dev, 2026-09-29: this asked MailboxTotalCount,
+                                           which counts the UNPINNED rows only. Tick every mailbox
+                                           in a batch - trivial with select-all, automatic on a
+                                           one-mailbox batch - and that count is zero while the
+                                           rows are all sitting in the pinned block. The pane then
+                                           rendered "matches" with an EMPTY filter name and hid
+                                           every ticked row, which is precisely the R11 failure
+                                           R5a pinning exists to prevent. The condition has to ask
+                                           whether ANY row renders, pinned or not. *@
+                                        @if (MailboxFilterIsSet)
+                                        {
+                                            <p class="text-muted text-center my-5">
+                                                No mailbox in this batch matches <strong>@mailboxFilter</strong>.
+                                            </p>
+                                        }
+                                        else
+                                        {
+                                            @* Unreachable while pinned rows ignore the filter: no
+                                               filter means every mailbox is either pinned or
+                                               other. Written anyway - the branch above named an
+                                               empty filter for a year because nobody asked what
+                                               it would say. *@
+                                            <p class="text-muted text-center my-5">
+                                                This batch contains no mailboxes to show.
+                                            </p>
+                                        }
                                     }
                                     else
                                     {
@@ -1035,7 +1059,7 @@
                                                    pinning is how R11 is met for them - a ticked
                                                    mailbox is never hidden by the filter or by a
                                                    page change. *@
-                                                @if (selectedMailboxes.Count > 0)
+                                                @if (PinnedMailboxTotalCount > 0)
                                                 {
                                                     foreach (var user in GetPinnedMailboxesPage())
                                                     {
@@ -2258,7 +2282,10 @@
     private IEnumerable<MigrationUserInfo> GetPinnedMailboxesPage() =>
         ListWindow.Slice(PinnedMailboxes(), pinnedMailboxPage, PinnedMailboxPageSize);
 
-    private int PinnedMailboxTotalCount => selectedMailboxes.Count;
+    // The rows actually pinned, not the size of the selection set. Those differ whenever the
+    // selection holds a mailbox this batch does not contain, and the pager then labelled pages
+    // that could never render.
+    private int PinnedMailboxTotalCount => PinnedMailboxes().Count();
 
     private int PinnedMailboxPageCount =>
         ListWindow.PageCount(PinnedMailboxTotalCount, PinnedMailboxPageSize);
@@ -2275,6 +2302,12 @@
         ListWindow.Slice(OtherMailboxes(), mailboxPage, MailboxPageSize);
 
     private int MailboxTotalCount => OtherMailboxes().Count();
+
+    // Whether the pane has anything at all to draw. Both halves, because a pinned row is still a
+    // rendered row - see the empty state above for what asking only one half did.
+    private bool AnyMailboxRowRenders => PinnedMailboxTotalCount > 0 || MailboxTotalCount > 0;
+
+    private bool MailboxFilterIsSet => mailboxFilter.Trim().Length > 0;
 
     private int MailboxPageCount => ListWindow.PageCount(MailboxTotalCount, MailboxPageSize);
 

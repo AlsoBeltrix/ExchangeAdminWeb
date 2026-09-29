@@ -275,7 +275,13 @@ public sealed class ModuleCatalog
             // one line, and the fifth already wrapped (owner, 2026-09-29, on a screenshot -
             // one line, uniform controls, and colour reserved for Delete)
             // (docs/MigrationInterfaceRedesign-Plan.md R13, queue items 12 and 14).
-            Version = "1.20.0",
+            // 1.20.1: a batch whose every mailbox was ticked rendered as empty. The pinned rows
+            // (R5a) sit inside the table, and the empty state short-circuiting that table counted
+            // only the UNPINNED rows - so select-all, or any one-mailbox batch, blanked the pane
+            // and announced "No mailbox in this batch matches" with no filter set. It hid exactly
+            // the rows the operator had selected, which is the R11 failure pinning exists to
+            // prevent. Found on dev; a test had pinned the faulty condition and read as coverage.
+            Version = "1.20.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

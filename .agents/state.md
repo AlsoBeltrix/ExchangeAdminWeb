@@ -95,9 +95,19 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
   - `RefusalMechanism.NoneNeeded` is new in the click-gate contract: the menu-closing sheet
     reaches no operation, and the vocabulary had no honest word for that on the click side
     (`HarmlessKeyboardPath` already had one for key presses). It still requires a written reason.
-  - **Not yet verified in a browser.** The plan's `## Acceptance` hand checks still need a dev
-    deploy - in particular the Actions menu opening, closing on an outside click, and the
-    schedule time field resolving to the UTC it displays.
+  - **First dev check found a real defect, now fixed (module `1.20.1`).** A batch whose every
+    mailbox was ticked rendered as empty: the pinned rows (R5a) sit inside the table, and the
+    empty state short-circuiting that table counted only the UNPINNED rows. Select-all, or any
+    one-mailbox batch, blanked the pane and said "No mailbox in this batch matches" with no
+    filter set. It hid exactly the rows the operator had selected - the R11 failure pinning
+    exists to prevent.
+    - **A test had pinned the faulty condition** (`AnEmptyBatchAndAnEmptyFilterResultSayDifferentThings`
+      asserted `else if (MailboxTotalCount == 0)`) and read as coverage for months. Quoting the
+      implementation back to itself can only ever agree with it. That assertion now names the
+      corrected condition and carries the lesson.
+  - **Still not fully verified in a browser.** Remaining `## Acceptance` hand checks: the
+    batch-open page-reset risk the plan flags, the Actions menu opening and closing on an
+    outside click, and the schedule time field resolving to the UTC it displays.
   `docs/MigrationInterfaceRedesign-Plan.md` is `Implemented`. Module `1.9.1` -> `1.19.0`, no base
   app bump at any point. Gates green at `8b8b8be`: build 0 errors, **3261 passed / 0 failed /
   3 skipped**, format, ASCII, `git diff --check`, PSScriptAnalyzer 0 errors, Pester 157/0.
