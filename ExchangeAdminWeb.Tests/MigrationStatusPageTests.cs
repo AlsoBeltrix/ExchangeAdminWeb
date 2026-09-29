@@ -228,15 +228,22 @@ public class MigrationStatusPageTests
         // removed, which is the debt S2 recorded. Comments are stripped first because this block's
         // own prose explains the "Clear selection" adjacency and would otherwise trip the check
         // that the phrase is absent - a guard failing on the comment that documents it.
+        // The action items moved into BatchActionsMenu when that menu began rendering in both
+        // panes - the left one where the ticking happens and the right one where the selection
+        // is listed. One definition, so this reads it rather than the placement.
+        var page = StripRazorComments(ReadPage());
+        var menu = StripLineComments(GetMemberSource(
+            @"private\s+RenderFragment<string>\s+BatchActionsMenu", "BatchActionsMenu"));
         var toolbar = StripLineComments(
-            ExtractBlock(StripRazorComments(ReadPage()), "@if (canManage && selectedBatches.Count > 0)"));
+            ExtractBlock(page, "@if (canManage && selectedBatches.Count > 0)"));
 
-        Assert.Contains("StageDeleteSelected", toolbar, StringComparison.Ordinal);
-        Assert.Contains("StageRemoveCompletedSelected", toolbar, StringComparison.Ordinal);
-        Assert.Contains("StageResumeSelected", toolbar, StringComparison.Ordinal);
-        Assert.Contains("StageCompleteSelected", toolbar, StringComparison.Ordinal);
-        Assert.Contains("StageStopSelected", toolbar, StringComparison.Ordinal);
+        Assert.Contains("StageDeleteSelected", menu, StringComparison.Ordinal);
+        Assert.Contains("StageRemoveCompletedSelected", menu, StringComparison.Ordinal);
+        Assert.Contains("StageResumeSelected", menu, StringComparison.Ordinal);
+        Assert.Contains("StageCompleteSelected", menu, StringComparison.Ordinal);
+        Assert.Contains("StageStopSelected", menu, StringComparison.Ordinal);
 
+        // The left bar keeps the tick-box wording; the right pane keeps "Clear selection".
         Assert.Contains("Untick all", toolbar, StringComparison.Ordinal);
 
         // "Clear selection" belongs to the right pane, which has no tick boxes to untick (R10).
@@ -254,10 +261,10 @@ public class MigrationStatusPageTests
         // On the control, not as a banner or a caption: one Complete button exists, so the text
         // is not repeated per row, and the per-batch answer already lives in the confirm step,
         // which names every skipped batch with the status that skipped it.
-        var toolbar = ExtractBlock(
-            StripRazorComments(ReadPage()), "@if (canManage && selectedBatches.Count > 0)");
+        var menu = GetMemberSource(
+            @"private\s+RenderFragment<string>\s+BatchActionsMenu", "BatchActionsMenu");
 
-        var complete = GetButtonTags(toolbar)
+        var complete = GetButtonTags(StripRazorComments(menu))
             .Single(tag => tag.Contains("StageCompleteSelected", StringComparison.Ordinal));
 
         var title = Regex.Match(complete, @"title=""(?<text>[^""]*)""").Groups["text"].Value;
@@ -1122,7 +1129,7 @@ public class MigrationStatusPageTests
 
         // Both batch views show it - the selection pane lists the same batches, and a total that
         // appears in one and not the other is the same omission wearing a different hat.
-        Assert.Equal(2, CountOf(page, "@batch.SyncedCount</span><span class=\"text-muted\">/@batch.TotalCount"));
+        Assert.Equal(2, CountOf(page, "<td class=\"mig-count\">@batch.TotalCount</td>"));
     }
 
     [Fact]
@@ -1465,13 +1472,14 @@ public class MigrationStatusPageTests
         // D2(b) was rejected: disabling the bulk button on a mixed selection sends the operator
         // back to acting one row at a time, which is the reported problem. The buttons gate on an
         // action already running, never on what is ticked.
-        var toolbar = ExtractBlock(ReadPage(), "@if (canManage && selectedBatches.Count > 0)");
+        var menu = GetMemberSource(
+            @"private\s+RenderFragment<string>\s+BatchActionsMenu", "BatchActionsMenu");
 
-        Assert.Contains("StageDeleteSelected", toolbar, StringComparison.Ordinal);
-        Assert.Contains("StageRemoveCompletedSelected", toolbar, StringComparison.Ordinal);
-        Assert.Contains("StageResumeSelected", toolbar, StringComparison.Ordinal);
-        Assert.DoesNotContain("Applies(", toolbar, StringComparison.Ordinal);
-        Assert.DoesNotContain("Eligible.Count == 0", toolbar, StringComparison.Ordinal);
+        Assert.Contains("StageDeleteSelected", menu, StringComparison.Ordinal);
+        Assert.Contains("StageRemoveCompletedSelected", menu, StringComparison.Ordinal);
+        Assert.Contains("StageResumeSelected", menu, StringComparison.Ordinal);
+        Assert.DoesNotContain("Applies(", menu, StringComparison.Ordinal);
+        Assert.DoesNotContain("Eligible.Count == 0", menu, StringComparison.Ordinal);
     }
 
     [Fact]

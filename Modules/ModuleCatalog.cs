@@ -334,7 +334,24 @@ public sealed class ModuleCatalog
             // dotted-underline hover affordance - the rule still named the deleted
             // mig-batch-head class. Found by the codex review, not by the gates: a dead CSS
             // selector compiles and breaks nothing visible except the thing it was doing.
-            Version = "1.21.1",
+            // 1.22.0: four defects the owner found on dev in one sitting.
+            // - Get-MigrationUser -BatchId returned nothing for batches that had users, so the
+            //   pane said "This batch contains no mailboxes" for a batch whose own record said
+            //   it held one. Piped from Get-MigrationBatch instead, which is the form that
+            //   works. THIS WAS THE REAL BUG behind the empty mailbox pane.
+            // - That empty state now distinguishes an empty batch from the batch record and the
+            //   user list DISAGREEING, instead of reporting the second as the first.
+            // - Total and Synced are separate columns again with real headers. They were merged
+            //   into "0/1" to save width under the old hardcoded grid; the owner then had to
+            //   ask what 0/1 meant. A table column costs only its content, so the hack bought
+            //   nothing once the grid was gone.
+            // - The batch Actions menu now renders in the right pane too. R3 puts batch
+            //   operations in the batch pane and R6 puts actions at the top of the thing they
+            //   act on; with several batches ticked those are different panes, and the pane
+            //   that LISTS the selection could not act on it.
+            // Also: SyncedCount no longer falls back to SyncedItemCount - items and mailboxes
+            // are different units and the fallback rendered an item count over a mailbox total.
+            Version = "1.22.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -590,7 +590,10 @@ https://admin.exchange.microsoft.com/#/migration";
                         var batchNameVal = batchObj.Properties["Identity"]?.Value?.ToString() ?? "Unknown";
                         var status = batchObj.Properties["Status"]?.Value?.ToString() ?? "Unknown";
                         var totalCount = Convert.ToInt32(batchObj.Properties["TotalCount"]?.Value ?? 0);
-                        var syncedCount = Convert.ToInt32(batchObj.Properties["SyncedCount"]?.Value ?? batchObj.Properties["SyncedItemCount"]?.Value ?? 0);
+                        // No fallback to SyncedItemCount: that counts ITEMS and TotalCount
+                        // counts MAILBOXES, so the fallback would render an item count over a
+                        // mailbox total and read as a nonsense fraction. Absent means 0 here.
+                        var syncedCount = Convert.ToInt32(batchObj.Properties["SyncedCount"]?.Value ?? 0);
                         var finalizedCount = Convert.ToInt32(batchObj.Properties["FinalizedCount"]?.Value ?? batchObj.Properties["FinalizedItemCount"]?.Value ?? 0);
                         var failedCount = Convert.ToInt32(batchObj.Properties["FailedCount"]?.Value ?? batchObj.Properties["FailedItemCount"]?.Value ?? 0);
                         var createdDateTime = batchObj.Properties["CreationDateTime"]?.Value as DateTime? ?? DateTime.MinValue;
@@ -651,8 +654,19 @@ https://admin.exchange.microsoft.com/#/migration";
 
             try
             {
+                // PIPED from the batch, not Get-MigrationUser -BatchId. Proven on dev
+                // 2026-09-29: -BatchId returns nothing for a batch whose own record reports
+                // TotalCount 1, while piping the batch object returns the user. -BatchId binds
+                // a MigrationBatchIdParameter and does not resolve the same way for every batch
+                // identity; the pipeline hands it the resolved batch object instead, which is
+                // what the working command from the operator does.
+                //
+                // The page showed "This batch contains no mailboxes" for batches that had one.
+                ps.AddCommand("Get-MigrationBatch")
+                  .AddParameter("Identity", batchName)
+                  .AddParameter("ErrorAction", "Ignore");
+
                 ps.AddCommand("Get-MigrationUser")
-                  .AddParameter("BatchId", batchName)
                   .AddParameter("ErrorAction", "Ignore");
 
                 var userResults = InvokeOptional(ps, tracker);

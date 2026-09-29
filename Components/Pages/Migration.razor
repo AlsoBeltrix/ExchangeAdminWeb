@@ -555,95 +555,11 @@
                                eligible/skipped split. *@
                             @if (canManage && selectedBatches.Count > 0)
                             {
-                                @* Owner, 2026-09-29, on a screenshot of the previous version: one
-                                   line, no differently sized buttons, and colours that mean
-                                   something. Six actions cannot fit as six labelled buttons in
-                                   this pane - the fifth already wrapped, and R13 adds a sixth -
-                                   so they collapse into one menu. That answers all four
-                                   complaints at once: the row cannot wrap, there is one button so
-                                   nothing can be a different size, the count rides on that button
-                                   instead of a "4 selected" block, and the only colour left is
-                                   the red on Delete, which is the only item that needs one. *@
                                 <div class="mig-pane-actions d-flex align-items-center gap-2">
-                                    <div class="dropdown">
-                                        <button class="btn btn-sm btn-outline-primary dropdown-toggle"
-                                                type="button"
-                                                disabled="@(IsBusy || pendingActionLabel != null)"
-                                                @onclick="ToggleBatchActionsMenu">
-                                            Actions (@selectedBatches.Count)
-                                        </button>
-                                        @if (batchActionsMenuOpen)
-                                        {
-                                            @* Closes on any outside click without JS interop: a
-                                               transparent sheet under the menu and over
-                                               everything else. The Bootstrap dropdown needs its
-                                               JS bundle, and this page has no other reason to
-                                               take that dependency. *@
-                                            <div class="mig-menu-sheet" @onclick="CloseBatchActionsMenu"></div>
-                                            <div class="dropdown-menu show mig-actions-menu">
-                                                @* Every item is enabled whenever anything is
-                                                   ticked, never conditioned on eligibility: under
-                                                   D2(a) a mixed or wholly-ineligible selection
-                                                   has a defined, useful outcome, and disabling is
-                                                   the D2(b) that was rejected. Each stages a
-                                                   ticket and reads MigrationBatchActionPlanner
-                                                   for its eligible/skipped split. *@
-                                                <button class="dropdown-item" type="button"
-                                                        disabled="@(IsBusy || pendingActionLabel != null)"
-                                                        title="Completes selected batches that have finished syncing. A batch with errors cannot complete until they are fixed or removed."
-                                                        @onclick="StageCompleteSelected">
-                                                    Complete now
-                                                </button>
-                                                @* R13, queue item 12. The service method has
-                                                   existed since S8; until this item it was
-                                                   reachable only from C#, which is exactly the
-                                                   "buried" R13 forbids. It sits under Complete
-                                                   because it IS Complete with a time on it. *@
-                                                <button class="dropdown-item" type="button"
-                                                        disabled="@(IsBusy || pendingActionLabel != null)"
-                                                        title="Sets a future time for the selected batches to finalise. A batch still syncing can be scheduled."
-                                                        @onclick="StageScheduleSelected">
-                                                    Schedule completion...
-                                                </button>
-                                                <div class="dropdown-divider"></div>
-                                                <button class="dropdown-item" type="button"
-                                                        disabled="@(IsBusy || pendingActionLabel != null)"
-                                                        title="Stops the selected batches that are still moving"
-                                                        @onclick="StageStopSelected">
-                                                    Stop
-                                                </button>
-                                                <button class="dropdown-item" type="button"
-                                                        disabled="@(IsBusy || pendingActionLabel != null)"
-                                                        title="Restarts the selected batches that are idle but restartable"
-                                                        @onclick="StageResumeSelected">
-                                                    Resume / Retry
-                                                </button>
-                                                <div class="dropdown-divider"></div>
-                                                <button class="dropdown-item" type="button"
-                                                        disabled="@(IsBusy || pendingActionLabel != null)"
-                                                        title="Removes only the selected batches whose status is Completed"
-                                                        @onclick="StageRemoveCompletedSelected">
-                                                    Remove completed
-                                                </button>
-                                                @* The one coloured item, because it is the one
-                                                   that destroys a batch whatever its status. A
-                                                   toolbar where four of six controls were tinted
-                                                   taught the operator to ignore the tint. *@
-                                                <button class="dropdown-item text-danger" type="button"
-                                                        disabled="@(IsBusy || pendingActionLabel != null)"
-                                                        title="Removes every selected batch, whatever its status"
-                                                        @onclick="StageDeleteSelected">
-                                                    Delete
-                                                </button>
-                                            </div>
-                                        }
-                                    </div>
-
-                                    @* R10. "Untick all" here, where the tick boxes are; the right
+                                    @BatchActionsMenu("left")
+                                    @* R10. "Untick all" here, where the tick boxes are. The right
                                        pane says "Clear selection" for the same operation because
-                                       there is nothing to untick there. Named "Untick", not
-                                       "Clear ...": the word "Clear" beside a destructive action
-                                       is the adjacency the owner rejected. *@
+                                       there is nothing to untick there. *@
                                     <button class="btn btn-sm btn-outline-secondary ms-auto flex-shrink-0"
                                             disabled="@IsBusy" @onclick="ClearBatchSelection">
                                         Untick all
@@ -677,12 +593,18 @@
                                             <th class="mig-dir-cell"></th>
                                             <th class="mig-batch-name">Batch</th>
                                             <th>Status</th>
-                                            @* Synced and Total in one cell, as the fraction they
-                                               always were. Short labels with the full name on
-                                               hover: the heading must not set the width of a
-                                               column whose data reads "0/1". *@
-                                            <th class="mig-count" title="Synced / Total - mailboxes synced, of the batch total">Sync</th>
-                                            <th class="mig-count" title="Failed - mailboxes that could not move">Fail</th>
+                                            @* Separate columns with their real names. They were
+                                               merged into one "0/1" cell to save width when this
+                                               was a CSS grid with hardcoded tracks - and the
+                                               owner then had to ask what 0/1 meant, which is the
+                                               answer. A table column costs only its own content,
+                                               so the hack bought nothing once the grid was gone.
+                                               R17: no unlabelled values, and an abbreviation
+                                               whose meaning lives in a tooltip is close enough
+                                               to unlabelled to count. *@
+                                            <th class="mig-count">Total</th>
+                                            <th class="mig-count">Synced</th>
+                                            <th class="mig-count">Failed</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -741,8 +663,9 @@
                                                     }
                                                 </td>
                                                 <td><span class="badge bg-@GetStatusColor(batch.Status)" title="@batch.Status">@batch.Status</span></td>
+                                                <td class="mig-count">@batch.TotalCount</td>
                                                 <td class="mig-count">
-                                                    <span class="text-success fw-bold">@batch.SyncedCount</span><span class="text-muted">/@batch.TotalCount</span>
+                                                    <span class="text-success fw-bold">@batch.SyncedCount</span>
                                                 </td>
                                                 <td class="mig-count">
                                                     @if (batch.FailedCount > 0)
@@ -795,13 +718,26 @@
                             @* R2. This pane is about the SELECTION. Exactly one ticked batch means
                                it is entirely and only that batch's mailboxes; more than one means
                                it lists exactly the ticked batches; none means nothing is chosen.
-                               No batch-scoped OPERATION appears here in any of the three - those
-                               live in the batch pane (R3), which is why there is no action bar
-                               below. *@
+
+                               It carries the batch actions too. R3 says batch operations live in
+                               the batch pane and R6 says actions sit at the top of the thing they
+                               act on; with several batches ticked those point at different panes,
+                               because the thing being acted on is the list RIGHT HERE. That
+                               contradiction was implemented literally - actions on the left only -
+                               and the result was a pane that presents itself as the home of the
+                               selection and cannot act on it. Owner, 2026-09-29.
+
+                               One definition, rendered in both places, keyed so only the menu
+                               that was clicked opens. Two copies is how the two action bars came
+                               apart in R12. *@
                             @if (selectedBatches.Count > 1)
                             {
                                 <div class="mig-pane-head d-flex align-items-center gap-2">
                                     <strong>@selectedBatches.Count batches selected</strong>
+                                    @if (canManage)
+                                    {
+                                        @BatchActionsMenu("right")
+                                    }
                                     @* R10. No tick boxes in this pane, so it never says "untick". *@
                                     <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@IsBusy"
                                             @onclick="ClearBatchSelection">
@@ -817,7 +753,8 @@
                                                 <th class="mig-dir-cell"></th>
                                                 <th class="mig-batch-name">Batch</th>
                                                 <th>Status</th>
-                                                <th class="mig-count" title="Synced / Total - mailboxes synced, of the batch total">Sync</th>
+                                                <th class="mig-count">Total</th>
+                                                <th class="mig-count">Synced</th>
                                                 <th></th>
                                             </tr>
                                         </thead>
@@ -837,8 +774,9 @@
                                                     <td class="mig-dir-cell">@DirectionIcon(batch.Direction)</td>
                                                     <td class="mig-batch-name" title="@selectedName">@selectedName</td>
                                                     <td><span class="badge bg-@GetStatusColor(batch.Status)">@batch.Status</span></td>
+                                                    <td class="mig-count">@batch.TotalCount</td>
                                                     <td class="mig-count">
-                                                        <span class="text-success fw-bold">@batch.SyncedCount</span><span class="text-muted">/@batch.TotalCount</span>
+                                                        <span class="text-success fw-bold">@batch.SyncedCount</span>
                                                     </td>
                                                     <td class="mig-count">
                                                         <button class="btn btn-link btn-sm p-0 text-danger" disabled="@IsBusy"
@@ -1062,7 +1000,28 @@
                                     }
                                     else if (!batchUsers.Any())
                                     {
-                                        <p class="text-muted text-center my-5">This batch contains no mailboxes.</p>
+                                        @* Two different facts, and they used to share one
+                                           sentence. Exchange answers "what is in this batch"
+                                           from two places - the batch record carries TotalCount,
+                                           the mailbox list comes from Get-MigrationUser - and
+                                           they can disagree. Saying "contains no mailboxes" when
+                                           the batch record says it holds some is not an empty
+                                           state, it is a contradiction the operator has to be
+                                           told about rather than shown as a clean result.
+                                           Owner, 2026-09-29, on exactly that screen. *@
+                                        @if (MailboxCountDisagreesWithTheBatch)
+                                        {
+                                            <p class="text-warning text-center my-5">
+                                                This batch reports <strong>@(openBatch!.TotalCount)</strong>
+                                                mailbox@(openBatch.TotalCount == 1 ? "" : "es"), but Exchange
+                                                returned none for it. The batch record and its mailbox list
+                                                disagree - this is not an empty batch.
+                                            </p>
+                                        }
+                                        else
+                                        {
+                                            <p class="text-muted text-center my-5">This batch contains no mailboxes.</p>
+                                        }
                                     }
                                     else if (!AnyMailboxRowRenders)
                                     {
@@ -1416,6 +1375,74 @@
 
     private const string DownArrowPath = "M7.646 10.854a.5.5 0 0 0 .708 0l2-2a.5.5 0 0 0-.708-.708L8.5 9.293V5.5a.5.5 0 0 0-1 0v3.793L6.354 8.146a.5.5 0 1 0-.708.708z";
 
+    @* The batch Actions menu, defined once and rendered in BOTH panes: the left one where the
+       ticking happens, and the right one where the selection is listed (R3 and R6 point at
+       different panes once several batches are ticked - see the right pane for why).
+
+       Keyed by placement so only the menu that was clicked opens; a single bool would open both
+       at once, since both panes are on screen together. Two copies of the markup is how the two
+       action bars drifted apart in R12, so there is one. *@
+    private RenderFragment<string> BatchActionsMenu => key =>
+    @<div class="dropdown">
+        <button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button"
+                disabled="@(IsBusy || pendingActionLabel != null)"
+                @onclick="() => ToggleBatchActionsMenu(key)">
+            Actions (@selectedBatches.Count)
+        </button>
+        @if (openBatchMenu == key)
+        {
+            @* Closes on any outside click without JS interop: a transparent sheet under the menu
+               and over everything else. *@
+            <div class="mig-menu-sheet" @onclick="CloseBatchActionsMenu"></div>
+            <div class="dropdown-menu show mig-actions-menu">
+                @* Every item is enabled whenever anything is ticked, never conditioned on
+                   eligibility: under D2(a) a mixed or wholly-ineligible selection has a defined,
+                   useful outcome, and disabling is the D2(b) that was rejected. *@
+                <button class="dropdown-item" type="button"
+                        disabled="@(IsBusy || pendingActionLabel != null)"
+                        title="Completes selected batches that have finished syncing. A batch with errors cannot complete until they are fixed or removed."
+                        @onclick="StageCompleteSelected">
+                    Complete now
+                </button>
+                @* R13, queue item 12. *@
+                <button class="dropdown-item" type="button"
+                        disabled="@(IsBusy || pendingActionLabel != null)"
+                        title="Sets a future time for the selected batches to finalise. A batch still syncing can be scheduled."
+                        @onclick="StageScheduleSelected">
+                    Schedule completion...
+                </button>
+                <div class="dropdown-divider"></div>
+                <button class="dropdown-item" type="button"
+                        disabled="@(IsBusy || pendingActionLabel != null)"
+                        title="Stops the selected batches that are still moving"
+                        @onclick="StageStopSelected">
+                    Stop
+                </button>
+                <button class="dropdown-item" type="button"
+                        disabled="@(IsBusy || pendingActionLabel != null)"
+                        title="Restarts the selected batches that are idle but restartable"
+                        @onclick="StageResumeSelected">
+                    Resume / Retry
+                </button>
+                <div class="dropdown-divider"></div>
+                <button class="dropdown-item" type="button"
+                        disabled="@(IsBusy || pendingActionLabel != null)"
+                        title="Removes only the selected batches whose status is Completed"
+                        @onclick="StageRemoveCompletedSelected">
+                    Remove completed
+                </button>
+                @* The one coloured item, because it is the one that destroys a batch whatever
+                   its status. *@
+                <button class="dropdown-item text-danger" type="button"
+                        disabled="@(IsBusy || pendingActionLabel != null)"
+                        title="Removes every selected batch, whatever its status"
+                        @onclick="StageDeleteSelected">
+                    Delete
+                </button>
+            </div>
+        }
+    </div>;
+
     // The ticket-entry confirmation, defined once and rendered in one of two places: beneath the
     // row whose button was clicked, or above the table for an action that names no single row. Two
     // copies would drift, and this is the control the operator has to find.
@@ -1480,7 +1507,7 @@
     // The column count of the batch table, for the colspan of the full-width rows. Derived from the
     // one condition that changes it, so a colspan cannot fall out of step with the header the
     // way the track count of the old grid did.
-    private int BatchColumnCount => canManage ? 6 : 5;
+    private int BatchColumnCount => canManage ? 7 : 6;
 
     private int tabIndex = 0;
     private bool isLoading = false;
@@ -1628,9 +1655,10 @@
     // Per-action ticket confirmation
     private string pendingActionTicket = "";
 
-    // Open state of the batch Actions menu. Deliberately NOT part of IsBusy: it is a menu, not an
-    // operation.
-    private bool batchActionsMenuOpen;
+    // WHICH batch Actions menu is open - "left", "right", or none. A bool served one
+    // placement; the menu now renders in both panes and a bool would open both at once.
+    // Deliberately NOT part of IsBusy: it is a menu, not an operation.
+    private string? openBatchMenu;
 
     // Its mailbox twin (R12). Separate flags rather than one: the two panes are independent, and
     // opening one menu must not silently close the menu in the other pane.
@@ -2810,6 +2838,13 @@
 
     // R13. True while a Schedule is staged: the confirm step then asks for a time as well as a
     // ticket, and Confirm stays disabled until both are present.
+    // R28 taken seriously: "no mailboxes" and "the two Exchange views disagree" are different
+    // facts and must not share a sentence. The batch record and Get-MigrationUser are separate
+    // queries, and a batch whose record says 1 while the user list returns none is a real state
+    // an operator has to see, not a clean empty result.
+    private bool MailboxCountDisagreesWithTheBatch =>
+        migrationBatches?.FirstOrDefault(b => b.BatchName == expandedBatch) is { TotalCount: > 0 };
+
     private bool ScheduleTimeIsRequired => pendingBatchAction == MigrationBatchAction.Schedule;
 
     // The typed time as UTC, or null when it is unparseable, blank, or already past. Null is what
@@ -2845,9 +2880,10 @@
         }
     }
 
-    private void ToggleBatchActionsMenu() => batchActionsMenuOpen = !batchActionsMenuOpen;
+    private void ToggleBatchActionsMenu(string key) =>
+        openBatchMenu = openBatchMenu == key ? null : key;
 
-    private void CloseBatchActionsMenu() => batchActionsMenuOpen = false;
+    private void CloseBatchActionsMenu() => openBatchMenu = null;
 
     private void ToggleMailboxActionsMenu() => mailboxActionsMenuOpen = !mailboxActionsMenuOpen;
 
@@ -2859,7 +2895,7 @@
         // below them, and a menu left open would cover the ticket field the operator has to
         // reach next. The mailbox bulk actions route through here as well, so this covers both
         // bars - Export/Download reports stage nothing and close their own.
-        batchActionsMenuOpen = false;
+        openBatchMenu = null;
         mailboxActionsMenuOpen = false;
 
         pendingActionLabel = label;
