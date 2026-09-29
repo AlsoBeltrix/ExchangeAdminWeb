@@ -314,7 +314,13 @@ public sealed class ModuleCatalog
             // icon has its own narrow track instead of being a passenger in the name cell, and
             // the name takes what is left (owner, 2026-09-29: "batch names are cutoff ... not
             // enough space where it is actually useful").
-            Version = "1.20.7",
+            // 1.20.8: the selection pane header lost a cell in 1.20.7. Moving the direction
+            // icon into its own track added a cell to the ROWS of that pane and not to its header,
+            // so every heading there sat one column left of its data - the same defect 1.20.6
+            // fixed in the list beside it, reintroduced by the change that fixed it. The
+            // alignment test now counts header cells against declared grid tracks for BOTH
+            // batch grids instead of one.
+            Version = "1.20.8",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

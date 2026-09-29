@@ -160,6 +160,11 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
       no column". It cost exactly the column that mattered. Synced and Total are now one cell
       as the fraction they always were, the icon has its own 1.1rem track, and the name takes
       the remainder.
+  - **1.20.8: the selection pane header lost a cell in the change that fixed the main list.**
+    Moving the direction icon into its own track added a cell to that pane's rows and not to
+    its header. Same defect as 1.20.6, one pane over, introduced by the fix for it - because
+    the alignment test counted one grid. It now counts header cells against declared grid
+    tracks for BOTH batch grids.
   - **Still not fully verified in a browser.** Remaining `## Acceptance` hand checks: the
     batch-open page-reset risk the plan flags, the Actions menu opening and closing on an
     outside click, and the schedule time field resolving to the UTC it displays.

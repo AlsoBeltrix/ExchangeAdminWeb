@@ -1230,6 +1230,14 @@ public class MigrationStatusPageTests
         // Header and rows take the grid from ONE property, so they cannot disagree again.
         Assert.Equal(2, CountOf(page, "@BatchGridClass"));
 
+        // BOTH batch grids: a header cell for every track the CSS declares. Counting only the
+        // main list is what let the selection pane header lose a cell in the very change that
+        // fixed the main one - the icon went into its rows and not its header, and every
+        // heading there sat one column left of its data.
+        AssertHeaderFillsItsGrid(page, "mig-batch-row mig-batch-head", ".mig-batch-row {");
+        AssertHeaderFillsItsGrid(page, "mig-batch-row mig-selected-row mig-batch-head",
+            ".mig-selected-row {");
+
         var cls = StripLineComments(GetMemberSource(
             @"private\s+string\s+BatchGridClass", "BatchGridClass"));
         Assert.Contains("canManage", cls, StringComparison.Ordinal);
@@ -1240,6 +1248,25 @@ public class MigrationStatusPageTests
 
         Assert.Equal(TrackCount(css, ".mig-batch-row {") - 1,
             TrackCount(css, ".mig-batch-row.mig-no-tick {"));
+    }
+
+    // A header row must supply one cell per declared grid track, or every label sits over the
+    // wrong value. The conditional tick-box spacer is counted once, which is correct: the
+    // read-only grid drops a track to match.
+    private static void AssertHeaderFillsItsGrid(string page, string headClass, string cssRule)
+    {
+        var css = File.ReadAllText(Path.Combine(GetPagesDirectory(), "Migration.razor.css"));
+        var tracks = TrackCount(css, cssRule);
+
+        var at = page.IndexOf(headClass, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"the header row '{headClass}' is gone");
+
+        var head = page[at..(at + page[at..].IndexOf("</div>", StringComparison.Ordinal))];
+        var cells = CountOf(head, "<span");
+
+        Assert.True(cells == tracks,
+            $"'{headClass}' supplies {cells} header cells for the {tracks} tracks in "
+            + $"'{cssRule}', so every heading after the missing one sits over the wrong value");
     }
 
     // The tracks in the grid-template-columns of one CSS rule. minmax(0, 1fr) holds a comma and

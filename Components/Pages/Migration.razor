@@ -820,6 +820,13 @@
                                 <div class="mig-pane-scroll">
                                     <div class="mig-batch-row mig-selected-row mig-batch-head">
                                         <span></span>
+                                        @* The direction track. Added to the ROWS of this pane and
+                                           not to its header when the icon moved out of the name
+                                           cell, which shifted every heading here one column left
+                                           of its data - the same defect just fixed in the list
+                                           beside it, reintroduced in the same change that fixed
+                                           it. The test now counts both grids. *@
+                                        <span></span>
                                         <span>Batch</span>
                                         <span>Status</span>
                                         <span class="mig-count" title="Mailboxes synced, of the batch total">Synced/Total</span>
