@@ -1106,6 +1106,48 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void EveryColumnTheMailboxSortOffersIsAColumnYouCanSee()
+    {
+        // The same guard as the batch list, on the other list. It passes today - the mailbox
+        // table renders Email, Status, Synced and Last Sync, which is exactly what its sort
+        // offers - so this is preventive, and deliberately so.
+        //
+        // The batch list drifted from its own sort because nothing checked it, and the R12
+        // action bars came apart because one was guarded and the other was not. A guard on one
+        // of two symmetric surfaces is how the unguarded one is discovered later, by an owner,
+        // on a screenshot. Both lists now carry it.
+        var page = StripRazorComments(ReadPage());
+        var sorted = StripLineComments(GetMethodBody("SortMailboxes"));
+
+        var start = page.IndexOf("id=\"mailboxSortColumn\"", StringComparison.Ordinal);
+        Assert.True(start > 0, "the mailbox sort control is gone; this test needs rewriting");
+
+        var sortable = Regex.Matches(page[start..], @"<option value=""(?<v>[A-Za-z]+)""")
+            .Select(m => m.Groups["v"].Value)
+            .Take(4)
+            .ToArray();
+
+        Assert.Equal(["Email", "Status", "Synced", "LastSync"], sortable);
+
+        foreach (var column in sortable)
+        {
+            // Email is the switch default rather than a named case, same shape as Created on the
+            // batch side.
+            Assert.True(
+                sorted.Contains($"\"{column}\" =>", StringComparison.Ordinal) || column == "Email",
+                $"the mailbox sort offers {column} but SortMailboxes does not order by it");
+
+            // The header text differs from the option value in one place, and that is fine - what
+            // matters is that a column exists for it.
+            var header = column == "LastSync" ? "Last Sync" : column;
+            Assert.True(
+                page.Contains($"<th>{header}</th>", StringComparison.Ordinal),
+                $"the mailbox sort offers {column} but no column header shows it, so the list "
+                + "can be ordered by something the operator cannot see");
+        }
+    }
+
+    [Fact]
     public void AllThreeEmptyStatesSayWhichOneApplies()
     {
         // R28. "Nothing matches" for all three hides whether the filter or the data is the
