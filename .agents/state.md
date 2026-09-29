@@ -79,104 +79,47 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     and add are both measured idempotent), which reduces but cannot eliminate it.
   - `Test-WebApp` holds 10,001 test members; the owner is removing it.
 
-- **QUEUE ITEM 14 IS IMPLEMENTED, AND SO ARE ITEMS 12 AND 13.** All eight slices, the mir-1
-  review fix, and R13. Every gate green: build 0 errors, full suite pass, format 0, ASCII 0,
-  `git diff --check` 0. Module `1.19.0` -> `1.20.0`.
-  - **R13 was missed until a requirements audit caught it.** S8 built
-    `ScheduleMigrationBatchCompletionAsync` and nothing called it, so scheduled completion was
-    reachable only from C# - the exact "buried" R13 forbids. Every slice was marked done and the
-    module was reported complete twice before the audit. The lesson is recorded in the plan:
-    finishing every slice is not the same as meeting every requirement, and only a requirement
-    walk finds the difference.
-  - The batch action bar is now one `Actions (n)` menu rather than six buttons over two lines
-    (owner, 2026-09-29, on a screenshot). `BatchActionButtonClass` went with it; the "which
-    action is staged" guarantee moved to the bold label in the confirm bar, and the test that
-    pinned the highlight was repointed there rather than deleted.
-  - `RefusalMechanism.NoneNeeded` is new in the click-gate contract: the menu-closing sheet
-    reaches no operation, and the vocabulary had no honest word for that on the click side
-    (`HarmlessKeyboardPath` already had one for key presses). It still requires a written reason.
-  - **First dev check found a real defect, now fixed (module `1.20.1`).** A batch whose every
-    mailbox was ticked rendered as empty: the pinned rows (R5a) sit inside the table, and the
-    empty state short-circuiting that table counted only the UNPINNED rows. Select-all, or any
-    one-mailbox batch, blanked the pane and said "No mailbox in this batch matches" with no
-    filter set. It hid exactly the rows the operator had selected - the R11 failure pinning
-    exists to prevent.
-    - **A test had pinned the faulty condition** (`AnEmptyBatchAndAnEmptyFilterResultSayDifferentThings`
-      asserted `else if (MailboxTotalCount == 0)`) and read as coverage for months. Quoting the
-      implementation back to itself can only ever agree with it. That assertion now names the
-      corrected condition and carries the lesson.
-  - **A sweep for the same shape found a second one (module `1.20.2`).** The batch-name filter
-    hid ticked batches from the selection pane. R5 forbids pinning selected batches into the
-    left list BECAUSE the right pane shows them, so that pane is the only surface a ticked batch
-    appears on - and it read the filtered list. The header said "4 batches selected" over
-    however many survived the filter, with the rest still armed for the next action. The
-    mailbox side had been written correctly and carried a test asserting it; the batch side had
-    neither. Both now do.
-  - **Defect class to keep in mind here: a count or a list that silently drops selected rows.**
-    Two instances in one day, in the two panes that show a selection. The batch list and the
-    selection pager were checked and are clean - they each read one source.
-  - **R12 was broken by the batch-bar redesign, now repaired (module `1.20.3`).** R12 says
-    both action bars are identical; converting only the batch bar to a menu broke that rule in
-    the act of satisfying the owner. The mailbox bar still had eight controls in five colours
-    and the same flex-wrap. Both are now one `Actions (n)` menu with one red item, and a test
-    checks the "identical" clause - nothing ever had, which is how they came apart. R12 in the
-    plan is amended: the "identical" half stands, the "outline buttons" styling it named does
-    not.
-  - **No Total column (module `1.20.4`).** R16 named Batch/Synced/Failed/Status and the table
-    was built to that list exactly, so Total appeared nowhere - while the sort dropdown offered
-    it and SortBatches ordered by it. The list could be sorted by a column that was not on
-    screen, and Synced/Failed were fractions with no denominator. Added to both batch views,
-    R16 amended, and the new test asserts the general rule (every sortable column is visible)
-    rather than the one missing name.
-  - **The Total test was itself partial, now derived.** It hardcoded five of the SEVEN batch
-    sort options and passed while Direction and Created still had no column - the same mistake
-    it was written to catch, one level up: a check seeded from memory rather than from the
-    thing it checks. It now reads the options out of the markup, so a sort option added later
-    is covered without anyone remembering.
-    - **Settled by the owner, 2026-09-29.** Direction now shows on every row as an inline SVG
-      inside the name cell - no column, so the name keeps its width. Created stays as it was,
-      with no column, deliberately. Both remain registered exemptions in the sortable-column
-      test with those reasons written down.
-  - **Known, not acted on: the mailbox pane re-sorts the whole set about five times per
-    render.** `MailboxTotalCount`, `MailboxPageCount`, `MailboxPagerLabel`, `GetPagedMailboxes`
-    and now `AnyMailboxRowRenders` each call `OtherMailboxes()`, which filters AND sorts; the
-    filter box binds `oninput`, so this runs on every keystroke. Four of those predate
-    2026-09-29; that day added one, and made `PinnedMailboxTotalCount` O(n) where it had been
-    `selectedMailboxes.Count`.
-    At the 2000 mailboxes R20 states this is low single-digit milliseconds, so it was left alone
-    rather than optimised on speculation - there is no measurement, and a cache here would add
-    an invalidation bug of exactly the kind this module just had three of. **Recorded because
-    if a large batch ever feels sluggish while typing in the mailbox filter, this is where to
-    look first**, and the fix is to compute the filtered-sorted list once per render rather
-    than to cache it across renders.
-  - **Two more from dev screenshots (modules `1.20.6`, `1.20.7`).**
-    - Read-only operators saw every batch row one column left of its heading: the header drew
-      an unconditional spacer for the tick-box column while the row only drew a tick box when
-      `canManage`. Pre-existing, and invisible to everyone who built it because they all had
-      the permission.
-    - The list gave its width to the wrong columns. Three fixed count columns held single
-      digits while a thirty-character address was cut to 115px, and the direction icon was
-      parked in the name cell - the one cell with variable width - which I had argued "costs
-      no column". It cost exactly the column that mattered. Synced and Total are now one cell
-      as the fraction they always were, the icon has its own 1.1rem track, and the name takes
-      the remainder.
-  - **1.20.8: the selection pane header lost a cell in the change that fixed the main list.**
-    Moving the direction icon into its own track added a cell to that pane's rows and not to
-    its header. Same defect as 1.20.6, one pane over, introduced by the fix for it - because
-    the alignment test counted one grid. It now counts header cells against declared grid
-    tracks for BOTH batch grids.
-  - **1.20.9: the headers were setting the column widths.** "SYNCED/TOTAL" is twelve
-    characters over data that reads "0/0". Labels shortened to Sync and Fail with the full name
-    in a title (dotted underline so a short label does not read as a truncation), and the count
-    tracks cut from 5.5rem/2.75rem to 3.5rem/2.5rem. The sortable-column test now accepts a
-    name found in a header title as well as in its text, scoped to the header row so an
-    unrelated tooltip cannot satisfy it.
-  - **Still not fully verified in a browser.** Remaining `## Acceptance` hand checks: the
-    batch-open page-reset risk the plan flags, the Actions menu opening and closing on an
-    outside click, and the schedule time field resolving to the UTC it displays.
-  `docs/MigrationInterfaceRedesign-Plan.md` is `Implemented`. Module `1.9.1` -> `1.19.0`, no base
-  app bump at any point. Gates green at `8b8b8be`: build 0 errors, **3261 passed / 0 failed /
-  3 skipped**, format, ASCII, `git diff --check`, PSScriptAnalyzer 0 errors, Pester 157/0.
+- **QUEUE ITEMS 12, 13 AND 14 ARE IMPLEMENTED AND UNVERIFIED IN A BROWSER.** Module
+  `1.9.1` -> `1.20.9`, no base app bump at any point. Gates green: build 0 errors,
+  3288 passed / 0 failed / 3 skipped, format, ASCII, `git diff --check`.
+  - **The per-version history is in `Modules/ModuleCatalog.cs`**, one comment line per bump,
+    and the reasoning for each is in its commit. Not copied here.
+  - **The owner's UI rulings of 2026-09-29 are in `.agents/decisions.md`** (one menu per
+    action bar, sortable means visible, icons carry labels). Not copied here.
+  - **WHAT IS ACTUALLY OUTSTANDING: the plan's `## Acceptance` hand checks.** Nothing in this
+    repo renders a Blazor component, so none of the below is covered by any test:
+    - the batch-open page-reset risk the plan flags as a genuine risk rather than a formality;
+    - both `Actions (n)` menus opening, closing on an outside click, and refusing while busy;
+    - the schedule time field resolving to the UTC it displays;
+    - the batch list column widths - **iterated four times from screenshots and never seen by
+      the agent that wrote them**, so treat the rem values as a starting point;
+    - ticking every mailbox in a batch, and ticking several batches then filtering.
+  - **Six defects were found here after the module was first reported complete**, five of them
+    by the owner looking at dev and one by a requirements walk. Four were in code carrying
+    passing tests. The pattern, which is the part worth keeping: **the tests checked what the
+    plan said rather than what the screen showed**, so a gap in the plan was invisible to
+    automation - and twice a test pinned the defect itself and read as coverage. The checks on
+    this page are now derived from the markup (every sort option resolves to something
+    visible; every header row supplies one cell per declared grid track) rather than from a
+    list someone typed.
+  - **Known and deliberately not acted on: the mailbox pane re-sorts the whole set about five
+    times per render.** `MailboxTotalCount`, `MailboxPageCount`, `MailboxPagerLabel`,
+    `GetPagedMailboxes` and `AnyMailboxRowRenders` each call `OtherMailboxes()`, which filters
+    AND sorts, and the filter box binds `oninput` - so it runs on every keystroke. At the 2000
+    mailboxes R20 names this is low single-digit milliseconds. There is no measurement, and a
+    cross-render cache would add an invalidation bug of exactly the kind this module just
+    produced three of. **If a large batch ever feels sluggish while typing in the mailbox
+    filter, this is the first place to look**, and the fix is to compute the list once per
+    render rather than to cache it between renders.
+  - **DRIFT IN THE OLDER ENTRIES BELOW, left for the owner rather than rewritten by me.** The
+    `ToggleBatchSelected` open question appears twice, and the plan status is given as
+    `Implemented` in one place and `Approved / In progress` about thirty lines later - the
+    plan file itself says `IMPLEMENTED`. These are prior sessions' records; `playbook drift`
+    is the verb for consolidating them and the owner has not invoked it.
+  **Everything below this line is the record as it stood at `8b8b8be`** (module `1.19.0`,
+  3261 passed), kept for its reasoning. Where it states a version, a gate result or a plan
+  status, the block above supersedes it - PSScriptAnalyzer 0 errors and Pester 157/0 were
+  last run there and have not been re-run since.
   - **NOTHING HAS BEEN SEEN IN A BROWSER except one owner screenshot of v1.15.0**, which found a
     real defect: the selection pane reused the batch grid, whose first column is checkbox-width,
     so its "Open" button wrapped to three lines. Fixed in `8b8b8be` with the header mislabel the
