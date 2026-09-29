@@ -21,12 +21,14 @@ questions first. Branch `master`, head `d9edf86`, tree clean.
 | --- | --- |
 | 15 Risky Users complete results | **Done already.** `docs/RiskyUsersCompleteResults-Plan.md` all five slices landed; re-read against the code tonight and there are no gaps. Both outstanding items are the owner's: the Graph permission (resolved 2026-09-28) and a browser check. |
 | 16 Sidebar scrollbar | **Done already.** `docs/SidebarScrollbar-Plan.md` landed with four tripwires in `ExchangeAdminWeb.Tests/SidebarScrollCssTests.cs`. Re-read tonight, no gaps. Browser check outstanding. |
-| 17 True Last Logon module | **Plan drafted, awaiting approval:** `docs/TrueLastLogon-Plan.md`. Scope cut to ONE USER at a time per the owner; reuses the existing Graph app reg. **Two open questions in the plan are blocking** - whether that app reg can carry `AuditLog.Read.All`, and whether on-prem ships day one or cloud-first. |
+| 17 True Last Logon module | **Plan drafted, awaiting approval:** `docs/TrueLastLogon-Plan.md`. Scope cut to ONE USER at a time per the owner. The credential question was answered from the repo - there is no single shared Graph app reg, nine modules each declare their own `GraphDelineaSecretId`, so this one does the same. **One question left, a sequencing call with a recommendation: on-prem first or cloud-first.** `AuditLog.Read.All` is a deployment prerequisite (it appears nowhere in the codebase today), not a design unknown. |
 | 18 Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The blocker was where the hold record lives - the script keeps each account's original OU in a CSV on one person's OneDrive, which a web app cannot use. |
 | 19 Risky Users labels | **Done.** `60c3ace`, module `1.4.1` -> `1.5.0`. Each card now says what it is for; Refresh became Search. |
 
-**Next action: 17 is blocked on the owner's two questions. Nothing else here is startable** -
-15, 16 and 19 are complete and 18 is cancelled. Do not open new queue items without a go.
+**Next action: 17 needs an approval and one sequencing answer. Nothing else here is
+startable** - 15, 16 and 19 are complete and 18 is cancelled. Do not open new queue items
+without a go, and do not start 17's code before the plan is approved (repo-guidance: plan
+first for code).
 
 **The owner deployed `94d9173`, and the three supplied screenshots still showed no mailboxes.**
 The deployed DLL matched the verified local DLL byte for byte. Read-only diagnosis now proves
