@@ -753,6 +753,46 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void BothActionBarsAreTheSameControl()
+    {
+        // R12: both action bars are identical in look and behaviour. Nothing checked the LOOK
+        // half, and that is exactly how they came apart: the batch bar became a single Actions
+        // menu on 2026-09-29 and the mailbox bar stayed eight buttons in five colours, which is
+        // the layout the owner had just rejected on the other pane.
+        //
+        // Asserted as a shape, not a pixel: one Actions (n) toggle per pane, one closing sheet
+        // per pane, one menu per pane, and exactly one red item in each.
+        var page = StripRazorComments(ReadPage());
+
+        Assert.Equal(2, CountOf(page, "dropdown-toggle"));
+        Assert.Equal(2, CountOf(page, "Actions (@selectedBatches.Count)")
+                        + CountOf(page, "Actions (@selectedMailboxes.Count)"));
+        Assert.Equal(2, CountOf(page, "mig-menu-sheet"));
+        Assert.Equal(2, CountOf(page, "mig-actions-menu"));
+
+        // One coloured item per menu. A bar where several controls are tinted teaches the
+        // operator to ignore the tint, which is the complaint that started this.
+        Assert.Equal(2, CountOf(page, "dropdown-item text-danger"));
+
+        // And neither bar keeps a row of tinted buttons any more.
+        Assert.DoesNotContain("BatchActionButtonClass", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("MailboxActionButtonClass", page, StringComparison.Ordinal);
+    }
+
+    private static int CountOf(string haystack, string needle)
+    {
+        var n = 0;
+        var i = haystack.IndexOf(needle, StringComparison.Ordinal);
+        while (i >= 0)
+        {
+            n++;
+            i = haystack.IndexOf(needle, i + needle.Length, StringComparison.Ordinal);
+        }
+
+        return n;
+    }
+
+    [Fact]
     public void BothActionBarsReachAPlannerAndNeitherLoopsTheSelectionItself()
     {
         // R12: both bars identical in BEHAVIOUR, not just in look. A mailbox bar that looped the

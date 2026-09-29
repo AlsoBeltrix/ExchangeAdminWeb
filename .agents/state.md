@@ -115,6 +115,13 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
   - **Defect class to keep in mind here: a count or a list that silently drops selected rows.**
     Two instances in one day, in the two panes that show a selection. The batch list and the
     selection pager were checked and are clean - they each read one source.
+  - **R12 was broken by the batch-bar redesign, now repaired (module `1.20.3`).** R12 says
+    both action bars are identical; converting only the batch bar to a menu broke that rule in
+    the act of satisfying the owner. The mailbox bar still had eight controls in five colours
+    and the same flex-wrap. Both are now one `Actions (n)` menu with one red item, and a test
+    checks the "identical" clause - nothing ever had, which is how they came apart. R12 in the
+    plan is amended: the "identical" half stands, the "outline buttons" styling it named does
+    not.
   - **Still not fully verified in a browser.** Remaining `## Acceptance` hand checks: the
     batch-open page-reset risk the plan flags, the Actions menu opening and closing on an
     outside click, and the schedule time field resolving to the UTC it displays.

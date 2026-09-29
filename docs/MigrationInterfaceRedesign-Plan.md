@@ -137,10 +137,18 @@ no selected item may be hidden by a filter or a page change.
 
 ### Actions
 
-R12. **Both action bars are identical** in look and behaviour: outline buttons, the picked
-one highlighted, a per-row outcome written against every affected row, a ticket required, and
-Confirm carrying the eligible count. Ineligible rows are listed as skipped and nothing is
-sent for them.
+R12. **Both action bars are identical** in look and behaviour: a single `Actions (n)` menu
+per pane, one red item in it, a per-row outcome written against every affected row, a ticket
+required, and Confirm carrying the eligible count. Ineligible rows are listed as skipped and
+nothing is sent for them.
+
+> Amended 2026-09-29. This requirement originally read "outline buttons, the picked one
+> highlighted", and both bars were built that way. The owner rejected that layout on a
+> screenshot of the batch bar - one line, no differently sized buttons, and colours that mean
+> something - and six labelled buttons do not fit on one line. The "identical" clause is the
+> load-bearing half and is unchanged; the button styling it happened to name is not.
+> Converting one bar and not the other would have broken this requirement in the act of
+> satisfying the owner, so both became menus together.
 
 R13. Scheduled completion (item 12) is reachable without hunting, and per-mailbox actions
 (item 13) have a home. Neither is buried inside a single dialog on one status.

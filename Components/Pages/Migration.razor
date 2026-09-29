@@ -897,53 +897,82 @@
                                    reaches its own planner. R6: at the top of the list it acts on. *@
                                 @if (canManage && selectedMailboxes.Count > 0)
                                 {
-                                    <div class="mig-pane-actions d-flex align-items-center flex-wrap gap-1">
-                                        <strong class="small me-1">@selectedMailboxes.Count selected</strong>
-                                        <button class="@MailboxActionButtonClass(MigrationUserAction.Complete, "success")"
-                                                disabled="@(IsBusy || pendingActionLabel != null)"
-                                                title="Completes the selected mailboxes that have finished syncing"
-                                                @onclick="StageCompleteMailboxes">
-                                            Complete
-                                        </button>
-                                        <button class="@MailboxActionButtonClass(MigrationUserAction.Approve, "warning")"
-                                                disabled="@(IsBusy || pendingActionLabel != null)"
-                                                title="Approves the selected mailboxes that are waiting for it"
-                                                @onclick="StageApproveMailboxes">
-                                            Approve
-                                        </button>
-                                        <button class="@MailboxActionButtonClass(MigrationUserAction.Pause, "warning")"
-                                                disabled="@(IsBusy || pendingActionLabel != null)"
-                                                title="Stops the selected mailboxes that are still moving"
-                                                @onclick="StagePauseMailboxes">
-                                            Pause
-                                        </button>
-                                        <button class="@MailboxActionButtonClass(MigrationUserAction.Resume, "success")"
-                                                disabled="@(IsBusy || pendingActionLabel != null)"
-                                                title="Restarts the selected mailboxes that are stopped or failed"
-                                                @onclick="StageResumeMailboxes">
-                                            Resume
-                                        </button>
-                                        <button class="@MailboxActionButtonClass(MigrationUserAction.Clear, "danger")"
-                                                disabled="@(IsBusy || pendingActionLabel != null)"
-                                                title="Removes the selected mailboxes that have completed from the batch"
-                                                @onclick="StageRemoveMailboxes">
-                                            Remove
-                                        </button>
-                                        @* R31. Read-only, so it sits apart from the five mutating
-                                           actions: no ticket, no preview, every mailbox eligible. *@
-                                        <button class="btn btn-sm btn-outline-primary" disabled="@IsBusy"
-                                                title="Fetches a report for each ticked mailbox in the background. Reports already open are reused; the rest can take twenty minutes each."
-                                                @onclick="StartReportExport">
-                                            Export reports
-                                        </button>
-                                        <button class="btn btn-sm btn-outline-secondary" disabled="@IsBusy"
-                                                title="Downloads a zip of the reports currently held for the ticked mailboxes, one text file each, with a manifest naming any that are missing."
-                                                @onclick="DownloadReportExportAsync">
-                                            Download reports
-                                        </button>
+                                    @* R12: both action bars are identical. The batch bar became a
+                                       single Actions menu on 2026-09-29 (owner: one line, no
+                                       differently sized buttons, colours that mean something);
+                                       this one had EIGHT controls in five colours and the same
+                                       flex-wrap, so leaving it as buttons would have broken the
+                                       very rule that says the two bars match. Same shape, same
+                                       order of concerns, same one red item. *@
+                                    <div class="mig-pane-actions d-flex align-items-center gap-2">
+                                        <div class="dropdown">
+                                            <button class="btn btn-sm btn-outline-primary dropdown-toggle"
+                                                    type="button"
+                                                    disabled="@(IsBusy || pendingActionLabel != null)"
+                                                    @onclick="ToggleMailboxActionsMenu">
+                                                Actions (@selectedMailboxes.Count)
+                                            </button>
+                                            @if (mailboxActionsMenuOpen)
+                                            {
+                                                <div class="mig-menu-sheet" @onclick="CloseMailboxActionsMenu"></div>
+                                                <div class="dropdown-menu show mig-actions-menu">
+                                                    <button class="dropdown-item" type="button"
+                                                            disabled="@(IsBusy || pendingActionLabel != null)"
+                                                            title="Completes the selected mailboxes that have finished syncing"
+                                                            @onclick="StageCompleteMailboxes">
+                                                        Complete now
+                                                    </button>
+                                                    <button class="dropdown-item" type="button"
+                                                            disabled="@(IsBusy || pendingActionLabel != null)"
+                                                            title="Approves the selected mailboxes that are waiting for it"
+                                                            @onclick="StageApproveMailboxes">
+                                                        Approve
+                                                    </button>
+                                                    <div class="dropdown-divider"></div>
+                                                    <button class="dropdown-item" type="button"
+                                                            disabled="@(IsBusy || pendingActionLabel != null)"
+                                                            title="Stops the selected mailboxes that are still moving"
+                                                            @onclick="StagePauseMailboxes">
+                                                        Pause
+                                                    </button>
+                                                    <button class="dropdown-item" type="button"
+                                                            disabled="@(IsBusy || pendingActionLabel != null)"
+                                                            title="Restarts the selected mailboxes that are stopped or failed"
+                                                            @onclick="StageResumeMailboxes">
+                                                        Resume
+                                                    </button>
+                                                    <div class="dropdown-divider"></div>
+                                                    @* The one coloured item, as on the batch bar. *@
+                                                    <button class="dropdown-item text-danger" type="button"
+                                                            disabled="@(IsBusy || pendingActionLabel != null)"
+                                                            title="Removes the selected mailboxes that have completed from the batch"
+                                                            @onclick="StageRemoveMailboxes">
+                                                        Remove from batch
+                                                    </button>
+                                                    <div class="dropdown-divider"></div>
+                                                    @* R31. Read-only: no ticket, no preview, every
+                                                       mailbox eligible. Below a divider rather
+                                                       than outside the menu, because R12 wants
+                                                       one control here, not three. *@
+                                                    <button class="dropdown-item" type="button"
+                                                            disabled="@IsBusy"
+                                                            title="Fetches a report for each ticked mailbox in the background. Reports already open are reused; the rest can take twenty minutes each."
+                                                            @onclick="StartReportExport">
+                                                        Export reports
+                                                    </button>
+                                                    <button class="dropdown-item" type="button"
+                                                            disabled="@IsBusy"
+                                                            title="Downloads a zip of the reports currently held for the ticked mailboxes, one text file each, with a manifest naming any that are missing."
+                                                            @onclick="DownloadReportExportAsync">
+                                                        Download reports
+                                                    </button>
+                                                </div>
+                                            }
+                                        </div>
+
                                         @* R10. "Untick all" here, where the tick boxes are. *@
-                                        <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@IsBusy"
-                                                @onclick="ClearMailboxSelection">
+                                        <button class="btn btn-sm btn-outline-secondary ms-auto flex-shrink-0"
+                                                disabled="@IsBusy" @onclick="ClearMailboxSelection">
                                             Untick all
                                         </button>
                                     </div>
@@ -1521,6 +1550,10 @@
     // Open state of the batch Actions menu. Deliberately NOT part of IsBusy: it is a menu, not an
     // operation.
     private bool batchActionsMenuOpen;
+
+    // Its mailbox twin (R12). Separate flags rather than one: the two panes are independent, and
+    // opening one menu must not silently close the menu in the other pane.
+    private bool mailboxActionsMenuOpen;
 
     // R13. The typed wall-clock time, as the browser's datetime-local gives it. Held as a string
     // rather than a DateTime so a half-typed value is just "not valid yet" instead of a binding
@@ -2488,6 +2521,10 @@
     // surface.
     private void StartReportExport()
     {
+        // These two stage nothing, so StageBatchAction never runs and the menu they were clicked
+        // from would stay open over the result banner.
+        mailboxActionsMenuOpen = false;
+
         if (IsBusy || expandedBatch == null || selectedMailboxes.Count == 0)
             return;
 
@@ -2547,6 +2584,8 @@
     // says so instead of delivering an empty archive.
     private async Task DownloadReportExportAsync()
     {
+        mailboxActionsMenuOpen = false;
+
         if (isDownloadingCsv || expandedBatch == null || selectedMailboxes.Count == 0)
             return;
 
@@ -2591,9 +2630,6 @@
             isDownloadingCsv = false;
         }
     }
-
-    private string MailboxActionButtonClass(MigrationUserAction action, string tone) =>
-        pendingUserAction == action ? $"btn btn-sm btn-{tone}" : $"btn btn-sm btn-outline-{tone}";
 
     // The preview for one mailbox row, the mailbox twin of StagedOutcomeFor.
     private string? StagedMailboxOutcomeFor(string email)
@@ -2732,11 +2768,18 @@
 
     private void CloseBatchActionsMenu() => batchActionsMenuOpen = false;
 
+    private void ToggleMailboxActionsMenu() => mailboxActionsMenuOpen = !mailboxActionsMenuOpen;
+
+    private void CloseMailboxActionsMenu() => mailboxActionsMenuOpen = false;
+
     private void StageBatchAction(string label, string target, Func<string, Task> callback)
     {
-        // The menu closes the moment an action is staged: the confirm bar renders directly below
-        // it, and a menu left open would cover the ticket field the operator has to reach next.
+        // Both menus close the moment an action is staged: the confirm bar renders directly
+        // below them, and a menu left open would cover the ticket field the operator has to
+        // reach next. The mailbox bulk actions route through here as well, so this covers both
+        // bars - Export/Download reports stage nothing and close their own.
         batchActionsMenuOpen = false;
+        mailboxActionsMenuOpen = false;
 
         pendingActionLabel = label;
         pendingActionTarget = target;

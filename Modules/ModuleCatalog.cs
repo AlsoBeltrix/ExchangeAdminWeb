@@ -288,7 +288,12 @@ public sealed class ModuleCatalog
             // batches selected" over however many survived, with the rest still armed. Same
             // shape as 1.20.1, found by sweeping for it; the mailbox side had been written
             // correctly and the batch side had no equivalent test.
-            Version = "1.20.2",
+            // 1.20.3: R12 says both action bars are identical, and converting only the batch
+            // bar to a menu broke that rule in the act of satisfying the owner. The mailbox bar
+            // still had EIGHT controls in five colours and the same flex-wrap - the layout just
+            // rejected on the other pane. Both are now one Actions (n) menu with one red item.
+            // Nothing had ever checked the "identical" clause, which is how they came apart.
+            Version = "1.20.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
