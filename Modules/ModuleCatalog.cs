@@ -351,7 +351,10 @@ public sealed class ModuleCatalog
             //   that LISTS the selection could not act on it.
             // Also: SyncedCount no longer falls back to SyncedItemCount - items and mailboxes
             // are different units and the fallback rendered an item count over a mailbox total.
-            Version = "1.22.0",
+            // 1.22.1: restore explicit BatchId mailbox loading, retrieve the complete set,
+            // and report query failures instead of showing an empty batch. The 1.22.0 query
+            // diagnosis above was disproven by same-credential live comparisons.
+            Version = "1.22.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

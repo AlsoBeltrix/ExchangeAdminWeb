@@ -8,14 +8,14 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**2026-09-28. THE SECOND SESSION HAS BEEN KILLED; ONE SESSION OWNS THIS REPO AGAIN.** On
-`master`, head `b6adcce`, tracked tree clean.
+**2026-09-29. Migration mailbox recovery is the active task.** The owner requested it working
+immediately; other module implementation is not part of this recovery. Work is on `master`,
+starting from `3a1644d`. One session owns the checkout. See the queue 12/13/14 entry below for
+the fix and remaining deployment step. Catchup cleanup was explicitly skipped.
 
-**THE FULL CI GATE SET IS GREEN AT `b6adcce`, MEASURED 2026-09-28** - build Release 0 errors,
-`dotnet test` **3206 passed / 0 failed / 3 skipped**, `dotnet format` exit 0, ASCII lint exit 0,
-`git diff --check` exit 0, PSScriptAnalyzer **0 errors**, Pester **157 passed / 0 failed**. This
-is the first measurement covering the Risky Users session's last three commits, which it landed
-without this session gate-checking them. Nothing is half-finished.
+**Recovery verification is green; the measured results are in Verification below.** No
+deployment or live migration writes have been performed by this session. The remaining step
+is an elevated dev deployment and a browser check of the affected batch.
 
 **Run the suite with `-- xUnit.MaxParallelThreads=4`.** At full parallelism it spreads over every
 core and each worker holds its own fixtures, which peaked near 27GB and got a run killed by the
@@ -44,8 +44,9 @@ identical - proved by swapping it for a plain-ASCII `"cafe"` and watching the te
 Pester ran, so neither had executed in CI since 2026-09-23.** A red gate early in a job hides
 every gate behind it.
 
-**Both remotes sit at `d0c2406`; 15 commits are unpushed** (4 Migration slices, 11 Risky Users
-and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask.
+**Origin was verified at `bceef0e` on 2026-09-29; the recovery base `3a1644d` was 48 commits
+ahead.** The local GitHub tracking ref also names `bceef0e`, but the live GitHub check was
+blocked by the sandbox proxy and its retry was interrupted. Push policy remains ask.
 
 - **COMMS-10K AT FULL SIZE: PLAN APPROVED BY THE OWNER 2026-09-28 AT REVISION 15. NO CODE
   WRITTEN. FOUR SLICES, NONE STARTED.** `docs/Comms10kBulkResolveScale-Plan.md`. Reported defect:
@@ -79,38 +80,26 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     and add are both measured idempotent), which reduces but cannot eliminate it.
   - `Test-WebApp` holds 10,001 test members; the owner is removing it.
 
-- **QUEUE ITEMS 12, 13 AND 14: CODE COMPLETE, BROKEN ON DEV, ACTIVE BUG HUNT.**
-  Branch `master`, verified head `1a09f90`, tree clean, 47 commits unpushed (policy: ask).
-  Module `1.22.0`. Gates green at that head: build 0 errors, 3289 passed / 0 failed /
-  3 skipped, format, ASCII, `git diff --check`, click-gate registry.
+- **QUEUE ITEMS 12, 13 AND 14: MAILBOX-LOADING FIX VERIFIED, AWAITING DEV DEPLOY.**
+  `docs/MigrationInterfaceRedesign-Plan.md` opens with the measured recovery evidence. The
+  piped query introduced by `1a09f90` can bind a batch name as a migration-user identity;
+  the explicit BatchId query returned the expected mailbox counts under the app's credentials.
+  The fix restores BatchId, removes the default result cap, surfaces failed reads separately
+  from empty batches, and removes the owner's rejected warning paragraph.
 
-  **STAGE: NOT SHIPPABLE. The mailbox pane renders empty for batches that have mailboxes.**
-  The owner reports this worked before the interface redesign, which makes it a regression
-  introduced by this work, not an Exchange fault.
-
-  - **NEXT ACTION, and the owner has been asked to choose:** the prime suspect is the
-    generation guard in `Components/Pages/Migration.razor` - `batchUsersGeneration`
-    (declared 1580, bumped 1780 and 1840, captured 1805/1857/3100, enforced in
-    `ReplaceBatchUsers` at 3654). It is the only thing in this module whose job is to
-    DISCARD mailbox results. If the counter is bumped between a fetch starting and landing,
-    every load is thrown away and the pane renders empty - exactly the symptom. Either
-    (a) prove or clear it, or (b) rip it out and accept the race it guarded. UNPROVEN as of
-    this handoff; do not assume it is the cause and do not assume it is not.
-  - **The guard was never requested by the owner.** It came from the `openreview` of S1 as
-    finding mir-1. Worth weighing when deciding whether to remove it.
-  - **A CHANGE MADE ON A BAD INFERENCE IS STILL IN, AT `1a09f90`.** The mailbox query was
-    switched from `Get-MigrationUser -BatchId <name>` to
-    `Get-MigrationBatch -Identity <name> | Get-MigrationUser` on the strength of ONE manual
-    test. The owner then said the pane worked before the redesign, which means `-BatchId`
-    was never the fault. **Consider reverting that query change** as part of clearing the
-    real cause; it is one Exchange round trip either way, so it is not a performance
-    question, it is a question of not carrying an unfounded change.
-  - **A warning paragraph in the empty state must go.** It narrates the batch-record vs
-    mailbox-list disagreement to the operator. The owner rejected it on sight, and it
-    violates the standing rule against putting explanation into UI elements.
-  - **Owner context that governs priority:** this is day five on one module and several
-    other modules are waiting to deploy. Do not open new work here. Fix the empty pane,
-    stop.
+  - The owner confirmed the visible symptom was the disagreement warning. That branch requires
+    an accepted empty result, so the previous handoff's generation-guard suspicion does not
+    explain it. The guard remains. No race was deliberately reintroduced.
+  - `ExchangeAdminWeb.Tests/MigrationMailboxLoadTests.cs` now tests the service through a real
+    local PowerShell runspace and executes the compiled Razor mailbox render tree. This is
+    behavioral coverage of loading, rendering, paging selected rows and displaying failure;
+    it does not exercise browser navigation or live mutation controls.
+  - **NEXT ACTION: deploy the verified recovery to dev, then open a populated batch.** The
+    read-only pipeline preflight could not start: `tools/deploy-pipeline.ps1` requires an
+    Administrator Windows PowerShell session and this session is not elevated. No deployment
+    authority was inferred from the implementation go. Push is still ask.
+  - The owner's priority remains recovery of this pane, then other modules. No broader
+    Migration redesign or independent review was started.
 
   **Outstanding behind that, all needing a dev deploy and none of it started:**
     - the batch-open page-reset risk the plan flags as a genuine risk, not a formality;
@@ -1104,12 +1093,17 @@ unblocked.
 ## Verification
 
 Commands and mandatory guards are owned by `.agents/repo-guidance.md` and `AGENTS.md`.
-**Last full run 2026-09-23, as of `bd29a9c`:** build Release 0 errors, `dotnet test
-ExchangeAdminWeb.slnx` **3064 passed / 0 failed / 3 skipped**, `dotnet format
---verify-no-changes` clean, `git diff --check` clean, Pester 157 passed / 0 failed,
-PSScriptAnalyzer 0 errors. Commits after `bd29a9c` are docs-only and were not re-run.
-Every commit of the weekend run passed these gates before it landed. Browser acceptance, AD/Graph
-queries and reviewer dispatches were not run. Current CI status does not belong here.
+**Recovery run 2026-09-29, for the code committed with this record:** Release build 0 errors;
+full Release suite **3294 passed / 0 failed / 3 skipped**, with `-- xUnit.MaxParallelThreads=4`;
+format, ASCII lint and `git diff --check` pass. Existing dependency and compiler warnings remain.
+All five new regression cases fail against the original service/page and pass with the fix;
+the proof includes compiled Razor render output, not just source scans. Local receipts are in
+`TestResults/migration-mailbox-*` (ignored). Live read-only Exchange comparisons are recorded in
+the recovery section of `docs/MigrationInterfaceRedesign-Plan.md`.
+PSScriptAnalyzer/Pester were not rerun because no PowerShell source changed; their last recorded
+2026-09-28 result was 0 errors and 157 passed / 0 failed. Browser acceptance, live writes and
+reviewer dispatches were not run. Dev deployment is pending elevation and authority. Current
+CI status does not belong here.
 Per-finding status is owned by `.agents/review/index.md`.
 
 ## Active sources

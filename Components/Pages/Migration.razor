@@ -994,34 +994,17 @@
                                             <p class="mt-2 text-muted">Loading mailboxes...</p>
                                         </div>
                                     }
+                                    else if (mailboxLoadFailed)
+                                    {
+                                        <p class="text-danger text-center my-5" role="alert">Unable to load mailboxes. Refresh to try again.</p>
+                                    }
                                     else if (batchUsers == null)
                                     {
                                         <p class="text-muted text-center my-5">No mailbox details available.</p>
                                     }
                                     else if (!batchUsers.Any())
                                     {
-                                        @* Two different facts, and they used to share one
-                                           sentence. Exchange answers "what is in this batch"
-                                           from two places - the batch record carries TotalCount,
-                                           the mailbox list comes from Get-MigrationUser - and
-                                           they can disagree. Saying "contains no mailboxes" when
-                                           the batch record says it holds some is not an empty
-                                           state, it is a contradiction the operator has to be
-                                           told about rather than shown as a clean result.
-                                           Owner, 2026-09-29, on exactly that screen. *@
-                                        @if (MailboxCountDisagreesWithTheBatch)
-                                        {
-                                            <p class="text-warning text-center my-5">
-                                                This batch reports <strong>@(openBatch!.TotalCount)</strong>
-                                                mailbox@(openBatch.TotalCount == 1 ? "" : "es"), but Exchange
-                                                returned none for it. The batch record and its mailbox list
-                                                disagree - this is not an empty batch.
-                                            </p>
-                                        }
-                                        else
-                                        {
-                                            <p class="text-muted text-center my-5">This batch contains no mailboxes.</p>
-                                        }
+                                        <p class="text-muted text-center my-5">This batch contains no mailboxes.</p>
                                     }
                                     else if (!AnyMailboxRowRenders)
                                     {
@@ -1579,6 +1562,7 @@
     // batch change.
     private int batchUsersGeneration;
     private List<MigrationUserInfo>? batchUsers;
+    private bool mailboxLoadFailed;
     private string? loadingBatchUsers;
     private string? actionInProgress;
     private string? loadingReport;
@@ -1802,6 +1786,7 @@
     private async Task LoadMailboxesFor(string batchName)
     {
         loadingBatchUsers = batchName;
+        mailboxLoadFailed = false;
         var generation = batchUsersGeneration;
 
         try
@@ -1811,6 +1796,8 @@
         catch
         {
             ReplaceBatchUsers(generation, new List<MigrationUserInfo>());
+            if (generation == batchUsersGeneration)
+                mailboxLoadFailed = true;
         }
         finally
         {
@@ -1854,6 +1841,7 @@
         // Set before the first await - see CreateSingleMigrationBatch for why - and it covers the
         // batch-list load below as well, because a pasted link lands with no list behind it.
         loadingBatchUsers = requested;
+        mailboxLoadFailed = false;
         var generation = batchUsersGeneration;
 
         try
@@ -1866,6 +1854,8 @@
         catch
         {
             ReplaceBatchUsers(generation, new List<MigrationUserInfo>());
+            if (generation == batchUsersGeneration)
+                mailboxLoadFailed = true;
         }
         finally
         {
@@ -2838,13 +2828,6 @@
 
     // R13. True while a Schedule is staged: the confirm step then asks for a time as well as a
     // ticket, and Confirm stays disabled until both are present.
-    // R28 taken seriously: "no mailboxes" and "the two Exchange views disagree" are different
-    // facts and must not share a sentence. The batch record and Get-MigrationUser are separate
-    // queries, and a batch whose record says 1 while the user list returns none is a real state
-    // an operator has to see, not a clean empty result.
-    private bool MailboxCountDisagreesWithTheBatch =>
-        migrationBatches?.FirstOrDefault(b => b.BatchName == expandedBatch) is { TotalCount: > 0 };
-
     private bool ScheduleTimeIsRequired => pendingBatchAction == MigrationBatchAction.Schedule;
 
     // The typed time as UTC, or null when it is unparseable, blank, or already past. Null is what
@@ -3097,8 +3080,7 @@
             if (result.Success && expandedBatch != null)
             {
                 InvalidateStoredReports();
-                var generation = batchUsersGeneration;
-                ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(expandedBatch));
+                await LoadMailboxesFor(expandedBatch);
             }
         }
         catch (Exception ex)
@@ -3656,6 +3638,7 @@
 
         InvalidateStoredReports();
         batchUsers = users;
+        mailboxLoadFailed = false;
 
         // S5. The rows just changed under the pager. Clamp rather than reset: a refresh of the
         // same batch should leave the operator where they were, and only a shrink that puts them

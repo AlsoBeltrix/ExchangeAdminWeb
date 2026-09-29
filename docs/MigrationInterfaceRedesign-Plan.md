@@ -1,6 +1,25 @@
 # Migration -- Redesign The Status Interface (queue item 14)
 
-Status: **IMPLEMENTED 2026-09-29. All eight slices, the mir-1 review fix, and R13.**
+Status: **Implementation landed; dev acceptance pending. Mailbox-loading recovery 2026-09-29.**
+
+The owner requested immediate recovery of the empty mailbox pane on 2026-09-29. The query
+introduced by `1a09f90` was tested with the app's configured Exchange identity: piping a batch
+into `Get-MigrationUser` failed on a four-mailbox batch because its batch name was treated as a
+user identity. Explicit `-BatchId` returned all expected rows for three batches (4, 1 and 1).
+The pipeline happened to work for the two single-mailbox batches, which is why one successful
+manual example was insufficient evidence for that change.
+
+The recovery restores explicit `-BatchId`, adds `-ResultSize Unlimited`, and propagates query
+failures to a short mailbox-pane error with a refresh action. The rejected disagreement
+paragraph is removed. Post-action mailbox refresh uses the same loader so a failed refresh
+does not relabel a successful mutation as failed. The generation guard remains in place;
+the reported warning required an accepted empty result, not a discarded generation.
+
+`ExchangeAdminWeb.Tests/MigrationMailboxLoadTests.cs` exercises the real service over a local
+PowerShell runspace and executes the compiled Razor render tree. It checks 1,205-row retrieval,
+normal and fully selected mailbox rendering with bounded pages, and failure propagation and
+display. All five cases fail against the original service/page. This covers neither browser
+navigation nor live migration writes; the acceptance checks below still apply.
 
 R13 was missing when the slices were all marked done: S8 built
 `ScheduleMigrationBatchCompletionAsync` and nothing on the page ever called it, so queue item 12
@@ -17,8 +36,8 @@ mean anything. Six labelled buttons do not fit on one line - the fifth already w
 R13 added a sixth - so the count rides on one `Actions (n)` button and the only colour left is
 the red on Delete. Module
 `1.9.1` -> `1.19.0`, no base app bump at any point. **Not yet seen in a browser beyond one owner
-screenshot** - the `## Acceptance` hand checks below are outstanding, and no test in this repo
-renders a Blazor component.
+screenshot** - the `## Acceptance` hand checks below are outstanding. The focused mailbox
+render-tree tests above do not exercise browser navigation or component lifecycle.
 
 Approved by the owner 2026-09-24. The layout
 was settled by the owner over many rounds against a working mockup (`.agents/mockups/migration-v3.html`), and four
@@ -586,8 +605,8 @@ Beyond the gates: with the app running, no control that acts on a selection may 
 screen while that selection exists, and no ticked row may be hidden by a filter or a page
 change. Those two are the item-14 clauses and are checked by hand on dev.
 
-**S1's own hand check, and the one thing the gates cannot answer.** No test in this repo renders
-a Blazor component, so nothing here proves what a browser does with the address. Three things
+**S1's own hand check, and the one thing the gates cannot answer.** The focused mailbox
+render-tree tests do not prove what a browser does with the address. Three things
 need a dev deploy and a browser, and the middle one is a genuine risk rather than a formality:
 
 1. Open a batch, press Back: it collapses. Press Forward: it reopens. Paste

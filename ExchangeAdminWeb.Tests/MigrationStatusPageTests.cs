@@ -1721,10 +1721,9 @@ public class MigrationStatusPageTests
         // awaited fetch straight in, with exactly one captured token in front of it.
         var fetches = Regex.Matches(page, @"GetMigrationBatchUsersAsync\(");
         var wrapped = Regex.Matches(page, @"ReplaceBatchUsers\([A-Za-z_][A-Za-z0-9_]*, await MigrationSvc\.GetMigrationBatchUsersAsync\(");
-        // Three now, not five: LoadMailboxesFor owns the refetch for every caller that used to
-        // write its own. Re-derived, not relaxed - the assertion that every fetch is wrapped is
-        // unchanged and is the part that bites.
-        Assert.True(fetches.Count >= 3,
+        // Two sites: the shared loader and URL entry. The post-action refresh now delegates to
+        // the loader too, so a refresh failure cannot overwrite a successful mutation result.
+        Assert.True(fetches.Count >= 2,
             $"expected every row refetch site to still be present, found {fetches.Count}");
         Assert.Equal(fetches.Count, wrapped.Count);
     }
@@ -1785,8 +1784,9 @@ public class MigrationStatusPageTests
 
         var calls = Regex.Matches(page, @"(?<![A-Za-z0-9_])ReplaceBatchUsers\((?<token>[A-Za-z_][A-Za-z0-9_]*),")
             .ToList();
-        // Five now, not eight, for the same consolidation. Each is still checked individually.
-        Assert.True(calls.Count >= 5,
+        // Both loaders have a success and a failure replacement: four calls. The post-action
+        // refresh delegates to LoadMailboxesFor. Each replacement is still checked individually.
+        Assert.True(calls.Count >= 4,
             $"expected every row replacement call site to still be present, found {calls.Count}");
 
         foreach (var call in calls)
@@ -1857,7 +1857,7 @@ public class MigrationStatusPageTests
 
         var reload = ExtractBlock(body, "if (result.Success && expandedBatch != null)");
         Assert.Contains("InvalidateStoredReports();", reload, StringComparison.Ordinal);
-        Assert.Contains("GetMigrationBatchUsersAsync", reload, StringComparison.Ordinal);
+        Assert.Contains("await LoadMailboxesFor(expandedBatch);", reload, StringComparison.Ordinal);
     }
 
     [Fact]
