@@ -138,6 +138,18 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
       and a seventh column would squeeze the batch name past what R15 allows. Total earned a
       column because it is a denominator compared row to row; those two are not. If the owner
       wants them visible, the columns go in and the name column narrows.
+  - **Known, not acted on: the mailbox pane re-sorts the whole set about five times per
+    render.** `MailboxTotalCount`, `MailboxPageCount`, `MailboxPagerLabel`, `GetPagedMailboxes`
+    and now `AnyMailboxRowRenders` each call `OtherMailboxes()`, which filters AND sorts; the
+    filter box binds `oninput`, so this runs on every keystroke. Four of those predate
+    2026-09-29; that day added one, and made `PinnedMailboxTotalCount` O(n) where it had been
+    `selectedMailboxes.Count`.
+    At the 2000 mailboxes R20 states this is low single-digit milliseconds, so it was left alone
+    rather than optimised on speculation - there is no measurement, and a cache here would add
+    an invalidation bug of exactly the kind this module just had three of. **Recorded because
+    if a large batch ever feels sluggish while typing in the mailbox filter, this is where to
+    look first**, and the fix is to compute the filtered-sorted list once per render rather
+    than to cache it across renders.
   - **Still not fully verified in a browser.** Remaining `## Acceptance` hand checks: the
     batch-open page-reset risk the plan flags, the Actions menu opening and closing on an
     outside click, and the schedule time field resolving to the UTC it displays.
