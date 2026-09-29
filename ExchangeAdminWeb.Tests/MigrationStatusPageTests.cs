@@ -1097,8 +1097,20 @@ public class MigrationStatusPageTests
             // the batch name needed (owner, 2026-09-29: "batch names are cutoff ... not enough
             // space where it is actually useful"). What matters is that the word appears in a
             // heading, not that it owns a cell of its own.
-            var headers = Regex.Matches(page, @"<span(?: [^>]*)?>([A-Za-z/ ]+)</span>")
+            // Text AND title, because the labels are abbreviated to stop a twelve-character
+            // heading setting the width of a column whose data reads "0/0" (owner,
+            // 2026-09-29). The full name has to be reachable, not necessarily printed.
+            //
+            // Scoped to the header rows: searching the whole page would let any tooltip
+            // anywhere satisfy this, and "Total:" in the right-hand pane would answer for a
+            // column that is not there.
+            var headAt = page.IndexOf("mig-batch-row mig-batch-head", StringComparison.Ordinal);
+            var headRow = page[headAt..(headAt + page[headAt..].IndexOf("</div>",
+                StringComparison.Ordinal))];
+
+            var headers = Regex.Matches(headRow, @"<span(?: [^>]*)?>([A-Za-z/ ]+)</span>")
                 .Select(m => m.Groups[1].Value)
+                .Concat(Regex.Matches(headRow, @"title=""([^""]+)""").Select(m => m.Groups[1].Value))
                 .ToArray();
 
             Assert.True(

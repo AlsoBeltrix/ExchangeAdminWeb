@@ -165,6 +165,12 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     its header. Same defect as 1.20.6, one pane over, introduced by the fix for it - because
     the alignment test counted one grid. It now counts header cells against declared grid
     tracks for BOTH batch grids.
+  - **1.20.9: the headers were setting the column widths.** "SYNCED/TOTAL" is twelve
+    characters over data that reads "0/0". Labels shortened to Sync and Fail with the full name
+    in a title (dotted underline so a short label does not read as a truncation), and the count
+    tracks cut from 5.5rem/2.75rem to 3.5rem/2.5rem. The sortable-column test now accepts a
+    name found in a header title as well as in its text, scoped to the header row so an
+    unrelated tooltip cannot satisfy it.
   - **Still not fully verified in a browser.** Remaining `## Acceptance` hand checks: the
     batch-open page-reset risk the plan flags, the Actions menu opening and closing on an
     outside click, and the schedule time field resolving to the UTC it displays.

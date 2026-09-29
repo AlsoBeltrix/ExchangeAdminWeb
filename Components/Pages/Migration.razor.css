@@ -68,7 +68,7 @@
    alignment - two separate column definitions is how a header drifts off its column. */
 .mig-batch-row {
     display: grid;
-    grid-template-columns: 1.25rem 1.1rem minmax(0, 1fr) 5.25rem 5.5rem 2.75rem;
+    grid-template-columns: 1.25rem 1.1rem minmax(0, 1fr) 5.25rem 3.5rem 2.5rem;
     gap: .4rem;
     align-items: center;
     padding: .4rem .6rem;
@@ -317,7 +317,7 @@
    (owner screenshot, v1.15.0 on dev). Its first and last columns hold text buttons, so they get
    text-sized columns. Everything between stays aligned with the list on the left. */
 .mig-selected-row {
-    grid-template-columns: 3.5rem 1.1rem minmax(0, 1fr) 5.25rem 5.5rem 4.5rem;
+    grid-template-columns: 3.5rem 1.1rem minmax(0, 1fr) 5.25rem 3.5rem 4.5rem;
 }
 
 .mig-selected-row .btn-link {
@@ -345,5 +345,13 @@
    leaving an empty one the header also has to remember to draw. Applied to the header and the
    rows from one property - see BatchGridClass. */
 .mig-batch-row.mig-no-tick {
-    grid-template-columns: 1.1rem minmax(0, 1fr) 5.25rem 5.5rem 2.75rem;
+    grid-template-columns: 1.1rem minmax(0, 1fr) 5.25rem 3.5rem 2.5rem;
+}
+
+/* Abbreviated column headings carry the full name in a title. The dotted underline is the only
+   hint that hovering will say more - without it a short label just reads as a truncation. */
+.mig-batch-head .mig-count[title] {
+    text-decoration: underline dotted;
+    text-underline-offset: .2em;
+    cursor: help;
 }

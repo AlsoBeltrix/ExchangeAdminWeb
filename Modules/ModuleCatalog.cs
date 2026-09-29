@@ -320,7 +320,11 @@ public sealed class ModuleCatalog
             // fixed in the list beside it, reintroduced by the change that fixed it. The
             // alignment test now counts header cells against declared grid tracks for BOTH
             // batch grids instead of one.
-            Version = "1.20.8",
+            // 1.20.9: the HEADERS were setting the column widths. "SYNCED/TOTAL" is twelve
+            // characters over data that reads "0/0" - nine wasted character widths taken from
+            // the batch name. Short labels with the full name on hover, and the count tracks
+            // shrink to fit the numbers rather than the headings (owner, 2026-09-29).
+            Version = "1.20.9",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -687,8 +687,8 @@
                                        a thirty-character address got 115px - the widths were
                                        spent where nothing varies. R17 still holds: the header
                                        names both numbers and the cell shows both. *@
-                                    <span class="mig-count" title="Mailboxes synced, of the batch total">Synced/Total</span>
-                                    <span class="mig-count">Failed</span>
+                                    <span class="mig-count" title="Synced / Total - mailboxes synced, of the batch total">Sync</span>
+                                    <span class="mig-count" title="Failed - mailboxes that could not move">Fail</span>
                                 </div>
 
                                 @* R28, the second of the three empty states: the catalogue has
@@ -829,7 +829,7 @@
                                         <span></span>
                                         <span>Batch</span>
                                         <span>Status</span>
-                                        <span class="mig-count" title="Mailboxes synced, of the batch total">Synced/Total</span>
+                                        <span class="mig-count" title="Synced / Total - mailboxes synced, of the batch total">Sync</span>
                                         <span class="mig-count"></span>
                                     </div>
                                     @foreach (var batch in GetSelectedBatchesPage())
