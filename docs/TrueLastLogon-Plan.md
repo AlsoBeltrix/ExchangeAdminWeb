@@ -67,25 +67,39 @@ Per the script's performance model, adapted to one user:
   claim from one computed from all 37, and the operator must see which they have. This is the
   on-prem equivalent of `Cloud_Verified` and it fails the same way if dropped.
 
-## Cloud: reuse the existing Graph app reg
+## Cloud: credential, and why the "which app reg" question dissolved
 
-Owner, 2026-09-29: reuse the app's current Graph credential rather than a dedicated app reg.
+Owner, 2026-09-29: reuse the existing Graph credential rather than create a dedicated app reg.
 
-Permissions the module needs, to be added to that registration:
+**There is no single shared Graph registration to reuse, and that turns out not to matter.**
+Nine modules each declare their own `GraphDelineaSecretId` config field -- M365 Group
+Management, MFA Reset, Cloud Password Reset, Named Locations, Emergency Disable, Risky Users,
+Defender Endpoint Devices, Intune Devices, Service Health -- and the owner points each at a
+Secret Server secret at deploy time. Which app registration sits behind a given secret is a
+runtime configuration fact, not a source fact.
+
+So this module follows the same convention: **it declares its own `GraphDelineaSecretId`**, and
+the owner points it at a secret whose registration carries the permissions below. That is the
+established pattern and it needs no decision now.
+
+Permissions the registration behind that secret must hold:
 
 | Permission | For |
 | --- | --- |
 | `AuditLog.Read.All` | `signInActivity`, and the raw sign-in log query |
 | `User.Read.All` | reading `signInActivity` on a user |
 
-`signInActivity` requires `AuditLog.Read.All` **in addition to** a user-read scope; Graph
-returns 403 naming the missing one if either is absent. Note Risky Users learned the narrower
-lesson here (`ModuleCatalog` 1.4.1): name the scope the call actually needs. `User.ReadBasic.All`
-is **not** sufficient for `signInActivity`.
+**`AuditLog.Read.All` appears nowhere in this codebase today**, so no existing module's
+registration is known to carry it. It is a Graph app role and needs a Privileged Role
+Administrator or Global Administrator to consent. Treat it as a deployment prerequisite, the
+same as every other module's secret.
 
-**Open: whether these can be added to the shared registration, or whether it already has them.**
-Answerable by reading the app reg; if they cannot be added, the fallback is a dedicated
-registration with a Delinea secret ID, and that is a scope change back through this plan.
+`signInActivity` requires `AuditLog.Read.All` **in addition to** a user-read scope, and
+`User.ReadBasic.All` is **not** sufficient for it -- the narrower version of the lesson Risky
+Users learned at `ModuleCatalog` 1.4.1. When either scope is missing, the module must surface
+the 403 **naming the exact missing permission**, as Risky Users does, rather than reporting an
+empty or dormant result. A missing permission rendering as "never signed in" is the single
+worst failure this module can have.
 
 ## What the page shows
 
@@ -124,11 +138,24 @@ account known to have logged on recently, and one known-dormant account, compare
 script's own output for the same two users. The module and the script must agree, and if they
 disagree the script is right until proven otherwise.
 
-## Open questions
+## Open question -- one, and it is a sequencing call
 
-1. **Does the existing Graph app reg already carry `AuditLog.Read.All`?** If it does, S2 needs
-   no tenant change. If it does not and cannot, this becomes a dedicated-registration change.
-2. **Is on-prem in scope on day one, or cloud-first?** The on-prem sweep is the larger half and
-   needs the app pool identity to read `lastLogon` on every DC. Cloud-first would ship something
-   useful sooner; the answer would be incomplete until on-prem lands, and would have to SAY so
-   rather than report a cloud date as the true last logon.
+**Is on-prem in scope on day one, or does cloud ship first?**
+
+The slice table above assumes on-prem first (S1), because it is the half that makes the answer
+TRUE: `lastLogon` is the only source that sees on-prem-only activity, and a cloud-only answer
+for a user who logs on to a workstation and never touches a cloud app reads as dormant when
+they are not. That is the dangerous direction.
+
+Cloud-first would ship something usable sooner and is a defensible call -- but only if the
+page states plainly that on-prem was not checked, and never presents a cloud date as "true
+last logon". The script already models this: `-CloudOnly` reports `OnPrem_LastLogon` as
+"Not checked" rather than "Never", and that distinction would have to be honoured from the
+first commit rather than retrofitted.
+
+**Recommendation: on-prem first.** It is the larger half, but shipping the half that can call
+an active user dormant is how this module would cause the exact harm it exists to prevent.
+
+The credential question that was here has been answered from the repo -- see the cloud section.
+The prerequisite (`AuditLog.Read.All` consented on whichever secret this module is pointed at)
+stands, but it is a deployment step like every other module's, not a design decision.
