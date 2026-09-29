@@ -8,10 +8,25 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**2026-09-29. Migration mailbox recovery is the active task.** The owner requested it working
-immediately; other module implementation is not part of this recovery. Work is on `master`,
-starting from `3a1644d`. One session owns the checkout. See the queue 12/13/14 entry below for
-the fix and remaining deployment step. Catchup cleanup was explicitly skipped.
+**2026-09-29 (late). THE MIGRATION MODULE IS CLOSED BY OWNER ORDER. DO NOT TOUCH IT.**
+Five days on one module was the limit. It is left broken on dev - the mailbox pane renders
+empty for batches that have mailboxes - and the diagnosis so far is in the queue 12/13/14
+entry below. **That entry is a record, not a work item.** Several other modules are waiting to
+deploy and they outrank finishing it.
+
+**Active work is queue items 15-19.** Owner set this and left for the day, answering the
+questions first. Branch `master`, head `d9edf86`, tree clean.
+
+| Item | State |
+| --- | --- |
+| 15 Risky Users complete results | **Done already.** `docs/RiskyUsersCompleteResults-Plan.md` all five slices landed; re-read against the code tonight and there are no gaps. Both outstanding items are the owner's: the Graph permission (resolved 2026-09-28) and a browser check. |
+| 16 Sidebar scrollbar | **Done already.** `docs/SidebarScrollbar-Plan.md` landed with four tripwires in `ExchangeAdminWeb.Tests/SidebarScrollCssTests.cs`. Re-read tonight, no gaps. Browser check outstanding. |
+| 17 True Last Logon module | **Plan drafted, awaiting approval:** `docs/TrueLastLogon-Plan.md`. Scope cut to ONE USER at a time per the owner; reuses the existing Graph app reg. **Two open questions in the plan are blocking** - whether that app reg can carry `AuditLog.Read.All`, and whether on-prem ships day one or cloud-first. |
+| 18 Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The blocker was where the hold record lives - the script keeps each account's original OU in a CSV on one person's OneDrive, which a web app cannot use. |
+| 19 Risky Users labels | **Done.** `60c3ace`, module `1.4.1` -> `1.5.0`. Each card now says what it is for; Refresh became Search. |
+
+**Next action: 17 is blocked on the owner's two questions. Nothing else here is startable** -
+15, 16 and 19 are complete and 18 is cancelled. Do not open new queue items without a go.
 
 **The owner deployed `94d9173`, and the three supplied screenshots still showed no mailboxes.**
 The deployed DLL matched the verified local DLL byte for byte. Read-only diagnosis now proves
