@@ -79,27 +79,43 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     and add are both measured idempotent), which reduces but cannot eliminate it.
   - `Test-WebApp` holds 10,001 test members; the owner is removing it.
 
-- **QUEUE ITEMS 12, 13 AND 14 ARE IMPLEMENTED AND UNVERIFIED IN A BROWSER.** Module
-  `1.9.1` -> `1.20.9`, no base app bump at any point. Gates green: build 0 errors,
-  3288 passed / 0 failed / 3 skipped, format, ASCII, `git diff --check`.
-  - **The per-version history is in `Modules/ModuleCatalog.cs`**, one comment line per bump,
-    and the reasoning for each is in its commit. Not copied here.
-  - **The owner's UI rulings of 2026-09-29 are in `.agents/decisions.md`** (one menu per
-    action bar, sortable means visible, icons carry labels). Not copied here.
-  - **1.21.0: both batch lists are HTML tables, not CSS grids.** The grid required a width
-    for every column and a header cell per declared track, kept in step by hand. That is where
-    two header-shift defects and four wrong width guesses came from. A table sizes each column
-    to its own widest cell across all rows and aligns header to body structurally, so neither
-    failure is expressible and there is no width left to guess. The mailbox table beside it
-    always worked this way and had none of those faults - which was visible for days before
-    anyone drew the conclusion.
-  - **WHAT IS ACTUALLY OUTSTANDING: the plan's `## Acceptance` hand checks.** Nothing in this
-    repo renders a Blazor component, so none of the below is covered by any test:
-    - the batch-open page-reset risk the plan flags as a genuine risk rather than a formality;
+- **QUEUE ITEMS 12, 13 AND 14: CODE COMPLETE, BROKEN ON DEV, ACTIVE BUG HUNT.**
+  Branch `master`, verified head `1a09f90`, tree clean, 47 commits unpushed (policy: ask).
+  Module `1.22.0`. Gates green at that head: build 0 errors, 3289 passed / 0 failed /
+  3 skipped, format, ASCII, `git diff --check`, click-gate registry.
+
+  **STAGE: NOT SHIPPABLE. The mailbox pane renders empty for batches that have mailboxes.**
+  The owner reports this worked before the interface redesign, which makes it a regression
+  introduced by this work, not an Exchange fault.
+
+  - **NEXT ACTION, and the owner has been asked to choose:** the prime suspect is the
+    generation guard in `Components/Pages/Migration.razor` - `batchUsersGeneration`
+    (declared 1580, bumped 1780 and 1840, captured 1805/1857/3100, enforced in
+    `ReplaceBatchUsers` at 3654). It is the only thing in this module whose job is to
+    DISCARD mailbox results. If the counter is bumped between a fetch starting and landing,
+    every load is thrown away and the pane renders empty - exactly the symptom. Either
+    (a) prove or clear it, or (b) rip it out and accept the race it guarded. UNPROVEN as of
+    this handoff; do not assume it is the cause and do not assume it is not.
+  - **The guard was never requested by the owner.** It came from the `openreview` of S1 as
+    finding mir-1. Worth weighing when deciding whether to remove it.
+  - **A CHANGE MADE ON A BAD INFERENCE IS STILL IN, AT `1a09f90`.** The mailbox query was
+    switched from `Get-MigrationUser -BatchId <name>` to
+    `Get-MigrationBatch -Identity <name> | Get-MigrationUser` on the strength of ONE manual
+    test. The owner then said the pane worked before the redesign, which means `-BatchId`
+    was never the fault. **Consider reverting that query change** as part of clearing the
+    real cause; it is one Exchange round trip either way, so it is not a performance
+    question, it is a question of not carrying an unfounded change.
+  - **A warning paragraph in the empty state must go.** It narrates the batch-record vs
+    mailbox-list disagreement to the operator. The owner rejected it on sight, and it
+    violates the standing rule against putting explanation into UI elements.
+  - **Owner context that governs priority:** this is day five on one module and several
+    other modules are waiting to deploy. Do not open new work here. Fix the empty pane,
+    stop.
+
+  **Outstanding behind that, all needing a dev deploy and none of it started:**
+    - the batch-open page-reset risk the plan flags as a genuine risk, not a formality;
     - both `Actions (n)` menus opening, closing on an outside click, and refusing while busy;
     - the schedule time field resolving to the UTC it displays;
-    - the batch list column widths - **iterated four times from screenshots and never seen by
-      the agent that wrote them**, so treat the rem values as a starting point;
     - ticking every mailbox in a batch, and ticking several batches then filtering.
   - **Six defects were found here after the module was first reported complete**, five of them
     by the owner looking at dev and one by a requirements walk. Four were in code carrying
