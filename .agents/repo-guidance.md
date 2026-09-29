@@ -85,6 +85,9 @@ module contract docs (`docs/AdminModuleSpec.md`,
   `tests/ps/`.
 - When a change ships a new test, prove it non-vacuous: revert the fix, confirm the
   test fails, restore it, confirm everything passes.
+- A page edit that adds or removes lines invalidates every `ClickGateRegistry` entry
+  below it, because entries are keyed by line number. Re-anchor with
+  `.agents/playbooks/clickgate-reanchor.md`; do not hand-compute a single offset.
 - CI (`.github/workflows/ci.yml`) triggers on push to `master` and on every PR, with
   a `build-test` job (build, format check, `dotnet test` on the solution, test-result
   upload) and a `powershell` job (PSScriptAnalyzer + Pester) — both on
