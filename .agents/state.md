@@ -133,11 +133,10 @@ and Graph), verified with `git ls-remote` on 2026-09-28. Push policy remains ask
     it was written to catch, one level up: a check seeded from memory rather than from the
     thing it checks. It now reads the options out of the markup, so a sort option added later
     is covered without anyone remembering.
-    - **OPEN, owner call:** Direction and Created are sortable with no column of their own.
-      Both are recorded as written exemptions - each is shown per batch in the right-hand pane,
-      and a seventh column would squeeze the batch name past what R15 allows. Total earned a
-      column because it is a denominator compared row to row; those two are not. If the owner
-      wants them visible, the columns go in and the name column narrows.
+    - **Settled by the owner, 2026-09-29.** Direction now shows on every row as an inline SVG
+      inside the name cell - no column, so the name keeps its width. Created stays as it was,
+      with no column, deliberately. Both remain registered exemptions in the sortable-column
+      test with those reasons written down.
   - **Known, not acted on: the mailbox pane re-sorts the whole set about five times per
     render.** `MailboxTotalCount`, `MailboxPageCount`, `MailboxPagerLabel`, `GetPagedMailboxes`
     and now `AnyMailboxRowRenders` each call `OtherMailboxes()`, which filters AND sorts; the

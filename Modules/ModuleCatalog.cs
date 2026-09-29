@@ -298,7 +298,11 @@ public sealed class ModuleCatalog
             // "Total" and ordered by it, so the list could be sorted by a column that was not on
             // screen, and Synced and Failed were fractions with no denominator. Added to both
             // batch views; R16 amended. Owner caught it on a dev screenshot.
-            Version = "1.20.4",
+            // 1.20.5: migration direction shows on every batch row as an inline SVG inside the
+            // name cell (owner, 2026-09-29: icons in the list, and do not clog the columns). No
+            // seventh column, so the batch name keeps its width and R15 holds. Labelled with a
+            // title and an aria-label, because an icon is where R17 is easiest to break.
+            Version = "1.20.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

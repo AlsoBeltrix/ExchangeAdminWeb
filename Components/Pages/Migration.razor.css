@@ -324,3 +324,13 @@
     white-space: nowrap;
     text-decoration: none;
 }
+
+/* Direction icon (owner, 2026-09-29). Inside the name cell, not a column of its own. Muted so it
+   reads as an attribute of the row rather than competing with the status badge, and it inherits
+   currentColor so it follows the theme without a second set of tokens. */
+.mig-dir {
+    flex-shrink: 0;
+    margin-right: .35rem;
+    opacity: .7;
+    vertical-align: -.15em;
+}

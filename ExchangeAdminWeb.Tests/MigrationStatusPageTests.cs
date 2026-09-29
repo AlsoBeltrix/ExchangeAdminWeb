@@ -1069,9 +1069,10 @@ public class MigrationStatusPageTests
         var exempt = new Dictionary<string, string>
         {
             ["Name"] = "the batch name IS the first column; it carries no separate count header",
-            ["Direction"] = "shown per batch in the right-hand pane as a ToCloud/FromCloud badge. "
-                + "A seventh column in this pane would squeeze the name column, and R15 forbids "
-                + "clipping the trailing identifier in a batch name",
+            ["Direction"] = "shown on every row as an icon inside the name cell, not as a "
+                + "column (owner, 2026-09-29). A seventh column would squeeze the name column "
+                + "and R15 forbids clipping the trailing identifier in a batch name, so the "
+                + "direction rides in the cell it describes. See TheDirectionIconIsLabelled.",
             ["Created"] = "shown per batch in the right-hand pane header (Created: ...), and the "
                 + "sort control itself names the ordering on screen. Same width argument as "
                 + "Direction: the fixed columns already take most of a narrow pane. UNLIKE those "
@@ -1145,6 +1146,47 @@ public class MigrationStatusPageTests
                 $"the mailbox sort offers {column} but no column header shows it, so the list "
                 + "can be ordered by something the operator cannot see");
         }
+    }
+
+    [Fact]
+    public void TheDirectionIconIsLabelledAndSaysSomethingDifferentForEachDirection()
+    {
+        // Owner, 2026-09-29: direction as an icon in the list, and do not clog the columns. An
+        // icon is the one place R17 - no unlabelled values - is easiest to break, because the
+        // shape reads as self-evident to whoever chose it and as nothing to everyone else.
+        var page = StripRazorComments(ReadPage());
+
+        // Labelled twice over: a title for a pointer, an aria-label for a screen reader.
+        Assert.Contains("<title>@DirectionLabel(direction)</title>", page, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"@DirectionLabel(direction)\"", page, StringComparison.Ordinal);
+
+        // And the label actually differs by direction, rather than one word for both.
+        var label = StripLineComments(GetMethodBody("DirectionLabel"));
+        Assert.Contains("Exchange Online", label, StringComparison.Ordinal);
+        Assert.Contains("on-premises", label, StringComparison.Ordinal);
+
+        // Neither is the raw enum name, which is a developer word and not an operator one.
+        Assert.DoesNotContain("\"ToCloud\"", label, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"ToOnPrem\"", label, StringComparison.Ordinal);
+
+        // The two directions draw different arrows. A single shared glyph would be a decoration
+        // that claims to carry information.
+        //
+        // Matched as the RENDERED path element, not as the identifier. The first version of this
+        // asserted Contains("DownArrowPath"), which the const DECLARATION satisfies on its own -
+        // so pointing both branches at the up arrow left it green. Caught by the probe, which is
+        // the only reason it is written correctly now.
+        Assert.Contains("<path d=\"@UpArrowPath\" />", page, StringComparison.Ordinal);
+        Assert.Contains("<path d=\"@DownArrowPath\" />", page, StringComparison.Ordinal);
+
+        // One definition, rendered in both batch views - the main list and the selection pane
+        // show the same batches, and a direction visible in one and not the other is the gap
+        // the Total column had.
+        Assert.Equal(2, CountOf(page, "@DirectionIcon(batch.Direction)"));
+
+        // Inline SVG rather than a Bootstrap Icons class: a webfont that has not loaded leaves
+        // an unlabelled row instead of a visibly broken one.
+        Assert.DoesNotContain("bi-cloud", page, StringComparison.Ordinal);
     }
 
     [Fact]
