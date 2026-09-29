@@ -5,6 +5,48 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-29 - Dense list surfaces: one menu per action bar, icons over columns, and a denominator is not optional
+
+Status: Active. Owner rulings, 2026-09-29, on dev screenshots of the Migration Status page.
+
+Decision:
+Three rulings about a pane too narrow for everything that wants to be in it.
+
+1. **An action bar is ONE control, not a row of them.** Where a pane has more actions than
+   fit on one line, they collapse into a single `Actions (n)` menu: the count rides on the
+   button, the row cannot wrap, nothing can be a different size, and exactly one item is
+   coloured - the destructive one. The owner's words were "one line, no differently sized
+   buttons ... colors do not make sense". Applies to every action bar in the pane, not the
+   one that prompted it.
+2. **A value you can sort by is a value you can see** - but a column is not the only way to
+   show it. The batch list had no Total while the sort offered Total, so the list could be
+   ordered by something absent from the screen; Total is now a column because it is a
+   DENOMINATOR, compared row to row, and Synced/Failed mean nothing without it. Direction is
+   now an inline SVG inside the name cell, and Created stays off the table entirely. Where a
+   value is not a column, the reason is written down next to the check that would otherwise
+   demand one.
+3. **Icons carry a label or they carry nothing.** An icon standing in for a column gets a
+   `<title>` and an `aria-label`, worded for an operator rather than named after the enum.
+
+Consequences:
+- `docs/MigrationInterfaceRedesign-Plan.md` R12 and R16 are amended in place, each with a
+  note saying what changed and why. R12's "identical" clause is load-bearing and unchanged;
+  the "outline buttons" styling it happened to name is superseded by ruling 1.
+- Converting one action bar and not its twin BREAKS R12. Both bars move together or neither
+  does. This is how the mailbox bar came to keep eight controls in five colours for a day
+  after the batch bar was fixed.
+- `RefusalMechanism.NoneNeeded` was added to the click-gate contract for the menu-closing
+  sheets, which reach no operation. It still requires a written reason.
+
+Reason:
+Every one of these was found by the owner looking at the running app, not by a test. The
+plan named four columns and the tests checked those four; the plan said both action bars
+were identical and the tests checked that both reached a planner. In each case the
+automation agreed with the specification while the specification was the thing that was
+wrong. A spec-shaped test cannot find a spec-shaped gap, and this page now carries checks
+derived from the markup (every sort option must resolve to something visible) rather than
+from a list someone typed.
+
 ### 2026-09-25 - A migration batch with errors is not completable, and the UI says so on the control
 
 Status: Active. Owner ruling, 2026-09-25.
