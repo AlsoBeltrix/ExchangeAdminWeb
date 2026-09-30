@@ -88,6 +88,10 @@ Gates at that head: build 0 errors, **3339 passed / 0 failed / 3 skipped**, form
     lost it has verified nothing. Relaxing that `&&` to `||` makes a live account read as
     confirmed dormant, and four tests fail when it is.
 
+**Open review findings: `tll-1` (HIGH) and `tll-2` (MEDIUM)** from a codex defect hunt over
+`046e3d2..cb968da`. Both admitted, both against `Services/CloudSignInService.cs`. Status is owned
+by `.agents/review/index.md`; S3 does not start until both are closed.
+
 **NEXT ACTION: S3** - module descriptor, page, permission, click gating, audit. Module is NOT
 registered yet, which is why nothing has a version bump. Two wiring items S3 owns: register
 `TrueLastLogonService` and `CloudSignInService` in `Program.cs`, and register the named
