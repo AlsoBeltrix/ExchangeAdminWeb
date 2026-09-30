@@ -67,20 +67,13 @@ Per the script's performance model, adapted to one user:
   claim from one computed from all 37, and the operator must see which they have. This is the
   on-prem equivalent of `Cloud_Verified` and it fails the same way if dropped.
 
-## Cloud: credential, and why the "which app reg" question dissolved
+## Cloud: credential
 
-Owner, 2026-09-29: reuse the existing Graph credential rather than create a dedicated app reg.
-
-**There is no single shared Graph registration to reuse, and that turns out not to matter.**
-Nine modules each declare their own `GraphDelineaSecretId` config field -- M365 Group
-Management, MFA Reset, Cloud Password Reset, Named Locations, Emergency Disable, Risky Users,
-Defender Endpoint Devices, Intune Devices, Service Health -- and the owner points each at a
-Secret Server secret at deploy time. Which app registration sits behind a given secret is a
-runtime configuration fact, not a source fact.
-
-So this module follows the same convention: **it declares its own `GraphDelineaSecretId`**, and
-the owner points it at a secret whose registration carries the permissions below. That is the
-established pattern and it needs no decision now.
+The module declares its own `GraphDelineaSecretId` config field, as nine other modules already
+do, and reads whatever Secret Server secret the owner points it at. **Whether that secret
+belongs to a new app registration or an existing one is an infrastructure choice and makes no
+difference to this code** -- the plan does not need to know, and an earlier revision of this
+file wrongly posed it as a question for the owner.
 
 Permissions the registration behind that secret must hold:
 
@@ -138,24 +131,19 @@ account known to have logged on recently, and one known-dormant account, compare
 script's own output for the same two users. The module and the script must agree, and if they
 disagree the script is right until proven otherwise.
 
-## Open question -- one, and it is a sequencing call
+## What this plan needs: approval, and nothing else
 
-**Is on-prem in scope on day one, or does cloud ship first?**
+**No open questions.** An earlier revision posed two, and neither was real:
 
-The slice table above assumes on-prem first (S1), because it is the half that makes the answer
-TRUE: `lastLogon` is the only source that sees on-prem-only activity, and a cloud-only answer
-for a user who logs on to a workstation and never touches a cloud app reads as dormant when
-they are not. That is the dangerous direction.
+- *Which app registration?* An infrastructure choice that does not reach this code.
+- *On-prem first or cloud-first?* Both halves get built. It only matters if a partial
+  deployment is wanted mid-build, and that can be said at any point.
 
-Cloud-first would ship something usable sooner and is a defensible call -- but only if the
-page states plainly that on-prem was not checked, and never presents a cloud date as "true
-last logon". The script already models this: `-CloudOnly` reports `OnPrem_LastLogon` as
-"Not checked" rather than "Never", and that distinction would have to be honoured from the
-first commit rather than retrofitted.
+**On-prem is S1 for a reason worth keeping.** `lastLogon` is the only source that sees
+on-prem-only activity, so a cloud-only answer calls a workstation user dormant when they are
+not. If a partial deploy is ever wanted, the cloud-only page must state that on-prem was not
+checked and must never label a cloud date "true last logon" -- the script already models this
+(`-CloudOnly` reports `OnPrem_LastLogon` as "Not checked", not "Never").
 
-**Recommendation: on-prem first.** It is the larger half, but shipping the half that can call
-an active user dormant is how this module would cause the exact harm it exists to prevent.
-
-The credential question that was here has been answered from the repo -- see the cloud section.
-The prerequisite (`AuditLog.Read.All` consented on whichever secret this module is pointed at)
-stands, but it is a deployment step like every other module's, not a design decision.
+One deployment prerequisite, not a design decision: `AuditLog.Read.All` consented on whichever
+secret the module is pointed at. Nothing in this app uses that permission today.
