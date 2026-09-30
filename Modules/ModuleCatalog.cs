@@ -611,6 +611,14 @@ public sealed class ModuleCatalog
             //   the error the owner hit. A query error now aborts the whole resolution rather
             //   than reading as "these 500 were not found" - the write removes everyone absent
             //   from the resolved list, so that reading unsubscribes real people.
+            //   S2: Preview and Download CSV stop throwing on the real group. They called
+            //   Get-ADGroupMember, which expands every member into a full object and is bound
+            //   by the ADWS MaxGroupOrMemberEntries cap (default 5000) - below the size this
+            //   module exists to manage. Now the raw `member` attribute, unioned with
+            //   primary-group members (lst-2: the linked attribute omits them and
+            //   Get-ADGroupMember included them, so the swap alone would silently shorten the
+            //   list). Detail resolves in batches; a DN that does not resolve falls back to its
+            //   CN and still produces a row, because an unresolved member is still a member.
             Version = "1.3.0",
             MainPermission = new(
                 "Access",

@@ -85,7 +85,7 @@ line says so. Status lives here.
 | 17 | True Last Logon module | **BUILT. S1, S2 and S3 all landed; module registered at `1.0.0`. NOT done - the mandatory live check is outstanding and is owner work.** Detail block below. |
 | 18 | Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The hold record lives in a CSV on one person's OneDrive, which a web app cannot use. |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
-| 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. S1 LANDED 2026-09-30; S2, S3 and S4 not started.** Module `1.2.0` -> `1.3.0`, set once on S1. Detail block below. Still executable with no owner input. |
+| 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. S1 AND S2 LANDED 2026-09-30; S3 and S4 not started.** Module `1.2.0` -> `1.3.0`, set once on S1. Detail block below. Still executable with no owner input. |
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
 
@@ -101,7 +101,7 @@ line says so. Status lives here.
    fraction of the planned scope - he rejected the plan's `.pg-*` conversion as a sledgehammer
    and was right. Detail block below. **Outstanding: a browser check at one tall and one short
    window, which is owner work and cannot be done here.**
-4. **20 Comms10k. S1 of 4 LANDED 2026-09-30.** S2 (Preview and Download CSV), S3 (distribution-group guard, then delete the protected-principal path) and S4 (clear-then-fill write with read-back) are next, in that order, and need no owner input. S4 is the one that actually makes the write reach 10k; S1-S3 are what make it safe to run.
+4. **20 Comms10k. S1 and S2 of 4 LANDED 2026-09-30.** S3 (distribution-group guard, then delete the protected-principal path) and S4 (clear-then-fill write with read-back) are next, in that order, and need no owner input. S4 is the one that actually makes the write reach 10k; S1-S3 are what make it safe to run.
 5. **8 S6-S8.** Written slices, no owner input needed. Pure execution.
 6. **10 and 11.** Code is done; what remains is a deploy and live validation, which is owner
    work, and it is gated behind item 1 above.
@@ -162,7 +162,7 @@ renders a Blazor component or measures a laid-out box, so the tests only ever pr
 the owner inspection is what actually confirms it, and it ran. The change moved the scroll from
 the document to `article` on EVERY page, so any later layout complaint on a page not opened
 that day is still possible; it would be a new report, not an unverified claim.
-### Queue item 20 - Comms-10k at full size, S1 of 4 landed
+### Queue item 20 - Comms-10k at full size, S1 and S2 of 4 landed
 
 `docs/Comms10kBulkResolveScale-Plan.md`, approved 2026-09-28 at revision 15. Module
 `1.2.0` -> `1.3.0`; the version is set ONCE, on S1, and the remaining slices extend its comment
@@ -195,14 +195,15 @@ silently queried something else (`SectionAccessGroupDirectory.cs:132` records th
 as the literal it is. There is a test asserting it is NOT escaped, because escaping it would
 break the match just as surely.
 
-Gates after S1: build 0 errors, **3404 passed / 0 failed / 3 skipped**, format, ASCII,
+Gates after S2: build 0 errors, **3426 passed / 0 failed / 3 skipped**, format, ASCII,
 `git diff --check`, csproj byte-identical. Five mutations probed and all five bit: batching
 off by one (3 fail), escaping removed (1), `sAMAccountName` added to the keys (1), ambiguous
 collapsing to the first match (1), and the seam swallowing a batch error (1).
 
-**NEXT: S2, then S3, then S4, in that order and one session each.** None needs owner input.
-S4 is the slice that actually makes the write reach ten thousand members; S1 to S3 are what make
-running it safe. The plan's tests 8 to 20 belong to those slices and are written out there.
+**NEXT: S3, then S4, one session each.** Neither needs owner input. S3's two halves - add the
+distribution-group guard, THEN delete the protected-principal path - **must not be split into
+two commits**; that ordering is a security property and the plan says so. S4 is the slice that
+actually makes the write reach ten thousand members. The plan's tests 10 to 20 belong to them.
 
 **Nothing in this module has run against the real group.** The plan's Acceptance section is the
 owner's and is outstanding in full.

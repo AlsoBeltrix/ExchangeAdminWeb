@@ -28,11 +28,37 @@ public class Comms10kService
         }
     }
 
-
     private bool HasCredentialSecret => int.TryParse(_moduleConfig.GetValue("Comms10k", "DelineaSecretId"), out var id) && id > 0;
 
     public bool IsConfigured => !string.IsNullOrEmpty(TargetGroup) && HasCredentialSecret;
 
+    /// <summary>
+    /// Lists the target group's membership: <paramref name="limit"/> rows for the page's preview,
+    /// or all of them for the CSV export. <c>TotalCount</c> is always the FULL membership.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Both of this method's directory calls used to be the wrong ones, and Preview and
+    /// Download CSV simply threw on the real group.</b> It called <c>Get-ADGroupMember</c>, which
+    /// expands every member into a full object and is bound by the ADWS
+    /// <c>MaxGroupOrMemberEntries</c> cap (default 5,000) - so it raised past that size, which is
+    /// exactly the size this module exists to manage. <see cref="ExecuteReplaceAsync"/> had
+    /// already been fixed to read the raw <c>member</c> attribute for the same reason; this half
+    /// never got the same treatment. Then it issued one <c>Get-ADUser</c> per member on top.
+    /// </para>
+    /// <para>
+    /// <b>The primary-group union is not an optimisation, it is a correctness fix that comes WITH
+    /// the switch.</b> The linked <c>member</c> attribute does not carry members whose membership
+    /// comes from their primary group; <c>Get-ADGroupMember</c> did. Swapping one for the other
+    /// without the union would silently shorten the list. This repository has already fixed the
+    /// identical defect once, at <c>GroupManagementService.cs:414-448</c> (lst-2). Listing only -
+    /// the write still targets the flat DN list.
+    /// </para>
+    /// <para>
+    /// Fails closed: an unreadable SID or a failed primary-group query throws rather than
+    /// returning a shorter list, because a quietly shorter membership is the whole finding.
+    /// </para>
+    /// </remarks>
     public async Task<Comms10kMemberList> GetMembersAsync(int? limit = null)
     {
         var group = TargetGroup;
@@ -45,61 +71,167 @@ public class Comms10kService
 
         return await Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
+            var dns = QueryMemberDns(creds.Value, group);
 
-            ps.AddCommand("Import-Module")
-              .AddParameter("Name", "ActiveDirectory")
-              .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            var result = new Comms10kMemberList { GroupName = group, TotalCount = dns.Count };
 
-            var server = _config["OnPremExchange:ServerUri"]?.Replace("/PowerShell/", "").Replace("http://", "").Replace("https://", "");
-            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+            // The limit is applied to the DN LIST, before any detail is fetched - that is the
+            // point of doing it here. Applying it after resolution would resolve ten thousand
+            // members to show fifty.
+            var toResolve = limit.HasValue ? dns.Take(limit.Value).ToList() : dns;
 
-            ps.AddCommand("Get-ADGroupMember")
-              .AddParameter("Identity", group)
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            var members = ps.Invoke();
-            ps.Commands.Clear();
-
-            var result = new Comms10kMemberList { GroupName = group, TotalCount = members.Count };
-
-            // Only resolve details for the limited set (preview) or all (export)
-            var toResolve = limit.HasValue ? members.Take(limit.Value) : members;
-
-            foreach (var member in toResolve)
-            {
-                var sam = member.Properties["SamAccountName"]?.Value?.ToString() ?? "";
-                var name = member.Properties["Name"]?.Value?.ToString() ?? "";
-
-                ps.AddCommand("Get-ADUser")
-                  .AddParameter("Identity", sam)
-                  .AddParameter("Properties", new[] { "EmailAddress", "DisplayName" })
-                  .AddParameter("Credential", credential)
-                  .AddParameter("ErrorAction", "SilentlyContinue");
-                var userResults = ps.Invoke();
-                ps.Commands.Clear();
-
-                var user = userResults.FirstOrDefault();
-                var email = user?.Properties["EmailAddress"]?.Value?.ToString() ?? "";
-                var displayName = user?.Properties["DisplayName"]?.Value?.ToString() ?? name;
-
-                result.Members.Add(new Comms10kMember
-                {
-                    Email = email,
-                    SamAccountName = sam,
-                    DisplayName = displayName
-                });
-            }
+            result.Members.AddRange(
+                Comms10kMemberResolver.BuildRows(toResolve, QueryMemberDetails(creds.Value, toResolve)));
 
             return result;
         });
+    }
+
+    /// <summary>
+    /// Every member DN of the group: the raw <c>member</c> attribute, unioned with the members
+    /// who hold it as their primary group. Internal virtual TEST SEAM.
+    /// </summary>
+    internal virtual IReadOnlyList<string> QueryMemberDns(
+        (string username, string password, string domain) creds, string group)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+
+        // Get-ADGroup -Properties member, NOT Get-ADGroupMember: the linked attribute comes back
+        // by range retrieval and is not subject to the ADWS MaxGroupOrMemberEntries cap, which is
+        // what made this page throw on the real group.
+        ps.Streams.Error.Clear();
+        ps.AddCommand("Get-ADGroup")
+          .AddParameter("Identity", group)
+          .AddParameter("Properties", new[] { "member", "SID" })
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var groupResult = ps.Invoke();
+        ps.Commands.Clear();
+
+        if (ps.HadErrors || groupResult.Count == 0)
+        {
+            var first = ps.Streams.Error.FirstOrDefault()?.ToString() ?? "the group was not returned";
+            ps.Streams.Error.Clear();
+            throw new InvalidOperationException($"The group's membership could not be read: {first}");
+        }
+
+        var dns = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (groupResult[0].Properties["member"]?.Value is System.Collections.IEnumerable members)
+        {
+            foreach (var m in members)
+            {
+                var dn = m?.ToString();
+                if (!string.IsNullOrWhiteSpace(dn) && seen.Add(dn))
+                    dns.Add(dn);
+            }
+        }
+
+        // The primary-group union (lst-2). Fail closed: an unreadable SID is a read error, never
+        // a silently narrower list.
+        var rid = Comms10kMemberResolver.RidFromSid(groupResult[0].Properties["SID"]?.Value?.ToString());
+        if (rid is null)
+            throw new InvalidOperationException("The group's membership could not be read: its SID was unreadable.");
+
+        ps.Streams.Error.Clear();
+        ps.AddCommand("Get-ADObject")
+          .AddParameter("LDAPFilter", $"(primaryGroupID={rid})")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var primaries = ps.Invoke();
+        ps.Commands.Clear();
+
+        if (ps.HadErrors)
+        {
+            var first = ps.Streams.Error.FirstOrDefault()?.ToString() ?? "unknown error";
+            ps.Streams.Error.Clear();
+            throw new InvalidOperationException($"The group's primary-group membership could not be read: {first}");
+        }
+
+        foreach (var p in primaries)
+        {
+            var dn = p?.Properties["DistinguishedName"]?.Value?.ToString();
+            if (!string.IsNullOrWhiteSpace(dn) && seen.Add(dn))
+                dns.Add(dn);
+        }
+
+        return dns;
+    }
+
+    /// <summary>
+    /// Display detail for the given member DNs, one query per batch. Internal virtual TEST SEAM.
+    /// </summary>
+    /// <remarks>
+    /// <b>A batch error here is NOT fatal, and that is the opposite of the address resolver.</b>
+    /// There, a failed query means addresses read as not-found and get dropped from a WRITE. Here
+    /// the membership is already known - this only decorates it - so a failed detail query costs
+    /// display names, not members. <see cref="Comms10kMemberResolver.BuildRows"/> falls back to
+    /// each DN's CN, and the row count still equals the member count.
+    /// </remarks>
+    internal virtual IReadOnlyList<Comms10kMemberResolver.Detail> QueryMemberDetails(
+        (string username, string password, string domain) creds, IReadOnlyList<string> distinguishedNames)
+    {
+        var details = new List<Comms10kMemberResolver.Detail>();
+        if (distinguishedNames.Count == 0)
+            return details;
+
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        var props = new[] { "sAMAccountName", "mail", "DisplayName" };
+
+        foreach (var batch in Comms10kMemberResolver.Batch(distinguishedNames))
+        {
+            ps.Streams.Error.Clear();
+            ps.AddCommand("Get-ADObject")
+              .AddParameter("LDAPFilter", Comms10kMemberResolver.BuildBatchFilter(batch))
+              .AddParameter("Properties", props)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "SilentlyContinue");
+            var objects = ps.Invoke();
+            ps.Commands.Clear();
+
+            if (ps.HadErrors)
+            {
+                _logger.LogWarning("Comms-10k: a member detail batch failed; those rows fall back to their CN. {Error}",
+                    ps.Streams.Error.FirstOrDefault()?.ToString() ?? "unknown error");
+                ps.Streams.Error.Clear();
+            }
+
+            foreach (var o in objects)
+            {
+                if (o is null)
+                    continue;
+                details.Add(new Comms10kMemberResolver.Detail(
+                    DistinguishedName: o.Properties["DistinguishedName"]?.Value?.ToString(),
+                    SamAccountName: o.Properties["sAMAccountName"]?.Value?.ToString(),
+                    Mail: o.Properties["mail"]?.Value?.ToString(),
+                    DisplayName: o.Properties["DisplayName"]?.Value?.ToString()));
+            }
+        }
+
+        return details;
     }
 
     /// <summary>
