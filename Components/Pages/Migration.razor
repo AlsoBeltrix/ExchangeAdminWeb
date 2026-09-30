@@ -627,7 +627,7 @@
                                             @* Captured per iteration: the lambdas below must
                                                close over THIS row's name. *@
                                             var batchName = batch.BatchName;
-                                            <tr class="mig-clickable @(expandedBatch == batchName ? "mig-open" : "")"
+                                            <tr @key="batchName" class="mig-clickable @(expandedBatch == batchName ? "mig-open" : "")"
                                                 @onclick="() => SelectOnlyBatch(batchName)">
                                                 @if (canManage)
                                                 {
@@ -762,7 +762,7 @@
                                             @foreach (var batch in GetSelectedBatchesPage())
                                             {
                                                 var selectedName = batch.BatchName;
-                                                <tr>
+                                                <tr @key="selectedName">
                                                     @* R9. Open narrows the selection to this one
                                                        batch, and the pane becomes its mailboxes. *@
                                                     <td>
@@ -1225,7 +1225,7 @@
     // per-row ticket confirmation and the report drawer.
     private RenderFragment<MigrationUserInfo> MailboxRow => user =>
     @<text>
-    <tr class="@(highlightedUser != null && user.EmailAddress.Contains(highlightedUser, StringComparison.OrdinalIgnoreCase) ? "table-warning" : "")">
+    <tr @key="user.EmailAddress" class="@(highlightedUser != null && user.EmailAddress.Contains(highlightedUser, StringComparison.OrdinalIgnoreCase) ? "table-warning" : "")">
         @if (canManage)
         {
             @* R7. Checkboxes on mailboxes as well as batches. Keyed on the address, never a row

@@ -2204,6 +2204,44 @@ public class MigrationStatusPageTests
         }
     }
 
+    [Fact]
+    public void EveryReorderingRowIsKeyedSoItsCheckboxCannotBeReusedByAnotherRow()
+    {
+        // Blazor diffs a sibling list by POSITION unless the rows carry @key. All three of these
+        // lists reorder underneath the operator - the mailbox list pins ticked rows above the
+        // "OTHER MAILBOXES" divider, and both batch lists sort - and every row carries a control
+        // whose live DOM state the operator has already changed by clicking it. Unkeyed, the
+        // <input> at a position is REUSED when a different row moves into that position; Blazor
+        // writes no update because the value it last rendered there is unchanged, while the
+        // browser's actual checkbox state came from the click. The row then draws as ticked when
+        // it is not. Reported on dev v1.22.1 against the mailbox list, with the pager and the
+        // action count both correct and only the checkboxes lying. The other two lists have the
+        // same shape, so they are keyed here too rather than waiting to be reported.
+        var surfaces = new (string What, string Markup, string Key)[]
+        {
+            ("the batch catalogue", GetBatchRowMarkup(), "batchName"),
+            ("the batch selection pane",
+                ExtractBlock(ReadPage(), "@foreach (var batch in GetSelectedBatchesPage())"),
+                "selectedName"),
+            ("the mailbox list", GetUserRowMarkup(), "user.EmailAddress"),
+        };
+
+        foreach (var (what, markup, key) in surfaces)
+        {
+            var clean = StripRazorComments(markup);
+            var row = clean.IndexOf("<tr", StringComparison.Ordinal);
+
+            Assert.True(row >= 0, $"no <tr> found in {what}");
+
+            var opening = clean[row..Math.Min(clean.Length, row + 80)];
+
+            Assert.True(opening.StartsWith($@"<tr @key=""{key}""", StringComparison.Ordinal),
+                $"the row in {what} is not keyed, so Blazor matches it by position and its "
+                + $@"checkbox is reused across a reorder. Expected @key=""{key}"" first on the "
+                + $"tag; found: {opening}");
+        }
+    }
+
     /// <summary>
     /// <paramref name="source"/> with line comments removed. The scans below look for words that
     /// also occur in prose - "await", "finally", the flag names themselves - so a comment

@@ -25,24 +25,33 @@ empty for batches that have mailboxes - and the diagnosis so far is in the queue
 entry below. **That entry is a record, not a work item.** Several other modules are waiting to
 deploy and they outrank finishing it.
 
-**BLOCKS THE NEXT DEPLOY - migration mailbox checkboxes lie about what is ticked.** Owner on
-dev `v1.22.1`, 2026-09-30, with a screenshot: ticking a mailbox pins it to the top, and rows
-in the list BELOW the divider then render as ticked when they are not. `Actions (3)` and the
-`1-3 OF 3 TICKED` pager are correct; the checkboxes are not.
+**FIXED IN CODE, NOT YET SEEN ON DEV - migration mailbox checkboxes lied about what is ticked.**
+Owner on dev `v1.22.1`, 2026-09-30, with a screenshot: ticking a mailbox pinned it to the top,
+and rows in the list BELOW the divider then rendered as ticked when they were not. `Actions (3)`
+and the `1-3 OF 3 TICKED` pager were correct; the checkboxes were not.
 
-- **Cause, diagnosed not guessed: there is no `@key` anywhere in `Components/Pages/Migration.razor`.**
-  Two loops emit `<tr>` into the same `<tbody>` - `GetPinnedMailboxesPage()` at :1082 then
-  `GetPagedMailboxes()` at :1117. Blazor diffs by POSITION, so when a mailbox moves between
+- **Cause, diagnosed not guessed: there was no `@key` anywhere in `Components/Pages/Migration.razor`.**
+  Two loops emit `<tr>` into the same `<tbody>` - `GetPinnedMailboxesPage()` then
+  `GetPagedMailboxes()`. Blazor diffs by POSITION, so when a mailbox moves between
   the two blocks the `<input type="checkbox">` element at that position is reused. Blazor
   writes an update only when the rendered `checked` value differs from what it last rendered
   at that position, but the browser's live state was changed by the operator's click, so the
   two drift apart.
-- **Fix: `@key` on the row, keyed by email address** (`MailboxRow`, the `<tr>` at :1228), so
-  Blazor matches rows by identity instead of position. **The same defect shape applies to the
-  batch list and the selection pane** - both have checkboxes and both reorder on sort - so key
-  all three, not just the one that was reported.
-- **This is the owner's explicit exception to "do not touch migration":** *"we cannot deploy
-  like this."* It does not reopen the module for anything else.
+- **Fixed:** `@key` on the row in all three lists that reorder - the batch catalogue
+  (`@key="batchName"`), the batch selection pane (`@key="selectedName"`) and `MailboxRow`
+  (`@key="user.EmailAddress"`). The batch lists have the same defect shape and were keyed
+  without waiting to be reported. Module `1.22.2` -> `1.22.3`; base app version unchanged,
+  because nothing shared moved.
+- **Guarded:** `MigrationStatusPageTests.EveryReorderingRowIsKeyedSoItsCheckboxCannotBeReusedByAnotherRow`
+  asserts the first `<tr>` of each of the three slices opens with its expected `@key`. Proven
+  non-vacuous: each key removed in turn, the test fails naming that surface, restored.
+- **Line counts are unchanged (3993), so `ClickGateRegistry` needed no re-anchor.** Three
+  attributes were added in place. Keep it that way if this block is edited again.
+- **NOT verified in a browser.** Nothing in this repo can render a Blazor component, so the
+  fix is proven at the source level only. The owner's own screenshot case - tick three
+  mailboxes, read the boxes below the divider - is the acceptance check and is outstanding.
+- **This was the owner's explicit exception to "do not touch migration":** *"we cannot deploy
+  like this."* It does not reopen the module for anything else, and nothing else was touched.
 
 ### The whole queue, swept 2026-09-30 against `C:\Users\mcoelho\Desktop\queue.txt`
 
@@ -70,7 +79,7 @@ line says so. Status lives here.
 | 11 | Force-change-at-next-login option at runtime | **Same build as 10.** Same pending deploy and validation. |
 | 12 | CompleteAfter in migration | **DONE** (owner-marked). |
 | 13 | Per-migration checkboxes and actions | **DONE** (owner-marked). |
-| 14 | Migration interface redesign | **DONE** (owner-marked), but see the deploy blocker at the top of this file - the checkbox defect is in this surface. |
+| 14 | Migration interface redesign | **DONE** (owner-marked). The checkbox defect that was blocking the deploy is in this surface and is now FIXED in code, unverified on dev - see the top of this file. |
 | 15 | Risky Users complete results | **DONE.** Browser check outstanding, owner's. |
 | 16 | Sidebar scrollbar | **DONE.** `ExchangeAdminWeb.Tests/SidebarScrollCssTests.cs`. Browser check outstanding, owner's. |
 | 17 | True Last Logon module | **IN PROGRESS. S1 and S2 landed and reviewed; S3 is next.** Detail block below. |
@@ -82,8 +91,9 @@ line says so. Status lives here.
 
 **Recommended order, and why.** The next agent should not just walk the numbers.
 
-1. **The migration `@key` checkbox defect** (top of this file, not a queue item). It blocks the
-   next deploy, so every finished item behind it is invisible to users. Bounded and diagnosed.
+1. **The migration `@key` checkbox defect** (top of this file, not a queue item). **FIXED in
+   code 2026-09-30, gates green, NOT yet deployed or seen in a browser.** It was blocking the
+   next deploy, so every finished item behind it stays invisible to users until a deploy runs.
 2. **17 S3.** One slice from a finished module. Until it lands, S1 and S2 are dead code that no
    operator can reach.
 3. **22, with 21 folded in as its first case.** These are the only NEW items, they are both

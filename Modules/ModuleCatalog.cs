@@ -355,7 +355,12 @@ public sealed class ModuleCatalog
             // and report query failures instead of showing an empty batch. The 1.22.0 query
             // diagnosis above was disproven by same-credential live comparisons.
             // 1.22.2: distinguish never-started pending batches from genuinely empty batches.
-            Version = "1.22.2",
+            // 1.22.3: every row in the three lists that reorder carries an @key. Blazor diffs a
+            // sibling list by position, so pinning a ticked mailbox above the OTHER MAILBOXES
+            // divider handed its checkbox element to whichever row moved into that position, and
+            // that row then drew as ticked when it was not. The Actions count and the ticked
+            // pager were both right; only the boxes lied (owner, dev v1.22.1, 2026-09-30).
+            Version = "1.22.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
