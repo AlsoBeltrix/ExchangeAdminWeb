@@ -86,8 +86,8 @@ line says so. Status lives here.
 | 18 | Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The hold record lives in a CSV on one person's OneDrive, which a web app cannot use. |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
 | 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. S1 LANDED 2026-09-30; S2, S3 and S4 not started.** Module `1.2.0` -> `1.3.0`, set once on S1. Detail block below. Still executable with no owner input. |
-| 21 | Popup report has no scrollbar and ignores the mouse wheel | **FIXED IN CODE 2026-09-30, unverified in a browser.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
-| 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **FIXED IN CODE 2026-09-30, unverified in a browser.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
+| 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
+| 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
 
 **Recommended order, and why.** The next agent should not just walk the numbers.
 
@@ -157,12 +157,11 @@ percentage, and the dialog's flex chain must be unbroken. Five probes, all five 
 
 Gates: build 0 errors, **3408 passed / 0 failed / 3 skipped**, format, ASCII, `git diff --check`.
 
-**NOT VERIFIED IN A BROWSER AND CANNOT BE HERE.** Nothing in this repo renders a Blazor
-component or measures a laid-out box; the tests prove a SHAPE. **This change moves the scroll
-from the document to `article` on EVERY page**, so the owner check is not optional and is not
-just the two reported screens: one tall window and one short laptop-height window, on a long
-form page as well as a list page. A page that reads fine at 1440px and is cramped at 768px is
-exactly the failure this whole change is about.
+**OWNER BROWSER CHECK: PASSED, 2026-09-30.** That closes both items. Nothing in this repo
+renders a Blazor component or measures a laid-out box, so the tests only ever proved a SHAPE -
+the owner inspection is what actually confirms it, and it ran. The change moved the scroll from
+the document to `article` on EVERY page, so any later layout complaint on a page not opened
+that day is still possible; it would be a new report, not an unverified claim.
 ### Queue item 20 - Comms-10k at full size, S1 of 4 landed
 
 `docs/Comms10kBulkResolveScale-Plan.md`, approved 2026-09-28 at revision 15. Module

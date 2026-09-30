@@ -1,6 +1,6 @@
 # App-Wide Layout And Scrolling -- One Contract Instead Of Thirty-Six Guesses
 
-Status: **Implemented 2026-09-30, on the owner's direct approval ("approved. fix it
+Status: **Implemented and ACCEPTED 2026-09-30 - owner browser check passed. On the owner's direct approval ("approved. fix it
 correctly.").** Queue items 21 and 22. Written against app `2.24.0`; shipped at `2.25.0`.
 
 **What shipped differs from what this plan proposed, and smaller.** The owner pushed back on the
