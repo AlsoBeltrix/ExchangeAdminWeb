@@ -85,7 +85,7 @@ line says so. Status lives here.
 | 17 | True Last Logon module | **BUILT. S1, S2 and S3 all landed; module registered at `1.0.0`. NOT done - the mandatory live check is outstanding and is owner work.** Detail block below. |
 | 18 | Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The hold record lives in a CSV on one person's OneDrive, which a web app cannot use. |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
-| 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. S1 AND S2 LANDED 2026-09-30. S3 IS BLOCKED ON AN OWNER DECISION** - its security premise is false against the real group, which is a SECURITY group and not Distribution; S4 is blocked behind it. Module `1.2.0` -> `1.3.0`, set once on S1. Detail block below. |
+| 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. S1 AND S2 LANDED 2026-09-30. S3 RESCOPED by owner ruling 2026-09-30 and ready to implement; S4 after it.** Module `1.2.0` -> `1.3.0`, set once on S1. Detail block below. |
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
 
@@ -101,7 +101,7 @@ line says so. Status lives here.
    fraction of the planned scope - he rejected the plan's `.pg-*` conversion as a sledgehammer
    and was right. Detail block below. **Outstanding: a browser check at one tall and one short
    window, which is owner work and cannot be done here.**
-4. **20 Comms10k. S1 and S2 of 4 LANDED 2026-09-30. S3 IS BLOCKED ON AN OWNER DECISION** (its security premise is false against the real group), **and S4 is blocked behind it.** Detail block below.
+4. **20 Comms10k. S1 and S2 of 4 LANDED 2026-09-30. S3 RESCOPED by owner ruling and ready to implement**, then S4. Detail block below.
 5. **8 S6-S8.** Written slices, no owner input needed. Pure execution.
 6. **10 and 11.** Code is done; what remains is a deploy and live validation, which is owner
    work, and it is gated behind item 1 above.
@@ -200,8 +200,18 @@ Gates after S2: build 0 errors, **3426 passed / 0 failed / 3 skipped**, format, 
 off by one (3 fail), escaping removed (1), `sAMAccountName` added to the keys (1), ambiguous
 collapsing to the first match (1), and the seam swallowing a batch error (1).
 
-**NEXT: S3 IS BLOCKED ON AN OWNER DECISION, and S4 is blocked behind it.** This is the only
-place in the queue where "no owner input needed" turned out to be wrong.
+**NEXT: S3, rescoped and ready. Not blocked.** Owner ruling 2026-09-30, `.agents/decisions.md`:
+Comms-10k runs NO protected-principal check, on members or on the target. The plan's
+distribution-only guard is dropped - the real group is `GroupCategory: Security` so it would
+have refused every write, and the exemption rests on the module's purpose, not the category.
+S3 is now: delete the protected-principal path, drop `"Comms10k"` from
+`ModulesWithProtectedPrincipalServicing`, add the group resolution S4 needs, amend three
+documents with a scoped exception. One commit.
+
+**Two agent concerns were raised and OVERRULED - do not re-litigate them.** That the group is
+Security-category, and that `TargetGroupName` is a generic field nothing pins to this group.
+Both are true; the owner ruled neither warrants a check here. The decisions entry records both
+so a later reviewer finds them already answered.
 
 S3 was to add a distribution-only guard and then DELETE Comms-10k's protected-principal member
 check, on the stated ground that the target is "a broadcast distribution list, membership of

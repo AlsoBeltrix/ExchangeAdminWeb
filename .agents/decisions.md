@@ -5,6 +5,63 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-30 - Comms-10k runs no protected-principal check at all
+
+Status: Active. Owner ruling, 2026-09-30, given three times - in approving
+`docs/Comms10kBulkResolveScale-Plan.md` on 2026-09-28, then reaffirmed twice when the agent
+raised concerns: *"protected principals are not protected here. this is a tactical comms group
+for large recipient lists that exceed MS limits"*, and then *"this ENTIRE module exists ONLY to
+update this ONE GROUP. no check beyond that is necessary."*
+
+Decision:
+
+**Comms-10k performs no protected-principal check - not on the members it writes, and not on
+the write target.** The module has exactly one job: replace the membership of one broadcast
+list that exists to carry recipient counts past Microsoft's per-message limits. Membership of
+it grants nothing.
+
+The member check cost a runspace and an AD-module import per member, which at ten thousand
+members was the module's dominant cost and blocked its intended use. The target check was
+proposed by the agent against a hypothetical - someone repointing `TargetGroupName` at a
+privileged group - and the owner rejected it as not a real scenario for a single-purpose
+module he alone configures.
+
+**This is the broadest protected-principal exemption in the app and it is scoped to one
+module.** Contrast the two others so they are not conflated:
+
+- Self-Service Groups is exempt from protected group TARGETS only and keeps its member check
+  (owner ruling 2026-08-31).
+- Comms-10k is exempt from BOTH.
+
+No other module may read itself into this. The general rule in
+`docs/ProjectConstitution.md` - and `.agents/repo-guidance.md` Known Failure Class 3's
+requirement that a mutating module route its write target through the check - is unchanged for
+everything else.
+
+**Two agent concerns were raised and overruled, recorded so they are not re-litigated:**
+
+1. The configured group is `GroupCategory: Security`, not Distribution, so "membership grants
+   access to nothing" is not guaranteed by its category. The owner owns that fact about the
+   environment and ruled that the group's PURPOSE settles it.
+2. `TargetGroupName` is a generic `AdGroup` config field, so nothing structural pins the module
+   to this one group. The owner ruled the module single-purpose in practice.
+
+Both remain true as facts; the ruling is that neither warrants a check here.
+
+**Superseded within the approved plan:** Slice 3's distribution-only guard is dropped entirely.
+It would have refused every write against the real group, and the exemption no longer rests on
+the category. The plan's measured ADWS limits are unaffected - they are properties of ADWS, not
+of the group used to measure them.
+
+Consequences:
+
+- `docs/ProjectConstitution.md`, `.agents/repo-guidance.md` Known Failure Class 3 and
+  `docs/AdminModuleDeveloperGuide.md` each carry a scoped exception naming Comms-10k and stating
+  it runs no protected-principal check of either kind.
+- Slice 3 reduces to: delete the protected-principal path from `Comms10k.razor`, drop
+  `"Comms10k"` from `ModulesWithProtectedPrincipalServicing`, and add the group resolution
+  Slice 4 needs. No guard.
+
 ### 2026-09-29 - Dense list surfaces: one menu per action bar, icons over columns, and a denominator is not optional
 
 Status: Active. Owner rulings, 2026-09-29, on dev screenshots of the Migration Status page.
