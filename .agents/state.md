@@ -13,7 +13,10 @@ the latest sweep is Archived 2026-09-23).
 owns the proposed shared API/registration/test support and Service Health/Risky Users
 pilots. **Draft; implementation not approved or started.** The scope is app code and
 module development, not worktrees/branches or runtime module packaging/import.
-Next: owner approval of the bounded plan; the active queue below is unchanged.
+Claude's requested review returned seven candidate corrections; full findings and
+provenance: [plan review](review/module-development-platform-plan-r1.md).
+Next: assess those corrections and revise the draft before implementation approval.
+The active queue below is unchanged.
 
 **2026-09-29 (late). THE MIGRATION MODULE IS CLOSED BY OWNER ORDER. DO NOT TOUCH IT.**
 Five days on one module was the limit. It is left broken on dev - the mailbox pane renders
