@@ -36,6 +36,7 @@ public static class ClickGateRegistry
         CalendarPermissions,
         IntuneDevices,
         DefenderEndpointDevices,
+        TrueLastLogon,
         GroupManagement,
         M365GroupManagement,
         ConferenceRooms,
@@ -4706,6 +4707,97 @@ public static class ClickGateRegistry
         ],
 
         KeyboardPaths = [],
+
+        HarmlessKeyboardPaths = [],
+    };
+
+    /// <summary>
+    /// True Last Logon (docs/TrueLastLogon-Plan.md S3). The smallest converted page in the
+    /// registry: one input, one button, one flag.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why a one-flag page is registered at all.</b> The lookup takes tens of seconds - a
+    /// sweep of every domain controller plus two sign-in log queries at roughly ten seconds each -
+    /// so the window in which a second click can land is unusually WIDE here, not narrow. A page
+    /// is registered on the size of that window, not the size of the page.
+    /// </para>
+    /// <para>
+    /// <b>The unconfigured module does NOT return.</b> Every other Graph-backed page in this
+    /// registry renders an alert and returns when its secret is unset, which makes every control
+    /// below it unreachable. This page must not: its on-prem half needs no credential and works
+    /// perfectly well while the cloud half is unconfigured. So the controls below stay live and
+    /// the cloud half reports itself as not checked - which is the module's whole thesis applied
+    /// to its own configuration.
+    /// </para>
+    /// <para>
+    /// <b>The button's second clause is a precondition, not a busy condition.</b> An empty box
+    /// has nothing to look up, and SearchAsync returns early on it anyway; the clause exists so
+    /// the control says so before it is clicked rather than accepting a click and doing nothing.
+    /// A mechanical rewrite to the bare predicate would leave a button that looks armed over an
+    /// empty field.
+    /// </para>
+    /// </remarks>
+    private static PageGateEntry TrueLastLogon => new()
+    {
+        Page = "TrueLastLogon.razor",
+        ExpectedLineCount = 557,
+
+        Predicates =
+        [
+            new PredicateScope("IsBusy", ["isSearching"], AppliesWhen: "the whole page"),
+        ],
+
+        NonButtonTargets = [],
+
+        DomSyncedControls =
+        [
+            new DomSyncedControl(55, "@bind=\"identity\"", "input", "disabled=\"@IsBusy\""),
+        ],
+
+        UngatedDomSyncedControls = [],
+
+        AnnotatedControls =
+        [
+            new AnnotatedControl(60, "@onclick=\"SearchAsync\"",
+                ["string.IsNullOrWhiteSpace(identity)"],
+                RendersOnlyWhen:
+                "always, once authorization has been checked - deliberately including the case "
+                + "where the Graph secret is unset, because the on-prem half needs no credential "
+                + "and refusing the whole lookup there would hide a working answer behind an "
+                + "unconfigured one"),
+        ],
+
+        PostAwaitLiveReads =
+        [
+            new PostAwaitLiveRead("SearchAsync", "identity", "target",
+                SnapshotShape.CapturedAtEntry,
+                "the box is live-bound on oninput and the lookup runs for tens of seconds, so an "
+                + "operator typing the next name during the wait would otherwise have the audit "
+                + "record name one account while the result on screen belongs to another - and "
+                + "this module's output is the evidence someone disables an account on"),
+        ],
+
+        RaiseMustFollowEarlyReturn =
+        [
+            new RaiseAfterEarlyReturn("SearchAsync", "isSearching", "target.Length == 0",
+                "the early return leaves no finally behind it, so a raise above the guard is "
+                + "never lowered. isSearching IS the page predicate, so that would not grey one "
+                + "button - it would deaden the whole page permanently, the first time anyone hit "
+                + "Enter in an empty box."),
+        ],
+
+        KeyboardPaths =
+        [
+            new KeyboardPath(55, "id=\"identity\"", "input",
+                "keydown", "OnIdentityKeyDown", "SearchAsync",
+                KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
+                "Enter runs the same lookup the button at 60 refuses while the page is busy. A "
+                + "second sweep started from the keyboard during the first races it over shared "
+                + "result fields, and the later reply wins - so the page can settle showing one "
+                + "account's logon under the other account's name",
+                GatedTwinButtonLine: 60),
+        ],
 
         HarmlessKeyboardPaths = [],
     };

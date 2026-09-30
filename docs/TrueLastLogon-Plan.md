@@ -1,7 +1,8 @@
 # True Last Logon -- One Person, Every Source
 
-Status: **APPROVED 2026-09-30 ("approve 17"). In progress.** Queue item 17. Written against
-app `2.24.0`.
+Status: **APPROVED 2026-09-30 ("approve 17"). S1, S2 and S3 all landed; the module is registered
+and reachable at `1.0.0`. NOT DONE - the mandatory live check has not been run.** Queue item 17.
+Written against app `2.24.0`.
 
 Replicates `C:\Users\mcoelho\Desktop\Get-TrueLastLogon-Commercial.ps1` as a module under
 Identity & Access.
@@ -121,14 +122,31 @@ here so it is designed in rather than found on dev.
 
 ## Slices
 
-| Slice | What |
-| --- | --- |
-| S1 | `TrueLastLogonService`: runtime DC enumeration, TCP preflight, concurrent `lastLogon` read, skipped-DC reporting. Unit tests over the max-and-skip logic. |
-| S2 | Cloud half: `signInActivity` + raw sign-in log, the later-of-two rule, and the four `Cloud_Verified` states. |
-| S3 | Module descriptor, page, permission, click gating, audit. |
+| Slice | What | State |
+| --- | --- | --- |
+| S1 | `TrueLastLogonService`: runtime DC enumeration, TCP preflight, concurrent `lastLogon` read, skipped-DC reporting. Unit tests over the max-and-skip logic. | **LANDED** |
+| S2 | Cloud half: `signInActivity` + raw sign-in log, the later-of-two rule, and the four `Cloud_Verified` states. | **LANDED**, reviewed (tll-1, tll-2 fixed) |
+| S3 | Module descriptor, page, permission, click gating, audit. | **LANDED** at module `1.0.0`; the live check below is still outstanding |
 
 Each slice is a commit with its own module version bump. S3 is the only one that touches
 `ModuleCatalog.cs` for registration; the base app version bumps only if shared code changes.
+
+**What S3 landed, so it is not re-derived.** `Services/TrueLastLogonAnswer.cs` holds the pure
+combiner - the maximum across sources, and the three-way distinction between a date, "nothing
+was checked" and "checked and found nothing". `Components/Pages/TrueLastLogon.razor` renders it,
+registered in `ClickGateRegistry` with one page-wide `IsBusy`. Two deliberate departures from the
+other Graph-backed pages, both because this module has two independent halves:
+
+- **The unconfigured module does not return.** Every other Graph page renders an alert and
+  returns when its secret is unset. Here the on-prem sweep needs no credential and works, so the
+  page warns and stays usable, reporting the cloud half as not checked.
+- **A sAMAccountName does not reach Graph.** The filter is an equality match on
+  `userPrincipalName`, so the cloud half reports itself as not checked rather than spending ten
+  seconds to be told no account matched - a weaker sentence and an easier one to misread.
+
+**Still not registered as a deployment prerequisite anywhere but here and the descriptor:**
+`AuditLog.Read.All` exists nowhere else in this codebase and needs Privileged Role Administrator
+or Global Administrator consent on whichever app registration the module's secret points at.
 
 ## Verification
 

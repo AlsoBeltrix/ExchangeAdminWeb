@@ -830,6 +830,40 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "TrueLastLogon",
+            DisplayName = "True Last Logon",
+            Description = "When one person really last logged on, asked of every domain controller and of the cloud sign-in logs together, with how far the answer can be trusted.",
+            Route = "true-last-logon",
+            // The one nav-menu icon class that actually fits this module. Unlike the reused
+            // gear above, bi-clock-fill-nav-menu already exists in NavMenu.razor.css, so the
+            // package validator's icon check passes without adding CSS.
+            IconCss = "bi bi-clock-fill-nav-menu",
+            Category = ModuleCategories.IdentityAndAccess,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            // 1.0.0: the module becomes reachable. S1 and S2 built both halves and registered
+            // nothing, so until now this existed only in C# (docs/TrueLastLogon-Plan.md S3).
+            // NOTE: adding a module does NOT bump the base app version - only this line is set
+            // (Constitution, Deployment And Versioning; .agents/decisions.md 2026-07-21).
+            Version = "1.0.0",
+            // One permission, no granular tier: the module reads and mutates nothing anywhere.
+            // Classified NON-ALERTING under the Constitution's notification rule - it exposes
+            // logon timestamps already visible in AD and Entra, and it is an account-hygiene
+            // lookup rather than a security-response surface, so the audit record is sufficient
+            // and no administrator alert is sent.
+            MainPermission = new(
+                "Access",
+                "TrueLastLogon",
+                "Open the module and look up when one account last logged on, across every domain controller and the Entra ID sign-in logs. Exposes logon timestamps, the domain controller that recorded them, and sign-in detail such as IP address, application and conditional-access result. Read-only - grants no ability to change anything.",
+                FailClosed: true),
+            GranularPermissions = [],
+            ConfigFields = [
+                new("GraphDelineaSecretId", "Graph App Delinea Secret ID",
+                    "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields. The app registration needs BOTH AuditLog.Read.All and User.Read.All on Microsoft Graph. AuditLog.Read.All appears nowhere else in this app, so an existing module's registration is unlikely to carry it, and consenting it requires a Privileged Role Administrator or Global Administrator. User.ReadBasic.All is NOT sufficient. Leave this unset and the cloud half reports itself as not checked; it never reports the account as dormant.")
+            ]
+        },
+        new()
+        {
             Id = "RiskyUsers",
             DisplayName = "Risky Users",
             Description = "Review Microsoft Entra ID Protection risky users and their risk history.",

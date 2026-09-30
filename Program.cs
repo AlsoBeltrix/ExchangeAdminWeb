@@ -155,6 +155,18 @@ try
             client.Timeout = TimeSpan.FromMinutes(4);
         });
 
+    // True Last Logon's cloud half (docs/TrueLastLogon-Plan.md S3). Its own client for the same
+    // reason the hunting client above is its own: the raw sign-in log costs roughly ten seconds
+    // per query and this module issues two of them, so the shared "MicrosoftGraph" client's
+    // thirty seconds would cancel legitimate work and report it as an intermittent fault. Two
+    // minutes sits well clear of the measured cost without letting a genuinely hung request sit
+    // there for four.
+    builder.Services.AddHttpClient(CloudSignInService.HttpClientName)
+        .ConfigureHttpClient(client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(2);
+        });
+
     builder.Services.AddSingleton<ModuleConfigService>();
     builder.Services.AddSingleton<ModuleCredentialService>();
     builder.Services.AddSingleton<ModuleAdminService>();
@@ -190,6 +202,14 @@ try
     // constructed per operation from the named client above. Nothing is user-reachable yet - the
     // module descriptor and page arrive in S2.
     builder.Services.AddSingleton<DefenderEndpointDeviceService>();
+    // True Last Logon (docs/TrueLastLogon-Plan.md). Two halves, registered together because
+    // neither is useful alone: the on-prem sweep is the only source that sees on-prem-only
+    // activity, and the cloud half is the only one that sees sign-ins no DC ever handled.
+    // Singletons like the other read services - no per-request state, and CloudSignInService
+    // builds its API client per operation from the named client above. TrueLastLogonService
+    // needs no credential at all; it runs read-only under the app pool identity.
+    builder.Services.AddSingleton<TrueLastLogonService>();
+    builder.Services.AddSingleton<CloudSignInService>();
     builder.Services.AddSingleton<DhcpAuthorizationService>();
     // BitLocker recovery. Scoped: the service opens a short-lived SQLite connection per query and
     // holds no state between them. Needs no HttpClient, no Graph registration and no Exchange

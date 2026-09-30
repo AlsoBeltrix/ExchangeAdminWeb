@@ -82,7 +82,7 @@ line says so. Status lives here.
 | 14 | Migration interface redesign | **DONE** (owner-marked). The checkbox defect that was blocking the deploy is in this surface and is now FIXED in code, unverified on dev - see the top of this file. |
 | 15 | Risky Users complete results | **DONE.** Browser check outstanding, owner's. |
 | 16 | Sidebar scrollbar | **DONE.** `ExchangeAdminWeb.Tests/SidebarScrollCssTests.cs`. Browser check outstanding, owner's. |
-| 17 | True Last Logon module | **IN PROGRESS. S1 and S2 landed and reviewed; S3 is next.** Detail block below. |
+| 17 | True Last Logon module | **BUILT. S1, S2 and S3 all landed; module registered at `1.0.0`. NOT done - the mandatory live check is outstanding and is owner work.** Detail block below. |
 | 18 | Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The hold record lives in a CSV on one person's OneDrive, which a web app cannot use. |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
 | 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. FOUR SLICES, NONE STARTED.** Ready to execute with no owner input. |
@@ -94,8 +94,9 @@ line says so. Status lives here.
 1. **The migration `@key` checkbox defect** (top of this file, not a queue item). **FIXED in
    code 2026-09-30, gates green, NOT yet deployed or seen in a browser.** It was blocking the
    next deploy, so every finished item behind it stays invisible to users until a deploy runs.
-2. **17 S3.** One slice from a finished module. Until it lands, S1 and S2 are dead code that no
-   operator can reach.
+2. **17 S3. LANDED 2026-09-30.** The module is registered and reachable at `1.0.0`. What is
+   left on this item is not code: `AuditLog.Read.All` consent, the module enabled in Module
+   Config, and the live two-account comparison against the source script.
 3. **22, with 21 folded in as its first case.** These are the only NEW items, they are both
    about the same failure - content the operator cannot scroll to - and the owner asked for one
    holistic plan with a codex review rather than two spot fixes. Doing 21 alone would be the
@@ -115,10 +116,10 @@ is an app-wide audit plus a holistic fix plus a review round. **The week's reali
 1, 2 and 3 - the deploy blocker, True Last Logon S3, and the layout plan** - with 20 and 8 as
 stretch if nothing goes wrong. Say so to the owner rather than silently missing the date.
 
-### Queue item 17 - True Last Logon, in progress
+### Queue item 17 - True Last Logon, built and awaiting a live check
 
-Branch `master`, verified head `20a9db5`, tree clean. **S2 is COMPLETE and reviewed; S3 is the
-next slice and has not been started.**
+Branch `master`, tree clean. **All three slices are landed. The module is registered and
+reachable at `1.0.0`. It is NOT done: nothing in it has touched a real domain or tenant.**
 
 **Nothing is pushed, and the owner ruled HOLD on 2026-09-30 when asked directly.** Do not push
 without a fresh ask. Both `github` and `origin` still sit at `0b7122a`, a clean ancestor of
@@ -127,9 +128,6 @@ trusting a number written here, because a second session has been committing int
 working tree today (`046e3d2`, `a24d685`) - neither touched this work stream's files, verified
 by reading their stats, but the shared-tree hazard recorded further down this file is live right
 now.
-
-Gates at `a908598`: build 0 errors, **3344 passed / 0 failed / 3 skipped**, format, ASCII,
-`git diff --check`.
 
 **Landed:**
 
@@ -162,29 +160,57 @@ both admitted and both fixed one-per-commit with mutation proof: `tll-1` (HIGH, 
 `.agents/review/index.md`. Both were the same shape - the file stated a rule in its own class
 remarks and then did not apply it.
 
-**NEXT ACTION: S3, approved and not started** - module descriptor, page, permission, click
-gating, audit. Module is NOT registered yet, which is why nothing has a version bump; adding it
-sets only the new module's own version and must NOT bump the base app version (Constitution,
-Deployment And Versioning; `.agents/decisions.md` 2026-07-21).
+**S3 IS LANDED. The module is registered, reachable and shipping at `1.0.0`** - descriptor,
+page, permission, click gating and audit. The base app version was deliberately NOT bumped
+(Constitution, Deployment And Versioning; `.agents/decisions.md` 2026-07-21). All four things
+S3 owned are done:
 
-Four things S3 owns, all named so the next session does not re-derive them:
+1. `TrueLastLogonService` and `CloudSignInService` registered as singletons in `Program.cs`.
+2. The named client `CloudSignInService.HttpClientName` registered at **2 minutes** - clear of
+   the two roughly-ten-second log queries without letting a hung request sit for four, the way
+   the Defender hunting client does.
+3. `GraphDelineaSecretId` declared on the descriptor, naming BOTH `AuditLog.Read.All` and
+   `User.Read.All` and saying a Privileged Role Administrator or Global Administrator must
+   consent. `Catalog_TrueLastLogon_DeclaresItsOwnGraphSecretAndNamesBothPermissions` pins that
+   wording, because the descriptor is the only place a deployer is told.
+4. "Not checked", "no logon found on what was checked" and a date render three different ways,
+   and the verification state is a first-class field with its meaning spelled out beside it.
 
-1. Register `TrueLastLogonService` and `CloudSignInService` in `Program.cs`.
-2. Register the named HttpClient `CloudSignInService.HttpClientName` with a timeout longer than
-   the shared "MicrosoftGraph" client's 30s - the sign-in log costs roughly ten seconds per
-   query, and there are two of them. `DefenderEndpointDeviceService.HuntingHttpClientName` at 4
-   minutes is the precedent.
-3. Declare the module's `GraphDelineaSecretId` config field on the descriptor. **`AuditLog.Read.All`
-   is a DEPLOYMENT PREREQUISITE and exists nowhere in this codebase today** - it needs Privileged
-   Role Administrator or Global Administrator consent on whichever app registration the secret
-   points at.
-4. The page must render "Not checked" and "Never" differently, and must show the verification
-   state as a first-class field rather than a tooltip. That is the whole point of the module.
+**Three decisions in S3 worth not re-deriving:**
 
-**The plan's live check is still outstanding and cannot be automated here:** one recently-active
-account and one known-dormant account, compared against the script's own output. Nothing in this
-module has touched a real domain or tenant yet. If the module and the script disagree, the
-script is right until proven otherwise.
+- **The unconfigured module does NOT return.** Every other Graph-backed page renders an alert
+  and returns when its secret is unset, which kills every control below. This page must not:
+  the on-prem sweep needs no credential and works fine while the cloud half is unconfigured.
+  It warns, stays usable, and reports the cloud half as not checked - the module's own thesis
+  applied to its own configuration. The `ClickGateRegistry` entry records this as the reason
+  its button renders unconditionally.
+- **A sAMAccountName never reaches Graph.** The filter is an equality match on
+  `userPrincipalName`, so the page reports the cloud half as not checked rather than spending
+  ten seconds to be told "no account matched" - a weaker sentence and an easier one to misread.
+- **The combining logic is a pure service, not page code.** `Services/TrueLastLogonAnswer.cs`
+  (`TrueLastLogonCombiner`, 9 tests). There is no bUnit harness here, so anything left in the
+  .razor is reachable only by a source-level tripwire.
+
+**One reachable case the tests caught before the page could show it.** `CloudSignInService`
+marks the log as having answered only when BOTH its queries did, so an interactive query that
+returns a real sign-in while the non-interactive one and `signInActivity` both fail arrives at
+the combiner as `Unverified` CARRYING A DATE. Defining "the cloud was checked" as
+`Verified != Unverified` alone would have printed a date and "Not checked" in the same breath.
+`CloudChecked` therefore also accepts a date, and `NothingWasCheckedAndADateCanNeverBothBeTrue`
+pins the invariant across every combination.
+
+Gates at S3: build 0 errors, **3384 passed / 0 failed / 3 skipped**, format, ASCII,
+`git diff --check`. Four mutations probed and all four bit: dropping the carries-a-date clause
+(2 fail), requiring an answering DC for `OnPremChecked` (1), earliest-wins instead of
+latest (3), and stripping `disabled="@IsBusy"` from the page input (2 ClickGate failures).
+
+**NEXT ACTION on this item is NOT code. It is the live check, and it is the owner's:** one
+recently-active account and one known-dormant account, looked up in the module and compared
+against `Get-TrueLastLogon-Commercial.ps1`'s own output for the same two users. If they
+disagree, the script is right until proven otherwise. Nothing in this module has touched a real
+domain or tenant. It also needs `AuditLog.Read.All` consented on the app registration behind
+whatever secret is pointed at it, and the module is `EnabledByDefault = false`, so it has to be
+enabled in Module Config before anyone can see it.
 
 **Two rules in this module are owner rulings and must not be quietly re-derived:**
 
@@ -195,10 +221,6 @@ script is right until proven otherwise.
 2. **An absence is only as good as the source that reported it.** A source that answered "no
    sign-ins" and a source that FAILED are different facts. `signInActivity` under-reports - 9
    of 557 measured - so `ActivityOnly` is never sufficient evidence of dormancy.
-
-**Nothing in this module has run against a real domain or tenant.** The plan's live check -
-one recently-active and one known-dormant account, compared against the script's own output -
-is mandatory before it is called done.
 
 **Still blocked / not startable:** 15, 16 and 19 are complete; 18 is cancelled. Do not open new
 queue items without a go.

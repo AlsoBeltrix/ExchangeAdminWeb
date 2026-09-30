@@ -15,7 +15,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(30, _catalog.GetAll().Count); // 30 modules (29 operational + 1 config-only)
+        Assert.Equal(31, _catalog.GetAll().Count); // 31 modules (30 operational + 1 config-only)
     }
 
     [Fact]
@@ -208,6 +208,71 @@ public class ModuleCatalogTests
         Assert.False(discovery.Required);
         Assert.Equal(ConfigFieldType.Boolean, discovery.FieldType);
         Assert.Equal("true", discovery.DefaultValue);
+    }
+
+    [Fact]
+    public void Catalog_HasTrueLastLogonModule()
+    {
+        var module = _catalog.GetById("TrueLastLogon");
+        Assert.NotNull(module);
+        Assert.Equal("true-last-logon", module!.Route);
+        Assert.Equal("Identity & Access", module.Category);
+        // Optional, like every other module that needs a Graph secret before it is useful: it
+        // ships configurable but not reachable, so landing it before the live check is safe.
+        Assert.False(module.EnabledByDefault);
+        Assert.False(module.IsSystemModule);
+        Assert.Equal("1.0.0", module.Version);
+    }
+
+    [Fact]
+    public void Catalog_TrueLastLogon_MainPermissionIsFailClosed()
+    {
+        // Sign-in detail - IP address, application, conditional-access result - plus the domain
+        // controller that recorded a logon is not address-book data, so the 2026-06-30
+        // open-by-default classification does not transfer.
+        var module = _catalog.GetById("TrueLastLogon")!;
+        Assert.Equal("TrueLastLogon", module.MainPermission.PolicyAlias);
+        Assert.True(module.MainPermission.FailClosed);
+    }
+
+    [Fact]
+    public void Catalog_TrueLastLogon_HasNoGranularPermissions()
+    {
+        // The module reads and mutates nothing anywhere, so there is no second tier to grant. A
+        // granular permission appearing here later means an ACTION was added - which needs a
+        // wider grant and its own plan, not a quiet descriptor edit.
+        var module = _catalog.GetById("TrueLastLogon")!;
+        Assert.Empty(module.GranularPermissions);
+    }
+
+    [Fact]
+    public void Catalog_TrueLastLogon_DeclaresItsOwnGraphSecretAndNamesBothPermissions()
+    {
+        // Credential isolation: the module reads ITS OWN secret, never another module's. The key
+        // is pinned against the constant the service reads at run time, so renaming one and not
+        // the other would leave the page permanently reporting the cloud half as not checked.
+        var module = _catalog.GetById("TrueLastLogon")!;
+        var secret = Assert.Single(module.ConfigFields);
+
+        Assert.Equal(CloudSignInService.SecretIdConfigKey, secret.Key);
+        Assert.True(secret.Required);
+
+        // AuditLog.Read.All exists nowhere else in this app, so an existing registration is
+        // unlikely to carry it and the description is the only place a deployer is told. Both
+        // permissions are named because signInActivity needs BOTH - a user-read scope alone
+        // returns a 403, and User.ReadBasic.All is not sufficient.
+        Assert.Contains("AuditLog.Read.All", secret.Description);
+        Assert.Contains("User.Read.All", secret.Description);
+    }
+
+    [Fact]
+    public void Catalog_TrueLastLogon_IsRegisteredAtItsOwnVersionWithoutBumpingTheApp()
+    {
+        // Adding a module sets only the new module's own version (Constitution, Deployment And
+        // Versioning; .agents/decisions.md 2026-07-21). This pins the rule where it is easiest to
+        // break: the next person to touch this module bumps 1.0.0, not the csproj.
+        var module = _catalog.GetById("TrueLastLogon")!;
+        Assert.Equal("1.0.0", module.Version);
     }
 
     [Fact]
@@ -449,10 +514,11 @@ public class ModuleCatalogTests
         Assert.Contains("IntuneDevicesEntraDelete", aliases);
         Assert.Contains("ServiceHealth", aliases);
         Assert.Contains("DefenderEndpointDevices", aliases);
+        Assert.Contains("TrueLastLogon", aliases);
         Assert.Contains("MessageTraceSearch", aliases);
         Assert.Contains("CloudPasswordReset", aliases);
         Assert.Contains("CloudPasswordResetReveal", aliases);
-        Assert.Equal(45, aliases.Count);
+        Assert.Equal(46, aliases.Count);
     }
 
     [Fact]
@@ -589,6 +655,7 @@ public class ModuleCatalogTests
             "IntuneDevices", "IntuneDevicesDelete", "IntuneDevicesPrivileged", "IntuneDevicesEntraDelete",
             "ServiceHealth",
             "DefenderEndpointDevices",
+            "TrueLastLogon",
             "LicensingUpdates",
             "ADAttributeEditor", "ADAttributeEditorLevel1", "ADAttributeEditorLevel2", "ADAttributeEditorLevel3",
             "AdminSettings",

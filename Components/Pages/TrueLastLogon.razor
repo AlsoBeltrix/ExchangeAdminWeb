@@ -1,0 +1,557 @@
+@page "/true-last-logon"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "TrueLastLogon")]
+@rendermode InteractiveServer
+@inject TrueLastLogonService OnPremLogons
+@inject CloudSignInService CloudSignIn
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<TrueLastLogon> Logger
+
+<PageTitle>True Last Logon</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>Read-only. Every lookup is written to the audit log.</small>
+    </div>
+    <h1 class="mb-4">True Last Logon<ModuleVersion /></h1>
+
+    @* NOT the unconfigured-and-return gate the other Graph modules use, and the difference is
+       deliberate. This module has two independent halves and only one of them needs a credential:
+       the domain controller sweep runs under the app pool identity with no secret at all. Returning
+       here would disable a working half because the other one is unconfigured, and the honest
+       behaviour - the same one this whole module is built around - is to run what can run and
+       report the rest as NOT CHECKED. *@
+    @if (!CloudSignIn.IsAvailable)
+    {
+        <div class="alert alert-warning">
+            <strong>The cloud half is not configured.</strong> Set Graph App Delinea Secret ID in
+            Module Config to include Entra ID sign-ins. Until then this page answers from domain
+            controllers only, and reports the cloud half as not checked - it will never report an
+            account as dormant on the strength of a half it did not ask.
+        </div>
+    }
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-8">
+                    <label class="form-label mb-1" for="identity">User principal name or sAMAccountName</label>
+                    <input id="identity" class="form-control" @bind="identity"
+                           @bind:event="oninput" @onkeydown="OnIdentityKeyDown" disabled="@IsBusy"
+                           placeholder="UPN or sAMAccountName" />
+                </div>
+                <div class="col-md-4">
+                    <button class="btn btn-primary w-100" @onclick="SearchAsync"
+                            disabled="@(IsBusy || string.IsNullOrWhiteSpace(identity))">
+                        @if (isSearching)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Look up
+                    </button>
+                </div>
+                <div class="col-12">
+                    <div class="form-text mt-2">
+                        The domain controller sweep accepts either form. The cloud half matches on
+                        user principal name only, so a sAMAccountName leaves it not checked rather
+                        than reporting no sign-ins.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (searchError != null)
+    {
+        <div class="alert alert-danger">@searchError</div>
+    }
+
+    @if (answer != null)
+    {
+        <div class="card mb-3">
+            <div class="card-header py-2"><strong>True last logon for @searchedFor</strong></div>
+            <div class="card-body">
+                @* The three outcomes, rendered three different ways on purpose. "Not checked" and
+                   "no logon found" share nothing - not a colour, not a phrase - because a screen
+                   looks authoritative and an operator reading one as the other disables a live
+                   account. *@
+                @if (answer.NothingWasChecked)
+                {
+                    <div class="alert alert-danger mb-0">
+                        <h4 class="alert-heading h5">Not checked</h4>
+                        Neither the domain controllers nor the cloud answered, so this module knows
+                        nothing about when this account last logged on.
+                        <strong>This is not evidence of dormancy.</strong> The reasons are listed
+                        below; fix one of them and ask again.
+                    </div>
+                }
+                else if (answer.LastLogon is { } when)
+                {
+                    <div class="display-6">@Local(when)</div>
+                    <div class="text-muted">
+                        Seen by @SourceLabel(answer.Source)@(answer.SourceDetail is { } dc ? $" ({dc})" : "").
+                        This is the latest of every source that answered.
+                    </div>
+                }
+                else
+                {
+                    <div class="alert alert-warning mb-0">
+                        <h4 class="alert-heading h5">No logon found on what was checked</h4>
+                        @CoverageSentence()
+                        <strong>Read that sentence and not the headline.</strong> How much this is
+                        worth depends entirely on how much was checked, which is spelled out below.
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header py-2"><strong>On-premises domain controllers</strong></div>
+            <div class="card-body">
+                @if (onPrem == null)
+                {
+                    <div><span class="badge bg-secondary">Not checked</span></div>
+                    <div class="text-muted mt-2">@(onPremError ?? "The domain controller sweep did not run.")</div>
+                    <div class="text-muted">This is not a report that the account never logged on.</div>
+                }
+                else
+                {
+                    @if (onPrem.LastLogon is { } when)
+                    {
+                        <div><strong>@Local(when)</strong></div>
+                        <div class="text-muted">Recorded by @onPrem.SourceDomainController.</div>
+                    }
+                    else
+                    {
+                        <div><span class="badge bg-warning text-dark">No logon recorded</span></div>
+                        <div class="text-muted">
+                            None of the @onPrem.AnsweredCount domain controller(s) that answered had
+                            ever seen this account.
+                        </div>
+                    }
+
+                    @* Named, never counted, and never suppressed. lastLogon does not replicate, so
+                       a DC that was not asked can be holding a more recent logon than any DC that
+                       was - which makes a result from 34 of 37 a different claim from one from all
+                       37, and the difference is invisible in the date itself. *@
+                    @if (onPrem.Skipped.Count > 0)
+                    {
+                        <div class="alert alert-warning mt-3 mb-0">
+                            <strong>@onPrem.Skipped.Count domain controller(s) did not answer.</strong>
+                            Any one of them can be holding a more recent logon than the answer above.
+                            <ul class="mb-0 mt-2">
+                                @foreach (var skipped in onPrem.Skipped)
+                                {
+                                    <li><code>@skipped.DomainController</code> - @skipped.Error</li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="text-success mt-2">
+                            <small>Every enumerated domain controller answered.</small>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header py-2"><strong>Cloud sign-ins</strong></div>
+            <div class="card-body">
+                @if (cloud == null)
+                {
+                    <div><span class="badge bg-secondary">Not checked</span></div>
+                    <div class="text-muted mt-2">@(cloudError ?? "The cloud lookup did not run.")</div>
+                    <div class="text-muted">This is not a report that the account has never signed in.</div>
+                }
+                else
+                {
+                    @* The verification state is a first-class field and not a tooltip. It is the
+                       single most important output of the cloud half: a DATE can be trusted on its
+                       own, an ABSENCE cannot, and this is the line that says which one the operator
+                       is looking at. *@
+                    <div class="mb-3">
+                        <div class="text-muted small text-uppercase">Verification</div>
+                        <div>
+                            <span class="badge bg-@VerificationColour(cloud.Result.Verified)">
+                                @VerificationLabel(cloud.Result.Verified)
+                            </span>
+                        </div>
+                        <div class="mt-1">@VerificationMeaning(cloud.Result.Verified)</div>
+                    </div>
+
+                    <dl class="row mb-0">
+                        <dt class="col-sm-3">Interactive</dt>
+                        <dd class="col-sm-9">@CloudDate(cloud.Result.Interactive)</dd>
+
+                        <dt class="col-sm-3">Non-interactive</dt>
+                        <dd class="col-sm-9">@CloudDate(cloud.Result.NonInteractive)</dd>
+                    </dl>
+
+                    @* A per-source failure is shown, never logged and dropped: it is exactly what
+                       turned a LogVerified answer into the weaker one above, and a 403 here names
+                       the permission that is missing rather than letting the absence read as
+                       dormancy. *@
+                    @if (cloud.ActivityError != null)
+                    {
+                        <div class="alert alert-warning mt-3 mb-0"><small>@cloud.ActivityError</small></div>
+                    }
+                    @if (cloud.LogError != null)
+                    {
+                        <div class="alert alert-warning mt-3 mb-0"><small>@cloud.LogError</small></div>
+                    }
+                }
+            </div>
+        </div>
+
+        @* The timestamp travels with the detail, always. The log retains only ~30 days while
+           signInActivity keeps older dates, so this row is not necessarily the account's latest
+           sign-in - rendering the IP and location without the date beside them would assert
+           something the record does not claim. *@
+        @if (cloud?.NewestLogRow is { } row)
+        {
+            <div class="card mb-3">
+                <div class="card-header py-2"><strong>Newest sign-in detail</strong></div>
+                <div class="card-body">
+                    <dl class="row mb-0">
+                        <dt class="col-sm-3">When</dt>
+                        <dd class="col-sm-9">@Local(row.When)</dd>
+
+                        <dt class="col-sm-3">IP address</dt>
+                        <dd class="col-sm-9">@Unknown(row.IpAddress)</dd>
+
+                        <dt class="col-sm-3">Application</dt>
+                        <dd class="col-sm-9">@Unknown(row.App)</dd>
+
+                        <dt class="col-sm-3">Resource</dt>
+                        <dd class="col-sm-9">@Unknown(row.Resource)</dd>
+
+                        <dt class="col-sm-3">Location</dt>
+                        <dd class="col-sm-9">@Unknown(row.Location)</dd>
+
+                        <dt class="col-sm-3">Conditional access</dt>
+                        <dd class="col-sm-9">@Unknown(row.ConditionalAccess)</dd>
+                    </dl>
+                    <div class="text-muted mt-2">
+                        <small>
+                            From the sign-in log, which retains about 30 days. It is the newest row
+                            the log holds, which is not always the account's latest sign-in.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private bool authChecked;
+
+    /// <summary>
+    /// The page's only in-flight flag, and therefore the whole of <see cref="IsBusy"/>. Raised in
+    /// <see cref="SearchAsync"/> alone, below its early returns and immediately above the try
+    /// whose finally lowers it again.
+    /// </summary>
+    private bool isSearching;
+
+    private string currentUser = "Unknown";
+    private string clientIpAddress = "Unknown";
+
+    /// <summary>The operator's input. Live-bound, so it is snapshotted before the first await.</summary>
+    private string identity = "";
+
+    /// <summary>The identity the result on screen is FOR, so a retyped box cannot relabel a result.</summary>
+    private string? searchedFor;
+
+    private string? searchError;
+    private TrueLastLogonAnswer? answer;
+    private OnPremLogonResult? onPrem;
+    private string? onPremError;
+    private CloudSignInLookup? cloud;
+    private string? cloudError;
+
+    /// <summary>
+    /// The page-wide busy predicate. One flag today; a second long-running call adds its flag
+    /// HERE rather than gating its own button, so no control can be clicked and accepted against
+    /// state another operation is replacing underneath it.
+    /// </summary>
+    private bool IsBusy => isSearching;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "TrueLastLogon");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+
+        authChecked = true;
+    }
+
+    /// <summary>
+    /// Enter runs the same lookup the button runs, and refuses on the same predicate. A disabled
+    /// input fires no keydown, so this is belt and braces on the gated path - but the check is
+    /// written out because the browser's copy of that disabled attribute is one round trip stale
+    /// and the keyboard is the path that outruns it.
+    /// </summary>
+    private async Task OnIdentityKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !IsBusy && !string.IsNullOrWhiteSpace(identity))
+            await SearchAsync();
+    }
+
+    private async Task SearchAsync()
+    {
+        if (IsBusy)
+            return;
+
+        // Snapshotted above the raise and above every await. The box is live-bound and the
+        // browser's copy of a disabled attribute is one round trip stale, so a keystroke landing
+        // during the lookup would otherwise let the audit record name one account while the
+        // result on screen is another's.
+        var target = identity.Trim();
+        if (target.Length == 0)
+            return;
+
+        isSearching = true;
+        ClearResult();
+        try
+        {
+            await Task.Yield();
+
+            // Both halves start together and each catches its own failure, so one half being
+            // unavailable never suppresses the other. That is the whole design: a cloud-only
+            // answer calls a workstation user dormant, and an on-prem-only answer misses every
+            // sign-in no DC ever handled.
+            var onPremTask = LookupOnPremAsync(target);
+            var cloudTask = LookupCloudAsync(target);
+
+            (onPrem, onPremError) = await onPremTask;
+            (cloud, cloudError) = await cloudTask;
+
+            answer = TrueLastLogonCombiner.Combine(onPrem, cloud?.Result);
+            searchedFor = target;
+
+            // Audited on whether anything was actually checked, because "the call returned" is
+            // not the fact worth recording here. A run where both halves failed is a FAILED
+            // lookup carrying its reasons; recording it as a successful read that happened to
+            // find nothing is the blanket-success shape.
+            var checkedSomething = !answer.NothingWasChecked;
+            SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress,
+                "TrueLastLogon_Lookup", target, checkedSomething,
+                checkedSomething ? null : Join(onPremError, cloudError),
+                extra: new Dictionary<string, object?>
+                {
+                    ["OnPremChecked"] = answer.OnPremChecked,
+                    ["OnPremAnswered"] = onPrem?.AnsweredCount,
+                    ["OnPremSkipped"] = onPrem?.Skipped.Count,
+                    ["CloudChecked"] = answer.CloudChecked,
+                    ["CloudVerified"] = cloud?.Result.Verified.ToString(),
+                    ["Source"] = answer.Source.ToString(),
+                    ["FoundLogon"] = answer.LastLogon != null
+                }));
+        }
+        catch (Exception ex)
+        {
+            // The previous answer is retracted with the error rather than left beside it: a stale
+            // result under a failure message reads as the answer to the new question - and here
+            // that stale result is a date attached to somebody else's name.
+            ClearResult();
+            searchError = ex.Message;
+            Logger.LogError(ex, "True last logon lookup failed.");
+
+            SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress,
+                "TrueLastLogon_Lookup", target, false, ex.Message));
+        }
+        finally
+        {
+            isSearching = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ClearResult()
+    {
+        searchError = null;
+        answer = null;
+        onPrem = null;
+        onPremError = null;
+        cloud = null;
+        cloudError = null;
+        searchedFor = null;
+    }
+
+    /// <summary>
+    /// The on-prem half. A thrown sweep is reported as a half that did not run, NEVER as an empty
+    /// result - an empty result is indistinguishable from "this user has never logged on".
+    /// </summary>
+    private async Task<(OnPremLogonResult? Result, string? Error)> LookupOnPremAsync(string target)
+    {
+        try
+        {
+            return (await OnPremLogons.GetOnPremLastLogonAsync(target), null);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "True last logon: the domain controller sweep failed.");
+            return (null, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// The cloud half. Both preconditions return a stated reason rather than a failure, because
+    /// "no credential is configured" and "you typed a sAMAccountName" are things the operator can
+    /// act on - and neither is a fact about the account.
+    /// </summary>
+    private async Task<(CloudSignInLookup? Result, string? Error)> LookupCloudAsync(string target)
+    {
+        if (!CloudSignIn.IsAvailable)
+        {
+            return (null, "No Graph secret is set for this module, so the cloud half was not "
+                + "checked. Set Graph App Delinea Secret ID in Module Config.");
+        }
+
+        // The Graph filter is an equality match on userPrincipalName, so a sAMAccountName matches
+        // no account. Asking anyway would spend roughly ten seconds to be told "no account
+        // matched", which is a weaker sentence than the one below and easier to misread.
+        if (!target.Contains('@'))
+        {
+            return (null, $"'{target}' is not a user principal name, and the cloud lookup matches "
+                + "on UPN only, so the cloud half was not checked. Search again with the UPN to "
+                + "include Entra ID sign-ins.");
+        }
+
+        try
+        {
+            return (await CloudSignIn.GetCloudSignInAsync(target), null);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "True last logon: the cloud lookup failed.");
+            return (null, ex.Message);
+        }
+    }
+
+    /// <summary>What was actually checked, in one sentence, for the no-logon-found case.</summary>
+    private string CoverageSentence()
+    {
+        var parts = new List<string>();
+
+        if (onPrem != null)
+        {
+            parts.Add(onPrem.Skipped.Count == 0
+                ? $"all {onPrem.AnsweredCount} domain controller(s) answered and none had seen this account"
+                : $"{onPrem.AnsweredCount} domain controller(s) answered and none had seen this account, "
+                    + $"but {onPrem.Skipped.Count} did not answer and any of them could be holding a logon");
+        }
+        else
+        {
+            parts.Add("the domain controllers were not checked");
+        }
+
+        parts.Add(cloud == null
+            ? "the cloud was not checked"
+            : $"the cloud answered as {VerificationLabel(cloud.Result.Verified)}");
+
+        return "Checked: " + string.Join("; ", parts) + ".";
+    }
+
+    private static string SourceLabel(LogonSource source) => source switch
+    {
+        LogonSource.OnPrem => "a domain controller",
+        LogonSource.CloudInteractive => "an interactive cloud sign-in",
+        LogonSource.CloudNonInteractive => "a non-interactive cloud sign-in",
+        _ => "no source"
+    };
+
+    private static string VerificationLabel(CloudVerification verified) => verified switch
+    {
+        CloudVerification.LogVerified => "Log verified",
+        CloudVerification.ActivityOnly => "signInActivity only",
+        CloudVerification.LogOnly30d => "Sign-in log only, about 30 days",
+        _ => "Unverified"
+    };
+
+    private static string VerificationColour(CloudVerification verified) => verified switch
+    {
+        CloudVerification.LogVerified => "success",
+        CloudVerification.ActivityOnly => "warning text-dark",
+        CloudVerification.LogOnly30d => "warning text-dark",
+        _ => "danger"
+    };
+
+    private static string VerificationMeaning(CloudVerification verified) => verified switch
+    {
+        CloudVerification.LogVerified =>
+            "Both cloud sources answered. This is the only state in which no sign-in is good "
+            + "evidence that the account is dormant.",
+        CloudVerification.ActivityOnly =>
+            "Only signInActivity answered. A DATE from it is usable; an ABSENCE is NOT evidence "
+            + "of dormancy - of 557 accounts it called dormant, 9 had signed in.",
+        CloudVerification.LogOnly30d =>
+            "Only the raw sign-in log answered, and it retains about 30 days. An absence here "
+            + "means nothing in that window, not that the account has never signed in.",
+        _ =>
+            "Neither cloud source answered, so nothing is known about this account's cloud "
+            + "sign-ins. This is not a report that it has never signed in."
+    };
+
+    /// <summary>
+    /// A cloud date, or the honest absence. Never the word "never" - the strongest this module
+    /// says is "no sign-in reported", and the verification line above says what that is worth.
+    /// </summary>
+    private static string CloudDate(DateTime? when) =>
+        when is { } value ? Local(value) : "No sign-in reported";
+
+    private static string Local(DateTime when) =>
+        when.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private static string Unknown(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "Not reported" : value;
+
+    private static string Join(params string?[] reasons) =>
+        string.Join(" ", reasons.Where(r => !string.IsNullOrWhiteSpace(r)));
+
+    /// <summary>
+    /// An audit write must never take the page down with it, and must never be silently lost
+    /// either - the failure is logged where the operator's action already is.
+    /// </summary>
+    private void SafeAudit(Action write)
+    {
+        try
+        {
+            write();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to write the True Last Logon audit record.");
+        }
+    }
+}
