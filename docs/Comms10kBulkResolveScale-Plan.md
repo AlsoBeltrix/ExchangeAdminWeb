@@ -102,8 +102,8 @@ truncation at this size.
 writes failed with `A required audit event could not be generated for the operation` - at 6,000
 (twice of three attempts), 9,000 and 9,800, while 9,500 succeeded. Non-deterministic and unrelated
 to size; it never appeared during any chunked run. This is a domain-controller audit condition,
-not something this module causes, but it will surface as occasional write failures and the module
-must report it rather than swallow it. **Worth investigating separately from this work.**
+not something this module causes. Recorded here because it will appear during the acceptance
+runs, and an implementer who hits it should know it is known and not a defect in their code.
 
 ## What is broken
 
