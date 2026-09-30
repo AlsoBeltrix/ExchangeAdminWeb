@@ -2243,8 +2243,8 @@
 
     private async Task ToggleBatchSelected(string batchName, bool selected)
     {
-        if (IsBusy) return;
-
+        // NO IsBusy guard (item 23): the browser applies the tick before the server sees it, so a
+        // refusal here leaves it ticked and unselected. Overlapping loads: batchUsersGeneration.
         if (selected)
             selectedBatches.Add(batchName);
         else
@@ -2296,8 +2296,8 @@
 
     private async Task ToggleSelectAllBatches(ChangeEventArgs e)
     {
-        if (IsBusy) return;
-
+        // NO IsBusy guard (item 23), same reason as ToggleBatchSelected: a tick the server
+        // refuses stays ticked in the browser. Overlapping loads: batchUsersGeneration.
         selectedBatches.Clear();
 
         if (e.Value is bool check && check && migrationBatches != null)

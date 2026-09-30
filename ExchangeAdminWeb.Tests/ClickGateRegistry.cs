@@ -325,21 +325,33 @@ public static class ClickGateRegistry
                 + "writes only to selectedMailboxes and moves the row between the pinned block and "
                 + "the list below it; it makes no call and awaits nothing"),
 
-            // STALE CLAIM CORRECTED, S5 step 2b. This entry used to end "it makes no call and
-            // awaits nothing", which was true until S3. Under R9 the open batch is DERIVED from the
-            // selection, so ticking down to one batch now calls AdoptSelectionAsOpenBatch, which
-            // navigates and fetches that batch's mailboxes from Exchange.
+            // THE OPEN QUESTION THIS ENTRY RECORDED IS CLOSED, AND IT WAS A REAL DEFECT.
             //
-            // The exemption still stands on D2(a) - the tick box is an input to the confirm step -
-            // but it no longer stands on "awaits nothing", and ToggleBatchSelected carries an
-            // `if (IsBusy) return;` guard that this registry elsewhere calls the wrong refusal for
-            // a DOM-synced control, because the browser keeps a tick the server refused. Recorded
-            // as an open question for the owner rather than changed here: D2(a) is an owner ruling
-            // and S3 changed the fact it rested on.
+            // The history: this entry once ended "it makes no call and awaits nothing", true until
+            // S3. Under R9 the open batch is DERIVED from the selection, so ticking down to one
+            // batch calls AdoptSelectionAsOpenBatch, which navigates and fetches that batch's
+            // mailboxes from Exchange. That made IsBusy true for the length of an Exchange round
+            // trip - while ToggleBatchSelected still opened with `if (IsBusy) return;`. This entry
+            // flagged the contradiction and parked it for the owner, because D2(a) is an owner
+            // ruling, rather than changing it.
+            //
+            // It shipped, and the owner hit it: queue item 23, reported as a prod blocker. Tick a
+            // batch, tick a second one before the first one's mailboxes arrive, and the second tick
+            // is refused by the guard while the browser keeps it drawn - so the box reads ticked,
+            // the right-hand pane does not list it, and the action bar counts one fewer.
+            //
+            // The guard is gone from ToggleBatchSelected and ToggleSelectAllBatches. D2(a) is
+            // unchanged and is what rules out the other repair: these tick boxes are not given a
+            // disabled attribute. Overlapping loads were already safe without the guard -
+            // batchUsersGeneration exists for exactly that, because the URL became an entry point
+            // in S1 and the browser's Back button is not a control this page can disable.
+            //
+            // MigrationBatchTickBoxTests holds the tripwire.
             new UngatedDomSyncedControl(637, "title=\"Select for a bulk action\"", "input",
                 "the per-row BATCH half of the same selection, on the same owner ruling and the "
-                + "same re-plan at 2526. ToggleBatchSelected (1992) writes to selectedBatches and "
-                + "nulls the result banner; it makes no call and awaits nothing"),
+                + "same re-plan at 2526. ToggleBatchSelected writes to selectedBatches, nulls the "
+                + "result banner and awaits AdoptSelectionAsOpenBatch, which may fetch; it carries "
+                + "no IsBusy guard, because a refused tick stays ticked in the browser"),
         ],
 
         // The two paths commit 2eb8c15 closed, now data rather than a comment on the DomSyncedControl

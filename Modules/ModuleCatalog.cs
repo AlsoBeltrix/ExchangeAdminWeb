@@ -367,7 +367,13 @@ public sealed class ModuleCatalog
             // item 21). The two-pane split also stops doing arithmetic on the chrome above it:
             // calc(100vh - 21rem) was a guess that was too small, so its pagers fell off the
             // bottom of the window (queue item 22).
-            Version = "1.22.4",
+            // 1.22.5: batch tick boxes stop dropping ticks (queue item 23, prod blocker). A
+            // checkbox is toggled by the BROWSER before the server hears about it, so the
+            // `if (IsBusy) return;` in ToggleBatchSelected discarded the tick while leaving it
+            // drawn - the box read ticked, the right pane did not list the batch and the action
+            // bar counted one fewer. The window opened in S3, when ticking down to one batch
+            // started fetching that batch's mailboxes and so held IsBusy for a round trip.
+            Version = "1.22.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
