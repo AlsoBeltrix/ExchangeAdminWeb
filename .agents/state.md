@@ -14,6 +14,25 @@ empty for batches that have mailboxes - and the diagnosis so far is in the queue
 entry below. **That entry is a record, not a work item.** Several other modules are waiting to
 deploy and they outrank finishing it.
 
+**BLOCKS THE NEXT DEPLOY - migration mailbox checkboxes lie about what is ticked.** Owner on
+dev `v1.22.1`, 2026-09-30, with a screenshot: ticking a mailbox pins it to the top, and rows
+in the list BELOW the divider then render as ticked when they are not. `Actions (3)` and the
+`1-3 OF 3 TICKED` pager are correct; the checkboxes are not.
+
+- **Cause, diagnosed not guessed: there is no `@key` anywhere in `Components/Pages/Migration.razor`.**
+  Two loops emit `<tr>` into the same `<tbody>` - `GetPinnedMailboxesPage()` at :1082 then
+  `GetPagedMailboxes()` at :1117. Blazor diffs by POSITION, so when a mailbox moves between
+  the two blocks the `<input type="checkbox">` element at that position is reused. Blazor
+  writes an update only when the rendered `checked` value differs from what it last rendered
+  at that position, but the browser's live state was changed by the operator's click, so the
+  two drift apart.
+- **Fix: `@key` on the row, keyed by email address** (`MailboxRow`, the `<tr>` at :1228), so
+  Blazor matches rows by identity instead of position. **The same defect shape applies to the
+  batch list and the selection pane** - both have checkboxes and both reorder on sort - so key
+  all three, not just the one that was reported.
+- **This is the owner's explicit exception to "do not touch migration":** *"we cannot deploy
+  like this."* It does not reopen the module for anything else.
+
 **Active work is queue items 15-19.** Owner set this and left for the day, answering the
 questions first. Branch `master`, head `d9edf86`, tree clean.
 
