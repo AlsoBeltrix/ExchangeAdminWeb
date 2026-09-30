@@ -194,7 +194,14 @@ public sealed class CloudSignInService
 
         // Started together, awaited one at a time. Three sequential queries at roughly ten
         // seconds each is half a minute of an operator watching a spinner; concurrently it is one
-        // query's worth. Nothing below throws, so no task is left with an unobserved exception.
+        // query's worth.
+        //
+        // Each reader catches its own exceptions and returns a did-not-answer result, so all
+        // three tasks always complete and every one of them is observed. An earlier version of
+        // this comment claimed no task could throw, which was simply false - DefenderApiClient
+        // catches only TaskCanceledException, so a bad secret or a DNS failure escaped it,
+        // threw out of the first await, and left the other two tasks running and unobserved
+        // (tll-2).
         var activityTask = ReadActivityAsync(v1, upn);
         var interactiveTask = ReadLogAsync(v1, upn, nonInteractive: false);
         var nonInteractiveTask = ReadLogAsync(beta, upn, nonInteractive: true);
@@ -279,7 +286,37 @@ public sealed class CloudSignInService
             _httpClientFactory.CreateClient(HttpClientName));
     }
 
-    private static async Task<(CloudSignInAnswer Answer, string? Error)> ReadActivityAsync(
+    /// <summary>
+    /// Reads <c>signInActivity</c>, converting ANY unexpected exception into a source that did
+    /// not answer (tll-2).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DefenderApiClient"/> catches only <see cref="TaskCanceledException"/>, so a bad
+    /// client secret, a malformed token response or a DNS failure escapes its
+    /// <c>GetWithStatusAsync</c> as an ordinary exception. Without this catch the whole lookup
+    /// throws on the first await - bypassing the per-source error model this class exists to
+    /// provide, and abandoning the two tasks already running.
+    ///
+    /// The exception MESSAGE is logged, never returned: it comes from the auth path, and only the
+    /// type name is safe to put in front of an operator.
+    /// </remarks>
+    private async Task<(CloudSignInAnswer Answer, string? Error)> ReadActivityAsync(
+        DefenderApiClient client, string upn)
+    {
+        try
+        {
+            return await ReadActivityCoreAsync(client, upn);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "True last logon: the signInActivity query threw.");
+            return (CloudSignInAnswer.DidNotAnswer,
+                $"The signInActivity query could not be completed ({ex.GetType().Name}). "
+                + "That is a failed check, not an absence of sign-ins.");
+        }
+    }
+
+    private static async Task<(CloudSignInAnswer Answer, string? Error)> ReadActivityCoreAsync(
         DefenderApiClient client, string upn)
     {
         var response = await client.GetWithStatusAsync(ActivityQuery(upn));
@@ -332,7 +369,28 @@ public sealed class CloudSignInService
             $"No cloud account matched '{upn}'. That is not evidence that the account has never signed in.");
     }
 
-    private static async Task<(CloudSignInAnswer Answer, CloudSignInDetail? Row, string? Error)> ReadLogAsync(
+    /// <summary>
+    /// Reads one sign-in log query, converting ANY unexpected exception into a source that did
+    /// not answer (tll-2). See <see cref="ReadActivityAsync"/> for why the catch is here.
+    /// </summary>
+    private async Task<(CloudSignInAnswer Answer, CloudSignInDetail? Row, string? Error)> ReadLogAsync(
+        DefenderApiClient client, string upn, bool nonInteractive)
+    {
+        try
+        {
+            return await ReadLogCoreAsync(client, upn, nonInteractive);
+        }
+        catch (Exception ex)
+        {
+            var kind = nonInteractive ? "non-interactive" : "interactive";
+            _logger?.LogDebug(ex, "True last logon: the {Kind} sign-in log query threw.", kind);
+            return (CloudSignInAnswer.DidNotAnswer, null,
+                $"The {kind} sign-in log query could not be completed ({ex.GetType().Name}). "
+                + "That is a failed check, not an absence of sign-ins.");
+        }
+    }
+
+    private static async Task<(CloudSignInAnswer Answer, CloudSignInDetail? Row, string? Error)> ReadLogCoreAsync(
         DefenderApiClient client, string upn, bool nonInteractive)
     {
         var kind = nonInteractive ? "non-interactive" : "interactive";

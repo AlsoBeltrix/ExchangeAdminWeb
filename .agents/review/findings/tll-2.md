@@ -5,9 +5,9 @@ whole class of failure bypasses the per-source error model the service exists to
 started tasks are abandoned unobserved, and the code carries a comment asserting the opposite of
 what it does.
 
-**Status**: Open
+**Status**: Verified
 **Branch**: -- (direct-to-main)
-**Commit**: --
+**Commit**: recorded in the closeout below
 
 ## Evidence
 
@@ -65,7 +65,22 @@ check - that is a different condition and keeps its current behaviour.
 
 ## Guard proof
 
-To be recorded with the fix commit.
+Two tests in `ExchangeAdminWeb.Tests/CloudSignInServiceTests.cs`, driven by a stub token endpoint
+that returns 401 - the real shape of an expired secret, reproduced through
+`DefenderApiClient.GetAccessTokenAsync` rather than by faking an exception:
+
+| Test | Mutation | Result |
+| --- | --- | --- |
+| `ASignInFailureIsReportedPerSourceRatherThanThrownOutOfTheLookup` | activity reader's catch replaced with `throw;` | FAIL (2), restore -> 26/26 |
+| `NothingFromTheAuthResponseReachesTheOperatorVisibleError` | log reader's catch replaced with `throw;` | FAIL (2), restore -> 26/26 |
+
+Both probes were run separately, and each on its own makes both tests fail - which is the point:
+before the fix a single unguarded source was enough to throw the whole lookup.
+
+The second test is a leak guard on the catch itself. The stubbed auth response carries a
+`CANARY-...` correlation marker; the operator-visible error must contain the exception TYPE and
+must not contain the marker. Without it, "improving" the message to include `ex.Message` would be
+an invisible regression.
 
 ## Coder dispute
 
@@ -80,8 +95,21 @@ case specifically is a page concern and belongs to S3, not to this service.
 
 ## Reviewer comments
 
-To be recorded.
+Same dispatch as `tll-1`:
+`Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard`
+Harness: codex-cli 0.154.0 (`codex exec`, CLI transport, `-s read-only`, generation pass).
+Range: `046e3d213586b769680826354d714102ce4af721..cb968daa76da3711f238c80af6c6f252e1cf17d5`.
+`capability_ok: true`. Verdict: **findings** (2). Timestamp: 2026-09-30.
+Escalation triggers: none matched.
+
+No verification round: MEDIUM, so it closes on the coder-side guard proof
+(`.agents/decisions.md` 2026-08-31).
+
+The reviewer's reasoning was checked against the code before admitting, and the part worth
+keeping is that it did not stop at the comment. It read `DefenderApiClient.SendAsync`, saw that
+the catch covers `TaskCanceledException` only, and named the three concrete escape routes.
 
 ## Closeout
 
-Pending.
+Fixed directly on `master`. Commit and completion receipt are in the follow-up bookkeeping
+commit that fills in the SHA here and in `.agents/review/index.md`.

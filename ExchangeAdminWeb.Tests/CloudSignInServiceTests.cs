@@ -52,13 +52,21 @@ public class CloudSignInServiceTests
         /// </summary>
         public TimeSpan InteractiveDelay { get; set; } = TimeSpan.Zero;
 
+        /// <summary>
+        /// How the token endpoint answers. Null is the canned success every other test relies on;
+        /// the tll-2 tests replace it so the SIGN-IN itself fails. Token requests are not recorded
+        /// in RequestUrls - every URL assertion here counts Graph calls.
+        /// </summary>
+        public Func<HttpResponseMessage>? TokenResponder { get; set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
 
             if (uri.Host == "login.microsoftonline.com")
-                return Json(HttpStatusCode.OK, """{"access_token":"test-token","expires_in":3600}""");
+                return TokenResponder?.Invoke()
+                    ?? Json(HttpStatusCode.OK, """{"access_token":"test-token","expires_in":3600}""");
 
             var url = uri.OriginalString;
             RequestUrls.Add(url);
@@ -427,6 +435,44 @@ public class CloudSignInServiceTests
         Assert.Equal(CloudVerification.ActivityOnly, lookup.Result.Verified);
         Assert.NotNull(lookup.LogError);
         Assert.Contains("timed out", lookup.LogError, StringComparison.Ordinal);
+    }
+
+    // ---- tll-2: a failure before the request is sent is still a per-source failure ------------
+
+    [Fact]
+    public async Task ASignInFailureIsReportedPerSourceRatherThanThrownOutOfTheLookup()
+    {
+        // tll-2. An expired client secret, a Secret Server entry pointing at a deleted app
+        // registration, or the app pool losing DNS all fail HERE - inside DefenderApiClient's
+        // token acquisition, which it does not catch. Before the fix the first await threw, the
+        // operator got an unhandled exception instead of a named per-source failure, and the two
+        // tasks already running were abandoned unobserved.
+        var (service, stub) = CreateService();
+        stub.TokenResponder = () => GraphStub.Json(HttpStatusCode.Unauthorized, """{"error":"invalid_client"}""");
+
+        var lookup = await service.GetCloudSignInAsync(Upn);
+
+        Assert.Equal(CloudVerification.Unverified, lookup.Result.Verified);
+        Assert.False(lookup.Result.NoSignInReported);
+        Assert.NotNull(lookup.ActivityError);
+        Assert.NotNull(lookup.LogError);
+        Assert.Contains("not an absence of sign-ins", lookup.ActivityError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task NothingFromTheAuthResponseReachesTheOperatorVisibleError()
+    {
+        // The catch added for tll-2 must not become a leak. Only the exception TYPE is shown;
+        // the message and anything the auth endpoint said stay in the debug log.
+        var (service, stub) = CreateService();
+        stub.TokenResponder = () => GraphStub.Json(
+            HttpStatusCode.Unauthorized, """{"error":"invalid_client","trace":"CANARY-8f21-correlation"}""");
+
+        var lookup = await service.GetCloudSignInAsync(Upn);
+
+        Assert.DoesNotContain("CANARY", lookup.ActivityError!, StringComparison.Ordinal);
+        Assert.DoesNotContain("CANARY", lookup.LogError!, StringComparison.Ordinal);
+        Assert.Contains(nameof(InvalidOperationException), lookup.ActivityError!, StringComparison.Ordinal);
     }
 
     // ---- Sign-in detail -----------------------------------------------------------------------
