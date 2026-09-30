@@ -139,11 +139,17 @@ disagree the script is right until proven otherwise.
 - *On-prem first or cloud-first?* Both halves get built. It only matters if a partial
   deployment is wanted mid-build, and that can be said at any point.
 
-**On-prem is S1 for a reason worth keeping.** `lastLogon` is the only source that sees
+**Owner ruling, 2026-09-30: this does not reach PROD until it works -- both halves.** No
+partial release, so the slice order is purely an internal build detail and not something to
+put to the owner again.
+
+**On-prem is still S1 for a reason worth keeping.** `lastLogon` is the only source that sees
 on-prem-only activity, so a cloud-only answer calls a workstation user dormant when they are
-not. If a partial deploy is ever wanted, the cloud-only page must state that on-prem was not
-checked and must never label a cloud date "true last logon" -- the script already models this
-(`-CloudOnly` reports `OnPrem_LastLogon` as "Not checked", not "Never").
+not. That matters even without a partial release: if the on-prem half is ever unavailable at
+RUNTIME -- DCs unreachable, the query failing -- the page must report "Not checked" and must
+never label a cloud date "true last logon". The script already models this (`-CloudOnly`
+reports `OnPrem_LastLogon` as "Not checked", not "Never"), and that behaviour is required in
+the module regardless of build order.
 
 One deployment prerequisite, not a design decision: `AuditLog.Read.All` consented on whichever
 secret the module is pointed at. Nothing in this app uses that permission today.
