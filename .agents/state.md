@@ -8,18 +8,27 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**2026-09-30. Branch `master`, verified head `e820d0d`, tree clean, 23 commits ahead
+**2026-09-30. Branch `master`, verified head `f750723`, tree clean, 24 commits ahead
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**
 
-**NEXT ACTION: Comms-10k S4** - rewrite the write as clear-then-fill with read-back, per
-`docs/Comms10kBulkResolveScale-Plan.md` Slice 4 and its write design. S3 landed the group
-resolution S4 consumes (`Comms10kService.QueryTargetGroup` -> `Comms10kTarget`, DN +
-objectGUID), so S4 uses that resolved identity for the `Global\` mutex key and every write
-rather than adding it. **The distribution-group guard that Slice 4's text refers to does NOT
-exist and must not be introduced** - it was deleted with the rest of S3's protection path by
-owner ruling; the plan's test 19 is void and tests 12-15's "distribution-group guard" clause
-should be read as deleted.
+**`docs/Comms10kBulkResolveScale-Plan.md` IS FULLY IMPLEMENTED. All four slices landed;
+nothing in it has run against the real group, and its Acceptance section is outstanding in
+full and is the owner's.** The module is at `1.3.0`, which the plan sets once on S1 and
+deliberately does not bump per slice.
+
+**NEXT ACTION: owner acceptance of Comms-10k on dev**, then the next queue item. There is no
+agent-executable work left on this plan. What S4 changed that acceptance must actually
+exercise: the write is no longer atomic. It clears the `member` attribute and refills it in
+batches, so for roughly eight seconds at ten thousand members the list is empty and then
+partial. The module reports five distinct outcomes for that - succeeded, succeeded with
+unremovable primary-group members, partly applied, could not confirm, refused before any
+change - and **the two worth checking by hand are "partly applied" and "could not confirm"**,
+because they are the ones telling an operator the list may be broken.
+
+**Do not reintroduce the distribution-group guard.** Slice 4's text still refers to it; it was
+deleted with the rest of the protection path in S3 by owner ruling, plan test 19 is void, and
+the "distribution-group guard" clause in tests 12-15 reads as deleted.
 
 **Comms-10k runs no protected-principal check of either kind, and two agent concerns about
 that were raised and OVERRULED. Do not re-litigate either** - `.agents/decisions.md`
@@ -29,7 +38,7 @@ structurally pins to this group. Both true; the owner ruled neither warrants a c
 single-purpose module. The Constitution, `.agents/repo-guidance.md` KFC3 and the developer
 guide all carry the scoped exception, contrasted against Self-Service Groups.
 
-**Landed this session, ten commits, suite 3344 -> 3433 green throughout:**
+**Landed this session, eleven commits, suite 3344 -> 3473 green throughout:**
 
 | Commit | What |
 | --- | --- |
@@ -43,21 +52,30 @@ guide all carry the scoped exception, contrasted against Self-Service Groups.
 | `5695139` | S3 blocked record (superseded by the next one) |
 | `8025b87` | Owner ruling: Comms-10k runs no protected-principal check |
 | `e820d0d` | Comms-10k S3, protection path deleted, write binds to the resolved identity |
+| `f750723` | Comms-10k S4, clear-then-fill with read-back, five reported outcomes |
 
 **Owner-side work outstanding, none of it agent-executable:**
 
-- **The push.** 23 commits, on HOLD.
+- **The push.** 24 commits, on HOLD.
 - **True Last Logon:** `AuditLog.Read.All` consent, enable the module in Module Config, and the
   two-account live comparison against `Get-TrueLastLogon-Commercial.ps1`. Nothing in that
   module has touched a real domain or tenant.
 - **Migration `@key` fix:** proven at source level only; the owner's own screenshot case is
   still the acceptance check.
-- **Comms-10k:** nothing has run against the real group; the plan's Acceptance is outstanding
-  in full.
+- **Comms-10k:** the plan is fully implemented and NOTHING has run against the real group. No
+  lock, clear, batch or read-back has touched a directory. The plan's Acceptance is outstanding
+  in full, and the write is no longer atomic, so the acceptance run is the only thing that has
+  ever exercised the sequence.
 
 **A recurring defect in this session's own tests, worth carrying:** three separate guards were
 written to forbid a named antipattern and then read the comment that EXPLAINED the antipattern,
-failing against the prose rather than the code. All three now strip comments first. Related:
+failing against the prose rather than the code. All of them now strip comments first, and so do
+the S3 and S4 tripwires. **Two more of the same family surfaced in S4's own mutation probes and
+are worth carrying:** a guard on a FACTORY is not a guard on its CALL SITE - the host-lock test
+asserted the mutex was keyed on the GUID it was handed, which a caller handing it the wrong
+value satisfies perfectly, and only a probe found it. And a probe whose sed silently no-opped
+was reported as run; a mutation that did not apply is not a passing test, so the probe script
+now verifies the mutation landed before trusting the result. Related:
 one mutation probe PASSED and was nearly recorded as bitten - the "mutation" was an equivalent
 implementation. A probe that passes is either a vacuous test or a bad probe, and assuming the
 first without checking is how a vacuous test gets certified.
