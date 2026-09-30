@@ -381,69 +381,186 @@ public class Comms10kService
 
         return await Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
+            var outcome = RunReplace(
+                group,
+                resolvedDns,
+                () => QueryTargetGroup(creds.Value, group),
+                (target, dns) => ApplyMembership(creds.Value, target, dns),
+                _logger);
 
-            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
-
-            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-
-            // Get initial count for the "(was M)" success message. Read the raw `member`
-            // linked attribute via Get-ADGroup -Properties member, NOT Get-ADGroupMember:
-            // Get-ADGroupMember expands each member into a full object and is bound by the
-            // ADWS MaxGroupOrMemberEntries cap (default 5000), so it throws on this module's
-            // large tactical DLs and would crash the replace before it runs. The `member`
-            // attribute is returned via range retrieval and is not subject to that cap
-            // (verified live: a ~6800-member group counts correctly). This counts direct
-            // members only, which is the right comparison since the replace below writes a
-            // flat DN list.
-            ps.AddCommand("Get-ADGroup")
-              .AddParameter("Identity", group)
-              .AddParameter("Properties", "member")
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            var groupResult = ps.Invoke();
-            ps.Commands.Clear();
-            var initialCount = 0;
-            if (groupResult.Count > 0 &&
-                groupResult[0].Properties["member"]?.Value is System.Collections.ICollection members)
+            if (outcome.Success)
             {
-                initialCount = members.Count;
+                _logger.LogInformation("Comms10k updated by {User}: {Initial} -> {Final} members",
+                    performedBy, outcome.InitialCount, outcome.FinalCount);
             }
 
-            try
-            {
-                ps.AddCommand("Set-ADGroup")
-                  .AddParameter("Identity", group)
-                  .AddParameter("Replace", new System.Collections.Hashtable { { "member", resolvedDns.ToArray() } })
-                  .AddParameter("Credential", credential)
-                  .AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                ps.Commands.Clear();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to replace members of {Group}", group);
-                return new Comms10kUpdateResult { Success = false, Message = $"Failed to update group: {ex.Message}" };
-            }
+            return outcome;
+        });
+    }
 
-            _logger.LogInformation("Comms10k updated by {User}: {Initial} -> {Final} members",
-                performedBy, initialCount, resolvedDns.Count);
-
+    /// <summary>
+    /// The replace sequence as a pure orchestration over its two directory steps, so the ORDER is
+    /// testable without a directory: resolve the target's immutable identity first, then write
+    /// against that identity and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// The dividing line the outcomes encode is attempted-or-not, never the error text. A
+    /// resolution failure returns before <paramref name="applyMembership"/> is ever called, so the
+    /// membership is provably untouched; only a failure raised by the write itself can have
+    /// changed anything.
+    /// </remarks>
+    internal static Comms10kUpdateResult RunReplace(
+        string groupName,
+        List<string> resolvedDns,
+        Func<Comms10kTarget> resolveTarget,
+        Func<Comms10kTarget, List<string>, int> applyMembership,
+        ILogger? logger = null)
+    {
+        Comms10kTarget target;
+        try
+        {
+            target = resolveTarget();
+        }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex, "Failed to resolve the Comms10k target group {Group}", groupName);
             return new Comms10kUpdateResult
             {
-                Success = true,
-                Message = $"Successfully updated {group}: {resolvedDns.Count} members (was {initialCount}).",
-                InitialCount = initialCount,
-                FinalCount = resolvedDns.Count
+                Success = false,
+                Message = $"The target group could not be resolved, so nothing was changed: {ex.Message}"
             };
-        });
+        }
+
+        int initialCount;
+        try
+        {
+            initialCount = applyMembership(target, resolvedDns);
+        }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex, "Failed to replace members of {Group}", groupName);
+            return new Comms10kUpdateResult { Success = false, Message = $"Failed to update group: {ex.Message}" };
+        }
+
+        return new Comms10kUpdateResult
+        {
+            Success = true,
+            Message = $"Successfully updated {groupName}: {resolvedDns.Count} members (was {initialCount}).",
+            InitialCount = initialCount,
+            FinalCount = resolvedDns.Count
+        };
+    }
+
+    /// <summary>
+    /// Resolves the configured group NAME to its distinguished name and objectGUID, once, before
+    /// anything is written. Throws if the group cannot be resolved unambiguously. Internal virtual
+    /// TEST SEAM.
+    /// </summary>
+    /// <remarks>
+    /// The Constitution requires a directory mutation to bind to an immutable identifier and
+    /// re-read before write where practical. Every call in this service used to pass the
+    /// configured NAME, so a rename, or a same-named object in another container, between one
+    /// operation and the next would retarget the write mid-sequence.
+    /// </remarks>
+    internal virtual Comms10kTarget QueryTargetGroup(
+        (string username, string password, string domain) creds, string group)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+
+        ps.Streams.Error.Clear();
+        ps.AddCommand("Get-ADGroup")
+          .AddParameter("Identity", group)
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var found = ps.Invoke();
+        ps.Commands.Clear();
+
+        if (ps.HadErrors || found.Count == 0)
+        {
+            var first = ps.Streams.Error.FirstOrDefault()?.ToString() ?? "the group was not returned";
+            ps.Streams.Error.Clear();
+            throw new InvalidOperationException(first);
+        }
+
+        // More than one match is ambiguous, and fails closed rather than picking one.
+        if (found.Count > 1)
+            throw new InvalidOperationException($"'{group}' matched {found.Count} groups.");
+
+        var dn = found[0].Properties["DistinguishedName"]?.Value?.ToString();
+        var guidValue = found[0].Properties["ObjectGUID"]?.Value;
+
+        if (string.IsNullOrWhiteSpace(dn))
+            throw new InvalidOperationException($"'{group}' returned no distinguished name.");
+        if (guidValue is not Guid guid || guid == Guid.Empty)
+            throw new InvalidOperationException($"'{group}' returned no objectGUID.");
+
+        return new Comms10kTarget(dn, guid);
+    }
+
+    /// <summary>
+    /// Writes the membership against the RESOLVED identity, and returns the membership count read
+    /// immediately before the write for the "(was M)" message. Throws on failure. Internal virtual
+    /// TEST SEAM.
+    /// </summary>
+    internal virtual int ApplyMembership(
+        (string username, string password, string domain) creds, Comms10kTarget target, List<string> resolvedDns)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+
+        // Get initial count for the "(was M)" success message. Read the raw `member`
+        // linked attribute via Get-ADGroup -Properties member, NOT Get-ADGroupMember:
+        // Get-ADGroupMember expands each member into a full object and is bound by the
+        // ADWS MaxGroupOrMemberEntries cap (default 5000), so it throws on this module's
+        // large tactical DLs and would crash the replace before it runs. The `member`
+        // attribute is returned via range retrieval and is not subject to that cap
+        // (verified live: a ~6800-member group counts correctly). This counts direct
+        // members only, which is the right comparison since the replace below writes a
+        // flat DN list.
+        ps.AddCommand("Get-ADGroup")
+          .AddParameter("Identity", target.DistinguishedName)
+          .AddParameter("Properties", "member")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var groupResult = ps.Invoke();
+        ps.Commands.Clear();
+        var initialCount = 0;
+        if (groupResult.Count > 0 &&
+            groupResult[0].Properties["member"]?.Value is System.Collections.ICollection members)
+        {
+            initialCount = members.Count;
+        }
+
+        ps.AddCommand("Set-ADGroup")
+          .AddParameter("Identity", target.DistinguishedName)
+          .AddParameter("Replace", new System.Collections.Hashtable { { "member", resolvedDns.ToArray() } })
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        return initialCount;
     }
 
     private static PSCredential CreateCredential(string username, string password, string domain)
@@ -455,6 +572,12 @@ public class Comms10kService
         return new PSCredential(fullUsername, securePassword);
     }
 }
+
+/// <summary>
+/// The resolved immutable identity of the target group. Every directory operation in a replace
+/// binds to this, never to the configured name.
+/// </summary>
+internal readonly record struct Comms10kTarget(string DistinguishedName, Guid ObjectGuid);
 
 public class Comms10kMember
 {

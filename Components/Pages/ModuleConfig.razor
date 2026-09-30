@@ -689,11 +689,16 @@
     /// is verified against a real <c>Evaluate</c> caller in that module's gate.
     ///
     /// Add a module here in the same commit that adds its <c>Evaluate</c> call, never before.
+    ///
+    /// The broadcast-list module is deliberately absent, and its absence is the rule working, not
+    /// an omission: it runs no principal-protection check of either kind (owner ruling
+    /// 2026-09-30, <c>.agents/decisions.md</c>), so there is no gate for a servicer grant to
+    /// override and an entry here would advertise a capability that does nothing.
     /// </remarks>
     private static readonly HashSet<string> ModulesWithProtectedPrincipalServicing =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            "BlockedSenders", "ConferenceRooms", "MfaReset", "EmergencyDisable", "Comms10k",
+            "BlockedSenders", "ConferenceRooms", "MfaReset", "EmergencyDisable",
             "ADAttributeEditor", "MailboxPermissions", "CalendarPermissions", "OutOfOffice",
             "GroupManagement", "M365GroupManagement", "SelfServiceGroups", "Migration",
             "AccountLockoutRemediation", "LicensingUpdates", "RiskyUsers", "IntuneDevices",

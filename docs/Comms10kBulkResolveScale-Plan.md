@@ -406,7 +406,7 @@ The linked `member` attribute omits members whose membership comes from their pr
 (`GroupManagementService.cs:414-448`, pinned by `GroupMemberListingTests.cs:172-209`); the same
 `(primaryGroupID=<rid>)` union applies here. It affects the listing only.
 
-### Slice 3 - Delete the protected-principal path. No guard.
+### Slice 3 - Delete the protected-principal path. No guard. -- LANDED 2026-09-30
 
 **Superseded by owner ruling 2026-09-30 (`.agents/decisions.md`).** The slice as originally
 written below added a distribution-only guard before deleting the member check. Both the guard

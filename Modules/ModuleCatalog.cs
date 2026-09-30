@@ -619,6 +619,13 @@ public sealed class ModuleCatalog
             //   Get-ADGroupMember included them, so the swap alone would silently shorten the
             //   list). Detail resolves in batches; a DN that does not resolve falls back to its
             //   CN and still produces a row, because an unresolved member is still a member.
+            //   S3: the principal-protection check is gone - no member check and no write-target
+            //   check (owner ruling 2026-09-30, .agents/decisions.md, carried by the
+            //   Constitution as a named scoped exception). It cost a runspace and an AD-module
+            //   import per member, which at ten thousand members was the module's dominant cost
+            //   and blocked its intended use. The replace now resolves the configured group name
+            //   to its distinguished name and objectGUID once and binds every operation to that,
+            //   so a rename between operations cannot retarget the write.
             Version = "1.3.0",
             MainPermission = new(
                 "Access",

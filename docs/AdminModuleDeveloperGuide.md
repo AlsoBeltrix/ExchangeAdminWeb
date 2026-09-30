@@ -663,6 +663,24 @@ Any module that modifies a user, mailbox, group membership, identity state,
 access state, password, token/session state, or directory attribute must check
 protected principals before writing.
 
+**Two modules are named scoped exceptions, and they are near-opposites. Do not
+conflate them, and do not read a new module into either** -- both come from owner
+rulings recorded in `.agents/decisions.md` and carried by
+`docs/ProjectConstitution.md`, which is the authority:
+
+- **Self-Service Groups** does not consult Protected Group TARGETS (2026-08-31).
+  It still checks the MEMBER being added or removed.
+- **Comms-10k** consults NEITHER -- no member check and no write-target check
+  (2026-09-30). It is the app's broadest exemption: the module exists only to
+  replace the membership of one broadcast list that carries recipient counts past
+  Microsoft's per-message limits, membership of it grants access to nothing, and
+  the member check cost a runspace and an AD-module import per member. It is
+  correspondingly absent from `ModuleConfig.razor`'s servicer opt-in set, because
+  there is no gate for a servicer grant to override.
+
+A new module gets neither exemption by resemblance. If you believe yours should
+be exempt, that is an owner decision and a new `.agents/decisions.md` entry.
+
 Relevant types:
 
 ```csharp

@@ -97,12 +97,14 @@ public class AuditCategoryFilingTests
 
         Assert.DoesNotContain("LogMigrationAction", text);
         // Every Comms10k_Replace audit routes through LogModuleAction with the Comms10k
-        // category (6 call sites: blocked/attempted/committed paths).
+        // category. Two call sites: the committed replace and the catch-all "attempted".
+        // It was six until the four principal-protection refusal paths were deleted with the
+        // check itself (owner ruling 2026-09-30, .agents/decisions.md); the drop is deliberate.
         var moduleCalls = Regex.Matches(
             text,
             @"LogModuleAction\(\s*[^;]*?""Comms10k_Replace""\s*,\s*""Comms10k""",
             RegexOptions.Singleline);
-        Assert.Equal(6, moduleCalls.Count);
+        Assert.Equal(2, moduleCalls.Count);
     }
 
     [Fact]
