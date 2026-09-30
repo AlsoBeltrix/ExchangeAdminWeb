@@ -44,16 +44,66 @@ in the list BELOW the divider then render as ticked when they are not. `Actions 
 - **This is the owner's explicit exception to "do not touch migration":** *"we cannot deploy
   like this."* It does not reopen the module for anything else.
 
-**Active work is queue items 15-19.** Owner set this and left for the day, answering the
-questions first. Branch `master`, head `d9edf86`, tree clean.
+### The whole queue, swept 2026-09-30 against `C:\Users\mcoelho\Desktop\queue.txt`
 
-| Item | State |
-| --- | --- |
-| 15 Risky Users complete results | **Done already.** `docs/RiskyUsersCompleteResults-Plan.md` all five slices landed; re-read against the code tonight and there are no gaps. Both outstanding items are the owner's: the Graph permission (resolved 2026-09-28) and a browser check. |
-| 16 Sidebar scrollbar | **Done already.** `docs/SidebarScrollbar-Plan.md` landed with four tripwires in `ExchangeAdminWeb.Tests/SidebarScrollCssTests.cs`. Re-read tonight, no gaps. Browser check outstanding. |
-| 17 True Last Logon module | **APPROVED and IN PROGRESS.** `docs/TrueLastLogon-Plan.md`. See the detail block below. |
-| 18 Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The blocker was where the hold record lives - the script keeps each account's original OU in a CSV on one person's OneDrive, which a web app cannot use. |
-| 19 Risky Users labels | **Done.** `60c3ace`, module `1.4.1` -> `1.5.0`. Each card now says what it is for; Refresh became Search. |
+**Owner instruction, 2026-09-30: "this entire queue needs to be done this week."** Read the
+feasibility note at the end of this section before planning around that date - the remaining
+work does not fit in a week and the next agent should not pretend otherwise.
+
+**`queue.txt` is the owner's file. Never write to it, including status markers** - its own first
+line says so. Status lives here.
+
+**Two items are NEW as of this sweep and had no plan and no tracking anywhere: 21 and 22.**
+
+| # | Item | State |
+| --- | --- | --- |
+| 1 | Licensing under Identity | **DONE** (owner-marked). |
+| 2 | Add status.cloud.microsoft to the O365 status page | **PLAN IS DRAFT, needs owner approval before any code.** `docs/ServiceHealthPublicStatus-Plan.md`, `Status: Draft`. |
+| 3 | Migration report survives batch recreate | **DONE** (owner-marked). |
+| 4 | Split message trace vs header analysis permissions | **DONE** (owner-marked). |
+| 5 | Other tenants/domains in message trace | **FEASIBILITY ONLY, no code proposed.** `docs/MessageTraceMultiTenant-Plan.md`, `Status: Draft. Scoping and feasibility only.` Needs an owner decision on whether to proceed at all. |
+| 6 | Containerize the app | **ON-HOLD** (owner-marked). `docs/Containerization-Feasibility.md`. |
+| 7 | O365 status module loading affordance | **DONE** (owner-marked). |
+| 8 | Defender for Endpoint devices | **PARTLY BUILT. S1-S5 landed, module registered and shipping at `1.1.0`; S6, S7 and S8 are WRITTEN and NOT IMPLEMENTED.** `docs/DefenderEndpointDevices-Plan.md`. Secret ID 657, both permissions consented. |
+| 9 | App-wide click-gating audit | **TIER 1 COMPLETE. Tiers 2, 3 and 4 are UNAPPROVED and not started.** `docs/ClickGatingAudit-Plan.md`. Largest single block of remaining effort in the queue. |
+| 10 | O365 password change matches on EmployeeID | **BUILT, REVIEWED, NEVER RUN AGAINST A REAL TENANT.** `docs/CloudPasswordReset-Plan.md`. Needs a deploy and owner validation, not code. |
+| 11 | Force-change-at-next-login option at runtime | **Same build as 10.** Same pending deploy and validation. |
+| 12 | CompleteAfter in migration | **DONE** (owner-marked). |
+| 13 | Per-migration checkboxes and actions | **DONE** (owner-marked). |
+| 14 | Migration interface redesign | **DONE** (owner-marked), but see the deploy blocker at the top of this file - the checkbox defect is in this surface. |
+| 15 | Risky Users complete results | **DONE.** Browser check outstanding, owner's. |
+| 16 | Sidebar scrollbar | **DONE.** `ExchangeAdminWeb.Tests/SidebarScrollCssTests.cs`. Browser check outstanding, owner's. |
+| 17 | True Last Logon module | **IN PROGRESS. S1 and S2 landed and reviewed; S3 is next.** Detail block below. |
+| 18 | Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The hold record lives in a CSV on one person's OneDrive, which a web app cannot use. |
+| 19 | Risky Users labels | **DONE.** `60c3ace`. |
+| 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. FOUR SLICES, NONE STARTED.** Ready to execute with no owner input. |
+| 21 | Popup report has no scrollbar and ignores the mouse wheel | **NEW. No plan, never tracked.** Evidence: `C:\Users\mcoelho\Desktop\no_scrollbar.PNG`. There is no way to see a whole report in the UI. |
+| 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **NEW. No plan, never tracked.** Evidence: `C:\Users\mcoelho\Desktop\scrollbar_issue2.PNG`. The owner asked specifically for a holistic plan **reviewed with codex**, not a spot fix. 21 is almost certainly one instance of this. |
+
+**Recommended order, and why.** The next agent should not just walk the numbers.
+
+1. **The migration `@key` checkbox defect** (top of this file, not a queue item). It blocks the
+   next deploy, so every finished item behind it is invisible to users. Bounded and diagnosed.
+2. **17 S3.** One slice from a finished module. Until it lands, S1 and S2 are dead code that no
+   operator can reach.
+3. **22, with 21 folded in as its first case.** These are the only NEW items, they are both
+   about the same failure - content the operator cannot scroll to - and the owner asked for one
+   holistic plan with a codex review rather than two spot fixes. Doing 21 alone would be the
+   spot fix he explicitly did not ask for.
+4. **20 Comms10k.** Approved plan, four slices, no owner input needed. Pure execution.
+5. **8 S6-S8.** Written slices, no owner input needed. Pure execution.
+6. **10 and 11.** Code is done; what remains is a deploy and live validation, which is owner
+   work, and it is gated behind item 1 above.
+7. **2, then 5.** Both need an owner decision before any code: 2's plan is a draft awaiting
+   approval, 5 is feasibility-only and may not be worth doing at all.
+8. **9 tiers 2-4.** Unapproved and the biggest remaining block. Needs a scoping conversation,
+   not a start.
+
+**Feasibility, stated plainly because the owner set a one-week target.** Items 4 through 8 of
+that order are each multi-session work; 9 alone took nine slices to get through tier 1, and 22
+is an app-wide audit plus a holistic fix plus a review round. **The week's realistic scope is
+1, 2 and 3 - the deploy blocker, True Last Logon S3, and the layout plan** - with 20 and 8 as
+stretch if nothing goes wrong. Say so to the owner rather than silently missing the date.
 
 ### Queue item 17 - True Last Logon, in progress
 
@@ -574,8 +624,15 @@ Reset is complete and reviewed; queue 4 slice 1 is landed with slices 2-4 unstar
 unblocked.
 
 - **QUEUE 8 (Defender for Endpoint): THE PARK'S CONDITION IS SATISFIED. The owner revised item 8
-  on 2026-09-24 and the plan is revised to match (`cb548cb`). The module is still not deployed and
-  no code has been written; the next move is an OWNER APPROVAL, not a slice.** The 2026-09-22 park
+  on 2026-09-24 and the plan is revised to match (`cb548cb`).**
+  **CORRECTED 2026-09-30: the sentence that used to stand here - "the module is still not
+  deployed and no code has been written; the next move is an OWNER APPROVAL, not a slice" - was
+  true when written and is now false.** Code evidence disproves it: `Modules/ModuleCatalog.cs:947`
+  registers `DefenderEndpointDevices`, `Services/DefenderEndpointDeviceService.cs` and
+  `Services/DefenderApiClient.cs` exist with tests, and the plan header records S1-S5 landed at
+  module `1.1.0` with S6-S8 written. The live state is in the queue table near the top of this
+  file. Left in place rather than deleted because a stale claim that a module does not exist is
+  exactly the kind of thing a later session acts on. The 2026-09-22 park
   waited on updated requirements from the stakeholder; those arrived in the queue file.
   **Three things the revision changed, and one that unblocked it:**
   - **The purpose is now stated - locate machines physically in a global company - and it
