@@ -57,10 +57,16 @@ questions first. Branch `master`, head `d9edf86`, tree clean.
 
 ### Queue item 17 - True Last Logon, in progress
 
-Branch `master`, tree clean. **Nothing is pushed** - both `github` and `origin` still sit at
-`0b7122a`, a clean ancestor of local, no divergence; push policy is ask. Count the backlog with
-`git log --oneline 0b7122a..HEAD` rather than trusting a number written here, because a second
-session has been committing into this same working tree today (`046e3d2`, `a24d685`).
+Branch `master`, verified head `20a9db5`, tree clean. **S2 is COMPLETE and reviewed; S3 is the
+next slice and has not been started.**
+
+**Nothing is pushed, and the owner ruled HOLD on 2026-09-30 when asked directly.** Do not push
+without a fresh ask. Both `github` and `origin` still sit at `0b7122a`, a clean ancestor of
+local, no divergence. Count the backlog with `git log --oneline 0b7122a..HEAD` rather than
+trusting a number written here, because a second session has been committing into this same
+working tree today (`046e3d2`, `a24d685`) - neither touched this work stream's files, verified
+by reading their stats, but the shared-tree hazard recorded further down this file is live right
+now.
 
 Gates at `a908598`: build 0 errors, **3344 passed / 0 failed / 3 skipped**, format, ASCII,
 `git diff --check`.
@@ -96,11 +102,29 @@ both admitted and both fixed one-per-commit with mutation proof: `tll-1` (HIGH, 
 `.agents/review/index.md`. Both were the same shape - the file stated a rule in its own class
 remarks and then did not apply it.
 
-**NEXT ACTION: S3** - module descriptor, page, permission, click gating, audit. Module is NOT
-registered yet, which is why nothing has a version bump. Two wiring items S3 owns: register
-`TrueLastLogonService` and `CloudSignInService` in `Program.cs`, and register the named
-HttpClient `CloudSignInService.HttpClientName` with a timeout longer than the shared
-"MicrosoftGraph" client's 30s - the sign-in log costs roughly ten seconds per query.
+**NEXT ACTION: S3, approved and not started** - module descriptor, page, permission, click
+gating, audit. Module is NOT registered yet, which is why nothing has a version bump; adding it
+sets only the new module's own version and must NOT bump the base app version (Constitution,
+Deployment And Versioning; `.agents/decisions.md` 2026-07-21).
+
+Four things S3 owns, all named so the next session does not re-derive them:
+
+1. Register `TrueLastLogonService` and `CloudSignInService` in `Program.cs`.
+2. Register the named HttpClient `CloudSignInService.HttpClientName` with a timeout longer than
+   the shared "MicrosoftGraph" client's 30s - the sign-in log costs roughly ten seconds per
+   query, and there are two of them. `DefenderEndpointDeviceService.HuntingHttpClientName` at 4
+   minutes is the precedent.
+3. Declare the module's `GraphDelineaSecretId` config field on the descriptor. **`AuditLog.Read.All`
+   is a DEPLOYMENT PREREQUISITE and exists nowhere in this codebase today** - it needs Privileged
+   Role Administrator or Global Administrator consent on whichever app registration the secret
+   points at.
+4. The page must render "Not checked" and "Never" differently, and must show the verification
+   state as a first-class field rather than a tooltip. That is the whole point of the module.
+
+**The plan's live check is still outstanding and cannot be automated here:** one recently-active
+account and one known-dormant account, compared against the script's own output. Nothing in this
+module has touched a real domain or tenant yet. If the module and the script disagree, the
+script is right until proven otherwise.
 
 **Two rules in this module are owner rulings and must not be quietly re-derived:**
 
