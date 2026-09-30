@@ -40,14 +40,48 @@ questions first. Branch `master`, head `d9edf86`, tree clean.
 | --- | --- |
 | 15 Risky Users complete results | **Done already.** `docs/RiskyUsersCompleteResults-Plan.md` all five slices landed; re-read against the code tonight and there are no gaps. Both outstanding items are the owner's: the Graph permission (resolved 2026-09-28) and a browser check. |
 | 16 Sidebar scrollbar | **Done already.** `docs/SidebarScrollbar-Plan.md` landed with four tripwires in `ExchangeAdminWeb.Tests/SidebarScrollCssTests.cs`. Re-read tonight, no gaps. Browser check outstanding. |
-| 17 True Last Logon module | **Plan drafted, awaiting approval:** `docs/TrueLastLogon-Plan.md`. Scope cut to ONE USER at a time per the owner. The credential question was answered from the repo - there is no single shared Graph app reg, nine modules each declare their own `GraphDelineaSecretId`, so this one does the same. **One question left, a sequencing call with a recommendation: on-prem first or cloud-first.** `AuditLog.Read.All` is a deployment prerequisite (it appears nowhere in the codebase today), not a design unknown. |
+| 17 True Last Logon module | **APPROVED and IN PROGRESS.** `docs/TrueLastLogon-Plan.md`. See the detail block below. |
 | 18 Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The blocker was where the hold record lives - the script keeps each account's original OU in a CSV on one person's OneDrive, which a web app cannot use. |
 | 19 Risky Users labels | **Done.** `60c3ace`, module `1.4.1` -> `1.5.0`. Each card now says what it is for; Refresh became Search. |
 
-**Next action: 17 needs an approval and one sequencing answer. Nothing else here is
-startable** - 15, 16 and 19 are complete and 18 is cancelled. Do not open new queue items
-without a go, and do not start 17's code before the plan is approved (repo-guidance: plan
-first for code).
+### Queue item 17 - True Last Logon, in progress
+
+Branch `master`, verified head `7c7ceea`, tree clean, **1 commit unpushed** (push policy: ask).
+`origin/master` also carries work from another session, including a revert of a comms10k docs
+commit; remote is a clean ancestor of local, no divergence.
+
+Gates at that head: build 0 errors, **3318 passed / 0 failed / 3 skipped**, format, ASCII,
+`git diff --check`.
+
+**Landed:**
+
+- **S1, the on-prem sweep.** `Services/OnPremLogonAggregator.cs` (pure, 5 tests) and
+  `Services/TrueLastLogonService.cs`. DCs enumerated at runtime from the host's own domain
+  membership, TCP:389 preflight at 2s, parallel query via PS7 `ForEach-Object -Parallel`.
+  `MapRow` is internal and tested (5 more).
+- **S2 core, the cloud rules.** `Services/CloudSignInAggregator.cs` (pure, 9 tests). Later of
+  the two sources per field; the four verification states.
+
+**NEXT ACTION: S2's Graph I/O** - fetch `signInActivity` and the raw sign-in log for one user
+and feed `CloudSignInAggregator`. Then S3: module descriptor, page, permission, click gating,
+audit. Module is NOT registered yet, which is why nothing has a version bump.
+
+**Two rules in this module are owner rulings and must not be quietly re-derived:**
+
+1. **Coverage is reported, never a gate** (owner, 2026-09-30: *"you will NEVER get a response
+   from ALL domain controllers. that cannot be a gate."*). An earlier version required a
+   complete DC sweep before it would say no logon was found; that gate never opens in a global
+   estate. A probe that re-introduces it fails a test on purpose.
+2. **An absence is only as good as the source that reported it.** A source that answered "no
+   sign-ins" and a source that FAILED are different facts. `signInActivity` under-reports - 9
+   of 557 measured - so `ActivityOnly` is never sufficient evidence of dormancy.
+
+**Nothing in this module has run against a real domain or tenant.** The plan's live check -
+one recently-active and one known-dormant account, compared against the script's own output -
+is mandatory before it is called done.
+
+**Still blocked / not startable:** 15, 16 and 19 are complete; 18 is cancelled. Do not open new
+queue items without a go.
 
 **The owner deployed `94d9173`, and the three supplied screenshots still showed no mailboxes.**
 The deployed DLL matched the verified local DLL byte for byte. Read-only diagnosis now proves
