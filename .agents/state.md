@@ -8,22 +8,28 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**HANDOFF 2026-09-30. Branch `master`, verified head `8025b87`, tree clean, 22 commits ahead
+**2026-09-30. Branch `master`, verified head `e820d0d`, tree clean, 23 commits ahead
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**
 
-**NEXT ACTION: Comms-10k S3, rescoped by owner ruling and ready to implement.** One commit:
-delete the protected-principal path from `Comms10k.razor`, drop `"Comms10k"` from
-`ModulesWithProtectedPrincipalServicing` in `ModuleConfig.razor`, add the group resolution S4
-needs, amend three documents with the scoped exception. **No guard of any kind** - see
-`.agents/decisions.md` 2026-09-30 and the plan's Slice 3 section. Then S4.
+**NEXT ACTION: Comms-10k S4** - rewrite the write as clear-then-fill with read-back, per
+`docs/Comms10kBulkResolveScale-Plan.md` Slice 4 and its write design. S3 landed the group
+resolution S4 consumes (`Comms10kService.QueryTargetGroup` -> `Comms10kTarget`, DN +
+objectGUID), so S4 uses that resolved identity for the `Global\` mutex key and every write
+rather than adding it. **The distribution-group guard that Slice 4's text refers to does NOT
+exist and must not be introduced** - it was deleted with the rest of S3's protection path by
+owner ruling; the plan's test 19 is void and tests 12-15's "distribution-group guard" clause
+should be read as deleted.
 
-**Two agent concerns on S3 were raised and OVERRULED. Do not re-litigate them** - the decisions
-entry records both so a reviewer finds them already answered: the group is `GroupCategory:
-Security` not Distribution, and `TargetGroupName` is a generic field nothing structurally pins
-to this group. Both true; the owner ruled neither warrants a check in a single-purpose module.
+**Comms-10k runs no protected-principal check of either kind, and two agent concerns about
+that were raised and OVERRULED. Do not re-litigate either** - `.agents/decisions.md`
+2026-09-30 records both so a reviewer finds them already answered: the group is
+`GroupCategory: Security` not Distribution, and `TargetGroupName` is a generic field nothing
+structurally pins to this group. Both true; the owner ruled neither warrants a check in a
+single-purpose module. The Constitution, `.agents/repo-guidance.md` KFC3 and the developer
+guide all carry the scoped exception, contrasted against Self-Service Groups.
 
-**Landed this session, nine commits, suite 3344 -> 3426 green throughout:**
+**Landed this session, ten commits, suite 3344 -> 3433 green throughout:**
 
 | Commit | What |
 | --- | --- |
@@ -36,10 +42,11 @@ to this group. Both true; the owner ruled neither warrants a check in a single-p
 | `b1474ad` | Comms-10k S2, Preview and Download CSV stop throwing |
 | `5695139` | S3 blocked record (superseded by the next one) |
 | `8025b87` | Owner ruling: Comms-10k runs no protected-principal check |
+| `e820d0d` | Comms-10k S3, protection path deleted, write binds to the resolved identity |
 
 **Owner-side work outstanding, none of it agent-executable:**
 
-- **The push.** 22 commits, on HOLD.
+- **The push.** 23 commits, on HOLD.
 - **True Last Logon:** `AuditLog.Read.All` consent, enable the module in Module Config, and the
   two-account live comparison against `Get-TrueLastLogon-Commercial.ps1`. Nothing in that
   module has touched a real domain or tenant.
