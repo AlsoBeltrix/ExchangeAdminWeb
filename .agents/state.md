@@ -86,8 +86,8 @@ line says so. Status lives here.
 | 18 | Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The hold record lives in a CSV on one person's OneDrive, which a web app cannot use. |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
 | 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. FOUR SLICES, NONE STARTED.** Ready to execute with no owner input. |
-| 21 | Popup report has no scrollbar and ignores the mouse wheel | **NEW. No plan, never tracked.** Evidence: `C:\Users\mcoelho\Desktop\no_scrollbar.PNG`. There is no way to see a whole report in the UI. |
-| 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **NEW. No plan, never tracked.** Evidence: `C:\Users\mcoelho\Desktop\scrollbar_issue2.PNG`. The owner asked specifically for a holistic plan **reviewed with codex**, not a spot fix. 21 is almost certainly one instance of this. |
+| 21 | Popup report has no scrollbar and ignores the mouse wheel | **PLANNED, folded into 22.** `docs/AppLayoutAndScrolling-Plan.md` S1, `Status: Draft`. Cause diagnosed not guessed - see the plan. Needs owner approval before code. |
+| 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **AUDITED AND PLANNED. `docs/AppLayoutAndScrolling-Plan.md`, `Status: Draft`.** Needs owner approval AND the codex review the owner asked for, before any code. 21 is S1 of it. |
 
 **Recommended order, and why.** The next agent should not just walk the numbers.
 
@@ -97,10 +97,14 @@ line says so. Status lives here.
 2. **17 S3. LANDED 2026-09-30.** The module is registered and reachable at `1.0.0`. What is
    left on this item is not code: `AuditLog.Read.All` consent, the module enabled in Module
    Config, and the live two-account comparison against the source script.
-3. **22, with 21 folded in as its first case.** These are the only NEW items, they are both
-   about the same failure - content the operator cannot scroll to - and the owner asked for one
-   holistic plan with a codex review rather than two spot fixes. Doing 21 alone would be the
-   spot fix he explicitly did not ask for.
+3. **22, with 21 folded in. AUDITED AND PLANNED 2026-09-30, awaiting approval.**
+   `docs/AppLayoutAndScrolling-Plan.md` is a draft. The audit found one failure class behind
+   both items and 26 instances of it; item 21's cause is diagnosed, not guessed. **Two things
+   gate any code here: the owner's approval, and the codex plan review the owner asked for.**
+   The plan carries ONE open question - whether the app should stop scrolling as a page at all
+   - with a recommendation; everything else is mechanical once that is settled. **S1 is
+   separable and is the piece the owner is actually waiting on:** a two-line markup fix that
+   makes migration reports readable again.
 4. **20 Comms10k.** Approved plan, four slices, no owner input needed. Pure execution.
 5. **8 S6-S8.** Written slices, no owner input needed. Pure execution.
 6. **10 and 11.** Code is done; what remains is a deploy and live validation, which is owner
