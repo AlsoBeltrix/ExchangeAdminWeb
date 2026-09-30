@@ -8,6 +8,13 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
+**2026-09-30 - Module development architecture plan drafted at the owner's request.**
+[`docs/ModuleDevelopmentPlatform-Plan.md`](../docs/ModuleDevelopmentPlatform-Plan.md)
+owns the proposed shared API/registration/test support and Service Health/Risky Users
+pilots. **Draft; implementation not approved or started.** The scope is app code and
+module development, not worktrees/branches or runtime module packaging/import.
+Next: owner approval of the bounded plan; the active queue below is unchanged.
+
 **2026-09-29 (late). THE MIGRATION MODULE IS CLOSED BY OWNER ORDER. DO NOT TOUCH IT.**
 Five days on one module was the limit. It is left broken on dev - the mailbox pane renders
 empty for batches that have mailboxes - and the diagnosis so far is in the queue 12/13/14
