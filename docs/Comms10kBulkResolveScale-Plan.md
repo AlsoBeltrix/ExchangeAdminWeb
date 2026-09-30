@@ -3,7 +3,7 @@
 Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
 review findings and 17 through 24 the findings of rounds 14 to 21, all within that approved
 scope. **Round 22 returned "best approach - no material changes are needed", ready to implement
-as written.** **S1 and S2 of 4 IMPLEMENTED 2026-09-30 (module set to `1.3.0` once, on S1); S3 and S4 not started.**
+as written.** **S1 and S2 of 4 IMPLEMENTED 2026-09-30 (module set to `1.3.0` once, on S1). S3 IS BLOCKED - its security premise is false against the real group, see its section - and S4 is blocked behind it.**
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). **No base app bump** - this work is module-scoped.
 `ExchangeAdminWeb.csproj` is at `2.24.0` as of 2026-09-28 and must be byte-identical after every
 slice; verify by diff rather than by reading this line, which goes stale whenever another work
@@ -405,6 +405,55 @@ The linked `member` attribute omits members whose membership comes from their pr
 `Get-ADGroupMember` included. This repository already fixed that once
 (`GroupManagementService.cs:414-448`, pinned by `GroupMemberListingTests.cs:172-209`); the same
 `(primaryGroupID=<rid>)` union applies here. It affects the listing only.
+
+### Slice 3 - BLOCKED. Its security premise is false against the real group.
+
+**Do not implement this slice as written.** Evidence, from the owner's own shell, 2026-09-30:
+
+```
+get-adgroup comms-10k
+GroupCategory     : Security
+GroupScope        : Universal
+DistinguishedName : CN=Comms-10k,OU=Automated Groups,...
+```
+
+Two separate problems, and the second is the serious one.
+
+1. **The guard would refuse every write on prod.** It is specified to accept `Distribution`
+   only, fail-closed. The configured target is a mail-enabled Universal SECURITY group, so the
+   module would refuse its own intended use on the first run.
+2. **The reason for deleting the protected-principal member check does not hold.** The
+   exemption below rests on *"the write target is a broadcast distribution list, membership of
+   which grants access to nothing, so the check produces only false positives."* Membership of
+   a security group CAN grant access. The premise is false for this group, so the exception is
+   not sound and must not be written into the Constitution.
+
+The plan text below is retained verbatim because the reasoning is right - it is the FACT it was
+written against that was wrong. Everything it says about why the condition must travel inside
+the exception text is exactly what caught this: an unqualified "Comms-10k is exempt" would have
+been written into four documents while the real target was a security group.
+
+**How the wrong fact got in.** The measurement on 2026-09-25 used
+`CN=Test-WebApp,OU=ZZMikeCTest,...`, "a Distribution, Universal group the owner supplied for the
+purpose". The directory limits it measured are still valid - they are properties of ADWS, not of
+that group. The CATEGORY is not, and nothing ever checked the configured target's category
+before writing a plan whose safety argument depends on it.
+
+**Awaiting an owner decision between two options** (put to the owner 2026-09-30, unanswered):
+
+- **A. Keep the protected-principal member check.** Drop the exemption and all four document
+  amendments entirely. S3 shrinks to the group resolution S4 needs, with no distribution-only
+  guard. Slower per write, correct. Recommended.
+- **B. Convert the AD group to a Distribution group**, after which the original plan is sound
+  as written. It is `SecurityEnabled` today, so anything holding an ACL against it loses that
+  access. An AD change outside this app, and the owner's to make.
+
+Until one is chosen, S4 must not consume "the resolved identity this slice introduces" - S4 is
+blocked behind this too.
+
+---
+
+**Original slice 3 text, retained for its reasoning:**
 
 ### Slice 3 - Add the distribution-group guard, THEN delete the protected-principal path
 
