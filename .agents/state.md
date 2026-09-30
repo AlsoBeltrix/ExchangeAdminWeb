@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**2026-09-30. Branch `master`, verified head `af4fb4c`, tree clean, 27 commits ahead
+**2026-09-30. Branch `master`, verified head `fcc94a4`, tree clean, 29 commits ahead
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**
 
@@ -62,7 +62,7 @@ structurally pins to this group. Both true; the owner ruled neither warrants a c
 single-purpose module. The Constitution, `.agents/repo-guidance.md` KFC3 and the developer
 guide all carry the scoped exception, contrasted against Self-Service Groups.
 
-**Landed this session, fourteen commits, suite 3344 -> 3474 green throughout:**
+**Landed this session, sixteen commits, suite 3344 -> 3487 green throughout:**
 
 | Commit | What |
 | --- | --- |
@@ -79,13 +79,16 @@ guide all carry the scoped exception, contrasted against Self-Service Groups.
 | `f750723` | Comms-10k S4, clear-then-fill with read-back, five reported outcomes |
 | `4f28fcd` | Replace locking stripped; plan approval is not content approval |
 | `af4fb4c` | Queue item 23, migration batch tick boxes stop dropping ticks |
+| `fcc94a4` | True Last Logon resolves a UPN; -Identity never could |
 
 **Owner-side work outstanding, none of it agent-executable:**
 
-- **The push.** 27 commits, on HOLD.
+- **The push.** 29 commits, on HOLD.
 - **True Last Logon:** `AuditLog.Read.All` consent, enable the module in Module Config, and the
-  two-account live comparison against `Get-TrueLastLogon-Commercial.ps1`. Nothing in that
-  module has touched a real domain or tenant.
+  two-account live comparison against `Get-TrueLastLogon-Commercial.ps1`. **Its first live run
+  failed: `Get-ADUser -Identity` cannot resolve a UPN, so every DC answered "cannot find". Fixed
+  in `fcc94a4`, module `1.0.1`, NOT yet seen on dev** - re-run the same UPN search as the check.
+  The on-prem half has now touched a real domain exactly once; the cloud half still has not.
 - **Migration `@key` fix:** proven at source level only; the owner's own screenshot case is
   still the acceptance check.
 - **Comms-10k:** the plan is fully implemented and NOTHING has run against the real group. No
@@ -187,7 +190,7 @@ line says so. Status lives here.
 | 14 | Migration interface redesign | **DONE** (owner-marked). The checkbox defect that was blocking the deploy is in this surface and is now FIXED in code, unverified on dev - see the top of this file. |
 | 15 | Risky Users complete results | **DONE.** Browser check outstanding, owner's. |
 | 16 | Sidebar scrollbar | **DONE.** `ExchangeAdminWeb.Tests/SidebarScrollCssTests.cs`. Browser check outstanding, owner's. |
-| 17 | True Last Logon module | **BUILT. S1, S2 and S3 all landed; module registered at `1.0.0`. NOT done - the mandatory live check is outstanding and is owner work.** Detail block below. |
+| 17 | True Last Logon module | **BUILT, and its first live run found a defect that is now fixed. S1-S3 landed; module at `1.0.1` (`fcc94a4`) after `Get-ADUser -Identity` proved unable to resolve a UPN - every DC answered "cannot find". NOT done: the re-run and the mandatory live comparison are outstanding owner work.** Detail block below. |
 | 18 | Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The hold record lives in a CSV on one person's OneDrive, which a web app cannot use. |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
 | 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. S1 AND S2 LANDED 2026-09-30. S3 RESCOPED by owner ruling 2026-09-30 and ready to implement; S4 after it.** Module `1.2.0` -> `1.3.0`, set once on S1. Detail block below. |
