@@ -360,7 +360,14 @@ public sealed class ModuleCatalog
             // divider handed its checkbox element to whichever row moved into that position, and
             // that row then drew as ticked when it was not. The Actions count and the ticked
             // pager were both right; only the boxes lied (owner, dev v1.22.1, 2026-09-30).
-            Version = "1.22.3",
+            // 1.22.4: the report dialog scrolls. The <pre> declared overflow/flex/min-height and
+            // the report still ran off the bottom of the screen, because the <pre> is not a flex
+            // child of .mig-modal - the Bootstrap .card-body between them is, and that is a
+            // BLOCK, so those properties were inert (docs/AppLayoutAndScrolling-Plan.md, queue
+            // item 21). The two-pane split also stops doing arithmetic on the chrome above it:
+            // calc(100vh - 21rem) was a guess that was too small, so its pagers fell off the
+            // bottom of the window (queue item 22).
+            Version = "1.22.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

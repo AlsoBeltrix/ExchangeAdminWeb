@@ -1,9 +1,32 @@
 # App-Wide Layout And Scrolling -- One Contract Instead Of Thirty-Six Guesses
 
-Status: **Draft. Needs owner approval AND the codex review the owner asked for, before any
-code.** Queue items 21 and 22. Written against app `2.24.0`.
+Status: **Implemented 2026-09-30, on the owner's direct approval ("approved. fix it
+correctly.").** Queue items 21 and 22. Written against app `2.24.0`; shipped at `2.25.0`.
 
-Item 22 asked for an app-wide audit of layout, alignment and scrolling, explicitly as one
+**What shipped differs from what this plan proposed, and smaller.** The owner pushed back on the
+plan as a sledgehammer, and was right: the audit's diagnosis held up but the remedy was scoped
+far past the defect. Recorded here rather than rewritten, because the plan as drafted is the
+thing that was argued with.
+
+- **The open question was not answered as posed.** The plan asked whether the app should stop
+  scrolling as a page at all (fixed frame) or keep scrolling. What shipped is neither extreme:
+  the scroll moved from the DOCUMENT to `article.content`. One scroll context, headings and the
+  top row always visible, and a page that wants to fill the frame now can - because `article`
+  finally has a height to take a percentage of. No page was forced into a fixed frame.
+- **The `.pg-*` class family was not created.** Completing the height chain made it unnecessary
+  for every page in the sweep: they either flow and let `article` scroll, or say `height: 100%`.
+  Adding a class family nobody needed would have been the sledgehammer again.
+- **The `calc(100vh - Npx)` pages were fixed by DELETING their caps**, not by converting them to
+  a shell. With one scroll context nothing is unreachable, and the cap was only ever there to
+  simulate the height the layout would not give them.
+- **S4, the fixed-pixel caps, was NOT done.** `max-height: 300px` on an autocomplete dropdown is
+  a deliberate popover size, not chrome arithmetic, and it is not part of the reported defect.
+  Left alone on purpose; the table below still lists them so a later sweep can decide.
+- **Migration's `.mig-split` took a PROPORTION, not a fill.** `70vh` instead of
+  `calc(100vh - 21rem)`. A proportion cannot go stale when a banner is added, which is the
+  defect class; a true `flex: 1` fill would need a flex chain threaded through that page's tabs
+  and cards, which is a larger change than the defect warrants. Named as a known compromise
+  rather than left to look finished.
 holistic plan rather than a spot fix. Item 21 -- "popup report has no scrollbar and ignores the
 mouse wheel" -- turned out to be one instance of the same failure, so it is folded in here as
 the plan's first worked case rather than tracked separately.
@@ -185,19 +208,27 @@ self-sizing and have no header to misalign.
 `<table>`. A CSS grid with fixed tracks needs a width per column and a header cell per track by
 hand, and this repo has already paid for that twice in one day.
 
-## Slices
+## Slices -- as shipped
 
-| Slice | What | Owner input needed |
+All of it landed in ONE commit, not five. The five-slice split was sized for the `.pg-*`
+conversion this plan proposed; once that turned out to be unnecessary, what remained was one
+coherent change - complete the height chain, and delete every number that existed only because
+the chain was missing. Splitting it would have left the tree in a state where the shell had a
+height and the pages still overrode it.
+
+| Slice | What | Shipped |
 | --- | --- | --- |
-| S1 | Item 21 only: the report dialog's inert wrapper, plus `overflow: hidden` on `.mig-modal`, plus its tripwire. Migration module version bump. | No |
-| S2 | The layout shell: `MainLayout.razor.css` height chain and the `.pg-*` classes, with `.adm` aliased onto them. No page converted yet. Base app version bump. | No |
-| S3 | Convert the `calc(100vh - Npx)` pages -- Migration, ADAttributeEditor, BitLockerRecovery, BlockedSenders, DhcpAuthorization, LicensingUpdates, M365GroupManagement, NamedLocations. One commit per page, each deleting its literal. | No |
-| S4 | Decide and act on the fixed-pixel caps, one line per decision: keep (a deliberate popover size) or convert (a page region in disguise). | No |
-| S5 | The tripwire test and the registry of deliberate exceptions. | No |
+| S1 | Item 21: the report dialog's inert wrapper, `overflow: hidden` on `.mig-modal`, tripwire. | **Yes**, in CSS rather than markup - see below. |
+| S2 | The layout shell height chain. | **Yes.** The `.pg-*` classes were NOT created and were not needed. |
+| S3 | The eight `calc(100vh - Npx)` pages. | **Yes**, by deleting the caps. Migration took a proportion instead. |
+| S4 | The fixed-pixel caps (300px dropdowns and friends). | **NO - deliberately untouched.** Not chrome arithmetic, not part of the defect. |
+| S5 | Tripwire tests. | **Yes.** `ExchangeAdminWeb.Tests/AppLayoutCssTests.cs`, four tests, all five probes bit. |
 
-**S1 is separable and is the one the owner is actually waiting on.** It is a two-line markup
-change against a diagnosed cause and it makes the reports readable again. S2 onwards touches
-every page in the app and should not ride along with it.
+**Item 21 was fixed in CSS, not in the markup the diagnosis named.** Deleting the `.card-body`
+wrapper would have removed two lines from `Migration.razor` and shifted every `ClickGateRegistry`
+entry below line 1213 - including the `@key` entry at 1228 added earlier the same day. Giving
+that wrapper `display: flex; flex-direction: column; min-height: 0` reconnects the same chain
+with the page file untouched.
 
 ## Verification
 
@@ -215,9 +246,9 @@ works.** Each slice needs an owner check on dev at a real viewport:
 - All: check one short viewport (a laptop at 768px tall) and one tall one, because a guess that
   happens to be right at 1440px is the whole reason this plan exists.
 
-## Open question for the owner -- one
+## Open question for the owner -- SETTLED, and not by picking (a) or (b)
 
-**Should the page itself stop scrolling entirely?**
+**Should the page itself stop scrolling entirely?** The two options below were both wrong, and the owner said so: *"what does that sledgehammer have to do with the scalpel operation..."*. What shipped moves the scroll from the DOCUMENT to `article.content` - one scroll context, the top row and headings always visible, and no page forced into a fixed frame. A page that WANTS a fixed frame can now have one by saying `height: 100%`, because `article` finally has a height. The question only existed because the layout had no height chain; completing the chain dissolved it. Kept below as written, because the reasoning that made it look like a real fork is worth being able to re-read.
 
 Fixing the chrome-height guess (S2) can land two ways:
 
@@ -240,8 +271,15 @@ without forcing a fixed frame onto pages that read better long.
 
 Nothing else in this plan is an open question. The rest is mechanical once this is settled.
 
-## Review
+## Review -- NOT RUN, and the plan it would have reviewed is not what shipped
 
-The owner asked for this plan to be **reviewed with codex** before implementation, and that has
-not happened yet. It is a plan review, not a defect hunt: whether the shell contract is the
-right shape, whether (a) or (b) is the right default, and whether the slice order is safe.
+The owner originally asked for this plan to be **reviewed with codex** before implementation.
+That did not happen, and the reason is worth recording rather than leaving as an omission: the
+owner reviewed it himself, rejected the scope, and directed the smaller fix
+(*"approved. fix it correctly."*). A codex review of the drafted plan would now be a review of
+a proposal that was overtaken.
+
+**What is still worth a review, if the owner wants one, is the SHIPPED change** - the four-rule
+height chain in `MainLayout.razor.css` and whether moving the scroll from the document to
+`article` has consequences on pages nobody has opened yet. That is a defect hunt over a diff,
+not a plan review, and it needs its own go.

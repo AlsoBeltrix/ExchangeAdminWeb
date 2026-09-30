@@ -4,8 +4,13 @@
     flex-direction: column;
 }
 
+/* Flex column so the content area can be told how tall it is, rather than every page
+   guessing. See the desktop block below for the whole chain and why it exists. */
 main {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
 .sidebar {
@@ -49,8 +54,25 @@ main {
 }
 
 @media (min-width: 641px) {
+    /* ============================================================================
+       THE HEIGHT CHAIN. Desktop only, matching the sidebar's existing 100vh - below
+       641px the sidebar is a drawer stacked above main, and a fixed-height page there
+       would break a layout nobody has reported a problem with.
+
+       Why this exists: nothing above <article> used to declare a height. main was
+       `flex: 1` and stopped, so a page that wanted to fill the remaining space had
+       nothing to measure against - `height: 100%` resolved to nothing. The only thing
+       that appeared to work was `100vh` minus a literal someone typed for the chrome
+       above them, and that literal is wrong the moment a heading, banner, tab strip or
+       version badge changes. Nine of them accumulated, no two alike, and the symptom
+       was module content sliced off the bottom of the window.
+
+       With the chain complete, a page fills the remaining space by saying so, and is
+       exactly right at every window size with no number anywhere.
+       ============================================================================ */
     .page {
         flex-direction: row;
+        height: 100vh;
     }
 
     .sidebar {
@@ -67,10 +89,21 @@ main {
         flex-direction: column;
     }
 
+    /* flex: none rather than sticky. It used to be sticky because the DOCUMENT scrolled
+       past it; now the scroll lives in article, so the top row simply never moves and
+       cannot be shrunk by a tall page below it. */
     .top-row {
-        position: sticky;
-        top: 0;
+        flex: none;
         z-index: 1;
+    }
+
+    /* The single scroll region for ordinary pages. A page that declares no height of its
+       own just flows and this scrolls, which is what the document used to do - one
+       scroll context, so the wheel always acts on the thing under the cursor. */
+    article.content {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
     }
 
     .top-row.auth ::deep a:first-child {

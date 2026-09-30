@@ -86,8 +86,8 @@ line says so. Status lives here.
 | 18 | Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The hold record lives in a CSV on one person's OneDrive, which a web app cannot use. |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
 | 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. S1 LANDED 2026-09-30; S2, S3 and S4 not started.** Module `1.2.0` -> `1.3.0`, set once on S1. Detail block below. Still executable with no owner input. |
-| 21 | Popup report has no scrollbar and ignores the mouse wheel | **PLANNED, folded into 22.** `docs/AppLayoutAndScrolling-Plan.md` S1, `Status: Draft`. Cause diagnosed not guessed - see the plan. Needs owner approval before code. |
-| 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **AUDITED AND PLANNED. `docs/AppLayoutAndScrolling-Plan.md`, `Status: Draft`.** Needs owner approval AND the codex review the owner asked for, before any code. 21 is S1 of it. |
+| 21 | Popup report has no scrollbar and ignores the mouse wheel | **FIXED IN CODE 2026-09-30, unverified in a browser.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
+| 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **FIXED IN CODE 2026-09-30, unverified in a browser.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
 
 **Recommended order, and why.** The next agent should not just walk the numbers.
 
@@ -97,14 +97,10 @@ line says so. Status lives here.
 2. **17 S3. LANDED 2026-09-30.** The module is registered and reachable at `1.0.0`. What is
    left on this item is not code: `AuditLog.Read.All` consent, the module enabled in Module
    Config, and the live two-account comparison against the source script.
-3. **22, with 21 folded in. AUDITED AND PLANNED 2026-09-30, awaiting approval.**
-   `docs/AppLayoutAndScrolling-Plan.md` is a draft. The audit found one failure class behind
-   both items and 26 instances of it; item 21's cause is diagnosed, not guessed. **Two things
-   gate any code here: the owner's approval, and the codex plan review the owner asked for.**
-   The plan carries ONE open question - whether the app should stop scrolling as a page at all
-   - with a recommendation; everything else is mechanical once that is settled. **S1 is
-   separable and is the piece the owner is actually waiting on:** a two-line markup fix that
-   makes migration reports readable again.
+3. **22, with 21 folded in. FIXED IN CODE 2026-09-30** on the owner's direct approval, at a
+   fraction of the planned scope - he rejected the plan's `.pg-*` conversion as a sledgehammer
+   and was right. Detail block below. **Outstanding: a browser check at one tall and one short
+   window, which is owner work and cannot be done here.**
 4. **20 Comms10k. S1 of 4 LANDED 2026-09-30.** S2 (Preview and Download CSV), S3 (distribution-group guard, then delete the protected-principal path) and S4 (clear-then-fill write with read-back) are next, in that order, and need no owner input. S4 is the one that actually makes the write reach 10k; S1-S3 are what make it safe to run.
 5. **8 S6-S8.** Written slices, no owner input needed. Pure execution.
 6. **10 and 11.** Code is done; what remains is a deploy and live validation, which is owner
@@ -120,6 +116,53 @@ is an app-wide audit plus a holistic fix plus a review round. **The week's reali
 1, 2 and 3 - the deploy blocker, True Last Logon S3, and the layout plan** - with 20 and 8 as
 stretch if nothing goes wrong. Say so to the owner rather than silently missing the date.
 
+### Queue items 21 and 22 - layout and scrolling, fixed in code
+
+`docs/AppLayoutAndScrolling-Plan.md` carries the audit, the diagnosis and an honest record of
+where the shipped change departs from what the plan proposed. App `2.24.0` -> `2.25.0`
+(shared/app-wide), Migration module `1.22.3` -> `1.22.4`.
+
+**The root cause was a missing height, not a wrong number.** Nothing above `<article>` declared
+one - `main` was `flex: 1` and stopped - so a page wanting to fill the remaining space had
+nothing to measure against and `height: 100%` resolved to nothing. The only thing that appeared
+to work was `100vh` minus a literal typed for the chrome above. Nine accumulated, no two alike,
+each wrong the moment a heading or banner changed.
+
+**What shipped** (`Components/Layout/MainLayout.razor.css`, four rules): `.page` gets
+`height: 100vh`, `main` becomes a flex column with `min-height: 0`, `.top-row` becomes
+`flex: none` instead of sticky, and `article.content` becomes
+`flex: 1; min-height: 0; overflow-y: auto`. Desktop only, matching the sidebar's existing
+`100vh` - below 641px the sidebar is a drawer and that layout is untouched.
+
+Then every number that existed only because the chain was missing went away: eight inline
+`calc(100vh - Npx)` caps deleted outright (one scroll context, nothing unreachable), and `.adm`
+went from `calc(100vh - 2.9rem - 1.1rem)` to plain `height: 100%`.
+
+**Three deliberate compromises, named so they are not mistaken for finished work:**
+
+1. **Migration's `.mig-split` took a PROPORTION, not a fill:** `70vh`, not `flex: 1`. A true
+   fill needs a flex chain threaded through that page's tabs and cards. A proportion cannot go
+   stale when a banner is added, which IS the defect class, so it fixes the reported fault.
+2. **Item 21 was fixed in CSS, not in the markup its diagnosis named.** Deleting the
+   `.card-body` wrapper would have shifted every `ClickGateRegistry` entry below
+   `Migration.razor:1213`, including the `@key` entry at 1228 from earlier the same day.
+   `.mig-modal .card-body { display: flex; flex-direction: column; min-height: 0; }` reconnects
+   the same chain with the page file untouched.
+3. **The fixed-pixel caps were left alone.** `max-height: 300px` on an autocomplete dropdown is
+   a deliberate popover size, not chrome arithmetic, and not part of the reported defect.
+
+**Guarded:** `ExchangeAdminWeb.Tests/AppLayoutCssTests.cs`, four tests - no page may do
+arithmetic on the chrome above it, the four layout rules must all be present, `.adm` must take a
+percentage, and the dialog's flex chain must be unbroken. Five probes, all five bit.
+
+Gates: build 0 errors, **3408 passed / 0 failed / 3 skipped**, format, ASCII, `git diff --check`.
+
+**NOT VERIFIED IN A BROWSER AND CANNOT BE HERE.** Nothing in this repo renders a Blazor
+component or measures a laid-out box; the tests prove a SHAPE. **This change moves the scroll
+from the document to `article` on EVERY page**, so the owner check is not optional and is not
+just the two reported screens: one tall window and one short laptop-height window, on a long
+form page as well as a list page. A page that reads fine at 1440px and is cramped at 768px is
+exactly the failure this whole change is about.
 ### Queue item 20 - Comms-10k at full size, S1 of 4 landed
 
 `docs/Comms10kBulkResolveScale-Plan.md`, approved 2026-09-28 at revision 15. Module

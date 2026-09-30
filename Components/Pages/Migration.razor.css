@@ -15,8 +15,18 @@
     gap: 1rem;
     align-items: stretch;
     min-height: 0;
-    /* Tall enough to be worth splitting, short enough to leave the page chrome visible. */
-    height: calc(100vh - 21rem);
+    /* A PROPORTION of the window, not arithmetic on the chrome above it. This used to read
+       `calc(100vh - 21rem)`, where 21rem was a typed-out guess at the top row, the article
+       padding, the banner, the h1 and its version badge, the subtitle, the tab strip and the
+       card header. The guess was too small, so the split was taller than the room left and
+       its pagers fell off the bottom of the window (owner screenshot, dev v1.22.1).
+       A proportion cannot go wrong that way: adding a banner changes what is above the split,
+       and 70vh is still 70vh. Article scrolls (MainLayout.razor.css), so the bottom is
+       reachable either way.
+       This is not the ideal - that would be `flex: 1` inside a page that fills the frame,
+       which needs a flex chain through this page's cards and tabs and is a larger change than
+       the defect warrants. Recorded in docs/AppLayoutAndScrolling-Plan.md. */
+    height: 70vh;
     min-height: 26rem;
 }
 
@@ -208,6 +218,9 @@
 .mig-actions-menu {
     background: var(--ui-surface);
     border: 1px solid var(--ui-line);
+    /* So a future break in the flex chain CLIPS visibly instead of painting the content
+       outside the box and off the screen, which is how the last one hid for a release. */
+    overflow: hidden;
 }
 
     .mig-actions-menu .dropdown-item {
@@ -291,11 +304,30 @@
     min-height: 0;
     background: var(--ui-surface);
     border: 1px solid var(--ui-line);
+    /* So a future break in the flex chain CLIPS visibly instead of painting the content
+       outside the box and off the screen, which is how the last one hid for a release. */
+    overflow: hidden;
 }
 
 .mig-modal .card-header {
     background: var(--ui-header);
     border-bottom: 1px solid var(--ui-line);
+    flex: none;
+}
+
+/* THE FIX FOR THE REPORT THAT WOULD NOT SCROLL (owner screenshot, dev v1.22.1).
+   .mig-report-text below already declared overflow/flex/min-height and the report still ran
+   off the bottom of the screen, because the <pre> is NOT a flex child of .mig-modal - this
+   .card-body is. A Bootstrap .card-body is a BLOCK, so the flex properties on the <pre> were
+   inert and nothing ever constrained its height; overflow:auto had no overflow to act on.
+   A correct rule on the wrong element.
+   Making the wrapper a flex column with min-height:0 reconnects the chain. Done here rather
+   than by deleting the wrapper in the markup so the page's line numbers - which
+   ClickGateRegistry keys on - do not move. */
+.mig-modal .card-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
 /* The report is the reason the dialog exists, so it gets the room. Scrolls inside the dialog
