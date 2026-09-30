@@ -8,6 +8,54 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
+**HANDOFF 2026-09-30. Branch `master`, verified head `8025b87`, tree clean, 22 commits ahead
+of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
+`ask`.**
+
+**NEXT ACTION: Comms-10k S3, rescoped by owner ruling and ready to implement.** One commit:
+delete the protected-principal path from `Comms10k.razor`, drop `"Comms10k"` from
+`ModulesWithProtectedPrincipalServicing` in `ModuleConfig.razor`, add the group resolution S4
+needs, amend three documents with the scoped exception. **No guard of any kind** - see
+`.agents/decisions.md` 2026-09-30 and the plan's Slice 3 section. Then S4.
+
+**Two agent concerns on S3 were raised and OVERRULED. Do not re-litigate them** - the decisions
+entry records both so a reviewer finds them already answered: the group is `GroupCategory:
+Security` not Distribution, and `TargetGroupName` is a generic field nothing structurally pins
+to this group. Both true; the owner ruled neither warrants a check in a single-purpose module.
+
+**Landed this session, nine commits, suite 3344 -> 3426 green throughout:**
+
+| Commit | What |
+| --- | --- |
+| `fe37c24` | Migration `@key` checkbox fix - the deploy blocker |
+| `a9e03af` | True Last Logon S3, module live at `1.0.0` |
+| `340999e` | Layout/scrolling audit and plan for items 21+22 |
+| `1c6eaba` | Comms-10k S1, batched address resolution, module `1.3.0` |
+| `fc2f2e5` | Layout height chain, app `2.25.0`, Migration `1.22.4` |
+| `4fa878f` | Items 21+22 accepted, owner browser check passed |
+| `b1474ad` | Comms-10k S2, Preview and Download CSV stop throwing |
+| `5695139` | S3 blocked record (superseded by the next one) |
+| `8025b87` | Owner ruling: Comms-10k runs no protected-principal check |
+
+**Owner-side work outstanding, none of it agent-executable:**
+
+- **The push.** 22 commits, on HOLD.
+- **True Last Logon:** `AuditLog.Read.All` consent, enable the module in Module Config, and the
+  two-account live comparison against `Get-TrueLastLogon-Commercial.ps1`. Nothing in that
+  module has touched a real domain or tenant.
+- **Migration `@key` fix:** proven at source level only; the owner's own screenshot case is
+  still the acceptance check.
+- **Comms-10k:** nothing has run against the real group; the plan's Acceptance is outstanding
+  in full.
+
+**A recurring defect in this session's own tests, worth carrying:** three separate guards were
+written to forbid a named antipattern and then read the comment that EXPLAINED the antipattern,
+failing against the prose rather than the code. All three now strip comments first. Related:
+one mutation probe PASSED and was nearly recorded as bitten - the "mutation" was an equivalent
+implementation. A probe that passes is either a vacuous test or a bad probe, and assuming the
+first without checking is how a vacuous test gets certified.
+
+
 **2026-09-30 - Module development architecture plan revised for a complete cutover.**
 [`docs/ModuleDevelopmentPlatform-Plan.md`](../docs/ModuleDevelopmentPlatform-Plan.md)
 revision 2 owns the proposed all-module code/registration/test/record boundaries,
@@ -25,7 +73,7 @@ empty for batches that have mailboxes - and the diagnosis so far is in the queue
 entry below. **That entry is a record, not a work item.** Several other modules are waiting to
 deploy and they outrank finishing it.
 
-**FIXED IN CODE, NOT YET SEEN ON DEV - migration mailbox checkboxes lied about what is ticked.**
+**FIXED IN CODE 2026-09-30, NOT YET SEEN ON DEV - migration mailbox checkboxes lied about what is ticked.**
 Owner on dev `v1.22.1`, 2026-09-30, with a screenshot: ticking a mailbox pinned it to the top,
 and rows in the list BELOW the divider then rendered as ticked when they were not. `Actions (3)`
 and the `1-3 OF 3 TICKED` pager were correct; the checkboxes were not.
