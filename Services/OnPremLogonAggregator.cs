@@ -30,16 +30,28 @@ public sealed record OnPremLogonResult(
     int AnsweredCount)
 {
     /// <summary>
-    /// True only when EVERY domain controller answered. When false the date below is a floor,
-    /// not the answer: a DC that was not asked can hold a more recent logon.
+    /// True when no answering DC had ever seen this user.
     /// </summary>
-    public bool EveryDomainControllerAnswered => Skipped.Count == 0;
+    /// <remarks>
+    /// <b>This does NOT mean the account never logged on, and it deliberately does not require
+    /// a complete sweep.</b> Owner, 2026-09-30: *"you will NEVER get a response from ALL domain
+    /// controllers. that cannot be a gate."* In a global estate some DCs are always
+    /// unreachable, so a completeness gate would never open and this module could not answer
+    /// the question it exists for.
+    ///
+    /// So coverage is REPORTED, never required: this flag says what the answering DCs saw, and
+    /// <see cref="Skipped"/> plus <see cref="AnsweredCount"/> say how much of the estate that
+    /// was. The caller must show both together - "no logon on the 34 that answered, 3 did not
+    /// answer" is the honest sentence, and a bare "never" is the one that gets a live account
+    /// disabled.
+    /// </remarks>
+    public bool NoLogonOnAnsweringDomainControllers => AnsweredCount > 0 && LastLogon == null;
 
     /// <summary>
-    /// True when every DC answered AND none of them had ever seen this user. The ONLY
-    /// combination that supports "this account has not logged on to the domain".
+    /// Whether every DC answered. Descriptive only - **nothing may gate on this**, see
+    /// <see cref="NoLogonOnAnsweringDomainControllers"/>. In practice it is usually false.
     /// </summary>
-    public bool ConfirmedNeverOnPrem => EveryDomainControllerAnswered && AnsweredCount > 0 && LastLogon == null;
+    public bool EveryDomainControllerAnswered => Skipped.Count == 0;
 }
 
 /// <summary>

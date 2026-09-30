@@ -68,6 +68,14 @@ Per the script's performance model, adapted to one user:
   claim from one computed from all 37, and the operator must see which they have. This is the
   on-prem equivalent of `Cloud_Verified` and it fails the same way if dropped.
 
+- **Owner ruling, 2026-09-30: coverage is REPORTED, never REQUIRED.** *"You will NEVER get a
+  response from ALL domain controllers. That cannot be a gate."* The first implementation made
+  a complete sweep the precondition for saying no logon was found; in a global estate that
+  gate never opens, so the module could not answer the question it exists for. The finding now
+  stands on its own and the coverage travels beside it. The honest sentence is "no logon on
+  the 34 that answered, 3 did not answer" -- never a bare "never", and never a refusal to
+  answer because three DCs were down.
+
 ## Cloud: credential
 
 The module declares its own `GraphDelineaSecretId` config field, as nine other modules already

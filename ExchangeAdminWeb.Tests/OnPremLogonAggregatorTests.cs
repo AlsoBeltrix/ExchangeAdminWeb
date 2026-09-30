@@ -56,28 +56,28 @@ public class OnPremLogonAggregatorTests
     }
 
     [Fact]
-    public void NeverLoggedOnIsOnlyClaimedWhenEveryDomainControllerAgreed()
+    public void NoLogonFoundIsReportedWithItsCoverageRatherThanGatedOnACompleteSweep()
     {
-        // "Never" is the most dangerous output this module can produce - it is what gets an
-        // account disabled - so it requires a COMPLETE sweep. Two shapes, and only one of them
-        // may claim it.
-        var complete = OnPremLogonAggregator.Aggregate(
-        [
-            Answered("dc-a", null),
-            Answered("dc-b", null),
-        ]);
-
-        Assert.Null(complete.LastLogon);
-        Assert.True(complete.ConfirmedNeverOnPrem);
-
+        // Owner, 2026-09-30: "you will NEVER get a response from ALL domain controllers. that
+        // cannot be a gate." An earlier version required a complete sweep before it would say
+        // no logon was found, which in a global estate meant never - the module could not
+        // answer the question it exists for.
+        //
+        // So the finding stands on its own and the COVERAGE travels with it. A partial sweep
+        // still reports what it found; it just also reports what it could not reach, and the
+        // caller has to show both.
         var partial = OnPremLogonAggregator.Aggregate(
         [
             Answered("dc-a", null),
-            Failed("dc-b", "unreachable"),
+            Answered("dc-b", null),
+            Failed("dc-c", "unreachable"),
         ]);
 
         Assert.Null(partial.LastLogon);
-        Assert.False(partial.ConfirmedNeverOnPrem);
+        Assert.True(partial.NoLogonOnAnsweringDomainControllers);
+        Assert.Equal(2, partial.AnsweredCount);
+        Assert.Single(partial.Skipped);
+        Assert.False(partial.EveryDomainControllerAnswered);
     }
 
     [Fact]
@@ -105,10 +105,10 @@ public class OnPremLogonAggregatorTests
 
         Assert.Null(result.LastLogon);
         Assert.Equal(0, result.AnsweredCount);
-        Assert.False(result.ConfirmedNeverOnPrem);
+        Assert.False(result.NoLogonOnAnsweringDomainControllers);
 
         var nothing = OnPremLogonAggregator.Aggregate(null);
         Assert.Null(nothing.LastLogon);
-        Assert.False(nothing.ConfirmedNeverOnPrem);
+        Assert.False(nothing.NoLogonOnAnsweringDomainControllers);
     }
 }
