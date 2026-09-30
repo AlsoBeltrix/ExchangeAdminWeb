@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**2026-09-30. Branch `master`, verified head `4f28fcd`, tree clean, 25 commits ahead
+**2026-09-30. Branch `master`, verified head `af4fb4c`, tree clean, 27 commits ahead
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**
 
@@ -24,8 +24,19 @@ that defence was tried this session and overruled. Anything needing his decision
 chat, plain English, one fork at a time. **Open gap, needs its own go:** plans have no
 exec-summary section and the `plan` operator does not produce one.
 
-**NEXT ACTION: owner acceptance of Comms-10k on dev**, then the next queue item. There is no
-agent-executable work left on this plan. What S4 changed that acceptance must actually
+**NEXT ACTION: owner acceptance on dev of queue item 23 (P1 prod blocker, fixed in `af4fb4c`)
+and of Comms-10k.** Neither can be verified here. Item 23's check is the owner's own rapid-click
+case: tick a batch, tick a second one before the first one's mailboxes finish loading, and
+confirm the right-hand pane and the `Actions (n)` count both agree with the boxes.
+
+**Item 23 carries a lesson that outlives it: a defect recorded as an open question is still a
+defect in production.** `ClickGateRegistry` found this exact fault, called it "the wrong refusal
+for a DOM-synced control", and parked it for the owner because D2(a) is an owner ruling. Nothing
+in this repo re-raises a parked entry, so it shipped and the owner hit it. When a registry entry
+or a plan note parks a live defect, it needs a line in this file too, not only in the artefact
+that found it.
+
+There is no agent-executable work left on the Comms-10k plan. What S4 changed that acceptance must actually
 exercise: the write is no longer atomic. It clears the `member` attribute and refills it in
 batches, so for roughly eight seconds at ten thousand members the list is empty and then
 partial. The module reports five distinct outcomes for that - succeeded, succeeded with
@@ -51,7 +62,7 @@ structurally pins to this group. Both true; the owner ruled neither warrants a c
 single-purpose module. The Constitution, `.agents/repo-guidance.md` KFC3 and the developer
 guide all carry the scoped exception, contrasted against Self-Service Groups.
 
-**Landed this session, twelve commits, suite 3344 -> 3468 green throughout:**
+**Landed this session, fourteen commits, suite 3344 -> 3474 green throughout:**
 
 | Commit | What |
 | --- | --- |
@@ -67,10 +78,11 @@ guide all carry the scoped exception, contrasted against Self-Service Groups.
 | `e820d0d` | Comms-10k S3, protection path deleted, write binds to the resolved identity |
 | `f750723` | Comms-10k S4, clear-then-fill with read-back, five reported outcomes |
 | `4f28fcd` | Replace locking stripped; plan approval is not content approval |
+| `af4fb4c` | Queue item 23, migration batch tick boxes stop dropping ticks |
 
 **Owner-side work outstanding, none of it agent-executable:**
 
-- **The push.** 25 commits, on HOLD.
+- **The push.** 27 commits, on HOLD.
 - **True Last Logon:** `AuditLog.Read.All` consent, enable the module in Module Config, and the
   two-account live comparison against `Get-TrueLastLogon-Commercial.ps1`. Nothing in that
   module has touched a real domain or tenant.
@@ -111,6 +123,12 @@ Five days on one module was the limit. It is left broken on dev - the mailbox pa
 empty for batches that have mailboxes - and the diagnosis so far is in the queue 12/13/14
 entry below. **That entry is a record, not a work item.** Several other modules are waiting to
 deploy and they outrank finishing it.
+
+**TWO owner exceptions have been made to that closure, both for prod blockers he raised himself
+and both scoped to the one defect named:** the `@key` checkbox fix (2026-09-30, *"we cannot
+deploy like this"*) and queue item 23 (2026-09-30, *"new item 23 is p1"*). Neither reopens the
+module for anything else, and nothing else was touched in either. A closed module plus a
+prod blocker the owner names is the only pattern that has authorised work here.
 
 **FIXED IN CODE 2026-09-30, NOT YET SEEN ON DEV - migration mailbox checkboxes lied about what is ticked.**
 Owner on dev `v1.22.1`, 2026-09-30, with a screenshot: ticking a mailbox pinned it to the top,
@@ -175,6 +193,7 @@ line says so. Status lives here.
 | 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. S1 AND S2 LANDED 2026-09-30. S3 RESCOPED by owner ruling 2026-09-30 and ready to implement; S4 after it.** Module `1.2.0` -> `1.3.0`, set once on S1. Detail block below. |
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
+| 23 | Migration batch tick boxes drop ticks when clicked in rapid succession | **CODE FIXED 2026-09-30 (`af4fb4c`), NOT YET SEEN ON DEV. Owner-declared P1 prod blocker.** A handler guard on a DOM-synced control: the browser applied the tick, `if (IsBusy) return;` discarded it, and Blazor sent no correction because its last-rendered value still matched the model. Guard removed from `ToggleBatchSelected` and `ToggleSelectAllBatches`; D2(a) rules out the disabled-attribute repair. Migration `1.22.4` -> `1.22.5`. Acceptance is the owner's rapid-click case. |
 
 **Recommended order, and why.** The next agent should not just walk the numbers.
 
