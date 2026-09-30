@@ -42,6 +42,16 @@ _First recorded 2026-07-21._
   `@azure-openai-eus2-global/gpt-5.5-dzs`; the **full prefixed slug must be passed to `--model`**
   (stripping the `@.../` prefix causes an `Either x-portkey-config or x-portkey-provider` failure).
   The `refresh_token_reused` OAuth errors it prints are harmless noise on the API-key path.
+  **`--output-schema` is validated STRICTLY by this gateway (observed 2026-09-30):** every key in
+  `properties` must also appear in `required`, or the call dies before the model sees anything
+  with `Invalid schema for response_format 'codex_output_schema': ... Missing '<key>'`. An
+  optional field is therefore not expressible - make it required and let the reviewer write an
+  empty string. The failure looks like a review outcome in the stream log but is a transport
+  error; `-o <file>` is never written, so a missing result file distinguishes the two.
+  **A generation (defect-hunt) pass runs `-s read-only`, so its capability-proof command must be
+  read-only too** - `git diff --stat` works, `dotnet build`/`dotnet test` are denied because they
+  write to `bin/` and `obj/`. Supply the coder's own gate results in the prompt as claims to be
+  checked by reading, rather than asking the reviewer to re-run them.
 - **codex-commercial** (same `codex-cli` engine via wrapper
   `C:\Users\mcoelho\.local\bin\codex-commercial.ps1`) — OpenAI direct, ChatGPT-subscription auth.
   `CODEX_HOME=C:\Users\mcoelho\.codex-commercial`; the wrapper strips `OPENAI_*`/`PORTKEY_*` env
