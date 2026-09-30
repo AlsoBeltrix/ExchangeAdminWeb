@@ -57,11 +57,12 @@ questions first. Branch `master`, head `d9edf86`, tree clean.
 
 ### Queue item 17 - True Last Logon, in progress
 
-Branch `master`, tree clean at the commit that lands S2's Graph I/O, **3 commits unpushed**
-(push policy: ask). Both `github` and `origin` sit at `0b7122a`, a clean ancestor of local; no
-divergence.
+Branch `master`, tree clean. **Nothing is pushed** - both `github` and `origin` still sit at
+`0b7122a`, a clean ancestor of local, no divergence; push policy is ask. Count the backlog with
+`git log --oneline 0b7122a..HEAD` rather than trusting a number written here, because a second
+session has been committing into this same working tree today (`046e3d2`, `a24d685`).
 
-Gates at that head: build 0 errors, **3339 passed / 0 failed / 3 skipped**, format, ASCII,
+Gates at `a908598`: build 0 errors, **3344 passed / 0 failed / 3 skipped**, format, ASCII,
 `git diff --check`.
 
 **Landed:**
@@ -72,7 +73,7 @@ Gates at that head: build 0 errors, **3339 passed / 0 failed / 3 skipped**, form
   `MapRow` is internal and tested (5 more).
 - **S2 core, the cloud rules.** `Services/CloudSignInAggregator.cs` (pure, 9 tests). Later of
   the two sources per field; the four verification states.
-- **S2 Graph I/O.** `Services/CloudSignInService.cs` (21 tests). Three concurrent queries for
+- **S2 Graph I/O.** `Services/CloudSignInService.cs` (26 tests). Three concurrent queries for
   one user: `signInActivity` via the `/users` COLLECTION form with an `eq` filter, the
   interactive sign-in log on v1.0, and the non-interactive sign-in log on **beta**. Two
   decisions worth not re-deriving:
@@ -89,9 +90,11 @@ Gates at that head: build 0 errors, **3339 passed / 0 failed / 3 skipped**, form
     lost it has verified nothing. Relaxing that `&&` to `||` makes a live account read as
     confirmed dormant, and four tests fail when it is.
 
-**Open review findings: `tll-1` (HIGH) and `tll-2` (MEDIUM)** from a codex defect hunt over
-`046e3d2..cb968da`. Both admitted, both against `Services/CloudSignInService.cs`. Status is owned
-by `.agents/review/index.md`; S3 does not start until both are closed.
+**Review round: CLOSED.** A codex defect hunt over `046e3d2..cb968da` returned two findings,
+both admitted and both fixed one-per-commit with mutation proof: `tll-1` (HIGH, `4725109`) and
+`tll-2` (MEDIUM, `a908598`). Detail in `.agents/review/findings/`; no open rows in
+`.agents/review/index.md`. Both were the same shape - the file stated a rule in its own class
+remarks and then did not apply it.
 
 **NEXT ACTION: S3** - module descriptor, page, permission, click gating, audit. Module is NOT
 registered yet, which is why nothing has a version bump. Two wiring items S3 owns: register

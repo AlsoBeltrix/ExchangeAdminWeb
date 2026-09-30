@@ -7,7 +7,7 @@ what it does.
 
 **Status**: Verified
 **Branch**: -- (direct-to-main)
-**Commit**: recorded in the closeout below
+**Commit**: `a908598`
 
 ## Evidence
 
@@ -111,5 +111,6 @@ the catch covers `TaskCanceledException` only, and named the three concrete esca
 
 ## Closeout
 
-Fixed directly on `master`. Commit and completion receipt are in the follow-up bookkeeping
-commit that fills in the SHA here and in `.agents/review/index.md`.
+Fixed directly on `master` in `a908598`. Full suite at that head:
+**3344 passed / 0 failed / 3 skipped**, build 0 errors, format, ASCII lint, `git diff --check`.
+Status `[x]` in `.agents/review/index.md`. Not yet pushed - push policy is ask.

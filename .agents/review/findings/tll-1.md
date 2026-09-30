@@ -6,7 +6,7 @@ sign-ins", and with both log queries empty that composes to `LogVerified` - the 
 plan says is safe to act on. Acting on it means disabling a live account.
 **Status**: Verified
 **Branch**: -- (direct-to-main)
-**Commit**: recorded in the closeout below
+**Commit**: `4725109`
 
 ## Evidence
 
@@ -125,5 +125,6 @@ review outcome, and it is now fixed in `.agents/review/tll-s2.schema.json`.
 
 ## Closeout
 
-Fixed directly on `master`. Commit and completion receipt are in the follow-up bookkeeping
-commit that fills in the SHA here and in `.agents/review/index.md`.
+Fixed directly on `master` in `4725109`. Full suite at `a908598` (the tll-2 fix on top):
+**3344 passed / 0 failed / 3 skipped**, build 0 errors, format, ASCII lint, `git diff --check`.
+Status `[x]` in `.agents/review/index.md`. Not yet pushed - push policy is ask.
