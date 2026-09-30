@@ -85,7 +85,7 @@ line says so. Status lives here.
 | 17 | True Last Logon module | **BUILT. S1, S2 and S3 all landed; module registered at `1.0.0`. NOT done - the mandatory live check is outstanding and is owner work.** Detail block below. |
 | 18 | Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The hold record lives in a CSV on one person's OneDrive, which a web app cannot use. |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
-| 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. FOUR SLICES, NONE STARTED.** Ready to execute with no owner input. |
+| 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. S1 LANDED 2026-09-30; S2, S3 and S4 not started.** Module `1.2.0` -> `1.3.0`, set once on S1. Detail block below. Still executable with no owner input. |
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **PLANNED, folded into 22.** `docs/AppLayoutAndScrolling-Plan.md` S1, `Status: Draft`. Cause diagnosed not guessed - see the plan. Needs owner approval before code. |
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **AUDITED AND PLANNED. `docs/AppLayoutAndScrolling-Plan.md`, `Status: Draft`.** Needs owner approval AND the codex review the owner asked for, before any code. 21 is S1 of it. |
 
@@ -105,7 +105,7 @@ line says so. Status lives here.
    - with a recommendation; everything else is mechanical once that is settled. **S1 is
    separable and is the piece the owner is actually waiting on:** a two-line markup fix that
    makes migration reports readable again.
-4. **20 Comms10k.** Approved plan, four slices, no owner input needed. Pure execution.
+4. **20 Comms10k. S1 of 4 LANDED 2026-09-30.** S2 (Preview and Download CSV), S3 (distribution-group guard, then delete the protected-principal path) and S4 (clear-then-fill write with read-back) are next, in that order, and need no owner input. S4 is the one that actually makes the write reach 10k; S1-S3 are what make it safe to run.
 5. **8 S6-S8.** Written slices, no owner input needed. Pure execution.
 6. **10 and 11.** Code is done; what remains is a deploy and live validation, which is owner
    work, and it is gated behind item 1 above.
@@ -120,6 +120,50 @@ is an app-wide audit plus a holistic fix plus a review round. **The week's reali
 1, 2 and 3 - the deploy blocker, True Last Logon S3, and the layout plan** - with 20 and 8 as
 stretch if nothing goes wrong. Say so to the owner rather than silently missing the date.
 
+### Queue item 20 - Comms-10k at full size, S1 of 4 landed
+
+`docs/Comms10kBulkResolveScale-Plan.md`, approved 2026-09-28 at revision 15. Module
+`1.2.0` -> `1.3.0`; the version is set ONCE, on S1, and the remaining slices extend its comment
+block rather than bumping again. `ExchangeAdminWeb.csproj` is untouched and verified so by diff,
+not by reading the plan's line about it.
+
+**S1 LANDED: address resolution is batched.** `Services/Comms10kAddressResolver.cs` is the new
+pure half - batching, RFC 4515 filter construction, match assignment - and
+`Comms10kService.QueryBatchCandidates` is the live query behind an `internal virtual` seam, one
+`Get-ADObject -LDAPFilter` per 500 addresses inside one runspace. 20 tests, plan tests 1 to 7.
+
+Three things in S1 that are load-bearing rather than cosmetic:
+
+- **A query error aborts the WHOLE resolution.** `ExecuteReplaceAsync` removes everyone absent
+  from the resolved list, so a batch that failed quietly would read as "these 500 were not
+  found" and unsubscribe 500 real people behind a green success message. Mirrors
+  `GroupManagementService.QueryBatchCandidates`.
+- **The match keys are UPN and mail ONLY.** `BulkIdentityList.BuildBatchFilter` also matches
+  `sAMAccountName` and optionally groups, which is why it is deliberately not reused - widening
+  the keys here changes who receives the mail. A probe that adds `sAMAccountName` fails a test.
+- **Blank CSV lines never reach the filter.** An empty equality assertion is not legal filter
+  syntax and the query is fail-closed per batch, so one blank row would have aborted the 499
+  real addresses beside it. `QueryableAddresses` screens them; `BuildBatchFilter` throws if one
+  arrives anyway; `Resolve` still walks the full original list so the blank is still reported.
+
+**Also fixed as a side effect, and worth not re-deriving:** the old code interpolated the
+address into `-Filter`, where PowerShell expands `$` as a variable and an address containing one
+silently queried something else (`SectionAccessGroupDirectory.cs:132` records the same lesson).
+`-LDAPFilter` has no such expansion and `$` is not an RFC 4515 metacharacter, so it now survives
+as the literal it is. There is a test asserting it is NOT escaped, because escaping it would
+break the match just as surely.
+
+Gates after S1: build 0 errors, **3404 passed / 0 failed / 3 skipped**, format, ASCII,
+`git diff --check`, csproj byte-identical. Five mutations probed and all five bit: batching
+off by one (3 fail), escaping removed (1), `sAMAccountName` added to the keys (1), ambiguous
+collapsing to the first match (1), and the seam swallowing a batch error (1).
+
+**NEXT: S2, then S3, then S4, in that order and one session each.** None needs owner input.
+S4 is the slice that actually makes the write reach ten thousand members; S1 to S3 are what make
+running it safe. The plan's tests 8 to 20 belong to those slices and are written out there.
+
+**Nothing in this module has run against the real group.** The plan's Acceptance section is the
+owner's and is outstanding in full.
 ### Queue item 17 - True Last Logon, built and awaiting a live check
 
 Branch `master`, tree clean. **All three slices are landed. The module is registered and

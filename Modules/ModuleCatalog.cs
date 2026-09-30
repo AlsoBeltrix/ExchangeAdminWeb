@@ -596,7 +596,15 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.DirectoryAndGroups,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.0",
+            // 1.3.0: the module works at its real size (docs/Comms10kBulkResolveScale-Plan.md).
+            // Landing across that plan's four slices; the version is set once, on S1.
+            // - S1: address resolution asks the directory ONE question per 500 addresses instead
+            //   of one per CSV row. At 5,279 addresses the old loop issued 5,279 sequential
+            //   queries and ADWS invalidated the enumeration context partway through, which is
+            //   the error the owner hit. A query error now aborts the whole resolution rather
+            //   than reading as "these 500 were not found" - the write removes everyone absent
+            //   from the resolved list, so that reading unsubscribes real people.
+            Version = "1.3.0",
             MainPermission = new(
                 "Access",
                 "Comms10k",

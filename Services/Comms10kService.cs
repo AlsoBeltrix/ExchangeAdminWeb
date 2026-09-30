@@ -102,6 +102,22 @@ public class Comms10kService
         });
     }
 
+    /// <summary>
+    /// Resolves CSV addresses to distinguished names, in batches.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A query error aborts the WHOLE resolution and never yields not-found rows.</b> That is
+    /// the load-bearing rule here, not the batching. <see cref="ExecuteReplaceAsync"/> removes
+    /// everyone absent from the resolved list, so a batch that silently failed would read as
+    /// "these 500 were not found" and unsubscribe 500 real people in one click. Mirrors
+    /// <c>GroupManagementService.QueryBatchCandidates</c>, which fails closed for the same reason.
+    /// </para>
+    /// <para>
+    /// The decisions live in <see cref="Comms10kAddressResolver"/>, which is pure; this method is
+    /// the I/O around it.
+    /// </para>
+    /// </remarks>
     public async Task<Comms10kResolveResult> ResolveEmailsAsync(List<string> emails)
     {
         var group = TargetGroup;
@@ -114,56 +130,108 @@ public class Comms10kService
 
         return await Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
-
-            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
-
-            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            var resolved = new List<string>();
-            var resolvedSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var skipped = new List<string>();
-
-            foreach (var email in emails)
+            IReadOnlyList<Comms10kAddressResolver.Candidate> candidates;
+            try
             {
-                var escaped = email.Replace("'", "''");
-                ps.AddCommand("Get-ADUser")
-                  .AddParameter("Filter", $"UserPrincipalName -eq '{escaped}' -or EmailAddress -eq '{escaped}'")
-                  .AddParameter("Credential", credential)
-                  .AddParameter("ErrorAction", "SilentlyContinue");
-                var userResults = ps.Invoke();
-                ps.Commands.Clear();
-
-                if (userResults.Count > 1)
-                {
-                    skipped.Add($"{email} (ambiguous: {userResults.Count} matches)");
-                }
-                else if (userResults.Count == 1)
-                {
-                    var dn = userResults[0].Properties["DistinguishedName"]?.Value?.ToString();
-                    if (dn != null && resolvedSet.Add(dn)) resolved.Add(dn);
-                    else if (dn == null) skipped.Add(email);
-                }
-                else
-                {
-                    skipped.Add(email);
-                }
+                candidates = QueryBatchCandidates(creds.Value, Comms10kAddressResolver.QueryableAddresses(emails));
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Comms-10k address resolution failed.");
+                return new Comms10kResolveResult
+                {
+                    Success = false,
+                    Message = $"Address resolution failed and no addresses were resolved: {ex.Message}"
+                };
+            }
+
+            var outcome = Comms10kAddressResolver.Resolve(emails, candidates);
 
             return new Comms10kResolveResult
             {
                 Success = true,
-                ResolvedDns = resolved,
-                SkippedEmails = skipped,
-                Message = $"{resolved.Count} resolved, {skipped.Count} not found."
+                ResolvedDns = outcome.ResolvedDns,
+                SkippedEmails = outcome.SkippedAddresses,
+                Message = $"{outcome.ResolvedDns.Count} resolved, {outcome.SkippedAddresses.Count} not found."
             };
         });
+    }
+
+    /// <summary>
+    /// The live directory query: one <c>Get-ADObject -LDAPFilter</c> per batch, inside ONE
+    /// runspace. Internal virtual TEST SEAM, like
+    /// <c>GroupManagementService.QueryBatchCandidates</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>No <c>-Server</c>.</b> Directory scope is the host's own, discovered at runtime
+    /// (architectural invariant 7). The admin module passes a global catalog because it resolves
+    /// foreign-domain principals by design; this module subscribes people from one address list
+    /// and has never done that.
+    /// </para>
+    /// <para>
+    /// <b>No <c>ResultSetSize</c>.</b> It would truncate the batch silently, and a truncated
+    /// answer here is indistinguishable from "not found" - which is the unsubscribe path. It
+    /// would also destroy ambiguity detection: a second match dropped by the cap turns an
+    /// AMBIGUOUS address into a confidently resolved wrong person.
+    /// </para>
+    /// <para>
+    /// Throws on any batch error, so the caller reports a failed resolution. Never returns a
+    /// partial candidate set.
+    /// </para>
+    /// </remarks>
+    internal virtual IReadOnlyList<Comms10kAddressResolver.Candidate> QueryBatchCandidates(
+        (string username, string password, string domain) creds,
+        IReadOnlyList<string> addresses)
+    {
+        var candidates = new List<Comms10kAddressResolver.Candidate>();
+        if (addresses.Count == 0)
+            return candidates;
+
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        var props = new[] { "userPrincipalName", "mail" };
+
+        foreach (var batch in Comms10kAddressResolver.Batch(addresses))
+        {
+            ps.Streams.Error.Clear();
+            ps.AddCommand("Get-ADObject")
+              .AddParameter("LDAPFilter", Comms10kAddressResolver.BuildBatchFilter(batch))
+              .AddParameter("Properties", props)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var objects = ps.Invoke();
+            ps.Commands.Clear();
+
+            if (ps.HadErrors)
+            {
+                var first = ps.Streams.Error.FirstOrDefault()?.ToString() ?? "unknown error";
+                ps.Streams.Error.Clear();
+                throw new InvalidOperationException($"The directory query reported an error: {first}");
+            }
+
+            foreach (var o in objects)
+            {
+                if (o is null)
+                    continue;
+                candidates.Add(new Comms10kAddressResolver.Candidate(
+                    DistinguishedName: o.Properties["DistinguishedName"]?.Value?.ToString(),
+                    UserPrincipalName: o.Properties["userPrincipalName"]?.Value?.ToString(),
+                    Mail: o.Properties["mail"]?.Value?.ToString()));
+            }
+        }
+
+        return candidates;
     }
 
     public async Task<Comms10kUpdateResult> ExecuteReplaceAsync(List<string> resolvedDns, string performedBy)

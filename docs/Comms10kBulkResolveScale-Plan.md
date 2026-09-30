@@ -3,7 +3,7 @@
 Status: **Approved by the owner, 2026-09-28**, at revision 15; revision 16 folds in the round-13
 review findings and 17 through 24 the findings of rounds 14 to 21, all within that approved
 scope. **Round 22 returned "best approach - no material changes are needed", ready to implement
-as written.** No code written.
+as written.** **S1 of 4 IMPLEMENTED 2026-09-30 (module set to `1.3.0`); S2, S3 and S4 not started.**
 Module: `Comms10k` (`1.2.0` -> `1.3.0`). **No base app bump** - this work is module-scoped.
 `ExchangeAdminWeb.csproj` is at `2.24.0` as of 2026-09-28 and must be byte-identical after every
 slice; verify by diff rather than by reading this line, which goes stale whenever another work
@@ -370,7 +370,7 @@ Invariant 7: scope is whatever the host's membership makes it, never named or co
 
 Four commits, each with its own tests and guard proof.
 
-### Slice 1 - Resolve addresses in batches
+### Slice 1 - Resolve addresses in batches -- LANDED 2026-09-30
 
 Replace the per-row loop with one `-LDAPFilter` OR-query per batch, then match in memory - the
 shape proven at `GroupManagementService.cs:852`, with the live query behind an `internal virtual`
