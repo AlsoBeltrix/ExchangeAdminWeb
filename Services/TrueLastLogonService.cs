@@ -57,7 +57,7 @@ public sealed class TrueLastLogonService
     /// error rather than to an error.
     /// </remarks>
     private const string SweepScript = @"
-param($SamOrUpn, $ProbeTimeoutSeconds, $Throttle)
+param($LdapFilter, $ProbeTimeoutSeconds, $Throttle)
 
 $dcs = @(Get-ADDomainController -Filter * -ErrorAction Stop |
          Select-Object -ExpandProperty HostName)
@@ -81,8 +81,25 @@ $dcs | ForEach-Object -ThrottleLimit $Throttle -Parallel {
     }
 
     try {
-        $u = Get-ADUser -Identity $using:SamOrUpn -Server $dc -Properties lastLogon -ErrorAction Stop
-        $raw = $u.lastLogon
+        # -LDAPFilter, NOT -Identity. -Identity resolves a distinguished name, a GUID, a SID or a
+        # sAMAccountName and NOTHING ELSE - it does not accept a userPrincipalName, so every UPN
+        # this module was handed failed on every DC with 'Cannot find an object with identity'.
+        # The filter is built and escaped in C# (BuildIdentityFilter) so the escaping is testable
+        # without a directory.
+        $found = @(Get-ADUser -LDAPFilter $using:LdapFilter -Server $dc -Properties lastLogon -ErrorAction Stop)
+
+        if ($found.Count -eq 0) {
+            # Not an answer of 'never logged on'. This DC holds no such object, and a null date
+            # here would let it vote for dormancy.
+            $row.Error = 'No user matched this identity on this domain controller'
+            return $row
+        }
+        if ($found.Count -gt 1) {
+            $row.Error = 'Ambiguous: ' + $found.Count + ' users match this identity'
+            return $row
+        }
+
+        $raw = $found[0].lastLogon
         if ($raw -and $raw -gt 0) {
             $row.LastLogon = [DateTime]::FromFileTimeUtc([Int64]$raw).ToString('o')
         }
@@ -114,7 +131,7 @@ $dcs | ForEach-Object -ThrottleLimit $Throttle -Parallel {
         {
             using var ps = PowerShell.Create();
             ps.AddScript(SweepScript)
-              .AddArgument(samOrUpn.Trim())
+              .AddArgument(BuildIdentityFilter(samOrUpn))
               .AddArgument(ProbeTimeoutSeconds)
               .AddArgument(Throttle);
 
@@ -145,6 +162,38 @@ $dcs | ForEach-Object -ThrottleLimit $Throttle -Parallel {
         {
             _runspaceLock.Release();
         }
+    }
+
+    /// <summary>
+    /// The LDAP filter that resolves what the operator typed, whether that is a
+    /// userPrincipalName or a sAMAccountName.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This exists because <c>-Identity</c> cannot resolve a UPN.</b> It accepts a
+    /// distinguished name, an objectGUID, an objectSid or a sAMAccountName, and nothing else, so
+    /// every UPN the module was given failed on every domain controller with "Cannot find an
+    /// object with identity". The parameter was named <c>SamOrUpn</c> throughout, so the UPN case
+    /// was intended from the start and was never reachable.
+    /// </para>
+    /// <para>
+    /// <b>Both attributes, not a branch on "@".</b> Splitting on the character would be a guess
+    /// about what the operator typed; matching either attribute needs no guess. A sAMAccountName
+    /// cannot contain "@" and a UPN must, so the two clauses cannot collide on one account.
+    /// </para>
+    /// <para>
+    /// <b>The value is RFC 4515 escaped</b> via the same helper the group modules use. It comes
+    /// straight from a text box, and an unescaped parenthesis or asterisk would change the
+    /// filter's structure rather than fail - an asterisk alone would turn this into a wildcard
+    /// sweep and report a stranger's logon under the typed name.
+    /// </para>
+    /// </remarks>
+    internal static string BuildIdentityFilter(string samOrUpn)
+    {
+        var escaped = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(samOrUpn.Trim());
+
+        return $"(&(objectCategory=person)(objectClass=user)"
+             + $"(|(userPrincipalName={escaped})(sAMAccountName={escaped})))";
     }
 
     /// <summary>

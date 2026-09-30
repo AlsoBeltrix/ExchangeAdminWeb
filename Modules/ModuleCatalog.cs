@@ -890,7 +890,12 @@ public sealed class ModuleCatalog
             // nothing, so until now this existed only in C# (docs/TrueLastLogon-Plan.md S3).
             // NOTE: adding a module does NOT bump the base app version - only this line is set
             // (Constitution, Deployment And Versioning; .agents/decisions.md 2026-07-21).
-            Version = "1.0.0",
+            // 1.0.1: a UPN search works. The sweep used Get-ADUser -Identity, which resolves a
+            // DN, GUID, SID or sAMAccountName and NOT a userPrincipalName, so every UPN failed
+            // on every DC with "Cannot find an object with identity" - the module's first live
+            // run. Now an RFC 4515 filter matching either attribute, escaped in C# so the
+            // escaping is testable; no match and more than one match both fail closed.
+            Version = "1.0.1",
             // One permission, no granular tier: the module reads and mutates nothing anywhere.
             // Classified NON-ALERTING under the Constitution's notification rule - it exposes
             // logon timestamps already visible in AD and Entra, and it is an account-hygiene
