@@ -53,11 +53,11 @@ questions first. Branch `master`, head `d9edf86`, tree clean.
 
 ### Queue item 17 - True Last Logon, in progress
 
-Branch `master`, verified head `7c7ceea`, tree clean, **1 commit unpushed** (push policy: ask).
-`origin/master` also carries work from another session, including a revert of a comms10k docs
-commit; remote is a clean ancestor of local, no divergence.
+Branch `master`, tree clean at the commit that lands S2's Graph I/O, **3 commits unpushed**
+(push policy: ask). Both `github` and `origin` sit at `0b7122a`, a clean ancestor of local; no
+divergence.
 
-Gates at that head: build 0 errors, **3318 passed / 0 failed / 3 skipped**, format, ASCII,
+Gates at that head: build 0 errors, **3339 passed / 0 failed / 3 skipped**, format, ASCII,
 `git diff --check`.
 
 **Landed:**
@@ -68,10 +68,28 @@ Gates at that head: build 0 errors, **3318 passed / 0 failed / 3 skipped**, form
   `MapRow` is internal and tested (5 more).
 - **S2 core, the cloud rules.** `Services/CloudSignInAggregator.cs` (pure, 9 tests). Later of
   the two sources per field; the four verification states.
+- **S2 Graph I/O.** `Services/CloudSignInService.cs` (21 tests). Three concurrent queries for
+  one user: `signInActivity` via the `/users` COLLECTION form with an `eq` filter, the
+  interactive sign-in log on v1.0, and the non-interactive sign-in log on **beta**. Two
+  decisions worth not re-deriving:
+  - **Non-interactive sign-ins are beta-only.** Graph v1.0 documents its sign-in list as
+    carrying interactive sign-ins only, and the v1.0 `signIn` resource has no
+    `signInEventTypes` to filter on. The shared `GraphTokenClient` is confined to v1.0 by a
+    deliberate guard, so the client here is `DefenderApiClient`, the one class in the assembly
+    that takes its base URL as a constructor argument. Widening the shared client would be a
+    shared-infrastructure change, and adding a module must not bump the base app version
+    (`.agents/decisions.md` 2026-07-21). No credential is shared - this module reads its own
+    `GraphDelineaSecretId`.
+  - **The log counts as having ANSWERED only when BOTH its queries did.** The non-interactive
+    query is the only source that catches what `signInActivity` under-reports, so a run that
+    lost it has verified nothing. Relaxing that `&&` to `||` makes a live account read as
+    confirmed dormant, and four tests fail when it is.
 
-**NEXT ACTION: S2's Graph I/O** - fetch `signInActivity` and the raw sign-in log for one user
-and feed `CloudSignInAggregator`. Then S3: module descriptor, page, permission, click gating,
-audit. Module is NOT registered yet, which is why nothing has a version bump.
+**NEXT ACTION: S3** - module descriptor, page, permission, click gating, audit. Module is NOT
+registered yet, which is why nothing has a version bump. Two wiring items S3 owns: register
+`TrueLastLogonService` and `CloudSignInService` in `Program.cs`, and register the named
+HttpClient `CloudSignInService.HttpClientName` with a timeout longer than the shared
+"MicrosoftGraph" client's 30s - the sign-in log costs roughly ten seconds per query.
 
 **Two rules in this module are owner rulings and must not be quietly re-derived:**
 
