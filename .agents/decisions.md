@@ -5,6 +5,71 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-30 - Plan approval is not approval of plan contents. Only an exec summary binds.
+
+Status: Active. Owner ruling, 2026-09-30, verbatim:
+
+> I don't read plans. plans are for agents. if it's not in the exec summary, it's not read,
+> understood, expected, or implicitly approved.
+
+Decision:
+
+**An owner "approved" on a `docs/*-Plan.md` authorises the work stream. It does NOT authorise
+any specific mechanism, dependency, control or design choice buried in the plan body.** Plans
+are agent-facing working documents. The owner does not read them, so nothing in one can be
+cited back to him as something he asked for, agreed to, or should have caught.
+
+Consequences, and they bite in both directions:
+
+- **An agent may not answer "why is this here?" with "it is in the approved plan."** That was
+  the defence offered for the Comms-10k locking below and it is not a defence. The question to
+  answer is what the mechanism does and why it is worth its cost.
+- **Anything needing the owner's actual decision must be surfaced to him directly**, in the
+  chat, in short plain-English terms, as a decision - not written into a plan and treated as
+  settled on approval. One fork at a time, per the standing preference.
+- **A plan's `Status: Approved` header still means the work stream may proceed.** This does not
+  invalidate the plan process or the requirement that code changes have a plan; it narrows what
+  approval of one implies.
+- **Open gap, not yet closed:** `docs/*-Plan.md` has no exec-summary section, and the `plan`
+  operator does not produce one. Until it does, the surfacing obligation above rests entirely
+  on the agent raising things in chat. Adding an exec summary to the plan template and the
+  `plan` playbook is proposed, not done, and needs its own go.
+
+### 2026-09-30 - Comms-10k replaces are not serialised
+
+Status: Active. Owner ruling, 2026-09-30: *"no one asked for that. strip it out."*, reaffirmed
+against the objection that the design was in the approved plan - see the ruling above, which is
+why that objection failed.
+
+Decision:
+
+**Comms-10k performs no locking of any kind around a membership replace.** The removed design
+was a per-group in-process semaphore plus a `Global\` named mutex keyed on the group's
+objectGUID, with an explicit security descriptor so the dev and prod app-pool identities could
+share it. All of it is deleted. `docs/Comms10kBulkResolveScale-Plan.md` carries the removed
+design as a superseded record, and plan test 17 is void.
+
+**The risk is real and is accepted, not overlooked.** The write is clear-then-fill, so two
+replaces of the same group running at the same time can interleave one run's clear with the
+other's add batches and leave the list holding neither uploaded file. That is a state the old
+single-operation atomic write could not produce.
+
+**What limits it:** each run reads the membership back and compares it against its OWN uploaded
+list, so an interleaved run reports `PartlyApplied` with the observed count rather than claiming
+success. The damage is visible rather than silent, and re-running one CSV on its own repairs the
+list. Concurrency here also requires two operators replacing the same broadcast list within the
+same few seconds.
+
+Consequences:
+
+- `Services/Comms10kService.cs` states in `RunReplace`'s own remarks that replaces are not
+  serialised, why, and that a lock may not be reinstated without an owner ruling saying so.
+- A source tripwire
+  (`Comms10kReplaceSequenceTests.ReplacesAreNotSerialised_AndTheCodeSaysSoRatherThanLeavingItToBeInferred`)
+  fails if `Mutex` or `SemaphoreSlim` reappears in that service, so a later sweep cannot
+  reinstate the lock as an obvious omission. It goes with the ruling if the ruling changes.
+- `README.md` and the `ModuleCatalog` descriptor both state the module is not serialised.
+
 ### 2026-09-30 - Comms-10k runs no protected-principal check at all
 
 Status: Active. Owner ruling, 2026-09-30, given three times - in approving

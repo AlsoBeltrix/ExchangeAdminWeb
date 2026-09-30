@@ -57,7 +57,7 @@ public class Comms10kReplaceWriterTests
         var calls = new List<string>();
         var target = Dns(5000);
 
-        Comms10kReplaceWriter.ExecuteUnderLock(
+        Comms10kReplaceWriter.ExecuteSequence(
             Group, target,
             clear: () => calls.Add("clear"),
             addBatch: b => calls.Add($"add:{b.Count}"),
@@ -94,7 +94,7 @@ public class Comms10kReplaceWriterTests
         var readBacks = 0;
         var target = Dns(3000);
 
-        Comms10kReplaceWriter.ExecuteUnderLock(
+        Comms10kReplaceWriter.ExecuteSequence(
             Group, target,
             clear: () => { },
             addBatch: _ => throw new InvalidOperationException("the directory refused the batch"),
@@ -111,7 +111,7 @@ public class Comms10kReplaceWriterTests
         var readBacks = 0;
         var target = Dns(10);
 
-        Comms10kReplaceWriter.ExecuteUnderLock(
+        Comms10kReplaceWriter.ExecuteSequence(
             Group, target,
             clear: () => throw new InvalidOperationException("timed out"),
             addBatch: _ => { },
@@ -350,7 +350,7 @@ public class Comms10kReplaceWriterTests
         var target = Dns(4000);
         var addAttempts = 0;
 
-        Comms10kReplaceWriter.ExecuteUnderLock(
+        Comms10kReplaceWriter.ExecuteSequence(
             Group, target,
             clear: () => calls.Add("clear"),
             addBatch: b => Comms10kReplaceWriter.WithRetry(

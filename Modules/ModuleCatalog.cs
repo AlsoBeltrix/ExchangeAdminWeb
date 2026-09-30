@@ -631,9 +631,10 @@ public sealed class ModuleCatalog
             //   and then partial for about eight seconds - so the module reports five distinct
             //   outcomes instead of a bool, derived only from what the read-back observes, and
             //   says plainly when the list is incomplete or when it could not be confirmed.
-            //   Serialised per group by a Global\ named mutex keyed on the objectGUID, because
-            //   dev and prod are separate processes writing the same group. Transient audit
-            //   faults retry per operation, never per run.
+            //   Not serialised (owner ruling 2026-09-30): two concurrent replaces can
+            //   interleave and leave the list holding neither file; each run's read-back
+            //   reports that rather than claiming success. Transient audit faults retry per
+            //   operation, never per run.
             Version = "1.3.0",
             MainPermission = new(
                 "Access",

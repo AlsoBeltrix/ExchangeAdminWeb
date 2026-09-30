@@ -187,6 +187,16 @@ Consequences that follow, and must be handled rather than hoped away:
   same CSV, which fully repairs it.
 - **Re-running is always safe.** The write does not depend on prior state, and `-Add` on an
   existing member is a silent no-op, so a repeat run of the same file converges.
+- **SUPERSEDED, owner ruling 2026-09-30 (`.agents/decisions.md`): there is no lock. Replaces are
+  not serialised, and nothing below about mutexes, semaphores, acquisition order, lock timeouts
+  or abandoned holders was implemented or may be reinstated without a new owner ruling.** The
+  ruling is that this serialisation was never asked for: plan approval is not approval of plan
+  contents, and only an exec summary binds. The risk the section describes is real and accepted
+  - two concurrent replaces can interleave and leave the list holding neither file - and what
+  reports it is the read-back, which compares the final membership against each run's own
+  uploaded list. Plan test 17 is void. The rest of this section is retained as the record of what
+  was removed and why it was argued for.
+
 - **Serialise per group, and a per-process lock is not enough here.** Two concurrent replaces
   would interleave clears and batches and could leave the list holding neither file - one run's
   clear landing midway through the other's fill. That is strictly worse than the single atomic

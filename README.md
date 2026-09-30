@@ -220,7 +220,10 @@ Dedicated bulk member replacement for broadcast distribution lists.
   list is briefly empty and then partial during the sequence (about eight seconds at ten
   thousand members), and a failure in that window leaves it incomplete. The module reports
   that state explicitly rather than as a generic failure, and re-running the same CSV
-  repairs it. Serialised per group by a host-wide lock keyed on the group's objectGUID
+  repairs it. **Replaces are not serialised** (owner ruling 2026-09-30): two run at the
+  same time on the same group can interleave and leave the list holding neither uploaded
+  file. Each run's read-back compares against its own list, so an interleaved run reports
+  as incomplete rather than claiming success, and re-running one file on its own repairs it
 - Runs **no protected-principal check** of either kind -- see the Protected Principals
   section of `docs/ProjectConstitution.md`, which carries it as a named scoped exception
 - Uses Delinea credentials for Active Directory operations

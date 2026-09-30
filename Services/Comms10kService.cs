@@ -1,8 +1,5 @@
-using System.Collections.Concurrent;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
-using System.Security.AccessControl;
-using System.Security.Principal;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -12,20 +9,6 @@ public class Comms10kService
     private readonly ModuleConfigService _moduleConfig;
     private readonly ModuleCredentialService _moduleCredentials;
     private readonly IConfiguration _config;
-
-    /// <summary>
-    /// In-process serialisation per target group, keyed on objectGUID. Taken INSIDE the
-    /// machine-wide mutex's outer position - see <c>RunReplace</c> - so same-process contention
-    /// never reaches the mutex.
-    /// </summary>
-    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> GroupLocks = new();
-
-    /// <summary>
-    /// A bounded wait for each lock, never <c>WaitOne()</c> forever: a replace is a foreground
-    /// operation behind a spinner. On timeout the run refuses BEFORE the clear and says another
-    /// replace is in progress. It never proceeds unlocked.
-    /// </summary>
-    private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(60);
 
     /// <summary>Short pause between retry attempts of one directory write.</summary>
     private static readonly TimeSpan RetryBackoff = TimeSpan.FromSeconds(2);
@@ -413,18 +396,23 @@ public class Comms10kService
     }
 
     /// <summary>
-    /// Resolve, lock, re-read, then clear-then-fill with a read-back.
+    /// Resolve, re-read, then clear-then-fill with a read-back.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Step 0 runs before the lock because its objectGUID IS the lock key</b>, so an unbounded
-    /// wait can sit between resolving and writing - which is why step 0b re-reads by that GUID
-    /// once the lock is held and immediately before the clear.
+    /// <b>Replaces are NOT serialised.</b> Owner ruling 2026-09-30
+    /// (<c>.agents/decisions.md</c>): the serialisation this sequence was first built with was
+    /// never asked for and is removed. Two replaces of the same group running at once can
+    /// interleave a clear with the other run's batches and leave the list holding neither
+    /// uploaded file. That risk is accepted, not overlooked. What catches it is the read-back:
+    /// each run compares the final membership against its own uploaded list, so an interleaved
+    /// run reports <c>PartlyApplied</c> with the observed count rather than claiming success,
+    /// and re-running one CSV on its own repairs the list.
     /// </para>
     /// <para>
-    /// <b>Acquisition order is in-process semaphore first, then the machine-wide mutex.</b>
-    /// Taking the mutex first would let one process hold a machine-wide lock while it queues on
-    /// its own semaphore, blocking the other instance behind purely local contention.
+    /// <b>Do not reinstate a lock here without an owner ruling that says so in those words.</b>
+    /// The removed design is described in <c>docs/Comms10kBulkResolveScale-Plan.md</c>, which is
+    /// superseded on this point.
     /// </para>
     /// </remarks>
     private Comms10kUpdateResult RunReplace(
@@ -441,69 +429,22 @@ public class Comms10kService
             return Refused(group, resolvedDns, $"The target group could not be resolved: {ex.Message}");
         }
 
-        var semaphore = GroupLocks.GetOrAdd(target.ObjectGuid, _ => new SemaphoreSlim(1, 1));
-        if (!semaphore.Wait(LockTimeout))
-            return Refused(group, resolvedDns, "Another replace of this list is already running in this instance.");
-
-        try
-        {
-            Mutex? mutex = null;
-            var held = false;
-            try
-            {
-                mutex = CreateHostLock(target.ObjectGuid);
-                try
-                {
-                    held = mutex.WaitOne(LockTimeout);
-                }
-                catch (AbandonedMutexException)
-                {
-                    // We now OWN the lock. A previous run died mid-fill, which means the list may
-                    // be half-written. Clear-then-fill is self-correcting, so the recovery is the
-                    // operation itself - but swallowing this without logging would erase the only
-                    // trace that a list was ever left incomplete.
-                    held = true;
-                    _logger.LogWarning(
-                        "Comms10k acquired an ABANDONED lock on {Group}: a previous replace did not finish and "
-                        + "the membership may have been left incomplete. Proceeding - this run rewrites it.", group);
-                }
-
-                if (!held)
-                {
-                    return Refused(group, resolvedDns,
-                        "Another replace of this list is already running on this host. Wait for it to finish.");
-                }
-
-                return WriteUnderLock(group, target, resolvedDns, creds);
-            }
-            finally
-            {
-                // On the same thread that took it, or the next run inherits an abandoned lock for
-                // no reason.
-                if (held) mutex!.ReleaseMutex();
-                mutex?.Dispose();
-            }
-        }
-        finally
-        {
-            semaphore.Release();
-        }
+        return PerformReplace(group, target, resolvedDns, creds);
     }
 
     /// <summary>
-    /// The write itself, with the locks held. Everything that can refuse does so BEFORE the clear
-    /// command is issued; from the clear onwards the outcome comes from the read-back.
+    /// The write itself. Everything that can refuse does so BEFORE the clear command is issued;
+    /// from the clear onwards the outcome comes from the read-back and nothing else.
     /// </summary>
     /// <remarks>
     /// <b>One runspace for the whole sequence, and the steps are passed to
-    /// <see cref="Comms10kReplaceWriter.ExecuteUnderLock"/> as delegates rather than being
-    /// <c>internal virtual</c> seams of their own.</b> The plan proposed seams matching Slice 1's,
-    /// where each opens its own runspace; that shape costs an <c>Import-Module ActiveDirectory</c>
-    /// per add batch, which at ten thousand members is six extra module imports inside the locked
-    /// window. The property worth testing is the ORDER and the outcome derivation, and both live
-    /// in the pure writer where they are testable with no directory at all.
+    /// <see cref="Comms10kReplaceWriter.ExecuteSequence"/> as delegates rather than being
+    /// <c>internal virtual</c> seams of their own.</b> A seam per step, each opening its own
+    /// runspace, costs an <c>Import-Module ActiveDirectory</c> per add batch - six extra module
+    /// imports at ten thousand members. The properties worth testing are the ORDER and the
+    /// outcome derivation, and both live in the pure writer where they need no directory.
     /// </remarks>
-    private Comms10kUpdateResult WriteUnderLock(
+    private Comms10kUpdateResult PerformReplace(
         string group, Comms10kTarget target, List<string> resolvedDns,
         (string username, string password, string domain) creds)
     {
@@ -520,10 +461,10 @@ public class Comms10kService
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
 
-        // Step 0b: re-read by objectGUID. The Constitution requires a re-read before write where
+        // Re-read by objectGUID. The Constitution requires a re-read before write where
         // practical, and here it is one cheap query that also proves the object still exists. It
-        // adopts the DN the directory returns NOW, so a rename or a move while we queued for the
-        // lock retargets nothing - the GUID is what we are bound to.
+        // adopts the DN the directory returns NOW, so a rename or a move between the resolve and
+        // the write retargets nothing - the GUID is what we are bound to.
         Comms10kTarget confirmed;
         try
         {
@@ -537,7 +478,7 @@ public class Comms10kService
         }
 
         // ---- past this point the clear is issued; no path below may claim nothing changed ----
-        return Comms10kReplaceWriter.ExecuteUnderLock(
+        return Comms10kReplaceWriter.ExecuteSequence(
             group,
             resolvedDns,
             clear: () => WithRetry("clear", () => ClearMembers(ps, credential, confirmed)),
@@ -688,51 +629,6 @@ public class Comms10kService
             throw new InvalidOperationException($"{what}: {record.Exception.Message}", record.Exception);
 
         throw new InvalidOperationException($"{what}: {record?.ToString() ?? "unknown error"}");
-    }
-
-    /// <summary>
-    /// The machine-wide lock for one group, created-or-opened with an explicit descriptor.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>A named mutex is not shareable by default, and that detail decides whether this works
-    /// at all.</b> Dev and prod run as separate processes under different app-pool identities
-    /// against the same directory, so a mutex created with default security by one is not
-    /// openable by the other - the lock would quietly become per-instance again, which is the
-    /// exact failure it exists to prevent, while looking like it was working.
-    /// </para>
-    /// <para>
-    /// <b>Granted by a RULE, not a list of accounts.</b> No source file or script knows both pool
-    /// identities, and naming either would break environment neutrality. One rule for the
-    /// well-known Authenticated Users SID, constructed rather than named, granting
-    /// <c>Synchronize | Modify</c> and nothing else - not <c>FullControl</c>, which would let any
-    /// holder rewrite the descriptor and lock the other instance out. Both pool identities are
-    /// authenticated, so both satisfy it without either being named. A mutex confers ordering and
-    /// no data access.
-    /// </para>
-    /// <para>
-    /// Keyed on the objectGUID, never the name, so a rename cannot split the lock in two.
-    /// </para>
-    /// <para>
-    /// <b>Residual, stated rather than buried:</b> a named mutex is host-wide. If the instances
-    /// are ever split across hosts they can still interleave, and only a directory-side or
-    /// database-side lease would prevent it. The read-back is what makes that damage visible
-    /// rather than silent.
-    /// </para>
-    /// </remarks>
-    private static Mutex CreateHostLock(Guid objectGuid)
-    {
-        var security = new MutexSecurity();
-        security.AddAccessRule(new MutexAccessRule(
-            new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
-            MutexRights.Synchronize | MutexRights.Modify,
-            AccessControlType.Allow));
-
-        return MutexAcl.Create(
-            initiallyOwned: false,
-            name: $"Global\\ExchangeAdminWeb-Comms10k-{objectGuid:N}",
-            createdNew: out _,
-            mutexSecurity: security);
     }
 
     /// <summary>

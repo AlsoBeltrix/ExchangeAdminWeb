@@ -8,7 +8,7 @@ public enum Comms10kOutcome
 {
     /// <summary>
     /// Nothing was written. Every refusal that happens BEFORE the clear command is issued lands
-    /// here - lock timeout, resolution failure, the post-lock re-read mismatch, an empty list -
+    /// here - resolution failure, the re-read mismatch, an empty list -
     /// and the membership is provably untouched.
     /// </summary>
     RefusedBeforeAnyChange,
@@ -204,8 +204,7 @@ public static class Comms10kReplaceWriter
     // ----- the outcome procedure ---------------------------------------------------------------
 
     /// <summary>
-    /// The clear-then-fill sequence, with the locks already held, as a pure orchestration over
-    /// its three directory steps.
+    /// The clear-then-fill sequence, as a pure orchestration over its three directory steps.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -219,7 +218,7 @@ public static class Comms10kReplaceWriter
     /// returns "refused before any change".
     /// </para>
     /// </remarks>
-    public static Comms10kUpdateResult ExecuteUnderLock(
+    public static Comms10kUpdateResult ExecuteSequence(
         string groupName,
         IReadOnlyList<string> target,
         Action clear,
