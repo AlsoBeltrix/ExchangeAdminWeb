@@ -1,5 +1,8 @@
+using System.Collections.Concurrent;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -9,6 +12,23 @@ public class Comms10kService
     private readonly ModuleConfigService _moduleConfig;
     private readonly ModuleCredentialService _moduleCredentials;
     private readonly IConfiguration _config;
+
+    /// <summary>
+    /// In-process serialisation per target group, keyed on objectGUID. Taken INSIDE the
+    /// machine-wide mutex's outer position - see <c>RunReplace</c> - so same-process contention
+    /// never reaches the mutex.
+    /// </summary>
+    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> GroupLocks = new();
+
+    /// <summary>
+    /// A bounded wait for each lock, never <c>WaitOne()</c> forever: a replace is a foreground
+    /// operation behind a spinner. On timeout the run refuses BEFORE the clear and says another
+    /// replace is in progress. It never proceeds unlocked.
+    /// </summary>
+    private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>Short pause between retry attempts of one directory write.</summary>
+    private static readonly TimeSpan RetryBackoff = TimeSpan.FromSeconds(2);
 
     public Comms10kService(ILogger<Comms10kService> logger, ModuleConfigService moduleConfig, ModuleCredentialService moduleCredentials, IConfiguration config)
     {
@@ -381,74 +401,350 @@ public class Comms10kService
 
         return await Task.Run(() =>
         {
-            var outcome = RunReplace(
-                group,
-                resolvedDns,
-                () => QueryTargetGroup(creds.Value, group),
-                (target, dns) => ApplyMembership(creds.Value, target, dns),
-                _logger);
+            var outcome = RunReplace(group, resolvedDns, creds.Value);
 
-            if (outcome.Success)
-            {
-                _logger.LogInformation("Comms10k updated by {User}: {Initial} -> {Final} members",
-                    performedBy, outcome.InitialCount, outcome.FinalCount);
-            }
+            _logger.LogInformation(
+                "Comms10k replace by {User} on {Group}: {Outcome}, {Written} written, final {Final}",
+                performedBy, group, outcome.Outcome, outcome.MembersWritten,
+                outcome.FinalCount?.ToString() ?? "unknown");
 
             return outcome;
         });
     }
 
     /// <summary>
-    /// The replace sequence as a pure orchestration over its two directory steps, so the ORDER is
-    /// testable without a directory: resolve the target's immutable identity first, then write
-    /// against that identity and nothing else.
+    /// Resolve, lock, re-read, then clear-then-fill with a read-back.
     /// </summary>
     /// <remarks>
-    /// The dividing line the outcomes encode is attempted-or-not, never the error text. A
-    /// resolution failure returns before <paramref name="applyMembership"/> is ever called, so the
-    /// membership is provably untouched; only a failure raised by the write itself can have
-    /// changed anything.
+    /// <para>
+    /// <b>Step 0 runs before the lock because its objectGUID IS the lock key</b>, so an unbounded
+    /// wait can sit between resolving and writing - which is why step 0b re-reads by that GUID
+    /// once the lock is held and immediately before the clear.
+    /// </para>
+    /// <para>
+    /// <b>Acquisition order is in-process semaphore first, then the machine-wide mutex.</b>
+    /// Taking the mutex first would let one process hold a machine-wide lock while it queues on
+    /// its own semaphore, blocking the other instance behind purely local contention.
+    /// </para>
     /// </remarks>
-    internal static Comms10kUpdateResult RunReplace(
-        string groupName,
-        List<string> resolvedDns,
-        Func<Comms10kTarget> resolveTarget,
-        Func<Comms10kTarget, List<string>, int> applyMembership,
-        ILogger? logger = null)
+    private Comms10kUpdateResult RunReplace(
+        string group, List<string> resolvedDns, (string username, string password, string domain) creds)
     {
         Comms10kTarget target;
         try
         {
-            target = resolveTarget();
+            target = QueryTargetGroup(creds, group);
         }
         catch (Exception ex)
         {
-            logger?.LogError(ex, "Failed to resolve the Comms10k target group {Group}", groupName);
-            return new Comms10kUpdateResult
-            {
-                Success = false,
-                Message = $"The target group could not be resolved, so nothing was changed: {ex.Message}"
-            };
+            _logger.LogError(ex, "Failed to resolve the Comms10k target group {Group}", group);
+            return Refused(group, resolvedDns, $"The target group could not be resolved: {ex.Message}");
         }
 
-        int initialCount;
+        var semaphore = GroupLocks.GetOrAdd(target.ObjectGuid, _ => new SemaphoreSlim(1, 1));
+        if (!semaphore.Wait(LockTimeout))
+            return Refused(group, resolvedDns, "Another replace of this list is already running in this instance.");
+
         try
         {
-            initialCount = applyMembership(target, resolvedDns);
+            Mutex? mutex = null;
+            var held = false;
+            try
+            {
+                mutex = CreateHostLock(target.ObjectGuid);
+                try
+                {
+                    held = mutex.WaitOne(LockTimeout);
+                }
+                catch (AbandonedMutexException)
+                {
+                    // We now OWN the lock. A previous run died mid-fill, which means the list may
+                    // be half-written. Clear-then-fill is self-correcting, so the recovery is the
+                    // operation itself - but swallowing this without logging would erase the only
+                    // trace that a list was ever left incomplete.
+                    held = true;
+                    _logger.LogWarning(
+                        "Comms10k acquired an ABANDONED lock on {Group}: a previous replace did not finish and "
+                        + "the membership may have been left incomplete. Proceeding - this run rewrites it.", group);
+                }
+
+                if (!held)
+                {
+                    return Refused(group, resolvedDns,
+                        "Another replace of this list is already running on this host. Wait for it to finish.");
+                }
+
+                return WriteUnderLock(group, target, resolvedDns, creds);
+            }
+            finally
+            {
+                // On the same thread that took it, or the next run inherits an abandoned lock for
+                // no reason.
+                if (held) mutex!.ReleaseMutex();
+                mutex?.Dispose();
+            }
+        }
+        finally
+        {
+            semaphore.Release();
+        }
+    }
+
+    /// <summary>
+    /// The write itself, with the locks held. Everything that can refuse does so BEFORE the clear
+    /// command is issued; from the clear onwards the outcome comes from the read-back.
+    /// </summary>
+    /// <remarks>
+    /// <b>One runspace for the whole sequence, and the steps are passed to
+    /// <see cref="Comms10kReplaceWriter.ExecuteUnderLock"/> as delegates rather than being
+    /// <c>internal virtual</c> seams of their own.</b> The plan proposed seams matching Slice 1's,
+    /// where each opens its own runspace; that shape costs an <c>Import-Module ActiveDirectory</c>
+    /// per add batch, which at ten thousand members is six extra module imports inside the locked
+    /// window. The property worth testing is the ORDER and the outcome derivation, and both live
+    /// in the pure writer where they are testable with no directory at all.
+    /// </remarks>
+    private Comms10kUpdateResult WriteUnderLock(
+        string group, Comms10kTarget target, List<string> resolvedDns,
+        (string username, string password, string domain) creds)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+
+        // Step 0b: re-read by objectGUID. The Constitution requires a re-read before write where
+        // practical, and here it is one cheap query that also proves the object still exists. It
+        // adopts the DN the directory returns NOW, so a rename or a move while we queued for the
+        // lock retargets nothing - the GUID is what we are bound to.
+        Comms10kTarget confirmed;
+        try
+        {
+            confirmed = ReadTargetByGuid(ps, credential, target.ObjectGuid);
         }
         catch (Exception ex)
         {
-            logger?.LogError(ex, "Failed to replace members of {Group}", groupName);
-            return new Comms10kUpdateResult { Success = false, Message = $"Failed to update group: {ex.Message}" };
+            _logger.LogError(ex, "Comms10k could not re-read {Group} by objectGUID before the write", group);
+            return Refused(group, resolvedDns,
+                $"The target group could not be re-read immediately before the write: {ex.Message}");
         }
 
-        return new Comms10kUpdateResult
+        // ---- past this point the clear is issued; no path below may claim nothing changed ----
+        return Comms10kReplaceWriter.ExecuteUnderLock(
+            group,
+            resolvedDns,
+            clear: () => WithRetry("clear", () => ClearMembers(ps, credential, confirmed)),
+            addBatch: batch => WithRetry("add batch", () => AddMemberBatch(ps, credential, confirmed, batch)),
+            readBack: () => ReadBackMembers(ps, credential, confirmed));
+    }
+
+    /// <summary>
+    /// Runs one directory write, retrying only a transient failure, and logging every attempt.
+    /// </summary>
+    /// <remarks>
+    /// Per OPERATION, never per run: re-running the clear after batches have landed would wipe
+    /// them. Every attempt logs, because <c>ADException</c> is a broad base type and a permanent
+    /// fault being retried three times must be visible rather than inferred.
+    /// </remarks>
+    private void WithRetry(string what, Action operation) =>
+        Comms10kReplaceWriter.WithRetry(
+            operation,
+            (attempt, typeName, retryable, ex) => _logger.LogWarning(ex,
+                "Comms10k {What} attempt {Attempt} of {Max} failed; type {Type}, retryable {Retryable}: {Message}",
+                what, attempt, Comms10kReplaceWriter.MaxAttempts, typeName ?? "unknown", retryable, ex.Message),
+            backoff: () => Thread.Sleep(RetryBackoff));
+
+    /// <summary>Empties the group's <c>member</c> attribute. One operation, whatever the size.</summary>
+    private static void ClearMembers(PowerShell ps, PSCredential credential, Comms10kTarget target)
+    {
+        ps.Streams.Error.Clear();
+        ps.AddCommand("Set-ADGroup")
+          .AddParameter("Identity", target.DistinguishedName)
+          .AddParameter("Clear", "member")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+        ThrowIfErrors(ps, "the group could not be cleared");
+    }
+
+    /// <summary>Adds one batch. <c>-Add</c> on a member already present is a silent no-op, which is what makes a retry safe.</summary>
+    private static void AddMemberBatch(
+        PowerShell ps, PSCredential credential, Comms10kTarget target, IReadOnlyList<string> batch)
+    {
+        ps.Streams.Error.Clear();
+        ps.AddCommand("Set-ADGroup")
+          .AddParameter("Identity", target.DistinguishedName)
+          .AddParameter("Add", new System.Collections.Hashtable { { "member", batch.ToArray() } })
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+        ThrowIfErrors(ps, "a batch of members could not be added");
+    }
+
+    /// <summary>
+    /// The membership as it now stands: the raw <c>member</c> attribute, and separately the
+    /// members who hold this group as their PRIMARY group.
+    /// </summary>
+    /// <remarks>
+    /// The two are kept apart because they behave differently under the write: a <c>member</c>
+    /// write cannot evict a primary-group member, so they are part of the expected final state
+    /// rather than a discrepancy. Reading them as one list would make the read-back unable to
+    /// match on any group that has one.
+    /// </remarks>
+    private static Comms10kReplaceWriter.ReadBack ReadBackMembers(
+        PowerShell ps, PSCredential credential, Comms10kTarget target)
+    {
+        ps.Streams.Error.Clear();
+        ps.AddCommand("Get-ADGroup")
+          .AddParameter("Identity", target.DistinguishedName)
+          .AddParameter("Properties", new[] { "member", "SID" })
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var groupResult = ps.Invoke();
+        ps.Commands.Clear();
+        ThrowIfErrors(ps, "the membership could not be read back");
+
+        if (groupResult.Count == 0)
+            throw new InvalidOperationException("the group was not returned by the read-back");
+
+        var members = new List<string>();
+        if (groupResult[0].Properties["member"]?.Value is System.Collections.IEnumerable raw)
         {
-            Success = true,
-            Message = $"Successfully updated {groupName}: {resolvedDns.Count} members (was {initialCount}).",
-            InitialCount = initialCount,
-            FinalCount = resolvedDns.Count
-        };
+            foreach (var m in raw)
+            {
+                var dn = m?.ToString();
+                if (!string.IsNullOrWhiteSpace(dn)) members.Add(dn);
+            }
+        }
+
+        // Fail closed: an unreadable SID is a read-back FAILURE, never a silently shorter list
+        // that would then be compared against the target and reported as partly applied.
+        var rid = Comms10kMemberResolver.RidFromSid(groupResult[0].Properties["SID"]?.Value?.ToString());
+        if (rid is null)
+            throw new InvalidOperationException("the group's SID was unreadable, so primary-group members could not be counted");
+
+        ps.Streams.Error.Clear();
+        ps.AddCommand("Get-ADObject")
+          .AddParameter("LDAPFilter", $"(primaryGroupID={rid})")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var primaries = ps.Invoke();
+        ps.Commands.Clear();
+        ThrowIfErrors(ps, "the group's primary-group membership could not be read back");
+
+        var primaryDns = new List<string>();
+        foreach (var p in primaries)
+        {
+            var dn = p?.Properties["DistinguishedName"]?.Value?.ToString();
+            if (!string.IsNullOrWhiteSpace(dn)) primaryDns.Add(dn);
+        }
+
+        return new Comms10kReplaceWriter.ReadBack(members, primaryDns);
+    }
+
+    /// <summary>Re-reads the target by its objectGUID and returns the identity as it stands now.</summary>
+    private static Comms10kTarget ReadTargetByGuid(PowerShell ps, PSCredential credential, Guid objectGuid)
+    {
+        ps.Streams.Error.Clear();
+        ps.AddCommand("Get-ADGroup")
+          .AddParameter("Identity", objectGuid.ToString())
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var found = ps.Invoke();
+        ps.Commands.Clear();
+        ThrowIfErrors(ps, "the group could not be re-read");
+
+        if (found.Count == 0)
+            throw new InvalidOperationException("the group no longer exists");
+
+        var dn = found[0].Properties["DistinguishedName"]?.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(dn))
+            throw new InvalidOperationException("the re-read returned no distinguished name");
+
+        return new Comms10kTarget(dn, objectGuid);
+    }
+
+    /// <summary>
+    /// Converts a non-terminating error stream into a throw, preserving the directory's own
+    /// exception as the inner one so the retry classifier can see its type.
+    /// </summary>
+    private static void ThrowIfErrors(PowerShell ps, string what)
+    {
+        if (!ps.HadErrors) return;
+
+        var record = ps.Streams.Error.FirstOrDefault();
+        ps.Streams.Error.Clear();
+
+        if (record?.Exception is not null)
+            throw new InvalidOperationException($"{what}: {record.Exception.Message}", record.Exception);
+
+        throw new InvalidOperationException($"{what}: {record?.ToString() ?? "unknown error"}");
+    }
+
+    /// <summary>
+    /// The machine-wide lock for one group, created-or-opened with an explicit descriptor.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A named mutex is not shareable by default, and that detail decides whether this works
+    /// at all.</b> Dev and prod run as separate processes under different app-pool identities
+    /// against the same directory, so a mutex created with default security by one is not
+    /// openable by the other - the lock would quietly become per-instance again, which is the
+    /// exact failure it exists to prevent, while looking like it was working.
+    /// </para>
+    /// <para>
+    /// <b>Granted by a RULE, not a list of accounts.</b> No source file or script knows both pool
+    /// identities, and naming either would break environment neutrality. One rule for the
+    /// well-known Authenticated Users SID, constructed rather than named, granting
+    /// <c>Synchronize | Modify</c> and nothing else - not <c>FullControl</c>, which would let any
+    /// holder rewrite the descriptor and lock the other instance out. Both pool identities are
+    /// authenticated, so both satisfy it without either being named. A mutex confers ordering and
+    /// no data access.
+    /// </para>
+    /// <para>
+    /// Keyed on the objectGUID, never the name, so a rename cannot split the lock in two.
+    /// </para>
+    /// <para>
+    /// <b>Residual, stated rather than buried:</b> a named mutex is host-wide. If the instances
+    /// are ever split across hosts they can still interleave, and only a directory-side or
+    /// database-side lease would prevent it. The read-back is what makes that damage visible
+    /// rather than silent.
+    /// </para>
+    /// </remarks>
+    private static Mutex CreateHostLock(Guid objectGuid)
+    {
+        var security = new MutexSecurity();
+        security.AddAccessRule(new MutexAccessRule(
+            new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
+            MutexRights.Synchronize | MutexRights.Modify,
+            AccessControlType.Allow));
+
+        return MutexAcl.Create(
+            initiallyOwned: false,
+            name: $"Global\\ExchangeAdminWeb-Comms10k-{objectGuid:N}",
+            createdNew: out _,
+            mutexSecurity: security);
+    }
+
+    /// <summary>
+    /// A refusal that happened before the clear was issued, so the membership is untouched. It
+    /// routes through the one procedure that derives outcomes rather than building a result by
+    /// hand - deciding outcomes at the error site is the habit that produced three rounds of
+    /// contradictions in this plan.
+    /// </summary>
+    private static Comms10kUpdateResult Refused(string group, IReadOnlyList<string> target, string reason)
+    {
+        return Comms10kReplaceWriter.Derive(
+            group, target, reason, observed: null, readBackError: null, writeError: null);
     }
 
     /// <summary>
@@ -508,61 +804,6 @@ public class Comms10kService
         return new Comms10kTarget(dn, guid);
     }
 
-    /// <summary>
-    /// Writes the membership against the RESOLVED identity, and returns the membership count read
-    /// immediately before the write for the "(was M)" message. Throws on failure. Internal virtual
-    /// TEST SEAM.
-    /// </summary>
-    internal virtual int ApplyMembership(
-        (string username, string password, string domain) creds, Comms10kTarget target, List<string> resolvedDns)
-    {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
-        runspace.Open();
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
-
-        var credential = CreateCredential(creds.username, creds.password, creds.domain);
-
-        // Get initial count for the "(was M)" success message. Read the raw `member`
-        // linked attribute via Get-ADGroup -Properties member, NOT Get-ADGroupMember:
-        // Get-ADGroupMember expands each member into a full object and is bound by the
-        // ADWS MaxGroupOrMemberEntries cap (default 5000), so it throws on this module's
-        // large tactical DLs and would crash the replace before it runs. The `member`
-        // attribute is returned via range retrieval and is not subject to that cap
-        // (verified live: a ~6800-member group counts correctly). This counts direct
-        // members only, which is the right comparison since the replace below writes a
-        // flat DN list.
-        ps.AddCommand("Get-ADGroup")
-          .AddParameter("Identity", target.DistinguishedName)
-          .AddParameter("Properties", "member")
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
-        var groupResult = ps.Invoke();
-        ps.Commands.Clear();
-        var initialCount = 0;
-        if (groupResult.Count > 0 &&
-            groupResult[0].Properties["member"]?.Value is System.Collections.ICollection members)
-        {
-            initialCount = members.Count;
-        }
-
-        ps.AddCommand("Set-ADGroup")
-          .AddParameter("Identity", target.DistinguishedName)
-          .AddParameter("Replace", new System.Collections.Hashtable { { "member", resolvedDns.ToArray() } })
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
-
-        return initialCount;
-    }
-
     private static PSCredential CreateCredential(string username, string password, string domain)
     {
         var fullUsername = username.Contains('\\') || username.Contains('@')
@@ -603,8 +844,27 @@ public class Comms10kResolveResult
 
 public class Comms10kUpdateResult
 {
+    /// <summary>
+    /// Kept for the audit and notification channels, which are boolean. It is DERIVED from
+    /// <see cref="Outcome"/> and is not the thing to branch on: "partly applied" and "could not
+    /// confirm" are both false here and mean entirely different things to an operator.
+    /// </summary>
     public bool Success { get; set; }
+
     public string Message { get; set; } = "";
-    public int InitialCount { get; set; }
-    public int FinalCount { get; set; }
+
+    /// <summary>What actually happened. See <see cref="Comms10kOutcome"/>.</summary>
+    public Comms10kOutcome Outcome { get; set; } = Comms10kOutcome.RefusedBeforeAnyChange;
+
+    /// <summary>How many members the write was asked to produce - the size of the uploaded, resolved list.</summary>
+    public int MembersWritten { get; set; }
+
+    /// <summary>
+    /// The membership observed by the read-back. <b>Null, never a guess</b>, when the read-back
+    /// could not be performed - that is the whole point of the could-not-confirm outcome.
+    /// </summary>
+    public int? FinalCount { get; set; }
+
+    /// <summary>Members a <c>member</c> write cannot evict, because this is their primary group.</summary>
+    public List<string> UnremovableMembers { get; set; } = new();
 }

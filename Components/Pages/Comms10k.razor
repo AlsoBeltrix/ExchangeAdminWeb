@@ -144,11 +144,17 @@
 
             @if (result != null)
             {
-                <div class="alert @(result.Success ? "alert-success" : "alert-danger") mt-3 alert-dismissible">
-                    @result.Message
-                    @if (result.Success)
+                @* Five outcomes, five distinct presentations. "Partly applied" and "could not
+                   confirm" both have Success false and mean entirely different things to the
+                   operator, so the banner is keyed on the OUTCOME, never on the bool. *@
+                <div class="alert @AlertClassFor(result.Outcome) mt-3 alert-dismissible">
+                    <strong>@HeadlineFor(result.Outcome)</strong>
+                    <br />@result.Message
+                    @if (result.Outcome is Comms10kOutcome.Succeeded or Comms10kOutcome.SucceededWithExceptions)
                     {
-                        <br /><small>The Entra/Outlook member count updates on the next directory sync (typically within ~30 minutes), not immediately.</small>
+                        <br />
+
+                        <small>The Entra/Outlook member count updates on the next directory sync (typically within ~30 minutes), not immediately.</small>
                     }
                     <button type="button" class="btn-close" @onclick="() => result = null"></button>
                 </div>
@@ -165,6 +171,9 @@
     private string ticketNumber = "";
     private string validatedTicket = "";
     private bool confirmPending;
+
+    /// <summary>Upload ceiling for the CSV. A malformed-upload guard; see HandleFileUpload.</summary>
+    private const long UploadSizeLimitBytes = 16 * 1024 * 1024;
 
     private Comms10kMemberList? preview;
     private List<string> parsedEmails = new();
@@ -227,7 +236,11 @@
 
         try
         {
-            await using var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024);
+            // A MALFORMED-UPLOAD guard, not a membership cap. At the measured average address
+            // length this is roughly half a million rows, fifty times the size this module is
+            // built for; nothing downstream imposes an upper bound on how many people are
+            // handled.
+            await using var stream = e.File.OpenReadStream(maxAllowedSize: UploadSizeLimitBytes);
             using var reader = new System.IO.StreamReader(stream);
             var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
@@ -255,6 +268,19 @@
                 if (!string.IsNullOrWhiteSpace(val) && val.Contains('@') && seen.Add(val))
                     parsedEmails.Add(val);
             }
+        }
+        catch (IOException ex) when (ex.Message.Contains("exceeds the maximum", StringComparison.OrdinalIgnoreCase))
+        {
+            // Caught ahead of the generic parse handler below, which reported an oversized upload
+            // as a raw stream error that named no limit and read as a corrupt file.
+            result = new Comms10kUpdateResult
+            {
+                Success = false,
+                Message = $"That file is larger than the {UploadSizeLimitBytes / (1024 * 1024)} MB upload limit. "
+                    + "The limit guards against a malformed upload, not against a large membership - "
+                    + "a list of this module's intended size is far below it, so check the file is a "
+                    + "plain CSV of addresses."
+            };
         }
         catch (Exception ex)
         {
@@ -323,8 +349,15 @@
 
             try
             {
+                // The outcome rides the TARGET field, not errorDetail: LogModuleAction drops
+                // errorDetail on success, so "succeeded with exceptions" - the one success that
+                // an operator may need to act on - would be indistinguishable from a clean one
+                // in the audit trail.
                 Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace",
-                    "Comms10k", $"{resolveResult.ResolvedDns.Count} members", result.Success, ticket,
+                    "Comms10k",
+                    $"{resolveResult.ResolvedDns.Count} members requested, outcome {result.Outcome}, "
+                    + $"final {result.FinalCount?.ToString() ?? "unknown"}",
+                    result.Success, ticket,
                     result.Success ? null : result.Message);
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for Comms10k replace"); }
@@ -335,7 +368,12 @@
                     result.Success, ticket, new Dictionary<string, string>
                     {
                         ["Target Group"] = "Comms-10k",
-                        ["Members"] = $"{result.InitialCount} -> {result.FinalCount}"
+                        ["Outcome"] = result.Outcome.ToString(),
+                        // Never a removal count: clear-then-fill does not read the prior
+                        // membership, so it knows what it wrote and what the group now holds,
+                        // and nothing about what left.
+                        ["Members written"] = result.MembersWritten.ToString(),
+                        ["Final membership"] = result.FinalCount?.ToString() ?? "UNKNOWN - read-back failed"
                     }, result.Success ? null : result.Message);
             }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for Comms10k replace"); }
@@ -352,6 +390,29 @@
         }
         finally { isLoading = false; }
     }
+
+    /// <summary>Bootstrap alert class per outcome. Green only where the membership is confirmed.</summary>
+    private static string AlertClassFor(Comms10kOutcome outcome) => outcome switch
+    {
+        Comms10kOutcome.Succeeded => "alert-success",
+        Comms10kOutcome.SucceededWithExceptions => "alert-warning",
+        Comms10kOutcome.PartlyApplied => "alert-danger",
+        Comms10kOutcome.CouldNotConfirm => "alert-danger",
+        _ => "alert-secondary"
+    };
+
+    /// <summary>
+    /// The one-line headline. Deliberately blunt on the two outcomes that need the operator to
+    /// do something: a half-written broadcast list looks identical to a working one from here.
+    /// </summary>
+    private static string HeadlineFor(Comms10kOutcome outcome) => outcome switch
+    {
+        Comms10kOutcome.Succeeded => "Replaced.",
+        Comms10kOutcome.SucceededWithExceptions => "Replaced, with members that could not be removed.",
+        Comms10kOutcome.PartlyApplied => "The list is INCOMPLETE - re-run the same file.",
+        Comms10kOutcome.CouldNotConfirm => "The result could not be confirmed - check the group.",
+        _ => "Nothing was changed."
+    };
 
     private async Task DownloadSampleCsv()
     {

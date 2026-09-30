@@ -626,6 +626,14 @@ public sealed class ModuleCatalog
             //   and blocked its intended use. The replace now resolves the configured group name
             //   to its distinguished name and objectGUID once and binds every operation to that,
             //   so a rename between operations cannot retarget the write.
+            //   S4: the write is clear-then-fill with a read-back, because the directory refuses
+            //   a single-operation swap at this size. It gives up atomicity - the list is empty
+            //   and then partial for about eight seconds - so the module reports five distinct
+            //   outcomes instead of a bool, derived only from what the read-back observes, and
+            //   says plainly when the list is incomplete or when it could not be confirmed.
+            //   Serialised per group by a Global\ named mutex keyed on the objectGUID, because
+            //   dev and prod are separate processes writing the same group. Transient audit
+            //   faults retry per operation, never per run.
             Version = "1.3.0",
             MainPermission = new(
                 "Access",

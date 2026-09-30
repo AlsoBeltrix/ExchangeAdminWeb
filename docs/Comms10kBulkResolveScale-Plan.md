@@ -517,7 +517,7 @@ alongside it rather than being stretched to cover this.
 `AuditCategoryFilingTests.cs:88-100` asserts six Comms-10k audit call sites; deleting the blocked
 paths changes that count deliberately.
 
-### Slice 4 - Rewrite the write as clear-then-fill with read-back
+### Slice 4 - Rewrite the write as clear-then-fill with read-back -- LANDED 2026-09-30
 
 Replace the single `Set-ADGroup -Replace` (`Comms10kService.cs:220-228`) with clear, then batched
 add, then read-back, per the write design above. **The group resolution and the

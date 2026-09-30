@@ -210,8 +210,19 @@ Dedicated bulk member replacement for broadcast distribution lists.
 
 - CSV upload of new member list
 - Resolves all entries before applying changes
-- Confirmation step showing add/remove diff
-- Atomic replacement via `Set-ADGroup -Replace` (full member swap in one AD operation)
+- Confirmation step stating the number of members the list will be set to. Not an
+  add/remove diff: the write never reads the prior membership, so no removal count
+  exists to show
+- **Clear, then fill, then read back.** The directory refuses a single-operation swap at
+  this module's size, so the write empties the `member` attribute, adds the resolved list
+  in batches of 2,000, and reports from a read-back of what the group actually holds --
+  never from which batches were believed to have run. **This gives up atomicity:** the
+  list is briefly empty and then partial during the sequence (about eight seconds at ten
+  thousand members), and a failure in that window leaves it incomplete. The module reports
+  that state explicitly rather than as a generic failure, and re-running the same CSV
+  repairs it. Serialised per group by a host-wide lock keyed on the group's objectGUID
+- Runs **no protected-principal check** of either kind -- see the Protected Principals
+  section of `docs/ProjectConstitution.md`, which carries it as a named scoped exception
 - Uses Delinea credentials for Active Directory operations
 - Section access key: `Comms10k`
 
@@ -833,7 +844,10 @@ All operations are logged as JSON Lines (.jsonl). Business audit records and dia
 - AdminSettings: `section`, `added`, `removed`
 - MfaReset: `target`, `methodsRemoved`
 - GroupManagement: `target`, `member`, `operation`, `backend`
-- Comms10k: `target`, `membersAdded`, `membersRemoved`
+- Comms10k: `target` (carries the members requested, the outcome, and the observed final
+  count). There is no removal count: clear-then-fill never reads the prior membership, so
+  the earlier `membersAdded` / `membersRemoved` fields documented here were never emitted
+  and could not be
 - ConferenceRooms: `target`, `properties`, `policyTemplate`
 - DhcpAuthorization: `target`, `operation`
 
