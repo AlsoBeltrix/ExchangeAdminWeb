@@ -1,8 +1,9 @@
 # Module development platform: Claude review
 
-Status: Review returned seven candidate plan corrections (three HIGH, four MEDIUM)
-and three optional suggestions. Plan remains draft; no implementation or plan
-revision is authorized by this review. Detailed intake and revisions are pending.
+Status: Review of plan revision 1 returned seven candidate corrections (three HIGH,
+four MEDIUM) and three optional suggestions. The owner's subsequent direction led
+to revision 2; [the plan](../../docs/ModuleDevelopmentPlatform-Plan.md), section 10,
+records their disposition. This review does not verify revision 2 or any code fix.
 
 Reviewer: Claude Code CLI 2.1.285 / claude-opus-5 / high / standard.
 Dispatched configured alias: opus (owner-selected configured model, high effort).

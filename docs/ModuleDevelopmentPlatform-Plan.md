@@ -1,497 +1,422 @@
 # Module Development Platform Plan
 
-Status: Draft - awaiting owner approval; implementation has not started.
+Status: Draft revision 2 - full cutover proposed; implementation approval pending.
 Owner: Michael
-Revision: 1 (2026-09-30)
-Assessment baseline: `5bb19ad70fd2d293b5d7a5565d9a122303dc5aa1`
+Revision: 2 (2026-09-30)
+Assessment baseline: 552a6c00d4c29556aab4f113bb2ad70bac21f877
 
-Sections 1-5 contain the owner's goal and proposed scope, acceptance criteria,
-failure behavior, and rollback. The proposals are not approved requirements yet.
-This document is the canonical scope and implementation checklist for this work.
+This document owns the implementation scope and acceptance criteria. Revision 2
+replaces the two-pilot rollout. Implementation is one complete architecture change
+covering the existing application and the module-authoring path. Intermediate
+commits are implementation checkpoints, not a reason to defer the remaining modules.
 
-## 1. Goal
+## 1. Required outcome
 
-Owner's original request:
+The owner needs multiple agents to land module work this week, without worktrees,
+branches, or competing writes to a central registry. The owner rejected both a
+protracted pilot migration and a reduced change that merely splits registration.
 
-> I need a way for multiple agents to work on this app simultaneously without stepping on each other's work. assess and recommend a solution.
+Each module owns its definition, version, registrations, pages, domain services,
+models, assets, tests, and work records. A normal module change stays in that
+module's files. Adding another module requires no hand-edited application registry,
+service list, routing list, test list, or solution entry. The application composes
+included modules automatically and remains one deployable application.
 
-Owner's clarification:
+All existing modules cross this boundary in this work. There is no supported
+legacy module list at completion and no follow-on migration required to obtain the
+benefit. Shared platform changes still have a shared owner; this design removes
+that dependency from ordinary feature development, not from changes to the platform.
 
-> I need to understand what about the CODE and the way the app functions would need to change to enable more rapid development of modules. no git tricks.
+Success is demonstrated by two independent module changes, including a version
+change and service/permission registration, building and testing concurrently with
+disjoint authored file sets and appearing together in the assembled application.
 
-Make a module an independently buildable feature with its own registration,
-pages, workflows, models, styles, and tests. Give module authors a small, stable
-host API and working development/test support so that normal feature work does
-not require changes to shared application behavior. Prove the approach with
-Service Health and Risky Users before extending the migration. Keep the deployed
-product as one application with its existing operational security model.
+## 2. Scope and preserved behavior
 
-The desired authoring loop is: define a module, implement its domain operations,
-compose its UI, and run its own tests. Navigation, permission enforcement,
-configuration access, credential resolution, auditing, and common interaction
-behavior come from tested platform components.
+Include every descriptor present at the implementation baseline, configuration-only
+and system modules included. Reconcile additions committed by active work before
+moving their files; the baseline below is evidence, not a permanent module registry.
 
-## 2. Non-goals and scope boundaries
+True Last Logon already has services and tests but no descriptor at the assessment
+baseline. Move those implemented files to its module project and provide its
+module-local integration path. Do not invent its unfinished page or enable it: its
+approved feature plan still owns those changes. Its eventual definition must be
+included automatically without modifying platform or host source.
 
-- No worktrees, new branches, shared-checkout locking system, or agent orchestrator.
-  This is a source architecture and developer feedback plan.
-- No runtime module upload, ZIP import, arbitrary assembly loading, separate module
-  deployment, hot replacement, microservices, or new package distribution service.
-  The 2026-07-22 module packaging/import deferment in
-  [decisions](../.agents/decisions.md) remains in force. The current request
-  authorizes drafting development boundaries, not reopening that distribution work.
-- No wholesale module migration. Only Service Health and Risky Users become feature
-  projects in this plan. Other modules remain supported through a legacy adapter.
-- No Migration module work, True Last Logon implementation, or change to the active
-  queue's priority. Those scopes remain owned by [state](../.agents/state.md).
-- No new Service Health public-status feature. Its existing separate draft remains
-  separate. Preserve the implemented tenant-status and load-feedback behavior.
-- No new Graph permissions, PAM provider, credential sharing, ticket policy,
-  ServiceNow behavior, protected-principal exception, or authorization rule.
-- No database split, configuration schema migration, or change to the shared
-  dev/prod configuration database. Development fixtures use disposable data.
-- No universal form/table generator, application-wide UI redesign, or replacement
-  of all source-based tests. Extract only components exercised by the pilots.
-- No automatic approval, deployment, live directory/tenant mutation, or reviewer
-  dispatch. The existing authorities and verification gates still apply.
+The prior prohibition on Migration feature work remains. This revised scope proposes
+an explicit, limited exception for moving its existing definition, code, assets,
+registrations and tests, plus removing a reverse dependency from shared code. No
+Migration fixes, UX changes, or reopening of its feature queue are included. Approval
+of this revision must include that structural exception; until then those files
+remain untouched. The same behavior-preserving rule applies to parked modules.
 
-## 3. Acceptance criteria - proposed for owner approval
+Preserve IDs, routes and aliases, permissions, enabled defaults, dependencies,
+configuration keys, module versions, DI lifetimes, cache ownership, credential
+isolation, ticket behavior, protection/servicer rules, audit and notification
+semantics, job persistence, and startup cleanup ordering. Namespace changes are not
+an objective: retain existing public type identities where practical to reduce
+unnecessary edits and keep persisted job payloads compatible.
 
-- **AC1 - Independent builds.** Each pilot's production project and tests build and
-  run against the module API, shared UI/runtime as needed, and test support without
-  referencing the web executable or another feature module. A deliberately broken
-  unrelated fixture module does not break the selected module's build/test loop.
-  The assembled application still requires all included modules to build.
-- **AC2 - One module definition.** Each pilot owns its descriptor, version, service
-  registrations, optional implemented capabilities, and tests. Host composition
-  generates the catalog and service/job registration from those definitions.
-  Ordinary pilot edits require no changes to `Program.cs`, the legacy catalog
-  list, shared settings markup, or a central list of module-specific tests.
-- **AC3 - Validated composition.** Duplicate IDs, routes, policy aliases, invalid
-  dependencies, incompatible contract versions, and invalid job registrations are
-  rejected before requests or jobs are served. All existing modules remain present
-  exactly once. A job registration constructs its processor through a fresh scope
-  and cannot register only the dispatch mapping or only the DI service.
-- **AC4 - Real shared contracts.** Pilot production code consumes public module API
-  types rather than host internals or local host stubs. Shared adapters use the
-  existing config/PAM/Graph implementations. A module resolves only its configured
-  credential, with no ambient or other-module fallback. Existing Graph continuation
-  URL restrictions remain enforced.
-- **AC5 - Authorization equivalence.** Direct routes, page entry, and operation
-  execution retain the existing enabled-module and permission checks. Missing or
-  unreadable grants deny. Tests cover permission revocation and disablement after
-  page load, main plus granular permissions, SID-based dynamic groups, and the
-  distinct AdminGroups system-module rule. Test hosting exercises the same policy
-  construction and handlers used by production.
-- **AC6 - Testable operations.** Pilot workflows can run through application
-  services without a Razor page. Risky Users' protected write entry point enforces
-  its existing ticket, target-protection, and servicer rules, and uses trusted
-  actor/IP context. Audit and notification failures do not rewrite the backend
-  outcome. Results distinguish a refusal before dispatch, a confirmed operation
-  failure/success, and an indeterminate dispatched write; there is no automatic
-  mutation retry. This last distinction is an explicit improvement in the pilot,
-  not a claim that its current boolean result already provides it.
-- **AC7 - Usable shared UI.** The pilots use small shared header/version and
-  operation-state components, plus confirmation/ticket and result primitives where
-  applicable. Stable row identity, conflicting-action prevention, stale-response
-  handling, and recovery after error/cancellation have behavioral coverage. Domain
-  presentation remains module-owned; existing routes and operator actions survive.
-- **AC8 - Safe independent preview.** A development host loads a selected module
-  with fake backends, test identities, and disposable storage. It exercises real
-  platform authorization and command behavior, makes no live external calls, and
-  does not read installed configuration or real secrets. Production publishing
-  excludes the development host, fakes, fixtures, and test authentication.
-- **AC9 - Pilot parity.** Service Health retains its cache, explicit refresh,
-  sanitized incident content, audited reads, and visible load/error behavior.
-  Risky Users retains its complete-results/ceiling distinction, direct lookup,
-  labels, permissions, cloud-only protection checks, and per-target outcomes.
-  Reads remain audited without alert email. Existing config keys, IDs, aliases,
-  audit action names, and enabled defaults remain compatible.
-- **AC10 - Effective tests.** New module tests cover workflows and rendered
-  components. Browser tests cover actual DOM/event behavior. Host tests cover the
-  assembled catalog, real adapters, routes, and published assets. Source guards
-  are removed only when an equivalent or stronger behavioral test demonstrably
-  catches their failure. No existing coverage floor or test discovery is weakened.
-- **AC11 - Repeatable authoring.** A starter creates a module definition, page,
-  workflow, test project, and fake-backend examples without production host stubs.
-  A disposable third module proves the instructions and composition mechanism.
-  New module setup may add a mechanical solution/project entry; ordinary feature
-  changes stay within that module. No application-code snippets are pasted into
-  `Program.cs` or `ModuleCatalog.cs`.
-- **AC12 - Compatible release and rollback.** The full solution, format, script,
-  and coverage gates cover all new projects. One publish contains the app and
-  production module assets. No runtime data/config migration is required. Module
-  and base-app versions follow existing rules, with the module definition becoming
-  the canonical version source for each migrated module.
+One shared/app version bump covers the infrastructure change. Do not bump every
+module merely because its source moved. Subsequent feature behavior/version changes
+are module-owned. Existing defects remain recorded; relocation does not certify or
+repair them.
 
-## 4. Failure behavior - proposed for owner approval
+No new packaging/import system, runtime DLL-directory scan, deployment topology,
+hot replacement, database/schema migration, Graph permissions, PAM implementation,
+or UI redesign. Do not use this refactor to rewrite every page into a new workflow
+framework or change Risky Users' outcomes/ticket policy. Reuse existing services and
+security checks; extract only the boundaries needed for independent module work.
 
-| Failure | Operator/developer sees | Resulting state |
-| --- | --- | --- |
-| Selected module does not compile | Error from that module's build | Its preview is unavailable; unrelated module projects can still build. Full app release is blocked. |
-| Composition has duplicate identity/route/policy, missing dependency, invalid registration, or unsupported API version | Actionable startup/test error naming the module and violated contract | Host does not serve a partially validated security configuration. Existing deployed app is unaffected until an authorized deployment. |
-| Module config or credential cannot be read | Module unavailable or operation refused, with sanitized explanation | No privileged fallback; no write dispatched. A shared authorization/config-store failure keeps existing fail-closed behavior. |
-| Permission revoked, module disabled, ticket refused, or protection check unavailable | Explicit refusal attached to the requested target | Backend mutation count is zero; audit follows the existing policy. |
-| Backend read fails | Error or explicitly incomplete result, according to the module's existing rules | Failure is not rendered as empty data, healthy status, or an authoritative negative result. |
-| Mutation fails before dispatch / has known result / loses its response after dispatch | Distinct refused, failed/succeeded, or outcome-unknown result | No speculative retry; caller is not told that a possibly applied write never happened. |
-| Audit or notification fails after execution | Existing logging/warning path records the secondary failure | Backend result remains intact; no repeat write and no secret-bearing error payload. |
-| Duplicate click, obsolete response, navigation, or cancellation | Consistent busy/result state; obsolete response does not overwrite current state | Operation context remains bound to the original target and actor. Cancellation is not proof that a dispatched write was undone. |
-| Preview is given real config, credentials, or a live transport | Development startup/test refusal | No access to installed dev/prod data or external systems. |
-| Module test/project is missing from solution or published assets are missing | Composition/publish verification fails | Release blocked; no silent reduction in verification. |
+## 3. Source and dependency ownership
 
-## 5. Rollback and blast radius - proposed for owner approval
-
-The platform affects composition, authorization wiring, routing, and shared
-services, so its blast radius includes the whole host even though only two modules
-are migrated. Module boundaries are maintainability and compilation boundaries;
-they are not a security sandbox or process-failure boundary inside the trusted app.
-
-Land the foundation and each pilot as separate verified slices. Keep legacy
-registration available for unmigrated modules. Do not combine a pilot migration
-with unrelated fixes, new permissions, a schema change, or another module's cleanup.
-
-Rollback is the previous verified complete application artifact through the existing
-authorized deployment/rollback procedure. Do not restore an older configuration
-database: configuration identity and storage remain compatible. Never load old and
-new implementations of the same pilot simultaneously. Source rollback restores a
-slice together with its project references, registration, and test relocation;
-reversing individual files across that boundary is not a valid rollback.
-
-Production deployment and live write acceptance are separate, named approvals.
-The existing dev/prod shared database must not be used for development fixtures.
-
-## 6. Design sketch
-
-### 6.1 Evidence and existing foundations
-
-The following were inspected at the assessment baseline. They identify the reason
-for each change, not a request to repair unrelated behavior.
-
-| Evidence | Architectural implication |
-| --- | --- |
-| `Modules/ModuleCatalog.cs:120`, `RegisterAll()` | Every descriptor/version shares one source list; keep the catalog as an aggregate and move pilot definitions beside their code. |
-| `Program.cs:95`, processor map; `:163` onward, module service registrations | Composition currently has several separately maintained integration points. |
-| `ExchangeAdminWeb.Tests/BulkJobProcessorWiringTests.cs:8` | Existing test explicitly documents the two-registration failure class. Build one registration primitive that supplies both. |
-| `Services/Jobs/IBulkJobProcessor.cs` | Reuse the existing module/runner separation. Do not replace the runner, FIFO policy, job database, or startup reconciliation. |
-| `Services/RiskyUsersService.cs:41`, `Services/ServiceHealthService.cs:50` | Both modules assemble Graph credentials/client access from concrete host services. Replace duplicated bootstrap with module-bound adapters. |
-| `Components/Pages/RiskyUsers.razor:800` | Write orchestration lives in a component. Its denial branches call `Refuse(...)` and `return`; notification exceptions are caught in `finally`. Preserve those policy outcomes when extracting the workflow. |
-| `Components/Pages/ModuleConfig.razor:693` | Servicer configuration uses an explicit list because metadata alone cannot prove enforcement. Replace only the pilot entry with a tested implemented-capability registration. |
-| `Components/Shared/ModuleVersion.razor`, `TicketNumberInput.razor` | Existing useful UI components inject concrete host services. Adapt them to public contracts rather than creating divergent copies. |
-| `Authorization/GroupAuthorizationHandler.cs` | The requirement and handler share this file. Dynamic groups use SIDs; static AdminGroups and Windows-principal matching have different behavior. Preserve both during extraction. |
-| `ExchangeAdminWeb.Tests/RiskyUsersPageTests.cs:16`, `ClickGateRegistry.cs:4716` | Source assertions explicitly lack behavioral rendering proof; registry entries include source-position fingerprints. |
-| `Components/Routes.razor:4`, `Program.cs:415` | Current routing targets the host assembly. Module assemblies must be registered for direct requests and interactive navigation. |
-| `ExchangeAdminWeb.csproj`, `ExchangeAdminWeb.Tests/ExchangeAdminWeb.Tests.csproj` | The current test project references the web executable; a separate module test cannot inherit that dependency. Root recursive source globs must exclude new project trees. |
-
-The module guide/spec still carry a 2.0 document version and June verification
-headers; the guide's stated host baseline is 2.3.22, while the assessed project is
-2.24.0. Treat that freshness gap explicitly. Current code and the Constitution
-govern the migration; refresh the relevant authoring documentation in S7.
-
-### 6.2 Project and dependency boundaries
-
-Proposed source layout (new paths are proposals, not existing artifacts):
+Proposed layout:
 
 ```text
 ModulePlatform/
-  Api/           descriptors, contracts, shared operation/identity DTOs
-  Runtime/       composition validation, authorization and operation machinery
-  UI/            Razor class library of shared components
-  Testing/       fake adapters, fixtures and common contract test support
-  DevHost/       selected-module preview, development/test use only
+  Api/              module contracts, descriptors and genuinely shared data types
+  Runtime/          existing shared integrations, policy engine, storage and jobs
+  UI/               existing shared Razor components
+  Composition/      compiler generator and its focused tests
+  Testing/          common fixtures and parameterized contract/source guards
+  DevHost/          selected-module development host
 FeatureModules/
-  ServiceHealth/
-    src/         Razor class library: definition, pages, workflows, models, CSS
-    tests/       module tests referencing its src project and test support
-  RiskyUsers/
-    src/
-    tests/
+  <ModuleId>/
+    src/            project, ModuleDefinition, pages, services, models, assets
+    tests/          project, fixtures, source guards and click-gate declarations
+    docs/           module behavior and development documentation
+.agents/modules/
+  <ModuleId>/       current work, task evidence and token log
 ```
 
-The existing web project remains the production host. It references Runtime/UI
-and the compiled production modules. Modules reference Api/UI and their own
-necessary libraries; they cannot reference the web executable, host `Services`,
-or another feature implementation. Runtime and UI reference Api, never a feature.
-Testing and DevHost have no incoming dependency from a production project.
+The web executable owns bootstrap, authentication hosting, the application shell,
+and top-level error/access-denied pages. Home/navigation consume the catalog.
+Admin Settings owns generic module configuration UI; feature-specific setting
+components are contributed by their owning module.
 
-Use normal project references and Razor Class Libraries. Add explicit exclusions
-for `ModulePlatform/**` and `FeatureModules/**` to the root web project's default
-compile/content items so source and test files are not compiled or published twice.
-Keep each module's test sources outside its production project directory.
+Use the current `net10.0-windows10.0.17763.0` target for runtime, feature and test
+projects. Razor pages/components live in Razor Class Libraries. The compiler
+extension targets the framework supported by the pinned SDK's analyzer host; pin
+and test that compiler dependency rather than upgrading application packages.
 
-The host can include production projects by the fixed
-`FeatureModules/*/src/*.csproj` convention; discovery inspects only compiled,
-referenced module assemblies. It must not search arbitrary DLL directories or
-accidentally discover test fixtures. Module test projects must also be present in
-the solution; a completeness test checks the convention against solution entries.
-No extra registry of each module's individual test methods is introduced.
+Dependency rules:
 
-Razor library support and both routing surfaces are documented by Microsoft:
-[RCLs](https://learn.microsoft.com/en-us/aspnet/core/blazor/components/class-libraries?view=aspnetcore-10.0)
-and [routing across assemblies](https://learn.microsoft.com/en-us/aspnet/core/blazor/fundamentals/routing?view=aspnetcore-10.0#route-to-components-from-multiple-assemblies).
+- Api references no application implementation. Runtime depends on Api; UI may
+  depend on Api and the public shared Runtime services it already consumes.
+- Features may reference Api, Runtime and UI, never the web executable or another
+  feature implementation. Shared libraries cannot reference a feature.
+- Retain working shared implementations such as AuditService and the EXO pool in
+  Runtime. Do not create a speculative interface for every existing class. Expose
+  narrow replaceable integration contracts where independent tests/preview need
+  them, preserving the real implementations and their authorization boundaries.
+- A genuinely cross-feature contract belongs in Api, with implementation supplied
+  by Runtime or the owning feature through an explicit extension contract. Do not
+  move feature services wholesale into Runtime to make dependencies compile.
+- Feature tests reference their own production project and Testing, not the host
+  test assembly or other feature tests. Move reusable fixtures out of
+  ExchangeAdminWeb.Tests before module tests need them. Grant InternalsVisibleTo
+  to each owning test assembly where existing internal seams require it.
+- The production graph excludes Testing, DevHost, fixtures and fake authentication.
+  Architecture tests inspect evaluated project/assembly references, including
+  transitive references, and reject forbidden dependency directions.
 
-### 6.3 Definitions and composition
+Root web compile/content globs exclude ModulePlatform, FeatureModules, build
+artifacts and module tests before introducing the new trees. Preserve scoped CSS,
+JavaScript/resource paths, namespaces, Razor imports and static-asset publishing.
+The cloud-password word list remains embedded in its owning production assembly.
 
-Introduce a small `IAdminModule` contract: a descriptor and a registration method
-using a constrained module registration builder. The descriptor remains the source
-of ID, route, display information, version, dependency, permissions, and config
-fields. Registration binds that identity to services and implemented capabilities.
-Do not duplicate the module ID in independent job/settings registries.
+### 3.1 Initial ownership map
 
-Build and validate the complete legacy-plus-new descriptor set before generating
-authorization policies. Preserve current alphabetical ordering and validation of
-duplicate IDs/routes/aliases and dependency cycles. Add contract-version and
-registration validation. Discovery must not construct backend services or contact
-PAM, Graph, AD, or Exchange merely to enumerate metadata.
+Rows group implementation work, not runtime registration. Derive the actual file
+move manifest from references at the start; update it for concurrent feature work.
+All listed modules get separate project/test directories, including grouped rows.
 
-Keep the existing `ModuleCatalog` entry point as a compatibility facade for legacy
-consumers/tests. Remove only the two migrated descriptor entries from its legacy
-list; all other descriptor values remain unchanged. The aggregate catalog remains
-the source for enumeration, navigation, authorization, and admin configuration.
-
-A single `AddJobProcessor<T>()` registration must bind the module ID, register the
-scoped processor, and supply the runner mapping. Reuse `IBulkJobProcessor` and its
-existing payload/outcome contracts, moving pure shared types to Api where needed.
-Exercise this extension through synthetic test processors; neither pilot acquires
-new background work. Existing processors can use the same helper through legacy
-composition without changing their execution behavior.
-
-Expose optional settings through registered, executable capabilities. For Risky
-Users, the servicer settings entry requires the actual protection implementation
-and passing denial/override tests. Do not replace the present list with an
-unchecked `SupportsServicing = true` flag. Other legacy settings special cases,
-including AD Attribute Editor, remain in the legacy path.
-
-### 6.4 Public API and adapters
-
-Define only contracts required by the pilots and existing job seam:
-
-- Read-only catalog/config access bound to a module identity.
-- Graph client access bound to that module's configured secret.
-- Trusted operation context: authenticated principal, actor, IP, target, ticket,
-  correlation ID, and cancellation. Capture immutable operation values before
-  awaiting work; do not read another circuit's later mutable UI state.
-- Authorization/config readers and protected-target/servicer evaluation.
-- Audit, operation trace, notification, and ticket validation adapters.
-- Explicit read/operation outcomes and the existing job extension contracts.
-
-Existing host implementations stay authoritative: SQLite repositories,
-`ModuleConfigService`, `ModuleCredentialService`, `DelineaService`,
-`GraphTokenClient`, protected-principal services, audit/email, and the job runner.
-Thin host adapters implement the new contracts. Production modules receive
-module-bound Graph access, not PAM secret material or a method that selects an
-arbitrary other module's credential. No duplicate token, retry, or URL validation
-implementation is added.
-
-Extract reusable authorization construction/handler behavior into Runtime using
-narrow catalog, enablement, and section-access readers. Host adapters delegate to
-the existing stores. Preserve the SID/name distinctions and shared membership
-checker used by live and job authorization. The preview uses fixture readers with
-that same engine, never an always-allow replacement.
-
-Preserve dependency lifetimes explicitly. Service Health's shared cache remains
-singleton; circuit identity and operation context remain scoped. Singletons must
-not capture scoped actor services. Job processors retain their per-job scope.
-
-### 6.5 Workflows and common execution
-
-Keep module domain logic in module-owned handlers. A small shared executor owns
-trusted context, the enforced authorization call, audit/trace sequencing, and
-secondary-failure handling. Module registrations supply named action policies and
-the applicable ticket/protection/notification adapters. A page calls a typed
-operation entry point; it cannot obtain the raw mutation handler and skip gates.
-This is a trusted code contract enforced by composition and tests, not an in-process
-security sandbox.
-
-For Risky Users, preserve the current action order and semantics: bind the immutable
-target/action/ticket; check permission and ticket; resolve/check the actual target
-(including cloud-only user rows); apply the module's servicer rule; revalidate
-authorization at the write boundary; dispatch the single Graph action; record its
-outcome and required notifications. Failed or ambiguous protection resolution
-refuses. No unrelated group-protection exception is imported from another module.
-
-The current Risky Users ticket path checks nonblank input and calls
-`ServiceNow.ValidateTicketAsync`. Adapt that existing behavior. Do not silently
-replace it with the newer `ITicketValidator` policy and introduce/change a
-`ValidateTickets` switch. New ServiceNow functionality is outside this plan.
-
-Carry backend outcome separately from audit/notification delivery. Do not classify
-an exception after dispatch as proof that nothing changed. The module backend
-adapter supplies dispatch/result knowledge; the executor cannot infer it from a
-generic thrown exception. Preserve audit names and the servicer note on success.
-Reads retain their existing audit-only policy.
-
-### 6.6 UI and test/development support
-
-Adapt the existing version/header and ticket primitives to Api contracts. Extract
-operation-state, confirmation, and result components only as the pilots need them.
-Keep module-specific columns, incident formatting, and remediation wording local.
-Use stable identity for rendered rows; keep selection/paging behavior only where
-the pilot already offers it. Do not add bulk actions to demonstrate a component.
-
-Introduce rendered component tests with a pinned bUnit version compatible with the
-repo's .NET/xUnit setup, and browser tests for DOM/event behavior. Microsoft's
-[Blazor testing guidance](https://learn.microsoft.com/en-us/aspnet/core/blazor/test?view=aspnetcore-10.0)
-distinguishes component testing from behavior requiring a real browser. Retain
-existing guard coverage until replacements fail for the corresponding defects.
-
-DevHost references a selected module project supplied at build time, plus Runtime,
-UI, and Testing; it does not reference the production host or all feature modules.
-Default fixture scenarios include successful/empty/error/partial reads, missing
-config, denied/revoked permissions, protected targets, failed/unknown writes, and
-notification failure. Use test identities with meaningful group claims, fake
-transports that reject unexpected requests, a temporary content root, disposable
-SQLite files, and local audit/notification sinks. No inherited real appsettings,
-user secrets, environment-supplied credentials, PAM adapter, or live network path.
-Choose a local port through launch arguments so previews can coexist.
-
-The starter is a local source template, not a downloadable runtime module package.
-It emits real public API calls and tests; test doubles live only in test projects.
-Update the legacy package validator/documentation to distinguish existing snippet
-contributions from the new first-party module-project path. Do not add import or
-installation behavior to the validator.
-
-### 6.7 Pilot choice and compatibility
-
-- **Service Health** proves independent reads, Graph/config adapters, cache lifetime,
-  sanitized HTML, CSS assets, routing, and the existing deferred initial load.
-- **Risky Users** proves granular authorization, mandatory ticket behavior,
-  cloud-only protection, servicer configuration, audit/notification sequencing,
-  typed write outcomes, pagination, and direct lookup.
-
-The pair intentionally shares Graph access, avoiding a simultaneous rewrite of
-the Exchange/AD infrastructure. EXO/AD modules and their inherited service base can
-adopt later under a separate scope. This pilot does not establish that every
-current module can be moved without additional contracts.
-
-Preserve the landed behavior in `ServiceHealth-Plan.md`,
-`ServiceHealthLoadFeedback-Plan.md`, `RiskyUsersModule-Plan.md`, and
-`RiskyUsersCompleteResults-Plan.md`, plus current code changes newer than those
-plans. Do not treat historical versions/verification claims as fresh measurements.
-
-## 7. Task breakdown
-
-Each slice includes its tests and required durable records. Dependencies are
-explicit; the platform foundation is established before independent module work.
-
-| Slice | Work and exit evidence | Depends on | ACs |
-| --- | --- | --- | --- |
-| S0 | Re-read the baseline and active scopes; record pilot IDs/routes/config keys/audit names, current behavior tests, and build/test timings. Add characterization tests only where observable behavior lacks coverage. Identify exact source guards and publish assets that must move. | Owner approval | 5, 9, 10, 12 |
-| S1 | Create Api/Runtime/UI project boundaries and root item exclusions. Introduce public descriptor/read/context contracts and thin host adapters; extract shared authorization machinery without changing its rules. Prove legacy host behavior and dependency direction. | S0 | 1, 4, 5, 12 |
-| S2 | Add module definition discovery, legacy catalog facade, composition validation, module-owned registration, and atomic job registration helper. Wire both Blazor routing surfaces. Test synthetic modules, policy collisions, DI lifetimes, processor construction, and reference/solution discovery. | S1 | 2, 3, 5, 10, 12 |
-| S3 | Build Testing/DevHost, the shared Graph adapter, common operation execution, and initial UI primitives. Use synthetic operations to prove denial-before-write, protected-target/servicer gates, trusted context, outcome handling, and complete offline behavior. Do not wait for a pilot UI to test the security machinery. | S1-S2 | 4-8, 10 |
-| S4 | Move Service Health into its module/test projects; replace concrete host dependencies with adapters. Preserve singleton cache, sanitation, load feedback, public route, and assets. Retain host integration checks while moving domain/component tests locally. | S3 | 1, 2, 4, 5, 7-10, 12 |
-| S5 | Move Risky Users into its module/test projects; extract the protected command workflow and replace its shared settings-list entry with the implemented capability. Preserve current read/write policies and UI semantics; add explicit unknown-write outcome. | S3 | 1, 2, 4-10, 12 |
-| S6 | Verify both pilots together with legacy modules; run publish/layout/static-asset checks and full solution gates. Make test discovery and security coverage aggregation account for all projects. Demonstrate independent builds with an unrelated broken fixture. | S4-S5 | 1-10, 12 |
-| S7 | Add the starter and prove a disposable third module. Update the module spec, guide, validator as necessary, and repo-specific test/version/source-location guidance. Record measured feedback results and remaining authorized manual acceptance. | S6 | 10-12 |
-
-S4 and S5 have no module-to-module implementation dependency once S3's contracts
-are stable. They can be implemented independently within their directories. A new
-shared API requirement is a platform change with its own tests, not permission to
-reach into another module or alter shared behavior opportunistically.
-
-S7 documentation changes include the Constitution's source-location wording only
-where needed to point to module-owned definitions; they must not weaken its rules.
-Repo guidance must recognize colocated module tests while retaining the full
-solution gate. Toolkit-owned AGENTS/skills/playbooks are outside this work.
-
-## 8. Test plan and verification
-
-### 8.1 Acceptance evidence
-
-| AC | Required proof |
+| Modules | Feature-owned code to move with the definition |
 | --- | --- |
-| 1 | Build and test each pilot project directly with no host/other-feature reference in its evaluated dependency graph. In an excluded disposable fixture, introduce a compile failure in module B and show A remains buildable; B and a composition including B must fail. |
-| 2 | Edit a pilot descriptor/version and operation inside its directory; aggregate catalog, page version, and behavior reflect it without editing host lists. Scan registrations to prove the old implementation is not also included. |
-| 3 | Negative composition cases for duplicate identities/routes/aliases, missing/cyclic dependency, unsupported contract version, mismatched/duplicate job processor, and missing DI dependency. Resolve scoped processors and prove both registration paths are supplied together. |
-| 4 | Adapter tests for module A vs B credentials/config, missing/corrupt settings, PAM failure, secret-field failure, and existing allowed/rejected Graph continuation URLs. Transport assertions prove refusal before prohibited network access; logs carry no fixture secret. |
-| 5 | Exercise actual authorization policies/handlers: direct navigation, main/granular grants, absent/unreadable grants, dynamic SID matching, static system groups, disabled dependencies, and revocation while an operation waits before its write. Assert zero backend writes on denial. |
-| 6 | Call the workflow without a page. Cover missing/invalid ticket, unreadable protection, cloud-only protected user by address/object ID, ambiguous resolution, servicer refusal/allow with audit note, success/failure/unknown write, and failing audit/email. Assert exact write count and original target/actor/IP, including overlapping sessions. |
-| 7 | Render and interact with shared components: row reorder/filter/page changes, conflicting clicks, ticket input/Enter, confirmation, stale response, failed load, cancellation, and busy-state recovery. Real-browser tests verify native checkbox/input state and JS interactions where present. |
-| 8 | Preview every fixture scenario offline. Sentinel real-config/secret values and disallowed endpoints must never be consumed. Inspect production dependency closure/publish output for absence of fakes, test auth, fixtures, and DevHost. |
-| 9 | Port existing pilot service tests; add rendered behavior equivalence for caching/refresh, sanitized content, load feedback, complete/partial/error/empty distinctions, lookup, labels, and per-row outcomes. Preserve policies, config keys, audit naming and read notification policy. |
-| 10 | Full solution discovers every module test project. Replace each source guard only after its replacement fails under a targeted defect probe. Keep assembly/publish/routing and real-adapter integration tests in the host suite. Coverage includes moved security code. |
-| 11 | Generate a temporary third module, compile it, render it in DevHost, discover it in a test composition, and run its tests using only the documented API. Verify no pasted host snippets, production stubs, or edits to another module are required. |
-| 12 | Full Release build/test/format and applicable script/coverage gates; publish to a disposable local destination and exercise routes/assets. Compare config compatibility and document the previous-artifact rollback procedure without touching a live installation. |
+| ExchangeOnline | ExchangeOnlineConfig page and its configuration definition; shared EXO pool/credential infrastructure stays Runtime |
+| MailboxPermissions, CalendarPermissions | respective pages/services and feature-only permission helpers/models |
+| Migration | page/CSS, migration services/planners/models, report store, export processor/payload and tests; structural exception in section 2 |
+| DelegationReport, RecipientLookup, OutOfOffice | respective pages/services and feature-only models; reusable recipient lookup contract stays shared where actually consumed |
+| MessageTrace | MessageTrace and MessageTraceReports pages, trace service, reports/exports/window planner, header analysis, forensic models, export store/listing and job processor |
+| BlockedSenders | page, service, protection gate and blocked-sender models |
+| GroupManagement, M365GroupManagement, Comms10k | respective pages/services and feature-only helpers |
+| SelfServiceGroups | page and Services/SelfServiceGroups tree |
+| MfaReset, CloudPasswordReset | respective pages/services; password generation/resources follow their actual consumers |
+| AccountLockoutRemediation | existing parked page/service/models/tests, preserving disabled state |
+| ConferenceRooms | page/service/protection gate/models and bulk processor/payload/contracts |
+| NamedLocations, EmergencyDisable, RiskyUsers | respective pages/services and feature-only models |
+| DhcpAuthorization, BitLockerRecovery | respective pages/services; BitLocker directory-search seam and identifier helpers |
+| DefenderEndpointDevices, IntuneDevices | respective pages/services/models; Defender named HTTP clients stay with its definition |
+| ServiceHealth, LicensingUpdates | respective pages/services/assets, preserving existing singleton/cache and scoped service lifetimes |
+| ADAttributeEditor | page, service, undo handler and custom settings contribution |
+| AdminSettings | AdminSettings and generic ModuleConfig pages; shared config/auth/storage providers stay Runtime |
+| AdminEventLog, AdminBulkJobs | respective pages and feature UI; shared audit/job engine stays Runtime |
+| TrueLastLogon (in progress) | existing TrueLastLogon/CloudSignIn services, aggregators and tests; its feature plan supplies remaining UI/definition |
 
-Prove new behavioral tests bite: temporarily remove or invert the relevant fix/guard,
-observe the intended failure, restore it, and rerun. Use owned fixture inputs or an
-explicitly scoped local edit; do not restore whole shared files over another task's
-work. This proof changes no approval or cleanup policy. Preserve guards until their
-replacement is demonstrated, including ClickGate re-anchoring when still applicable.
+Resolve real coupling explicitly. For example,
+`ExchangeServiceBase.CheckAdGroupMembership` currently takes
+`MigrationEligibilityResult`. Move that Migration-specific method into the
+Migration implementation while preserving its behavior; do not make Runtime depend
+on Migration. Apply the same reference-based test to shared autocomplete components,
+lookup models, permission outcomes and job payloads. Physical file names alone do
+not establish ownership.
 
-### 8.2 Commands and required checks
+## 4. Automatic composition, with no replacement central list
 
-Fast module checks supplement the repo's completion gates; they do not replace them:
+### 4.1 Build inventory and generated references
 
-```powershell
-dotnet build FeatureModules/ServiceHealth/src/ExchangeAdminWeb.Modules.ServiceHealth.csproj -c Release
-dotnet test FeatureModules/ServiceHealth/tests/ExchangeAdminWeb.Modules.ServiceHealth.Tests.csproj -- xUnit.MaxParallelThreads=4
-dotnet build FeatureModules/RiskyUsers/src/ExchangeAdminWeb.Modules.RiskyUsers.csproj -c Release
-dotnet test FeatureModules/RiskyUsers/tests/ExchangeAdminWeb.Modules.RiskyUsers.Tests.csproj -- xUnit.MaxParallelThreads=4
-dotnet build ExchangeAdminWeb.slnx -c Release
-dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4
-dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore
-git diff --check HEAD
-```
+The host uses one fixed project-reference convention:
+`FeatureModules/*/src/*.csproj`. Each production module exposes a public definition
+implementing `IAdminModule` and an assembly marker identifying that type. The marker
+references the type; the descriptor remains the sole source of the module ID.
 
-The future project names above are fixed by this plan unless revised explicitly.
-Run the existing coverage collector/floor and ASCII checks with all affected
-projects. If PowerShell changes, run PSScriptAnalyzer and Pester with corresponding
-guard proof. Update CI's solution/test discovery and coverage handling if the new
-project layout requires it; do not lower a floor to accommodate moved code.
-Pin compatible component/browser test dependencies and record their exact commands
-with the implementation; run those tests in CI, not only on one workstation.
+A small compiler generator reads the markers in the referenced assemblies and emits
+the strongly typed module factories and assembly set into build output. It sorts
+inputs consistently, diagnoses malformed/missing definitions and duplicate markers,
+and emits direct references to each definition. It never depends on
+`AppDomain.CurrentDomain.GetAssemblies()` or on application code having touched a
+feature first. No generated inventory is checked in or edited by agents.
 
-Before any slice claims completion, run the applicable full repo gates. Use the
-repo's current Windows target. Keep the existing maximum-four xUnit worker
-guidance for the full suite; don't change runtime job concurrency as a development
-optimization.
+The build validates the evaluated feature project inventory against the marked
+referenced assemblies. A production project in the module convention cannot silently
+disappear because its marker is missing. Project names/assembly names follow one
+validated convention; generation uses structured compiler/project metadata, not a
+regex parser for C# files. Fixtures outside the feature tree are excluded explicitly.
 
-Local publish verification uses a disposable destination, not the IIS deployment
-pipeline. Manual live tenant/domain checks and deployment need their existing named
-authority. Unrun operational checks remain listed as pending rather than inferred
-from simulated tests.
+The same composition mechanism serves production, integration tests and DevHost.
+DevHost receives a selected module project at build time through a validated module
+ID/path parameter, not a central switch statement. A module project awaiting its
+feature definition, such as True Last Logon at this baseline, is explicitly marked
+as a library-only work-in-progress in its own project; it is build/test discoverable
+but contributes no route or enabled descriptor. Clearing that local marker requires
+a valid definition and automatically enrolls it in application composition.
 
-### 8.3 Measuring whether this improves development
+### 4.2 One complete catalog
 
-Record baseline and post-pilot timings for the same machine/configuration and
-separate cold/warm runs: selected-module build, selected-module tests, preview
-startup, and full integration gates. Also record the files required for one
-representative module change and for creating the third module, together with any
-host API change that was necessary. No speedup percentage is assumed.
+`ModuleCatalog` becomes an immutable read model constructed from that complete
+module set. Delete its hand-maintained descriptor list and the parameterless
+constructor that implicitly builds a legacy catalog. Update all construction sites,
+including tests; a compatibility type name must not conceal a different catalog.
 
-The structural success criterion is AC1/AC2/AC11: independent module feedback and
-module-local ordinary edits. A test filter on the original monolithic test project
-does not demonstrate independent compilation. Broader migration needs separate
-approval informed by these results.
+Expose an aggregate route/alias/ID reader for navigation, version badges, usage
+telemetry, authorization and configuration. Keep module-bound config/credential
+access separate from that aggregate reader. Both legacy route names and newly added
+routes resolve through the same catalog; there is no legacy-only view.
 
-### 8.4 Implementation and acceptance status
+Before registering policies or serving requests, validate the complete definitions:
+duplicate IDs/routes/aliases, missing/cyclic dependencies, supported contract
+version, invalid capability contributions and conflicting service registrations.
+Catalog construction performs no credential resolution or live backend calls.
 
-| Item | Status |
+Supply the generated assembly set to both Blazor routing surfaces: endpoint mapping
+and the interactive Router. A route must work on direct navigation and in-app
+navigation. Publish verification checks module static assets as well as assemblies.
+
+### 4.3 Module-owned composition hooks
+
+An IAdminModule definition owns these contributions through constrained registration
+helpers. No feature-type lists remain in Program.cs or generic admin pages:
+
+| Contribution | Required behavior |
 | --- | --- |
-| Owner approval of this plan | Pending |
-| S0-S7 implementation | Not started |
-| Module/host automated verification | Not run for this plan; no implementation exists |
-| Independent reviewer | Not requested or dispatched |
-| Live acceptance / deployment | Not authorized by the drafting request |
+| Services and named HTTP clients | preserve lifetimes/timeouts; diagnose name collisions; cannot replace platform authentication, authorization or credential services |
+| Bulk processors | one AddJobProcessor call supplies both scoped DI and dispatch mapping; preserve runner concurrency, existing module IDs and payload compatibility |
+| Startup maintenance | module-owned scoped hook for current retention/cleanup; generic dispatcher preserves ordering after store initialization and existing best-effort behavior; no new scheduled tasks |
+| Undo | module registers its IUndoableModule handler; existing aggregate resolver remains generic |
+| Settings and servicer UI | capability backed by the actual registered implementation, not an unchecked Boolean; custom settings component belongs to its feature |
+| Metadata, policies and version | one descriptor in the module; navigation, policy construction, config UI, version badge and telemetry consume the composed result |
 
-Track implementation as Draft -> Approved -> In progress -> Verified (pending any
-named integration/operational step) -> Implemented. Verification is not completion
-while required acceptance remains outstanding. This plan creates no branch or
-branch-closeout work. Existing git/push authority still governs ordinary records.
+For example, MessageTraceExportStore and MigrationReportStore startup pruning move
+out of Program.cs into their owning hooks. Defender and True Last Logon HTTP-client
+setup lives beside the feature requiring its timeout and permitted endpoints.
+Shared Graph transport does not acquire permissive URLs or shared credentials.
 
-## 9. Traceability check
+## 5. Tests, build isolation and developer support
 
-Pending plan iteration; no completed review or approval is implied.
+Move feature-specific tests and click-gate declarations with their features. The
+ClickGate runner/source parser remains reusable; each module owns its registered
+controls, exclusions, explanations and fingerprints. Generic guards discover these
+contributions and fail if a page has no declaration. Do not retain a central array
+that each agent must edit. Preserve the existing conversion scope and evidence;
+source relocation does not authorize converting parked pages or relaxing guards.
 
-## 10. Review log and pending owner decision
+Inventory every source-layout dependency, including AuditExtraChannelTests,
+PageHandlerHygieneTests, PageAuthorizationRecheckTests, servicer/protection tests,
+ModuleCatalogTests, ClickGateSource/Tests/Registry, Get-ClickGateAudit.ps1 and
+validate-module-package.ps1. Replace hardcoded Services/Components/Pages/Program.cs
+assumptions at the same time their inputs move. A source-root resolver reports
+missing expected files and empty coverage, rather than returning an empty success.
+Parameterize local guards over the selected module; host integration guards check
+completeness across the entire discovered module set.
 
-- 2026-09-30: Revision 1 drafted from the owner-requested code architecture
-  assessment. No implementation, self-review, or independent review was performed.
-- **Pending decision:** approve the bounded S0-S7 scope with Service Health and
-  Risky Users as the pilots. The consequence is an initial shared-platform
-  refactor, including authorization adapters and new test infrastructure, followed
-  by two module migrations. Recommendation: approve this bounded pilot before
-  considering additional modules; keep runtime packaging/import deferred.
-- Drafting verification is documentation-only. Implementation build/test results
-  must be recorded by slice as the work actually lands.
+Replace BulkJobProcessorWiringTests' assembly assumption and Program.cs regex with
+behavioral tests that resolve each registered processor from a fresh scope and
+compare its mapping, identity and DI registration. Preserve every existing processor
+and prove the replacement catches a missing mapping/service registration.
+
+Move coverage-path and report handling with the first affected code/test project,
+not in a later cleanup phase. Security coverage includes relocated authorization,
+section-access and protection code. Collect all reports from the current run;
+merge hits by normalized source path and line without double-counting shared files.
+Never pick the newest single module report. Require fresh reports for every expected
+test project and prove failure on missing/empty/stale reports. Record comparable
+before/after covered and total lines; do not lower the floor to hide a move.
+
+Add one verification entry point, `tools/Invoke-Verification.ps1`, which inventories
+host/platform/feature projects, generates a disposable solution with absolute project
+paths, and runs the requested build/test/format/coverage operations. Every run builds
+the inventory from source. A newly added module/test project needs no checked-in
+solution edit. CI and deployment gates use this entry point; update guidance in the
+same change so the old root-solution command cannot be mistaken for a complete gate.
+The existing root solution may remain a convenience view, not the completion gate.
+
+Provide `tools/Test-Module.ps1 -ModuleId <Id>` and a selected-module preview command.
+Validate IDs/paths, derive all sources from the owning module, and give each invocation
+its own ignored artifacts/results/storage directory. Use the SDK artifacts output
+layout to separate intermediate and output files by project and invocation. Concurrent
+checks must not overwrite shared bin/obj files or read another run's coverage. Limit
+xUnit workers to the existing maximum of four per invoked suite; whole-repo verification
+schedules module suites to avoid multiplying that worker load without a bound.
+
+Testing supplies common fixtures, component-test helpers and actual platform policy
+construction. The selected-module DevHost uses real policy/command boundaries with
+explicit fake integrations and identities, disposable stores, unique ports, and no
+installed configuration, production credentials or live external calls. Missing fake
+capabilities refuse to start or report an explicit unavailable operation. No silent
+fallback to the real Runtime adapter. Add the adapters/scenarios needed for each
+module's supported preview, preserving existing test seams and service behavior.
+Production publishing must exclude DevHost and all test/fake assemblies.
+
+The developer guide and starter produce the same module layout, marker, registrations,
+tests and documentation used by the converted modules. A starter must not copy host
+internals, require a central source edit, or require the complete web app to compile
+before its selected module can be tested.
+
+## 6. Records and guidance must not become the next shared registry
+
+Update the Constitution's module/version source-location wording, repo guidance,
+module spec, authoring guide and validator with the actual cutover. Preserve their
+security and behavior rules. Do not leave instructions directing the next agent to
+put a descriptor or version back in ModuleCatalog.cs.
+
+Module versions and feature documentation live with their definitions. Module work
+records and token logs live under `.agents/modules/<ModuleId>/`. State.md remains
+the sole entry point through a stable pointer to that convention; routine module
+progress does not require rewriting a shared status table. The existing shared
+token log becomes the platform-work log with a pointer to module logs. Update the
+repo-owned logging guidance accordingly; do not edit toolkit-owned AGENTS/skills.
+Repo-wide decisions and shared-platform work still use their existing central records.
+
+The definition of ordinary independent work includes its required tests, version,
+documentation and records, not just its production source. A feature needing a new
+shared contract declares that platform change explicitly instead of quietly editing
+another agent's shared implementation.
+
+## 7. Execution as one complete cutover
+
+Approval covers the complete scope below. No additional per-module pilot approval
+or acceptance waiting period is part of this plan. Shared-foundation edits have one
+owner; module moves can proceed concurrently after that boundary compiles. This is
+code ownership during the transition, not a branch/worktree or locking scheme.
+
+1. **Capture the current boundary and prepare the foundation.** Read current active
+   work, enumerate all source/asset/test owners, and capture descriptor values,
+   registrations/lifetimes, routes and representative security behavior. Preserve
+   other agents' landed or uncommitted work. Extract Api/Runtime/UI/Testing, establish
+   dependency guards and root exclusions, implement composition generation and the
+   verification wrapper, and move affected coverage/scanner handling with the code.
+2. **Convert the entire module set in parallel-capable batches.** Use section 3.1's
+   ownership map to move each feature's full file set, definition, registrations,
+   capabilities, tests and records. Shared-platform fixes return to the foundation
+   owner; module batches do not independently rewrite Program.cs. Update source
+   authority docs as the old registry is replaced. Intermediate commits may compose
+   old and new source while extracting, but no migration adapter survives completion.
+3. **Finish composition and prove concurrent development.** Remove remaining feature
+   lists and legacy paths, validate every module, run independent/concurrent module
+   checks and the complete application gates, and prove starter/discovery, preview,
+   routing and publishing. Record remaining live/manual checks explicitly. The work
+   is not complete with two modules converted or with a future-migration checklist.
+
+Do not promise a calendar duration before running the checks. These are dependency
+steps inside one requested refactor, not a multi-release roadmap. Feature delivery
+can use completed module boundaries during the cutover; release readiness still
+requires the complete checks below. Recheck the current source before every move so
+an in-flight module addition is neither overwritten nor stranded on the old layout.
+
+## 8. Completion criteria and proof
+
+| Criterion | Required evidence |
+| --- | --- |
+| Entire application converted | every baseline descriptor appears exactly once with preserved behavior/config values; no hand-maintained legacy registry remains; in-progress library-only modules retain all implemented code/tests |
+| No replacement central edit point | add two disposable module fixtures and change two real module versions/registrations using disjoint owned file sets; generated composition sees both; Program.cs, catalog implementation, routing, shared tests and checked-in solution require no feature edits |
+| Independent compilation and tests | each production/test project builds without host/other-feature references; representative Graph, AD, EXO, job and system modules run locally; an unrelated broken fixture blocks the composed fixture host but not an independent real module |
+| Actual concurrency | run two selected-module builds/tests simultaneously with distinct artifacts/storage/ports; demonstrate no output locking, stale report use or shared authored-file changes |
+| Catalog and discovery parity | compare the cutover against captured module-local baselines; detect missing markers/definitions, duplicate IDs/routes/aliases and invalid dependencies; include an assembly never otherwise touched at startup; test both migrated routes and system/config-only routes |
+| Registration completeness | resolve real registrations with test integrations, verify lifetimes and scoped processor construction, named clients, settings, undo and startup maintenance; missing either processor mapping or service fails |
+| Security preserved | use actual policy construction/handlers to prove enabled/dependent/granular permissions, dynamic SID versus static AdminGroups rules, revocation-before-write, protected targets/servicers, module credential isolation and no backend write on denial; preserve Self-Service Groups' owner-ruled exception |
+| UI and operation behavior preserved | representative rendered components and browser navigation cover version badges, telemetry attribution, direct routes, static assets, conflicting actions, error recovery, ticket behavior and known audit/notification ordering; retain existing module behavior tests |
+| Guard and coverage completeness | each relocated source guard still detects its target defect; every test project produces a fresh report; security coverage spans all moved paths with comparable denominator and no floor reduction |
+| Independent authoring support | starter module compiles/tests/previews through documented commands without host snippets; selected-module fakes cannot reach live integrations; feature checks do not require unrelated feature compilation |
+| Whole app release integrity | full Release build, all discovered tests, format, ASCII, applicable Pester/PSScriptAnalyzer, coverage floor and git diff --check pass; publish includes module routes/resources and excludes fakes/tests |
+| Durable ownership | each module's version, click-gate declarations, docs and work records are local; root state/guidance point to the new authority without recurring per-module edits |
+
+For changed/new behavioral guards, temporarily remove the protected behavior in an
+owned disposable fixture or narrowly scoped source edit, observe the intended test
+failure, restore it, and rerun. Never revert entire shared files over concurrent work.
+Use project inventory and test identities to reconcile moved tests, not just a total
+pass count. Report skipped/unrun checks and manual/live validation separately.
+
+## 9. Failure behavior, release and rollback
+
+Malformed composition fails before requests/jobs are served and names the offending
+module. Missing/unreadable permissions or required config continue to deny. Missing
+preview fakes deny or stop preview startup; no real backend fallback is allowed.
+Module compilation failure blocks the full app release, while another module's own
+build/test loop remains usable. Existing best-effort cleanup and notification/audit
+handling retain their behavior; no mutation is retried by this infrastructure.
+
+This refactor has application-wide blast radius. Verification is a release gate, not
+a claim that moving files cannot affect security, resource paths or persisted jobs.
+No live deployment or push is included. Before an authorized deployment, retain the
+previous published artifact; rollback restores that artifact and leaves the shared
+configuration database, operational job data, reports and logs intact. No schema or
+config-key migration is needed. Verify the previous artifact can still read queued
+job payloads and existing module config; no delete/recreate workaround is acceptable.
+
+## 10. Claude revision-1 findings and disposition
+
+The original [Claude report](../.agents/review/module-development-platform-plan-r1.md)
+is preserved with its provenance. It reviewed revision 1, not this revision.
+No repeat review was requested or run.
+
+| Finding | Revision-2 requirement |
+| --- | --- |
+| F1 catalog facade ambiguity | section 4.2 removes the implicit legacy constructor/list and requires one complete catalog everywhere |
+| F2 source scanners lose moved pages | section 5 moves scanners and click-gate ownership with their inputs and requires discovery completeness |
+| F3 coverage repaired too late | section 5 requires current-run report aggregation and scope repair with the first affected move |
+| F4 route reader missing | section 4.2 separates aggregate route/alias reads from module-bound config/credential access |
+| F5 job wiring guard breaks | sections 4.3 and 5 replace text/assembly assumptions with processor construction and mapping proof |
+| F6 authoritative docs lag | sections 6 and 7 update source-location guidance during the cutover |
+| F7 discovery unspecified | section 4.1 specifies generated static references from module-owned markers; an explicit hand-maintained host list is rejected because it recreates contention |
+
+The report's optional TFM, internals/test-helper and contention-measurement concerns
+are covered in sections 3, 5 and 8. These are plan dispositions, not claims of tested
+repairs. The original review's implementation-dependent risks remain predictions
+until implementation and guard proof exist.
+
+## 11. Approval and implementation status
+
+Pending: approval of this complete scope, including the structural-only Migration
+exception in section 2. Approval of the old two-pilot draft is not being assumed.
+No application changes have been made by drafting or reviewing this plan. After
+approval, execute the whole cutover; do not stop at a pilot or solicit a new rollout
+choice for every module. Deployment/push and any new external review remain separate
+owner actions under existing policy.
+
+Technical references for the proposed implementation: Microsoft's
+[Razor Class Libraries](https://learn.microsoft.com/en-us/aspnet/core/blazor/components/class-libraries?view=aspnetcore-10.0),
+[Blazor assembly routing](https://learn.microsoft.com/en-us/aspnet/core/blazor/fundamentals/routing?view=aspnetcore-10.0),
+[SDK artifacts layout](https://learn.microsoft.com/en-us/dotnet/core/sdk/artifacts-output),
+and the Roslyn team's
+[incremental generator cookbook](https://github.com/dotnet/roslyn/blob/main/docs/features/incremental-generators.cookbook.md).
+The specific composition and ownership rules above are this plan's design choices.

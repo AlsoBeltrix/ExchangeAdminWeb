@@ -8,15 +8,16 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**2026-09-30 - Module development architecture plan drafted at the owner's request.**
+**2026-09-30 - Module development architecture plan revised for a complete cutover.**
 [`docs/ModuleDevelopmentPlatform-Plan.md`](../docs/ModuleDevelopmentPlatform-Plan.md)
-owns the proposed shared API/registration/test support and Service Health/Risky Users
-pilots. **Draft; implementation not approved or started.** The scope is app code and
-module development, not worktrees/branches or runtime module packaging/import.
-Claude's requested review returned seven candidate corrections; full findings and
-provenance: [plan review](review/module-development-platform-plan-r1.md).
-Next: assess those corrections and revise the draft before implementation approval.
-The active queue below is unchanged.
+revision 2 owns the proposed all-module code/registration/test/record boundaries,
+generated composition and concurrent-development proof. The owner rejected both a
+two-pilot rollout and a registry-only reduction. **Draft; implementation not started.**
+The prior [Claude review](review/module-development-platform-plan-r1.md) is retained;
+its plan dispositions are in revision 2, section 10. No repeat review was run.
+Next: approval of the full cutover, including its explicitly proposed structural-only
+Migration exception. Until approved, the Migration prohibition below remains in force.
+The existing feature queue and its behavior scopes remain unchanged.
 
 **2026-09-29 (late). THE MIGRATION MODULE IS CLOSED BY OWNER ORDER. DO NOT TOUCH IT.**
 Five days on one module was the limit. It is left broken on dev - the mailbox pane renders
