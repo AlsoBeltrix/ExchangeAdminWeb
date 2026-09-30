@@ -1,6 +1,7 @@
 # True Last Logon -- One Person, Every Source
 
-Status: **DRAFT, awaiting owner approval.** Queue item 17. Written against app `2.24.0`.
+Status: **APPROVED 2026-09-30 ("approve 17"). In progress.** Queue item 17. Written against
+app `2.24.0`.
 
 Replicates `C:\Users\mcoelho\Desktop\Get-TrueLastLogon-Commercial.ps1` as a module under
 Identity & Access.
