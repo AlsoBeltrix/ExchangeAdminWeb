@@ -4,9 +4,9 @@
 source that came back in a shape we cannot read is reported as a source that answered "no
 sign-ins", and with both log queries empty that composes to `LogVerified` - the single state the
 plan says is safe to act on. Acting on it means disabling a live account.
-**Status**: Open
+**Status**: Verified
 **Branch**: -- (direct-to-main)
-**Commit**: --
+**Commit**: recorded in the closeout below
 
 ## Evidence
 
@@ -73,7 +73,25 @@ Split the branch so each fact gets its own answer, and make a present-but-unread
 
 ## Guard proof
 
-To be recorded with the fix commit.
+Three tests in `ExchangeAdminWeb.Tests/CloudSignInServiceTests.cs`, each mutated and watched to
+fail:
+
+| Test | Mutation | Result |
+| --- | --- | --- |
+| `ASignInActivityInAShapeWeCannotReadIsNotAVerifiedAbsence` | restore the single `!= JsonValueKind.Object` branch | FAIL, restore -> 24/24 |
+| `APresentButBlankActivityDateIsUnreadableRatherThanAbsent` | blank date string back to `DateRead.Absent` | FAIL, restore -> 24/24 |
+| `AnExplicitlyNullSignInActivityIsStillARealAnswer` | over-tighten to `if (!hasActivity)` so JSON null falls into the unreadable branch | FAIL, restore -> 24/24 |
+
+The third is the guard against over-correcting. Graph really does send
+`"signInActivity": null` for an account with no activity, so a fix that treated every non-object
+as a failure would make every genuinely dormant account permanently unverifiable - the opposite
+error, and one that would have looked like extra safety.
+
+**One assertion of mine was wrong and the tests caught it, not the code.** I first asserted
+`NoSignInReported == false` on the repaired path. It is `true`, correctly: under `LogOnly30d` the
+log DID answer and DID report nothing, so an absence really was reported - what changed is the
+trust attached to it. The assertion now pins the verification state, which is the thing the
+finding is about.
 
 ## Coder dispute
 
@@ -88,8 +106,24 @@ reading, and the guard costs one branch.
 
 ## Reviewer comments
 
-To be recorded.
+`Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard`
+Harness: codex-cli 0.154.0 (`codex exec`, CLI transport, `-s read-only`, generation pass).
+Range: `046e3d213586b769680826354d714102ce4af721..cb968daa76da3711f238c80af6c6f252e1cf17d5`
+(both SHAs echoed correctly). `capability_ok: true` - read `docs/TrueLastLogon-Plan.md` and
+`.agents/repo-guidance.md`, ran `git diff --stat 046e3d2..cb968da`.
+Verdict: **findings** (2). Timestamp: 2026-09-30.
+Escalation triggers: none matched. No T1 sensitive path in the diff.
+
+No verification round was dispatched: the finding is HIGH, not CRITICAL, and
+`.agents/decisions.md` 2026-08-31 closes everything below CRITICAL on the coder-side guard
+proof.
+
+Note on the dispatch itself: the first attempt died before the model saw anything, on
+`Invalid schema for response_format ... Missing 'capability_note'`. This gateway enforces strict
+structured outputs, so every property must appear in `required`. That is a transport fact, not a
+review outcome, and it is now fixed in `.agents/review/tll-s2.schema.json`.
 
 ## Closeout
 
-Pending.
+Fixed directly on `master`. Commit and completion receipt are in the follow-up bookkeeping
+commit that fills in the SHA here and in `.agents/review/index.md`.

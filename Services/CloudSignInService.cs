@@ -84,7 +84,8 @@ public sealed record CloudSignInLookup(
 /// </para>
 /// <para>
 /// <b>A value that cannot be read is a source that did not answer.</b> That single rule covers a
-/// non-200, a timeout, a body with no result collection, and a date string that will not parse.
+/// non-200, a timeout, a body with no result collection, a <c>signInActivity</c> that is neither
+/// an object nor null, and a date string that is blank or will not parse.
 /// It is the same rule <see cref="TrueLastLogonService.MapRow"/> applies on-prem, and it is what
 /// keeps a broken response out of the one reading that matters - "this account is dormant".
 /// </para>
@@ -296,10 +297,24 @@ public sealed class CloudSignInService
         foreach (var user in value.EnumerateArray())
         {
             // The account came back, so signInActivity WAS consulted - even when the property is
-            // absent, which legitimately means no recorded activity. Telling that apart from a
-            // query that never succeeded is the entire point of the Answered flag.
-            if (!user.TryGetProperty("signInActivity", out var activity) || activity.ValueKind != JsonValueKind.Object)
+            // absent or null, which are both Graph's shapes for "no recorded activity". Telling
+            // that apart from a query that never succeeded is the entire point of the Answered
+            // flag.
+            var hasActivity = user.TryGetProperty("signInActivity", out var activity);
+
+            if (!hasActivity || activity.ValueKind == JsonValueKind.Null)
                 return (new CloudSignInAnswer(true, null, null), null);
+
+            // Anything else that is not an object is a response this module cannot read, and the
+            // rule for that is the same everywhere: it did not answer. Folding it in with the two
+            // cases above would report an unparseable body as a confirmed absence of sign-ins,
+            // which with two empty log queries composes to LogVerified - the one state the plan
+            // calls safe to act on (tll-1).
+            if (activity.ValueKind != JsonValueKind.Object)
+            {
+                return (CloudSignInAnswer.DidNotAnswer,
+                    "signInActivity came back in a shape this module cannot read, so its answer was discarded.");
+            }
 
             var interactive = ReadDate(activity, "lastSignInDateTime", out var interactiveWhen);
             var nonInteractive = ReadDate(activity, "lastNonInteractiveSignInDateTime", out var nonInteractiveWhen);
@@ -403,9 +418,12 @@ public sealed class CloudSignInService
         if (value.ValueKind != JsonValueKind.String)
             return DateRead.Malformed;
 
+        // Present and blank is UNREADABLE, not absent. Absent means the field was not sent;
+        // callers are entitled to treat that as "nothing of this kind", and a blank string is
+        // not that (tll-1).
         var raw = value.GetString();
         if (string.IsNullOrWhiteSpace(raw))
-            return DateRead.Absent;
+            return DateRead.Malformed;
 
         if (!DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
             return DateRead.Malformed;

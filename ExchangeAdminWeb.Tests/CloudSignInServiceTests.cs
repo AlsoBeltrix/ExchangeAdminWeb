@@ -360,6 +360,61 @@ public class CloudSignInServiceTests
         Assert.NotNull(lookup.ActivityError);
     }
 
+    // ---- tll-1: three different facts must not share one answer -------------------------------
+
+    [Fact]
+    public async Task ASignInActivityInAShapeWeCannotReadIsNotAVerifiedAbsence()
+    {
+        // tll-1. The dangerous composition: an unparseable activity value plus two empty log
+        // queries. Folding the unreadable shape in with "absent" reports LogVerified and
+        // NoSignInReported - the strongest claim the module can make, from a body it could not
+        // parse, and the one state the plan calls safe to act on.
+        var (service, stub) = CreateService();
+        stub.Activity = () => GraphStub.Json(
+            HttpStatusCode.OK, """{"value":[{"userPrincipalName":"jane.doe@example.test","signInActivity":"bad"}]}""");
+
+        var lookup = await service.GetCloudSignInAsync(Upn);
+
+        // The log still answered, so LogOnly30d with a reported absence is the honest result -
+        // "nothing in the retained window", bounded. What must not survive is LogVerified, which
+        // would claim both sources agreed when one of them was never read.
+        Assert.NotEqual(CloudVerification.LogVerified, lookup.Result.Verified);
+        Assert.Equal(CloudVerification.LogOnly30d, lookup.Result.Verified);
+        Assert.NotNull(lookup.ActivityError);
+        Assert.Contains("cannot read", lookup.ActivityError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnExplicitlyNullSignInActivityIsStillARealAnswer()
+    {
+        // The other side of tll-1, and the reason the fix is a split rather than a tightening:
+        // Graph really does send "signInActivity": null for an account with no activity. Treating
+        // that as a failed source would make every genuinely dormant account unverifiable.
+        var (service, stub) = CreateService();
+        stub.Activity = () => GraphStub.Json(
+            HttpStatusCode.OK, """{"value":[{"userPrincipalName":"jane.doe@example.test","signInActivity":null}]}""");
+
+        var lookup = await service.GetCloudSignInAsync(Upn);
+
+        Assert.Equal(CloudVerification.LogVerified, lookup.Result.Verified);
+        Assert.True(lookup.Result.NoSignInReported);
+        Assert.Null(lookup.ActivityError);
+    }
+
+    [Fact]
+    public async Task APresentButBlankActivityDateIsUnreadableRatherThanAbsent()
+    {
+        // tll-1, second instance. An empty string is not the field being missing.
+        var (service, stub) = CreateService();
+        stub.Activity = () => GraphStub.Json(HttpStatusCode.OK, ActivityBody("", null));
+
+        var lookup = await service.GetCloudSignInAsync(Upn);
+
+        Assert.NotEqual(CloudVerification.LogVerified, lookup.Result.Verified);
+        Assert.Equal(CloudVerification.LogOnly30d, lookup.Result.Verified);
+        Assert.NotNull(lookup.ActivityError);
+    }
+
     [Fact]
     public async Task ATimeoutIsReportedAsATimeoutAndNotAsAnAbsence()
     {
