@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**2026-09-30. Branch `master`, verified head `f750723`, tree clean, 24 commits ahead
+**2026-09-30. Branch `master`, verified head `4f28fcd`, tree clean, 25 commits ahead
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**
 
@@ -16,6 +16,13 @@ of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and pu
 nothing in it has run against the real group, and its Acceptance section is outstanding in
 full and is the owner's.** The module is at `1.3.0`, which the plan sets once on S1 and
 deliberately does not bump per slice.
+
+**READ `.agents/decisions.md` 2026-09-30 "Plan approval is not approval of plan contents"
+BEFORE citing any plan.** The owner does not read plans; an `Approved` header authorises the
+work stream and nothing in the body. Never answer "why is this here?" with "the plan says so" -
+that defence was tried this session and overruled. Anything needing his decision goes to him in
+chat, plain English, one fork at a time. **Open gap, needs its own go:** plans have no
+exec-summary section and the `plan` operator does not produce one.
 
 **NEXT ACTION: owner acceptance of Comms-10k on dev**, then the next queue item. There is no
 agent-executable work left on this plan. What S4 changed that acceptance must actually
@@ -26,9 +33,15 @@ unremovable primary-group members, partly applied, could not confirm, refused be
 change - and **the two worth checking by hand are "partly applied" and "could not confirm"**,
 because they are the ones telling an operator the list may be broken.
 
-**Do not reintroduce the distribution-group guard.** Slice 4's text still refers to it; it was
-deleted with the rest of the protection path in S3 by owner ruling, plan test 19 is void, and
-the "distribution-group guard" clause in tests 12-15 reads as deleted.
+**Two things in the plan were removed by owner ruling and MUST NOT be reintroduced**
+(`.agents/decisions.md` 2026-09-30; both have tripwires that fail if they come back):
+
+- **The distribution-group guard.** Slice 4's text still refers to it; it went with the rest of
+  the protection path in S3. Plan test 19 is void and the "distribution-group guard" clause in
+  tests 12-15 reads as deleted.
+- **All replace locking.** No mutex, no semaphore. Plan test 17 is void. The accepted risk:
+  two concurrent replaces can interleave and leave the list holding neither uploaded file; each
+  run's read-back reports that as incomplete rather than claiming success.
 
 **Comms-10k runs no protected-principal check of either kind, and two agent concerns about
 that were raised and OVERRULED. Do not re-litigate either** - `.agents/decisions.md`
@@ -38,7 +51,7 @@ structurally pins to this group. Both true; the owner ruled neither warrants a c
 single-purpose module. The Constitution, `.agents/repo-guidance.md` KFC3 and the developer
 guide all carry the scoped exception, contrasted against Self-Service Groups.
 
-**Landed this session, eleven commits, suite 3344 -> 3473 green throughout:**
+**Landed this session, twelve commits, suite 3344 -> 3468 green throughout:**
 
 | Commit | What |
 | --- | --- |
@@ -53,10 +66,11 @@ guide all carry the scoped exception, contrasted against Self-Service Groups.
 | `8025b87` | Owner ruling: Comms-10k runs no protected-principal check |
 | `e820d0d` | Comms-10k S3, protection path deleted, write binds to the resolved identity |
 | `f750723` | Comms-10k S4, clear-then-fill with read-back, five reported outcomes |
+| `4f28fcd` | Replace locking stripped; plan approval is not content approval |
 
 **Owner-side work outstanding, none of it agent-executable:**
 
-- **The push.** 24 commits, on HOLD.
+- **The push.** 25 commits, on HOLD.
 - **True Last Logon:** `AuditLog.Read.All` consent, enable the module in Module Config, and the
   two-account live comparison against `Get-TrueLastLogon-Commercial.ps1`. Nothing in that
   module has touched a real domain or tenant.
