@@ -73,6 +73,15 @@ public class AppLayoutCssTests
         // dropped. .page claiming 100vh here would now push the status frame below the fold.
         Assert.Contains("height: 100vh", DeclarationsOf(desktop, ".app-shell"), StringComparison.Ordinal);
 
+        // The two declarations that make the shell's height mean anything. Without them
+        // .page's `flex: 1` is inert, the chain silently detaches at its new root, and the
+        // "percentages have nothing real to measure against" failure returns - while every
+        // other assertion here still passes. The chain is only as strong as its top link, and
+        // this source scan is the only guard: there is no bUnit or browser harness.
+        var baseShell = DeclarationsOf(StripComments(css), ".app-shell");
+        Assert.Contains("display: flex", baseShell, StringComparison.Ordinal);
+        Assert.Contains("flex-direction: column", baseShell, StringComparison.Ordinal);
+
         // .page takes the space the status frame leaves at BOTH breakpoints, so these live in
         // the base rule rather than the desktop block - on mobile they are what put the frame
         // at the bottom of a short page instead of directly under the content.
