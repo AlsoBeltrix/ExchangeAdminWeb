@@ -107,13 +107,15 @@
 
     private sealed record Outcome(string Id, string Text, bool Success, bool FromJob);
 
-    private readonly DateTime arrivedUtc = DateTime.UtcNow;
-
+    // NO SESSION STATE LIVES ON THIS COMPONENT. The layout is rebuilt by the server on every
+    // navigation, so this component is destroyed and recreated each time the operator changes
+    // page. A field here resets with it: "since you arrived" would quietly become "since this
+    // page", and a dismissed result would come back on the next click. Both belong to the
+    // circuit, so both live on the scoped IActivityProgress, which survives.
     private string currentUser = "";
     private bool expanded;
     private bool disposed;
     private bool subscribed;
-    private readonly HashSet<string> dismissedJobs = new(StringComparer.Ordinal);
 
     private IReadOnlyList<Activity> activities = Array.Empty<Activity>();
     private IReadOnlyList<ActivityOutcome> outcomes = Array.Empty<ActivityOutcome>();
@@ -208,8 +210,8 @@
     private IReadOnlyList<BulkJob> FinishedSinceArrival() =>
         recentJobs
             .Where(j => j.FinishedAtUtc is DateTime finished
-                && finished >= arrivedUtc
-                && !dismissedJobs.Contains(j.Id))
+                && finished >= Progress.SessionStartedUtc
+                && !Progress.IsJobDismissed(j.Id))
             .ToList();
 
     private void ToggleExpanded() => expanded = !expanded;
@@ -221,7 +223,7 @@
             return;
 
         if (latest.FromJob)
-            dismissedJobs.Add(latest.Id);
+            Progress.DismissJob(latest.Id);
         else
             Progress.DismissOutcome(latest.Id);
 

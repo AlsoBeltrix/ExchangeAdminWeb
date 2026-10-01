@@ -168,6 +168,26 @@ public interface IActivityProgress
     void DismissOutcome(string id);
 
     /// <summary>
+    /// When this operator's session began. The status frame announces background jobs that
+    /// ended after this, so it does not re-announce the whole retention window.
+    /// </summary>
+    /// <remarks>
+    /// It lives here rather than on the frame component because the LAYOUT IS REBUILT ON EVERY
+    /// NAVIGATION: a field on the component resets each time the operator changes page, so
+    /// "since you arrived" would silently mean "since this page", and jobs would be
+    /// re-announced on every click. This service is scoped to the circuit and survives.
+    /// </remarks>
+    DateTime SessionStartedUtc { get; }
+
+    /// <summary>Hides one finished background job's result, after the operator dismisses it.</summary>
+    /// <remarks>Also on the service, and for the same reason as <see cref="SessionStartedUtc"/>:
+    /// held on the component, a dismissal would be undone by the next navigation.</remarks>
+    void DismissJob(string jobId);
+
+    /// <summary>Whether that job's result has already been dismissed this session.</summary>
+    bool IsJobDismissed(string jobId);
+
+    /// <summary>
     /// Raised on every change. Subscribers on a Blazor circuit MUST marshal through
     /// InvokeAsync: a module reporting from a worker thread raises this off the renderer.
     /// </summary>
@@ -184,9 +204,12 @@ public sealed class ActivityProgressService : IActivityProgress, IDisposable
     private readonly object _gate = new();
     private readonly List<ActivityState> _active = [];
     private readonly List<ActivityOutcome> _recent = [];
+    private readonly HashSet<string> _dismissedJobs = new(StringComparer.Ordinal);
     private bool _disposed;
 
     public event Action? Changed;
+
+    public DateTime SessionStartedUtc { get; } = DateTime.UtcNow;
 
     public IReadOnlyList<Activity> Active
     {
@@ -277,6 +300,29 @@ public sealed class ActivityProgressService : IActivityProgress, IDisposable
 
         if (removed)
             Raise();
+    }
+
+    public void DismissJob(string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return;
+
+        bool added;
+        lock (_gate)
+        {
+            added = _dismissedJobs.Add(jobId);
+        }
+
+        if (added)
+            Raise();
+    }
+
+    public bool IsJobDismissed(string jobId)
+    {
+        lock (_gate)
+        {
+            return _dismissedJobs.Contains(jobId);
+        }
     }
 
     /// <summary>

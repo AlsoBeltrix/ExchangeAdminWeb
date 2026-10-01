@@ -147,27 +147,84 @@ public class GlobalProgressWiringTests
     }
 
     [Fact]
-    public void TheStatusFrameIsTheLastRowInsideMainAndNotAnOverlay()
+    public void TheStatusFrameSpansTheWindowAndIsNotAFooterInsideThePage()
     {
         var layout = StripComments(ReadRepoFile(Path.Combine("Components", "Layout", "MainLayout.razor")));
 
-        // The frame must sit INSIDE main, after article, so the height chain keeps working:
-        // article stays `flex: 1` and simply gets shorter. Anything fixed or absolute would
-        // float over the bottom of every page, which is precisely the defect queue item 22
-        // fixed (docs/AppLayoutAndScrolling-Plan.md).
-        var article = layout.IndexOf("</article>", StringComparison.Ordinal);
-        var frame = layout.IndexOf("<GlobalProgress", StringComparison.Ordinal);
+        // It must be a SIBLING of .page, outside </main> and outside the page div, so it runs
+        // the full window width - under the sidebar as well as the content. Built inside main
+        // it stops where the sidebar stops and reads as the open module's footer, which is
+        // what the owner rejected on 2026-10-01: "why is it just a footer on the module page?"
         var mainClose = layout.IndexOf("</main>", StringComparison.Ordinal);
+        var pageClose = layout.IndexOf("</div>", mainClose < 0 ? 0 : mainClose, StringComparison.Ordinal);
+        var frame = layout.IndexOf("<GlobalProgress", StringComparison.Ordinal);
+        var shellClose = layout.LastIndexOf("</div>", StringComparison.Ordinal);
 
-        Assert.True(article >= 0 && frame > article && mainClose > frame,
-            "The status frame must render inside <main>, after </article>. Found article at "
-            + $"{article}, frame at {frame}, </main> at {mainClose}.");
+        Assert.True(mainClose >= 0, "</main> was not found.");
+        Assert.True(frame > pageClose,
+            "The status frame must render AFTER the page div closes, as a sibling of .page - "
+            + $"not inside main or inside .page. Found .page closing at {pageClose}, frame at {frame}.");
+        Assert.True(frame < shellClose, "The status frame must still be inside the shell.");
 
+        // Still not an overlay. Floating over the bottom of every page is item 22's actual
+        // defect (docs/AppLayoutAndScrolling-Plan.md); this is a real row of the window.
         var css = StripComments(ReadRepoFile(Path.Combine("wwwroot", "app.css")));
         var frameRule = DeclarationsOf(css, ".gp-frame");
         Assert.DoesNotContain("position: fixed", frameRule, StringComparison.Ordinal);
         Assert.DoesNotContain("position: absolute", frameRule, StringComparison.Ordinal);
         Assert.Contains("flex: none", frameRule, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheFrameHoldsNoSessionStateOfItsOwnBecauseTheLayoutIsRebuiltEveryNavigation()
+    {
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor")));
+
+        // The server rebuilds the layout on every navigation, so this component is destroyed
+        // and recreated each time the operator changes page. Anything session-scoped held in a
+        // field resets with it: "finished since you arrived" quietly becomes "since this
+        // page", and a dismissed result reappears on the next click. Both belong to the
+        // circuit, so both live on the scoped service.
+        Assert.Contains("Progress.SessionStartedUtc", source, StringComparison.Ordinal);
+        Assert.Contains("Progress.IsJobDismissed(", source, StringComparison.Ordinal);
+        Assert.Contains("Progress.DismissJob(", source, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("arrivedUtc", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("dismissedJobs", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheNavigationReadoutStopsOnSomethingObservableRatherThanAFrameworkEvent()
+    {
+        var script = ReadRepoFile(Path.Combine("wwwroot", "nav-progress.js"));
+
+        // The first version stopped only on blazor:enhancedload, which its own comment called
+        // "proven in this app" because App.razor subscribes to it. A subscription is not
+        // evidence that an event fires - the theme code there also has a MutationObserver
+        // fallback, so it would work either way. On dev the event does not fire, and the frame
+        // sat on "Loading Mailbox Permissions - 1m 27s" across several navigations.
+        //
+        // The stop condition must therefore be something directly observable: the page content
+        // actually changed.
+        Assert.Contains("MutationObserver", script, StringComparison.Ordinal);
+        Assert.Contains("childList", script, StringComparison.Ordinal);
+        Assert.Contains("mutatedOutsideTheFrame", script, StringComparison.Ordinal);
+        Assert.Contains("disconnect()", script, StringComparison.Ordinal);
+
+        // And it must expire regardless. A readout nothing can stop is worse than no readout:
+        // it is the operator's one trusted surface standing there saying something false.
+        Assert.Contains("MAX_READOUT_MS", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheFrameCannotClaimToBeLoadingAndIdleAtTheSameTime()
+    {
+        var css = StripComments(ReadRepoFile(Path.Combine("wwwroot", "app.css")));
+
+        // Observed on dev: "Loading Mailbox Permissions - 1m 27s" rendered beside "Idle". The
+        // two halves answer different questions - the server knows of no activity, the browser
+        // knows a page was asked for - and both were allowed to speak at once.
+        Assert.Contains(".gp-frame-navigating .gp-idle", css, StringComparison.Ordinal);
     }
 
     [Fact]

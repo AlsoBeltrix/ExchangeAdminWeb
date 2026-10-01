@@ -1635,12 +1635,15 @@ pre.bg-light {
    gets shorter. Do not make this fixed/absolute: that would overlay the bottom of every page,
    which is the exact defect queue item 22 fixed. */
 .gp-frame {
+    /* Full window width: it is a sibling of .page, not a child of main, so it runs under the
+       sidebar too. A frame that stops where the sidebar stops reads as the module page's
+       footer, which is what the first attempt built and the owner rejected. */
     flex: none;
     display: flex;
     align-items: center;
     gap: 0.6rem;
     min-height: 2rem;
-    padding: 0.25rem 1.5rem 0.25rem 2rem;
+    padding: 0.25rem 1rem;
     border-top: 1px solid var(--ui-line);
     background: var(--ui-header);
     color: var(--ui-fg);
@@ -1733,6 +1736,15 @@ pre.bg-light {
     font-weight: 600;
     color: var(--ui-brand);
     white-space: nowrap;
+}
+
+/* While a navigation is being reported, the Blazor half must not also claim the app is idle.
+   The two are answering different questions - the server knows of no activity, the browser
+   knows a page was asked for - and showing both at once produced "Loading Mailbox Permissions
+   - 1m 27s" next to "Idle" on dev. */
+.gp-frame-navigating .gp-idle,
+.gp-frame-navigating .gp-dot-idle {
+    display: none;
 }
 
 .gp-more, .gp-dismiss {

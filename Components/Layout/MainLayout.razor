@@ -1,39 +1,51 @@
 @inherits LayoutComponentBase
 
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
+@*
+    THE SHELL. The window is a column: the application area on top, the status frame along the
+    bottom. The frame is a sibling of .page, not a child of main, so it spans the FULL window
+    width - under the sidebar as well as the content - and is window chrome rather than a
+    footer belonging to whatever module is open.
 
-    <main>
-        <div class="top-row px-4 d-flex justify-content-end align-items-center">
-            <AuthorizeView>
-                <Authorized>
-                    <UsageTracker />
-                    <ThemePicker />
-                    <small class="text-muted">
-                        <span class="me-1">&#128100;</span>@context.User.Identity?.Name
-                    </small>
-                </Authorized>
-            </AuthorizeView>
+    It was first built inside main, which made it stop where the sidebar stops and read as part
+    of the page. Owner, 2026-10-01: "why isn't it a frame across the bottom of the window? why
+    is it just a footer on the module page? that is not what I told you to design."
+
+    The height chain from queue item 22 is preserved and extended rather than bypassed:
+    .app-shell owns the 100vh, .page takes what is left with `flex: 1; min-height: 0`, and the
+    frame is `flex: none`. No element guesses the height of any other, which is the property
+    item 22 bought. Nothing here is fixed or absolute, so nothing overlays page content - that
+    was item 22's actual defect. See MainLayout.razor.css and AppLayoutCssTests.
+*@
+<div class="app-shell">
+    <div class="page">
+        <div class="sidebar">
+            <NavMenu />
         </div>
 
-        <article class="content px-4">
-            @Body
-        </article>
+        <main>
+            <div class="top-row px-4 d-flex justify-content-end align-items-center">
+                <AuthorizeView>
+                    <Authorized>
+                        <UsageTracker />
+                        <ThemePicker />
+                        <small class="text-muted">
+                            <span class="me-1">&#128100;</span>@context.User.Identity?.Name
+                        </small>
+                    </Authorized>
+                </AuthorizeView>
+            </div>
 
-        @*
-            The status frame. LAST CHILD OF main, and a non-flexing row, so the height chain
-            above it is unchanged: article keeps `flex: 1` and simply gets shorter. It is
-            deliberately not fixed or absolute - overlaying the bottom of every page is the
-            exact defect queue item 22 fixed (docs/AppLayoutAndScrolling-Plan.md).
-        *@
-        <AuthorizeView>
-            <Authorized>
-                <GlobalProgress />
-            </Authorized>
-        </AuthorizeView>
-    </main>
+            <article class="content px-4">
+                @Body
+            </article>
+        </main>
+    </div>
+
+    <AuthorizeView>
+        <Authorized>
+            <GlobalProgress />
+        </Authorized>
+    </AuthorizeView>
 </div>
 
 <div id="blazor-error-ui">

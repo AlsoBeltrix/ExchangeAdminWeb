@@ -60,13 +60,27 @@ public class AppLayoutCssTests
     [Fact]
     public void TheLayoutGivesTheContentAreaARealHeightToMeasureAgainst()
     {
-        // Every "height: 100%" in a page below this is meaningless without these four rules.
-        // Delete any one of them and percentages silently resolve to auto again - which is the
-        // state that made nine pages invent their own numbers.
+        // Every "height: 100%" in a page below this is meaningless without these rules. Delete
+        // any one of them and percentages silently resolve to auto again - which is the state
+        // that made nine pages invent their own numbers.
         var css = File.ReadAllText(Path.Combine(GetLayoutDirectory(), "MainLayout.razor.css"));
         var desktop = DesktopBlock(css);
 
-        Assert.Contains("height: 100vh", DeclarationsOf(desktop, ".page"), StringComparison.Ordinal);
+        // The window height moved up one level when the status frame became a real row of the
+        // window rather than a footer inside main (2026-10-01). The chain is unchanged in kind
+        // - exactly one element owns the viewport height and everything below measures against
+        // it, with no literal anywhere - so this assertion follows it rather than being
+        // dropped. .page claiming 100vh here would now push the status frame below the fold.
+        Assert.Contains("height: 100vh", DeclarationsOf(desktop, ".app-shell"), StringComparison.Ordinal);
+
+        var page = DeclarationsOf(desktop, ".page");
+        Assert.Contains("flex: 1", page, StringComparison.Ordinal);
+        Assert.Contains("min-height: 0", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("100vh", page, StringComparison.Ordinal);
+
+        // The sidebar measures the row it is given, not the viewport: a 100vh sidebar would
+        // run underneath the status frame.
+        Assert.DoesNotContain("100vh", DeclarationsOf(desktop, ".sidebar"), StringComparison.Ordinal);
 
         var main = DeclarationsOf(StripComments(css), "main");
         Assert.Contains("display: flex", main, StringComparison.Ordinal);

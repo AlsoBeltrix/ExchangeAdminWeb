@@ -13,15 +13,28 @@
 // for it: the destination name taken from the clicked link, plus a ticking elapsed time so the
 // operator can see it is still moving rather than wedged.
 //
-// Two independent start signals, because only one of them is proven in this app:
-//   1. blazor:enhancednavigationstart - the documented signal. Present in the shipped runtime
-//      (verified by reading blazor.web.js on the dev host), but its firing is not observable
-//      from this repo.
+// START signals, two of them, because neither Blazor event is guaranteed here:
+//   1. blazor:enhancednavigationstart - documented and present in the shipped runtime.
 //   2. A capturing click listener on same-origin links - depends on nothing but the DOM, and
-//      it is also the only one of the two that knows WHICH link was clicked, so it is what
-//      supplies the destination name.
-// The end signal, blazor:enhancedload, is already proven here: App.razor has subscribed to it
-// for theme reapplication since before this work.
+//      is the only one of the two that knows WHICH link was clicked, so it supplies the name.
+//
+// STOP: the authority is the DOM, not a framework event.
+//
+// The first version of this file stopped only on `blazor:enhancedload` and its comment called
+// that signal "already proven here, App.razor has subscribed to it since before this work".
+// That was wrong, and it was wrong as REASONING, not as a typo: a subscription is not evidence
+// that an event fires. App.razor's theme code also installs a MutationObserver, so the theme
+// would keep working whether that event ever fired or not, and I read working theming as proof
+// of a firing event. On dev it evidently does not fire - the frame sat on "Loading Mailbox
+// Permissions - 1m 27s" across several navigations while the page behind it had loaded
+// instantly.
+//
+// So the stop condition is now something directly observable: the page content actually
+// changed. A MutationObserver watches for child nodes being added or removed outside the
+// status frame, which is precisely "the new page rendered". The Blazor events are still
+// listened for, because if they do fire they are earlier and cheaper - but nothing depends on
+// them any more. There is also a hard cap: a readout that cannot be stopped must expire rather
+// than stand there lying, which is the failure the owner actually saw.
 (function () {
     'use strict';
 
@@ -34,6 +47,16 @@
     // the gap between the click and Blazor committing - not the load itself.
     var BLOCKED_NAV_GRACE_MS = 600;
 
+    // Ignore DOM churn in the first moments after the click, so the readout cannot stop itself
+    // on the click's own side effects before the new page has had any chance to arrive.
+    var CONTENT_SETTLE_MS = 200;
+
+    // A readout that cannot be stopped must expire. Standing there counting up forever is the
+    // exact failure this file shipped with, and in a permanent frame it is worse than showing
+    // nothing: it is the operator's one trusted surface telling them something false. Five
+    // minutes is far longer than any navigation in this app and far shorter than forever.
+    var MAX_READOUT_MS = 5 * 60 * 1000;
+
     var active = false;
     var startedAt = 0;
     var destination = '';
@@ -41,6 +64,7 @@
     var hrefAtStart = '';
     var navEventSeen = false;
     var leavingDocument = false;
+    var contentWatcher = null;
 
     function host() {
         // The frame renders the slot. If the frame is not on the page (an unauthenticated or
@@ -91,6 +115,46 @@
     //   - navigation committed  -> location.href has already changed;
     //   - full page navigation  -> beforeunload has fired;
     //   - navigation refused    -> neither, and only then do we stop.
+    // True when the mutation touched something that is not part of the status frame. The frame
+    // repaints its own elapsed time every second and Blazor re-renders it independently, so
+    // without this filter the readout would immediately stop itself.
+    function mutatedOutsideTheFrame(records) {
+        var frame = document.getElementById(FRAME_ID);
+        for (var i = 0; i < records.length; i++) {
+            var target = records[i].target;
+            if (!target) {
+                continue;
+            }
+            if (frame && (target === frame || frame.contains(target))) {
+                continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    function watchForTheNewPage() {
+        if (contentWatcher || typeof MutationObserver !== 'function') {
+            return;
+        }
+
+        contentWatcher = new MutationObserver(function (records) {
+            if (!active || Date.now() - startedAt < CONTENT_SETTLE_MS) {
+                return;
+            }
+            if (mutatedOutsideTheFrame(records)) {
+                // The page content changed, so the navigation landed. This is the authority:
+                // it is the thing the operator can see, and it needs no framework contract.
+                stop();
+            }
+        });
+
+        // childList only. Attribute changes would fire on the sidebar link gaining its active
+        // class the instant the click is handled, and character-data changes would fire on the
+        // readout's own ticking text.
+        contentWatcher.observe(document.body, { childList: true, subtree: true });
+    }
+
     function abandonIfNavigationNeverHappened() {
         if (!active || navEventSeen || leavingDocument) {
             return;
@@ -123,12 +187,20 @@
         }
 
         paint();
+        watchForTheNewPage();
+
         // One second, because the number it prints has one-second resolution. A faster timer
-        // would repaint identical text. The same tick re-checks for a refused navigation; a
-        // window.confirm blocks timers while it is open, so the first tick after the operator
-        // answers it is what clears a cancelled one.
+        // would repaint identical text. The same tick re-checks for a refused navigation and
+        // enforces the hard cap; a window.confirm blocks timers while it is open, so the first
+        // tick after the operator answers it is what clears a cancelled one.
         ticker = window.setInterval(function () {
             abandonIfNavigationNeverHappened();
+
+            if (Date.now() - startedAt > MAX_READOUT_MS) {
+                stop();
+                return;
+            }
+
             paint();
         }, 1000);
 
@@ -144,6 +216,11 @@
         if (ticker !== null) {
             window.clearInterval(ticker);
             ticker = null;
+        }
+
+        if (contentWatcher) {
+            contentWatcher.disconnect();
+            contentWatcher = null;
         }
 
         var frame = document.getElementById(FRAME_ID);

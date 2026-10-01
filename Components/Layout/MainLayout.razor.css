@@ -1,3 +1,11 @@
+/* The outermost row stack: application area, then the status frame. On desktop this is what
+   owns the window height, so .page can take "whatever is left" instead of claiming 100vh and
+   pushing the frame off the bottom. */
+.app-shell {
+    display: flex;
+    flex-direction: column;
+}
+
 .page {
     position: relative;
     display: flex;
@@ -70,14 +78,25 @@ main {
        With the chain complete, a page fills the remaining space by saying so, and is
        exactly right at every window size with no number anywhere.
        ============================================================================ */
+    /* The 100vh moved up one level, to .app-shell, when the status frame became a real row of
+       the window rather than a footer inside main. .page claiming 100vh here would push the
+       frame below the fold. The chain is unchanged in kind - one element owns the window
+       height and everything below measures against it, with no literal anywhere. */
+    .app-shell {
+        height: 100vh;
+    }
+
     .page {
         flex-direction: row;
-        height: 100vh;
+        flex: 1;
+        min-height: 0;
     }
 
     .sidebar {
         width: 218px;
-        height: 100vh;
+        /* 100% of the row .page gives it, NOT 100vh: with the status frame taking a slice of
+           the window, a viewport-height sidebar would run underneath it. */
+        height: 100%;
         position: sticky;
         top: 0;
 
