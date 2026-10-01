@@ -1087,11 +1087,25 @@
         var target = string.Join(",", messages.Select(m => string.IsNullOrWhiteSpace(m.MessageId) ? m.MessageTraceId : m.MessageId));
         try
         {
+            // Items, and a REAL one: the selection count is known, so the frame shows a true
+            // "x of y" rather than a spinner over an unknown number of cloud round trips.
+            //
+            // This is also the first operation in the app that is genuinely cancellable. The
+            // token comes from the activity, so the navigate-away warning's OK path actually
+            // stops the fetch instead of only stopping the UI waiting for it. That only works
+            // because GetMessageDetailAsync already accepts a token - most services do not,
+            // and until they do the warning's promise is half true for those modules.
+            using var activity = Progress.Begin(
+                "Message Trace", "Downloading delivery detail", ActivitySize.Items(messages.Count));
+
             // Fetch each selected message's detail (one cloud call each; on-prem free), then build the
             // same CSV the email path produces. Fail-soft: a per-message error is carried into the export.
             var details = new List<MessageTraceDetail>(messages.Count);
             foreach (var m in messages)
-                details.Add(await MsgTrace.GetMessageDetailAsync(m));
+            {
+                details.Add(await MsgTrace.GetMessageDetailAsync(m, activity.CancellationToken));
+                activity.Report(details.Count);
+            }
 
             var csv = MessageTraceDetailReport.BuildCsv(details);
             var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
@@ -1099,7 +1113,18 @@
             var filename = $"MessageTraceDetail_{DateTime.Now:yyyyMMdd-HHmmss}.csv";
             await JS.InvokeVoidAsync("downloadFile", filename, "text/csv", base64);
 
+            activity.Complete(true, $"{details.Count:N0} message(s) exported");
+
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailDownload", target, true, null, ticketNumber.Trim());
+        }
+        catch (OperationCanceledException)
+        {
+            // The operator chose to leave and cancel. That is not an error and must not be
+            // rendered as one - but it IS audited, because a half-finished export of other
+            // people's mail detail is a thing to have a record of.
+            detailActionError = null;
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailDownload", target,
+                false, "Cancelled by the operator", ticketNumber.Trim());
         }
         catch (Exception ex)
         {

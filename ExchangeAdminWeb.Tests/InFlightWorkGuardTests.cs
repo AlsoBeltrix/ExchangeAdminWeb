@@ -101,6 +101,30 @@ public class InFlightWorkGuardTests
             "A disposed check must sit between awaiting authentication and subscribing.");
     }
 
+    [Fact]
+    public void AtLeastOneModuleActuallyHonoursTheCancellationTokenTheWarningPromises()
+    {
+        // The warning tells the operator their work will be cancelled. Cancelling sets a
+        // token; work that never reads the token keeps running regardless, so for a module
+        // that ignores it the popup is only half true - the UI stops waiting, the work does
+        // not stop.
+        //
+        // This asserts the promise is kept SOMEWHERE rather than everywhere, because adoption
+        // is incremental and most services do not accept a token yet. Its job is to stop the
+        // last honouring call site being deleted and the promise quietly becoming false
+        // everywhere at once.
+        var honouring = Directory
+            .GetFiles(Path.Combine(RepoRoot(), "Components", "Pages"), "*.razor")
+            .Where(f => File.ReadAllText(f).Contains("activity.CancellationToken", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ToList();
+
+        Assert.True(honouring.Count > 0,
+            "No page passes activity.CancellationToken into the work it reports. The "
+            + "navigate-away warning says the operation will be cancelled, so at least one "
+            + "module must actually honour it or the warning is a lie everywhere.");
+    }
+
     private static string ReadRepoFile(string relativePath) =>
         File.ReadAllText(Path.Combine(RepoRoot(), relativePath));
 
