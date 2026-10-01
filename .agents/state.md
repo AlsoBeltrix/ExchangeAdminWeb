@@ -26,6 +26,11 @@ Two new items landed in `queue.txt` on 2026-10-01 and NEITHER is started - the t
 > depends entirely on how much was checked, which is spelled out below.`), and his rule is
 > **"No editorializing anywhere in the app."** Not scoped to that one module - it is a sweep.
 
+**Item 24 now has a stakeholder complaint behind it, not just an owner observation.** The
+Comms-10k reviewer's second point is exactly this: no visibility into whether the sync is still
+running, and no notification that it finished or failed. Whatever is built for 24 should satisfy
+that case, and it is the reason 24 outranks the rest of the Comms-10k report.
+
 **Item 24 is a cross-cutting design job, not a bug fix, and it needs a plan and a go before any
 code.** It touches every module by definition. Before drafting, note two things this repo
 already has, so the plan extends them rather than inventing a third pattern: `IsBusy` and the
@@ -127,10 +132,29 @@ guide all carry the scoped exception, contrasted against Self-Service Groups.
 - **Migration `@key` fix:** proven at source level only; the owner's own screenshot case is
   still the acceptance check.
 - **Comms-10k: FAILS THE STAKEHOLDER'S TEST (owner, 2026-10-01). The plan is fully implemented
-  and it is NOT accepted.** The failure mode has not yet been described to the agent - the next
-  session must ask what the stakeholder's test is and what it did, and must NOT guess from the
-  plan's Acceptance list. Until then nothing about this module is diagnosable and no fix should
-  be attempted.
+  and it is NOT accepted.** The stakeholder's own three points, verbatim, are below. **NOT
+  diagnosed, NOT started, and it is NOT the priority - item 24 is.** Do not open this before
+  item 24 without an owner go.
+
+  1. *"Longer synchronization time. In the previous version of the Self-Service App, audience
+     updates were completed much faster, typically within 15 to 20 minutes. With the current
+     interface/version, member loading can take 1.5 hours or more before the distribution list
+     is fully updated."*
+  2. *"Lack of Sync Progress Visibility. We currently have no visibility into whether the member
+     synchronization is still in progress ... a clear notification indicating whether the member
+     loading process has been successfully completed or has failed."*
+  3. *"Ongoing issue with missing email addresses. We continue to encounter cases where not all
+     intended members are loaded into the distribution list."*
+
+  Three things the next session should know before touching any of it, none of them a
+  diagnosis:
+  - **Point 2 IS queue item 24.** Fixing the P1 covers it; it is not separate work.
+  - **Point 3 says "ongoing" and "we continue to"**, so it reads as predating this plan rather
+    than as a regression from it. Establish that before treating it as one.
+  - **Point 1 needs its baseline established first.** "The previous version of the Self-Service
+    App" may not be this app, and "before the distribution list is fully updated" may be
+    measuring AD-to-Exchange-Online directory sync rather than the module's write, which is
+    measured at 7.9s for 10,001 members. Ask before timing anything.
 
 **A recurring defect in this session's own tests, worth carrying:** three separate guards were
 written to forbid a named antipattern and then read the comment that EXPLAINED the antipattern,
