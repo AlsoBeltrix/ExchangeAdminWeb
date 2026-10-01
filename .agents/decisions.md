@@ -5,6 +5,39 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-01 - Rendered is not visible. A source scan cannot verify a UI claim.
+
+Status: Active. Owner ruling, 2026-10-01, verbatim:
+
+> the issue is that you don't understand that making the text appear in the code does not mean
+> the text is accessible to the human who needs it.
+
+Context: the status frame rendered the word "Idle" into the DOM, correctly, and the operator
+saw an empty bar. The text was underneath the browser's own status bubble - the overlay every
+major browser draws in the BOTTOM-LEFT corner of the viewport for link hover targets and page
+loading. The agent had verified the string was in the served markup, found no error in the
+logs, concluded the markup was right and therefore something must be hiding it in CSS, and
+shipped a confident fix for a cause that was not the cause.
+
+Decision:
+
+**A source-level assertion proves a string exists. It proves nothing about whether a person can
+read it.** Position, contrast, size, z-order, and what else occupies that screen real estate
+are all part of "does this work", and none of them are visible to any test in this repo.
+
+Consequences:
+
+- **An agent may not report a UI change as working on the strength of a passing source scan.**
+  Say what was checked and say that legibility was not. The honest phrasing is "the markup
+  contains it; whether it is readable on screen is unverified."
+- **Screen real estate the agent does not own must be treated as unavailable.** The viewport's
+  bottom-left corner belongs to the browser; so do the scrollbar gutters, and on mobile the
+  OS chrome. Do not place content there and then reason about why it cannot be seen.
+- **When a visual report conflicts with a source scan, the operator's eyes win and the scan is
+  the thing to doubt.** The scan is measuring a weaker property than the one in dispute.
+- This is why `docs/GlobalProgressSystem-Plan.md` carries a manual acceptance checklist that
+  only the owner can run, and why that checklist is not optional paperwork.
+
 ### 2026-10-01 - No deployments until the global progress system is done
 
 Status: Active. Owner ruling, 2026-10-01, verbatim: *"no more deployments until this is done."*

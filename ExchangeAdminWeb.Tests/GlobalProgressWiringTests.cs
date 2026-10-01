@@ -234,6 +234,25 @@ public class GlobalProgressWiringTests
     }
 
     [Fact]
+    public void TheStatusFrameKeepsItsContentOutOfTheBrowsersOwnBottomLeftOverlay()
+    {
+        var css = StripComments(ReadRepoFile(Path.Combine("wwwroot", "app.css")));
+        var frameRule = DeclarationsOf(css, ".gp-frame");
+
+        // The bottom-left corner of the viewport belongs to the BROWSER: the link hover target
+        // and the page-loading status are drawn there as an overlay, on top of whatever the
+        // page put underneath. This frame first rendered "Idle" starting at the left edge, so
+        // the text was correct in the DOM and completely hidden from the operator.
+        //
+        // Owner, 2026-10-01: "making the text appear in the code does not mean the text is
+        // accessible to the human who needs it."
+        //
+        // The bubble's width follows the URL it is showing, so no left-hand indent is safe.
+        // The only reliable answer is not to use that corner at all.
+        Assert.Contains("justify-content: flex-end", frameRule, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheStatusFrameCanNeverRenderCompletelyEmpty()
     {
         var css = StripComments(ReadRepoFile(Path.Combine("wwwroot", "app.css")));
