@@ -5,6 +5,7 @@
 @attribute [Authorize(Policy = "OutOfOffice")]
 @rendermode InteractiveServer
 @inject OutOfOfficeService OofService
+@inject IActivityProgress Progress
 @inject AuditService Audit
 @inject EmailService Email
 @inject PermissionValidator Validator
@@ -237,7 +238,11 @@
 
         try
         {
+            using var activity = Progress.Begin(
+                "Out of Office", $"Reading auto-reply for {checkEmail.Trim()}", ActivitySize.Unknown);
+
             checkResult = await OofService.GetOutOfOfficeAsync(checkEmail.Trim());
+            activity.Complete(checkResult.Error == null, checkResult.Error);
             Audit.LogLookupAction(currentUser, clientIpAddress, "CheckOutOfOffice", checkEmail.Trim(), checkResult.Error == null, checkResult.Error);
         }
         catch (Exception ex)

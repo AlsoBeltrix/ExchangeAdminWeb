@@ -363,6 +363,10 @@ public class GlobalProgressWiringTests
     [InlineData("EmergencyDisable.razor")]
     [InlineData("LicensingUpdates.razor")]
     [InlineData("MfaReset.razor")]
+    [InlineData("OutOfOffice.razor")]
+    [InlineData("BlockedSenders.razor")]
+    [InlineData("CloudPasswordReset.razor")]
+    [InlineData("ADAttributeEditor.razor")]
     public void AnAdoptedModuleReportsItsWorkToTheStatusFrame(string page)
     {
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", page)));

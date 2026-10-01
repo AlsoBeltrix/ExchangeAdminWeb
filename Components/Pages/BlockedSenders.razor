@@ -5,6 +5,7 @@
 @attribute [Authorize(Policy = "BlockedSenders")]
 @rendermode InteractiveServer
 @inject BlockedSenderService BlockedSenderSvc
+@inject IActivityProgress Progress
 @inject BlockedSenderProtectionGate ProtectionGate
 @inject AuditService Audit
 @inject EmailService Email
@@ -188,8 +189,12 @@
 
         try
         {
+            using var activity = Progress.Begin(
+                "Blocked Senders", "Loading blocked senders", ActivitySize.Unknown);
+
             var senders = await BlockedSenderSvc.GetBlockedSendersAsync();
             blockedSenders = senders.ToList();
+            activity.Complete(true, $"{blockedSenders.Count:N0} sender(s)");
 
             try
             {

@@ -3,6 +3,7 @@
 @attribute [Authorize(Policy = "ADAttributeEditor")]
 @rendermode InteractiveServer
 @inject ADAttributeEditorService EditorService
+@inject IActivityProgress Progress
 @inject ProtectedPrincipalService ProtectedPrincipalService
 @inject ProtectedPrincipalServicerService Servicers
 @inject AuditService Audit
@@ -307,7 +308,11 @@
 
         try
         {
+            using var activity = Progress.Begin(
+                "AD Attribute Editor", $"Looking up {searchIdentity.Trim()}", ActivitySize.Unknown);
+
             var result = await EditorService.LookupAsync(searchIdentity.Trim());
+            activity.Complete(result.Success, result.Error);
 
             if (!result.Success)
             {
