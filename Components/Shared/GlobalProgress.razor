@@ -130,7 +130,7 @@
     private bool subscribed;
 
     private IReadOnlyList<PageLoad> pageLoads = Array.Empty<PageLoad>();
-    private IReadOnlyList<Activity> activities = Array.Empty<Activity>();
+    private IReadOnlyList<ProgressActivity> activities = Array.Empty<ProgressActivity>();
     private IReadOnlyList<ActivityOutcome> outcomes = Array.Empty<ActivityOutcome>();
     private IReadOnlyList<BulkJob> activeJobs = Array.Empty<BulkJob>();
     private IReadOnlyList<BulkJob> recentJobs = Array.Empty<BulkJob>();
@@ -322,7 +322,7 @@
         }
     }
 
-    private static string ActivityStatus(Activity activity)
+    private static string ActivityStatus(ProgressActivity activity)
     {
         var counted = activity.Shape switch
         {

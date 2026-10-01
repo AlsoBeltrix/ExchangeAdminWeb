@@ -353,6 +353,24 @@ public class GlobalProgressWiringTests
             + "no page load can be attributed to the operator waiting for it.");
     }
 
+    [Theory]
+    [InlineData("RiskyUsers.razor")]
+    public void AnAdoptedModuleReportsItsWorkToTheStatusFrame(string page)
+    {
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", page)));
+
+        // An adopted module begins an activity and lets `using` end it, so an exception path
+        // cannot leave the frame claiming the work is still running - the same guarantee the
+        // page-load middleware gets from its own using block.
+        Assert.Contains("IActivityProgress Progress", source, StringComparison.Ordinal);
+        Assert.Contains("using var activity = Progress.Begin(", source, StringComparison.Ordinal);
+
+        // And it must report the outcome rather than only the start. Dispose alone records a
+        // failure, which is right for an abandoned operation and wrong for one that worked.
+        Assert.Contains("activity.Complete(true", source, StringComparison.Ordinal);
+        Assert.Contains("activity.Complete(false", source, StringComparison.Ordinal);
+    }
+
     private static string DeclarationsOf(string css, string selector)
     {
         var index = css.IndexOf(selector + " {", StringComparison.Ordinal);

@@ -3,6 +3,7 @@
 @attribute [Authorize(Policy = "RiskyUsers")]
 @rendermode InteractiveServer
 @inject RiskyUsersService RiskyUsersService
+@inject IActivityProgress Progress
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -620,9 +621,17 @@
 
         var target = lookupUpn.Trim();
 
+        // Reported to the status frame for as long as it runs. Indeterminate: Entra does not
+        // tell us how long a lookup will take, and a made-up percentage is the one thing the
+        // frame must never show.
+        using var activity = Progress.Begin(
+            "Risky Users", $"Looking up {target}", ActivitySize.Unknown);
+
         try
         {
             lookup = await RiskyUsersService.LookupAsync(target);
+
+            activity.Complete(true);
 
             SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_Lookup", "RiskyUsers",
                 target, true));
@@ -632,6 +641,7 @@
             // A failed lookup is NOT "no risk record". The service returns the two negatives as
             // outcomes precisely so that this branch only ever holds real failures.
             lookupError = ex.Message;
+            activity.Complete(false, ex.Message);
             Logger.LogError(ex, "Risky Users lookup failed for {Upn}", target);
 
             SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_Lookup", "RiskyUsers",
@@ -671,12 +681,17 @@
             string.IsNullOrWhiteSpace(upnContains) ? null : upnContains.Trim());
         var target = DescribeFilter(filter);
 
+        using var activity = Progress.Begin(
+            "Risky Users", "Querying Entra ID Protection", ActivitySize.Unknown);
+
         try
         {
             var page = await RiskyUsersService.GetRiskyUsersAsync(filter);
             results = [.. page.Users];
             truncated = page.Truncated;
             ceiling = page.Ceiling;
+
+            activity.Complete(true, $"{results.Count:N0} found");
 
             SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_List", "RiskyUsers", target, true));
         }
@@ -686,6 +701,7 @@
             // service throws rather than returning an empty page, and that exception is surfaced
             // here as a distinct alert, never folded into the empty-results branch.
             errorMessage = ex.Message;
+            activity.Complete(false, ex.Message);
             Logger.LogError(ex, "Failed to load risky users.");
 
             SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_List", "RiskyUsers", target, false, errorDetail: ex.Message));

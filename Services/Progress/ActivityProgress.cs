@@ -62,7 +62,7 @@ public readonly record struct ActivityUpdate(int Done, string? Detail = null);
 /// A live activity, as the display reads it. Immutable snapshot: the service hands out copies so
 /// a render cannot observe a half-applied update from another thread.
 /// </summary>
-public sealed record Activity
+public sealed record ProgressActivity
 {
     public required string Id { get; init; }
     public required string ModuleId { get; init; }
@@ -150,7 +150,7 @@ public interface IActivityProgress
     IActivityHandle Begin(string moduleId, string label, ActivitySize size);
 
     /// <summary>Everything running right now, oldest first.</summary>
-    IReadOnlyList<Activity> Active { get; }
+    IReadOnlyList<ProgressActivity> Active { get; }
 
     /// <summary>Recently ended activities, newest first, bounded. Cleared as they age out.</summary>
     IReadOnlyList<ActivityOutcome> RecentOutcomes { get; }
@@ -211,7 +211,7 @@ public sealed class ActivityProgressService : IActivityProgress, IDisposable
 
     public DateTime SessionStartedUtc { get; } = DateTime.UtcNow;
 
-    public IReadOnlyList<Activity> Active
+    public IReadOnlyList<ProgressActivity> Active
     {
         get
         {
@@ -516,11 +516,11 @@ public sealed class ActivityProgressService : IActivityProgress, IDisposable
             }
         }
 
-        internal Activity Snapshot()
+        internal ProgressActivity Snapshot()
         {
             lock (_stateGate)
             {
-                return new Activity
+                return new ProgressActivity
                 {
                     Id = Id,
                     ModuleId = ModuleId,
