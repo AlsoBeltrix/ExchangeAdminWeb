@@ -273,6 +273,7 @@ try
     // token down into services as arguments.
     builder.Services.AddScoped<ExchangeAdminWeb.Services.Progress.IActivityProgress,
         ExchangeAdminWeb.Services.Progress.ActivityProgressService>();
+    builder.Services.AddSingleton<PageLoadTracker>();
     builder.Services.AddSingleton<AuditService>();
     builder.Services.AddSingleton<EmailService>();
     builder.Services.AddSingleton<ProtectedPrincipalService>();
@@ -438,6 +439,10 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
     app.UseMiddleware<ClientInfoMiddleware>();
+    // After authentication, so the request is attributed to the right operator, and after
+    // ClientInfoMiddleware for consistency with it. Records page requests while they are being
+    // served so the status frame reports a fact rather than inferring one in the browser.
+    app.UseMiddleware<PageLoadMiddleware>();
     app.UseAntiforgery();
 
     app.MapRazorComponents<App>()

@@ -1748,37 +1748,6 @@ pre.bg-light {
     }
 }
 
-.gp-nav-slot { display: contents; }
-
-.gp-nav-live {
-    font-weight: 600;
-    color: var(--ui-brand);
-    white-space: nowrap;
-}
-
-/* While a navigation is being reported, the Blazor half must not also claim the app is idle.
-   The two answer different questions - the server knows of no activity, the browser knows a
-   page was asked for - and showing both at once produced "Loading Mailbox Permissions - 1m
-   27s" next to "Idle" on dev.
-
-   DRIVEN BY THE PRESENCE OF THE READOUT, not by a class the JS toggles. The first version
-   added .gp-frame-navigating and removed it again, which meant a stuck class could hide
-   "Idle" with no readout left to replace it - an EMPTY status bar, which is the worst of the
-   three states and is what the owner was shown. Keyed on :has(), the invariant is structural
-   and cannot desynchronise: "Idle" is hidden only while something is actually there instead
-   of it. If a browser does not support :has(), the rule drops and both show - cluttered, but
-   never blank. That is the correct direction to fail. */
-.gp-frame:has(#gp-nav-live) .gp-idle,
-.gp-frame:has(#gp-nav-live) .gp-dot-idle {
-    display: none;
-}
-
-/* The tint follows the same structural signal, for the same reason. */
-.gp-frame:has(#gp-nav-live) {
-    background: color-mix(in srgb, var(--ui-brand) 14%, var(--ui-header));
-    border-top-color: var(--ui-brand);
-}
-
 .gp-more, .gp-dismiss {
     flex: none;
     padding: 0 0.4rem;

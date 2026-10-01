@@ -194,46 +194,6 @@ public class GlobalProgressWiringTests
     }
 
     [Fact]
-    public void TheNavigationReadoutStopsOnSomethingObservableRatherThanAFrameworkEvent()
-    {
-        var script = ReadRepoFile(Path.Combine("wwwroot", "nav-progress.js"));
-
-        // The first version stopped only on blazor:enhancedload, which its own comment called
-        // "proven in this app" because App.razor subscribes to it. A subscription is not
-        // evidence that an event fires - the theme code there also has a MutationObserver
-        // fallback, so it would work either way. On dev the event does not fire, and the frame
-        // sat on "Loading Mailbox Permissions - 1m 27s" across several navigations.
-        //
-        // The stop condition must therefore be something directly observable: the page content
-        // actually changed.
-        Assert.Contains("MutationObserver", script, StringComparison.Ordinal);
-        Assert.Contains("childList", script, StringComparison.Ordinal);
-        Assert.Contains("mutatedOutsideTheFrame", script, StringComparison.Ordinal);
-        Assert.Contains("disconnect()", script, StringComparison.Ordinal);
-
-        // A DOM change alone is not proof the new page arrived: the old page is still live and
-        // still mutating while we wait - four autocomplete components hold debounce timers
-        // that call StateHasChanged after the click. The URL must have moved first.
-        var observerBody = Between(script, "contentWatcher = new MutationObserver", "contentWatcher.observe");
-        Assert.Contains("location.href === hrefAtStart", observerBody, StringComparison.Ordinal);
-
-        // And it must expire regardless. A readout nothing can stop is worse than no readout:
-        // it is the operator's one trusted surface standing there saying something false.
-        Assert.Contains("MAX_READOUT_MS", script, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void TheFrameCannotClaimToBeLoadingAndIdleAtTheSameTime()
-    {
-        var css = StripComments(ReadRepoFile(Path.Combine("wwwroot", "app.css")));
-
-        // Observed on dev: "Loading Mailbox Permissions - 1m 27s" rendered beside "Idle". The
-        // two halves answer different questions - the server knows of no activity, the browser
-        // knows a page was asked for - and both were allowed to speak at once.
-        Assert.Contains(".gp-frame:has(#gp-nav-live) .gp-idle", css, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void TheStatusFrameKeepsItsContentOutOfTheBrowsersOwnBottomLeftOverlay()
     {
         var css = StripComments(ReadRepoFile(Path.Combine("wwwroot", "app.css")));
@@ -293,32 +253,6 @@ public class GlobalProgressWiringTests
     }
 
     [Fact]
-    public void TheStatusFrameCanNeverRenderCompletelyEmpty()
-    {
-        var css = StripComments(ReadRepoFile(Path.Combine("wwwroot", "app.css")));
-        var script = ReadRepoFile(Path.Combine("wwwroot", "nav-progress.js"));
-
-        // The frame has exactly three legitimate states: Idle, a live readout, or both halves
-        // of a running job. Blank is not one of them, and blank is what the owner was shown.
-        //
-        // It happened because hiding "Idle" was driven by a CLASS the script toggled on an
-        // element Blazor owns and re-renders. Two independent writers on one attribute: if the
-        // class survived without the readout surviving, nothing was left to display.
-        //
-        // The rule is now keyed on the readout element's own presence, so "Idle" can only be
-        // hidden while something is literally there instead of it. The script must therefore
-        // not style the frame at all - if it starts toggling classes again the same
-        // desynchronisation returns, which is why this asserts the ABSENCE.
-        Assert.DoesNotContain("classList", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("gp-frame-navigating", css, StringComparison.Ordinal);
-
-        // And the hide must be conditional on the readout existing, never unconditional.
-        var hideRule = css.IndexOf(".gp-idle", StringComparison.Ordinal);
-        Assert.True(hideRule > 0, "No rule targeting .gp-idle was found.");
-        Assert.Contains(":has(#gp-nav-live)", css, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void TheStatusFrameIsAnInteractiveIslandLikeEveryOtherLiveComponentInTheLayout()
     {
         var frame = ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor"));
@@ -371,76 +305,52 @@ public class GlobalProgressWiringTests
     }
 
     [Fact]
-    public void TheNavigationReadoutWritesIntoTheSlotTheFrameRenders()
+    public void PageLoadsAreReportedFromTheServerAndNotDetectedInTheBrowser()
     {
         var frame = StripComments(ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor")));
-        var script = ReadRepoFile(Path.Combine("wwwroot", "nav-progress.js"));
+        var app = StripComments(ReadRepoFile(Path.Combine("Components", "App.razor")));
 
-        // The component cannot render during a navigation - the circuit that would render it
-        // is the thing being waited on - so the JS owns this slot. If the id drifts on either
-        // side the readout silently stops appearing, which is exactly how the first attempt
-        // failed on dev.
-        Assert.Contains("gp-nav-slot", frame, StringComparison.Ordinal);
-        Assert.Contains("gp-nav-slot", script, StringComparison.Ordinal);
-        Assert.Contains("gp-frame", script, StringComparison.Ordinal);
+        // Four browser-side attempts to detect that a page had arrived were shipped and all
+        // four failed on the real deployment, each leaving the frame counting upwards on a
+        // page that had already loaded: blazor:enhancedload, blazor:enhancednavigationend, a
+        // DOM MutationObserver, and a timeout. They share one shape - the browser LATCHES a
+        // claim and something else has to retract it. A design that must be told to stop lying
+        // can always be caught lying.
+        //
+        // The server is holding the request. It cannot be wrong about whether it is still
+        // serving it, and PageLoadTracker forgets the request in a finally, so there is no
+        // latch to strand. This test exists to stop the browser-side approach coming back.
+        Assert.Contains("PageLoadTracker", frame, StringComparison.Ordinal);
+        Assert.Contains("PageLoads.InFlightFor(", frame, StringComparison.Ordinal);
 
-        // It must name the destination, not just report that something is happening.
-        Assert.Contains("'Loading '", script, StringComparison.Ordinal);
-        Assert.Contains("textContent", script, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(RepoRoot(), "wwwroot", "nav-progress.js")),
+            "wwwroot/nav-progress.js is back. Page-load reporting belongs on the server; see "
+            + "Services/PageLoadTracker.cs and the comment in Components/App.razor.");
+
+        Assert.DoesNotContain("nav-progress", app, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ARefusedNavigationCannotLeaveTheFrameReadingLoadingForever()
+    public void TheMiddlewareEndsEveryPageLoadEvenWhenTheRequestFails()
     {
-        var script = ReadRepoFile(Path.Combine("wwwroot", "nav-progress.js"));
+        var source = StripComments(ReadRepoFile(Path.Combine("Middleware", "PageLoadMiddleware.cs")));
 
-        // A click is not a navigation. UnsavedChangesGuard can refuse one with
-        // PreventNavigation, and a refused navigation fires no load event - so the readout
-        // needs a way to notice nothing happened. In a PERMANENT frame a stuck "Loading X -
-        // 94s" is worse than no frame at all: it is a standing lie with a live timer behind it.
-        // Declared AND wired in. An earlier version of this test only asserted the name
-        // appeared somewhere, which a probe satisfied by renaming the declaration and leaving
-        // the call sites - a guard that is present but never called reads identically to one
-        // that works. Count the calls, not the mentions.
-        Assert.Contains("function abandonIfNavigationNeverHappened()", script, StringComparison.Ordinal);
+        // The entire anti-stranding guarantee is that the scope is disposed whatever happens.
+        // A request that throws, is cancelled or times out must still clear the frame; an
+        // explicit End() on the success path only would reintroduce exactly the stuck readout
+        // this replaced.
+        Assert.Contains("using (tracker.Begin(", source, StringComparison.Ordinal);
 
-        // Count bare identifier references, not call parentheses: one of the two call sites
-        // passes the function to setTimeout by name, with no parentheses at all, so a
-        // parenthesis-based count silently misses it.
-        var calls = Regex.Matches(script, @"\babandonIfNavigationNeverHappened\b").Count
-            - 1; // the declaration itself
-        Assert.True(calls >= 2,
-            "The watchdog must be called from both the repeating tick and the one-shot timer: "
-            + $"the tick is what clears a cancelled window.confirm, and the timer is what "
-            + $"catches a refusal that never ran a tick. Found {calls} call sites.");
+        var registration = StripComments(ReadRepoFile("Program.cs"));
+        Assert.Contains("UseMiddleware<PageLoadMiddleware>()", registration, StringComparison.Ordinal);
 
-        Assert.Contains("setInterval", script, StringComparison.Ordinal);
-        Assert.Contains("setTimeout(abandonIfNavigationNeverHappened", script, StringComparison.Ordinal);
-
-        // The three facts the watchdog distinguishes. Losing any one of them either strands the
-        // readout or kills a legitimate one: href proves an enhanced navigation committed,
-        // beforeunload proves a full one did, and the start event proves Blazor accepted it.
-        foreach (var fact in new[] { "hrefAtStart", "leavingDocument", "navEventSeen" })
-        {
-            Assert.True(Regex.Matches(script, Regex.Escape(fact)).Count >= 2,
-                $"'{fact}' must be both set and read; found fewer than two references, so it "
-                + "is either never assigned or never consulted.");
-        }
-
-        // The interval must be cleared on every stop, or a refused navigation leaks a timer
-        // that repaints forever.
-        Assert.Contains("clearInterval", script, StringComparison.Ordinal);
-    }
-
-    private static string Between(string source, string start, string end)
-    {
-        var from = source.IndexOf(start, StringComparison.Ordinal);
-        Assert.True(from >= 0, $"'{start}' not found.");
-
-        var to = source.IndexOf(end, from, StringComparison.Ordinal);
-        Assert.True(to > from, $"'{end}' not found after '{start}'.");
-
-        return source[from..to];
+        // After authentication, or every page load is attributed to nobody and the frame shows
+        // the operator nothing.
+        var auth = registration.IndexOf("UseAuthentication()", StringComparison.Ordinal);
+        var pageLoad = registration.IndexOf("UseMiddleware<PageLoadMiddleware>()", StringComparison.Ordinal);
+        Assert.True(auth >= 0 && pageLoad > auth,
+            "PageLoadMiddleware must run after UseAuthentication, or context.User is empty and "
+            + "no page load can be attributed to the operator waiting for it.");
     }
 
     private static string DeclarationsOf(string css, string selector)
@@ -451,22 +361,6 @@ public class GlobalProgressWiringTests
         var open = css.IndexOf('{', index);
         var close = css.IndexOf('}', open);
         return css[open..close];
-    }
-
-    [Fact]
-    public void TheNavigationBarIsLoadedAndCarriesBothStartSignals()
-    {
-        var app = StripComments(ReadRepoFile(Path.Combine("Components", "App.razor")));
-        Assert.Contains("nav-progress.js", app, StringComparison.Ordinal);
-
-        var script = ReadRepoFile(Path.Combine("wwwroot", "nav-progress.js"));
-
-        // Two independent start signals, because only the end signal is proven in this app. If
-        // the documented start event turns out not to fire on the installed Blazor version, the
-        // click fallback still raises the bar; losing either one silently halves the fix.
-        Assert.Contains("blazor:enhancednavigationstart", script, StringComparison.Ordinal);
-        Assert.Contains("blazor:enhancedload", script, StringComparison.Ordinal);
-        Assert.Contains("addEventListener('click'", script, StringComparison.Ordinal);
     }
 
     private static IEnumerable<string> EnumerateSource()

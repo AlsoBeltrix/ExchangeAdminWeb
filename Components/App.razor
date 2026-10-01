@@ -119,13 +119,13 @@
         }
     </script>
     @*
-        Navigation progress. Must be plain JS: this page is prerendered, so a Blazor spinner
-        cannot paint for a load the browser has not received yet, and enhanced navigation keeps
-        the PREVIOUS page on screen and interactive meanwhile. The file explains both start
-        signals and why there are two. Loaded before blazor.web.js so its capturing click
-        listener is registered first.
+        There is deliberately no navigation-progress script here. One existed and was deleted:
+        it tried to work out in the browser when a page had arrived, through two Blazor events,
+        a DOM MutationObserver and a timeout, and every one of them left the status frame
+        counting upwards on a page that had already loaded. Page loads are now reported by
+        PageLoadTracker from the server, which is holding the request and cannot be wrong about
+        whether it is still serving it. Do not reintroduce browser-side detection.
     *@
-    <script src="nav-progress.js"></script>
     <script src="_framework/blazor.web.js"></script>
 </body>
 

@@ -5,6 +5,7 @@
 @inject IActivityProgress Progress
 @inject BulkJobService BulkJobs
 @inject AuthenticationStateProvider AuthStateProvider
+@inject PageLoadTracker PageLoads
 
 @*
     INTERACTIVE SERVER, and it has to be declared here. `Routes.razor` carries no render mode,
@@ -29,11 +30,16 @@
     Lives in Components/Shared and is rendered by MainLayout, so it sits outside
     Components/Pages and cannot shift any of ClickGateRegistry's line keys.
 
-    #gp-nav-slot is deliberately empty here and is owned by wwwroot/nav-progress.js. During a
-    page navigation the server is busy producing the next page, so this component cannot render
-    anything - the only thing that can report a navigation in progress is JS already running in
-    the browser. It writes into that slot. Blazor's enhanced-navigation DOM patch clears the
-    injected node when the new page lands, which is exactly when it should go.
+    PAGE LOADS ARE REPORTED FROM THE SERVER, not inferred in the browser. PageLoadTracker holds
+    the requests being served right now; this renders them. There is no latch and nothing to
+    retract, because "is a page loading" is answered by asking rather than by remembering that
+    a click happened.
+
+    That replaces four failed attempts to detect it in JavaScript - two Blazor events, a DOM
+    MutationObserver and a timeout - each of which left the frame counting upwards on a page
+    that had already arrived. The circuit is NOT busy during a page load: the next page is
+    built by a separate HTTP request, so this component is free to render the whole time.
+    Assuming otherwise is what sent the first version into the browser.
 *@
 
 @* The expanded list renders BEFORE the frame so it opens upward, into the page, rather than
@@ -68,8 +74,6 @@
 
 <div id="gp-frame" class="gp-frame @(IsBusy ? "gp-frame-busy" : "gp-frame-idle")"
      role="status" aria-live="polite">
-
-    <div id="gp-nav-slot" class="gp-nav-slot"></div>
 
     @if (Primary is null)
     {
@@ -125,6 +129,7 @@
     private bool disposed;
     private bool subscribed;
 
+    private IReadOnlyList<PageLoad> pageLoads = Array.Empty<PageLoad>();
     private IReadOnlyList<Activity> activities = Array.Empty<Activity>();
     private IReadOnlyList<ActivityOutcome> outcomes = Array.Empty<ActivityOutcome>();
     private IReadOnlyList<BulkJob> activeJobs = Array.Empty<BulkJob>();
@@ -134,9 +139,21 @@
     {
         get
         {
-            var lines = activities
-                .Select(a => new Line(a.ModuleId, a.Label, ActivityStatus(a), a.PercentComplete, false))
+            // Page loads first: they are what the operator is waiting on right now, and the
+            // reason they are looking at the frame at all.
+            var lines = pageLoads
+                .Select(p => new Line(
+                    "Page",
+                    $"Loading {p.Route}",
+                    Elapsed(p.StartedUtc),
+                    // Indeterminate on purpose. The server does not know how long building a
+                    // page will take, so there is no honest number to show.
+                    null,
+                    false))
                 .ToList();
+
+            lines.AddRange(activities
+                .Select(a => new Line(a.ModuleId, a.Label, ActivityStatus(a), a.PercentComplete, false)));
 
             lines.AddRange(activeJobs.Select(j =>
                 new Line(j.ModuleId, JobLabel(j), JobStatus(j), JobPercent(j), true)));
@@ -189,6 +206,7 @@
 
         Progress.Changed += OnProgressChanged;
         BulkJobs.JobChanged += OnJobChanged;
+        PageLoads.Changed += OnPageLoadChanged;
         subscribed = true;
 
         Reload();
@@ -196,6 +214,10 @@
 
     private void Reload()
     {
+        pageLoads = string.IsNullOrWhiteSpace(currentUser)
+            ? Array.Empty<PageLoad>()
+            : PageLoads.InFlightFor(currentUser);
+
         activities = Progress.Active;
         outcomes = Progress.RecentOutcomes;
 
@@ -243,6 +265,27 @@
 
     // Raised by whatever thread the reporting module is on, for the same reason.
     private async void OnProgressChanged() => await Refresh();
+
+    // Raised from the thread serving someone's page request. Ignore other operators': the
+    // tracker is keyed by user and every circuit hears every user's changes.
+    private async void OnPageLoadChanged(string user)
+    {
+        if (!string.Equals(user, currentUser, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        await Refresh();
+    }
+
+    // Derived from the start time on every render, never accumulated, so it cannot drift and
+    // cannot survive the thing it is timing.
+    private static string Elapsed(DateTime startedUtc)
+    {
+        var seconds = (int)Math.Max(0, (DateTime.UtcNow - startedUtc).TotalSeconds);
+        if (seconds < 1)
+            return "working";
+
+        return seconds < 60 ? $"{seconds}s" : $"{seconds / 60}m {seconds % 60}s";
+    }
 
     private async Task Refresh()
     {
@@ -338,6 +381,7 @@
 
         Progress.Changed -= OnProgressChanged;
         BulkJobs.JobChanged -= OnJobChanged;
+        PageLoads.Changed -= OnPageLoadChanged;
         subscribed = false;
     }
 }
