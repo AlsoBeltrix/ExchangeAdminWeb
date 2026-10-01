@@ -3,6 +3,7 @@
 @attribute [Authorize(Policy = "LicensingUpdates")]
 @rendermode InteractiveServer
 @inject LicensingUpdatesService LicenseService
+@inject IActivityProgress Progress
 @inject AuditService Audit
 @inject EmailService Email
 @inject AuthenticationStateProvider AuthStateProvider
@@ -317,7 +318,17 @@
                 return;
             }
 
+            // One write per CSV row, so the row count IS known and the frame can show a true
+            // "x of y" rather than an undifferentiated spinner over a bulk licence change.
+            using var activity = Progress.Begin(
+                "Licensing Updates", "Applying licence changes",
+                ActivitySize.Items(previewResult.Rows.Count));
+
             applyResult = await LicenseService.ApplyCsvAsync(previewResult, ticketNumber.Trim(), currentUser, clientIpAddress, authState.User);
+            activity.Report(applyResult.TotalRows);
+            activity.Complete(applyResult.Success, applyResult.Success
+                ? $"{applyResult.Succeeded:N0} applied, {applyResult.Unchanged:N0} unchanged, {applyResult.Failed:N0} failed"
+                : applyResult.Error);
 
             if (applyResult.Success)
             {

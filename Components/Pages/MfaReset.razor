@@ -3,6 +3,7 @@
 @attribute [Authorize(Policy = "MfaReset")]
 @rendermode InteractiveServer
 @inject MfaResetService MfaService
+@inject IActivityProgress Progress
 @inject AuditService Audit
 @inject EmailService Email
 @inject ServiceNowService ServiceNow
@@ -373,7 +374,14 @@
                 return;
             }
 
+            // One Graph delete per registered method, and the method count is known from the
+            // list the operator is looking at.
+            using var activity = Progress.Begin(
+                "MFA Reset", $"Resetting MFA methods for {upn}",
+                methods is null ? ActivitySize.Unknown : ActivitySize.Items(methods.Count));
+
             result = await MfaService.ResetAllMethodsAsync(upn);
+            activity.Complete(result.Success, result.Success ? null : result.Message);
 
             // The serviced note rides `extra`, never errorDetail: this call is the SUCCESS path,
             // and LogMfaResetAction writes ["error"] = success ? null : errorDetail - so the one

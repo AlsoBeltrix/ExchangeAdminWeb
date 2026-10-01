@@ -3,6 +3,7 @@
 @attribute [Authorize(Policy = "Comms10k")]
 @rendermode InteractiveServer
 @inject Comms10kService Comms10kService
+@inject IActivityProgress Progress
 @inject AuditService Audit
 @inject ServiceNowService ServiceNow
 @inject AuthenticationStateProvider AuthStateProvider
@@ -309,7 +310,17 @@
             }
             validatedTicket = trimmedTicket;
 
+            // Items, not indeterminate: the uploaded address count IS known here, so the frame
+            // can show a true "x of y" while the batched directory lookups run.
+            using var resolving = Progress.Begin(
+                "Comms-10k", "Resolving addresses in AD", ActivitySize.Items(parsedEmails.Count));
+
             resolveResult = await Comms10kService.ResolveEmailsAsync(parsedEmails);
+            resolving.Report(resolveResult.ResolvedDns.Count);
+            resolving.Complete(resolveResult.Success, resolveResult.Success
+                ? $"{resolveResult.ResolvedDns.Count:N0} of {parsedEmails.Count:N0} matched"
+                : resolveResult.Message);
+
             if (!resolveResult.Success)
                 result = new Comms10kUpdateResult { Success = false, Message = resolveResult.Message };
         }
@@ -345,7 +356,18 @@
             // This is the app's broadest exemption and it is scoped to this one module: it is
             // BROADER than the Self-Service Groups exception, which drops the target check only
             // and keeps its member check. No other module may read itself into it.
+            // The write is NOT atomic: it clears the member attribute and refills in batches,
+            // so for several seconds the list is empty and then partial. The frame has to say
+            // so, because that window is exactly when an operator must not assume it is safe to
+            // walk away. Indeterminate because the service owns the batching and does not report
+            // per-batch progress - telling the truth about not knowing beats inventing a bar.
+            using var replacing = Progress.Begin(
+                "Comms-10k",
+                $"Replacing membership ({resolveResult!.ResolvedDns.Count:N0} members)",
+                ActivitySize.Unknown);
+
             result = await Comms10kService.ExecuteReplaceAsync(resolveResult!.ResolvedDns, currentUser);
+            replacing.Complete(result.Success, result.Message);
 
             try
             {

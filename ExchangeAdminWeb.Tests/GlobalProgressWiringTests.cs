@@ -359,6 +359,10 @@ public class GlobalProgressWiringTests
     [InlineData("DelegationReport.razor")]
     [InlineData("BitLockerRecovery.razor")]
     [InlineData("MessageTrace.razor")]
+    [InlineData("Comms10k.razor")]
+    [InlineData("EmergencyDisable.razor")]
+    [InlineData("LicensingUpdates.razor")]
+    [InlineData("MfaReset.razor")]
     public void AnAdoptedModuleReportsItsWorkToTheStatusFrame(string page)
     {
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", page)));
@@ -367,21 +371,60 @@ public class GlobalProgressWiringTests
         // cannot leave the frame claiming the work is still running - the same guarantee the
         // page-load middleware gets from its own using block.
         Assert.Contains("IActivityProgress Progress", source, StringComparison.Ordinal);
-        Assert.Contains("using var activity = Progress.Begin(", source, StringComparison.Ordinal);
 
-        // And it must report the outcome rather than only the start. Dispose alone records a
-        // failure, which is right for an abandoned operation and wrong for one that worked.
+        // Every activity the page begins must be `using`, so an exception path cannot leave
+        // the frame claiming the work is still running, and must report an outcome of its own,
+        // so a success is not recorded as the dispose fallback's failure.
         //
-        // Counted rather than matched against a literal `true`/`false`: a page that computes
-        // its outcome - Complete(result.Success, ...) - is reporting more honestly than one
-        // that hardcodes it, and an earlier version of this assertion failed exactly those
-        // pages for being better. Two call sites means the success and failure branches are
-        // both covered.
-        var completions = Regex.Matches(source, @"activity\.Complete\(").Count;
-        Assert.True(completions >= 2,
-            $"{page} calls activity.Complete {completions} time(s). Both the success and the "
-            + "failure branch must report, or one of them silently falls through to the "
-            + "dispose fallback and is recorded as a failure.");
+        // Matched per variable rather than against the name "activity": a page with two
+        // distinct operations names them for what they are (Comms-10k has `resolving` and
+        // `replacing`), and an earlier version of this test failed those pages for being
+        // clearer than the one it was written against.
+        var begun = Regex.Matches(source, @"using var (\w+) = Progress\.Begin\(")
+            .Select(m => m.Groups[1].Value)
+            .ToList();
+
+        Assert.True(begun.Count > 0,
+            $"{page} injects the progress service but never begins an activity with "
+            + "`using var <name> = Progress.Begin(`.");
+
+        foreach (var name in begun)
+        {
+            Assert.True(Regex.IsMatch(source, Regex.Escape(name) + @"\.Complete\("),
+                $"{page} begins '{name}' but never completes it. Falling out of scope records "
+                + "a FAILURE, so a successful run would be reported to the operator as failed.");
+        }
+    }
+
+    [Fact]
+    public void NoAdoptedModuleBeginsAnActivityWithoutUsing()
+    {
+        var offenders = new List<string>();
+
+        foreach (var file in Directory.GetFiles(Path.Combine(RepoRoot(), "Components", "Pages"), "*.razor"))
+        {
+            var source = StripComments(File.ReadAllText(file));
+
+            // `Progress.Begin` without `using` means nothing guarantees the activity ends. The
+            // frame would keep showing it after the operation returned - the exact stranded-
+            // readout defect that four browser-side attempts at navigation reporting produced,
+            // reintroduced one module at a time.
+            // The `using var` prefix is part of the match, not something to look for inside a
+            // match that starts after it - the first version of this started matching at
+            // "var" and so reported every correct call site as an offender.
+            foreach (Match match in Regex.Matches(source, @"(using\s+var\s+)?\w+\s*=\s*Progress\.Begin\("))
+            {
+                if (match.Groups[1].Success)
+                    continue;
+
+                var line = source[..match.Index].Count(c => c == '\n') + 1;
+                offenders.Add($"{Path.GetFileName(file)}:{line}");
+            }
+        }
+
+        Assert.True(offenders.Count == 0,
+            "Progress.Begin must always be assigned with `using var`, or the activity can "
+            + "outlive the work and strand the status frame:\n" + string.Join("\n", offenders));
     }
 
     private static string DeclarationsOf(string css, string selector)

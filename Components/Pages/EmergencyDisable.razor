@@ -3,6 +3,7 @@
 @attribute [Authorize(Policy = "EmergencyDisable")]
 @rendermode InteractiveServer
 @inject EmergencyDisableService DisableService
+@inject IActivityProgress Progress
 @inject ProtectedPrincipalService ProtectedPrincipalService
 @inject ProtectedPrincipalServicerService Servicers
 @inject AuditService Audit
@@ -326,7 +327,13 @@
                 return;
             }
 
+            // A multi-step write across AD and the session stores, so the operator needs to see
+            // it is still going rather than clicking a second time on an account disable.
+            using var activity = Progress.Begin(
+                "Emergency Disable", $"Disabling {resolvedPrincipal.DisplayName}", ActivitySize.Unknown);
+
             disableResult = await DisableService.DisableAsync(resolvedPrincipal, ticketNumber.Trim(), currentUser, clientIpAddress, authState.User);
+            activity.Complete(disableResult.Success, disableResult.Error);
 
             if (disableResult.Success)
             {
