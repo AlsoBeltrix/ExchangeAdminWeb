@@ -119,17 +119,18 @@ guide all carry the scoped exception, contrasted against Self-Service Groups.
 **Owner-side work outstanding, none of it agent-executable:**
 
 - **The push.** 29 commits, on HOLD.
-- **True Last Logon:** `AuditLog.Read.All` consent, enable the module in Module Config, and the
-  two-account live comparison against `Get-TrueLastLogon-Commercial.ps1`. **Its first live run
-  failed: `Get-ADUser -Identity` cannot resolve a UPN, so every DC answered "cannot find". Fixed
-  in `fcc94a4`, module `1.0.1`, NOT yet seen on dev** - re-run the same UPN search as the check.
-  The on-prem half has now touched a real domain exactly once; the cloud half still has not.
+- **True Last Logon:** the UPN defect is CLOSED - `Get-ADUser -Identity` could not resolve a UPN
+  (fixed in `fcc94a4`, module `1.0.1`), and the owner confirmed the UPN search works on dev
+  2026-10-01. Still outstanding and still owner work: `AuditLog.Read.All` consent and the
+  two-account live comparison against `Get-TrueLastLogon-Commercial.ps1`. The on-prem half now
+  works against a real domain; the cloud half has still never run.
 - **Migration `@key` fix:** proven at source level only; the owner's own screenshot case is
   still the acceptance check.
-- **Comms-10k:** the plan is fully implemented and NOTHING has run against the real group. No
-  lock, clear, batch or read-back has touched a directory. The plan's Acceptance is outstanding
-  in full, and the write is no longer atomic, so the acceptance run is the only thing that has
-  ever exercised the sequence.
+- **Comms-10k: FAILS THE STAKEHOLDER'S TEST (owner, 2026-10-01). The plan is fully implemented
+  and it is NOT accepted.** The failure mode has not yet been described to the agent - the next
+  session must ask what the stakeholder's test is and what it did, and must NOT guess from the
+  plan's Acceptance list. Until then nothing about this module is diagnosable and no fix should
+  be attempted.
 
 **A recurring defect in this session's own tests, worth carrying:** three separate guards were
 written to forbid a named antipattern and then read the comment that EXPLAINED the antipattern,
@@ -231,7 +232,7 @@ line says so. Status lives here.
 | 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. S1 AND S2 LANDED 2026-09-30. S3 RESCOPED by owner ruling 2026-09-30 and ready to implement; S4 after it.** Module `1.2.0` -> `1.3.0`, set once on S1. Detail block below. |
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
-| 23 | Migration batch tick boxes drop ticks when clicked in rapid succession | **CODE FIXED 2026-09-30 (`af4fb4c`), NOT YET SEEN ON DEV. Owner-declared P1 prod blocker.** A handler guard on a DOM-synced control: the browser applied the tick, `if (IsBusy) return;` discarded it, and Blazor sent no correction because its last-rendered value still matched the model. Guard removed from `ToggleBatchSelected` and `ToggleSelectAllBatches`; D2(a) rules out the disabled-attribute repair. Migration `1.22.4` -> `1.22.5`. Acceptance is the owner's rapid-click case. |
+| 23 | Migration batch tick boxes drop ticks when clicked in rapid succession | **DONE. Fixed 2026-09-30 (`af4fb4c`), owner-verified on dev 2026-10-01.** Was an owner-declared P1 prod blocker. A handler guard on a DOM-synced control: the browser applied the tick, `if (IsBusy) return;` discarded it, and Blazor sent no correction because its last-rendered value still matched the model. Guard removed from `ToggleBatchSelected` and `ToggleSelectAllBatches`; D2(a) rules out the disabled-attribute repair. Migration `1.22.4` -> `1.22.5`. Acceptance is the owner's rapid-click case. |
 | 24 | Global progress-meter system; a click landing is not obvious in most modules | **NOT STARTED. Owner-declared P1 as of 2026-10-01 and the next action.** Cross-cutting: touches every module, so it needs a plan and a go before code. Extend what exists (`IsBusy`, the per-module spinner/disabled conventions) and use `ClickGateRegistry` as the census of click surfaces; it is line-keyed, so page edits need `.agents/playbooks/clickgate-reanchor.md`. |
 | 25 | Verbosity sweep across the whole app; no editorializing anywhere | **NOT STARTED.** Owner: *"Too much chat context leaked into the app, too many words for a human to read instantly."* His example is True Last Logon's no-logon banner, but the item is an app-wide sweep, not that one module. Counts and coverage facts are not editorializing; instruction to the reader is. No test pins any of this copy. |
 
