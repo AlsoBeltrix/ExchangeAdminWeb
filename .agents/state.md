@@ -4,7 +4,7 @@ Current work and blockers only. Rules live in `docs/ProjectConstitution.md` and
 `.agents/repo-guidance.md`, decisions in `.agents/decisions.md`, and machine observations in
 `.agents/machines.md`. Each plan owns its implementation and manual acceptance checklist.
 Superseded descriptions are verbatim in `docs/history/state-archive.md` (newest section first;
-the latest sweep is Archived 2026-09-23).
+the latest sweep is Archived 2026-10-01).
 
 ## Now
 
@@ -102,7 +102,9 @@ structurally pins to this group. Both true; the owner ruled neither warrants a c
 single-purpose module. The Constitution, `.agents/repo-guidance.md` KFC3 and the developer
 guide all carry the scoped exception, contrasted against Self-Service Groups.
 
-**Landed in the 2026-09-30 session, sixteen commits, suite 3344 -> 3487 green throughout:**
+**Landed in the 2026-09-30 session** (git owns the commit list - `git log --oneline
+--since=2026-09-30 --until=2026-10-01`)**, suite 3344 -> 3487 green throughout. Suite
+re-verified at 3487 passed / 0 failed / 3 skipped as of `370381d`:**
 
 | Commit | What |
 | --- | --- |
@@ -193,7 +195,7 @@ deploy like this"*) and queue item 23 (2026-09-30, *"new item 23 is p1"*). Neith
 module for anything else, and nothing else was touched in either. A closed module plus a
 prod blocker the owner names is the only pattern that has authorised work here.
 
-**FIXED IN CODE 2026-09-30, NOT YET SEEN ON DEV - migration mailbox checkboxes lied about what is ticked.**
+**FIXED IN CODE 2026-09-30 AND DEPLOYED; THE OWNER'S OWN CHECK IS STILL OUTSTANDING - migration mailbox checkboxes lied about what is ticked.**
 Owner on dev `v1.22.1`, 2026-09-30, with a screenshot: ticking a mailbox pinned it to the top,
 and rows in the list BELOW the divider then rendered as ticked when they were not. `Actions (3)`
 and the `1-3 OF 3 TICKED` pager were correct; the checkboxes were not.
@@ -213,11 +215,19 @@ and the `1-3 OF 3 TICKED` pager were correct; the checkboxes were not.
 - **Guarded:** `MigrationStatusPageTests.EveryReorderingRowIsKeyedSoItsCheckboxCannotBeReusedByAnotherRow`
   asserts the first `<tr>` of each of the three slices opens with its expected `@key`. Proven
   non-vacuous: each key removed in turn, the test fails naming that surface, restored.
-- **Line counts are unchanged (3993), so `ClickGateRegistry` needed no re-anchor.** Three
-  attributes were added in place. Keep it that way if this block is edited again.
+- **Line counts were unchanged, so `ClickGateRegistry` needed no re-anchor.** Three attributes
+  were added in place. Keep it that way if this block is edited again. The number itself is
+  owned by `ExpectedLineCount` in `ExchangeAdminWeb.Tests/ClickGateRegistry.cs` and is not
+  copied here.
 - **NOT verified in a browser.** Nothing in this repo can render a Blazor component, so the
   fix is proven at the source level only. The owner's own screenshot case - tick three
   mailboxes, read the boxes below the divider - is the acceptance check and is outstanding.
+- **It IS deployed, on both instances. Measured on this host 2026-10-01 as of `370381d`**, by
+  reading the two deployed assemblies directly: `D:\inetpub\ExchangeAdminWebDev` and
+  `D:\inetpub\ExchangeAdminWeb` both report FileVersion `2.25.0.0` and both carry the Migration
+  descriptor version literal `1.22.5`, which is later than the `1.22.3` this fix shipped in.
+  So the earlier reading - that this defect was blocking the next deploy and every finished
+  item behind it stayed invisible until one ran - is spent: the deploy ran.
 - **This was the owner's explicit exception to "do not touch migration":** *"we cannot deploy
   like this."* It does not reopen the module for anything else, and nothing else was touched.
 
@@ -253,165 +263,19 @@ line says so. Status lives here.
 | 17 | True Last Logon module | **BUILT, and its first live run found a defect that is now fixed. S1-S3 landed; module at `1.0.1` (`fcc94a4`) after `Get-ADUser -Identity` proved unable to resolve a UPN - every DC answered "cannot find". NOT done: the re-run and the mandatory live comparison are outstanding owner work.** Detail block below. |
 | 18 | Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The hold record lives in a CSV on one person's OneDrive, which a web app cannot use. |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
-| 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN APPROVED 2026-09-28. S1 AND S2 LANDED 2026-09-30. S3 RESCOPED by owner ruling 2026-09-30 and ready to implement; S4 after it.** Module `1.2.0` -> `1.3.0`, set once on S1. Detail block below. |
+| 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN FULLY IMPLEMENTED 2026-09-30, all four slices. NOT ACCEPTED - it fails the stakeholder's test (owner, 2026-10-01) and the plan's Acceptance section is outstanding in full.** Module `1.3.0`, set once on S1. The stakeholder's three points, and the three things to know before touching any of it, are at the top of this file. |
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
 | 23 | Migration batch tick boxes drop ticks when clicked in rapid succession | **DONE. Fixed 2026-09-30 (`af4fb4c`), owner-verified on dev 2026-10-01.** Was an owner-declared P1 prod blocker. A handler guard on a DOM-synced control: the browser applied the tick, `if (IsBusy) return;` discarded it, and Blazor sent no correction because its last-rendered value still matched the model. Guard removed from `ToggleBatchSelected` and `ToggleSelectAllBatches`; D2(a) rules out the disabled-attribute repair. Migration `1.22.4` -> `1.22.5`. Acceptance is the owner's rapid-click case. |
 | 24 | Global progress-meter system; a click landing is not obvious in most modules | **NOT STARTED. Owner-declared P1 as of 2026-10-01 and the next action.** Cross-cutting: touches every module, so it needs a plan and a go before code. Extend what exists (`IsBusy`, the per-module spinner/disabled conventions) and use `ClickGateRegistry` as the census of click surfaces; it is line-keyed, so page edits need `.agents/playbooks/clickgate-reanchor.md`. |
 | 25 | Verbosity sweep across the whole app; no editorializing anywhere | **NOT STARTED.** Owner: *"Too much chat context leaked into the app, too many words for a human to read instantly."* His example is True Last Logon's no-logon banner, but the item is an app-wide sweep, not that one module. Counts and coverage facts are not editorializing; instruction to the reader is. No test pins any of this copy. |
 
-**Recommended order, and why.** The next agent should not just walk the numbers.
-
-1. **The migration `@key` checkbox defect** (top of this file, not a queue item). **FIXED in
-   code 2026-09-30, gates green, NOT yet deployed or seen in a browser.** It was blocking the
-   next deploy, so every finished item behind it stays invisible to users until a deploy runs.
-2. **17 S3. LANDED 2026-09-30.** The module is registered and reachable at `1.0.0`. What is
-   left on this item is not code: `AuditLog.Read.All` consent, the module enabled in Module
-   Config, and the live two-account comparison against the source script.
-3. **22, with 21 folded in. FIXED IN CODE 2026-09-30** on the owner's direct approval, at a
-   fraction of the planned scope - he rejected the plan's `.pg-*` conversion as a sledgehammer
-   and was right. Detail block below. **Outstanding: a browser check at one tall and one short
-   window, which is owner work and cannot be done here.**
-4. **20 Comms10k. S1 and S2 of 4 LANDED 2026-09-30. S3 RESCOPED by owner ruling and ready to implement**, then S4. Detail block below.
-5. **8 S6-S8.** Written slices, no owner input needed. Pure execution.
-6. **10 and 11.** Code is done; what remains is a deploy and live validation, which is owner
-   work, and it is gated behind item 1 above.
-7. **2, then 5.** Both need an owner decision before any code: 2's plan is a draft awaiting
-   approval, 5 is feasibility-only and may not be worth doing at all.
-8. **9 tiers 2-4.** Unapproved and the biggest remaining block. Needs a scoping conversation,
-   not a start.
-
-**Feasibility, stated plainly because the owner set a one-week target.** Items 4 through 8 of
-that order are each multi-session work; 9 alone took nine slices to get through tier 1, and 22
-is an app-wide audit plus a holistic fix plus a review round. **The week's realistic scope is
-1, 2 and 3 - the deploy blocker, True Last Logon S3, and the layout plan** - with 20 and 8 as
-stretch if nothing goes wrong. Say so to the owner rather than silently missing the date.
-
-### Queue items 21 and 22 - layout and scrolling, fixed in code
-
-`docs/AppLayoutAndScrolling-Plan.md` carries the audit, the diagnosis and an honest record of
-where the shipped change departs from what the plan proposed. App `2.24.0` -> `2.25.0`
-(shared/app-wide), Migration module `1.22.3` -> `1.22.4`.
-
-**The root cause was a missing height, not a wrong number.** Nothing above `<article>` declared
-one - `main` was `flex: 1` and stopped - so a page wanting to fill the remaining space had
-nothing to measure against and `height: 100%` resolved to nothing. The only thing that appeared
-to work was `100vh` minus a literal typed for the chrome above. Nine accumulated, no two alike,
-each wrong the moment a heading or banner changed.
-
-**What shipped** (`Components/Layout/MainLayout.razor.css`, four rules): `.page` gets
-`height: 100vh`, `main` becomes a flex column with `min-height: 0`, `.top-row` becomes
-`flex: none` instead of sticky, and `article.content` becomes
-`flex: 1; min-height: 0; overflow-y: auto`. Desktop only, matching the sidebar's existing
-`100vh` - below 641px the sidebar is a drawer and that layout is untouched.
-
-Then every number that existed only because the chain was missing went away: eight inline
-`calc(100vh - Npx)` caps deleted outright (one scroll context, nothing unreachable), and `.adm`
-went from `calc(100vh - 2.9rem - 1.1rem)` to plain `height: 100%`.
-
-**Three deliberate compromises, named so they are not mistaken for finished work:**
-
-1. **Migration's `.mig-split` took a PROPORTION, not a fill:** `70vh`, not `flex: 1`. A true
-   fill needs a flex chain threaded through that page's tabs and cards. A proportion cannot go
-   stale when a banner is added, which IS the defect class, so it fixes the reported fault.
-2. **Item 21 was fixed in CSS, not in the markup its diagnosis named.** Deleting the
-   `.card-body` wrapper would have shifted every `ClickGateRegistry` entry below
-   `Migration.razor:1213`, including the `@key` entry at 1228 from earlier the same day.
-   `.mig-modal .card-body { display: flex; flex-direction: column; min-height: 0; }` reconnects
-   the same chain with the page file untouched.
-3. **The fixed-pixel caps were left alone.** `max-height: 300px` on an autocomplete dropdown is
-   a deliberate popover size, not chrome arithmetic, and not part of the reported defect.
-
-**Guarded:** `ExchangeAdminWeb.Tests/AppLayoutCssTests.cs`, four tests - no page may do
-arithmetic on the chrome above it, the four layout rules must all be present, `.adm` must take a
-percentage, and the dialog's flex chain must be unbroken. Five probes, all five bit.
-
-Gates: build 0 errors, **3408 passed / 0 failed / 3 skipped**, format, ASCII, `git diff --check`.
-
-**OWNER BROWSER CHECK: PASSED, 2026-09-30.** That closes both items. Nothing in this repo
-renders a Blazor component or measures a laid-out box, so the tests only ever proved a SHAPE -
-the owner inspection is what actually confirms it, and it ran. The change moved the scroll from
-the document to `article` on EVERY page, so any later layout complaint on a page not opened
-that day is still possible; it would be a new report, not an unverified claim.
-### Queue item 20 - Comms-10k at full size, S1 and S2 of 4 landed
-
-`docs/Comms10kBulkResolveScale-Plan.md`, approved 2026-09-28 at revision 15. Module
-`1.2.0` -> `1.3.0`; the version is set ONCE, on S1, and the remaining slices extend its comment
-block rather than bumping again. `ExchangeAdminWeb.csproj` is untouched and verified so by diff,
-not by reading the plan's line about it.
-
-**S1 LANDED: address resolution is batched.** `Services/Comms10kAddressResolver.cs` is the new
-pure half - batching, RFC 4515 filter construction, match assignment - and
-`Comms10kService.QueryBatchCandidates` is the live query behind an `internal virtual` seam, one
-`Get-ADObject -LDAPFilter` per 500 addresses inside one runspace. 20 tests, plan tests 1 to 7.
-
-Three things in S1 that are load-bearing rather than cosmetic:
-
-- **A query error aborts the WHOLE resolution.** `ExecuteReplaceAsync` removes everyone absent
-  from the resolved list, so a batch that failed quietly would read as "these 500 were not
-  found" and unsubscribe 500 real people behind a green success message. Mirrors
-  `GroupManagementService.QueryBatchCandidates`.
-- **The match keys are UPN and mail ONLY.** `BulkIdentityList.BuildBatchFilter` also matches
-  `sAMAccountName` and optionally groups, which is why it is deliberately not reused - widening
-  the keys here changes who receives the mail. A probe that adds `sAMAccountName` fails a test.
-- **Blank CSV lines never reach the filter.** An empty equality assertion is not legal filter
-  syntax and the query is fail-closed per batch, so one blank row would have aborted the 499
-  real addresses beside it. `QueryableAddresses` screens them; `BuildBatchFilter` throws if one
-  arrives anyway; `Resolve` still walks the full original list so the blank is still reported.
-
-**Also fixed as a side effect, and worth not re-deriving:** the old code interpolated the
-address into `-Filter`, where PowerShell expands `$` as a variable and an address containing one
-silently queried something else (`SectionAccessGroupDirectory.cs:132` records the same lesson).
-`-LDAPFilter` has no such expansion and `$` is not an RFC 4515 metacharacter, so it now survives
-as the literal it is. There is a test asserting it is NOT escaped, because escaping it would
-break the match just as surely.
-
-Gates after S2: build 0 errors, **3426 passed / 0 failed / 3 skipped**, format, ASCII,
-`git diff --check`, csproj byte-identical. Five mutations probed and all five bit: batching
-off by one (3 fail), escaping removed (1), `sAMAccountName` added to the keys (1), ambiguous
-collapsing to the first match (1), and the seam swallowing a batch error (1).
-
-**NEXT: S3, rescoped and ready. Not blocked.** Owner ruling 2026-09-30, `.agents/decisions.md`:
-Comms-10k runs NO protected-principal check, on members or on the target. The plan's
-distribution-only guard is dropped - the real group is `GroupCategory: Security` so it would
-have refused every write, and the exemption rests on the module's purpose, not the category.
-S3 is now: delete the protected-principal path, drop `"Comms10k"` from
-`ModulesWithProtectedPrincipalServicing`, add the group resolution S4 needs, amend three
-documents with a scoped exception. One commit.
-
-**Two agent concerns were raised and OVERRULED - do not re-litigate them.** That the group is
-Security-category, and that `TargetGroupName` is a generic field nothing pins to this group.
-Both are true; the owner ruled neither warrants a check here. The decisions entry records both
-so a later reviewer finds them already answered.
-
-S3 was to add a distribution-only guard and then DELETE Comms-10k's protected-principal member
-check, on the stated ground that the target is "a broadcast distribution list, membership of
-which grants access to nothing". The owner ran the lookup on 2026-09-30 and the configured
-target is `GroupCategory: Security` - a mail-enabled Universal SECURITY group. So the guard as
-specified would refuse every write on prod, and more seriously the reason for deleting a
-security check does not hold: membership of a security group can grant access.
-
-The plan's own insistence that the distribution-only condition travel INSIDE the exception text
-is what caught this. Written the loose way, "Comms-10k is exempt from the member check" would
-have gone into the Constitution and three other documents while the real target was a security
-group.
-
-**Two options are with the owner, unanswered:** (A) keep the member check, drop the exemption
-and all four document amendments, S3 shrinks to the group resolution S4 needs - recommended; or
-(B) convert the AD group to Distribution, after which the plan is sound as written, but it is
-`SecurityEnabled` today so anything holding an ACL on it loses that access. Detail and evidence
-are in the plan's Slice 3 section.
-
-**Do not implement either half of S3 until that is answered.** The measurement the plan rests
-on used a DIFFERENT group - `CN=Test-WebApp,OU=ZZMikeCTest` - which really was Distribution;
-the ADWS limits it established are still valid, the category is not.
-
-**Nothing in this module has run against the real group.** The plan's Acceptance section is the
-owner's and is outstanding in full.
 ### Queue item 17 - True Last Logon, built and awaiting a live check
 
-Branch `master`, tree clean. **All three slices are landed. The module is registered and
-reachable at `1.0.0`. It is NOT done: nothing in it has touched a real domain or tenant.**
+**All three slices are landed and the module ships at `1.0.1`** (`Modules/ModuleCatalog.cs`
+owns that number). **It is NOT done, but the reason has narrowed:** the on-prem half HAS now
+run against a real domain - the owner exercised the UPN search on dev 2026-10-01 - while the
+cloud half has still never touched a real tenant.
 
 **Nothing is pushed, and the owner ruled HOLD on 2026-09-30 when asked directly.** Do not push
 without a fresh ask. Both `github` and `origin` still sit at `0b7122a`, a clean ancestor of
@@ -452,7 +316,8 @@ both admitted and both fixed one-per-commit with mutation proof: `tll-1` (HIGH, 
 `.agents/review/index.md`. Both were the same shape - the file stated a rule in its own class
 remarks and then did not apply it.
 
-**S3 IS LANDED. The module is registered, reachable and shipping at `1.0.0`** - descriptor,
+**S3 IS LANDED. The module is registered, reachable and shipping** (the version literal is
+owned by `Modules/ModuleCatalog.cs`, not copied here) - descriptor,
 page, permission, click gating and audit. The base app version was deliberately NOT bumped
 (Constitution, Deployment And Versioning; `.agents/decisions.md` 2026-07-21). All four things
 S3 owned are done:
@@ -499,8 +364,9 @@ latest (3), and stripping `disabled="@IsBusy"` from the page input (2 ClickGate 
 **NEXT ACTION on this item is NOT code. It is the live check, and it is the owner's:** one
 recently-active account and one known-dormant account, looked up in the module and compared
 against `Get-TrueLastLogon-Commercial.ps1`'s own output for the same two users. If they
-disagree, the script is right until proven otherwise. Nothing in this module has touched a real
-domain or tenant. It also needs `AuditLog.Read.All` consented on the app registration behind
+disagree, the script is right until proven otherwise. The CLOUD half has never touched a real
+tenant; the on-prem half has, per the record above this one in this file (`9e8b9e4`).
+It also needs `AuditLog.Read.All` consented on the app registration behind
 whatever secret is pointed at it, and the module is `EnabledByDefault = false`, so it has to be
 enabled in Module Config before anyone can see it.
 
@@ -524,9 +390,8 @@ no start timestamp, WorkflowStage Injection, and no migration-user or move-reque
 The current correction distinguishes this pending state from an empty batch. No live migration
 writes have been performed by this session. See the plan's recovery evidence and Verification.
 
-**Run the suite with `-- xUnit.MaxParallelThreads=4`.** At full parallelism it spreads over every
-core and each worker holds its own fixtures, which peaked near 27GB and got a run killed by the
-harness for memory pressure on 2026-09-25. Capped, it costs nothing measurable (under 5 minutes).
+**Run the suite with `-- xUnit.MaxParallelThreads=4`.** Why, and the host measurement behind it,
+are in `.agents/machines.md` under Test tooling - it is a property of this box, not of the repo.
 
 **TWO SESSIONS SHARED THIS WORKING TREE ON 2026-09-25 AND IT CAUSED REAL DAMAGE. READ THIS
 BEFORE RUNNING TWO AGENTS IN ONE CHECKOUT AGAIN.** Three separate incidents, all on shared
@@ -826,7 +691,8 @@ blocked by the sandbox proxy and its retry was interrupted. Push policy remains 
     generation strands it forever on the collapse path, which starts no successor load.
     Detail in `.agents/review/findings/mir-1.md`; index `.agents/review/index.md`, no open rows.
   - **Two things S1 had to touch that the next slices will too.** `ClickGateRegistry` pins
-    Migration's line count (now 2166) and cites handler coordinates in its rationale; every slice
+    Migration's line count (the number lives in that file's `ExpectedLineCount`; the 2166 once
+    recorded here is long stale) and cites handler coordinates in its rationale; every slice
     will fail `TheRegisteredLineCountStillMatchesTheFile` until both are re-checked and updated.
     And `LoadMigrationStatus` is now a two-part split (`LoadBatchList` is the shared reload);
     `SelectionIsPrunedWhenTheTableReloads` is anchored on the shared half.
@@ -1354,7 +1220,8 @@ unblocked.
   operators to that page. Not caused by this run's work.
 
 - **A defect in committed TEST infrastructure, found in plan review and not yet fixed.**
-  `ExchangeAdminWeb.Tests/ClickGateSource.cs:364-384` (re-verified 2026-09-23 as of `26b414b`;
+  `ExchangeAdminWeb.Tests/ClickGateSource.cs:364-384` (re-verified 2026-10-01 as of `370381d`
+  - the citation is still exact and the method is still not quote-aware;
   the earlier `:213-228` citation was stale), `ExtractBlock`, counts `{` and `}`
   without being quote-aware, so a brace inside a string or interpolated string miscounts the
   depth and the extracted block ends in the wrong place - usually over-capturing into the code
@@ -1555,9 +1422,9 @@ unblocked.
 - **Falsified deployment/configuration blockers:**
   the old dev/prod versions, incomplete shared cutover and missing initial ServiceHealth,
   RiskyUsers and IntuneDevices configuration disagree with the host. Evidence is canonical in
-  `.agents/machines.md`, whose receipt was re-measured 2026-09-23 as of `26b414b` - **dev and prod
-  are no longer at the same base version.** Manual acceptance and exact deployed module versions
-  remain unverified.
+  `.agents/machines.md`, whose receipt was re-measured 2026-10-01 as of `370381d` - **the
+  2026-09-23 divergence is itself now falsified: dev and prod are back at the same base
+  version, and it is the repo's current one.** Manual acceptance remains unverified.
 - **Queue 6, containerize: the SPN and gMSA work is not ours to do.** The owner's 2026-09-21
   ruling makes containerization a requirement, but a containerised app runs under Kestrel rather
   than IIS, so Windows Authentication needs a gMSA, a credential spec and SPNs registered in the
@@ -1566,7 +1433,7 @@ unblocked.
   container outside line of sight of on-prem AD and Exchange cannot do the AD, on-prem Exchange or
   DHCP work at all. Evidence: `.agents/decisions.md` 2026-09-21, items 3 and the closing paragraph.
 - **SQLite upgrade is no longer blocked by package availability.** The 2026-06-26 decision's
-  "no patched package exists" basis is falsified, re-verified 2026-09-23 as of `26b414b`:
+  "no patched package exists" basis is falsified, re-verified 2026-10-01 as of `370381d`:
   `obj/project.assets.json` still resolves `SQLitePCLRaw.lib.e_sqlite3/2.1.11`, while
   [NuGet publishes newer builds](https://www.nuget.org/packages/SQLitePCLRaw.lib.e_sqlite3),
   including 3.53.3 (the package version identifies its SQLite engine).
@@ -1589,7 +1456,7 @@ unblocked.
   implementation uses the store's change token with a throttle. The additive-only rule has
   operative homes in the decision, guidance and test but is absent from the Constitution.
   Evidence: `docs/SharedConfigDb-Plan.md` section 9. No ruling inferred.
-- **Plan-status drift remains, re-verified 2026-09-23 as of `26b414b`:**
+- **Plan-status drift remains, re-verified 2026-10-01 as of `370381d`:**
   `docs/BlockedSendersLoadTiming-Plan.md` and
   `docs/Comms10kReplaceUx-Plan.md` still say Approved;
   `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` still says Approved / In progress.
@@ -1597,7 +1464,7 @@ unblocked.
   `docs/AdminUIRedesign-Plan.md` remains In progress with manual checks.
 - **Unscheduled M365 protection gap:** group update/delete and owner adds were recorded as
   ungated, and protection configuration cannot identify a cloud-only group. Re-verified
-  2026-09-23 as of `26b414b`: `Services/M365GroupManagementService.cs` calls its
+  2026-10-01 as of `370381d`: `Services/M365GroupManagementService.cs` calls its
   `CheckProtectedAsync` gate from the member/owner paths only - `UpdateGroupAsync` and
   `DeleteGroupAsync` still call neither.
   The owner excluded this module from the on-prem target work; no work approved.
@@ -1613,16 +1480,20 @@ unblocked.
 ## Verification
 
 Commands and mandatory guards are owned by `.agents/repo-guidance.md` and `AGENTS.md`.
-**Recovery run 2026-09-29, for the code committed with this record:** Release build 0 errors;
-full Release suite **3294 passed / 0 failed / 3 skipped**, with `-- xUnit.MaxParallelThreads=4`;
-format, ASCII lint and `git diff --check` pass. Existing dependency and compiler warnings remain.
+**Re-verified 2026-10-01 as of `370381d`:** full Release suite **3487 passed / 0 failed /
+3 skipped**, with `-- xUnit.MaxParallelThreads=4`, 5m10s. That supersedes the 3294 recorded
+for the 2026-09-29 recovery run, which was the figure for that commit and not for this head.
+Build, format, ASCII lint and `git diff --check` were NOT re-run by this sweep.
+The 2026-09-29 recovery run reported Release build 0 errors; format, ASCII lint and
+`git diff --check` passing. Existing dependency and compiler warnings remain.
 All five new regression cases fail against the original service/page and pass with the fix;
 the proof includes compiled Razor render output, not just source scans. Local receipts are in
 `TestResults/migration-mailbox-*` (ignored). Live read-only Exchange comparisons are recorded in
 the recovery section of `docs/MigrationInterfaceRedesign-Plan.md`.
 PSScriptAnalyzer/Pester were not rerun because no PowerShell source changed; their last recorded
 2026-09-28 result was 0 errors and 157 passed / 0 failed. Browser acceptance, live writes and
-reviewer dispatches were not run. Dev deployment is pending elevation and authority. Current
+reviewer dispatches were not run. **Dev deployment is no longer pending** - both instances were
+deployed 2026-09-30, measured on this host 2026-10-01 and recorded in `.agents/machines.md`. Current
 CI status does not belong here.
 Per-finding status is owned by `.agents/review/index.md`.
 

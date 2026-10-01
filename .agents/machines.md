@@ -97,16 +97,21 @@ Read-only evidence: DLL FileVersion/LastWriteTime, the `ConfigStore:Path` field 
 both deployed appsettings files, and selected rows in the shared config database.
 No secret values or directory data were read.
 
-**Deployed base versions re-measured 2026-09-23 as of `26b414b`. Dev and prod have
-diverged; the 2026-09-14 reading of `2.20.2.0` on both is falsified for dev:**
+**Deployed base versions re-measured 2026-10-01 as of `370381d`. The 2026-09-23 reading
+(dev `2.22.0.0`, prod `2.20.2.0`, "dev and prod have diverged") is FALSIFIED - both
+instances were redeployed on 2026-09-30 and are converged again:**
 
-- Dev DLL `D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll` - `2.22.0.0`,
-  LastWriteTime `2026-09-22 15:46:45` (host local time). Matches the owner's 2026-09-22
-  deploy of the MessageTrace slice-1 fix and the Access-tab labels.
-- Prod DLL `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll` - `2.20.2.0`,
-  LastWriteTime `2026-09-09 08:24:15`. Unchanged since the 2026-09-14 reading.
-- The repo is at base `2.23.0` (`ExchangeAdminWeb.csproj`), so neither instance carries
-  the current build. `ExchangeAdminWeb.csproj` owns that number; do not copy it here.
+- Dev DLL `D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll` - FileVersion matches the
+  repo's current `<VersionPrefix>`, LastWriteTime `2026-09-30 17:29` (host local time).
+  It carries the Migration descriptor version literal `1.22.5` and the `BuildIdentityFilter`
+  member added by `fcc94a4`, so the dev instance includes the True Last Logon UPN fix.
+- Prod DLL `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll` - same FileVersion,
+  LastWriteTime `2026-09-30 17:17`. It carries Migration `1.22.5` but NOT
+  `BuildIdentityFilter`, so prod is one commit short of the UPN fix.
+- `ExchangeAdminWeb.csproj` owns the base version number and `Modules/ModuleCatalog.cs` owns
+  the module versions; neither is copied here. Method: FileVersion off each assembly plus a
+  UTF-16 literal scan of the two DLLs for the version strings and the member name. That
+  identifies what shipped; it does not prove runtime behaviour, consent or configuration.
 
 ServiceHealth, RiskyUsers and IntuneDevices are enabled; each has a nonblank,
 nonzero `GraphDelineaSecretId` and at least one section-access row. These checks do
@@ -116,10 +121,17 @@ The old separate dev/prod and missing-initial-configuration records are supersed
 
 ### Cloud owner diagnostic files (2026-09-14)
 
-The original ignored `CloudAccountOwnerCoverage-20260911-154815.csv` remains in the
-workspace. The earlier record mentioned three original exports; the other two were
-not located. The owner-authorized runtime investigation read the surviving export
-and produced the ignored `CloudAccountOwnerCoverage-20260914-runtime-investigation.csv`.
+**Re-measured 2026-10-01 as of `370381d`: NEITHER file is in the workspace any more.** A
+recursive search of the repo for `CloudAccountOwnerCoverage*` returns nothing, so the
+2026-09-14 reading below is stale as to location. Both were gitignored, so git cannot say
+where they went and this sweep did not look outside the repo; treat their disposition as
+unknown rather than as settled.
+
+The 2026-09-14 record, kept for what it says about the files themselves: the original ignored
+`CloudAccountOwnerCoverage-20260911-154815.csv` was then in the workspace. The earlier record
+mentioned three original exports; the other two were not located. The owner-authorized runtime
+investigation read the surviving export and produced the ignored
+`CloudAccountOwnerCoverage-20260914-runtime-investigation.csv`.
 The latter is a diagnostic receipt, not application configuration or an authoritative
 owner map. It contains current candidate recipients and worker classifications for
 inspection. Its SHA-256 is
@@ -158,6 +170,11 @@ work. AD queries succeeded in the native PowerShell execution environment.
 The app-only Graph context was left available in PTK's default session.
 
 ### Test tooling
+
+**Run the xUnit suite with `-- xUnit.MaxParallelThreads=4` on this box.** At full parallelism
+it spreads over every core and each worker holds its own fixtures, which peaked near 27GB and
+got a run killed by the harness for memory pressure on 2026-09-25. Capped, it costs nothing
+measurable: re-timed 2026-10-01 as of `370381d` at 5m10s for the full Release suite.
 
 _Re-probed 2026-09-14 as of `a16c316`._ Pester `6.0.1`, PSScriptAnalyzer `1.25.0`,
 and ActiveDirectory `1.0.1.0` are installed; the

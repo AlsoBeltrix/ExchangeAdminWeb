@@ -13,6 +13,179 @@ still ran it inline.
 > can be run from the dev instance. Read every "no dev tenant" below as "live validation
 > not yet performed."
 
+## Archived 2026-10-01 (drift sweep)
+
+Preserved verbatim. Rotated out of `.agents/state.md` because each entry was completed or
+explicitly superseded by the record above it in the same file. What is still live has a home
+elsewhere and is named here:
+
+- **Recommended order and its one-week feasibility note** - superseded by the owner's
+  2026-10-01 declaration that queue item 24 is the P1 and nothing else starts before it. Each
+  item's current standing is in the queue table in `.agents/state.md`; entries 1 to 4 of the
+  order describe work that has since landed.
+- **Queue items 21 and 22** - complete. Owner browser check passed 2026-09-30.
+  `docs/AppLayoutAndScrolling-Plan.md` owns the audit, the diagnosis and the three named
+  compromises; `ExchangeAdminWeb.Tests/AppLayoutCssTests.cs` owns the guards.
+- **Queue item 20, Comms-10k** - the block below says "S1 and S2 of 4 landed" and ends with two
+  S3 options "with the owner, unanswered". Both are superseded: the owner ruled on 2026-09-30
+  (`.agents/decisions.md`, "Comms-10k runs no protected-principal check at all") and all four
+  slices landed the same day. `docs/Comms10kBulkResolveScale-Plan.md` owns the design, the
+  measurements and the outstanding Acceptance section; the live status, the stakeholder
+  rejection and the two overruled concerns are in `.agents/state.md`. The S1 rules that are
+  load-bearing rather than historical - a query error aborts the whole resolution, the match
+  keys are UPN and mail only, blank CSV lines never reach the filter, `-LDAPFilter` does not
+  expand `$` - are each pinned by a test in
+  `ExchangeAdminWeb.Tests/Comms10kAddressResolverTests.cs`.
+
+**Recommended order, and why.** The next agent should not just walk the numbers.
+
+1. **The migration `@key` checkbox defect** (top of this file, not a queue item). **FIXED in
+   code 2026-09-30, gates green, NOT yet deployed or seen in a browser.** It was blocking the
+   next deploy, so every finished item behind it stays invisible to users until a deploy runs.
+2. **17 S3. LANDED 2026-09-30.** The module is registered and reachable at `1.0.0`. What is
+   left on this item is not code: `AuditLog.Read.All` consent, the module enabled in Module
+   Config, and the live two-account comparison against the source script.
+3. **22, with 21 folded in. FIXED IN CODE 2026-09-30** on the owner's direct approval, at a
+   fraction of the planned scope - he rejected the plan's `.pg-*` conversion as a sledgehammer
+   and was right. Detail block below. **Outstanding: a browser check at one tall and one short
+   window, which is owner work and cannot be done here.**
+4. **20 Comms10k. S1 and S2 of 4 LANDED 2026-09-30. S3 RESCOPED by owner ruling and ready to implement**, then S4. Detail block below.
+5. **8 S6-S8.** Written slices, no owner input needed. Pure execution.
+6. **10 and 11.** Code is done; what remains is a deploy and live validation, which is owner
+   work, and it is gated behind item 1 above.
+7. **2, then 5.** Both need an owner decision before any code: 2's plan is a draft awaiting
+   approval, 5 is feasibility-only and may not be worth doing at all.
+8. **9 tiers 2-4.** Unapproved and the biggest remaining block. Needs a scoping conversation,
+   not a start.
+
+**Feasibility, stated plainly because the owner set a one-week target.** Items 4 through 8 of
+that order are each multi-session work; 9 alone took nine slices to get through tier 1, and 22
+is an app-wide audit plus a holistic fix plus a review round. **The week's realistic scope is
+1, 2 and 3 - the deploy blocker, True Last Logon S3, and the layout plan** - with 20 and 8 as
+stretch if nothing goes wrong. Say so to the owner rather than silently missing the date.
+
+### Queue items 21 and 22 - layout and scrolling, fixed in code
+
+`docs/AppLayoutAndScrolling-Plan.md` carries the audit, the diagnosis and an honest record of
+where the shipped change departs from what the plan proposed. App `2.24.0` -> `2.25.0`
+(shared/app-wide), Migration module `1.22.3` -> `1.22.4`.
+
+**The root cause was a missing height, not a wrong number.** Nothing above `<article>` declared
+one - `main` was `flex: 1` and stopped - so a page wanting to fill the remaining space had
+nothing to measure against and `height: 100%` resolved to nothing. The only thing that appeared
+to work was `100vh` minus a literal typed for the chrome above. Nine accumulated, no two alike,
+each wrong the moment a heading or banner changed.
+
+**What shipped** (`Components/Layout/MainLayout.razor.css`, four rules): `.page` gets
+`height: 100vh`, `main` becomes a flex column with `min-height: 0`, `.top-row` becomes
+`flex: none` instead of sticky, and `article.content` becomes
+`flex: 1; min-height: 0; overflow-y: auto`. Desktop only, matching the sidebar's existing
+`100vh` - below 641px the sidebar is a drawer and that layout is untouched.
+
+Then every number that existed only because the chain was missing went away: eight inline
+`calc(100vh - Npx)` caps deleted outright (one scroll context, nothing unreachable), and `.adm`
+went from `calc(100vh - 2.9rem - 1.1rem)` to plain `height: 100%`.
+
+**Three deliberate compromises, named so they are not mistaken for finished work:**
+
+1. **Migration's `.mig-split` took a PROPORTION, not a fill:** `70vh`, not `flex: 1`. A true
+   fill needs a flex chain threaded through that page's tabs and cards. A proportion cannot go
+   stale when a banner is added, which IS the defect class, so it fixes the reported fault.
+2. **Item 21 was fixed in CSS, not in the markup its diagnosis named.** Deleting the
+   `.card-body` wrapper would have shifted every `ClickGateRegistry` entry below
+   `Migration.razor:1213`, including the `@key` entry at 1228 from earlier the same day.
+   `.mig-modal .card-body { display: flex; flex-direction: column; min-height: 0; }` reconnects
+   the same chain with the page file untouched.
+3. **The fixed-pixel caps were left alone.** `max-height: 300px` on an autocomplete dropdown is
+   a deliberate popover size, not chrome arithmetic, and not part of the reported defect.
+
+**Guarded:** `ExchangeAdminWeb.Tests/AppLayoutCssTests.cs`, four tests - no page may do
+arithmetic on the chrome above it, the four layout rules must all be present, `.adm` must take a
+percentage, and the dialog's flex chain must be unbroken. Five probes, all five bit.
+
+Gates: build 0 errors, **3408 passed / 0 failed / 3 skipped**, format, ASCII, `git diff --check`.
+
+**OWNER BROWSER CHECK: PASSED, 2026-09-30.** That closes both items. Nothing in this repo
+renders a Blazor component or measures a laid-out box, so the tests only ever proved a SHAPE -
+the owner inspection is what actually confirms it, and it ran. The change moved the scroll from
+the document to `article` on EVERY page, so any later layout complaint on a page not opened
+that day is still possible; it would be a new report, not an unverified claim.
+### Queue item 20 - Comms-10k at full size, S1 and S2 of 4 landed
+
+`docs/Comms10kBulkResolveScale-Plan.md`, approved 2026-09-28 at revision 15. Module
+`1.2.0` -> `1.3.0`; the version is set ONCE, on S1, and the remaining slices extend its comment
+block rather than bumping again. `ExchangeAdminWeb.csproj` is untouched and verified so by diff,
+not by reading the plan's line about it.
+
+**S1 LANDED: address resolution is batched.** `Services/Comms10kAddressResolver.cs` is the new
+pure half - batching, RFC 4515 filter construction, match assignment - and
+`Comms10kService.QueryBatchCandidates` is the live query behind an `internal virtual` seam, one
+`Get-ADObject -LDAPFilter` per 500 addresses inside one runspace. 20 tests, plan tests 1 to 7.
+
+Three things in S1 that are load-bearing rather than cosmetic:
+
+- **A query error aborts the WHOLE resolution.** `ExecuteReplaceAsync` removes everyone absent
+  from the resolved list, so a batch that failed quietly would read as "these 500 were not
+  found" and unsubscribe 500 real people behind a green success message. Mirrors
+  `GroupManagementService.QueryBatchCandidates`.
+- **The match keys are UPN and mail ONLY.** `BulkIdentityList.BuildBatchFilter` also matches
+  `sAMAccountName` and optionally groups, which is why it is deliberately not reused - widening
+  the keys here changes who receives the mail. A probe that adds `sAMAccountName` fails a test.
+- **Blank CSV lines never reach the filter.** An empty equality assertion is not legal filter
+  syntax and the query is fail-closed per batch, so one blank row would have aborted the 499
+  real addresses beside it. `QueryableAddresses` screens them; `BuildBatchFilter` throws if one
+  arrives anyway; `Resolve` still walks the full original list so the blank is still reported.
+
+**Also fixed as a side effect, and worth not re-deriving:** the old code interpolated the
+address into `-Filter`, where PowerShell expands `$` as a variable and an address containing one
+silently queried something else (`SectionAccessGroupDirectory.cs:132` records the same lesson).
+`-LDAPFilter` has no such expansion and `$` is not an RFC 4515 metacharacter, so it now survives
+as the literal it is. There is a test asserting it is NOT escaped, because escaping it would
+break the match just as surely.
+
+Gates after S2: build 0 errors, **3426 passed / 0 failed / 3 skipped**, format, ASCII,
+`git diff --check`, csproj byte-identical. Five mutations probed and all five bit: batching
+off by one (3 fail), escaping removed (1), `sAMAccountName` added to the keys (1), ambiguous
+collapsing to the first match (1), and the seam swallowing a batch error (1).
+
+**NEXT: S3, rescoped and ready. Not blocked.** Owner ruling 2026-09-30, `.agents/decisions.md`:
+Comms-10k runs NO protected-principal check, on members or on the target. The plan's
+distribution-only guard is dropped - the real group is `GroupCategory: Security` so it would
+have refused every write, and the exemption rests on the module's purpose, not the category.
+S3 is now: delete the protected-principal path, drop `"Comms10k"` from
+`ModulesWithProtectedPrincipalServicing`, add the group resolution S4 needs, amend three
+documents with a scoped exception. One commit.
+
+**Two agent concerns were raised and OVERRULED - do not re-litigate them.** That the group is
+Security-category, and that `TargetGroupName` is a generic field nothing pins to this group.
+Both are true; the owner ruled neither warrants a check here. The decisions entry records both
+so a later reviewer finds them already answered.
+
+S3 was to add a distribution-only guard and then DELETE Comms-10k's protected-principal member
+check, on the stated ground that the target is "a broadcast distribution list, membership of
+which grants access to nothing". The owner ran the lookup on 2026-09-30 and the configured
+target is `GroupCategory: Security` - a mail-enabled Universal SECURITY group. So the guard as
+specified would refuse every write on prod, and more seriously the reason for deleting a
+security check does not hold: membership of a security group can grant access.
+
+The plan's own insistence that the distribution-only condition travel INSIDE the exception text
+is what caught this. Written the loose way, "Comms-10k is exempt from the member check" would
+have gone into the Constitution and three other documents while the real target was a security
+group.
+
+**Two options are with the owner, unanswered:** (A) keep the member check, drop the exemption
+and all four document amendments, S3 shrinks to the group resolution S4 needs - recommended; or
+(B) convert the AD group to Distribution, after which the plan is sound as written, but it is
+`SecurityEnabled` today so anything holding an ACL on it loses that access. Detail and evidence
+are in the plan's Slice 3 section.
+
+**Do not implement either half of S3 until that is answered.** The measurement the plan rests
+on used a DIFFERENT group - `CN=Test-WebApp,OU=ZZMikeCTest` - which really was Distribution;
+the ADWS limits it established are still valid, the category is not.
+
+**Nothing in this module has run against the real group.** The plan's Acceptance section is the
+owner's and is outstanding in full.
+
 ## Archived 2026-09-23 (drift sweep)
 
 Preserved verbatim. Rotated out of `.agents/state.md` because each entry was completed,
