@@ -45,10 +45,6 @@
                     <div class="col-md-2 d-flex align-items-end">
                         <button class="btn btn-primary" @onclick="CheckStatus"
                                 disabled="@(string.IsNullOrWhiteSpace(checkEmail) || isChecking)">
-                            @if (isChecking)
-                            {
-                                <span class="spinner-border spinner-border-sm me-2"></span>
-                            }
                             Check
                         </button>
                     </div>
@@ -149,10 +145,6 @@
 
                 <button class="btn btn-primary" @onclick="SetOof"
                         disabled="@(!IsSetFormValid || isSetting)">
-                    @if (isSetting)
-                    {
-                        <span class="spinner-border spinner-border-sm me-2"></span>
-                    }
                     @(oofState == "Disabled" ? "Disable Auto-Reply" : "Set Auto-Reply")
                 </button>
 

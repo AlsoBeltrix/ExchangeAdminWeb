@@ -55,8 +55,7 @@
             <div>
                 <button class="btn btn-outline-secondary btn-sm me-2" @onclick="DownloadCsvAsync" disabled="@(blockedSenders.Count == 0)">Download CSV</button>
                 <button class="btn btn-outline-primary btn-sm" @onclick="LoadBlockedSenders" disabled="@isLoading">
-                    @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                    Refresh
+                                        Refresh
                 </button>
             </div>
         </div>
@@ -122,8 +121,7 @@
                            @bind="reason" />
                 </div>
                 <button class="btn btn-danger me-2" @onclick="ConfirmUnblock" disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">
-                    @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                    Confirm Unblock
+                                        Confirm Unblock
                 </button>
                 <button class="btn btn-secondary" @onclick="CancelUnblock" disabled="@isLoading">Cancel</button>
             </div>

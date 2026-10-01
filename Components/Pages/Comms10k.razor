@@ -94,8 +94,7 @@
                     {
                         <p class="text-info">@parsedEmails.Count email(s) parsed. Click Validate to check against AD.</p>
                         <button class="btn btn-primary btn-sm" @onclick="ValidateEmails" disabled="@isLoading">
-                            @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                            Validate
+                                                        Validate
                         </button>
                     }
 
@@ -121,8 +120,7 @@
                                 }
                                 </p>
                                 <button class="btn btn-danger btn-sm me-2" @onclick="ExecuteReplace" disabled="@isLoading">
-                                    @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                                    Confirm Replace
+                                                                        Confirm Replace
                                 </button>
                                 <button class="btn btn-secondary btn-sm" @onclick="() => confirmPending = false">Cancel</button>
                             </div>

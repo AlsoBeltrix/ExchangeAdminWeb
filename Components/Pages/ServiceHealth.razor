@@ -32,17 +32,13 @@
             {
                 <span class="sh-updated">Last updated @status.LastUpdatedUtc.ToLocalTime().ToString("g")</span>
             }
+            @* The label no longer swaps to "Refreshing..." with its own spinner: the status
+               frame reports the refresh, and this page saying it too produced two different
+               answers on screen at once. The disabled state stays - that is refusal, not
+               reporting, and it belongs on the control being clicked. *@
             <button class="sh-refresh" @onclick="RefreshAsync" disabled="@isLoading">
-                @if (isLoading)
-                {
-                    <span class="spinner-border spinner-border-sm" role="status"></span>
-                    <span>Refreshing...</span>
-                }
-                else
-                {
-                    <i class="bi bi-arrow-clockwise"></i>
-                    <span>Refresh</span>
-                }
+                <i class="bi bi-arrow-clockwise"></i>
+                <span>Refresh</span>
             </button>
         </div>
     </div>
@@ -63,11 +59,11 @@
     }
     else if (isLoading && status == null)
     {
-        <div class="sh-loading">
-            <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Loading service health...</span>
-            </div>
-        </div>
+        @* No spinner here. The first load is reported by the status frame, which carries the
+           elapsed time as well - this page drawing its own was the duplicate the owner
+           rejected. The branch stays so the empty state is still explicit rather than
+           falling through to "no data", which would be a different and wrong claim. *@
+        <div class="sh-loading"></div>
     }
     else if (status != null)
     {
