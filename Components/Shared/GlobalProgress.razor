@@ -169,6 +169,14 @@
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         currentUser = authState.User.Identity?.Name ?? "";
 
+        // Dispose can run DURING the await above, on a circuit that went away while
+        // authentication was still resolving. It would find subscribed == false, unsubscribe
+        // nothing, and return - and then this continuation would subscribe a dead component to
+        // a SINGLETON event, where it stays reachable for the life of the process. Checking
+        // here is the only place that closes it, because Dispose has already been and gone.
+        if (disposed)
+            return;
+
         Progress.Changed += OnProgressChanged;
         BulkJobs.JobChanged += OnJobChanged;
         subscribed = true;

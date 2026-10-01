@@ -89,6 +89,26 @@ public class GlobalProgressWiringTests
     }
 
     [Fact]
+    public void TheAppFrameDisplayCannotSubscribeAfterItHasBeenDisposed()
+    {
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor")));
+
+        // OnInitializedAsync awaits authentication before subscribing. If the circuit is
+        // disposed during that await, Dispose finds nothing subscribed and returns, and then
+        // the continuation subscribes a dead component to a SINGLETON event - where it stays
+        // reachable for the life of the process. Dispose has already run by then, so the only
+        // place that can close this is a disposed check between the await and the subscribe.
+        var awaitIndex = source.IndexOf("await AuthStateProvider.GetAuthenticationStateAsync()", StringComparison.Ordinal);
+        var guardIndex = source.IndexOf("if (disposed)", awaitIndex < 0 ? 0 : awaitIndex, StringComparison.Ordinal);
+        var subscribeIndex = source.IndexOf("Progress.Changed +=", StringComparison.Ordinal);
+
+        Assert.True(awaitIndex >= 0, "The authentication await was not found.");
+        Assert.True(guardIndex > awaitIndex && guardIndex < subscribeIndex,
+            "A disposed check must sit between awaiting authentication and subscribing. "
+            + $"await at {awaitIndex}, guard at {guardIndex}, subscribe at {subscribeIndex}.");
+    }
+
+    [Fact]
     public void TheAppFrameDisplayMarshalsItsEventHandlersOntoTheRenderer()
     {
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor")));
