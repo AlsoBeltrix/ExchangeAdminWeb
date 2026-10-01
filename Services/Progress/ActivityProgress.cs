@@ -297,7 +297,19 @@ public sealed class ActivityProgressService : IActivityProgress, IDisposable
         }
 
         foreach (var straggler in stragglers)
+        {
+            // Cancel BEFORE completing, and do both. Completing alone closes the activity in
+            // the UI while the work carries on headless: the operator is told it failed, the
+            // backend keeps going, and any result it produces lands nowhere because Complete
+            // has already won. That is the orphaned-work defect this whole system exists to
+            // remove, reintroduced in the one place nobody looks.
+            //
+            // Cancelling is a request, not a guarantee - it only stops work that honours the
+            // token. A module that takes the token and ignores it is a defect in that module,
+            // and S4's adoption checklist is where that is enforced.
+            straggler.RequestCancel();
             straggler.Complete(false, "The page was closed before this finished.");
+        }
 
         lock (_gate)
         {

@@ -314,6 +314,24 @@ public class ActivityProgressTests
     }
 
     [Fact]
+    public void DisposingTheCircuitCancelsStillRunningWorkRatherThanLeavingItHeadless()
+    {
+        var progress = new ActivityProgressService();
+        var handle = progress.Begin("Migration", "Loading batches", ActivitySize.Unknown);
+        var token = handle.CancellationToken;
+
+        progress.Dispose();
+
+        // Completing without cancelling closes the activity in the UI while the work carries
+        // on with nowhere to report: the operator is told it failed, the backend keeps running,
+        // and any result it produces is discarded because Complete already won. That is the
+        // orphaned-work defect the whole system exists to remove.
+        Assert.True(token.IsCancellationRequested,
+            "Disposing the circuit must cancel the token it asked modules to honour, not just "
+            + "mark the activity failed.");
+    }
+
+    [Fact]
     public void ASubscriberThatThrowsDoesNotFailTheReportingModule()
     {
         using var progress = new ActivityProgressService();
