@@ -156,10 +156,6 @@
                        "Search" says that. *@
                     <button class="btn btn-primary w-100" @onclick="LoadRiskyUsersAsync" disabled="@isLoading"
                             title="Runs the search with the filters on this row">
-                        @if (isLoading)
-                        {
-                            <span class="spinner-border spinner-border-sm me-1"></span>
-                        }
                         Search
                     </button>
                 </div>
@@ -167,17 +163,18 @@
         </div>
     </div>
 
-    @* An in-flight query must SAY it is in flight, in the results area, not only as a button
-       spinner - a blank results area during a Graph round trip reads as a hung page (the
-       BitLocker blr-4 class of defect). *@
-    @if (isLoading)
-    {
-        <div class="alert alert-info d-flex align-items-center">
-            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-            <span>Querying Microsoft Entra ID Protection...</span>
-        </div>
-    }
+    @* The in-flight banner that used to sit here is GONE, and the requirement it served is not.
+       An in-flight query must still SAY it is in flight - a blank results area during a Graph
+       round trip reads as a hung page (the BitLocker blr-4 class of defect). That is now the
+       status frame's job: this page reports the query to IActivityProgress and the frame shows
+       it with the elapsed time, on every page, in one place the operator has learned to read.
 
+       Owner, 2026-10-01: "if each module has its own spinner, I don't want those updated to
+       look the same. that's not a global system." The duplicate was visible on dev - the frame
+       said Idle while this banner said Querying - which is worse than either alone.
+
+       The BUTTON keeps its disabled state. That is refusal, not reporting, and it has to stay
+       on the control the operator is clicking. *@
     @* hasQueried is cleared at the start of every query, not only the first, and set again only
        in `finally` once an answer (success or failure) exists - so a second query never leaves
        the first query's verdict on screen while the second is in flight (AC3). *@
