@@ -4,12 +4,24 @@
 .app-shell {
     display: flex;
     flex-direction: column;
+
+    /* Below 641px the sidebar is a drawer and the DOCUMENT scrolls, so there is no viewport
+       height here to make the frame a window row (the desktop block adds that). Without a
+       floor the shell is only as tall as its content, and the frame lands wherever the page
+       happens to end - under the fold on a long page, mid-screen on a short one. */
+    min-height: 100vh;
 }
 
 .page {
     position: relative;
     display: flex;
     flex-direction: column;
+
+    /* Takes the space the status frame leaves, at BOTH breakpoints. On mobile that is what
+       pushes the frame to the bottom of a short page instead of leaving it floating directly
+       under the content. */
+    flex: 1;
+    min-height: 0;
 }
 
 /* Flex column so the content area can be told how tall it is, rather than every page
@@ -88,8 +100,6 @@ main {
 
     .page {
         flex-direction: row;
-        flex: 1;
-        min-height: 0;
     }
 
     .sidebar {

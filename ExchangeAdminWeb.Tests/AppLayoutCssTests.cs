@@ -73,10 +73,19 @@ public class AppLayoutCssTests
         // dropped. .page claiming 100vh here would now push the status frame below the fold.
         Assert.Contains("height: 100vh", DeclarationsOf(desktop, ".app-shell"), StringComparison.Ordinal);
 
-        var page = DeclarationsOf(desktop, ".page");
-        Assert.Contains("flex: 1", page, StringComparison.Ordinal);
-        Assert.Contains("min-height: 0", page, StringComparison.Ordinal);
-        Assert.DoesNotContain("100vh", page, StringComparison.Ordinal);
+        // .page takes the space the status frame leaves at BOTH breakpoints, so these live in
+        // the base rule rather than the desktop block - on mobile they are what put the frame
+        // at the bottom of a short page instead of directly under the content.
+        var basePage = DeclarationsOf(StripComments(css), ".page");
+        Assert.Contains("flex: 1", basePage, StringComparison.Ordinal);
+        Assert.Contains("min-height: 0", basePage, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("100vh", DeclarationsOf(desktop, ".page"), StringComparison.Ordinal);
+
+        // Mobile has no viewport-height owner of its own, so without this floor the shell is
+        // only as tall as its content and the frame lands wherever the page happens to end.
+        Assert.Contains("min-height: 100vh", DeclarationsOf(StripComments(css), ".app-shell"),
+            StringComparison.Ordinal);
 
         // The sidebar measures the row it is given, not the viewport: a 100vh sidebar would
         // run underneath the status frame.
