@@ -306,6 +306,11 @@
 </div>
 
 @code {
+    // [Inject] rather than an @inject directive: this page is click-gate converted and every
+    // registry entry is keyed by LINE NUMBER. A directive at the top shifts every registered
+    // control down one; a property here sits below all of them and moves nothing.
+    [Inject] private IActivityProgress Progress { get; set; } = default!;
+
     private string currentUser = "";
     private string clientIpAddress = "Unknown";
     private bool authChecked;
@@ -390,7 +395,11 @@
 
         try
         {
+            using var activity = Progress.Begin(
+                "M365 Group Management", $"Searching groups for {term}", ActivitySize.Unknown);
+
             groups = await GroupService.SearchGroupsAsync(term);
+            activity.Complete(true, $"{groups.Count:N0} group(s)");
             hasSearched = true;
 
             try { Audit.LogLookupAction(currentUser, clientIpAddress, "M365GroupManagement_Search", term, true); }

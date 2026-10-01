@@ -371,6 +371,10 @@ public class GlobalProgressWiringTests
     [InlineData("DefenderEndpointDevices.razor")]
     [InlineData("NamedLocations.razor")]
     [InlineData("DhcpAuthorization.razor")]
+    [InlineData("MailboxPermissions.razor")]
+    [InlineData("CalendarPermissions.razor")]
+    [InlineData("GroupManagement.razor")]
+    [InlineData("M365GroupManagement.razor")]
     public void AnAdoptedModuleReportsItsWorkToTheStatusFrame(string page)
     {
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", page)));
