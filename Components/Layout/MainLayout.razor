@@ -9,9 +9,6 @@
         <div class="top-row px-4 d-flex justify-content-end align-items-center">
             <AuthorizeView>
                 <Authorized>
-                    @* The app's only progress display. Renders nothing while idle.
-                       docs/GlobalProgressSystem-Plan.md section 5.2. *@
-                    <GlobalProgress />
                     <UsageTracker />
                     <ThemePicker />
                     <small class="text-muted">
@@ -24,6 +21,18 @@
         <article class="content px-4">
             @Body
         </article>
+
+        @*
+            The status frame. LAST CHILD OF main, and a non-flexing row, so the height chain
+            above it is unchanged: article keeps `flex: 1` and simply gets shorter. It is
+            deliberately not fixed or absolute - overlaying the bottom of every page is the
+            exact defect queue item 22 fixed (docs/AppLayoutAndScrolling-Plan.md).
+        *@
+        <AuthorizeView>
+            <Authorized>
+                <GlobalProgress />
+            </Authorized>
+        </AuthorizeView>
     </main>
 </div>
 

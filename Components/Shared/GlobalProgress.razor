@@ -6,131 +6,166 @@
 @inject AuthenticationStateProvider AuthStateProvider
 
 @*
-    The app's only progress display. Modules report to IActivityProgress and render nothing
-    themselves; background jobs are read from the job store. See
-    docs/GlobalProgressSystem-Plan.md sections 5.1 and 5.2.
+    The app's status frame. Always present along the bottom of the window, reading "Idle" when
+    nothing is running and a live status readout when something is (owner, 2026-10-01:
+    "bottom status frame. shows progress bar with status or idle when nothing is running").
 
-    Lives in Components/Shared and is rendered by MainLayout, so it is outside
-    Components/Pages and therefore outside the ClickGateRegistry's scanned surface. That is
-    deliberate: the registry is keyed by line number across 12 pinned pages, and a control in
-    the app frame must not be able to shift any of them.
+    Always-visible is the owner's call and it is the point: a frame that only appears when
+    something happens is a frame the operator has not learned to read. One that is always there,
+    saying Idle, is one they already know where to look at.
 
-    Renders NOTHING when idle. An always-visible empty bar trains operators to ignore the one
-    place that is supposed to mean something is happening.
+    It renders a STATUS READOUT, not a timer. Every line says what is happening in words, and
+    carries a count whenever the module supplied one. An indeterminate activity says so rather
+    than animating a number it invented.
+
+    Lives in Components/Shared and is rendered by MainLayout, so it sits outside
+    Components/Pages and cannot shift any of ClickGateRegistry's line keys.
+
+    #gp-nav-slot is deliberately empty here and is owned by wwwroot/nav-progress.js. During a
+    page navigation the server is busy producing the next page, so this component cannot render
+    anything - the only thing that can report a navigation in progress is JS already running in
+    the browser. It writes into that slot. Blazor's enhanced-navigation DOM patch clears the
+    injected node when the new page lands, which is exactly when it should go.
 *@
 
-@if (HasAnything)
+@* The expanded list renders BEFORE the frame so it opens upward, into the page, rather than
+   off the bottom of the window. *@
+@if (expanded && Lines.Count > 1)
 {
-    <div class="gp-wrap">
-        <button type="button"
-                class="gp-toggle"
-                aria-expanded="@(expanded ? "true" : "false")"
-                title="@SummaryText()"
-                @onclick="Toggle">
-            @if (RunningCount > 0)
-            {
-                <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
-            }
-            <span class="gp-toggle-label">@SummaryText()</span>
-            @if (RunningCount > 1)
-            {
-                <span class="gp-count">@RunningCount</span>
-            }
-        </button>
-
-        @if (expanded)
+    <div class="gp-list">
+        @foreach (var line in Lines)
         {
-            <div class="gp-panel">
-                @foreach (var activity in activities)
+            <div class="gp-list-row">
+                <span class="gp-list-module">@line.ModuleId</span>
+                <span class="gp-list-label">@line.Label</span>
+                <div class="gp-bar gp-bar-sm">
+                    @if (line.Percent is int linePercent)
+                    {
+                        <div class="gp-bar-fill" style="width:@(linePercent)%"></div>
+                    }
+                    else
+                    {
+                        <div class="gp-bar-fill gp-bar-indeterminate"></div>
+                    }
+                </div>
+                <span class="gp-status">@line.Status</span>
+                @if (line.Background)
                 {
-                    <div class="gp-item">
-                        <div class="gp-item-module">@activity.ModuleId</div>
-                        <div class="gp-item-label">@activity.Label</div>
-                        <div class="gp-track">
-                            @if (activity.PercentComplete is int percent)
-                            {
-                                <div class="gp-fill" style="width:@(percent)%"></div>
-                            }
-                            else
-                            {
-                                <div class="gp-fill gp-fill-indeterminate"></div>
-                            }
-                        </div>
-                        <div class="gp-item-detail">@ActivityText(activity)</div>
-                    </div>
-                }
-
-                @foreach (var job in activeJobs)
-                {
-                    <div class="gp-item">
-                        <div class="gp-item-module">@job.ModuleId</div>
-                        <div class="gp-item-label">@JobLabel(job)</div>
-                        <div class="gp-track">
-                            @if (JobPercent(job) is int percent)
-                            {
-                                <div class="gp-fill" style="width:@(percent)%"></div>
-                            }
-                            else
-                            {
-                                <div class="gp-fill gp-fill-indeterminate"></div>
-                            }
-                        </div>
-                        <div class="gp-item-detail">@JobText(job)</div>
-                        <div class="gp-safe-note">Runs in the background. You can leave this page.</div>
-                    </div>
-                }
-
-                @foreach (var outcome in outcomes)
-                {
-                    <div class="gp-item">
-                        <div class="gp-item-module">@outcome.ModuleId</div>
-                        <div class="gp-item-label @(outcome.Success ? "gp-ok" : "gp-bad")">
-                            @outcome.Label - @(outcome.Success ? "finished" : "failed")
-                        </div>
-                        @if (!string.IsNullOrWhiteSpace(outcome.Message))
-                        {
-                            <div class="gp-item-detail">@outcome.Message</div>
-                        }
-                    </div>
-                }
-
-                @foreach (var job in FinishedSinceArrival())
-                {
-                    <div class="gp-item">
-                        <div class="gp-item-module">@job.ModuleId</div>
-                        <div class="gp-item-label @(JobSucceeded(job) ? "gp-ok" : "gp-bad")">
-                            @JobLabel(job) - @JobEndedText(job)
-                        </div>
-                        <div class="gp-item-detail">@JobText(job)</div>
-                    </div>
+                    <span class="gp-safe">background - safe to leave</span>
                 }
             </div>
         }
     </div>
 }
 
+<div id="gp-frame" class="gp-frame @(IsBusy ? "gp-frame-busy" : "gp-frame-idle")"
+     role="status" aria-live="polite">
+
+    <div id="gp-nav-slot" class="gp-nav-slot"></div>
+
+    @if (Primary is null)
+    {
+        <span class="gp-dot gp-dot-idle" aria-hidden="true"></span>
+        <span class="gp-idle">Idle</span>
+    }
+    else
+    {
+        <span class="spinner-border spinner-border-sm gp-spin" aria-hidden="true"></span>
+        <span class="gp-label">@Primary.Label</span>
+        <div class="gp-bar" title="@Primary.Status">
+            @if (Primary.Percent is int percent)
+            {
+                <div class="gp-bar-fill" style="width:@(percent)%"></div>
+            }
+            else
+            {
+                <div class="gp-bar-fill gp-bar-indeterminate"></div>
+            }
+        </div>
+        <span class="gp-status">@Primary.Status</span>
+
+        @if (OtherCount > 0)
+        {
+            <button type="button" class="gp-more" @onclick="ToggleExpanded">
+                @(expanded ? "hide" : $"+{OtherCount} more")
+            </button>
+        }
+    }
+
+    @if (LatestOutcome is not null)
+    {
+        <span class="gp-outcome @(LatestOutcome.Success ? "gp-ok" : "gp-bad")">
+            @LatestOutcome.Text
+        </span>
+        <button type="button" class="gp-dismiss" title="Dismiss" @onclick="DismissLatest">x</button>
+    }
+</div>
+
 @code {
+    /// <summary>One readable row in the frame, from either source.</summary>
+    private sealed record Line(string ModuleId, string Label, string Status, int? Percent, bool Background);
+
+    private sealed record Outcome(string Id, string Text, bool Success, bool FromJob);
+
     private readonly DateTime arrivedUtc = DateTime.UtcNow;
 
     private string currentUser = "";
     private bool expanded;
     private bool disposed;
     private bool subscribed;
+    private readonly HashSet<string> dismissedJobs = new(StringComparer.Ordinal);
 
     private IReadOnlyList<Activity> activities = Array.Empty<Activity>();
     private IReadOnlyList<ActivityOutcome> outcomes = Array.Empty<ActivityOutcome>();
     private IReadOnlyList<BulkJob> activeJobs = Array.Empty<BulkJob>();
     private IReadOnlyList<BulkJob> recentJobs = Array.Empty<BulkJob>();
 
-    private bool HasAnything =>
-        activities.Count > 0 || activeJobs.Count > 0 || outcomes.Count > 0 || FinishedSinceArrival().Count > 0;
+    private List<Line> Lines
+    {
+        get
+        {
+            var lines = activities
+                .Select(a => new Line(a.ModuleId, a.Label, ActivityStatus(a), a.PercentComplete, false))
+                .ToList();
 
-    private int RunningCount => activities.Count + activeJobs.Count;
+            lines.AddRange(activeJobs.Select(j =>
+                new Line(j.ModuleId, JobLabel(j), JobStatus(j), JobPercent(j), true)));
+
+            return lines;
+        }
+    }
+
+    private Line? Primary => Lines.FirstOrDefault();
+
+    private int OtherCount => Math.Max(0, Lines.Count - 1);
+
+    private bool IsBusy => Lines.Count > 0;
+
+    private Outcome? LatestOutcome
+    {
+        get
+        {
+            var fromActivity = outcomes.FirstOrDefault();
+            if (fromActivity is not null)
+            {
+                var verb = fromActivity.Success ? "finished" : "failed";
+                var text = string.IsNullOrWhiteSpace(fromActivity.Message)
+                    ? $"{fromActivity.Label} {verb}"
+                    : $"{fromActivity.Label} {verb} - {fromActivity.Message}";
+                return new Outcome(fromActivity.Id, text, fromActivity.Success, false);
+            }
+
+            var job = FinishedSinceArrival().FirstOrDefault();
+            return job is null
+                ? null
+                : new Outcome(job.Id, $"{JobLabel(job)} {JobEndedText(job)}", JobSucceeded(job), true);
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
-        // SubmittedBy is written from user.Identity.Name verbatim at enqueue time (see the three
-        // enqueueing pages), so the scoped query must match on the same unnormalised value.
+        // SubmittedBy is written from user.Identity.Name verbatim at enqueue time by the three
+        // enqueueing pages, so the scoped query matches on that same unnormalised value.
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         currentUser = authState.User.Identity?.Name ?? "";
 
@@ -146,9 +181,9 @@
         activities = Progress.Active;
         outcomes = Progress.RecentOutcomes;
 
-        // NEVER GetActiveJobs() here. This component renders in the app frame, on every page,
-        // for every operator; the unscoped accessor spans every module and every submitter and
-        // would show one operator another operator's work. Guarded by GlobalProgressScopeTests.
+        // NEVER GetActiveJobs() here. This frame renders on every page for every operator, and
+        // the unscoped accessor spans every module and every submitter - BulkJobService says so
+        // itself. Guarded by GlobalProgressWiringTests.
         activeJobs = string.IsNullOrWhiteSpace(currentUser)
             ? Array.Empty<BulkJob>()
             : BulkJobs.GetActiveJobsBySubmitter(currentUser);
@@ -158,18 +193,37 @@
             : BulkJobs.GetRecentJobsBySubmitter(currentUser);
     }
 
-    // Only jobs that ENDED while this operator was on the app are announced. Without the cutoff
-    // the panel would re-announce every job from the retention window on every page load, which
-    // trains the operator to dismiss it unread - the same failure as an always-visible bar.
+    // Only jobs that ENDED while this operator was here are announced, and only until dismissed.
+    // Without the cutoff the frame would re-announce every job in the retention window on every
+    // page load, which teaches the operator to ignore the one place that is meant to mean
+    // something.
     private IReadOnlyList<BulkJob> FinishedSinceArrival() =>
-        recentJobs.Where(j => j.FinishedAtUtc is DateTime finished && finished >= arrivedUtc).ToList();
+        recentJobs
+            .Where(j => j.FinishedAtUtc is DateTime finished
+                && finished >= arrivedUtc
+                && !dismissedJobs.Contains(j.Id))
+            .ToList();
 
-    private void Toggle() => expanded = !expanded;
+    private void ToggleExpanded() => expanded = !expanded;
+
+    private void DismissLatest()
+    {
+        var latest = LatestOutcome;
+        if (latest is null)
+            return;
+
+        if (latest.FromJob)
+            dismissedJobs.Add(latest.Id);
+        else
+            Progress.DismissOutcome(latest.Id);
+
+        Reload();
+    }
 
     // Raised from the job pump's thread, not the renderer's, so it MUST be marshalled.
     private async void OnJobChanged(string jobId) => await Refresh();
 
-    // Raised by whatever thread the reporting module happens to be on, for the same reason.
+    // Raised by whatever thread the reporting module is on, for the same reason.
     private async void OnProgressChanged() => await Refresh();
 
     private async Task Refresh()
@@ -190,29 +244,12 @@
         }
         catch (ObjectDisposedException)
         {
-            // The circuit went away between the guard above and the dispatch. Nothing to update.
+            // The circuit went away between the guard and the dispatch. Nothing to update.
         }
     }
 
-    private string SummaryText()
+    private static string ActivityStatus(Activity activity)
     {
-        var running = RunningCount;
-        if (running == 1)
-        {
-            var only = activities.Count == 1 ? activities[0].Label : JobLabel(activeJobs[0]);
-            return only;
-        }
-
-        if (running > 1)
-            return $"{running} things running";
-
-        var ended = outcomes.Count + FinishedSinceArrival().Count;
-        return ended == 1 ? "1 finished" : $"{ended} finished";
-    }
-
-    private static string ActivityText(Activity activity)
-    {
-        var detail = activity.Detail;
         var counted = activity.Shape switch
         {
             ActivityShape.Steps => $"step {activity.Done} of {activity.Total}",
@@ -220,29 +257,29 @@
             _ => "working",
         };
 
-        return string.IsNullOrWhiteSpace(detail) ? counted : $"{counted} - {detail}";
+        return string.IsNullOrWhiteSpace(activity.Detail) ? counted : $"{counted} - {activity.Detail}";
     }
 
     private static string JobLabel(BulkJob job) => job.JobType.Replace('_', ' ');
 
-    // Null until the runner has stamped a row count, so the bar stays indeterminate rather than
-    // rendering 0% for a queued job that has not been sized yet.
+    // Null until the runner has stamped a row count, so a queued job shows an indeterminate bar
+    // rather than a confident 0%.
     private static int? JobPercent(BulkJob job) =>
         job.TotalRows > 0
             ? (int)Math.Clamp(job.ProcessedRows * 100L / job.TotalRows, 0L, 100L)
             : null;
 
-    private string JobText(BulkJob job)
+    private string JobStatus(BulkJob job)
     {
         var status = BulkJobs.DisplayStatus(job, DateTime.UtcNow);
         if (job.TotalRows <= 0)
             return status;
 
-        var counts = $"{job.ProcessedRows:N0} of {job.TotalRows:N0}";
+        var text = $"{status} - {job.ProcessedRows:N0} of {job.TotalRows:N0}";
         if (job.FailedCount > 0 || job.PartialCount > 0)
-            counts += $" ({job.SuccessCount:N0} ok, {job.PartialCount:N0} partial, {job.FailedCount:N0} failed)";
+            text += $" ({job.SuccessCount:N0} ok, {job.PartialCount:N0} partial, {job.FailedCount:N0} failed)";
 
-        return $"{status} - {counts}";
+        return text;
     }
 
     // Completed with no failed rows is the only unambiguous success. Cancelled and Interrupted
@@ -263,8 +300,8 @@
     {
         disposed = true;
 
-        // This component lives in the layout, so it outlives every page. A leaked handler here
-        // persists for the life of the process and keeps a dead circuit's component reachable.
+        // This frame lives in the layout and outlives every page, so a leaked handler persists
+        // for the life of the process and keeps a dead circuit's component reachable.
         if (!subscribed)
             return;
 

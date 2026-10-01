@@ -31,10 +31,14 @@ one system, and that system owns everything the operator sees.
   Nothing can cancel anything today.
 - Slow work survives you walking away and tells you when it finished or failed.
 
-**What it costs.** Four stages. S1 and S2 build the whole system and fix the click problem
+**What it costs.** Four stages. S1 and S2 build the whole system and fix the navigation case
 across all 36 modules without touching a single one of them. S3 moves Comms-10k onto the
-background runner. S4 takes the remaining modules one at a time, slowest first, and can pause
-for other work.
+background runner. S4 wires the modules themselves up, slowest first.
+
+**S4 is no longer last by default.** The frame is a status readout, and a readout with nothing
+reporting into it only ever says "Idle". The first build shipped the display with no module
+feeding it and the owner was shown an empty frame, which is not a progress system. The slow
+modules get wired up as soon as the frame is accepted, not after everything else.
 
 **The real expense is not the progress bar.** Making results survive navigation means moving
 slow work out of the pages and into the background runner, module by module. That is the bulk
@@ -290,20 +294,47 @@ precedent for a shared UI-state service in this app and this follows its shape.
 The service is per-circuit. It also exposes the current user's **background jobs**, read from
 `BulkJobService`, so the display has one source of truth for "what is running for me".
 
-### 5.2 The display - one component in the app frame
+### 5.2 The display - a permanent status frame along the bottom
 
-A single component rendered by `Components/Layout/MainLayout.razor`, inside the existing
-`top-row`. Behaviour:
+**Owner ruling, 2026-10-01, after rejecting the first build:** *"bottom status frame. shows
+progress bar with status or idle when nothing is running."* And on what it must contain:
+*"progress system is not just a vague timer, it's a live status readout."*
 
-- Idle: renders nothing at all.
-- One or more activities running: a slim determinate or indeterminate bar with the label; the
-  count when the activity supplied one.
-- More than one: a collapsed summary that expands to a list.
-- An activity ends: a short-lived result line, success or failure, that the operator does not
-  have to be on the originating page to see.
-- Background jobs appear in the same list, marked as safe to leave, with a link to the Bulk
-  Jobs page. Live-updated by subscribing to `BulkJobService.JobChanged` - this closes D5's
-  "press Refresh yourself".
+**What was rejected, so it is not rebuilt:** a 3px indeterminate bar across the top of the
+viewport plus a panel in the `top-row` that appeared only when something was running. Two
+faults, both real. A hairline is a web convention, not something an operator notices while
+working in a form - it fails the owner's own "clearly, obviously" standard. And it carried no
+information at all, which is the "vague timer" he ruled out.
+
+A single component rendered by `Components/Layout/MainLayout.razor` as the **last child of
+`main`, after `article`**. Behaviour:
+
+- **Always present.** Idle reads "Idle" with a muted dot. A frame that appears only when
+  something happens is one the operator never learns to look at; one that is always there is
+  one they already know the location of.
+- Running: a real progress bar (10px, not a hairline) plus the label and a **status readout in
+  words** - "step 3 of 5 - clearing the list", "6,200 of 10,000". The frame tints to the brand
+  colour so peripheral vision catches the change, rather than only text appearing.
+- More than one: the primary line plus a `+N more` toggle that opens the full list **upward**,
+  into the page, not off the bottom of the window.
+- An activity ends: a result line, success or failure, that the operator sees from any page,
+  with a dismiss control. Not auto-cleared on a timer - an outcome the operator missed is an
+  outcome lost.
+- Background jobs appear in the same list, marked "background - safe to leave". Live-updated
+  by subscribing to `BulkJobService.JobChanged` - this closes D5's "press Refresh yourself".
+
+**Layout constraint, and it is load-bearing.** The frame is `flex: none` INSIDE `main`, so the
+height chain in `MainLayout.razor.css` keeps working unchanged: `article` stays `flex: 1` and
+simply gets shorter. It must never be `position: fixed` or `absolute` - floating over the
+bottom of every page is exactly the defect queue item 22 fixed
+(`docs/AppLayoutAndScrolling-Plan.md`). Guarded by
+`GlobalProgressWiringTests.TheStatusFrameIsTheLastRowInsideMainAndNotAnOverlay`.
+
+**The frame is server-rendered, which makes it self-diagnosing.** Because the idle state comes
+from Blazor rather than JS, "I see the Idle frame" and "I see nothing" are different diagnoses,
+and the served HTML can be checked from outside a browser by fetching a page and grepping for
+`gp-frame`. The first build had no such property: every part of it was JS-injected, so when it
+failed on dev there was nothing to look at and nothing to check.
 
 **The display must show only the current operator's jobs, and `GetActiveJobs()` is the wrong
 API for it.** `BulkJobService.GetActiveJobs()` (`:179`) spans every module, and the comment

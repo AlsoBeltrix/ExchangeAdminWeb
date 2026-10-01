@@ -1,56 +1,96 @@
-// Navigation progress bar.
+// Navigation reporting for the bottom status frame.
 //
-// Why this is plain JS and not a Blazor component: the defect it fixes is that nothing paints
-// between clicking a module in the sidebar and that module's page arriving. The app renders
-// interactively with prerendering on (Program.cs AddInteractiveServerRenderMode, and no call
-// site passes prerender:false), so the server builds the whole page -- including any spinner in
-// OnInitializedAsync -- before the browser is sent a single byte. A component cannot show a
-// spinner for a load that has not reached the browser yet. Only something already running in
-// the page can, which means JS.
+// Why this is plain JS and not part of the Blazor component: while a page is loading, the
+// server is busy producing it. The component in the frame cannot re-render to say "loading" -
+// the circuit that would render it is the thing we are waiting on. Worse, the app renders with
+// prerendering on (Program.cs AddInteractiveServerRenderMode, no call site passes
+// prerender:false), so the whole page is built server-side before the browser is sent a byte,
+// and Blazor enhanced navigation leaves the PREVIOUS page fully rendered and interactive
+// meanwhile. Nothing on screen changes. Only code already running in the browser can report it.
+// Diagnosed in docs/ServiceHealthLoadFeedback-Plan.md lines 44-66.
 //
-// The app also uses Blazor enhanced navigation, so the PREVIOUS page stays fully rendered and
-// interactive for the whole load. Without this bar there is no visual change at all and the
-// operator clicks again. Diagnosed in docs/ServiceHealthLoadFeedback-Plan.md lines 44-66.
+// This writes a live readout into #gp-nav-slot, a deliberately empty element the frame renders
+// for it: the destination name taken from the clicked link, plus a ticking elapsed time so the
+// operator can see it is still moving rather than wedged.
 //
 // Two independent start signals, because only one of them is proven in this app:
-//   1. blazor:enhancednavigationstart -- the documented signal, NOT yet confirmed against the
-//      installed Blazor version on a dev deploy (docs/GlobalProgressSystem-Plan.md S1).
-//   2. A capturing click listener on same-origin links -- the fallback, which depends on
-//      nothing but the DOM.
-// Both call start(); start() is idempotent. If (1) turns out to fire, the fallback is harmless
-// duplication. If it does not, the bar still works. The end signal, blazor:enhancedload, IS
-// already proven here: App.razor has subscribed to it for theme reapplication since before this.
+//   1. blazor:enhancednavigationstart - the documented signal. Present in the shipped runtime
+//      (verified by reading blazor.web.js on the dev host), but its firing is not observable
+//      from this repo.
+//   2. A capturing click listener on same-origin links - depends on nothing but the DOM, and
+//      it is also the only one of the two that knows WHICH link was clicked, so it is what
+//      supplies the destination name.
+// The end signal, blazor:enhancedload, is already proven here: App.razor has subscribed to it
+// for theme reapplication since before this work.
 (function () {
     'use strict';
 
-    var BAR_ID = 'nav-progress-bar';
-    var active = false;
-    var bar = null;
+    var SLOT_ID = 'gp-nav-slot';
+    var FRAME_ID = 'gp-frame';
+    var NODE_ID = 'gp-nav-live';
 
-    function ensureBar() {
-        if (bar && bar.isConnected) {
-            return bar;
-        }
-        bar = document.getElementById(BAR_ID);
-        if (!bar) {
-            bar = document.createElement('div');
-            bar.id = BAR_ID;
-            bar.setAttribute('role', 'progressbar');
-            bar.setAttribute('aria-label', 'Loading the page');
-            // aria-valuenow is deliberately omitted: this bar does not know how far along the
-            // load is, and announcing a number it invented is the exact dishonesty the progress
-            // rules forbid. An indeterminate progressbar is a valid ARIA state.
-            document.body.appendChild(bar);
-        }
-        return bar;
+    var active = false;
+    var startedAt = 0;
+    var destination = '';
+    var ticker = null;
+
+    function host() {
+        // The frame renders the slot. If the frame is not on the page (an unauthenticated or
+        // error page), fall back to the body so the readout still appears rather than silently
+        // doing nothing.
+        return document.getElementById(SLOT_ID) || document.getElementById(FRAME_ID) || document.body;
     }
 
-    function start() {
+    function node() {
+        var existing = document.getElementById(NODE_ID);
+        if (existing && existing.isConnected) {
+            return existing;
+        }
+
+        var created = document.createElement('div');
+        created.id = NODE_ID;
+        created.className = 'gp-nav-live';
+        host().appendChild(created);
+        return created;
+    }
+
+    function elapsedText() {
+        var seconds = Math.floor((Date.now() - startedAt) / 1000);
+        if (seconds < 1) {
+            return '';
+        }
+        if (seconds < 60) {
+            return ' - ' + seconds + 's';
+        }
+        return ' - ' + Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's';
+    }
+
+    function paint() {
+        if (!active) {
+            return;
+        }
+        node().textContent = 'Loading ' + destination + elapsedText();
+    }
+
+    function start(name) {
         if (active) {
             return;
         }
         active = true;
-        ensureBar().classList.add('nav-progress-running');
+        startedAt = Date.now();
+        destination = name || 'the page';
+
+        var frame = document.getElementById(FRAME_ID);
+        if (frame) {
+            // Takes the frame out of its idle styling for the duration, so the change is
+            // visible and not merely additive text.
+            frame.classList.add('gp-frame-navigating');
+        }
+
+        paint();
+        // One second, because the number it prints has one-second resolution. A faster timer
+        // would repaint identical text.
+        ticker = window.setInterval(paint, 1000);
     }
 
     function stop() {
@@ -58,20 +98,35 @@
             return;
         }
         active = false;
-        ensureBar().classList.remove('nav-progress-running');
+
+        if (ticker !== null) {
+            window.clearInterval(ticker);
+            ticker = null;
+        }
+
+        var frame = document.getElementById(FRAME_ID);
+        if (frame) {
+            frame.classList.remove('gp-frame-navigating');
+        }
+
+        var live = document.getElementById(NODE_ID);
+        if (live && live.parentNode) {
+            live.parentNode.removeChild(live);
+        }
     }
 
-    // Enhanced navigation keeps the old page on screen, so the end signal is an event rather
-    // than a page unload. This one is proven in this app.
+    // The proven end signal.
     document.addEventListener('blazor:enhancedload', stop);
 
-    // The documented start signal. Unconfirmed here; harmless if it never fires.
-    document.addEventListener('blazor:enhancednavigationstart', start);
+    // The documented start signal. It carries no destination, so it reports generically; the
+    // click listener below normally wins the race and supplies the name.
+    document.addEventListener('blazor:enhancednavigationstart', function () { start(''); });
 
-    // Fallback start signal. Capturing, so it runs before Blazor's own handler takes the click.
+    // Fallback start signal, and the one that knows the destination. Capturing, so it runs
+    // before Blazor's own handler takes the click.
     document.addEventListener('click', function (e) {
-        // Honour anything that means "not a plain navigation": modified clicks open a new tab
-        // and never replace this page, so showing a loading bar for them would be a lie.
+        // Anything that means "not a plain navigation": a modified click opens a new tab and
+        // never replaces this page, so reporting a load would be a lie.
         if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
             return;
         }
@@ -88,7 +143,6 @@
         }
 
         var href = anchor.getAttribute('href') || '';
-        // In-page anchors and script hrefs navigate nowhere.
         if (href === '' || href.charAt(0) === '#' || href.toLowerCase().indexOf('javascript:') === 0) {
             return;
         }
@@ -107,11 +161,11 @@
             return;
         }
 
-        start();
+        start((anchor.textContent || '').replace(/\s+/g, ' ').trim());
     }, true);
 
-    // A full (non-enhanced) navigation replaces the document, so the bar goes with it. These two
-    // cover the back/forward cache, where the restored page would otherwise keep a stale bar.
+    // A full (non-enhanced) navigation replaces the document, so the readout goes with it.
+    // These cover the back/forward cache, where a restored page would keep a stale readout.
     window.addEventListener('pageshow', stop);
     window.addEventListener('pagehide', stop);
 })();

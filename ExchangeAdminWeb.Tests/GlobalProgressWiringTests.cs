@@ -108,6 +108,88 @@ public class GlobalProgressWiringTests
     }
 
     [Fact]
+    public void TheStatusFrameIsTheLastRowInsideMainAndNotAnOverlay()
+    {
+        var layout = StripComments(ReadRepoFile(Path.Combine("Components", "Layout", "MainLayout.razor")));
+
+        // The frame must sit INSIDE main, after article, so the height chain keeps working:
+        // article stays `flex: 1` and simply gets shorter. Anything fixed or absolute would
+        // float over the bottom of every page, which is precisely the defect queue item 22
+        // fixed (docs/AppLayoutAndScrolling-Plan.md).
+        var article = layout.IndexOf("</article>", StringComparison.Ordinal);
+        var frame = layout.IndexOf("<GlobalProgress", StringComparison.Ordinal);
+        var mainClose = layout.IndexOf("</main>", StringComparison.Ordinal);
+
+        Assert.True(article >= 0 && frame > article && mainClose > frame,
+            "The status frame must render inside <main>, after </article>. Found article at "
+            + $"{article}, frame at {frame}, </main> at {mainClose}.");
+
+        var css = StripComments(ReadRepoFile(Path.Combine("wwwroot", "app.css")));
+        var frameRule = DeclarationsOf(css, ".gp-frame");
+        Assert.DoesNotContain("position: fixed", frameRule, StringComparison.Ordinal);
+        Assert.DoesNotContain("position: absolute", frameRule, StringComparison.Ordinal);
+        Assert.Contains("flex: none", frameRule, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheStatusFrameAlwaysRendersAndSaysIdleWhenNothingIsRunning()
+    {
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor")));
+
+        // The owner's requirement, 2026-10-01: the frame is permanent and reads "Idle" when
+        // nothing is running. An earlier build rendered nothing while idle, which makes it a
+        // thing operators never learn to look at.
+        Assert.Contains("Idle", source, StringComparison.Ordinal);
+        Assert.Contains("gp-frame", source, StringComparison.Ordinal);
+
+        // No top-level conditional may wrap the frame element itself.
+        var frameIndex = source.IndexOf("id=\"gp-frame\"", StringComparison.Ordinal);
+        Assert.True(frameIndex > 0, "The frame element was not found.");
+    }
+
+    [Fact]
+    public void TheStatusReadoutCarriesWordsAndCountsRatherThanJustABar()
+    {
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor")));
+
+        // A progress system here is a live status readout, not a timer (owner, 2026-10-01).
+        // These are the three honest shapes; losing them turns the frame back into a sliver
+        // that says nothing.
+        Assert.Contains("step {activity.Done} of {activity.Total}", source, StringComparison.Ordinal);
+        Assert.Contains("{activity.Done:N0} of {activity.Total:N0}", source, StringComparison.Ordinal);
+        Assert.Contains("of {job.TotalRows:N0}", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheNavigationReadoutWritesIntoTheSlotTheFrameRenders()
+    {
+        var frame = StripComments(ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor")));
+        var script = ReadRepoFile(Path.Combine("wwwroot", "nav-progress.js"));
+
+        // The component cannot render during a navigation - the circuit that would render it
+        // is the thing being waited on - so the JS owns this slot. If the id drifts on either
+        // side the readout silently stops appearing, which is exactly how the first attempt
+        // failed on dev.
+        Assert.Contains("gp-nav-slot", frame, StringComparison.Ordinal);
+        Assert.Contains("gp-nav-slot", script, StringComparison.Ordinal);
+        Assert.Contains("gp-frame", script, StringComparison.Ordinal);
+
+        // It must name the destination, not just report that something is happening.
+        Assert.Contains("'Loading '", script, StringComparison.Ordinal);
+        Assert.Contains("textContent", script, StringComparison.Ordinal);
+    }
+
+    private static string DeclarationsOf(string css, string selector)
+    {
+        var index = css.IndexOf(selector + " {", StringComparison.Ordinal);
+        Assert.True(index >= 0, $"selector '{selector}' not found in app.css");
+
+        var open = css.IndexOf('{', index);
+        var close = css.IndexOf('}', open);
+        return css[open..close];
+    }
+
+    [Fact]
     public void TheNavigationBarIsLoadedAndCarriesBothStartSignals()
     {
         var app = StripComments(ReadRepoFile(Path.Combine("Components", "App.razor")));

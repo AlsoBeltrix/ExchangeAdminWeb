@@ -1624,160 +1624,167 @@ pre.bg-light {
     font-size: 0.65rem;
 }
 
-/* --- Global progress system (docs/GlobalProgressSystem-Plan.md) --- */
+/* --- Global status frame (docs/GlobalProgressSystem-Plan.md) ---
+   A permanent strip along the bottom of the window. Owner, 2026-10-01: "bottom status frame.
+   shows progress bar with status or idle when nothing is running."
 
-/* Navigation bar. Fixed to the viewport top, above everything, because the page underneath is
-   the PREVIOUS page -- enhanced navigation leaves it rendered and interactive for the whole
-   load, which is why nothing else on screen can be trusted to signal the click landed. */
-#nav-progress-bar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    height: 3px;
-    width: 100%;
-    z-index: 2000;
-    pointer-events: none;
-    opacity: 0;
-    background: transparent;
-    transition: opacity 120ms linear;
-}
-
-#nav-progress-bar.nav-progress-running {
-    opacity: 1;
-    /* Indeterminate on purpose: nothing here knows how far along the load is, and a bar that
-       fills to a made-up percentage is the dishonesty the progress rules forbid. The sweep says
-       "still working", which is the only true claim available. */
-    background: linear-gradient(90deg,
-        transparent 0%,
-        var(--ui-brand) 35%,
-        var(--ui-brand) 65%,
-        transparent 100%);
-    background-size: 40% 100%;
-    background-repeat: no-repeat;
-    animation: nav-progress-sweep 1.1s linear infinite;
-}
-
-@keyframes nav-progress-sweep {
-    from { background-position: -40% 0; }
-    to { background-position: 140% 0; }
-}
-
-/* Operators who have asked the OS for less motion still need to know the app is working, so the
-   bar stays visible and only the sweep stops. Removing the indicator entirely would hand that
-   group the original defect back. */
-@media (prefers-reduced-motion: reduce) {
-    #nav-progress-bar.nav-progress-running {
-        animation: none;
-        background: var(--ui-brand);
-        background-size: 100% 100%;
-    }
-}
-
-/* Activity panel in the app frame. */
-.gp-wrap {
-    position: relative;
+   Always visible on purpose. A frame that only appears when something happens is one the
+   operator has not learned to look at; one that always says Idle is one they already know. It
+   sits INSIDE main, after article, as a non-flexing row, so the height chain in
+   MainLayout.razor.css keeps working unchanged - article still takes `flex: 1` and simply
+   gets shorter. Do not make this fixed/absolute: that would overlay the bottom of every page,
+   which is the exact defect queue item 22 fixed. */
+.gp-frame {
+    flex: none;
     display: flex;
     align-items: center;
-    margin-right: 0.75rem;
-}
-
-.gp-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    max-width: 22rem;
-    padding: 0.15rem 0.5rem;
-    border: 1px solid var(--ui-line);
-    border-radius: 4px;
-    background: var(--ui-surface);
+    gap: 0.6rem;
+    min-height: 2rem;
+    padding: 0.25rem 1.5rem 0.25rem 2rem;
+    border-top: 1px solid var(--ui-line);
+    background: var(--ui-header);
     color: var(--ui-fg);
     font-size: 0.8125rem;
-    line-height: 1.3;
-    cursor: pointer;
+    line-height: 1.35;
 }
 
-.gp-toggle:hover { border-color: var(--ui-brand); }
+.gp-frame-busy, .gp-frame-navigating {
+    /* A visible change of state, not just added text: the strip itself takes the brand tint so
+       peripheral vision catches it. */
+    background: color-mix(in srgb, var(--ui-brand) 14%, var(--ui-header));
+    border-top-color: var(--ui-brand);
+}
 
-.gp-toggle-label {
+.gp-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+}
+
+.gp-dot-idle { background: var(--ui-fg3); }
+
+.gp-idle { color: var(--ui-fg2); }
+
+.gp-spin { flex: none; }
+
+.gp-label {
+    flex: none;
+    font-weight: 600;
+    max-width: 22rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.gp-count {
-    flex: none;
-    padding: 0 0.35rem;
-    border-radius: 999px;
-    background: var(--ui-brand);
-    color: var(--ui-brand-fg);
-    font-size: 0.6875rem;
-}
-
-.gp-panel {
-    position: absolute;
-    top: calc(100% + 0.35rem);
-    right: 0;
-    z-index: 1900;
-    width: 24rem;
-    max-height: 60vh;
-    overflow-y: auto;
-    padding: 0.5rem;
-    border: 1px solid var(--ui-line);
-    border-radius: 6px;
-    background: var(--ui-surface);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
-}
-
-.gp-item {
-    padding: 0.4rem 0.3rem;
-    border-bottom: 1px solid var(--ui-grid);
-}
-
-.gp-item:last-child { border-bottom: none; }
-
-.gp-item-label {
-    font-size: 0.8125rem;
-    color: var(--ui-fg);
-}
-
-.gp-item-detail {
-    font-size: 0.75rem;
+.gp-status {
     color: var(--ui-fg2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.gp-item-module {
-    font-size: 0.6875rem;
+/* The bar is a real width, not a hairline. A 3px sliver was the first attempt and the owner
+   rejected it outright: it is a web convention, not something a person working in a form
+   notices. */
+.gp-bar {
+    flex: 1 1 10rem;
+    max-width: 24rem;
+    height: 10px;
+    border-radius: 5px;
+    background: var(--ui-grid);
+    border: 1px solid var(--ui-line);
+    overflow: hidden;
+}
+
+.gp-bar-sm { height: 8px; max-width: 14rem; }
+
+.gp-bar-fill {
+    height: 100%;
+    background: var(--ui-brand);
+    transition: width 180ms linear;
+}
+
+/* Indeterminate means the module does not know the size of the work. It sweeps rather than
+   filling, so it can never be read as "about a third done". */
+.gp-bar-indeterminate {
+    width: 35%;
+    animation: gp-sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes gp-sweep {
+    0% { margin-left: -35%; }
+    100% { margin-left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    /* Still obviously "working", just not moving. Removing the indicator for this group would
+       hand them back the original defect. */
+    .gp-bar-indeterminate {
+        animation: none;
+        width: 100%;
+        opacity: 0.45;
+    }
+}
+
+.gp-nav-slot { display: contents; }
+
+.gp-nav-live {
+    font-weight: 600;
+    color: var(--ui-brand);
+    white-space: nowrap;
+}
+
+.gp-more, .gp-dismiss {
+    flex: none;
+    padding: 0 0.4rem;
+    border: 1px solid var(--ui-line);
+    border-radius: 3px;
+    background: var(--ui-surface);
+    color: var(--ui-fg2);
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.gp-more:hover, .gp-dismiss:hover { border-color: var(--ui-brand); color: var(--ui-fg); }
+
+.gp-outcome {
+    margin-left: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gp-ok { color: var(--ui-on); }
+.gp-bad { color: var(--ui-danger); font-weight: 600; }
+
+.gp-safe { color: var(--ui-fg3); font-size: 0.75rem; }
+
+/* The expanded list sits above the frame, inside main, so it also respects the height chain. */
+.gp-list {
+    flex: none;
+    max-height: 30vh;
+    overflow-y: auto;
+    padding: 0.25rem 1.5rem 0.25rem 2rem;
+    border-top: 1px solid var(--ui-line);
+    background: var(--ui-surface);
+    font-size: 0.8125rem;
+}
+
+.gp-list-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.2rem 0;
+}
+
+.gp-list-module {
+    flex: none;
+    min-width: 9rem;
     color: var(--ui-fg3);
+    font-size: 0.6875rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
 }
 
-.gp-track {
-    height: 4px;
-    margin: 0.3rem 0;
-    border-radius: 2px;
-    background: var(--ui-grid);
-    overflow: hidden;
-}
-
-.gp-fill {
-    height: 100%;
-    background: var(--ui-brand);
-}
-
-.gp-fill-indeterminate {
-    width: 40%;
-    animation: nav-progress-sweep 1.1s linear infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .gp-fill-indeterminate { animation: none; width: 100%; opacity: 0.5; }
-}
-
-.gp-ok { color: var(--ui-on); }
-.gp-bad { color: var(--ui-danger); }
-
-.gp-safe-note {
-    font-size: 0.6875rem;
-    color: var(--ui-fg2);
-}
+.gp-list-label { flex: none; font-weight: 600; }
