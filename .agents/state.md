@@ -8,9 +8,43 @@ the latest sweep is Archived 2026-09-23).
 
 ## Now
 
-**2026-09-30. Branch `master`, verified head `fcc94a4`, tree clean, 29 commits ahead
+**HANDOFF 2026-10-01. Branch `master`, verified head `dd3911f`, tree clean, 30 commits ahead
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**
+
+**NEXT ACTION: queue item 24, owner-declared the next P1. Nothing else starts before it.**
+Two new items landed in `queue.txt` on 2026-10-01 and NEITHER is started - the tree is clean.
+
+> **24 (P1). A global progress-meter system.** Owner, verbatim: *"It's not obvious in most
+> modules that a click landed. we need a golbal progress meter system so all modules behave the
+> same and prioritize keeping the user up to date throughout the process."*
+>
+> **25. A verbosity sweep, app-wide.** Owner, verbatim: *"Do a verbosity sweep. Too much chat
+> context leaked into the app, too many words for a human to read instantly."* His example is
+> True Last Logon's no-logon banner (`No logon found on what was checked` / `Checked: 0 domain
+> controller(s) answered ... Read that sentence and not the headline. How much this is worth
+> depends entirely on how much was checked, which is spelled out below.`), and his rule is
+> **"No editorializing anywhere in the app."** Not scoped to that one module - it is a sweep.
+
+**Item 24 is a cross-cutting design job, not a bug fix, and it needs a plan and a go before any
+code.** It touches every module by definition. Before drafting, note two things this repo
+already has, so the plan extends them rather than inventing a third pattern: `IsBusy` and the
+per-module `disabled`/spinner conventions, and `ClickGateRegistry`, which is the existing census
+of every click surface and its gating - it is the natural inventory of what a global meter would
+have to cover, and it is LINE-KEYED, so any page edit shifts it
+(`.agents/playbooks/clickgate-reanchor.md`).
+
+**Item 25 overlaps nothing in 24 and must not be folded into it.** It is a prose sweep across
+all modules. One line to hold while cutting: a COUNT or a coverage fact is not editorializing -
+in True Last Logon specifically, `lastLogon` does not replicate, so "none of 34 that answered"
+is a materially weaker claim than "none of 37", and `"This is not evidence of dormancy."` is a
+safety statement. What goes is instruction to the reader. Grep found NO test pinning any of that
+copy, so the wording is free; add one for whatever replaces it.
+
+**Do not read the "0 answered / 37 did not answer" in the owner's example as a live defect.**
+That output is from the pre-`fcc94a4` build, where `Get-ADUser -Identity` could not resolve a
+UPN so every DC errored, and an errored DC correctly counts as "did not answer". The fail-closed
+aggregation was working. Item 25 is about the PROSE only.
 
 **`docs/Comms10kBulkResolveScale-Plan.md` IS FULLY IMPLEMENTED. All four slices landed;
 nothing in it has run against the real group, and its Acceptance section is outstanding in
@@ -24,10 +58,11 @@ that defence was tried this session and overruled. Anything needing his decision
 chat, plain English, one fork at a time. **Open gap, needs its own go:** plans have no
 exec-summary section and the `plan` operator does not produce one.
 
-**NEXT ACTION: owner acceptance on dev of queue item 23 (P1 prod blocker, fixed in `af4fb4c`)
-and of Comms-10k.** Neither can be verified here. Item 23's check is the owner's own rapid-click
-case: tick a batch, tick a second one before the first one's mailboxes finish loading, and
-confirm the right-hand pane and the `Actions (n)` count both agree with the boxes.
+**After item 24: owner acceptance on dev of queue item 23 (P1 prod blocker, fixed in `af4fb4c`),
+True Last Logon's UPN re-run (`fcc94a4`), and Comms-10k.** None can be verified here. Item 23's
+check is the owner's own rapid-click case: tick a batch, tick a second one before the first
+one's mailboxes finish loading, and confirm the right-hand pane and the `Actions (n)` count both
+agree with the boxes.
 
 **Item 23 carries a lesson that outlives it: a defect recorded as an open question is still a
 defect in production.** `ClickGateRegistry` found this exact fault, called it "the wrong refusal
@@ -62,7 +97,7 @@ structurally pins to this group. Both true; the owner ruled neither warrants a c
 single-purpose module. The Constitution, `.agents/repo-guidance.md` KFC3 and the developer
 guide all carry the scoped exception, contrasted against Self-Service Groups.
 
-**Landed this session, sixteen commits, suite 3344 -> 3487 green throughout:**
+**Landed in the 2026-09-30 session, sixteen commits, suite 3344 -> 3487 green throughout:**
 
 | Commit | What |
 | --- | --- |
@@ -161,7 +196,7 @@ and the `1-3 OF 3 TICKED` pager were correct; the checkboxes were not.
 - **This was the owner's explicit exception to "do not touch migration":** *"we cannot deploy
   like this."* It does not reopen the module for anything else, and nothing else was touched.
 
-### The whole queue, swept 2026-09-30 against `C:\Users\mcoelho\Desktop\queue.txt`
+### The whole queue, swept 2026-10-01 against `C:\Users\mcoelho\Desktop\queue.txt`
 
 **Owner instruction, 2026-09-30: "this entire queue needs to be done this week."** Read the
 feasibility note at the end of this section before planning around that date - the remaining
@@ -170,7 +205,7 @@ work does not fit in a week and the next agent should not pretend otherwise.
 **`queue.txt` is the owner's file. Never write to it, including status markers** - its own first
 line says so. Status lives here.
 
-**Two items are NEW as of this sweep and had no plan and no tracking anywhere: 21 and 22.**
+**NEW since the 2026-09-30 sweep: 23 (fixed, awaiting the owner), 24 and 25 (neither started).**
 
 | # | Item | State |
 | --- | --- | --- |
@@ -197,6 +232,8 @@ line says so. Status lives here.
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
 | 23 | Migration batch tick boxes drop ticks when clicked in rapid succession | **CODE FIXED 2026-09-30 (`af4fb4c`), NOT YET SEEN ON DEV. Owner-declared P1 prod blocker.** A handler guard on a DOM-synced control: the browser applied the tick, `if (IsBusy) return;` discarded it, and Blazor sent no correction because its last-rendered value still matched the model. Guard removed from `ToggleBatchSelected` and `ToggleSelectAllBatches`; D2(a) rules out the disabled-attribute repair. Migration `1.22.4` -> `1.22.5`. Acceptance is the owner's rapid-click case. |
+| 24 | Global progress-meter system; a click landing is not obvious in most modules | **NOT STARTED. Owner-declared P1 as of 2026-10-01 and the next action.** Cross-cutting: touches every module, so it needs a plan and a go before code. Extend what exists (`IsBusy`, the per-module spinner/disabled conventions) and use `ClickGateRegistry` as the census of click surfaces; it is line-keyed, so page edits need `.agents/playbooks/clickgate-reanchor.md`. |
+| 25 | Verbosity sweep across the whole app; no editorializing anywhere | **NOT STARTED.** Owner: *"Too much chat context leaked into the app, too many words for a human to read instantly."* His example is True Last Logon's no-logon banner, but the item is an app-wide sweep, not that one module. Counts and coverage facts are not editorializing; instruction to the reader is. No test pins any of this copy. |
 
 **Recommended order, and why.** The next agent should not just walk the numbers.
 
