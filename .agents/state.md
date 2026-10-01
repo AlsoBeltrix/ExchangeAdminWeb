@@ -8,12 +8,23 @@ the latest sweep is Archived 2026-10-01).
 
 ## Now
 
-**HANDOFF 2026-10-01. Branch `master`, verified head `dd3911f`, tree clean, 30 commits ahead
+**HANDOFF 2026-10-01. Branch `master`, verified head `a81395d`, tree clean, 39 commits ahead
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**
 
-**NEXT ACTION: queue item 24, owner-declared the next P1. Nothing else starts before it.**
-Two new items landed in `queue.txt` on 2026-10-01 and NEITHER is started - the tree is clean.
+**NEXT ACTION: owner approval of `docs/GlobalProgressSystem-Plan.md` (queue item 24). The plan
+is drafted and reviewed; no code may start until it is approved.** It is at revision 2
+(`a81395d`), with the 2026-10-01 codex approach review folded in - verdict "Acceptable with
+changes: the approach stands", five required changes, all applied. Nothing else starts before
+item 24.
+
+**The owner's own clarifications during the 2026-10-01 drafting session are binding and are
+recorded verbatim in section 1 of the plan. Read them before touching this work stream** - the
+first draft was rejected twice for missing them. In short: this is ONE system, not 36 spinners
+harmonised; modules report and render nothing; a progress bar over work whose result gets
+discarded is *"just protracted doom"*, so durability comes first; navigating away from
+in-flight work gets a popup that actually cancels it on OK; and Comms-10k moves to the
+background runner.
 
 > **24 (P1). A global progress-meter system.** Owner, verbatim: *"It's not obvious in most
 > modules that a click landed. we need a golbal progress meter system so all modules behave the
@@ -267,7 +278,7 @@ line says so. Status lives here.
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
 | 23 | Migration batch tick boxes drop ticks when clicked in rapid succession | **DONE. Fixed 2026-09-30 (`af4fb4c`), owner-verified on dev 2026-10-01.** Was an owner-declared P1 prod blocker. A handler guard on a DOM-synced control: the browser applied the tick, `if (IsBusy) return;` discarded it, and Blazor sent no correction because its last-rendered value still matched the model. Guard removed from `ToggleBatchSelected` and `ToggleSelectAllBatches`; D2(a) rules out the disabled-attribute repair. Migration `1.22.4` -> `1.22.5`. Acceptance is the owner's rapid-click case. |
-| 24 | Global progress-meter system; a click landing is not obvious in most modules | **NOT STARTED. Owner-declared P1 as of 2026-10-01 and the next action.** Cross-cutting: touches every module, so it needs a plan and a go before code. Extend what exists (`IsBusy`, the per-module spinner/disabled conventions) and use `ClickGateRegistry` as the census of click surfaces; it is line-keyed, so page edits need `.agents/playbooks/clickgate-reanchor.md`. |
+| 24 | Global progress-meter system; a click landing is not obvious in most modules | **PLAN DRAFTED AND REVIEWED 2026-10-01, AWAITING OWNER APPROVAL. No code.** `docs/GlobalProgressSystem-Plan.md` revision 2. Owner-declared P1. Not a harmonisation of the existing spinners - one system that modules report into and that owns all display, built on the rule that work which writes many items or runs long moves to the background runner so its result lands. S1 and S2 touch no pages; S3 moves Comms-10k; S4+ adopt one module per slice. |
 | 25 | Verbosity sweep across the whole app; no editorializing anywhere | **NOT STARTED.** Owner: *"Too much chat context leaked into the app, too many words for a human to read instantly."* His example is True Last Logon's no-logon banner, but the item is an app-wide sweep, not that one module. Counts and coverage facts are not editorializing; instruction to the reader is. No test pins any of this copy. |
 
 ### Queue item 17 - True Last Logon, built and awaiting a live check
