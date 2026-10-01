@@ -247,9 +247,49 @@ public class GlobalProgressWiringTests
         // Owner, 2026-10-01: "making the text appear in the code does not mean the text is
         // accessible to the human who needs it."
         //
-        // The bubble's width follows the URL it is showing, so no left-hand indent is safe.
-        // The only reliable answer is not to use that corner at all.
-        Assert.Contains("justify-content: flex-end", frameRule, StringComparison.Ordinal);
+        // The overlay anchors to the BOTTOM and switches sides - it starts bottom-left and
+        // jumps bottom-right when the pointer nears it - so picking a side does not work. The
+        // separation has to be vertical: the frame is tall enough that its text clears the
+        // overlay's band, and the bottom padding is dead space left for the browser.
+        //
+        // Reduce either number and the frame goes unreadable exactly when an operator is
+        // hovering a link or waiting for a page, which are the two moments they are most
+        // likely to be reading it - and nothing else here can catch that.
+        var minHeight = CssLength(frameRule, "min-height");
+        Assert.True(minHeight >= 3.0,
+            $"The status frame is {minHeight}rem tall; it needs at least 3rem so its text "
+            + "clears the browser's bottom overlay.");
+
+        var padBottom = PaddingBottom(frameRule);
+        Assert.True(padBottom >= 1.5,
+            $"The frame leaves {padBottom}rem of clearance below its text; the browser's "
+            + "bottom overlay is roughly 24px, so this needs at least 1.5rem of dead space.");
+    }
+
+    private static double CssLength(string rule, string property)
+    {
+        var match = Regex.Match(rule, Regex.Escape(property) + @"\s*:\s*([0-9.]+)rem");
+        Assert.True(match.Success, $"'{property}' was not found as a rem value in the rule.");
+        return double.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static double PaddingBottom(string rule)
+    {
+        var match = Regex.Match(rule, @"padding\s*:\s*([^;]+);");
+        Assert.True(match.Success, "No padding shorthand was found in the frame rule.");
+
+        var parts = match.Groups[1].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // Shorthand: 1 value = all sides, 2 = block/inline, 3 or 4 = bottom is the third.
+        var bottom = parts.Length switch
+        {
+            1 => parts[0],
+            2 => parts[0],
+            _ => parts[2],
+        };
+
+        var value = Regex.Match(bottom, @"([0-9.]+)rem");
+        Assert.True(value.Success, $"The bottom padding '{bottom}' is not a rem value.");
+        return double.Parse(value.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     [Fact]

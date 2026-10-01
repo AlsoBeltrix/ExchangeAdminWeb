@@ -31,8 +31,10 @@ Consequences:
   Say what was checked and say that legibility was not. The honest phrasing is "the markup
   contains it; whether it is readable on screen is unverified."
 - **Screen real estate the agent does not own must be treated as unavailable.** The viewport's
-  bottom-left corner belongs to the browser; so do the scrollbar gutters, and on mobile the
-  OS chrome. Do not place content there and then reason about why it cannot be seen.
+  BOTTOM EDGE belongs to the browser: the link-hover and page-loading overlay is drawn there,
+  on top of page content, roughly 24px tall. It anchors to the bottom and SWITCHES SIDES to
+  avoid the pointer, so choosing a corner is not a defence - only vertical clearance is. The
+  scrollbar gutters and, on mobile, the OS chrome are the same kind of territory.
 - **When a visual report conflicts with a source scan, the operator's eyes win and the scan is
   the thing to doubt.** The scan is measuring a weaker property than the one in dispute.
 - This is why `docs/GlobalProgressSystem-Plan.md` carries a manual acceptance checklist that
