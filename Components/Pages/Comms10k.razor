@@ -3,6 +3,7 @@
 @attribute [Authorize(Policy = "Comms10k")]
 @rendermode InteractiveServer
 @inject Comms10kService Comms10kService
+@inject ExchangeAdminWeb.Services.Jobs.BulkJobService BulkJobs
 @inject IActivityProgress Progress
 @inject AuditService Audit
 @inject ServiceNowService ServiceNow
@@ -226,8 +227,13 @@
         finally { isLoading = false; }
     }
 
+    // Recorded so the job's durable record says WHICH list was applied. Without it a finished
+    // job reads "the membership was replaced" with no way to tell with what.
+    private string? uploadedFileName;
+
     private async Task HandleFileUpload(InputFileChangeEventArgs e)
     {
+        uploadedFileName = e.File?.Name;
         parsedEmails = new();
         resolveResult = null;
         confirmPending = false;
@@ -355,48 +361,49 @@
             // BROADER than the Self-Service Groups exception, which drops the target check only
             // and keeps its member check. No other module may read itself into it.
             // The write is NOT atomic: it clears the member attribute and refills in batches,
-            // so for several seconds the list is empty and then partial. The frame has to say
-            // so, because that window is exactly when an operator must not assume it is safe to
-            // walk away. Indeterminate because the service owns the batching and does not report
-            // per-batch progress - telling the truth about not knowing beats inventing a bar.
-            using var replacing = Progress.Begin(
-                "Comms-10k",
-                $"Replacing membership ({resolveResult!.ResolvedDns.Count:N0} members)",
-                ActivitySize.Unknown);
-
-            result = await Comms10kService.ExecuteReplaceAsync(resolveResult!.ResolvedDns, currentUser);
-            replacing.Complete(result.Success, result.Message);
-
-            try
+            // ENQUEUED, NOT EXECUTED HERE. The write clears the member attribute and refills in
+            // batches, so for several seconds the list is empty and then partial. Run from this
+            // page, an operator who navigated away mid-write would have the result land nowhere -
+            // and a progress bar over work whose answer gets discarded is, in the owner's words,
+            // "just protracted doom". On the runner the result is durable and leaving is safe.
+            //
+            // The audit and the admin notification that used to sit here are GONE ON PURPOSE:
+            // Comms10kReplaceProcessor performs both, because it performs the mutation. Putting
+            // them back would double-file every replace.
+            var jobId = BulkJobs.Enqueue(new ExchangeAdminWeb.Services.Jobs.BulkJob
             {
-                // The outcome rides the TARGET field, not errorDetail: LogModuleAction drops
-                // errorDetail on success, so "succeeded with exceptions" - the one success that
-                // an operator may need to act on - would be indistinguishable from a clean one
-                // in the audit trail.
-                Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace",
-                    "Comms10k",
-                    $"{resolveResult.ResolvedDns.Count} members requested, outcome {result.Outcome}, "
-                    + $"final {result.FinalCount?.ToString() ?? "unknown"}",
-                    result.Success, ticket,
-                    result.Success ? null : result.Message);
-            }
-            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for Comms10k replace"); }
-
-            try
-            {
-                await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace",
-                    result.Success, ticket, new Dictionary<string, string>
+                Id = Guid.NewGuid().ToString("N"),
+                ModuleId = ExchangeAdminWeb.Services.Jobs.Comms10kReplaceProcessor.ModuleName,
+                JobType = ExchangeAdminWeb.Services.Jobs.Comms10kReplaceJobPayload.JobType,
+                Status = ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued,
+                SubmittedBy = currentUser,
+                SubmittedByDisplay = currentUser,
+                SubmittedIp = clientIpAddress,
+                Ticket = ticket,
+                PayloadJson = System.Text.Json.JsonSerializer.Serialize(
+                    new ExchangeAdminWeb.Services.Jobs.Comms10kReplaceJobPayload
                     {
-                        ["Target Group"] = "Comms-10k",
-                        ["Outcome"] = result.Outcome.ToString(),
-                        // Never a removal count: clear-then-fill does not read the prior
-                        // membership, so it knows what it wrote and what the group now holds,
-                        // and nothing about what left.
-                        ["Members written"] = result.MembersWritten.ToString(),
-                        ["Final membership"] = result.FinalCount?.ToString() ?? "UNKNOWN - read-back failed"
-                    }, result.Success ? null : result.Message);
-            }
-            catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for Comms10k replace"); }
+                        // The UPLOADED addresses, not the resolved ones: a resolved set is only
+                        // valid at the moment it was read, and the job resolves as its first
+                        // stage anyway.
+                        Emails = parsedEmails,
+                        SourceFileName = uploadedFileName,
+                    }),
+                SubmittedAtUtc = DateTime.UtcNow
+            });
+
+            Logger.LogInformation("Comms-10k replace submitted as job {JobId} by {User}", jobId, currentUser);
+
+            // Submitted, not finished - and the message says so rather than implying the list
+            // has changed. RefusedBeforeAnyChange is the honest outcome for a submission:
+            // nothing has been written yet, and the five real outcomes belong to the job.
+            result = new Comms10kUpdateResult
+            {
+                Success = true,
+                Outcome = Comms10kOutcome.RefusedBeforeAnyChange,
+                Message = $"Submitted as a background job. It keeps running if you close this tab - "
+                    + $"watch the status bar, and collect the result from Bulk Jobs."
+            };
 
             parsedEmails = new();
             resolveResult = null;
@@ -405,8 +412,10 @@
         catch (Exception ex)
         {
             result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k", "attempted", false, ticket, ex.Message); } catch { }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace", false, ticket, new Dictionary<string, string> { ["Target Group"] = "Comms-10k" }, ex.Message); } catch { }
+            // SUBMISSION failure, not a write failure - no job exists, so nothing downstream will
+            // ever audit this. The processor owns both channels for a replace that actually ran.
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k", "submission failed", false, ticket, ex.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace", false, ticket, new Dictionary<string, string> { ["Target Group"] = "Comms-10k", ["Stage"] = "submission" }, ex.Message); } catch { }
         }
         finally { isLoading = false; }
     }

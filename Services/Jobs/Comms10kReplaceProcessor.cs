@@ -150,10 +150,18 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         SafeAudit(() => _audit.LogModuleAction(
             job.SubmittedBy, job.SubmittedIp, "Comms10k_Replace", "Comms10k",
             target, result.Success, job.Ticket ?? "", result.Success ? null : result.Message,
+            // The outcome rides `extra`, which is the ONLY channel that survives a SUCCESSFUL
+            // operation - LogModuleAction discards errorDetail on success, so "succeeded with
+            // exceptions", the one success an operator may need to act on, would otherwise be
+            // indistinguishable from a clean one in the trail.
             extra: new Dictionary<string, object?>
             {
                 ["Outcome"] = result.Outcome.ToString(),
                 ["MemberCount"] = _resolvedDns.Count,
+                ["MembersWritten"] = result.MembersWritten,
+                // Absent rather than guessed. A read-back failure is exactly when a number
+                // invented here would be believed.
+                ["FinalCount"] = result.FinalCount?.ToString() ?? "UNKNOWN - read-back failed",
                 ["SourceFile"] = payload.SourceFileName,
             }));
 
@@ -203,6 +211,11 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
                     // applied" and "could not confirm" are the two that need acting on.
                     ["Outcome"] = outcome,
                     ["Detail"] = detail,
+                    ["Members written"] = _result?.MembersWritten.ToString() ?? "0",
+                    // Never a removal count: clear-then-fill does not read the prior
+                    // membership, so it knows what it wrote and what the group now holds,
+                    // and nothing about what left.
+                    ["Final membership"] = _result?.FinalCount?.ToString() ?? "UNKNOWN - read-back failed",
                 },
                 _result?.Success == true ? null : detail);
         }

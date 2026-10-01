@@ -93,18 +93,31 @@ public class AuditCategoryFilingTests
     [Fact]
     public void Comms10k_AuditsUnderOwnCategory_NotBorrowedMigrationAction()
     {
-        var text = File.ReadAllText(FindRepoFile("Components", "Pages", "Comms10k.razor"));
+        // THE RULE IS UNCHANGED; THE WRITE MOVED. The replace now runs on the background
+        // runner (2026-10-01), so the audit for a replace that actually happened is filed by
+        // Comms10kReplaceProcessor, not by the page. The page retains exactly one call, for a
+        // SUBMISSION failure - no job exists in that case, so nothing downstream would ever
+        // file it.
+        //
+        // Counting both files together is the point: the total is what stops a replace going
+        // unaudited, and checking only the page would have passed while the write moved out
+        // from under it.
+        var page = File.ReadAllText(FindRepoFile("Components", "Pages", "Comms10k.razor"));
+        var processor = File.ReadAllText(FindRepoFile("Services", "Jobs", "Comms10kReplaceProcessor.cs"));
 
-        Assert.DoesNotContain("LogMigrationAction", text);
-        // Every Comms10k_Replace audit routes through LogModuleAction with the Comms10k
-        // category. Two call sites: the committed replace and the catch-all "attempted".
-        // It was six until the four principal-protection refusal paths were deleted with the
-        // check itself (owner ruling 2026-09-30, .agents/decisions.md); the drop is deliberate.
-        var moduleCalls = Regex.Matches(
-            text,
+        Assert.DoesNotContain("LogMigrationAction", page);
+        Assert.DoesNotContain("LogMigrationAction", processor);
+
+        var pattern = new Regex(
             @"LogModuleAction\(\s*[^;]*?""Comms10k_Replace""\s*,\s*""Comms10k""",
             RegexOptions.Singleline);
-        Assert.Equal(2, moduleCalls.Count);
+
+        Assert.True(pattern.IsMatch(processor),
+            "the processor performs the replace and must file its audit under Comms10k");
+        Assert.True(pattern.IsMatch(page),
+            "the page must still audit a submission failure, which no job will ever record");
+
+        Assert.Equal(2, pattern.Matches(page).Count + pattern.Matches(processor).Count);
     }
 
     [Fact]

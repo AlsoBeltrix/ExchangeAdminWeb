@@ -211,25 +211,36 @@ public class Comms10kReplaceSequenceTests
     [Fact]
     public void TheAuditAndTheNotificationBothCarryTheOutcome()
     {
-        var source = StripComments(PageSource());
+        // THE RULE IS UNCHANGED; THE WRITE MOVED to the background runner on 2026-10-01, so
+        // both channels are now the processor's. Reading the page here would have passed on
+        // an empty page and proved nothing.
+        var source = StripComments(ProcessorSource());
 
-        // The outcome rides the audit's TARGET field, because LogModuleAction drops errorDetail
-        // on success - so "succeeded with exceptions" would otherwise look identical to a clean
-        // success in the trail.
-        Assert.Matches(
-            new Regex(@"LogModuleAction\((?:[^;]*?)outcome \{result\.Outcome\}", RegexOptions.Singleline),
-            source);
-
+        // The outcome must survive a SUCCESSFUL operation. LogModuleAction discards
+        // errorDetail on success, so "succeeded with exceptions" - the one success an operator
+        // may need to act on - would otherwise look identical to a clean one in the trail.
+        // `extra` is the channel that survives; on the page it was the target field. Either is
+        // fine, carrying it nowhere is not.
         Assert.Contains("[\"Outcome\"] = result.Outcome.ToString()", source, StringComparison.Ordinal);
 
-        // Absent rather than guessed when the read-back failed.
-        Assert.Contains("result.FinalCount?.ToString() ?? \"UNKNOWN", source, StringComparison.Ordinal);
+        // The notification carries it too, with the counts.
+        Assert.Contains("[\"Outcome\"] = outcome", source, StringComparison.Ordinal);
+
+        // Absent rather than guessed when the read-back failed - which is precisely the moment
+        // an invented number would be believed. Asserted on both channels.
+        var unknowns = Regex.Matches(source, @"FinalCount\?\.ToString\(\) \?\? ""UNKNOWN").Count;
+        Assert.True(unknowns >= 2,
+            $"the unread final count must stay explicit on both the audit and the "
+            + $"notification; found {unknowns} of 2.");
     }
 
     // ----- harness -------------------------------------------------------------------------
 
     private static string PageSource() =>
         File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "Comms10k.razor"));
+
+    private static string ProcessorSource() =>
+        File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "Jobs", "Comms10kReplaceProcessor.cs"));
 
     private static string ServiceSource() =>
         File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "Comms10kService.cs"));
