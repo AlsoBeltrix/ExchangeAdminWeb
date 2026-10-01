@@ -52,7 +52,6 @@
                                placeholder="UPN or email of the account to disable" disabled="@(isLoading || isDisabling)" />
                         <button class="btn btn-danger" @onclick="PerformLookup"
                                 disabled="@(isLoading || isDisabling || string.IsNullOrWhiteSpace(searchIdentity))">
-                            @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Lookup
                         </button>
                     </div>
@@ -153,7 +152,6 @@
                         </div>
                         <button class="btn btn-danger w-100" @onclick="ExecuteDisable"
                                 disabled="@(isDisabling || !confirmed || string.IsNullOrWhiteSpace(ticketNumber))">
-                            @if (isDisabling) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Disable Account Now
                         </button>
                     </div>

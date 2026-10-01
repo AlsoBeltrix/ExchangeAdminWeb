@@ -63,7 +63,6 @@
                         <div class="col-md-3">
                             <button class="btn btn-primary w-100" @onclick="RunPreview"
                                     disabled="@(isProcessing || selectedFile == null || previewResult != null)">
-                                @if (isProcessing && applyResult == null) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                 Preview
                             </button>
                         </div>
@@ -204,7 +203,6 @@
                         </div>
                         <button class="btn btn-primary w-100" @onclick="RunApply"
                                 disabled="@(isProcessing || string.IsNullOrWhiteSpace(ticketNumber) || readyCount == 0)">
-                            @if (isProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Apply to @readyCount user(s)
                         </button>
                     </div>

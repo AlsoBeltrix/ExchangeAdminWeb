@@ -51,7 +51,6 @@
                             <input type="email" class="form-control" @bind="userPrincipalName" placeholder="user@analog.com"
                                    disabled="@isLoading" @onkeydown="HandleKeyDown" />
                             <button class="btn btn-primary" @onclick="ListMethods" disabled="@(isLoading || string.IsNullOrWhiteSpace(userPrincipalName))">
-                                @if (isLoading && !resetConfirmPending) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                 List Methods
                             </button>
                         </div>
@@ -74,7 +73,6 @@
                     <strong>Confirm MFA Reset for @userPrincipalName</strong>
                     <p class="mb-2">This will remove @methods.Count authentication method(s). The user will be required to re-register MFA at their next sign-in.</p>
                     <button class="btn btn-danger btn-sm me-2" @onclick="ExecuteReset" disabled="@isLoading">
-                        @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
                         Reset MFA
                     </button>
                     <button class="btn btn-secondary btn-sm" @onclick="CancelReset">Cancel</button>

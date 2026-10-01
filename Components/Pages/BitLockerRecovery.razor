@@ -63,7 +63,6 @@
                             disabled="@(isSearching || !HasSearchTerm || !HasTicket)">
                         @if (isSearching)
                         {
-                            <span class="spinner-border spinner-border-sm me-1"></span>
                         }
                         Search
                     </button>
@@ -97,23 +96,15 @@
        the page blank for the seconds a live Active Directory query takes, which reads as hung -
        and an operator on a recovery call who thinks the app has hung will reload it and start
        over. Silence is not a safe default here; it is just a different wrong answer. *@
-    @if (isSearching)
-    {
-        <div class="alert alert-info d-flex align-items-center">
-            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-            <span>
-                @if (includeLiveAd)
-                {
-                    <text>Searching the archive and live Active Directory. The live search can take
-                    a while on a broad name - please wait rather than retrying.</text>
-                }
-                else
-                {
-                    <text>Searching the archive...</text>
-                }
-            </span>
-        </div>
-    }
+    @* The in-flight banner is gone - the status frame reports the search and its elapsed time,
+       and this page saying it too put two reporters on screen. What the banner uniquely carried
+       was the ADVICE on a live-AD search ("please wait rather than retrying"), which is not
+       progress and not something the frame can say. It now rides the activity's own label, so
+       it reaches the operator in the one place they are being taught to read.
+
+       The surrounding !isSearching guard below is unaffected and still load-bearing: without
+       it the zero-results branch renders during a live query and claims no keys were found. *@
+
 
     @* !isSearching is load-bearing, not cosmetic. SearchAsync clears results at the start but a
        previous search has already set `searched`, so without this the zero-results branch renders
@@ -319,7 +310,9 @@
         // The live Active Directory half of this is the slow part, by the page's own copy.
         using var activity = Progress.Begin(
             "BitLocker Recovery",
-            includeLiveAd ? "Searching the archive and live AD" : "Searching the archive",
+            includeLiveAd
+                ? "Searching the archive and live AD - this can take a while on a broad name"
+                : "Searching the archive",
             ActivitySize.Unknown);
 
         try
