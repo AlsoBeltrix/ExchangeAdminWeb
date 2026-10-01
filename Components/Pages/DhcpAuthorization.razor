@@ -297,8 +297,12 @@
             // reading the field there could throw a NullReferenceException into this method's own
             // catch - which would audit and email a write that SUCCEEDED as a failure, and skip the
             // confirming refresh. The local cannot be nulled from outside.
+            using var activity = Progress.Begin(
+                "DHCP Authorization", $"Authorizing {dns}", ActivitySize.Unknown);
+
             var result = await DhcpService.AuthorizeServerAsync(dns, ip);
             operationResult = result;
+            activity.Complete(result.Success, result.Success ? null : result.Message);
 
             try
             {
@@ -381,8 +385,12 @@
             // Held in a local as well as published to the banner. See AuthorizeServer: the dismiss
             // control nulls operationResult, and a null read after the email await would audit and
             // email a deauthorization that SUCCEEDED as a failure and skip the confirming refresh.
+            using var activity = Progress.Begin(
+                "DHCP Authorization", $"Deauthorizing {server.DnsName}", ActivitySize.Unknown);
+
             var result = await DhcpService.DeauthorizeServerAsync(server.DnsName, server.IpAddress);
             operationResult = result;
+            activity.Complete(result.Success, result.Success ? null : result.Message);
 
             try
             {
