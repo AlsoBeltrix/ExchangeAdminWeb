@@ -1,6 +1,8 @@
 # Global Progress System - Plan
 
-Status: **Draft. Not approved. No code written.**
+Status: **Draft at revision 2. Not approved. No code written.**
+Revision 2 folds in the 2026-10-01 approach review, which returned "Acceptable with changes:
+the approach stands" and named five required changes. All five are applied; see section 12.
 Queue item 24, owner-declared P1 on 2026-10-01.
 Base app version: shared infrastructure, so `<VersionPrefix>` in `ExchangeAdminWeb.csproj`
 bumps. Each module's adoption additionally bumps that module's `Version` in
@@ -200,7 +202,29 @@ Three parts. Modules touch only the first.
 
 ### 5.1 The reporting channel - `IActivityProgress`
 
-A scoped service injected into pages and services. Modules call it; modules render nothing.
+A **per-circuit (scoped)** service. Modules call it; modules render nothing.
+
+**Lifetime rule, and it is load-bearing: `IActivityProgress` must never be injected into a
+singleton.** Most module services are registered `AddSingleton` - `Comms10kService`
+(`Program.cs:177`), `IntuneDeviceService` (`:176`), `M365GroupManagementService` (`:191`),
+`NamedLocationsService` (`:190`), `RiskyUsersService` (`:195`), `ServiceHealthService` (`:199`),
+`DefenderEndpointDeviceService` (`:204`), `TrueLastLogonService` (`:211`),
+`DhcpAuthorizationService` (`:213`) and others. Injecting a per-circuit service into any of them
+captures the first circuit's progress sink for the lifetime of the process and reports one
+operator's work to another. Only some services are `AddScoped` (`ConferenceRoomService`,
+`GroupManagementService`, `SelfServiceGroupService`, `EmergencyDisableService`,
+`DelegationReportService`, ...), and the split is not a reliable guide to write by.
+
+**Therefore progress is page-owned and passed down, never resolved inside a service:**
+
+- The **page** begins the activity and holds the handle.
+- A service that needs to report passes through an `IProgress<ActivityUpdate>` and/or a
+  `CancellationToken` **as method arguments**, supplied by the page. Services take no
+  constructor dependency on the progress system, so their lifetime stays irrelevant.
+- **Background work does not use this channel at all.** A job reports by writing to the job
+  store, which is already durable and already per-job. The display reads it from there.
+
+A test enforces the rule; see section 8.
 
 Shape (indicative, settled in S1 against the code):
 
@@ -236,6 +260,25 @@ A single component rendered by `Components/Layout/MainLayout.razor`, inside the 
   Jobs page. Live-updated by subscribing to `BulkJobService.JobChanged` - this closes D5's
   "press Refresh yourself".
 
+**The display must show only the current operator's jobs, and `GetActiveJobs()` is the wrong
+API for it.** `BulkJobService.GetActiveJobs()` (`:179`) spans every module, and the comment
+immediately below it (`:218-221`) records that a page built on it "both discloses and" reaches
+across module boundaries - which is why `GetActiveJobsByModule` exists. The app frame is
+rendered on every page for every operator, so it is the worst possible place to leak another
+operator's or another module's work. Neither existing accessor is user-scoped: `BulkJob` carries
+`SubmittedBy`, but no query filters on it. **S1 adds a user-scoped query** - repository method
+plus service accessor - and the display uses only that. The admin-wide view stays where it is,
+on the Bulk Jobs page, behind its existing authorization.
+
+**Subscription contract for `JobChanged`, which the display must follow** (the two existing
+subscribers already do - `AdminBulkJobs.razor:170/190/297`, `ConferenceRooms.razor:732/764/883`):
+
+- marshal the handler onto the renderer with `await InvokeAsync(StateHasChanged)` - the event is
+  raised from the job pump's thread, not the circuit's;
+- guard against a disposed component before touching state;
+- unsubscribe in `Dispose`. The display is a long-lived layout component, so a leaked handler
+  here persists for the life of the process.
+
 **Navigation progress is part of this component and is the first thing it does.** Driven from
 `Components/App.razor` by the browser-side enhanced-navigation events, alongside the existing
 `blazor:enhancedload` subscription at `:73`. The exact start-side event name must be confirmed
@@ -253,9 +296,11 @@ When navigation is attempted while activities are live:
   to collect the result, with a link to the Bulk Jobs page. The operator is not blocked.
 - **Both** - the foreground warning wins, and the message names the background job separately.
 
-`Components/Shared/UnsavedChangesGuard.razor` is the existing precedent for intercepting
-navigation in this app. Read it before writing a second mechanism; extend or mirror it rather
-than inventing a third.
+`Components/Shared/UnsavedChangesGuard.razor` is the existing precedent and it uses Blazor's
+`<NavigationLock>` with `ConfirmExternalNavigation` plus an `OnLocationChanging` handler
+(`:11`, `:26`). Its header records that before it, the app had no `beforeunload`,
+`NavigationLock` or `OnLocationChanging` anywhere. Use the same mechanism; read that file before
+writing a second one, and do not invent a third.
 
 ---
 
@@ -314,11 +359,24 @@ The whole framework plus the single highest-value fix, with **no page edits**.
 - `IActivityProgress` / `ActivityProgressService`, DI registration in `Program.cs`.
 - The display component, rendered from `MainLayout.razor`.
 - Enhanced-navigation start/end wiring in `App.razor`.
-- The display subscribes to `BulkJobService.JobChanged`, so background jobs appear live and D5's
-  manual Refresh stops being the only way to see them.
+- A **user-scoped active-jobs query** on `BulkJobRepository` and `BulkJobService`, filtering on
+  `SubmittedBy`, because the display must not use `GetActiveJobs()` (section 5.2).
+- The display subscribes to `BulkJobService.JobChanged` under the contract in section 5.2, so
+  background jobs appear live and D5's manual Refresh stops being the only way to see them.
 - No module reports anything yet. Nothing in `Components/Pages/` is touched.
 
-Fixes D1 app-wide and the live half of D5. Base app version bumps.
+**S1's first task is to prove the navigation signal, before anything else is built.** The
+end-side event is proven in this app (`App.razor:73` subscribes to `blazor:enhancedload`). The
+start-side signal is **not** - the event name and its firing behaviour must be confirmed
+empirically against the installed Blazor version on a dev deploy, not taken from this document
+and not inferred from documentation. If no usable start-side event exists, the fallback is a
+delegated click handler on the sidebar that raises the bar on navigation intent and clears it
+on `blazor:enhancedload`. Design that fallback in S1 rather than discovering the need for it
+later.
+
+**Until that proof lands, S1 is not described as fixing D1.** The claim is conditional on the
+signal, and the acceptance check in section 10 item 1 is what settles it. Base app version
+bumps.
 
 ### S2 - The navigation guard and cancellation
 
@@ -333,10 +391,36 @@ Fixes D4's mechanism. Base app version bumps.
 Owner-directed. A new `IBulkJobProcessor`, registered in `BulkJobProcessorRegistry` and
 `Program.cs`, satisfying `BulkJobProcessorWiringTests`.
 
-The existing five-outcome reporting from `docs/Comms10kBulkResolveScale-Plan.md` S4 -
-succeeded, succeeded with unremovable primary-group members, partly applied, could not confirm,
-refused before any change - maps onto the job's terminal message and must survive the move
-intact. Audit and `EmailService` notification move with it.
+**The shape mismatch must be resolved in this slice's design, before code.** The runner is
+row-oriented: `IBulkJobProcessor.CountRows(job)` stamps a total once, and
+`BulkJobRepository.RecordRow` recomputes progress by SQL aggregate per row, with each row
+carrying `Success | Partial | Failed`. Comms-10k is not that shape. It is one staged operation -
+resolve addresses, clear the `member` attribute, refill in batches, read back - where the list
+is empty and then partial for several seconds, and which reports five outcomes for the
+operation as a whole: succeeded; succeeded with unremovable primary-group members; partly
+applied; could not confirm; refused before any change
+(`docs/Comms10kBulkResolveScale-Plan.md` S4).
+
+**One member is not one safe row and must not be modelled as one.** A per-member row would
+report "9,998 of 10,000 succeeded" for a clear-then-refill that actually left the list broken,
+which is exactly the dishonesty section 4's rule exists to prevent.
+
+The slice must choose one and say which, with its reasoning, before implementing:
+
+- **(a) Map stages to rows** - `CountRows` returns the stage count, each stage records one row,
+  and the operation's five outcomes land in the job's terminal `Message`. No schema change.
+  Progress is coarse ("step 3 of 5") but never lies.
+- **(b) Extend the runner for staged jobs** - an appended v2 migration step adding a stage
+  label and within-stage counts, so the refill can report "6,200 of 10,000 written" inside
+  stage 3. Honest and finer-grained, but it changes shared job infrastructure and must respect
+  `JobStoreMigrator`'s append-only rule and the recorded decision that only row-level progress
+  is durable (`BulkJobModels.cs:110-111`).
+
+Recommendation: **(a)**, because it needs no change to shared infrastructure and the owner's
+requirement is that the operator knows it is running and how it ended - not that they watch a
+member counter. Raise (b) only if (a) proves too coarse in acceptance.
+
+Audit and `EmailService` notification move with the operation and must fire from the processor.
 
 This answers the stakeholder's point 2 directly and makes the 10,000-member replace safe to
 navigate away from.
@@ -387,6 +471,14 @@ which, per test, when writing them.
   the prose that explained the antipattern rather than the code
   (`.agents/state.md`, 2026-09-30 session notes).
 - **Source scan:** `MainLayout.razor` renders the display component.
+- **Lifetime tripwire, source scan:** no type registered `AddSingleton` in `Program.cs` takes
+  `IActivityProgress` as a constructor parameter. This is the guard for section 5.1's rule and
+  it must exist before the first module adopts, not after. Strip comments before matching.
+- **Scoping tripwire, source scan:** the display component does not reference
+  `GetActiveJobs()`. Section 5.2's leak is silent at runtime and invisible to any functional
+  test, so a structural guard is the only thing that catches it.
+- **Subscription hygiene, source scan:** the display component implements `IDisposable` and
+  unsubscribes from `JobChanged`.
 - **Jobs:** the Comms-10k processor is mapped and constructible
   (`BulkJobProcessorWiringTests`), and its five outcomes survive the move to a job message.
 - **Registry:** `ClickGateRegistry` line counts updated in the same commit as any page edit.
@@ -429,6 +521,9 @@ it can be done by an agent.
    Bulk Jobs page.
 6. Force a failure. You are told it failed, with the reason, wherever you are.
 7. Confirm no module shows its own spinner any more, for each adopted module.
+8. **Two operators at once.** Have a second person start a job while you have one running. You
+   see only your own, and they see only theirs. This is the check for review finding 2, and it
+   cannot be caught any other way on this stack.
 
 ---
 
@@ -451,7 +546,44 @@ it can be done by an agent.
 
 ---
 
-## 12. Open questions for the owner
+## 12. Review
+
+Approach review, 2026-10-01, unprimed (`.agents/playbooks/openreview.md`).
+
+```text
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / frontier-at-recorded-max
+Harness: codex-cli 0.159.0, `codex exec`, sandbox read-only
+Pins: base 839831e, head f854575
+Capability proof: `git diff --stat 839831e..f854575` reproduced verbatim by the reviewer
+```
+
+The Portkey catalog on this host exposes exactly one model
+(`@azure-openai-eus2-global/gpt-5.5-dzs`) whose declared `supported_reasoning_levels` top out
+at `xhigh`; there is no `max` level to request, so `xhigh` is this harness's recorded ceiling.
+
+**Verdict: "Acceptable with changes: the approach stands; identify required changes."**
+
+The reviewer independently derived the same approach - per-circuit progress service, one layout
+component, navigation progress at the shell, `NavigationLock`-style guarding, and long or
+multi-item work moved into `BulkJobService` rather than made honest in page-local spinners.
+
+Five required changes, all five verified against the code before being accepted, all five
+applied in revision 2:
+
+| # | Finding | Verified by | Applied in |
+| --- | --- | --- | --- |
+| 1 | A per-circuit progress service must not be injected into singleton services | `Program.cs:177` and 8 further `AddSingleton` module services | 5.1, section 8 tripwire |
+| 2 | The layout display must not read `GetActiveJobs()`; it needs a user-scoped query | `BulkJobService.cs:179` and its own warning at `:218-221` | 5.2, S1, section 8 tripwire |
+| 3 | The `JobChanged` subscription contract must be specified | existing subscribers at `AdminBulkJobs.razor:170/190/297`, `ConferenceRooms.razor:732/764/883` | 5.2, section 8 |
+| 4 | S3 needs a Comms-10k job shape; the runner is row-oriented and the operation is not | `IBulkJobProcessor.CountRows`, `BulkJobRepository.RecordRow`, `BulkJobModels.cs:110-111` | S3, two named options with a recommendation |
+| 5 | S1's "fixes D1 app-wide" must stay conditional until the start-side navigation signal is proven | `App.razor:73` proves only the end-side event | S1, with a named fallback |
+
+Finding 1 is the most serious: it is silent at runtime, it cross-wires one operator's progress
+into another's session, and nothing in the existing suite would have caught it.
+
+No review has been run on revision 2.
+
+## 13. Open questions for the owner
 
 None blocking. S1 through S3 are fully specified by the clarifications in section 1.
 
