@@ -1,3 +1,4 @@
+@rendermode InteractiveServer
 @using ExchangeAdminWeb.Services.Jobs
 @using ExchangeAdminWeb.Services.Progress
 @implements IDisposable
@@ -6,6 +7,13 @@
 @inject AuthenticationStateProvider AuthStateProvider
 
 @*
+    INTERACTIVE SERVER, and it has to be declared here. `Routes.razor` carries no render mode,
+    so the router is static and interactivity is opt-in per component - which is why NavMenu,
+    ThemePicker and UsageTracker each declare it on their own first line. Without it this
+    component is rendered once, statically, and is then inert: the dismiss and "+N more"
+    buttons do nothing, OnInitializedAsync's subscriptions are thrown away, and no job update
+    ever reaches the frame. It shipped that way and showed a permanently static "Idle" on dev.
+
     The app's status frame. Always present along the bottom of the window, reading "Idle" when
     nothing is running and a live status readout when something is (owner, 2026-10-01:
     "bottom status frame. shows progress bar with status or idle when nothing is running").

@@ -228,6 +228,29 @@ public class GlobalProgressWiringTests
     }
 
     [Fact]
+    public void TheStatusFrameIsAnInteractiveIslandLikeEveryOtherLiveComponentInTheLayout()
+    {
+        var frame = ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor"));
+
+        // Routes.razor carries no render mode, so the router is static and interactivity is
+        // opt-in per component. Without this line the frame is rendered once and is then
+        // inert: its buttons do nothing, its subscriptions are discarded, and no job update
+        // ever reaches it. It shipped that way and sat on a static "Idle" on dev.
+        Assert.Contains("@rendermode InteractiveServer", frame, StringComparison.Ordinal);
+
+        // The same requirement, from the other direction: every component the layout renders
+        // that holds live state declares it. If one of these loses it, this test should fail
+        // too rather than leaving the frame as the only guarded case.
+        foreach (var peer in new[] { "NavMenu.razor", "ThemePicker.razor", "UsageTracker.razor" })
+        {
+            var source = ReadRepoFile(Path.Combine("Components", "Layout", peer));
+            Assert.True(source.Contains("@rendermode InteractiveServer", StringComparison.Ordinal),
+                $"{peer} no longer declares a render mode; the layout's interactivity "
+                + "convention has changed and the status frame must be re-checked against it.");
+        }
+    }
+
+    [Fact]
     public void TheStatusFrameAlwaysRendersAndSaysIdleWhenNothingIsRunning()
     {
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor")));
