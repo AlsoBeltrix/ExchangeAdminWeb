@@ -43,6 +43,13 @@
 
     <AuthorizeView>
         <Authorized>
+            @*
+                Warns before navigating away from running work and cancels it on OK. Rendered
+                once here rather than per page: a per-page guard would need adding to 36 pages
+                and would silently miss any that forgot - the same failure shape as the
+                per-module spinners this system replaces.
+            *@
+            <InFlightWorkGuard />
             <GlobalProgress />
         </Authorized>
     </AuthorizeView>

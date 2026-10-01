@@ -1,0 +1,171 @@
+@using Microsoft.AspNetCore.Components.Routing
+@using ExchangeAdminWeb.Services.Jobs
+@using ExchangeAdminWeb.Services.Progress
+@implements IDisposable
+@inject IActivityProgress Progress
+@inject BulkJobService BulkJobs
+@inject AuthenticationStateProvider AuthStateProvider
+
+@* Warns before navigating away from work that is still running, and CANCELS it if the operator
+   confirms.
+
+   Owner, 2026-10-01: "show a popup saying there's an op in-progress and warn that navigating
+   away will kill it, then actually kill it if the user clicks okay, keep on the page if they
+   click cancel. for long running ops that use the background runner, tell the user how to check
+   and retrieve results."
+
+   Two messages, because the two cases have opposite advice and conflating them would be the
+   worst outcome of all - telling an operator their background job will die, or telling them a
+   foreground operation is safe to leave.
+
+   Rendered once by MainLayout rather than per page. A per-page guard would have to be added to
+   36 pages and would miss any module that forgot, which is the same shape as the per-module
+   spinners this whole system replaces. *@
+
+<NavigationLock ConfirmExternalNavigation="@HasForegroundWork"
+                OnBeforeInternalNavigation="ConfirmAsync" />
+
+@code {
+    private string currentUser = "";
+    private bool subscribed;
+    private bool disposed;
+
+    /// <summary>
+    /// Only FOREGROUND work blocks a close or reload. A background job survives both, so
+    /// warning about it on tab close would be a lie - and ConfirmExternalNavigation cannot
+    /// carry a custom message anyway, so it could not explain itself.
+    /// </summary>
+    private bool HasForegroundWork => Progress.HasActive;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        currentUser = authState.User.Identity?.Name ?? "";
+
+        if (disposed)
+            return;
+
+        // Re-render when work starts or stops: NavigationLock reads
+        // ConfirmExternalNavigation at render time, so without this the browser-level
+        // confirmation would reflect whatever was true when the page loaded.
+        Progress.Changed += OnChanged;
+        subscribed = true;
+    }
+
+    private async Task ConfirmAsync(LocationChangingContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var foreground = Progress.Active;
+        var background = string.IsNullOrWhiteSpace(currentUser)
+            ? Array.Empty<BulkJob>()
+            : BulkJobs.GetActiveJobsBySubmitter(currentUser);
+
+        if (foreground.Count == 0 && background.Count == 0)
+            return;
+
+        // Foreground wins when both are running: it is the destructive case, and the message
+        // names the background job separately so the operator is not left thinking that dies
+        // too.
+        if (foreground.Count > 0)
+        {
+            var proceed = await Confirm(ForegroundMessage(foreground, background));
+
+            if (!proceed)
+            {
+                context.PreventNavigation();
+                return;
+            }
+
+            // "Actually kill it", as asked. Cancelling is a REQUEST - it stops work that
+            // honours the token - so a module that takes the token and ignores it will keep
+            // running after the operator was told it stopped. That is a defect in the module,
+            // and it is why adoption has to wire cancellation, not just reporting.
+            Progress.CancelAll();
+            return;
+        }
+
+        // Background only: leaving is genuinely safe, so this informs rather than asks. It
+        // still goes through confirm() because there is no other synchronous way to be sure
+        // the operator saw it before the page changes under them.
+        await Confirm(BackgroundMessage(background));
+    }
+
+    private static string ForegroundMessage(IReadOnlyList<ProgressActivity> foreground, IReadOnlyList<BulkJob> background)
+    {
+        var what = foreground.Count == 1
+            ? foreground[0].Label
+            : $"{foreground.Count} operations";
+
+        var message =
+            $"{what} is still running.\n\nLeaving this page will CANCEL it. Anything it has "
+            + "already changed will stay changed.\n\nOK to leave and cancel, or Cancel to stay.";
+
+        if (background.Count > 0)
+        {
+            message +=
+                $"\n\n({background.Count} background job(s) will keep running and are not "
+                + "affected - see Bulk Jobs for those.)";
+        }
+
+        return message;
+    }
+
+    private static string BackgroundMessage(IReadOnlyList<BulkJob> background)
+    {
+        var what = background.Count == 1
+            ? background[0].JobType.Replace('_', ' ')
+            : $"{background.Count} background jobs";
+
+        return
+            $"{what} is running in the background.\n\nLeaving is safe - it keeps going and "
+            + "finishes on its own. The status bar will tell you when it is done, and the "
+            + "results are on the Bulk Jobs page.";
+    }
+
+    private async Task<bool> Confirm(string message)
+    {
+        try
+        {
+            // window.confirm for the same reason UnsavedChangesGuard uses it: synchronous from
+            // the operator's point of view and impossible to miss. A styled dialog would need
+            // its own render pass while navigation is already in flight.
+            return await JS.InvokeAsync<bool>("confirm", message);
+        }
+        catch (Exception)
+        {
+            // If the prompt cannot be shown - circuit going away, interop disposed - FAIL
+            // CLOSED by not navigating and not cancelling. Silently killing an operator's
+            // in-flight work because a dialog failed is the worst available outcome.
+            return false;
+        }
+    }
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+
+    private async void OnChanged()
+    {
+        if (disposed)
+            return;
+
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception)
+        {
+            // The guard is chrome; a failed repaint must never tear down the circuit.
+        }
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+
+        if (!subscribed)
+            return;
+
+        Progress.Changed -= OnChanged;
+        subscribed = false;
+    }
+}
