@@ -72,11 +72,24 @@ for:**
 
 **Remaining work, in the order it is worth doing:**
 
-- **S3, Comms-10k onto the background runner.** Approved, not started. The shape question is
-  decided in the plan: map its STAGES to rows (`CountRows` returns the stage count), do not
-  model one member as one row - "9,998 of 10,000 succeeded" for a clear-then-refill that left
-  the list broken is the dishonesty the whole system exists to prevent. Audit and
-  `EmailService` notification move with the operation into the processor.
+- **S3, Comms-10k onto the background runner. HALF DONE - the processor exists, the page does
+  not use it.** `Services/Jobs/Comms10kReplaceProcessor.cs` and its payload are landed,
+  registered in both the processor map and DI, and green. Stages are rows; one member is NOT
+  one row, and that is a decision, not an implementation detail - see the processor's own
+  remarks before changing it.
+
+  **What is left is the page swap, and it is the riskiest single edit in this work stream.**
+  `Components/Pages/Comms10k.razor` still performs the replace inline. Swapping it means:
+  enqueue instead of calling `ExecuteReplaceAsync`; **DELETE the page's audit and email blocks**
+  or they will fire twice, because the processor already does both; and rework the result
+  rendering, since there is no longer an immediate result to show - the operator watches the
+  status frame and collects the outcome from Bulk Jobs. That changes the module's whole
+  interaction model.
+
+  It was deliberately NOT attempted at the end of the 2026-10-01 session, with two degradation
+  signals already on the record (a commit with unread failing tests, and a DI registration that
+  only a tripwire caught). This module writes a ten-thousand-member broadcast list; a careless
+  swap here is not a cosmetic defect.
 - **Cancellation tokens.** No module honours `handle.CancellationToken` yet, so S2's OK path
   stops the UI waiting rather than the work. Until a module honours it, the popup's promise is
   only half true for that module.
