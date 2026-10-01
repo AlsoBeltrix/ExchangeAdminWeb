@@ -263,6 +263,12 @@
 </div>
 
 @code {
+    // [Inject] rather than an @inject directive on purpose: this page is click-gate converted,
+    // and every ClickGateRegistry entry for it is keyed by LINE NUMBER. A directive at the top
+    // shifts every registered control down one; a property here sits below all of them and
+    // moves nothing. Only ExpectedLineCount changes. UnsavedChangesGuard uses the same form.
+    [Inject] private IActivityProgress Progress { get; set; } = default!;
+
     private bool authChecked;
 
     /// <summary>
@@ -342,6 +348,12 @@
 
         isSearching = true;
         ClearResult();
+
+        // Steps, not Items: the two halves are the unit the operator cares about, and the DC
+        // count inside the on-prem half is the aggregator's business, not a progress number.
+        using var activity = Progress.Begin(
+            "True Last Logon", $"Checking {target}", ActivitySize.Steps(2));
+
         try
         {
             await Task.Yield();
@@ -354,7 +366,10 @@
             var cloudTask = LookupCloudAsync(target);
 
             (onPrem, onPremError) = await onPremTask;
+            activity.Step("on-premises domain controllers");
+
             (cloud, cloudError) = await cloudTask;
+            activity.Step("cloud sign-ins");
 
             answer = TrueLastLogonCombiner.Combine(onPrem, cloud?.Result);
             searchedFor = target;
@@ -364,6 +379,10 @@
             // lookup carrying its reasons; recording it as a successful read that happened to
             // find nothing is the blanket-success shape.
             var checkedSomething = !answer.NothingWasChecked;
+            // Reported on whether anything was actually checked, matching the audit: a run where
+            // both halves failed is a FAILED lookup, not a successful one that found nothing.
+            activity.Complete(checkedSomething,
+                checkedSomething ? null : Join(onPremError, cloudError));
             SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress,
                 "TrueLastLogon_Lookup", target, checkedSomething,
                 checkedSomething ? null : Join(onPremError, cloudError),

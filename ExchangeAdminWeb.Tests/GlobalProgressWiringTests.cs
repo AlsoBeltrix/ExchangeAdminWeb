@@ -367,6 +367,10 @@ public class GlobalProgressWiringTests
     [InlineData("BlockedSenders.razor")]
     [InlineData("CloudPasswordReset.razor")]
     [InlineData("ADAttributeEditor.razor")]
+    [InlineData("TrueLastLogon.razor")]
+    [InlineData("DefenderEndpointDevices.razor")]
+    [InlineData("NamedLocations.razor")]
+    [InlineData("DhcpAuthorization.razor")]
     public void AnAdoptedModuleReportsItsWorkToTheStatusFrame(string page)
     {
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", page)));

@@ -348,6 +348,11 @@
 </div>
 
 @code {
+    // [Inject] rather than an @inject directive: this page is click-gate converted and every
+    // registry entry is keyed by LINE NUMBER. A directive at the top shifts every registered
+    // control down one; a property here sits below all of them and moves nothing.
+    [Inject] private IActivityProgress Progress { get; set; } = default!;
+
     private bool authChecked;
 
     /// <summary>
@@ -567,6 +572,9 @@
         {
             await Task.Yield();
 
+            using var activity = Progress.Begin(
+                "Defender for Endpoint Devices", "Listing devices", ActivitySize.Unknown);
+
             var loaded = await DeviceService.ListDevicesAsync(filters);
             result = loaded;
             expandedDevices.Clear();
@@ -574,6 +582,11 @@
             // A refusal is audited as a FAILED lookup carrying its reason. It is not a successful
             // read of zero devices, and recording it as one would be the blanket-success shape.
             var complete = loaded.Outcome == DefenderDeviceListOutcome.Complete;
+            // A refusal is a failure, not a successful read of zero devices - same rule the audit
+            // below follows.
+            activity.Complete(complete, complete
+                ? $"{loaded.Devices.Count:N0} device(s)"
+                : loaded.Outcome.ToString());
             SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress,
                 "DefenderEndpointDevices_List", DescribeFilters(filters), complete,
                 complete ? null : loaded.RefusalReason,

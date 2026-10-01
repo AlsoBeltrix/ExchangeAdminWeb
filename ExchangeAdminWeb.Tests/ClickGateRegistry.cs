@@ -443,7 +443,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DhcpAuthorization => new()
     {
         Page = "DhcpAuthorization.razor",
-        ExpectedLineCount = 411,
+        ExpectedLineCount = 420,
 
         Predicates =
         [
@@ -707,7 +707,7 @@ public static class ClickGateRegistry
     private static PageGateEntry NamedLocations => new()
     {
         Page = "NamedLocations.razor",
-        ExpectedLineCount = 538,
+        ExpectedLineCount = 547,
 
         Predicates =
         [
@@ -4657,7 +4657,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DefenderEndpointDevices => new()
     {
         Page = "DefenderEndpointDevices.razor",
-        ExpectedLineCount = 857,
+        ExpectedLineCount = 870,
 
         Predicates =
         [
@@ -4753,7 +4753,7 @@ public static class ClickGateRegistry
     private static PageGateEntry TrueLastLogon => new()
     {
         Page = "TrueLastLogon.razor",
-        ExpectedLineCount = 557,
+        ExpectedLineCount = 576,
 
         Predicates =
         [
