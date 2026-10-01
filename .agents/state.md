@@ -50,6 +50,49 @@ the True Last Logon re-run, Comms-10k, the Migration `@key` case, items 15/16/21
 has deployed to dev several times during this work to check the frame, so the freeze is being
 read as prod-only in practice; it has not been restated either way.
 
+### Queue item 24 - exactly what is left, and the rules a fresh session needs
+
+**Four rules learned the expensive way. Breaking any of them re-creates a defect already paid
+for:**
+
+1. **Converted pages take the service as `[Inject] private IActivityProgress Progress` inside
+   `@code`, never an `@inject` directive.** A directive sits above every registered control and
+   shifts all of them; the property sits below and shifts nothing. Only `ExpectedLineCount`
+   changes, and all 316 ClickGate assertions stay green without re-anchoring.
+2. **Remove a module's spinner ONLY after its operation reports.** Message Trace still has four
+   because only its main search is wired. A spinner removed from unreported work leaves no
+   feedback at all, which is worse than the duplication the sweep exists to remove.
+3. **Per-row indicators and the pre-authorization latch STAY.** The frame says what is
+   happening and has no concept of where in a table; the latch is refusal, not progress. This
+   reading of "spinners don't live in modules" has not been ruled on - one owner word overrules
+   it everywhere.
+4. **Never report page-load state from the browser.** Four mechanisms were tried and all four
+   stranded the readout on a page that had arrived. `wwwroot/nav-progress.js` is deleted and
+   `Components/App.razor` carries the reason where its script tag was.
+
+**Remaining work, in the order it is worth doing:**
+
+- **S3, Comms-10k onto the background runner.** Approved, not started. The shape question is
+  decided in the plan: map its STAGES to rows (`CountRows` returns the stage count), do not
+  model one member as one row - "9,998 of 10,000 succeeded" for a clear-then-refill that left
+  the list broken is the dishonesty the whole system exists to prevent. Audit and
+  `EmailService` notification move with the operation into the processor.
+- **Cancellation tokens.** No module honours `handle.CancellationToken` yet, so S2's OK path
+  stops the UI waiting rather than the work. Until a module honours it, the popup's promise is
+  only half true for that module.
+- **Spinner removal on the 12 click-gate-converted pages.** The riskiest remaining work: each
+  also needs its `SpinnerExpressions` registry entry deleted in the same commit, and markup
+  removal from the MIDDLE of a page shifts every entry below it - which is the full re-anchor
+  case, not the cheap one. `difflib` is unavailable on this host, so use the playbook's step 4
+  (run the tests and read the reported positions) one page at a time.
+- **Migration.** Flagged above as an unresolved contradiction. Needs an owner word.
+- **The owner's acceptance pass**, which nothing here can substitute for.
+
+**A process failure from 2026-10-01 worth not repeating:** `ed669a8` was committed with two
+failing tests and a "0 failed" claim in its message, because the commit was chained onto the
+test command with `&&` and the result was never read. `cc3e8c9` corrects it. Do not chain a
+commit onto an unread verification run.
+
 **NOTHING IN THIS WORK STREAM IS VERIFIED IN A BROWSER AND NOTHING HERE CAN VERIFY IT**
 (`.agents/decisions.md` 2026-10-01, "Rendered is not visible"). Three dev rejections in a row
 came from source scans passing while the feature was visibly broken. Do not report any of it as
