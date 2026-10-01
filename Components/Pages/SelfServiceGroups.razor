@@ -452,6 +452,11 @@
 </div>
 
 @code {
+    // [Inject] rather than an @inject directive: this page is click-gate converted and every
+    // registry entry is keyed by LINE NUMBER. A directive at the top shifts every registered
+    // control down one; a property here sits below all of them and moves nothing.
+    [Inject] private IActivityProgress Progress { get; set; } = default!;
+
     // Two view-scoped busy predicates, not one page-wide predicate (click-gating sweep, tier 1
     // page 9). The page renders two mutually exclusive views - browse while selected == null,
     // manage otherwise - and their in-flight flags are disjoint. A single predicate would grey the
@@ -1103,7 +1108,14 @@
             if (string.IsNullOrWhiteSpace(callerSid))
                 throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
 
+            // A per-group DACL read over every candidate group, which is why the page already
+            // warns this "can take a moment". Indeterminate: the candidate count is discovered
+            // as it goes.
+            using var activity = Progress.Begin(
+                "Self-Service Groups", "Reading group permissions", ActivitySize.Unknown);
+
             ownedGroups = await GroupService.GetOwnedGroupsAsync(callerSid);
+            activity.Complete(true, $"{ownedGroups.Count:N0} group(s) you can manage");
             loaded = true;
         }
         catch (Exception ex)

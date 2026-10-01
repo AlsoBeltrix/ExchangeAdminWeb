@@ -375,6 +375,9 @@ public class GlobalProgressWiringTests
     [InlineData("CalendarPermissions.razor")]
     [InlineData("GroupManagement.razor")]
     [InlineData("M365GroupManagement.razor")]
+    [InlineData("IntuneDevices.razor")]
+    [InlineData("ConferenceRooms.razor")]
+    [InlineData("SelfServiceGroups.razor")]
     public void AnAdoptedModuleReportsItsWorkToTheStatusFrame(string page)
     {
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", page)));
