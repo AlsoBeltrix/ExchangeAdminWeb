@@ -29,10 +29,18 @@
     var FRAME_ID = 'gp-frame';
     var NODE_ID = 'gp-nav-live';
 
+    // Give a committed navigation this long to show itself before concluding it was blocked.
+    // The href changes before the fetch (see the watchdog below), so this only has to cover
+    // the gap between the click and Blazor committing - not the load itself.
+    var BLOCKED_NAV_GRACE_MS = 600;
+
     var active = false;
     var startedAt = 0;
     var destination = '';
     var ticker = null;
+    var hrefAtStart = '';
+    var navEventSeen = false;
+    var leavingDocument = false;
 
     function host() {
         // The frame renders the slot. If the frame is not on the page (an unauthenticated or
@@ -72,6 +80,31 @@
         node().textContent = 'Loading ' + destination + elapsedText();
     }
 
+    // A click is not a navigation. The app's UnsavedChangesGuard can refuse one
+    // (Components/Shared/UnsavedChangesGuard.razor: window.confirm, then
+    // context.PreventNavigation), and a refused navigation fires no load event - so without
+    // this the frame would read "Loading Module Config - 94s" forever, with a timer still
+    // running behind it. A permanent frame telling a standing lie is worse than no frame.
+    //
+    // The signal is exact rather than a guess. Blazor's enhanced navigation pushes the new URL
+    // BEFORE it fetches, and only after the location-changing handlers have approved, so:
+    //   - navigation committed  -> location.href has already changed;
+    //   - full page navigation  -> beforeunload has fired;
+    //   - navigation refused    -> neither, and only then do we stop.
+    function abandonIfNavigationNeverHappened() {
+        if (!active || navEventSeen || leavingDocument) {
+            return;
+        }
+        if (location.href !== hrefAtStart) {
+            return;
+        }
+        if (Date.now() - startedAt < BLOCKED_NAV_GRACE_MS) {
+            return;
+        }
+
+        stop();
+    }
+
     function start(name) {
         if (active) {
             return;
@@ -79,6 +112,8 @@
         active = true;
         startedAt = Date.now();
         destination = name || 'the page';
+        hrefAtStart = location.href;
+        navEventSeen = false;
 
         var frame = document.getElementById(FRAME_ID);
         if (frame) {
@@ -89,8 +124,15 @@
 
         paint();
         // One second, because the number it prints has one-second resolution. A faster timer
-        // would repaint identical text.
-        ticker = window.setInterval(paint, 1000);
+        // would repaint identical text. The same tick re-checks for a refused navigation; a
+        // window.confirm blocks timers while it is open, so the first tick after the operator
+        // answers it is what clears a cancelled one.
+        ticker = window.setInterval(function () {
+            abandonIfNavigationNeverHappened();
+            paint();
+        }, 1000);
+
+        window.setTimeout(abandonIfNavigationNeverHappened, BLOCKED_NAV_GRACE_MS + 50);
     }
 
     function stop() {
@@ -118,9 +160,22 @@
     // The proven end signal.
     document.addEventListener('blazor:enhancedload', stop);
 
+    // Also an end signal, and the one that fires when an enhanced navigation finishes without
+    // replacing the document body.
+    document.addEventListener('blazor:enhancednavigationend', stop);
+
     // The documented start signal. It carries no destination, so it reports generically; the
-    // click listener below normally wins the race and supplies the name.
-    document.addEventListener('blazor:enhancednavigationstart', function () { start(''); });
+    // click listener below normally wins the race and supplies the name. Its arrival is also
+    // positive proof the navigation was committed rather than refused, which switches the
+    // blocked-navigation watchdog off.
+    document.addEventListener('blazor:enhancednavigationstart', function () {
+        navEventSeen = true;
+        start('');
+    });
+
+    // A full page navigation is leaving this document, so an unchanged href proves nothing and
+    // the watchdog must not fire.
+    window.addEventListener('beforeunload', function () { leavingDocument = true; });
 
     // Fallback start signal, and the one that knows the destination. Capturing, so it runs
     // before Blazor's own handler takes the click.

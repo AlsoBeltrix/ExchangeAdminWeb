@@ -179,6 +179,29 @@ public class GlobalProgressWiringTests
         Assert.Contains("textContent", script, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ARefusedNavigationCannotLeaveTheFrameReadingLoadingForever()
+    {
+        var script = ReadRepoFile(Path.Combine("wwwroot", "nav-progress.js"));
+
+        // A click is not a navigation. UnsavedChangesGuard can refuse one with
+        // PreventNavigation, and a refused navigation fires no load event - so the readout
+        // needs a way to notice nothing happened. In a PERMANENT frame a stuck "Loading X -
+        // 94s" is worse than no frame at all: it is a standing lie with a live timer behind it.
+        Assert.Contains("abandonIfNavigationNeverHappened", script, StringComparison.Ordinal);
+
+        // The three facts the watchdog distinguishes. Losing any one of them either strands the
+        // readout or kills a legitimate one: href proves an enhanced navigation committed,
+        // beforeunload proves a full one did, and the start event proves Blazor accepted it.
+        Assert.Contains("hrefAtStart", script, StringComparison.Ordinal);
+        Assert.Contains("leavingDocument", script, StringComparison.Ordinal);
+        Assert.Contains("navEventSeen", script, StringComparison.Ordinal);
+
+        // The interval must be cleared on every stop, or a refused navigation leaks a timer
+        // that repaints forever.
+        Assert.Contains("clearInterval", script, StringComparison.Ordinal);
+    }
+
     private static string DeclarationsOf(string css, string selector)
     {
         var index = css.IndexOf(selector + " {", StringComparison.Ordinal);
