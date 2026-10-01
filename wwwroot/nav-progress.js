@@ -190,13 +190,6 @@
         hrefAtStart = location.href;
         navEventSeen = false;
 
-        var frame = document.getElementById(FRAME_ID);
-        if (frame) {
-            // Takes the frame out of its idle styling for the duration, so the change is
-            // visible and not merely additive text.
-            frame.classList.add('gp-frame-navigating');
-        }
-
         paint();
         watchForTheNewPage();
 
@@ -232,11 +225,6 @@
         if (contentWatcher) {
             contentWatcher.disconnect();
             contentWatcher = null;
-        }
-
-        var frame = document.getElementById(FRAME_ID);
-        if (frame) {
-            frame.classList.remove('gp-frame-navigating');
         }
 
         var live = document.getElementById(NODE_ID);

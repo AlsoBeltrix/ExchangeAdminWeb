@@ -230,7 +230,33 @@ public class GlobalProgressWiringTests
         // Observed on dev: "Loading Mailbox Permissions - 1m 27s" rendered beside "Idle". The
         // two halves answer different questions - the server knows of no activity, the browser
         // knows a page was asked for - and both were allowed to speak at once.
-        Assert.Contains(".gp-frame-navigating .gp-idle", css, StringComparison.Ordinal);
+        Assert.Contains(".gp-frame:has(#gp-nav-live) .gp-idle", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheStatusFrameCanNeverRenderCompletelyEmpty()
+    {
+        var css = StripComments(ReadRepoFile(Path.Combine("wwwroot", "app.css")));
+        var script = ReadRepoFile(Path.Combine("wwwroot", "nav-progress.js"));
+
+        // The frame has exactly three legitimate states: Idle, a live readout, or both halves
+        // of a running job. Blank is not one of them, and blank is what the owner was shown.
+        //
+        // It happened because hiding "Idle" was driven by a CLASS the script toggled on an
+        // element Blazor owns and re-renders. Two independent writers on one attribute: if the
+        // class survived without the readout surviving, nothing was left to display.
+        //
+        // The rule is now keyed on the readout element's own presence, so "Idle" can only be
+        // hidden while something is literally there instead of it. The script must therefore
+        // not style the frame at all - if it starts toggling classes again the same
+        // desynchronisation returns, which is why this asserts the ABSENCE.
+        Assert.DoesNotContain("classList", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("gp-frame-navigating", css, StringComparison.Ordinal);
+
+        // And the hide must be conditional on the readout existing, never unconditional.
+        var hideRule = css.IndexOf(".gp-idle", StringComparison.Ordinal);
+        Assert.True(hideRule > 0, "No rule targeting .gp-idle was found.");
+        Assert.Contains(":has(#gp-nav-live)", css, StringComparison.Ordinal);
     }
 
     [Fact]
