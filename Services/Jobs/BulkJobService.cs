@@ -222,6 +222,23 @@ public sealed class BulkJobService
         _repository.GetActiveByModule(moduleId);
 
     /// <summary>
+    /// Non-terminal jobs submitted by one operator. What the app-frame progress display uses.
+    /// <see cref="GetActiveJobs"/> spans every module AND every operator; the frame renders for
+    /// everyone on every page, so reading the unscoped list there would show one operator another
+    /// operator's work. Guarded by GlobalProgressScopeTests.
+    /// </summary>
+    public IReadOnlyList<BulkJob> GetActiveJobsBySubmitter(string submittedBy) =>
+        _repository.GetActiveBySubmitter(submittedBy);
+
+    /// <summary>
+    /// Recently finished jobs for one operator, newest first, so the frame can report an outcome
+    /// the operator has not seen yet. Same scoping reason as
+    /// <see cref="GetActiveJobsBySubmitter"/>.
+    /// </summary>
+    public IReadOnlyList<BulkJob> GetRecentJobsBySubmitter(string submittedBy) =>
+        _repository.GetRecentFinishedBySubmitter(submittedBy, _recentJobLimit);
+
+    /// <summary>
     /// Terminal jobs for one module, any job type, newest first. Uses the shared
     /// BulkJobs:RecentJobLimit, which is correct here because the limit now applies AFTER the
     /// module filter -- the window belongs to this module alone.

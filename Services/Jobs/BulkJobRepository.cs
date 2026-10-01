@@ -434,6 +434,53 @@ public sealed class BulkJobRepository
         return ReadAll(command);
     }
 
+    /// <summary>
+    /// Non-terminal jobs submitted by one operator, oldest submission first. What the app-frame
+    /// progress display must use: <see cref="GetActive"/> spans every module AND every operator,
+    /// and the frame renders on every page for everyone, so it is the worst possible place to
+    /// read an unscoped list from.
+    /// </summary>
+    public IReadOnlyList<BulkJob> GetActiveBySubmitter(string submittedBy)
+    {
+        // Fail closed on a blank actor rather than matching every job with an empty submitter.
+        if (string.IsNullOrWhiteSpace(submittedBy))
+            return [];
+
+        using var connection = _factory.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = SelectColumns +
+            " WHERE submitted_by = $actor COLLATE NOCASE AND status IN ($queued, $running)" +
+            " ORDER BY submitted_at ASC;";
+        command.Parameters.AddWithValue("$actor", submittedBy);
+        command.Parameters.AddWithValue("$queued", BulkJobStatus.Queued.ToString());
+        command.Parameters.AddWithValue("$running", BulkJobStatus.Running.ToString());
+        return ReadAll(command);
+    }
+
+    /// <summary>
+    /// Most recent terminal jobs submitted by one operator, newest first, capped. Pairs with
+    /// <see cref="GetActiveBySubmitter"/> so the frame can report "your job finished" without
+    /// reading across operators.
+    /// </summary>
+    public IReadOnlyList<BulkJob> GetRecentFinishedBySubmitter(string submittedBy, int limit)
+    {
+        if (string.IsNullOrWhiteSpace(submittedBy))
+            return [];
+
+        using var connection = _factory.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = SelectColumns +
+            " WHERE submitted_by = $actor COLLATE NOCASE" +
+            " AND status IN ($completed, $cancelled, $interrupted)" +
+            " ORDER BY finished_at DESC LIMIT $limit;";
+        command.Parameters.AddWithValue("$actor", submittedBy);
+        command.Parameters.AddWithValue("$completed", BulkJobStatus.Completed.ToString());
+        command.Parameters.AddWithValue("$cancelled", BulkJobStatus.Cancelled.ToString());
+        command.Parameters.AddWithValue("$interrupted", BulkJobStatus.Interrupted.ToString());
+        command.Parameters.AddWithValue("$limit", limit);
+        return ReadAll(command);
+    }
+
     public IReadOnlyList<BulkJobRow> GetRows(string jobId)
     {
         using var connection = _factory.Open();

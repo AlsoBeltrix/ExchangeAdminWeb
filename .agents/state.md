@@ -12,11 +12,20 @@ the latest sweep is Archived 2026-10-01).
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**
 
-**NEXT ACTION: owner approval of `docs/GlobalProgressSystem-Plan.md` (queue item 24). The plan
-is drafted and reviewed; no code may start until it is approved.** It is at revision 2
-(`a81395d`), with the 2026-10-01 codex approach review folded in - verdict "Acceptable with
-changes: the approach stands", five required changes, all applied. Nothing else starts before
-item 24.
+**NEXT ACTION: queue item 24 slice S2 - the navigation guard and cancellation.**
+`docs/GlobalProgressSystem-Plan.md` is APPROVED (owner, 2026-10-01); S1 through S3 are
+authorised and S4's module order needs no further go (*"I don't care about the order"* - take
+the slowest first). **S1 LANDED 2026-10-01**: the progress service, the app-frame display, the
+navigation bar, and user-scoped job queries. App `2.26.0`, suite 3518 green, 8 mutation probes
+all biting.
+
+**STANDING CONSTRAINT, owner 2026-10-01: no deployments until item 24 is done**
+(`.agents/decisions.md`). That blocks every outstanding acceptance check in this file - item 23,
+the True Last Logon re-run, Comms-10k, the Migration `@key` case, items 15/16/21/22. Do not
+treat any of them as actionable. **Unresolved and the owner's to settle: whether the freeze
+covers DEV.** S1's one unprovable claim is the start-side enhanced-navigation event, which needs
+a dev deploy, so taken literally the freeze blocks the work it was imposed to speed up. Raise it
+when it bites, not before.
 
 **The owner's own clarifications during the 2026-10-01 drafting session are binding and are
 recorded verbatim in section 1 of the plan. Read them before touching this work stream** - the
@@ -278,7 +287,7 @@ line says so. Status lives here.
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
 | 23 | Migration batch tick boxes drop ticks when clicked in rapid succession | **DONE. Fixed 2026-09-30 (`af4fb4c`), owner-verified on dev 2026-10-01.** Was an owner-declared P1 prod blocker. A handler guard on a DOM-synced control: the browser applied the tick, `if (IsBusy) return;` discarded it, and Blazor sent no correction because its last-rendered value still matched the model. Guard removed from `ToggleBatchSelected` and `ToggleSelectAllBatches`; D2(a) rules out the disabled-attribute repair. Migration `1.22.4` -> `1.22.5`. Acceptance is the owner's rapid-click case. |
-| 24 | Global progress-meter system; a click landing is not obvious in most modules | **PLAN DRAFTED AND REVIEWED 2026-10-01, AWAITING OWNER APPROVAL. No code.** `docs/GlobalProgressSystem-Plan.md` revision 2. Owner-declared P1. Not a harmonisation of the existing spinners - one system that modules report into and that owns all display, built on the rule that work which writes many items or runs long moves to the background runner so its result lands. S1 and S2 touch no pages; S3 moves Comms-10k; S4+ adopt one module per slice. |
+| 24 | Global progress-meter system; a click landing is not obvious in most modules | **PLAN APPROVED 2026-10-01. S1 LANDED; S2 IS NEXT.** `docs/GlobalProgressSystem-Plan.md` revision 2. Owner-declared P1. Not a harmonisation of the existing spinners - one system that modules report into and that owns all display, built on the rule that work which writes many items or runs long moves to the background runner so its result lands. S1 and S2 touch no pages; S3 moves Comms-10k; S4+ adopt one module per slice. |
 | 25 | Verbosity sweep across the whole app; no editorializing anywhere | **NOT STARTED.** Owner: *"Too much chat context leaked into the app, too many words for a human to read instantly."* His example is True Last Logon's no-logon banner, but the item is an app-wide sweep, not that one module. Counts and coverage facts are not editorializing; instruction to the reader is. No test pins any of this copy. |
 
 ### Queue item 17 - True Last Logon, built and awaiting a live check

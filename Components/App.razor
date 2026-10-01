@@ -118,6 +118,14 @@
             window.URL.revokeObjectURL(url);
         }
     </script>
+    @*
+        Navigation progress. Must be plain JS: this page is prerendered, so a Blazor spinner
+        cannot paint for a load the browser has not received yet, and enhanced navigation keeps
+        the PREVIOUS page on screen and interactive meanwhile. The file explains both start
+        signals and why there are two. Loaded before blazor.web.js so its capturing click
+        listener is registered first.
+    *@
+    <script src="nav-progress.js"></script>
     <script src="_framework/blazor.web.js"></script>
 </body>
 

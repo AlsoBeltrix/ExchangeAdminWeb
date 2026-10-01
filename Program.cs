@@ -265,6 +265,14 @@ try
     // audit service it hangs off.
     builder.Services.AddSingleton<UsageTelemetryService>();
     builder.Services.AddSingleton<OperationTraceService>();
+    // The global progress channel (docs/GlobalProgressSystem-Plan.md). SCOPED, and it must stay
+    // that way: it is per-circuit operator-facing state, so a singleton registration would hand
+    // the first circuit's sink to every later one and report one operator's work to another.
+    // No singleton may take IActivityProgress as a dependency either - ActivityProgressLifetimeTests
+    // fails the build if one does. Pages own the handle and pass progress and the cancellation
+    // token down into services as arguments.
+    builder.Services.AddScoped<ExchangeAdminWeb.Services.Progress.IActivityProgress,
+        ExchangeAdminWeb.Services.Progress.ActivityProgressService>();
     builder.Services.AddSingleton<AuditService>();
     builder.Services.AddSingleton<EmailService>();
     builder.Services.AddSingleton<ProtectedPrincipalService>();

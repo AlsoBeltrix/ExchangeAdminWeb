@@ -1623,3 +1623,161 @@ pre.bg-light {
     font-family: var(--ui-mono);
     font-size: 0.65rem;
 }
+
+/* --- Global progress system (docs/GlobalProgressSystem-Plan.md) --- */
+
+/* Navigation bar. Fixed to the viewport top, above everything, because the page underneath is
+   the PREVIOUS page -- enhanced navigation leaves it rendered and interactive for the whole
+   load, which is why nothing else on screen can be trusted to signal the click landed. */
+#nav-progress-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 3px;
+    width: 100%;
+    z-index: 2000;
+    pointer-events: none;
+    opacity: 0;
+    background: transparent;
+    transition: opacity 120ms linear;
+}
+
+#nav-progress-bar.nav-progress-running {
+    opacity: 1;
+    /* Indeterminate on purpose: nothing here knows how far along the load is, and a bar that
+       fills to a made-up percentage is the dishonesty the progress rules forbid. The sweep says
+       "still working", which is the only true claim available. */
+    background: linear-gradient(90deg,
+        transparent 0%,
+        var(--ui-brand) 35%,
+        var(--ui-brand) 65%,
+        transparent 100%);
+    background-size: 40% 100%;
+    background-repeat: no-repeat;
+    animation: nav-progress-sweep 1.1s linear infinite;
+}
+
+@keyframes nav-progress-sweep {
+    from { background-position: -40% 0; }
+    to { background-position: 140% 0; }
+}
+
+/* Operators who have asked the OS for less motion still need to know the app is working, so the
+   bar stays visible and only the sweep stops. Removing the indicator entirely would hand that
+   group the original defect back. */
+@media (prefers-reduced-motion: reduce) {
+    #nav-progress-bar.nav-progress-running {
+        animation: none;
+        background: var(--ui-brand);
+        background-size: 100% 100%;
+    }
+}
+
+/* Activity panel in the app frame. */
+.gp-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-right: 0.75rem;
+}
+
+.gp-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 22rem;
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--ui-line);
+    border-radius: 4px;
+    background: var(--ui-surface);
+    color: var(--ui-fg);
+    font-size: 0.8125rem;
+    line-height: 1.3;
+    cursor: pointer;
+}
+
+.gp-toggle:hover { border-color: var(--ui-brand); }
+
+.gp-toggle-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gp-count {
+    flex: none;
+    padding: 0 0.35rem;
+    border-radius: 999px;
+    background: var(--ui-brand);
+    color: var(--ui-brand-fg);
+    font-size: 0.6875rem;
+}
+
+.gp-panel {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    right: 0;
+    z-index: 1900;
+    width: 24rem;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 0.5rem;
+    border: 1px solid var(--ui-line);
+    border-radius: 6px;
+    background: var(--ui-surface);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.gp-item {
+    padding: 0.4rem 0.3rem;
+    border-bottom: 1px solid var(--ui-grid);
+}
+
+.gp-item:last-child { border-bottom: none; }
+
+.gp-item-label {
+    font-size: 0.8125rem;
+    color: var(--ui-fg);
+}
+
+.gp-item-detail {
+    font-size: 0.75rem;
+    color: var(--ui-fg2);
+}
+
+.gp-item-module {
+    font-size: 0.6875rem;
+    color: var(--ui-fg3);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.gp-track {
+    height: 4px;
+    margin: 0.3rem 0;
+    border-radius: 2px;
+    background: var(--ui-grid);
+    overflow: hidden;
+}
+
+.gp-fill {
+    height: 100%;
+    background: var(--ui-brand);
+}
+
+.gp-fill-indeterminate {
+    width: 40%;
+    animation: nav-progress-sweep 1.1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .gp-fill-indeterminate { animation: none; width: 100%; opacity: 0.5; }
+}
+
+.gp-ok { color: var(--ui-on); }
+.gp-bad { color: var(--ui-danger); }
+
+.gp-safe-note {
+    font-size: 0.6875rem;
+    color: var(--ui-fg2);
+}

@@ -9,6 +9,9 @@
         <div class="top-row px-4 d-flex justify-content-end align-items-center">
             <AuthorizeView>
                 <Authorized>
+                    @* The app's only progress display. Renders nothing while idle.
+                       docs/GlobalProgressSystem-Plan.md section 5.2. *@
+                    <GlobalProgress />
                     <UsageTracker />
                     <ThemePicker />
                     <small class="text-muted">

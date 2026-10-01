@@ -1,0 +1,275 @@
+@using ExchangeAdminWeb.Services.Jobs
+@using ExchangeAdminWeb.Services.Progress
+@implements IDisposable
+@inject IActivityProgress Progress
+@inject BulkJobService BulkJobs
+@inject AuthenticationStateProvider AuthStateProvider
+
+@*
+    The app's only progress display. Modules report to IActivityProgress and render nothing
+    themselves; background jobs are read from the job store. See
+    docs/GlobalProgressSystem-Plan.md sections 5.1 and 5.2.
+
+    Lives in Components/Shared and is rendered by MainLayout, so it is outside
+    Components/Pages and therefore outside the ClickGateRegistry's scanned surface. That is
+    deliberate: the registry is keyed by line number across 12 pinned pages, and a control in
+    the app frame must not be able to shift any of them.
+
+    Renders NOTHING when idle. An always-visible empty bar trains operators to ignore the one
+    place that is supposed to mean something is happening.
+*@
+
+@if (HasAnything)
+{
+    <div class="gp-wrap">
+        <button type="button"
+                class="gp-toggle"
+                aria-expanded="@(expanded ? "true" : "false")"
+                title="@SummaryText()"
+                @onclick="Toggle">
+            @if (RunningCount > 0)
+            {
+                <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+            }
+            <span class="gp-toggle-label">@SummaryText()</span>
+            @if (RunningCount > 1)
+            {
+                <span class="gp-count">@RunningCount</span>
+            }
+        </button>
+
+        @if (expanded)
+        {
+            <div class="gp-panel">
+                @foreach (var activity in activities)
+                {
+                    <div class="gp-item">
+                        <div class="gp-item-module">@activity.ModuleId</div>
+                        <div class="gp-item-label">@activity.Label</div>
+                        <div class="gp-track">
+                            @if (activity.PercentComplete is int percent)
+                            {
+                                <div class="gp-fill" style="width:@(percent)%"></div>
+                            }
+                            else
+                            {
+                                <div class="gp-fill gp-fill-indeterminate"></div>
+                            }
+                        </div>
+                        <div class="gp-item-detail">@ActivityText(activity)</div>
+                    </div>
+                }
+
+                @foreach (var job in activeJobs)
+                {
+                    <div class="gp-item">
+                        <div class="gp-item-module">@job.ModuleId</div>
+                        <div class="gp-item-label">@JobLabel(job)</div>
+                        <div class="gp-track">
+                            @if (JobPercent(job) is int percent)
+                            {
+                                <div class="gp-fill" style="width:@(percent)%"></div>
+                            }
+                            else
+                            {
+                                <div class="gp-fill gp-fill-indeterminate"></div>
+                            }
+                        </div>
+                        <div class="gp-item-detail">@JobText(job)</div>
+                        <div class="gp-safe-note">Runs in the background. You can leave this page.</div>
+                    </div>
+                }
+
+                @foreach (var outcome in outcomes)
+                {
+                    <div class="gp-item">
+                        <div class="gp-item-module">@outcome.ModuleId</div>
+                        <div class="gp-item-label @(outcome.Success ? "gp-ok" : "gp-bad")">
+                            @outcome.Label - @(outcome.Success ? "finished" : "failed")
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(outcome.Message))
+                        {
+                            <div class="gp-item-detail">@outcome.Message</div>
+                        }
+                    </div>
+                }
+
+                @foreach (var job in FinishedSinceArrival())
+                {
+                    <div class="gp-item">
+                        <div class="gp-item-module">@job.ModuleId</div>
+                        <div class="gp-item-label @(JobSucceeded(job) ? "gp-ok" : "gp-bad")">
+                            @JobLabel(job) - @JobEndedText(job)
+                        </div>
+                        <div class="gp-item-detail">@JobText(job)</div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private readonly DateTime arrivedUtc = DateTime.UtcNow;
+
+    private string currentUser = "";
+    private bool expanded;
+    private bool disposed;
+    private bool subscribed;
+
+    private IReadOnlyList<Activity> activities = Array.Empty<Activity>();
+    private IReadOnlyList<ActivityOutcome> outcomes = Array.Empty<ActivityOutcome>();
+    private IReadOnlyList<BulkJob> activeJobs = Array.Empty<BulkJob>();
+    private IReadOnlyList<BulkJob> recentJobs = Array.Empty<BulkJob>();
+
+    private bool HasAnything =>
+        activities.Count > 0 || activeJobs.Count > 0 || outcomes.Count > 0 || FinishedSinceArrival().Count > 0;
+
+    private int RunningCount => activities.Count + activeJobs.Count;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // SubmittedBy is written from user.Identity.Name verbatim at enqueue time (see the three
+        // enqueueing pages), so the scoped query must match on the same unnormalised value.
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        currentUser = authState.User.Identity?.Name ?? "";
+
+        Progress.Changed += OnProgressChanged;
+        BulkJobs.JobChanged += OnJobChanged;
+        subscribed = true;
+
+        Reload();
+    }
+
+    private void Reload()
+    {
+        activities = Progress.Active;
+        outcomes = Progress.RecentOutcomes;
+
+        // NEVER GetActiveJobs() here. This component renders in the app frame, on every page,
+        // for every operator; the unscoped accessor spans every module and every submitter and
+        // would show one operator another operator's work. Guarded by GlobalProgressScopeTests.
+        activeJobs = string.IsNullOrWhiteSpace(currentUser)
+            ? Array.Empty<BulkJob>()
+            : BulkJobs.GetActiveJobsBySubmitter(currentUser);
+
+        recentJobs = string.IsNullOrWhiteSpace(currentUser)
+            ? Array.Empty<BulkJob>()
+            : BulkJobs.GetRecentJobsBySubmitter(currentUser);
+    }
+
+    // Only jobs that ENDED while this operator was on the app are announced. Without the cutoff
+    // the panel would re-announce every job from the retention window on every page load, which
+    // trains the operator to dismiss it unread - the same failure as an always-visible bar.
+    private IReadOnlyList<BulkJob> FinishedSinceArrival() =>
+        recentJobs.Where(j => j.FinishedAtUtc is DateTime finished && finished >= arrivedUtc).ToList();
+
+    private void Toggle() => expanded = !expanded;
+
+    // Raised from the job pump's thread, not the renderer's, so it MUST be marshalled.
+    private async void OnJobChanged(string jobId) => await Refresh();
+
+    // Raised by whatever thread the reporting module happens to be on, for the same reason.
+    private async void OnProgressChanged() => await Refresh();
+
+    private async Task Refresh()
+    {
+        if (disposed)
+            return;
+
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (disposed)
+                    return;
+
+                Reload();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException)
+        {
+            // The circuit went away between the guard above and the dispatch. Nothing to update.
+        }
+    }
+
+    private string SummaryText()
+    {
+        var running = RunningCount;
+        if (running == 1)
+        {
+            var only = activities.Count == 1 ? activities[0].Label : JobLabel(activeJobs[0]);
+            return only;
+        }
+
+        if (running > 1)
+            return $"{running} things running";
+
+        var ended = outcomes.Count + FinishedSinceArrival().Count;
+        return ended == 1 ? "1 finished" : $"{ended} finished";
+    }
+
+    private static string ActivityText(Activity activity)
+    {
+        var detail = activity.Detail;
+        var counted = activity.Shape switch
+        {
+            ActivityShape.Steps => $"step {activity.Done} of {activity.Total}",
+            ActivityShape.Items => $"{activity.Done:N0} of {activity.Total:N0}",
+            _ => "working",
+        };
+
+        return string.IsNullOrWhiteSpace(detail) ? counted : $"{counted} - {detail}";
+    }
+
+    private static string JobLabel(BulkJob job) => job.JobType.Replace('_', ' ');
+
+    // Null until the runner has stamped a row count, so the bar stays indeterminate rather than
+    // rendering 0% for a queued job that has not been sized yet.
+    private static int? JobPercent(BulkJob job) =>
+        job.TotalRows > 0
+            ? (int)Math.Clamp(job.ProcessedRows * 100L / job.TotalRows, 0L, 100L)
+            : null;
+
+    private string JobText(BulkJob job)
+    {
+        var status = BulkJobs.DisplayStatus(job, DateTime.UtcNow);
+        if (job.TotalRows <= 0)
+            return status;
+
+        var counts = $"{job.ProcessedRows:N0} of {job.TotalRows:N0}";
+        if (job.FailedCount > 0 || job.PartialCount > 0)
+            counts += $" ({job.SuccessCount:N0} ok, {job.PartialCount:N0} partial, {job.FailedCount:N0} failed)";
+
+        return $"{status} - {counts}";
+    }
+
+    // Completed with no failed rows is the only unambiguous success. Cancelled and Interrupted
+    // are not successes, and a Completed job holding failed rows did not do what was asked.
+    private static bool JobSucceeded(BulkJob job) =>
+        job.Status == BulkJobStatus.Completed && job.FailedCount == 0;
+
+    private static string JobEndedText(BulkJob job) => job.Status switch
+    {
+        BulkJobStatus.Completed when job.FailedCount == 0 => "finished",
+        BulkJobStatus.Completed => "finished with failures",
+        BulkJobStatus.Cancelled => "cancelled",
+        BulkJobStatus.Interrupted => "interrupted",
+        _ => job.Status.ToString().ToLowerInvariant(),
+    };
+
+    public void Dispose()
+    {
+        disposed = true;
+
+        // This component lives in the layout, so it outlives every page. A leaked handler here
+        // persists for the life of the process and keeps a dead circuit's component reachable.
+        if (!subscribed)
+            return;
+
+        Progress.Changed -= OnProgressChanged;
+        BulkJobs.JobChanged -= OnJobChanged;
+        subscribed = false;
+    }
+}
