@@ -227,14 +227,34 @@ public class GlobalProgressWiringTests
         // PreventNavigation, and a refused navigation fires no load event - so the readout
         // needs a way to notice nothing happened. In a PERMANENT frame a stuck "Loading X -
         // 94s" is worse than no frame at all: it is a standing lie with a live timer behind it.
-        Assert.Contains("abandonIfNavigationNeverHappened", script, StringComparison.Ordinal);
+        // Declared AND wired in. An earlier version of this test only asserted the name
+        // appeared somewhere, which a probe satisfied by renaming the declaration and leaving
+        // the call sites - a guard that is present but never called reads identically to one
+        // that works. Count the calls, not the mentions.
+        Assert.Contains("function abandonIfNavigationNeverHappened()", script, StringComparison.Ordinal);
+
+        // Count bare identifier references, not call parentheses: one of the two call sites
+        // passes the function to setTimeout by name, with no parentheses at all, so a
+        // parenthesis-based count silently misses it.
+        var calls = Regex.Matches(script, @"\babandonIfNavigationNeverHappened\b").Count
+            - 1; // the declaration itself
+        Assert.True(calls >= 2,
+            "The watchdog must be called from both the repeating tick and the one-shot timer: "
+            + $"the tick is what clears a cancelled window.confirm, and the timer is what "
+            + $"catches a refusal that never ran a tick. Found {calls} call sites.");
+
+        Assert.Contains("setInterval", script, StringComparison.Ordinal);
+        Assert.Contains("setTimeout(abandonIfNavigationNeverHappened", script, StringComparison.Ordinal);
 
         // The three facts the watchdog distinguishes. Losing any one of them either strands the
         // readout or kills a legitimate one: href proves an enhanced navigation committed,
         // beforeunload proves a full one did, and the start event proves Blazor accepted it.
-        Assert.Contains("hrefAtStart", script, StringComparison.Ordinal);
-        Assert.Contains("leavingDocument", script, StringComparison.Ordinal);
-        Assert.Contains("navEventSeen", script, StringComparison.Ordinal);
+        foreach (var fact in new[] { "hrefAtStart", "leavingDocument", "navEventSeen" })
+        {
+            Assert.True(Regex.Matches(script, Regex.Escape(fact)).Count >= 2,
+                $"'{fact}' must be both set and read; found fewer than two references, so it "
+                + "is either never assigned or never consulted.");
+        }
 
         // The interval must be cleared on every stop, or a refused navigation leaks a timer
         // that repaints forever.

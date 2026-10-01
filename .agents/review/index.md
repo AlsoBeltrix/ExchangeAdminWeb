@@ -14,6 +14,10 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 
 | ID                | Severity | Impact (one line)                                             | Status | Branch | Reviewer |
 |-------------------|----------|---------------------------------------------------------------|--------|--------|----------|
+| gps-s1-1          | MEDIUM   | Refused navigation strands the status readout + leaks a timer | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std (codex-cli 0.159.0, codex exec, read-only) - raised over 9115be7..c60b1cd; fix ad74545, guard confirmed (probe: remove the setTimeout call site -> FAIL, restore -> PASS) |
+| gps-s1-2          | MEDIUM   | Frame subscribes to a singleton event AFTER being disposed    | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std - raised over 9115be7..c60b1cd; fix 1ed797a, guard confirmed; test pins the ORDER of await/guard/subscribe, since a guard in the wrong place reads identically |
+| gps-s1-3          | MEDIUM   | async void + SQLite read in the frame can tear down a circuit | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std - raised over 9115be7..c60b1cd; fix 04857a2, guard confirmed |
+| gps-s1-4          | LOW      | Circuit dispose completes stragglers but never cancels them   | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std - raised over 9115be7..c60b1cd; fix 478cbef, guard confirmed; latent until the first module adopts, fixed before S4 spreads the assumption |
 | pp-finder-1       | HIGH     | Protected room editable via single-room Finder (no PP gate)   | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std (finding+plan r1-3); codex-commercial/gpt-5.6-sol/max/frontier (consolidation r4) |
 | gm3-task2-slice1  | n/a      | Slice-landing review: list-time member-write eligibility      | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std — accepted, no material issue (1a0cf58) |
 | gm3-task2-slice2  | HIGH     | SID gate accepted SDDL aliases (alternate-identity to AD)     | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std — reopened (d85c511) → accepted after fix (e748e32) |
