@@ -102,6 +102,8 @@ try
                 typeof(ExchangeAdminWeb.Services.Jobs.MessageTraceDetailJobProcessor)),
             new(ExchangeAdminWeb.Services.Jobs.MigrationReportExportProcessor.ModuleName,
                 typeof(ExchangeAdminWeb.Services.Jobs.MigrationReportExportProcessor)),
+            new(ExchangeAdminWeb.Services.Jobs.Comms10kReplaceProcessor.ModuleName,
+                typeof(ExchangeAdminWeb.Services.Jobs.Comms10kReplaceProcessor)),
         }));
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Jobs.BulkJobService>();
 
@@ -187,6 +189,7 @@ try
     // Bulk job processor for ConferenceRooms (resolved per-job from a fresh scope by the runner).
     builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor>();
     builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.MigrationReportExportProcessor>();
+    builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.Comms10kReplaceProcessor>();
     builder.Services.AddSingleton<NamedLocationsService>();
     builder.Services.AddSingleton<M365GroupManagementService>();
     // Risky Users read path (docs/RiskyUsersModule-Plan.md, S2). Singleton like the other Graph
