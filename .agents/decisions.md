@@ -5,6 +5,49 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-01 - No deployments until the global progress system is done
+
+Status: Active. Owner ruling, 2026-10-01, verbatim: *"no more deployments until this is done."*
+
+Decision:
+
+**No deploy of any kind ships while queue item 24 is outstanding.** "This" is the global
+progress system, `docs/GlobalProgressSystem-Plan.md`, approved the same day. Finished work from
+other streams accumulates on `master` and waits.
+
+What this blocks, named so nobody rediscovers it as a surprise: owner acceptance of queue item
+23, the True Last Logon UPN re-run, the Comms-10k stakeholder re-test, the Migration `@key`
+checkbox case, and the browse checks on items 15, 16, 21 and 22. All of those need a dev
+instance carrying the current build and none of them can run until the freeze lifts.
+
+**Unresolved and the owner's to settle when it bites:** whether the freeze covers the DEV
+instance as well as prod. The progress plan's own acceptance checklist needs a dev deploy - in
+particular S1 cannot prove the start-side enhanced-navigation signal without one, because
+nothing in this repo renders a Blazor page. Taken literally the freeze blocks the work it was
+imposed to accelerate. Raise it when S1 reaches that check, not before; everything up to that
+point is buildable and unit-testable without a deploy.
+
+### 2026-10-01 - Every plan carries an exec summary, and it is the only binding part
+
+Status: Active. Closes the open gap recorded in the 2026-09-30 ruling directly below.
+
+Owner, 2026-10-01, after being handed a plan summary in chat for the second time:
+*"I do not read plans. Plans are execution steps for agents. I require concise exec summaries."*
+
+Decision:
+
+**Every `docs/*-Plan.md` opens with an `## Exec summary` section, before anything else.** It is
+written for the owner, in plain English, and it is the only part of a plan he is expected to
+read or is bound by. It states what the work does, what it gets him, what it costs, the biggest
+risk, and exactly what approving it authorises. It does not describe mechanisms, file names or
+test strategy - those are the body, which is agent-facing.
+
+This closes the gap the 2026-09-30 ruling left open on the plan-document side. **It does not
+close it on the tooling side:** `.agents/playbooks/plan.md` is toolkit-owned and must not be
+edited in this repo (`AGENTS.md`: edit toolkit sources, never installed copies). Until the
+toolkit source carries it, the requirement lives in `.agents/repo-guidance.md` under Earned
+Practices and the drafting agent applies it by hand.
+
 ### 2026-09-30 - Plan approval is not approval of plan contents. Only an exec summary binds.
 
 Status: Active. Owner ruling, 2026-09-30, verbatim:
@@ -30,10 +73,10 @@ Consequences, and they bite in both directions:
 - **A plan's `Status: Approved` header still means the work stream may proceed.** This does not
   invalidate the plan process or the requirement that code changes have a plan; it narrows what
   approval of one implies.
-- **Open gap, not yet closed:** `docs/*-Plan.md` has no exec-summary section, and the `plan`
-  operator does not produce one. Until it does, the surfacing obligation above rests entirely
-  on the agent raising things in chat. Adding an exec summary to the plan template and the
-  `plan` playbook is proposed, not done, and needs its own go.
+- **Open gap, CLOSED on the document side 2026-10-01** by the ruling above: every plan now
+  opens with an `## Exec summary`, and it is the only binding part. The tooling half is still
+  open - `.agents/playbooks/plan.md` is toolkit-owned and cannot be edited here, so the
+  drafting agent writes the section by hand until the toolkit source carries it.
 
 ### 2026-09-30 - Comms-10k replaces are not serialised
 

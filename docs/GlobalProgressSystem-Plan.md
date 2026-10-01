@@ -1,9 +1,54 @@
 # Global Progress System - Plan
 
-Status: **Draft at revision 2. Not approved. No code written.**
-Revision 2 folds in the 2026-10-01 approach review, which returned "Acceptable with changes:
-the approach stands" and named five required changes. All five are applied; see section 12.
+Status: **APPROVED by the owner, 2026-10-01, at revision 2.** Stages S1 through S3 are
+authorised. S4's module order needs no further go - the owner declined to pick one
+(*"I don't care about the order"*), so take the slowest first.
 Queue item 24, owner-declared P1 on 2026-10-01.
+Revision 2 folded in the 2026-10-01 approach review, which returned "Acceptable with changes:
+the approach stands" and named five required changes. All five are applied; see section 12.
+
+**Standing constraint from the same ruling: no deployments ship until this work is done**
+(`.agents/decisions.md` 2026-10-01). Whether that covers the dev instance is unresolved and
+becomes a live question at S1's navigation-signal check - raise it then, not before.
+
+---
+
+## Exec summary
+
+*This is the only part of this plan the owner reads or is bound by
+(`.agents/decisions.md` 2026-09-30, 2026-10-01). Everything below it is agent-facing.*
+
+**What it does.** Modules stop drawing their own spinners. They report what they are doing to
+one system, and that system owns everything the operator sees.
+
+**What it gets you.**
+
+- Clicking a module shows instantly that the click registered. Today 31 of 36 show nothing at
+  all, because of how the page is built before the browser sees it.
+- Whatever is running is visible wherever you are in the app, with an honest count or an honest
+  "working" - never an invented percentage.
+- Trying to leave mid-operation warns you, and genuinely cancels the work if you confirm.
+  Nothing can cancel anything today.
+- Slow work survives you walking away and tells you when it finished or failed.
+
+**What it costs.** Four stages. S1 and S2 build the whole system and fix the click problem
+across all 36 modules without touching a single one of them. S3 moves Comms-10k onto the
+background runner. S4 takes the remaining modules one at a time, slowest first, and can pause
+for other work.
+
+**The real expense is not the progress bar.** Making results survive navigation means moving
+slow work out of the pages and into the background runner, module by module. That is the bulk
+of the job and it is why this is bigger than it sounds.
+
+**Biggest risk.** Twelve modules are pinned by tests that fail if a single line moves. S1 and
+S2 do not touch them, so the system is proven working before anything fragile is opened.
+
+**Reviewed.** Codex, 2026-10-01: approach sound, five required fixes, all verified against the
+code and applied. The worst of them would have shown one operator's progress to another.
+
+**What approval authorises:** S1, S2 and S3. Nothing in the body below binds beyond that.
+
+---
 Base app version: shared infrastructure, so `<VersionPrefix>` in `ExchangeAdminWeb.csproj`
 bumps. Each module's adoption additionally bumps that module's `Version` in
 `Modules/ModuleCatalog.cs`. Both versioning rules fire independently

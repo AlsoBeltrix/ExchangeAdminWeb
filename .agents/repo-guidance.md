@@ -181,6 +181,11 @@ only the new module's own version is set (Constitution "Deployment And Versionin
   implement. Implementation must not exceed plan scope; scope changes go back through
   the plan. The Constitution lists which change types require a written plan and which
   do not. The `plan` and `new-module` operators automate the drafting.
+- **Every plan opens with an `## Exec summary`, and it is the only part the owner reads or is
+  bound by** (`.agents/decisions.md` 2026-10-01). Plain English, before any other section:
+  what the work does, what it gets him, what it costs, the biggest risk, and what approving it
+  authorises. No mechanisms, file names or test strategy - that is the agent-facing body. The
+  `plan` playbook is toolkit-owned and does not yet produce one, so write it by hand.
 - Disputes about repo behavior are settled by reading the file, not by argument. Any
   control-flow claim must quote exact lines and name the error mechanism (throw vs
   Write-Error vs native exit code vs swallowed catch).
