@@ -355,6 +355,10 @@ public class GlobalProgressWiringTests
 
     [Theory]
     [InlineData("RiskyUsers.razor")]
+    [InlineData("ServiceHealth.razor")]
+    [InlineData("DelegationReport.razor")]
+    [InlineData("BitLockerRecovery.razor")]
+    [InlineData("MessageTrace.razor")]
     public void AnAdoptedModuleReportsItsWorkToTheStatusFrame(string page)
     {
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", page)));
@@ -367,8 +371,17 @@ public class GlobalProgressWiringTests
 
         // And it must report the outcome rather than only the start. Dispose alone records a
         // failure, which is right for an abandoned operation and wrong for one that worked.
-        Assert.Contains("activity.Complete(true", source, StringComparison.Ordinal);
-        Assert.Contains("activity.Complete(false", source, StringComparison.Ordinal);
+        //
+        // Counted rather than matched against a literal `true`/`false`: a page that computes
+        // its outcome - Complete(result.Success, ...) - is reporting more honestly than one
+        // that hardcodes it, and an earlier version of this assertion failed exactly those
+        // pages for being better. Two call sites means the success and failure branches are
+        // both covered.
+        var completions = Regex.Matches(source, @"activity\.Complete\(").Count;
+        Assert.True(completions >= 2,
+            $"{page} calls activity.Complete {completions} time(s). Both the success and the "
+            + "failure branch must report, or one of them silently falls through to the "
+            + "dispose fallback and is recorded as a failure.");
     }
 
     private static string DeclarationsOf(string css, string selector)

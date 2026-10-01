@@ -3,6 +3,7 @@
 @attribute [Authorize(Policy = "ServiceHealth")]
 @rendermode InteractiveServer
 @inject ServiceHealthService HealthService
+@inject IActivityProgress Progress
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -360,9 +361,16 @@
         isLoading = true;
         loadError = null;
         await Task.Yield();
+
+        using var activity = Progress.Begin(
+            "Service Health",
+            forceRefresh ? "Refreshing service health" : "Reading service health",
+            ActivitySize.Unknown);
+
         try
         {
             status = await HealthService.GetStatusAsync(forceRefresh);
+            activity.Complete(true, $"{status.TotalServices:N0} services, {status.ActiveIssues:N0} open");
             Audit.LogLookupAction(currentUser, clientIpAddress, "ServiceHealthView",
                 "Microsoft 365 service health", true,
                 extra: new Dictionary<string, object?>
@@ -375,6 +383,7 @@
         catch (Exception ex)
         {
             loadError = ex.Message;
+            activity.Complete(false, ex.Message);
             Logger.LogError(ex, "Failed to load Microsoft 365 service health");
             Audit.LogLookupAction(currentUser, clientIpAddress, "ServiceHealthView",
                 "Microsoft 365 service health", false, ex.Message);

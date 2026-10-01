@@ -7,6 +7,7 @@
 @attribute [Authorize(Policy = "MessageTrace")]
 @rendermode InteractiveServer
 @inject MessageTraceService MsgTrace
+@inject IActivityProgress Progress
 @inject HeaderAnalysisService HeaderAnalysis
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
@@ -783,6 +784,11 @@
         detailActionError = null;
         emailJobSubmitted = false;
 
+        // The service splits a wide range into windows, so a 90-day trace is many round trips.
+        // Indeterminate: the window count is the service's business and is not surfaced here.
+        using var activity = Progress.Begin(
+            "Message Trace", "Searching message trace", ActivitySize.Unknown);
+
         try
         {
             // EVERY range runs here, including a 90-day one. There is no second path.
@@ -793,6 +799,14 @@
             // search sat in the build while the page walked past it. Do not reintroduce a
             // date-width branch here - the service splits wide ranges into windows itself.
             await RunRealtimeTrace();
+            activity.Complete(true, response?.Results?.Count is int n ? $"{n:N0} message(s)" : null);
+        }
+        catch (Exception ex)
+        {
+            // Reported before rethrowing: the frame must not be left claiming a search is
+            // still running while the page handles the failure its own way.
+            activity.Complete(false, ex.Message);
+            throw;
         }
         finally
         {

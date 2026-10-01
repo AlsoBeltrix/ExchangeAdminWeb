@@ -5,6 +5,7 @@
 @attribute [Authorize(Policy = "DelegationReport")]
 @rendermode InteractiveServer
 @inject DelegationReportService DelegationService
+@inject IActivityProgress Progress
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -140,13 +141,20 @@
         isLoading = true;
         result = null;
 
+        // Three nested permission loops per recipient, so this is one of the slowest reads in
+        // the app. Indeterminate: the recipient count is not known until it is walked.
+        using var activity = Progress.Begin(
+            "Delegation Report", $"Reading delegation for {emailAddress.Trim()}", ActivitySize.Unknown);
+
         try
         {
             result = await DelegationService.GetMailboxDelegationAsync(emailAddress.Trim());
+            activity.Complete(result.Error == null, result.Error);
             Audit.LogLookupAction(currentUser, clientIpAddress, "DelegationReport", emailAddress.Trim(), result.Error == null, result.Error);
         }
         catch (Exception ex)
         {
+            activity.Complete(false, ex.Message);
             result = new DelegationReportResult { EmailAddress = emailAddress, Error = ex.Message };
         }
         finally

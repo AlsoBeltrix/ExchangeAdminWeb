@@ -3,6 +3,7 @@
 @attribute [Authorize(Policy = "BitLockerRecovery")]
 @rendermode InteractiveServer
 @inject BitLockerRecoveryService RecoveryService
+@inject IActivityProgress Progress
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -315,6 +316,12 @@
         StateHasChanged();
         await Task.Yield();
 
+        // The live Active Directory half of this is the slow part, by the page's own copy.
+        using var activity = Progress.Begin(
+            "BitLocker Recovery",
+            includeLiveAd ? "Searching the archive and live AD" : "Searching the archive",
+            ActivitySize.Unknown);
+
         try
         {
             // A recovery-screen identifier targets one key, so it wins when both are given.
@@ -341,6 +348,7 @@
                 : await RecoveryService.SearchByComputerNameAsync(searchTerm, searchTicket, includeLiveAd);
 
             searched = true;
+            activity.Complete(result.Success, result.Success ? $"{results.Count:N0} found" : result.Error);
 
             if (!result.Success)
             {
@@ -366,6 +374,7 @@
         }
         catch (Exception ex)
         {
+            activity.Complete(false, "The search could not be completed.");
             Logger.LogError(ex, "BitLocker recovery search failed.");
             errorMessage = "The search could not be completed. Try again, or contact an administrator.";
         }
