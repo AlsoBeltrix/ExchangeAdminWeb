@@ -254,6 +254,19 @@
         {
             // The circuit went away between the guard and the dispatch. Nothing to update.
         }
+        catch (Exception)
+        {
+            // These handlers are `async void`, so nothing above them can observe a fault: the
+            // event source already returned successfully and there is no Task to carry it.
+            // Reload() reads the jobs SQLite store, so a locked or unreadable database here
+            // would surface as an unhandled exception and tear down the operator's whole
+            // circuit - losing the page they were working on because a STATUS BAR could not
+            // refresh. The frame is chrome; it must never be able to take the app down with
+            // it. The existing job pages catch broadly around the same pattern.
+            //
+            // Swallowed rather than surfaced: the next JobChanged or Changed repaints, and a
+            // frame that is briefly stale is the correct trade against a dead circuit.
+        }
     }
 
     private static string ActivityStatus(Activity activity)

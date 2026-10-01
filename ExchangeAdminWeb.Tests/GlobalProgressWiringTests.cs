@@ -120,6 +120,25 @@ public class GlobalProgressWiringTests
     }
 
     [Fact]
+    public void AFaultInTheStatusFrameCannotTearDownTheOperatorsCircuit()
+    {
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor")));
+
+        // The handlers are `async void`, so no caller can observe a fault - the event source
+        // has already returned and there is no Task to carry it. The refresh path reads the
+        // jobs SQLite store, so a locked database would become an unhandled exception and kill
+        // the circuit, losing whatever page the operator was working on because a STATUS BAR
+        // could not repaint. Chrome must never be able to take the app down with it.
+        Assert.Contains("catch (Exception)", source, StringComparison.Ordinal);
+
+        var refresh = source.IndexOf("private async Task Refresh()", StringComparison.Ordinal);
+        Assert.True(refresh >= 0, "Refresh() was not found.");
+        Assert.True(source.IndexOf("catch (Exception)", refresh, StringComparison.Ordinal) > refresh,
+            "The broad catch must be inside Refresh(), which is the async void handlers' only "
+            + "path to the job store.");
+    }
+
+    [Fact]
     public void TheLayoutRendersTheDisplay()
     {
         var layout = StripComments(ReadRepoFile(Path.Combine("Components", "Layout", "MainLayout.razor")));
