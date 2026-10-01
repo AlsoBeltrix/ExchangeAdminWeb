@@ -12,8 +12,9 @@ the latest sweep is Archived 2026-10-01).
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**
 
-**NEXT ACTION: queue item 24 remaining work - remove the per-module spinners, then S3
-(Comms-10k onto the background runner). Then the owner's acceptance pass on dev.**
+**NEXT ACTION: queue item 24 remaining work - the owner's acceptance pass on dev, plus the
+Migration ruling. The agent-executable remainder is spinner removal on the 12 line-pinned
+pages and threading cancellation tokens through more services.**
 
 `docs/GlobalProgressSystem-Plan.md` is APPROVED (owner, 2026-10-01); S1-S3 are authorised and
 S4's module order needs no further go (*"I don't care about the order"*). App `2.26.0`, suite
@@ -72,27 +73,16 @@ for:**
 
 **Remaining work, in the order it is worth doing:**
 
-- **S3, Comms-10k onto the background runner. HALF DONE - the processor exists, the page does
-  not use it.** `Services/Jobs/Comms10kReplaceProcessor.cs` and its payload are landed,
-  registered in both the processor map and DI, and green. Stages are rows; one member is NOT
-  one row, and that is a decision, not an implementation detail - see the processor's own
-  remarks before changing it.
-
-  **What is left is the page swap, and it is the riskiest single edit in this work stream.**
-  `Components/Pages/Comms10k.razor` still performs the replace inline. Swapping it means:
-  enqueue instead of calling `ExecuteReplaceAsync`; **DELETE the page's audit and email blocks**
-  or they will fire twice, because the processor already does both; and rework the result
-  rendering, since there is no longer an immediate result to show - the operator watches the
-  status frame and collects the outcome from Bulk Jobs. That changes the module's whole
-  interaction model.
-
-  It was deliberately NOT attempted at the end of the 2026-10-01 session, with two degradation
-  signals already on the record (a commit with unread failing tests, and a DI registration that
-  only a tripwire caught). This module writes a ten-thousand-member broadcast list; a careless
-  swap here is not a cosmetic defect.
-- **Cancellation tokens.** No module honours `handle.CancellationToken` yet, so S2's OK path
-  stops the UI waiting rather than the work. Until a module honours it, the popup's promise is
-  only half true for that module.
+- **S3 IS DONE.** Comms-10k resolves and replaces on the background runner
+  (`Services/Jobs/Comms10kReplaceProcessor.cs`); the page enqueues and shows a submission
+  message. Stages are rows and one member is NOT one row - a decision, not an implementation
+  detail; read the processor remarks before changing it. The page keeps one audit and one
+  notification for a SUBMISSION failure only; the processor owns both for a replace that ran.
+  **Nothing has run against the real group** - the plan Acceptance is outstanding in full.
+- **Cancellation tokens.** ONE operation honours `handle.CancellationToken` - Message Trace's
+  bulk detail download, which was first because its service already accepted a token. Every
+  other module ignores it, so S2's OK path stops the UI waiting rather than the work for
+  those. Extending it means threading tokens through service signatures, module by module.
 - **Spinner removal on the 12 click-gate-converted pages.** The riskiest remaining work: each
   also needs its `SpinnerExpressions` registry entry deleted in the same commit, and markup
   removal from the MIDDLE of a page shifts every entry below it - which is the full re-anchor
