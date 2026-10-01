@@ -943,14 +943,21 @@ public sealed class BitLockerRecoveryTests : IDisposable
         // guards that a broken page satisfies are worse than no guard, because they read as
         // coverage. Pinning the condition together with the alert it gates is what makes this
         // fail when the block stops rendering.
+        // THE REQUIREMENT IS UNCHANGED; WHERE IT IS MET HAS MOVED. The page's own in-flight
+        // banner was removed on 2026-10-01 because the global status frame reports this search
+        // and two reporters on screen disagreed with each other. A running search must still
+        // say so, so this now asserts the page reports it rather than draws it.
         var source = ReadPage();
 
-        var block = System.Text.RegularExpressions.Regex.Match(
+        var reported = System.Text.RegularExpressions.Regex.Match(
             source,
-            @"@if \(isSearching\)\s*\{\s*<div class=""alert alert-info");
+            @"using var activity = Progress\.Begin\(\s*""BitLocker Recovery""",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
 
-        Assert.True(block.Success,
-            "the in-flight indicator block is no longer gated on isSearching, so a running search shows nothing");
+        Assert.True(reported.Success,
+            "the search is no longer reported to the status frame, so a running search shows "
+            + "nothing anywhere - the page stopped drawing its own indicator on the "
+            + "understanding that the frame carries it");
         Assert.Contains("Searching the archive", source, StringComparison.Ordinal);
     }
 
@@ -960,18 +967,21 @@ public sealed class BitLockerRecoveryTests : IDisposable
         // The whole point of the indicator is the live-AD case, which is the slow one. A generic
         // spinner with no expectation set still invites a retry. Anchored to the branch that
         // renders it, for the reason above.
+        // Same move as the test above: the warning now rides the activity's own label, so it
+        // reaches the operator in the status frame rather than in a page banner. Anchored to
+        // the Begin call and the live-AD branch together, so a label that drops the warning
+        // fails even though the activity still exists - the advice is the point, not the
+        // reporting.
         var source = ReadPage();
 
-        // Anchored to the WHOLE indicator block, not just the inner branch. Matching only
-        // `@if (includeLiveAd)` still passed with the outer block disabled - the branch survives
-        // inside dead markup - which is the same false-coverage trap as the test above.
         var liveBranch = System.Text.RegularExpressions.Regex.Match(
             source,
-            @"@if \(isSearching\).*?@if \(includeLiveAd\).*?please wait rather than retrying",
+            @"Progress\.Begin\(.*?includeLiveAd.*?this can take a while on a broad name",
             System.Text.RegularExpressions.RegexOptions.Singleline);
 
         Assert.True(liveBranch.Success,
-            "the live-AD wait message is no longer rendered from the in-flight indicator");
+            "the live-AD wait message is gone. A generic 'searching' with no expectation set "
+            + "still invites a retry, which is the whole reason this warning exists.");
     }
 
     [Fact]
