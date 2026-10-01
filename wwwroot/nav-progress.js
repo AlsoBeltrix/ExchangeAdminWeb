@@ -142,9 +142,20 @@
             if (!active || Date.now() - startedAt < CONTENT_SETTLE_MS) {
                 return;
             }
+
+            // A DOM change alone is NOT proof the new page arrived - the old page is still
+            // live and still mutating while we wait. An autocomplete debounce completing
+            // after the click (ADIdentityAutocomplete and three siblings each hold their own
+            // timer and call StateHasChanged) adds and removes nodes on the page we are
+            // leaving, and on its own that would stop the readout while the operator is still
+            // waiting. Requiring the URL to have moved first rules that out: Blazor pushes
+            // the new URL before it fetches, so href-changed means the navigation committed,
+            // and the first content change after THAT is the new page landing.
+            if (location.href === hrefAtStart) {
+                return;
+            }
+
             if (mutatedOutsideTheFrame(records)) {
-                // The page content changed, so the navigation landed. This is the authority:
-                // it is the thing the operator can see, and it needs no framework contract.
                 stop();
             }
         });

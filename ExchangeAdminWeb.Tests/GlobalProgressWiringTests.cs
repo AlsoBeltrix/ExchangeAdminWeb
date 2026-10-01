@@ -211,6 +211,12 @@ public class GlobalProgressWiringTests
         Assert.Contains("mutatedOutsideTheFrame", script, StringComparison.Ordinal);
         Assert.Contains("disconnect()", script, StringComparison.Ordinal);
 
+        // A DOM change alone is not proof the new page arrived: the old page is still live and
+        // still mutating while we wait - four autocomplete components hold debounce timers
+        // that call StateHasChanged after the click. The URL must have moved first.
+        var observerBody = Between(script, "contentWatcher = new MutationObserver", "contentWatcher.observe");
+        Assert.Contains("location.href === hrefAtStart", observerBody, StringComparison.Ordinal);
+
         // And it must expire regardless. A readout nothing can stop is worse than no readout:
         // it is the operator's one trusted surface standing there saying something false.
         Assert.Contains("MAX_READOUT_MS", script, StringComparison.Ordinal);
@@ -339,6 +345,17 @@ public class GlobalProgressWiringTests
         // The interval must be cleared on every stop, or a refused navigation leaks a timer
         // that repaints forever.
         Assert.Contains("clearInterval", script, StringComparison.Ordinal);
+    }
+
+    private static string Between(string source, string start, string end)
+    {
+        var from = source.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(from >= 0, $"'{start}' not found.");
+
+        var to = source.IndexOf(end, from, StringComparison.Ordinal);
+        Assert.True(to > from, $"'{end}' not found after '{start}'.");
+
+        return source[from..to];
     }
 
     private static string DeclarationsOf(string css, string selector)
