@@ -113,12 +113,34 @@ that check caught it on nine pages in one pass.
 the shared markup and missed `ServiceHealth.razor`, which wrapped the same spinner in its own
 `.sh-loading` div; the rule-shaped tripwire caught it on the first full run.
 
-**What is left, biggest first:** Migration 13, SelfServiceGroups 9, GroupManagement 6,
-MessageTrace 5, M365GroupManagement 5, ConferenceRooms 4, MailboxPermissions 3,
-CalendarPermissions 3, then RiskyUsers / NamedLocations / IntuneDevices / AdminEventLog at 2
-and five pages at 1. **These are the hard ones** - in-page spinners tied to real operations,
-so state.md's rule 2 applies: remove one ONLY after its operation reports, or the page is left
-with no feedback at all. Several of those operations do not report yet.
+**What is left, 42 spinners across 6 pages:** Migration 13, SelfServiceGroups 9,
+GroupManagement 6, MessageTrace 5, M365GroupManagement 5, ConferenceRooms 4. Count fresh with
+`grep -rc "spinner-border" Components/Pages/*.razor`.
+
+**THE PATTERN THAT WORKS, proven over 10 pages on 2026-10-02 - follow it exactly:**
+
+1. Map each spinner to the busy flag it reads, then to the method that sets that flag. A
+   spinner whose operation does not report CANNOT come out until it does (rule 2 above).
+2. Open the activity BEFORE the `try`, not inside it, so refusal paths that return without
+   throwing are still covered. Complete it in the `finally`, AFTER any admin notification -
+   completing at the service call puts the bar back to Idle while an email is still sending,
+   which is the gps-1 defect.
+3. **Complete from a LOCAL, never from a field another control can touch.** ClickGateRegistry
+   caught this three separate times in one session - `operationResult` on NamedLocations,
+   `bulkResult` twice on the permissions pages. The registry names the local to read instead.
+   Where it also pins a form like `var bulk = await ...`, keep that line EXACTLY and mirror
+   into a second hoisted local rather than hoisting the pinned one.
+4. On a pinned page, pad each replacement comment to the HEIGHT of the markup it replaces so
+   no registered line key moves; `` additions below the controls are free and change only
+   `ExpectedLineCount`. Check `wc -l` against the registry BEFORE running tests.
+5. When a page loses its LAST spinner, empty its `SpinnerExpressions` with the reason. Done so
+   far for DhcpAuthorization, NamedLocations, MailboxPermissions, CalendarPermissions.
+6. Busy flags STAY. They are click gates; deleting one reopens a double-submit window.
+7. Bump the module version. Verify it IS a catalog module rather than assuming - gps-2 was
+   exactly that mistake, and `ExchangeOnlineConfig.razor`'s descriptor id is `ExchangeOnline`.
+
+**Run `--filter "FullyQualifiedName~ClickGate"` (1 second, 316 tests) after every pinned-page
+edit.** The full suite is ~5 minutes and most of it cannot be affected by a page edit.
 
 **OWNER RULING, 2026-10-02, verbatim: *"all modules need their spinners migrated to the bar,
 including migration."*** That settles two things that were open:
