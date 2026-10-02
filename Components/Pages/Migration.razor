@@ -67,7 +67,7 @@
                 <button class="btn btn-primary" @onclick="CheckSingleEligibility" disabled="@(IsBusy || string.IsNullOrWhiteSpace(singleEmail) || string.IsNullOrWhiteSpace(singleTicketNumber))">
                     @if (isLoading)
                     {
-                        <span class="spinner-border spinner-border-sm me-2"></span>
+                        @* spinner removed: reported to the status bar *@
                     }
                     Check Eligibility
                 </button>
@@ -174,7 +174,7 @@
                                     <button class="btn btn-success" @onclick="CreateSingleMigrationBatch" disabled="@IsBusy">
                                         @if (isCreating)
                                         {
-                                            <span class="spinner-border spinner-border-sm me-2"></span>
+                                            @* spinner removed: reported to the status bar *@
                                         }
                                         Create Migration Batch
                                     </button>
@@ -241,7 +241,7 @@
                 <button class="btn btn-primary" @onclick="CheckBulkEligibility" disabled="@(IsBusy || csvFile == null || string.IsNullOrWhiteSpace(bulkTicketNumber))">
                     @if (isLoading)
                     {
-                        <span class="spinner-border spinner-border-sm me-2"></span>
+                        @* spinner removed: reported to the status bar *@
                     }
                     Check All
                 </button>
@@ -344,7 +344,7 @@
                                     <button class="btn btn-success" @onclick="CreateMigrationBatch" disabled="@IsBusy">
                                         @if (isCreating)
                                         {
-                                            <span class="spinner-border spinner-border-sm me-2"></span>
+                                            @* spinner removed: reported to the status bar *@
                                         }
                                         Create Migration Batch
                                     </button>
@@ -406,7 +406,7 @@
                                     disabled="@(IsBusy || string.IsNullOrWhiteSpace(searchQuery))">
                                 @if (isSearching)
                                 {
-                                    <span class="spinner-border spinner-border-sm"></span>
+                                    @* spinner removed: reported to the status bar *@
                                 }
                                 else
                                 {
@@ -436,7 +436,7 @@
                         <button class="btn btn-sm btn-primary" @onclick="LoadMigrationStatus" disabled="@IsBusy">
                             @if (isLoadingStatus)
                             {
-                                <span class="spinner-border spinner-border-sm me-2"></span>
+                                @* spinner removed: reported to the status bar *@
                             }
                             Refresh
                         </button>
@@ -468,9 +468,9 @@
                 @if (isLoadingStatus)
                 {
                     <div class="text-center py-5">
-                        <div class="spinner-border text-primary" role="status">
-                            <span class="visually-hidden">Loading...</span>
-                        </div>
+                        @* spinner removed: the batch-list load reports to
+                           the status bar, with its elapsed time.
+                           Owner ruling 2026-10-02. *@
                         <p class="mt-2 text-muted">@(actionInProgress == "clearing" ? "Removing completed batches and reloading..." : "Loading migration batches...")</p>
                     </div>
                 }
@@ -849,7 +849,7 @@
                                             @onclick="() => RefreshBatchUsers(expandedBatch!)">
                                         @if (loadingBatchUsers == expandedBatch)
                                         {
-                                            <span class="spinner-border spinner-border-sm"></span>
+                                            @* spinner removed: reported to the status bar *@
                                         }
                                         else
                                         {
@@ -988,9 +988,9 @@
                                         @* R27: the pane that is loading says so, rather than the
                                            whole page freezing. *@
                                         <div class="text-center py-5">
-                                            <div class="spinner-border text-primary" role="status">
-                                                <span class="visually-hidden">Loading...</span>
-                                            </div>
+                                            @* spinner removed: the mailbox-pane
+                                               load reports to the status bar.
+                                               Owner ruling 2026-10-02. *@
                                             <p class="mt-2 text-muted">Loading mailboxes...</p>
                                         </div>
                                     }
@@ -1199,7 +1199,7 @@
                                 @onclick="() => RefetchUserReport(reportUser)">
                             @if (loadingReport == reportUser)
                             {
-                                <span class="spinner-border spinner-border-sm"></span>
+                                @* spinner removed: reported to the status bar *@
                             }
                             else
                             {
@@ -1308,7 +1308,7 @@
                     @onclick="() => LoadUserReport(e)">
                 @if (loadingReport == e)
                 {
-                    <span class="spinner-border spinner-border-sm"></span>
+                    @* spinner removed: reported to the status bar *@
                 }
                 else
                 {
@@ -1317,7 +1317,7 @@
             </button>
             @if (actionInProgress == e)
             {
-                <span class="spinner-border spinner-border-sm ms-1"></span>
+                @* spinner removed: reported to the status bar *@
             }
         </td>
     </tr>
@@ -1473,7 +1473,7 @@
                             || (ScheduleTimeIsRequired && PendingScheduleUtc == null))">
             @if (actionInProgress != null)
             {
-                <span class="spinner-border spinner-border-sm"></span>
+                @* spinner removed: reported to the status bar *@
             }
             else if (pendingActionPlan != null)
             {
@@ -1505,6 +1505,20 @@
     private int BatchColumnCount => canManage ? 7 : 6;
 
     private int tabIndex = 0;
+    // [Inject] PROPERTY, never an @inject directive. A directive sits above every registered
+    // control on this page and would shift all of ClickGateRegistry's line keys; a property
+    // here is below them, so only ExpectedLineCount moves. See .agents/state.md.
+    [Inject] private IActivityProgress Progress { get; set; } = default!;
+
+    // Every handler below ends its activity with Complete(true) from its finally. That argument
+    // records ENDED, not SUCCEEDED: the frame is live only, so ActivityProgressService.Finish
+    // discards both the flag and the message (it says so on itself). Completing in the finally
+    // is what matters - it ends the activity on refusal and exception paths too, and after this
+    // page's audit and notification work rather than at the service call.
+    //
+    // If a retained result line is ever reintroduced - it should not be, see
+    // `.agents/decisions.md` 2026-10-02 - every one of these needs a real outcome first.
+
     private bool isLoading = false;
     private bool isCreating = false;
     private bool canCreate = false;
@@ -1799,6 +1813,10 @@
     {
         loadingBatchUsers = batchName;
         mailboxLoadFailed = false;
+
+        using var activity = Progress.Begin(
+            "Exchange Migration", $"Loading mailboxes in {batchName}", ActivitySize.Unknown);
+
         var generation = batchUsersGeneration;
 
         try
@@ -1815,6 +1833,7 @@
         {
             if (loadingBatchUsers == batchName)
                 loadingBatchUsers = null;
+            activity.Complete(true);
         }
     }
 
@@ -1854,6 +1873,10 @@
         // batch-list load below as well, because a pasted link lands with no list behind it.
         loadingBatchUsers = requested;
         mailboxLoadFailed = false;
+
+        using var activity = Progress.Begin(
+            "Exchange Migration", $"Loading mailboxes in {requested}", ActivitySize.Unknown);
+
         var generation = batchUsersGeneration;
 
         try
@@ -1873,6 +1896,7 @@
         {
             if (loadingBatchUsers == requested)
                 loadingBatchUsers = null;
+            activity.Complete(true);
         }
     }
 
@@ -1884,6 +1908,10 @@
         isLoading = true;
         singleResult = null;
         singleCreateResult = null;
+
+        using var activity = Progress.Begin(
+            "Exchange Migration", "Checking eligibility", ActivitySize.Unknown);
+
         await Task.Yield();
 
         try
@@ -1925,6 +1953,7 @@
         finally
         {
             isLoading = false;
+            activity.Complete(true);
         }
     }
 
@@ -1936,6 +1965,10 @@
         // guards moved inside the try so the existing finally clears the flag on their returns.
         isCreating = true;
         singleCreateResult = null;
+
+        using var activity = Progress.Begin(
+            "Exchange Migration", "Creating the migration batch", ActivitySize.Unknown);
+
 
         try
         {
@@ -2003,6 +2036,7 @@
         finally
         {
             isCreating = false;
+            activity.Complete(true);
         }
     }
 
@@ -2022,6 +2056,10 @@
         isLoading = true;
         bulkResult = null;
         createResult = null;
+
+        using var activity = Progress.Begin(
+            "Exchange Migration", "Checking bulk eligibility", ActivitySize.Unknown);
+
         await Task.Yield();
 
         try
@@ -2066,6 +2104,7 @@
         finally
         {
             isLoading = false;
+            activity.Complete(true);
         }
     }
 
@@ -2074,6 +2113,10 @@
         // Set before the first await - see CreateSingleMigrationBatch for why.
         isCreating = true;
         createResult = null;
+
+        using var activity = Progress.Begin(
+            "Exchange Migration", "Creating the migration batch", ActivitySize.Unknown);
+
 
         try
         {
@@ -2146,6 +2189,7 @@
         finally
         {
             isCreating = false;
+            activity.Complete(true);
         }
     }
 
@@ -2196,6 +2240,10 @@
         isLoadingStatus = true;
         ResetBatchPage();
 
+        using var activity = Progress.Begin(
+            "Exchange Migration", "Loading migration batches", ActivitySize.Unknown);
+
+
         try
         {
             migrationBatches = await MigrationSvc.GetMigrationBatchesAsync();
@@ -2210,6 +2258,7 @@
         {
             PruneSelection();
             isLoadingStatus = false;
+            activity.Complete(true);
             batchesLoaded = true;
         }
     }
@@ -2998,6 +3047,9 @@
         actionInProgress = target;
         batchActionResult = null;
 
+        using var activity = Progress.Begin(
+            "Exchange Migration", $"{auditAction} on {target}", ActivitySize.Unknown);
+
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -3046,6 +3098,7 @@
         finally
         {
             actionInProgress = null;
+            activity.Complete(true);
         }
     }
 
@@ -3054,6 +3107,9 @@
         // Set before the first await - see CreateSingleMigrationBatch for why.
         actionInProgress = target;
         batchActionResult = null;
+
+        using var activity = Progress.Begin(
+            "Exchange Migration", $"{auditAction} on {target}", ActivitySize.Unknown);
 
         try
         {
@@ -3102,6 +3158,7 @@
         finally
         {
             actionInProgress = null;
+            activity.Complete(true);
         }
     }
 
@@ -3220,6 +3277,10 @@
         actionInProgress = "clearing";
         isLoadingStatus = true;
         batchActionResult = null;
+
+        using var activity = Progress.Begin(
+            "Exchange Migration", "Removing completed batches", ActivitySize.Unknown);
+
 
         try
         {
@@ -3347,6 +3408,7 @@
         finally
         {
             actionInProgress = null;
+            activity.Complete(true);
             isLoadingStatus = false;
         }
     }
@@ -3370,6 +3432,10 @@
         // Set before the first await - see CreateSingleMigrationBatch for why.
         actionInProgress = "mailboxes";
         batchActionResult = null;
+
+        using var activity = Progress.Begin(
+            "Exchange Migration", "Applying the bulk mailbox action", ActivitySize.Unknown);
+
 
         try
         {
@@ -3492,6 +3558,7 @@
         finally
         {
             actionInProgress = null;
+            activity.Complete(true);
         }
     }
 
@@ -3516,6 +3583,10 @@
         isSearching = true;
         highlightedUser = null;
         batchActionResult = null;
+
+        using var activity = Progress.Begin(
+            "Exchange Migration", "Searching for the user", ActivitySize.Unknown);
+
 
         try
         {
@@ -3577,6 +3648,7 @@
             // the life of the circuit whenever Exchange failed. SelectOnlyBatch and
             // RefreshBatchUsers already clear it here; this method now matches them.
             isSearching = false;
+            activity.Complete(true);
             loadingBatchUsers = null;
         }
     }
@@ -3708,6 +3780,10 @@
         loadingReport = emailAddress;
         var takenAtUtc = DateTime.UtcNow;
 
+        using var activity = Progress.Begin(
+            "Exchange Migration", $"Fetching the report for {emailAddress}", ActivitySize.Unknown);
+
+
         try
         {
             var text = await MigrationSvc.GetMigrationUserReportAsync(emailAddress);
@@ -3745,6 +3821,7 @@
             // nulled it, and a late write would resurrect a spinner for a fetch nobody awaits.
             if (generation == reportGeneration)
                 loadingReport = null;
+            activity.Complete(true);
         }
     }
 

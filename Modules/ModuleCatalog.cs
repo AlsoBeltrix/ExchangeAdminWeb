@@ -373,7 +373,7 @@ public sealed class ModuleCatalog
             // drawn - the box read ticked, the right pane did not list the batch and the action
             // bar counted one fewer. The window opened in S3, when ticking down to one batch
             // started fetching that batch's mailboxes and so held IsBusy for a round trip.
-            Version = "1.22.5",
+            Version = "1.22.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

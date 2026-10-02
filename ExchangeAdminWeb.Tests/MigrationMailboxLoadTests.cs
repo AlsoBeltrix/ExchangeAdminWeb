@@ -135,6 +135,15 @@ public sealed class MigrationMailboxLoadTests : IDisposable
         typeof(Migration).GetProperty("MigrationSvc", properties)!.SetValue(page, service);
         typeof(Migration).GetProperty("ReportStore", properties)!.SetValue(page, new MigrationReportStore(environment));
         typeof(Migration).GetProperty("Logger", properties)!.SetValue(page, Substitute.For<ILogger<Migration>>());
+
+        // Migration took its first [Inject] progress dependency in the 2026-10-02 spinner
+        // migration, and LoadMailboxesFor begins an activity. This harness builds the component
+        // by hand with no DI container, so an unset property is a NullReferenceException inside
+        // the method under test - which is how these eight tests first failed. A real service
+        // rather than a substitute: it is self-contained, has no circuit, and asserting on what
+        // the bar was told is not this file's job.
+        typeof(Migration).GetProperty("Progress", properties)!
+            .SetValue(page, new ExchangeAdminWeb.Services.Progress.ActivityProgressService());
         PageField("tabIndex").SetValue(page, 2);
         PageField("batchesLoaded").SetValue(page, true);
         PageField("canManage").SetValue(page, true);
