@@ -8,7 +8,123 @@ the latest sweep is Archived 2026-10-01).
 
 ## Now
 
-**PROD BUG FIXED 2026-10-02, NOT YET DEPLOYED. Cloud Password Reset could never find an owner.**
+**HANDOFF 2026-10-02. Branch `master`, head `a4d38eb`, tree clean. Both remotes verified at
+`6a7588d`; `a4d38eb` (the acceptance record) is local only - push policy is `ask` and the
+owner's `git push all` authorised the earlier push, not this one.**
+
+**NEXT TASK: QUEUE ITEM 18.** Owner, 2026-10-02: *"prepare to begin item #18 in the queue &
+handoff so we can start in a new session."* The grounding below was gathered in that session;
+nothing was implemented and no plan exists yet.
+
+### Queue item 18 - what it is
+
+Verbatim from the owner's queue (`C:\Users\mcoelho\Desktop\queue.txt`, **never write to that
+file**):
+
+> 18. Add functionality from "C:\Users\mcoelho\Desktop\Set-AccountSecurityHold.ps1" to the
+> emergency lockout module. Replace csv logging for old OU to append to ad object's description
+> or other applicable attribute that can be seen in ADUC.
+
+"Emergency lockout module" is **Emergency Disable** (`Components/Pages/EmergencyDisable.razor`,
+368 lines, not ClickGate-pinned; `Services/EmergencyDisableService.cs`, 736 lines; catalog id
+`EmergencyDisable`, version `1.2.1`).
+
+### What the script actually does - read before designing
+
+`Set-AccountSecurityHold.ps1` is two modes over one CSV state file:
+
+- **Hold:** resolve the account by sAMAccountName or UPN (LDAP filter, escaped), record its
+  current parent OU, `Move-ADObject` it into a Security Hold OU.
+- **Release:** find the newest un-released HOLD row **matched on ObjectGUID** so a rename cannot
+  lose the record, verify the original OU still exists, and move the object back.
+
+Five behaviours that are decisions, not incidentals:
+
+1. **RELEASE DOES NOT ENABLE THE ACCOUNT.** The script says so in capitals. Moving out of the
+   hold OU and deciding the account may log on again are separate decisions.
+2. **Dry run by default**; nothing moves without `-Apply`.
+3. **Release refuses when the original OU no longer exists** rather than guessing a destination.
+4. **Already-in-hold and not-in-hold are skips, not errors.**
+5. It warns, without blocking, when the account being held is still **enabled**.
+
+### The owner's change, and the one thing it collides with
+
+The CSV is the script's record of truth. The owner wants the original OU written to **an AD
+attribute visible in ADUC** instead. The script already has this as an off-by-default
+`-StampInfo` switch writing `info` - the ADUC **Notes** field on the Telephones tab - in the
+form `[SEC-HOLD yyyy-MM-dd] from <original parent DN>`.
+
+**Its author argued against it, and the owner has chosen the other way.** The script's NOTES
+say `info` is readable by anyone who can read the object, including the service desk, so a
+discreet hold leaks. The owner's instruction is explicit that the value must be visible in
+ADUC, which is the point - an attribute travels with the object and survives loss of a file
+share. **Do not re-litigate this; do raise it once in the plan's exec summary as a stated
+consequence, because "who is under investigation" becoming service-desk-readable is a real
+change in who knows.**
+
+### Constraints a plan must satisfy
+
+- **A WRITTEN PLAN IS REQUIRED.** Moving AD objects between OUs changes GPO and delegation
+  scope - "destructive or high-blast-radius workflows" in the Constitution's plan list. Draft
+  `docs/<Feature>-Plan.md`, exec summary first (plain English, what it does, what it costs, the
+  biggest risk, what approval authorises), and get a go before implementing.
+- **ENVIRONMENT NEUTRALITY IS THE HARD ONE.** The script hardcodes
+  `OU=Security Hold,OU=Users,OU=AMER,DC=ad,DC=analog,DC=com` as a default. Repo guidance
+  invariant 7 (owner ruling 2026-09-11) forbids any source file naming an ADI OU, domain or
+  host as behaviour, **including in the safety argument**. The hold OU must be a
+  `ConfigFields` entry on the module descriptor or discovered at runtime, never defaulted or
+  named in source, and a missing or non-existent OU must fail closed.
+- **The protected-principal check is mandatory.** Known Failure Class 3: every mutating module
+  routes its write target through it before writing. A move is a write. Emergency Disable is
+  not one of the two scoped exemptions (Self-Service Groups, Comms-10k).
+- **Per-item failure aggregation** (Known Failure Class 2) if the UI accepts more than one
+  identity, which the script does.
+- **Report progress to the status bar, draw no spinner.** As of 2026-10-02 there are ZERO
+  spinners under `Components/Pages`; a new one would be the only one in the app. Pattern and
+  traps are in the spinner-migration section below.
+- **New service logic needs tests in `ExchangeAdminWeb.Tests/`**, and the module version bumps
+  (`EmergencyDisable` 1.2.1 -> next). Base app version does not move for a module-scoped change.
+- **Dispatch codex per slice before moving on.** Four commits shipped unreviewed earlier in the
+  2026-10-02 session and the owner had to ask; both findings it then raised were real and
+  unreachable by any test here.
+
+### Open design questions for the plan, not for an agent to settle alone
+
+1. **Where does release read the original OU from** once the CSV is gone - parse it back out of
+   `info`? That makes a free-text field load-bearing. Decide the format, and decide what happens
+   when an operator has edited the field by hand.
+2. **`info` vs `description`.** The owner named description first ("description or other
+   applicable attribute"). `description` is far more visible in ADUC lists than `info`, and is
+   also more likely to already hold something. The script chose `info`. Needs a decision.
+3. **Does hold also disable?** The script deliberately does not. The module is called Emergency
+   Disable and already disables. Whether hold is a separate action, or a step in the existing
+   disable flow, is the shape question the plan opens with.
+
+## Previously - queue item 24, the global progress system
+
+**ITEM 24 IS FUNCTIONALLY COMPLETE AND PARTIALLY ACCEPTED.** 86 page spinners to ZERO across 32
+pages; every module reports to the bottom status bar instead. App `2.27.0`, suite 3579 green,
+ClickGate 316/316. The owner deployed to dev 2026-10-02 and reported *"browser check looks fine
+for the modules I checked. reset worked."* - **a sample, not a sweep**; he did not say which
+modules.
+
+**Two things remain open on item 24 and the owner has not ruled on either:**
+
+1. **Four spinners survive in `Components/Shared`** - `ADGroupAutocomplete`,
+   `ADIdentityAutocomplete`, `RecipientAutocomplete` (typeahead) and `TicketNumberInput`
+   (ServiceNow validation). They fire per keystroke inside the field the operator is looking at
+   and the bar cannot say WHICH field, which is the "information the bar cannot carry" case the
+   owner's ruling says to raise rather than decide. **Raised 2026-10-02, unanswered.**
+   `GlobalProgress.razor`'s own spinner is the bar itself and stays regardless.
+2. **Cancellation tokens.** Only Message Trace's bulk detail download honours
+   `handle.CancellationToken`. Everywhere else the navigation guard's OK path stops the UI
+   waiting rather than the work. Pre-dates this session; the last real gap in the system.
+
+### The item 24 record, kept because the acceptance pass is not finished
+
+
+**PROD BUG FIXED, DEPLOYED AND CONFIRMED 2026-10-02. Cloud Password Reset could never find an
+owner.**
 `ADEmployeeIdLookup.GetForestDomains()` read `(Get-ADForest).Domains` out of the returned PSObject
 through an `is IEnumerable<object>` test. That type is `ADPropertyValueCollection`, which derives
 from `CollectionBase` and implements only the NON-generic `IEnumerable`, so the test was false
