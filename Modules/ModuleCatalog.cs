@@ -440,7 +440,7 @@ public sealed class ModuleCatalog
             // analysis versus trace (owner ruling 2026-09-22). They now head as Header Analysis
             // and Trace Search, with the alias still beside each - it is the storage key and the
             // name in the denial log.
-            Version = "1.5.3",
+            Version = "1.5.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

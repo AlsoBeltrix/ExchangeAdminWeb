@@ -68,10 +68,7 @@
                     <textarea class="form-control font-monospace" rows="8" @bind="headerText" placeholder="Paste raw message headers here" disabled="@isAnalyzing"></textarea>
                     <div class="mt-2">
                         <button class="btn btn-primary" @onclick="AnalyzePastedHeaders" disabled="@(isAnalyzing || string.IsNullOrWhiteSpace(headerText))">
-                            @if (isAnalyzing)
-                            {
-                                <span class="spinner-border spinner-border-sm me-2"></span>
-                            }
+                            @* No spinner: the analysis reports to the status bar. *@
                             Analyze Pasted Headers
                         </button>
                     </div>
@@ -414,19 +411,13 @@
                             <span class="me-2"><strong>@selectedIndices.Count</strong> selected@(SelectionCappedAt50 ? $" (cap {MessageTraceDetailReport.EmailMax})" : "")</span>
                             <button type="button" class="btn btn-sm btn-primary" title="@liveTitle"
                                     disabled="@(action != MessageTraceDetailAction.LiveOrEmail || detailActionBusy)" @onclick="DownloadSelectedDetails">
-                                @if (detailActionBusy && detailActionKind == "download")
-                                {
-                                    <span class="spinner-border spinner-border-sm me-1"></span>
-                                }
+                                @* No spinner: the download reports to the status bar. *@
                                 Download details (up to @MessageTraceDetailReport.LiveMax)
                             </button>
                             <button type="button" class="btn btn-sm btn-outline-primary"
                                     title="Produce the detail export as a background job and list it on Downloadable Reports."
                                     disabled="@(action == MessageTraceDetailAction.None || detailActionBusy)" @onclick="EmailSelectedDetails">
-                                @if (detailActionBusy && detailActionKind == "email")
-                                {
-                                    <span class="spinner-border spinner-border-sm me-1"></span>
-                                }
+                                @* No spinner: the export job submit reports to the bar. *@
                                 Export details as a job
                             </button>
                             @if (selectedIndices.Count > 0)
@@ -526,10 +517,7 @@
                                         <td class="text-break"><small>@msg.MessageId</small></td>
                                         <td class="text-nowrap">
                                             <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleDetail(index, msg)" disabled="@detailLoading">
-                                                @if (detailLoading && expandedIndex == index)
-                                                {
-                                                    <span class="spinner-border spinner-border-sm me-1"></span>
-                                                }
+                                                @* No spinner: the detail load reports to the bar. *@
                                                 @(expandedIndex == index ? "Hide" : "Details")
                                             </button>
                                         </td>
@@ -540,9 +528,7 @@
                                             <td colspan="10">
                                                 @if (detailLoading)
                                                 {
-                                                    <div class="d-flex align-items-center gap-2 text-muted">
-                                                        <span class="spinner-border spinner-border-sm"></span> Loading delivery detail...
-                                                    </div>
+                                                    <div class="text-muted">Loading delivery detail...</div>
                                                 }
                                                 else if (!string.IsNullOrEmpty(detail?.Error))
                                                 {
@@ -854,9 +840,14 @@
         isAnalyzing = true;
         headerAnalysisError = null;
         headerAnalysis = null;
+
+        using var analyzeActivity = Progress.Begin(
+            "Message Trace", "Analyzing pasted headers", ActivitySize.Unknown);
+
         try
         {
             headerAnalysis = await analyze();
+            analyzeActivity.Complete(true);
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageHeaderAnalysis", target, true, null, ticketNumber.Trim());
         }
         catch (Exception ex)
@@ -985,11 +976,16 @@
         detail = null;
         detailLoading = true;
         var target = string.IsNullOrWhiteSpace(msg.MessageId) ? msg.MessageTraceId : msg.MessageId;
+
+        using var detailActivity = Progress.Begin(
+            "Message Trace", $"Loading delivery detail for {target}", ActivitySize.Unknown);
+
         try
         {
             // Fail-soft: the seam sets Error rather than throwing; render it inline, never blank the list.
             var fetched = await MsgTrace.GetMessageDetailAsync(msg);
             var success = string.IsNullOrEmpty(fetched.Error);
+            detailActivity.Complete(success, fetched.Error);
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_Detail", target, success, fetched.Error, ticketNumber.Trim());
             if (token == detailRequestToken)
             {
@@ -1177,6 +1173,9 @@
         emailJobSubmitted = false;
         detailActionBusy = true;
         detailActionKind = "email";
+
+        using var exportActivity = Progress.Begin(
+            "Message Trace", "Submitting the detail export job", ActivitySize.Unknown);
         var target = string.Join(",", messages.Select(m => string.IsNullOrWhiteSpace(m.MessageId) ? m.MessageTraceId : m.MessageId));
         try
         {
@@ -1204,6 +1203,7 @@
             };
             BulkJobs.Enqueue(job);
             emailJobSubmitted = true;
+            exportActivity.Complete(true, $"Queued as job {job.Id}.");
             submittedRecipientsDisplay = string.Join(", ", recipients);
             var notified = recipients.Count == 0 ? "no notification" : string.Join(", ", recipients);
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailEmailJob", target, true, $"{messages.Count} message(s); job {job.Id}; notify: {notified}", ticketNumber.Trim());
