@@ -1095,7 +1095,7 @@ public static class ClickGateRegistry
     private static PageGateEntry MailboxPermissions => new()
     {
         Page = "MailboxPermissions.razor",
-        ExpectedLineCount = 742,
+        ExpectedLineCount = 761,
 
         // One flag, one page-wide predicate, and that was checked rather than assumed: Revision 1
         // found a single predicate provably wrong on two OTHER pages. This page has one view. The
@@ -1290,11 +1290,12 @@ public static class ClickGateRegistry
         // flag ever joins IsBusy these must NOT start spinning for it. The short string is contained
         // in the long one - that is text containment and cannot be helped - so the short entry
         // covers 91 and 139 and the long entry pins 159, which is the inline form.
-        SpinnerExpressions =
-        [
-            "@if (isLoading)",
-            "@if (isLoading) { <span class=\"spinner-border spinner-border-sm me-1\"></span> }",
-        ],
+        // SpinnerExpressions is EMPTY on purpose, and the emptiness is the record. This page had
+        // three, all keyed on isLoading: the single write, the CSV run and the on-prem confirm.
+        // All three were removed on 2026-10-02 once each of those operations reports to the
+        // global status frame (owner ruling, `.agents/decisions.md`). isLoading itself STAYS -
+        // it is the click gate on all three buttons, and deleting it reopens a double-submit.
+        SpinnerExpressions = [],
 
         // Falsification 6 for this page, and the larger half of the fix. tabIndex is the one the
         // plan names: it chose between Add and Remove AFTER the awaits in both write handlers, so a
@@ -1491,7 +1492,7 @@ public static class ClickGateRegistry
     private static PageGateEntry CalendarPermissions => new()
     {
         Page = "CalendarPermissions.razor",
-        ExpectedLineCount = 691,
+        ExpectedLineCount = 707,
 
         // One flag, one page-wide predicate, on the twin's reasoning re-checked against this file
         // rather than copied: the tab strip, the single-mailbox form, the bulk form, the on-prem
@@ -1676,11 +1677,12 @@ public static class ClickGateRegistry
         // flag ever joins IsBusy these must NOT start spinning for it. The short string is contained
         // in the long one - that is text containment and cannot be helped - so the short entry
         // covers 89 and 138 and the long entry pins 158, which is the inline form.
-        SpinnerExpressions =
-        [
-            "@if (isLoading)",
-            "@if (isLoading) { <span class=\"spinner-border spinner-border-sm me-1\"></span> }",
-        ],
+        // SpinnerExpressions is EMPTY on purpose, and the emptiness is the record. Three
+        // spinners, all keyed on isLoading - the single write, the CSV run, the on-prem
+        // confirm - removed 2026-10-02 once all three report to the global status frame
+        // (owner ruling, `.agents/decisions.md`). isLoading STAYS: it is the click gate on
+        // all three buttons and deleting it reopens a double-submit.
+        SpinnerExpressions = [],
 
         // Falsification 6 for this page, and the larger half of the fix. tabIndex is the one the plan
         // names and ExecuteOnPrem is where it bites hardest; see the remarks above.

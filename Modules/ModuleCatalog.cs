@@ -151,7 +151,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.2.0",
+            Version = "1.2.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -178,7 +178,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.2.0",
+            Version = "1.2.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -88,10 +88,10 @@
                         }
 
                         <button class="btn btn-primary" @onclick="SubmitSingle" disabled="@(IsBusy || !IsFormValid)">
-                            @if (isLoading)
-                            {
-                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                            }
+                            @* No spinner: the write reports to the status bar
+                               (owner ruling 2026-10-02). isLoading still gates
+                               the button - that is the click gate, not progress,
+                               and removing it reopens a double-submit window. *@
                             @(tabIndex == 0 ? "Add Permissions" : "Remove Permissions")
                         </button>
                     </div>
@@ -136,10 +136,10 @@
                         </div>
 
                         <button class="btn btn-primary" @onclick="ProcessBulk" disabled="@(IsBusy || csvFile is null || string.IsNullOrWhiteSpace(bulkTicketNumber))">
-                            @if (isLoading)
-                            {
-                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                            }
+                            @* No spinner: the write reports to the status bar
+                               (owner ruling 2026-10-02). isLoading still gates
+                               the button - that is the click gate, not progress,
+                               and removing it reopens a double-submit window. *@
                             Process CSV
                         </button>
                     </div>
@@ -156,7 +156,7 @@
                     <strong>@onPremTarget</strong> is an on-premises mailbox. This will execute against the on-prem Exchange server.
                     <div class="mt-2">
                         <button class="btn btn-warning btn-sm me-2" @onclick="ConfirmOnPrem" disabled="@IsBusy">
-                            @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            @* No spinner: the on-prem write reports to the status bar. *@
                             Continue
                         </button>
                         <button class="btn btn-secondary btn-sm" @onclick="CancelOnPrem">Cancel</button>
@@ -560,6 +560,17 @@
         bulkResult = null;
         await Task.Yield();
 
+        // One activity for the whole CSV run, opened before the try so the re-authorization and
+        // ticket refusals inside it are covered too.
+        using var bulkActivity = Progress.Begin(
+            "Mailbox Permissions", "Processing the permissions CSV", ActivitySize.Unknown);
+
+        // Hoisted so the finally can complete the activity from the LOCAL. Completing from
+        // bulkResult is a post-await live read - the dismiss control at line 212 can null it
+        // while this handler is suspended - which ClickGateRegistry records for this page and
+        // which failed three assertions when written that way.
+        BulkOperationResult? completedBulk = null;
+
         // The try opens above the re-authorization for the reason given on SubmitSingle: an await
         // between the raise and the try has no finally behind it.
         try
@@ -584,6 +595,7 @@
             // as a failure.
             var bulk = await MailboxService.ProcessMailboxPermissionsCsvAsync(stream, isAdd, Validator, currentUser, Audit, ipAddress, ticket, bulkAuthState.User);
             bulkResult = bulk;
+            completedBulk = bulk;
 
             var action = isAdd ? "BulkAdd" : "BulkRemove";
 
@@ -611,6 +623,7 @@
         finally
         {
             isLoading = false;
+            bulkActivity.Complete(completedBulk != null, completedBulk == null ? "The CSV run did not complete." : null);
         }
     }
 
@@ -622,6 +635,11 @@
         // ForbiddenGuardSite on this page's ClickGateRegistry entry.
         isLoading = true;
         result = null;
+
+        // The on-prem write is its own operation and its own wait - SubmitSingle has already
+        // returned by the time the operator confirms, so its activity is long gone.
+        using var onPremActivity = Progress.Begin(
+            "Mailbox Permissions", $"Updating on-premises permissions on {onPremTarget}", ActivitySize.Unknown);
 
         var target = onPremTarget!;
         var user = onPremUser!;
@@ -717,6 +735,7 @@
         finally
         {
             isLoading = false;
+            onPremActivity.Complete(result?.Success ?? false, result?.Message);
             onPremTarget = null;
         }
     }
