@@ -103,27 +103,21 @@
             </button>
         }
     }
-
-    @if (LatestOutcome is not null)
-    {
-        <span class="gp-outcome @(LatestOutcome.Success ? "gp-ok" : "gp-bad")">
-            @LatestOutcome.Text
-        </span>
-        <button type="button" class="gp-dismiss" title="Dismiss" @onclick="DismissLatest">x</button>
-    }
 </div>
 
 @code {
     /// <summary>One readable row in the frame, from either source.</summary>
     private sealed record Line(string ModuleId, string Label, string Status, int? Percent, bool Background);
 
-    private sealed record Outcome(string Id, string Text, bool Success, bool FromJob);
-
-    // NO SESSION STATE LIVES ON THIS COMPONENT. The layout is rebuilt by the server on every
-    // navigation, so this component is destroyed and recreated each time the operator changes
-    // page. A field here resets with it: "since you arrived" would quietly become "since this
-    // page", and a dismissed result would come back on the next click. Both belong to the
-    // circuit, so both live on the scoped IActivityProgress, which survives.
+    // THE FRAME IS LIVE ONLY: it shows what is running and says Idle when nothing is. It does
+    // not retain, announce or let you dismiss a finished thing, and it must not start doing so
+    // again (owner ruling 2026-10-02, `.agents/decisions.md`; the reasoning is on
+    // IActivityProgress). A finished operation is reported by the page that ran it, the audit
+    // log and the admin event log - three places already, before this one makes a fourth.
+    //
+    // That is also why no session state lives here. The layout is rebuilt by the server on
+    // every navigation, so this component is destroyed and recreated each time the operator
+    // changes page, and anything remembered in a field here resets with it.
     private string currentUser = "";
     private bool expanded;
     private bool disposed;
@@ -131,9 +125,7 @@
 
     private IReadOnlyList<PageLoad> pageLoads = Array.Empty<PageLoad>();
     private IReadOnlyList<ProgressActivity> activities = Array.Empty<ProgressActivity>();
-    private IReadOnlyList<ActivityOutcome> outcomes = Array.Empty<ActivityOutcome>();
     private IReadOnlyList<BulkJob> activeJobs = Array.Empty<BulkJob>();
-    private IReadOnlyList<BulkJob> recentJobs = Array.Empty<BulkJob>();
 
     private List<Line> Lines
     {
@@ -168,27 +160,6 @@
 
     private bool IsBusy => Lines.Count > 0;
 
-    private Outcome? LatestOutcome
-    {
-        get
-        {
-            var fromActivity = outcomes.FirstOrDefault();
-            if (fromActivity is not null)
-            {
-                var verb = fromActivity.Success ? "finished" : "failed";
-                var text = string.IsNullOrWhiteSpace(fromActivity.Message)
-                    ? $"{fromActivity.Label} {verb}"
-                    : $"{fromActivity.Label} {verb} - {fromActivity.Message}";
-                return new Outcome(fromActivity.Id, text, fromActivity.Success, false);
-            }
-
-            var job = FinishedSinceArrival().FirstOrDefault();
-            return job is null
-                ? null
-                : new Outcome(job.Id, $"{JobLabel(job)} {JobEndedText(job)}", JobSucceeded(job), true);
-        }
-    }
-
     protected override async Task OnInitializedAsync()
     {
         // SubmittedBy is written from user.Identity.Name verbatim at enqueue time by the three
@@ -219,46 +190,19 @@
             : PageLoads.InFlightFor(currentUser);
 
         activities = Progress.Active;
-        outcomes = Progress.RecentOutcomes;
 
         // NEVER GetActiveJobs() here. This frame renders on every page for every operator, and
         // the unscoped accessor spans every module and every submitter - BulkJobService says so
         // itself. Guarded by GlobalProgressWiringTests.
+        //
+        // ACTIVE jobs only, never recent ones. A finished job is not something this frame has
+        // anything to say about (see the live-only note above).
         activeJobs = string.IsNullOrWhiteSpace(currentUser)
             ? Array.Empty<BulkJob>()
             : BulkJobs.GetActiveJobsBySubmitter(currentUser);
-
-        recentJobs = string.IsNullOrWhiteSpace(currentUser)
-            ? Array.Empty<BulkJob>()
-            : BulkJobs.GetRecentJobsBySubmitter(currentUser);
     }
-
-    // Only jobs that ENDED while this operator was here are announced, and only until dismissed.
-    // Without the cutoff the frame would re-announce every job in the retention window on every
-    // page load, which teaches the operator to ignore the one place that is meant to mean
-    // something.
-    private IReadOnlyList<BulkJob> FinishedSinceArrival() =>
-        recentJobs
-            .Where(j => j.FinishedAtUtc is DateTime finished
-                && finished >= Progress.SessionStartedUtc
-                && !Progress.IsJobDismissed(j.Id))
-            .ToList();
 
     private void ToggleExpanded() => expanded = !expanded;
-
-    private void DismissLatest()
-    {
-        var latest = LatestOutcome;
-        if (latest is null)
-            return;
-
-        if (latest.FromJob)
-            Progress.DismissJob(latest.Id);
-        else
-            Progress.DismissOutcome(latest.Id);
-
-        Reload();
-    }
 
     // Raised from the job pump's thread, not the renderer's, so it MUST be marshalled.
     private async void OnJobChanged(string jobId) => await Refresh();
@@ -355,20 +299,6 @@
 
         return text;
     }
-
-    // Completed with no failed rows is the only unambiguous success. Cancelled and Interrupted
-    // are not successes, and a Completed job holding failed rows did not do what was asked.
-    private static bool JobSucceeded(BulkJob job) =>
-        job.Status == BulkJobStatus.Completed && job.FailedCount == 0;
-
-    private static string JobEndedText(BulkJob job) => job.Status switch
-    {
-        BulkJobStatus.Completed when job.FailedCount == 0 => "finished",
-        BulkJobStatus.Completed => "finished with failures",
-        BulkJobStatus.Cancelled => "cancelled",
-        BulkJobStatus.Interrupted => "interrupted",
-        _ => job.Status.ToString().ToLowerInvariant(),
-    };
 
     public void Dispose()
     {

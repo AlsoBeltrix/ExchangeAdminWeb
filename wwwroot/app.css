@@ -1748,7 +1748,8 @@ pre.bg-light {
     }
 }
 
-.gp-more, .gp-dismiss {
+/* No .gp-outcome / .gp-dismiss rules: the frame is live only and has nothing to dismiss. */
+.gp-more {
     flex: none;
     padding: 0 0.4rem;
     border: 1px solid var(--ui-line);
@@ -1759,16 +1760,7 @@ pre.bg-light {
     cursor: pointer;
 }
 
-.gp-more:hover, .gp-dismiss:hover { border-color: var(--ui-brand); color: var(--ui-fg); }
-
-.gp-outcome {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.gp-ok { color: var(--ui-on); }
-.gp-bad { color: var(--ui-danger); font-weight: 600; }
+.gp-more:hover { border-color: var(--ui-brand); color: var(--ui-fg); }
 
 .gp-safe { color: var(--ui-fg3); font-size: 0.75rem; }
 

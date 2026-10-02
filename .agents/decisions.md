@@ -5,6 +5,47 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-02 - The status frame is live only. It retains no finished work.
+
+Status: Active. Owner ruling, 2026-10-02, verbatim:
+
+> why are progress messages sticky? who asked for that? this is a progress bar, not a job log.
+
+> there's no need to persist a status message for random ops. page loads don't get sticky
+> status messages. the sticky messages I have seen are inaccurate.
+
+Decision:
+
+**The bottom status frame shows what is running and says Idle when nothing is.** An ended
+activity leaves the channel immediately. There is no retained result line, no dismiss control,
+and no announcement of a background job that has finished.
+
+Removed from `Services/Progress/ActivityProgress.cs` and `Components/Shared/GlobalProgress.razor`:
+`ActivityOutcome`, `RecentOutcomes`, `DismissOutcome`, `DismissJob`, `IsJobDismissed`,
+`SessionStartedUtc`, the frame's outcome span and dismiss button, and the finished-job
+announcement fed by `GetRecentJobsBySubmitter`. Two tripwires assert the shape rather than trust
+it (`ActivityProgressTests`, `GlobalProgressWiringTests`), because retention is the kind of thing
+a later agent re-adds as a kindness.
+
+**Nobody had asked for it.** It came from `docs/GlobalProgressSystem-Plan.md` section 320-322,
+written by an agent, which ruled out auto-clearing on the reasoning that "an outcome the operator
+missed is an outcome lost". A plan's body does not carry the owner's authority - only its exec
+summary binds him (`.agents/decisions.md` 2026-10-01) - so that paragraph never had a go behind
+it. It also contradicted his own spec for the frame from 2026-10-01: *"bottom status frame. shows
+progress bar with status or idle when nothing is running."*
+
+**The asymmetry with page loads was the tell.** `PageLoadTracker` lines are live only and vanish
+when the request completes, and nobody has ever missed one. The outcome line was the single
+mechanism in the frame out of step with the rest of it.
+
+**Where a finished operation IS reported:** the page that ran it (its own result banner), the
+audit log, and the admin event log. The bar would have been the fourth copy. A background job
+still shows in the frame WHILE it runs; after it ends, it is the Admin Bulk Jobs page.
+
+Supersedes `docs/GlobalProgressSystem-Plan.md` 320-322. Do not reintroduce a retained result
+line, on a timer or otherwise - an expiring one was proposed in the same conversation and
+rejected on the same grounds.
+
 ### 2026-10-02 - Every module's spinners move to the status bar. Migration included.
 
 Status: Active. Owner ruling, 2026-10-02, verbatim:

@@ -69,7 +69,10 @@ public class GlobalProgressWiringTests
         // This component renders in the app frame, on every page, for everyone.
         Assert.DoesNotContain("GetActiveJobs()", source, StringComparison.Ordinal);
         Assert.Contains("GetActiveJobsBySubmitter(", source, StringComparison.Ordinal);
-        Assert.Contains("GetRecentJobsBySubmitter(", source, StringComparison.Ordinal);
+
+        // ACTIVE jobs only. The frame is live only (owner ruling 2026-10-02), so a finished job
+        // is not its business and reading the recent list would only put one back on screen.
+        Assert.DoesNotContain("GetRecentJobsBySubmitter(", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -176,19 +179,24 @@ public class GlobalProgressWiringTests
     }
 
     [Fact]
-    public void TheFrameHoldsNoSessionStateOfItsOwnBecauseTheLayoutIsRebuiltEveryNavigation()
+    public void TheFrameRetainsNothingAboutWorkThatHasAlreadyFinished()
     {
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Shared", "GlobalProgress.razor")));
 
-        // The server rebuilds the layout on every navigation, so this component is destroyed
-        // and recreated each time the operator changes page. Anything session-scoped held in a
-        // field resets with it: "finished since you arrived" quietly becomes "since this
-        // page", and a dismissed result reappears on the next click. Both belong to the
-        // circuit, so both live on the scoped service.
-        Assert.Contains("Progress.SessionStartedUtc", source, StringComparison.Ordinal);
-        Assert.Contains("Progress.IsJobDismissed(", source, StringComparison.Ordinal);
-        Assert.Contains("Progress.DismissJob(", source, StringComparison.Ordinal);
-
+        // THE DEFECT THIS REPLACES: the frame rendered the newest finished outcome until the
+        // operator clicked it away, so "Resolving ... finished" sat on screen for 30 seconds
+        // while the work the operator was actually waiting on was still running. Nobody asked
+        // for retention; it came from a plan body, which carries no owner authority
+        // (`.agents/decisions.md` 2026-10-01). Removed by owner ruling 2026-10-02: the bar
+        // shows what is running and says Idle when nothing is.
+        //
+        // The session-state rule still holds for anything that IS kept, and for the same
+        // reason: the server rebuilds the layout on every navigation, so a field here resets
+        // each time the operator changes page.
+        Assert.DoesNotContain("Outcome", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Dismiss", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("FinishedSince", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SessionStartedUtc", source, StringComparison.Ordinal);
         Assert.DoesNotContain("arrivedUtc", source, StringComparison.Ordinal);
         Assert.DoesNotContain("dismissedJobs", source, StringComparison.Ordinal);
     }

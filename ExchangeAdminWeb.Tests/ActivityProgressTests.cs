@@ -120,62 +120,48 @@ public class ActivityProgressTests
     }
 
     [Fact]
-    public void CompleteRemovesTheActivityAndRecordsTheOutcome()
+    public void CompleteRemovesTheActivityAndRetainsNothing()
     {
         using var progress = new ActivityProgressService();
         var handle = progress.Begin("GroupManagement", "Adding members", ActivitySize.Items(3));
 
         handle.Complete(true, "3 added");
 
+        // THE FRAME IS LIVE ONLY (owner ruling 2026-10-02). An ended activity leaves the channel
+        // and is not held anywhere, so there is nothing left to go stale on screen.
         Assert.False(progress.HasActive);
         Assert.Empty(progress.Active);
-        var outcome = Assert.Single(progress.RecentOutcomes);
-        Assert.True(outcome.Success);
-        Assert.Equal("3 added", outcome.Message);
-        Assert.Equal("Adding members", outcome.Label);
     }
 
     [Fact]
-    public void DisposeWithoutCompleteIsRecordedAsAFailure()
+    public void DisposeWithoutCompleteStillEndsTheActivity()
     {
         using var progress = new ActivityProgressService();
 
-        // Mirrors OperationTraceService.OperationScope: falling out of scope without saying you
-        // succeeded is not success, and must not vanish from the operator's view.
+        // Mirrors OperationTraceService.OperationScope: falling out of scope must still close
+        // the activity, or the frame shows work that is no longer running.
         using (progress.Begin("MailboxPermissions", "Granting access", ActivitySize.Unknown))
         {
         }
 
-        var outcome = Assert.Single(progress.RecentOutcomes);
-        Assert.False(outcome.Success);
+        Assert.Empty(progress.Active);
+        Assert.False(progress.HasActive);
     }
 
     [Fact]
-    public void AnExplicitCompleteIsNotOverwrittenByTheDisposeFallback()
-    {
-        using var progress = new ActivityProgressService();
-
-        using (var handle = progress.Begin("MailboxPermissions", "Granting access", ActivitySize.Unknown))
-        {
-            handle.Complete(true, "done");
-        }
-
-        var outcome = Assert.Single(progress.RecentOutcomes);
-        Assert.True(outcome.Success);
-        Assert.Equal("done", outcome.Message);
-    }
-
-    [Fact]
-    public void CompletingTwiceRecordsOneOutcome()
+    public void CompletingTwiceEndsTheActivityOnce()
     {
         using var progress = new ActivityProgressService();
         var handle = progress.Begin("Migration", "Loading", ActivitySize.Unknown);
+        var raised = 0;
+        progress.Changed += () => raised++;
 
         handle.Complete(true);
         handle.Complete(false, "second call");
 
-        var outcome = Assert.Single(progress.RecentOutcomes);
-        Assert.True(outcome.Success);
+        // First call wins, so a `using` around an explicit Complete does not re-fire on dispose.
+        Assert.Equal(1, raised);
+        Assert.Empty(progress.Active);
     }
 
     [Fact]
@@ -265,52 +251,39 @@ public class ActivityProgressTests
     }
 
     [Fact]
-    public void OnlyTheMostRecentOutcomesAreKept()
+    public void NothingIsRetainedAfterActivitiesEnd()
     {
         using var progress = new ActivityProgressService();
 
         for (var i = 0; i < 12; i++)
             progress.Begin("Migration", $"Job {i}", ActivitySize.Unknown).Complete(true);
 
-        // Bounded on purpose: this is a transient operator notice, not a history. The durable
-        // record is the audit log.
-        Assert.True(progress.RecentOutcomes.Count <= 5,
-            $"Expected the outcome list to stay bounded, found {progress.RecentOutcomes.Count}.");
-        Assert.Equal("Job 11", progress.RecentOutcomes[0].Label);
-    }
-
-    [Fact]
-    public void DismissingAnOutcomeRemovesIt()
-    {
-        using var progress = new ActivityProgressService();
-        var handle = progress.Begin("Migration", "Loading", ActivitySize.Unknown);
-        handle.Complete(true);
-
-        progress.DismissOutcome(progress.RecentOutcomes[0].Id);
-
-        Assert.Empty(progress.RecentOutcomes);
-    }
-
-    [Fact]
-    public void DisposingTheCircuitRecordsStillRunningWorkAsFailedRatherThanDroppingIt()
-    {
-        var progress = new ActivityProgressService();
-        var handle = progress.Begin("Migration", "Loading batches", ActivitySize.Unknown);
-        var sawFailure = false;
-        progress.Changed += () =>
-        {
-            if (progress.RecentOutcomes.Any(o => !o.Success))
-                sawFailure = true;
-        };
-
-        progress.Dispose();
-
-        // The activity must not simply disappear: work that was in flight when the circuit went
-        // away did not succeed, and silently dropping it is the defect this system exists to end.
-        Assert.True(sawFailure);
+        // The frame said "Resolving ... finished" for half a minute while the real work was
+        // still running, because the service kept the last five outcomes and the frame rendered
+        // the newest until it was dismissed by hand. Owner ruling 2026-10-02 removed retention
+        // outright: the bar shows what is running and says Idle when nothing is.
         Assert.Empty(progress.Active);
         Assert.False(progress.HasActive);
-        Assert.NotNull(handle);
+    }
+
+    [Fact]
+    public void TheProgressChannelExposesNoWayToRetainAFinishedActivity()
+    {
+        // A TRIPWIRE, not a unit test. Retention was never asked for - it came from a paragraph
+        // in docs/GlobalProgressSystem-Plan.md, and a plan body does not carry owner authority
+        // (`.agents/decisions.md` 2026-10-01). It is the kind of thing a future agent re-adds as
+        // a kindness, so the interface's shape is asserted rather than trusted.
+        var members = typeof(IActivityProgress)
+            .GetMembers()
+            .Select(m => m.Name)
+            .Where(n => n.Contains("Outcome", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("Dismiss", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("Recent", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        Assert.True(members.Count == 0,
+            "IActivityProgress is live only and must not retain finished work. Found: "
+            + string.Join(", ", members));
     }
 
     [Fact]
@@ -322,13 +295,15 @@ public class ActivityProgressTests
 
         progress.Dispose();
 
-        // Completing without cancelling closes the activity in the UI while the work carries
-        // on with nowhere to report: the operator is told it failed, the backend keeps running,
-        // and any result it produces is discarded because Complete already won. That is the
-        // orphaned-work defect the whole system exists to remove.
+        // Completing without cancelling closes the activity while the work carries on with
+        // nowhere to report: the backend keeps running and any result it produces is discarded
+        // because Complete already won. That is the orphaned-work defect the whole system
+        // exists to remove.
         Assert.True(token.IsCancellationRequested,
             "Disposing the circuit must cancel the token it asked modules to honour, not just "
-            + "mark the activity failed.");
+            + "close the activity.");
+        Assert.Empty(progress.Active);
+        Assert.False(progress.HasActive);
     }
 
     [Fact]

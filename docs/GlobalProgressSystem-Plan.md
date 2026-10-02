@@ -317,9 +317,15 @@ A single component rendered by `Components/Layout/MainLayout.razor` as the **las
   colour so peripheral vision catches the change, rather than only text appearing.
 - More than one: the primary line plus a `+N more` toggle that opens the full list **upward**,
   into the page, not off the bottom of the window.
-- An activity ends: a result line, success or failure, that the operator sees from any page,
+- ~~An activity ends: a result line, success or failure, that the operator sees from any page,
   with a dismiss control. Not auto-cleared on a timer - an outcome the operator missed is an
-  outcome lost.
+  outcome lost.~~ **SUPERSEDED by the owner ruling of 2026-10-02 (`.agents/decisions.md`): the
+  frame is LIVE ONLY and retains nothing.** This bullet was never asked for - it was written
+  here by an agent, and a plan body does not carry the owner's authority. It contradicted his
+  own spec in the same section ("idle when nothing is running"), and in practice the retained
+  line outlived the work it described: "Resolving ... finished" sat on screen for 30 seconds
+  while the operation the operator was waiting on was still running. A finished operation is
+  already reported by its own page, the audit log and the admin event log.
 - Background jobs appear in the same list, marked "background - safe to leave". Live-updated
   by subscribing to `BulkJobService.JobChanged` - this closes D5's "press Refresh yourself".
 

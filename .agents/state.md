@@ -25,7 +25,28 @@ app version unchanged (only this module's behaviour changes - nothing else calls
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**
 
-**NEXT ACTION: migrate EVERY module's spinners to the status bar, Migration included.**
+**LANDED 2026-10-02: the status frame retains nothing.** App `2.27.0`, suite 3576 green. The
+owner reported a "Resolving ... finished" line that sat on screen for 30+ seconds and asked who
+had asked for sticky progress messages. Nobody had - it came from a plan body, not from him
+(`.agents/decisions.md` 2026-10-02). `RecentOutcomes`, `ActivityOutcome`, `DismissOutcome`,
+`DismissJob`, `IsJobDismissed`, `SessionStartedUtc`, the dismiss button and the finished-job
+announcement are gone; two tripwires stop them coming back. **An expiring version of the same
+thing was proposed and rejected on the same grounds - do not re-propose one.**
+
+**NEXT ACTION, and it is the other half of the same bug report: `CloudPasswordReset` lies about
+when it is finished.** `LookupAsync` (`Components/Pages/CloudPasswordReset.razor`) calls
+`activity.Complete(...)` the moment the Graph resolve returns, then calls
+`ResetService.DeriveDestination(resolved)` - which runs `ADEmployeeIdLookup`'s synchronous
+`Get-ADForest` plus one synchronous `Get-ADUser` PER FOREST DOMAIN, on the renderer thread,
+outside any activity. That is the 30 seconds the operator waited with no feedback, and it
+produces the "Password goes to" row they were waiting for. Fix is one activity spanning both
+stages and the AD search off the renderer thread. **It is NEW: before `f0c5df9` the forest
+lookup returned empty and that path bailed instantly, so making it work is what exposed this.**
+**Check every other adopted page for the same shape** - `Complete` called before the slow part.
+
+**THEN: migrate EVERY module's spinners to the status bar, Migration included.** 86
+`spinner-border` instances across 32 pages at the time of writing; count it fresh with
+`grep -rc "spinner-border" Components/Pages/*.razor` rather than trusting that number.
 
 **OWNER RULING, 2026-10-02, verbatim: *"all modules need their spinners migrated to the bar,
 including migration."*** That settles two things that were open:

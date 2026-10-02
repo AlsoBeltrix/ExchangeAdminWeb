@@ -86,17 +86,6 @@ public sealed record ProgressActivity
         IsDeterminate ? (int)Math.Clamp(Done * 100L / Total, 0L, 100L) : null;
 }
 
-/// <summary>How an activity ended, held briefly so the operator sees the result anywhere in the app.</summary>
-public sealed record ActivityOutcome
-{
-    public required string Id { get; init; }
-    public required string ModuleId { get; init; }
-    public required string Label { get; init; }
-    public required bool Success { get; init; }
-    public string? Message { get; init; }
-    public required DateTime EndedUtc { get; init; }
-}
-
 /// <summary>
 /// A module's handle on one activity. Disposing it always ends the activity, so a `using` keeps
 /// the display honest on every exception path.
@@ -136,6 +125,18 @@ public interface IActivityHandle : IDisposable
 /// The app's single progress channel. Modules report into it; modules render nothing themselves.
 /// </summary>
 /// <remarks>
+/// LIVE ONLY. The frame shows what is running and says Idle when nothing is (owner, 2026-10-01:
+/// "bottom status frame. shows progress bar with status or idle when nothing is running"). An
+/// ended activity leaves the channel immediately and is not retained anywhere.
+///
+/// It used to keep the last five outcomes and render the newest until the operator dismissed it
+/// by hand. Nobody asked for that: it came from a paragraph in docs/GlobalProgressSystem-Plan.md
+/// written by an agent, and a plan's body does not carry the owner's authority
+/// (`.agents/decisions.md` 2026-10-01). Owner ruling 2026-10-02 removed it - the retained line
+/// outlived the work it described, page loads never had one and were not missed, and the durable
+/// record of what happened is the audit log and each page's own result banner. DO NOT REINTRODUCE
+/// a retained result line here; it is the third copy of something already recorded twice.
+///
 /// PER-CIRCUIT (scoped). It must never be injected into a singleton - see the lifetime rule in
 /// docs/GlobalProgressSystem-Plan.md section 5.1 and the tripwire in
 /// ExchangeAdminWeb.Tests/ActivityProgressLifetimeTests.cs. Pages own the handle and pass
@@ -152,9 +153,6 @@ public interface IActivityProgress
     /// <summary>Everything running right now, oldest first.</summary>
     IReadOnlyList<ProgressActivity> Active { get; }
 
-    /// <summary>Recently ended activities, newest first, bounded. Cleared as they age out.</summary>
-    IReadOnlyList<ActivityOutcome> RecentOutcomes { get; }
-
     /// <summary>True when anything is in flight. What the navigation guard asks.</summary>
     bool HasActive { get; }
 
@@ -163,29 +161,6 @@ public interface IActivityProgress
 
     /// <summary>Requests cancellation of everything in flight. The navigation guard's OK path.</summary>
     void CancelAll();
-
-    /// <summary>Drops one recorded outcome once the operator has seen it.</summary>
-    void DismissOutcome(string id);
-
-    /// <summary>
-    /// When this operator's session began. The status frame announces background jobs that
-    /// ended after this, so it does not re-announce the whole retention window.
-    /// </summary>
-    /// <remarks>
-    /// It lives here rather than on the frame component because the LAYOUT IS REBUILT ON EVERY
-    /// NAVIGATION: a field on the component resets each time the operator changes page, so
-    /// "since you arrived" would silently mean "since this page", and jobs would be
-    /// re-announced on every click. This service is scoped to the circuit and survives.
-    /// </remarks>
-    DateTime SessionStartedUtc { get; }
-
-    /// <summary>Hides one finished background job's result, after the operator dismisses it.</summary>
-    /// <remarks>Also on the service, and for the same reason as <see cref="SessionStartedUtc"/>:
-    /// held on the component, a dismissal would be undone by the next navigation.</remarks>
-    void DismissJob(string jobId);
-
-    /// <summary>Whether that job's result has already been dismissed this session.</summary>
-    bool IsJobDismissed(string jobId);
 
     /// <summary>
     /// Raised on every change. Subscribers on a Blazor circuit MUST marshal through
@@ -197,19 +172,11 @@ public interface IActivityProgress
 /// <inheritdoc cref="IActivityProgress"/>
 public sealed class ActivityProgressService : IActivityProgress, IDisposable
 {
-    // How many ended activities are kept for the result line. Small on purpose: this is a
-    // transient operator notice, not a history. The durable record is the audit log.
-    private const int MaxRecentOutcomes = 5;
-
     private readonly object _gate = new();
     private readonly List<ActivityState> _active = [];
-    private readonly List<ActivityOutcome> _recent = [];
-    private readonly HashSet<string> _dismissedJobs = new(StringComparer.Ordinal);
     private bool _disposed;
 
     public event Action? Changed;
-
-    public DateTime SessionStartedUtc { get; } = DateTime.UtcNow;
 
     public IReadOnlyList<ProgressActivity> Active
     {
@@ -218,17 +185,6 @@ public sealed class ActivityProgressService : IActivityProgress, IDisposable
             lock (_gate)
             {
                 return _active.Select(a => a.Snapshot()).ToList();
-            }
-        }
-    }
-
-    public IReadOnlyList<ActivityOutcome> RecentOutcomes
-    {
-        get
-        {
-            lock (_gate)
-            {
-                return _recent.ToList();
             }
         }
     }
@@ -290,45 +246,10 @@ public sealed class ActivityProgressService : IActivityProgress, IDisposable
             Raise();
     }
 
-    public void DismissOutcome(string id)
-    {
-        bool removed;
-        lock (_gate)
-        {
-            removed = _recent.RemoveAll(o => o.Id == id) > 0;
-        }
-
-        if (removed)
-            Raise();
-    }
-
-    public void DismissJob(string jobId)
-    {
-        if (string.IsNullOrWhiteSpace(jobId))
-            return;
-
-        bool added;
-        lock (_gate)
-        {
-            added = _dismissedJobs.Add(jobId);
-        }
-
-        if (added)
-            Raise();
-    }
-
-    public bool IsJobDismissed(string jobId)
-    {
-        lock (_gate)
-        {
-            return _dismissedJobs.Contains(jobId);
-        }
-    }
-
     /// <summary>
-    /// Ends the circuit's activities. Anything still running is recorded as a failure rather than
-    /// vanishing: an activity that was in flight when the circuit went away did NOT succeed, and
-    /// silently dropping it is the exact defect this system exists to remove.
+    /// Ends the circuit's activities. Anything still running is cancelled on the way out, so work
+    /// that honours its token stops rather than carrying on headless behind a circuit that has
+    /// gone away.
     /// </summary>
     public void Dispose()
     {
@@ -344,11 +265,10 @@ public sealed class ActivityProgressService : IActivityProgress, IDisposable
 
         foreach (var straggler in stragglers)
         {
-            // Cancel BEFORE completing, and do both. Completing alone closes the activity in
-            // the UI while the work carries on headless: the operator is told it failed, the
-            // backend keeps going, and any result it produces lands nowhere because Complete
-            // has already won. That is the orphaned-work defect this whole system exists to
-            // remove, reintroduced in the one place nobody looks.
+            // Cancel BEFORE completing, and do both. Completing alone closes the activity while
+            // the work carries on headless: the backend keeps going and any result it produces
+            // lands nowhere, because Complete has already won. That is the orphaned-work defect
+            // this whole system exists to remove, reintroduced in the one place nobody looks.
             //
             // Cancelling is a request, not a guarantee - it only stops work that honours the
             // token. A module that takes the token and ignores it is a defect in that module,
@@ -360,29 +280,24 @@ public sealed class ActivityProgressService : IActivityProgress, IDisposable
         lock (_gate)
         {
             _active.Clear();
-            _recent.Clear();
         }
     }
 
+    /// <summary>
+    /// Drops the activity. <paramref name="success"/> and <paramref name="message"/> are the
+    /// module's own statement of how it ended; nothing renders them, because the frame is live
+    /// only. They stay on the signature because the call sites already say it and saying it is
+    /// not wrong - but if you are here looking for where the result is shown, there isn't one.
+    /// </summary>
     private void Finish(ActivityState state, bool success, string? message)
     {
+        _ = success;
+        _ = message;
+
         lock (_gate)
         {
             if (!_active.Remove(state))
                 return;
-
-            _recent.Insert(0, new ActivityOutcome
-            {
-                Id = state.Id,
-                ModuleId = state.ModuleId,
-                Label = state.Label,
-                Success = success,
-                Message = string.IsNullOrWhiteSpace(message) ? null : message.Trim(),
-                EndedUtc = DateTime.UtcNow,
-            });
-
-            if (_recent.Count > MaxRecentOutcomes)
-                _recent.RemoveRange(MaxRecentOutcomes, _recent.Count - MaxRecentOutcomes);
         }
 
         Raise();
