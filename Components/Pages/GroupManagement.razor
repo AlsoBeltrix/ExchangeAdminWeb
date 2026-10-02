@@ -37,7 +37,7 @@
                        @oninput="(e) => searchTerm = e.Value?.ToString() ?? string.Empty"
                        @onkeydown="HandleSearchKey" disabled="@IsBusy" />
                 <button class="btn btn-primary" @onclick="Search" disabled="@(IsBusy || string.IsNullOrWhiteSpace(searchTerm))">
-                    @if (isLoading && selectedGroup == null) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    @* No spinner: the search reports to the status bar. *@
                     Search
                 </button>
             </div>
@@ -66,7 +66,7 @@
                 {
                     @* The protection answer gates the whole panel: nothing renders until it
                        arrives, and a denial replaces the panel outright (owner, 2026-08-31). *@
-                    <div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span><small>Checking protection...</small></div>
+                    <div class="text-muted"><small>Checking protection...</small></div>
                 }
                 else if (targetProtection.DenialMessage != null)
                 {
@@ -82,7 +82,7 @@
                 @if (memberList == null)
                 {
                     <button class="btn btn-primary btn-sm" @onclick="LoadMembers" disabled="@IsBusy">
-                        @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        @* No spinner: the member load reports to the bar. *@
                         Load Members
                     </button>
                 }
@@ -135,13 +135,13 @@
                                                   disabled="@IsBusy" placeholder="jdoe&#10;jane.doe@contoso.com&#10;Some Group"></textarea>
                                         <div class="d-flex align-items-center gap-2">
                                             <button class="btn btn-outline-primary btn-sm" @onclick="ResolvePasteAsync" disabled="@(IsBusy || string.IsNullOrWhiteSpace(pasteText))">
-                                                @if (isResolving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                                @* No spinner: the resolve reports to the bar. *@
                                                 Resolve
                                             </button>
                                             <button class="btn btn-success btn-sm" @onclick="AddResolvedAsync"
                                                     disabled="@(IsBusy || ResolvedCount == 0 || string.IsNullOrWhiteSpace(ticketNumber))"
                                                     title="@(string.IsNullOrWhiteSpace(ticketNumber) ? "Enter a ticket number first." : (ResolvedCount == 0 ? "Resolve the list first; only resolved lines can be added." : null))">
-                                                @if (isLoading && resolution != null) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                                @* No spinner: the bulk add reports to the bar. *@
                                                 Add resolved (@ResolvedCount)
                                             </button>
                                             @if (resolution != null)
@@ -200,7 +200,7 @@
                                 <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
                                     <strong>Remove @SelectedCount member(s) from @selectedGroup.Name?</strong>
                                     <button class="btn btn-danger btn-sm" @onclick="RemoveSelectedAsync" disabled="@IsBusy">
-                                        @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                        @* No spinner: the write reports to the bar. *@
                                         Remove @SelectedCount member(s)
                                     </button>
                                     <button class="btn btn-outline-secondary btn-sm" @onclick="() => showRemoveConfirm = false" disabled="@isLoading">Cancel</button>
@@ -463,6 +463,10 @@
         // applied only if this group is still the selection when the await returns. Fail
         // closed - an errored check denies rather than rendering the normal panel.
         targetProtection = null;
+
+        using var protectionActivity = Progress.Begin(
+            "AD Group Management", $"Checking protection on {group.Name}", ActivitySize.Unknown);
+
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -480,6 +484,8 @@
             // Never ReferenceEquals(selectedGroup, group) here - see the note at the raise.
             if (token == selectToken)
                 isSelecting = false;
+
+            protectionActivity.Complete(true);
         }
     }
 
@@ -498,6 +504,9 @@
 
         isLoading = true;
         // A reload invalidates every GUID the selection held (rows may be gone).
+
+        using var loadActivity = Progress.Begin(
+            "AD Group Management", "Loading members", ActivitySize.Unknown);
         selectedGuids.Clear();
         showRemoveConfirm = false;
         await Task.Yield();
@@ -510,7 +519,11 @@
         {
             memberList = new GroupMemberList { GroupName = group.Name, Error = ex.Message };
         }
-        finally { isLoading = false; }
+        finally
+        {
+            isLoading = false;
+            loadActivity.Complete(memberList?.Error is null, memberList?.Error);
+        }
     }
 
     private void OnNewMemberChanged(string value)
@@ -549,12 +562,18 @@
         isLoading = true;
         opResult = null;
         await Task.Yield();
+
+        // Completed from a LOCAL, never from opResult: the dismiss at line 179 can null that
+        // field while this handler is suspended (the live-read class ClickGateRegistry records).
+        PermissionResult? completed = null;
+        using var activity = Progress.Begin(
+            "AD Group Management", $"Updating membership of {group?.Name}", ActivitySize.Unknown);
         try
         {
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
-                opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
                 try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = memberLabel, ["memberDn"] = selection?.DistinguishedName }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember ticket denial"); }
                 return;
             }
@@ -564,7 +583,7 @@
             // loop (docs/GroupBulkActions-Plan.md S3, AC8). The held picker DN (gmn-3) is what
             // it writes. It never throws.
             var outcome = await AddOneAsync(group, memberLabel, selection?.DistinguishedName, ticket, sendAdminEmail: true);
-            opResult = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
+            opResult = completed = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
 
             if (outcome.Done)
             {
@@ -581,7 +600,11 @@
             // its own failures.
             opResult = PermissionResult.Fail(ex.Message);
         }
-        finally { isLoading = false; }
+        finally
+        {
+            isLoading = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
+        }
     }
 
     /// <summary>
@@ -658,12 +681,18 @@
         isLoading = true;
         opResult = null;
         await Task.Yield();
+
+        // Completed from a LOCAL, never from opResult: the dismiss at line 179 can null that
+        // field while this handler is suspended (the live-read class ClickGateRegistry records).
+        PermissionResult? completed = null;
+        using var activity = Progress.Begin(
+            "AD Group Management", $"Updating membership of {group?.Name}", ActivitySize.Unknown);
         try
         {
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
-                opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
                 try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = member, ["memberObjectGuid"] = listed.ObjectGuid, ["memberDn"] = listed.DistinguishedName }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember ticket denial"); }
                 return;
             }
@@ -672,7 +701,7 @@
             // audit and admin email - is RemoveOneAsync, shared byte-for-byte with the bulk loop
             // (docs/GroupBulkActions-Plan.md S2, AC3). It never throws.
             var outcome = await RemoveOneAsync(group, listed, ticket, sendAdminEmail: true);
-            opResult = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
+            opResult = completed = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
 
             // Refresh only when the operator is still looking at the group we wrote to.
             if (outcome.Done && ReferenceEquals(selectedGroup, group))
@@ -684,7 +713,11 @@
             // its own failures.
             opResult = PermissionResult.Fail(ex.Message);
         }
-        finally { isLoading = false; }
+        finally
+        {
+            isLoading = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
+        }
     }
 
     /// <summary>
@@ -824,6 +857,10 @@
         bulkOutcome = null;
         await Task.Yield();
 
+        PermissionResult? completed = null;
+        using var activity = Progress.Begin(
+            "AD Group Management", $"Removing selected members from {group?.Name}", ActivitySize.Unknown);
+
         const string action = "GroupManagement_BulkRemoveMembers";
         var notAttempted = rows.Select(r => $"{r.DisplayName}: Not attempted").ToList();
         try
@@ -831,7 +868,7 @@
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
-                opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
                 AuditBatch(action, group, ticket, false, $"Ticket validation failed: {ticketValidation.Message}", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -840,7 +877,7 @@
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "GroupManagementOnPrem");
             if (!authCheck.Succeeded)
             {
-                opResult = PermissionResult.Fail("Authorization denied.");
+                opResult = completed = PermissionResult.Fail("Authorization denied.");
                 AuditBatch(action, group, ticket, false, "Authorization denied", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -856,7 +893,7 @@
             selectedGuids.Clear();
             bulkOutcome = outcomes;
             bulkOutcomeTitle = $"Remove selected: {summary.Done} of {summary.Requested} removed";
-            opResult = summary.Success
+            opResult = completed = summary.Success
                 ? PermissionResult.Ok($"{summary.Done} member(s) removed from {group.Name}.")
                 : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not removed - see the outcome table.");
 
@@ -867,7 +904,11 @@
                 catch (Exception ex) { memberList = new GroupMemberList { GroupName = group.Name, Error = ex.Message }; }
             }
         }
-        finally { isLoading = false; }
+        finally
+        {
+            isLoading = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
+        }
     }
 
     // ----- Bulk add via paste list (docs/GroupBulkActions-Plan.md S3) -----
@@ -900,6 +941,9 @@
         resolution = null;
         opResult = null;
         await Task.Yield();
+
+        using var resolveActivity = Progress.Begin(
+            "AD Group Management", "Resolving the pasted identities", ActivitySize.Unknown);
         try
         {
             var parsed = BulkIdentityList.Parse(paste);
@@ -913,7 +957,11 @@
         {
             opResult = PermissionResult.Fail($"The pasted lines could not be resolved: {ex.Message}");
         }
-        finally { isResolving = false; }
+        finally
+        {
+            isResolving = false;
+            resolveActivity.Complete(resolution is { Count: > 0 });
+        }
     }
 
     /// <summary>
@@ -942,6 +990,10 @@
         bulkOutcome = null;
         await Task.Yield();
 
+        PermissionResult? completed = null;
+        using var activity = Progress.Begin(
+            "AD Group Management", $"Adding {rows.Count} member(s) to {group.Name}", ActivitySize.Items(rows.Count));
+
         const string action = "GroupManagement_BulkAddMembers";
         var notAttempted = rows.Select(r => $"{r.Line.Text}: Not attempted").ToList();
         try
@@ -949,7 +1001,7 @@
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
-                opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
                 AuditBatch(action, group, ticket, false, $"Ticket validation failed: {ticketValidation.Message}", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -958,7 +1010,7 @@
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "GroupManagementOnPrem");
             if (!authCheck.Succeeded)
             {
-                opResult = PermissionResult.Fail("Authorization denied.");
+                opResult = completed = PermissionResult.Fail("Authorization denied.");
                 AuditBatch(action, group, ticket, false, "Authorization denied", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -973,7 +1025,7 @@
 
             bulkOutcome = outcomes;
             bulkOutcomeTitle = $"Add resolved: {summary.Done} of {summary.Requested} added";
-            opResult = summary.Success
+            opResult = completed = summary.Success
                 ? PermissionResult.Ok($"{summary.Done} member(s) added to {group.Name}.")
                 : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not added - see the outcome table.");
             if (summary.Success)
@@ -989,6 +1041,10 @@
                 catch (Exception ex) { memberList = new GroupMemberList { GroupName = group.Name, Error = ex.Message }; }
             }
         }
-        finally { isLoading = false; }
+        finally
+        {
+            isLoading = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
+        }
     }
 }

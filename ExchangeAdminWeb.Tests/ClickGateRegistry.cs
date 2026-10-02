@@ -2300,7 +2300,7 @@ public static class ClickGateRegistry
     private static PageGateEntry GroupManagement => new()
     {
         Page = "GroupManagement.razor",
-        ExpectedLineCount = 994,
+        ExpectedLineCount = 1050,
 
         // One page-wide predicate, tested against this file rather than assumed. This page has a
         // single view: Search replaces searchResults and nulls the selection, SelectGroup replaces
@@ -2674,14 +2674,17 @@ public static class ClickGateRegistry
         // that has a resolution behind it. 65 is not a spinner but the same hazard: it gates the
         // whole card body on the protection answer, and folding it into IsBusy would blank the panel
         // during every unrelated operation.
-        SpinnerExpressions =
-        [
-            "@if (isLoading && selectedGroup == null)",
-            "@if (isLoading)",
-            "@if (isResolving)",
-            "@if (isLoading && resolution != null)",
-            "@if (targetProtection is null)",
-        ],
+        // SpinnerExpressions is EMPTY on purpose, and the emptiness is the record. Five
+        // conditions across six spinners, removed 2026-10-02 once all seven of this page's
+        // operations report to the global status frame - search, protection check, member load,
+        // add, remove, bulk remove, paste resolve and bulk add (owner ruling,
+        // `.agents/decisions.md`).
+        //
+        // The conditions were five and never one because each had to name which control was
+        // working; the frame names the operation and its target instead. isLoading, isResolving
+        // and isSelecting all STAY as click gates. The "Checking protection..." text stays too -
+        // it is a refusal gate's own state, not progress.
+        SpinnerExpressions = [],
 
         // Ten. Falsification 6 bit harder on this page than on any converted so far: seven of these
         // are new in this slice and one of them - LoadMembers reading selectedGroup - was not a

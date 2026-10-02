@@ -762,7 +762,13 @@ public class GroupMemberNestingProtectionTests
         {
             var start = text.IndexOf(handler, StringComparison.Ordinal);
             Assert.True(start >= 0, handler + " not found - tripwire is stale.");
-            var end = text.IndexOf("finally { isLoading = false; }", start, StringComparison.Ordinal);
+            // Bounded on the finally's FIRST STATEMENT, not on a one-line `finally { ... }`.
+            // The spinner migration (2026-10-02) gave these handlers a multi-line finally so the
+            // progress activity completes after the admin notification, and the old single-line
+            // marker stopped existing - which failed this tripwire as "could not bound" rather
+            // than as anything about nesting protection. The statement is what the bound actually
+            // needs; the brace style never was.
+            var end = text.IndexOf("isLoading = false;", start, StringComparison.Ordinal);
             Assert.True(end > start, "Could not bound " + handler + " - update the tripwire.");
             var body = text[start..end];
 
@@ -793,8 +799,9 @@ public class GroupMemberNestingProtectionTests
         // denial stays in the single handler (carrying the held picker DN), and the auth
         // denial, the outcome record and the exception path live in AddOneAsync, carrying the
         // memberDn it was handed. All four branches still carry the immutable identity.
+        // Same bound change as the handler-snapshot tripwire above, and for the same reason.
         var addStart = text.IndexOf("private async Task AddMember()", StringComparison.Ordinal);
-        var addEnd = text.IndexOf("finally { isLoading = false; }", addStart, StringComparison.Ordinal);
+        var addEnd = text.IndexOf("isLoading = false;", addStart, StringComparison.Ordinal);
         Assert.True(addStart >= 0 && addEnd > addStart, "Could not bound AddMember - update the tripwire.");
         var add = text[addStart..addEnd];
         Assert.Single(Regex.Matches(add, Regex.Escape("[\"memberDn\"] = selection?.DistinguishedName")));
@@ -811,7 +818,7 @@ public class GroupMemberNestingProtectionTests
         // in RemoveOneAsync - the per-member handler both the single button and the bulk loop
         // call. All four branches still carry the immutable identity.
         var remStart = text.IndexOf("private async Task RemoveMember(GroupMemberInfo listed)", StringComparison.Ordinal);
-        var remEnd = text.IndexOf("finally { isLoading = false; }", remStart, StringComparison.Ordinal);
+        var remEnd = text.IndexOf("isLoading = false;", remStart, StringComparison.Ordinal);
         Assert.True(remStart >= 0 && remEnd > remStart, "Could not bound RemoveMember - update the tripwire.");
         var remove = text[remStart..remEnd];
         Assert.Single(Regex.Matches(remove, Regex.Escape("[\"memberObjectGuid\"] = listed.ObjectGuid")));
