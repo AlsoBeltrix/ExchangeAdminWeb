@@ -1,4 +1,5 @@
 using ExchangeAdminWeb.Services;
+using System.Management.Automation;
 using System.Text.Json;
 using ExchangeAdminWeb.Modules;
 
@@ -192,6 +193,82 @@ public class CloudPasswordResetDestinationTests
 
         Assert.Equal("0001234", result.EmployeeId);
     }
+
+    // ----- Forest enumeration: an empty domain list refuses every reset -----
+    //
+    // FindUserByEmployeeId cannot run in a unit test, so the pure projection is tested directly
+    // and the PowerShell wiring is pinned with source tripwires - the same split
+    // GroupSearchForestScopeTests uses for the group search's forest scope.
+
+    private static string LookupSource() =>
+        File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "ADEmployeeIdLookup.cs"));
+
+    private static string ForestBody() =>
+        AuditCategoryFilingTests.MethodBody(LookupSource(), "private List<string> GetForestDomains()");
+
+    /// <summary>The same body with its comment lines dropped.</summary>
+    /// <remarks>
+    /// The "must not appear" assertions below are about what the method DOES. Run against the
+    /// raw text they also match the comment that explains why the old shape was wrong, so the
+    /// guard fails on its own documentation.
+    /// </remarks>
+    private static string ForestCode() =>
+        string.Join('\n', ForestBody()
+            .Split('\n')
+            .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+
+    [Fact]
+    public void ProjectDomainNames_keeps_every_domain_the_pipeline_emitted()
+    {
+        var result = ADDirectorySearchService.ProjectDomainNames(
+            [new PSObject("ad.corp.test"), new PSObject("winroot.corp.test")]);
+
+        // Every domain, in order. Dropping one is how a second domain's match goes unseen and a
+        // single hit is reported as unambiguous - a password mailed to the wrong person.
+        Assert.Equal(new[] { "ad.corp.test", "winroot.corp.test" }, result);
+    }
+
+    [Fact]
+    public void ProjectDomainNames_drops_blank_entries_rather_than_querying_an_empty_server()
+    {
+        var result = ADDirectorySearchService.ProjectDomainNames(
+            [new PSObject("ad.corp.test"), new PSObject("   "), new PSObject("")]);
+
+        // Get-ADUser -Server "" throws, which would turn the whole lookup Unavailable on one
+        // junk element even though a real domain was present.
+        Assert.Equal(new[] { "ad.corp.test" }, result);
+    }
+
+    [Fact]
+    public void Forest_enumeration_projects_inside_powershell_not_through_PSObject_properties()
+    {
+        // 2026-10-02: this returned empty on every single call, so every reset refused with
+        // "The directory could not be searched". (Get-ADForest).Domains is an
+        // ADPropertyValueCollection - CollectionBase, non-generic IEnumerable only - so the
+        // `is IEnumerable<object>` test it was read through was false whatever AD returned.
+        // ResolveGlobalCatalog, same class, had already hit this and documented the AddScript
+        // workaround; this path did not use it.
+        var code = ForestCode();
+
+        Assert.Contains("AddScript(\"(Get-ADForest -ErrorAction Stop).Domains\")", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("IEnumerable<object>", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("Properties[\"Domains\"]", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Forest_enumeration_logs_the_error_it_clears()
+    {
+        // Clearing the error stream and returning empty made this cause indistinguishable from
+        // every other Unavailable cause, on the one code path whose whole job is to tell those
+        // causes apart.
+        var body = ForestBody();
+
+        var iClear = body.IndexOf("ps.Streams.Error.Clear();", StringComparison.Ordinal);
+        var iLog = body.IndexOf("_logger.LogWarning(\"Could not enumerate forest domains", StringComparison.Ordinal);
+
+        Assert.True(iClear >= 0, "Tripwire is stale - the error stream is no longer cleared here.");
+        Assert.True(iLog > iClear, "The cleared Get-ADForest error must be logged before returning empty.");
+    }
 }
 
 /// <summary>
@@ -297,7 +374,7 @@ public class CloudPasswordResetCatalogTests
         Assert.Equal("Identity & Access", module.Category);
         Assert.False(module.EnabledByDefault);
         Assert.False(module.IsSystemModule);
-        Assert.Equal("1.0.0", module.Version);
+        Assert.Equal("1.0.1", module.Version);
     }
 
     [Fact]

@@ -8,6 +8,19 @@ the latest sweep is Archived 2026-10-01).
 
 ## Now
 
+**PROD BUG FIXED 2026-10-02, NOT YET DEPLOYED. Cloud Password Reset could never find an owner.**
+`ADEmployeeIdLookup.GetForestDomains()` read `(Get-ADForest).Domains` out of the returned PSObject
+through an `is IEnumerable<object>` test. That type is `ADPropertyValueCollection`, which derives
+from `CollectionBase` and implements only the NON-generic `IEnumerable`, so the test was false
+whatever AD returned; the method returned empty, and every reset refused with "The directory could
+not be searched". Confirmed in prod logs: every occurrence since the module shipped is
+`AD employeeID lookup could not enumerate forest domains`, with no exception ever logged and no
+success ever recorded. Fixed by projecting inside PowerShell (`AddScript`), the workaround
+`ResolveGlobalCatalog` in the same class had already discovered and documented. The `HadErrors`
+branch now logs the error it clears, which is why diagnosis needed a log dig. Module `1.0.1`; base
+app version unchanged (only this module's behaviour changes - nothing else calls the lookup).
+**NEEDS A DEV DEPLOY AND AN OPERATOR CHECK against a cloud account with an employee ID.**
+
 **HANDOFF 2026-10-01. Branch `master`, verified head `ae7833d`, tree clean, 67 commits ahead
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**

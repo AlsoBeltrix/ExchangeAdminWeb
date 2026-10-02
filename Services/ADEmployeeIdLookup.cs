@@ -182,24 +182,33 @@ public sealed partial class ADDirectorySearchService
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Get-ADForest").AddParameter("ErrorAction", "Stop");
+            // AddScript, not AddCommand + Properties["Domains"]. Two independent reasons, and
+            // either one alone returns an empty list, which refuses every reset this module is
+            // asked to do:
+            // 1. `(Get-ADForest).Domains` is an ADPropertyValueCollection, which derives from
+            //    CollectionBase and implements only the NON-generic IEnumerable - verified by
+            //    reflection against Microsoft.ActiveDirectory.Management 10.0.0.0. An
+            //    `is IEnumerable<object>` test against it is false no matter what it holds.
+            // 2. Reading Properties[...] off the PSObject this runspace returns yields an empty
+            //    value regardless - measured for GlobalCatalogs in ResolveGlobalCatalog, same
+            //    class, and the reason that method already projects inside PowerShell.
+            // Projecting in the pipeline sidesteps both: PowerShell unrolls the collection and
+            // emits one domain name per object.
+            ps.AddScript("(Get-ADForest -ErrorAction Stop).Domains");
             var result = ps.Invoke();
 
             if (ps.HadErrors)
             {
+                // Log the reason. Clearing the stream and returning empty made this failure
+                // indistinguishable from every other Unavailable cause, on the one code path
+                // whose whole job is to tell those causes apart.
+                var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Get-ADForest failed";
                 ps.Streams.Error.Clear();
+                _logger.LogWarning("Could not enumerate forest domains for an employeeID lookup: {Error}", errMsg);
                 return [];
             }
 
-            var forest = result.FirstOrDefault(o => o is not null);
-            if (forest?.Properties["Domains"]?.Value is not IEnumerable<object> domains)
-                return [];
-
-            return domains
-                .Select(d => d?.ToString())
-                .Where(d => !string.IsNullOrWhiteSpace(d))
-                .Select(d => d!)
-                .ToList();
+            return ProjectDomainNames(result);
         }
         catch (Exception ex)
         {
@@ -207,4 +216,20 @@ public sealed partial class ADDirectorySearchService
             return [];
         }
     }
+
+    /// <summary>The domain names carried by a <c>(Get-ADForest).Domains</c> pipeline result.</summary>
+    /// <remarks>
+    /// Pure, so the projection is testable without a forest - the same split
+    /// <see cref="ClassifyDestination"/> uses, and the reason the type error this replaced could
+    /// ship unnoticed: nothing exercised it off a live directory.
+    ///
+    /// Blank entries are dropped rather than handed to <c>Get-ADUser -Server ""</c>, which throws
+    /// and would turn the whole lookup Unavailable on one junk element.
+    /// </remarks>
+    internal static List<string> ProjectDomainNames(IEnumerable<PSObject> results) =>
+        results
+            .Select(o => o?.ToString())
+            .Where(d => !string.IsNullOrWhiteSpace(d))
+            .Select(d => d!.Trim())
+            .ToList();
 }
