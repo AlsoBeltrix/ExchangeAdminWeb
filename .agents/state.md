@@ -63,6 +63,34 @@ The exception:
 Cloud Password Reset defect** - slow SYNCHRONOUS work on the renderer thread - which grep
 cannot find by shape and which needs a read of each page's service calls.
 
+**REVIEWED 2026-10-02, and it had to be asked for.** codex / gpt-5.5-dzs / xhigh over
+`ad3c1e9..e5f9e5c` returned two findings, both LOW, both admitted and fixed:
+`.agents/review/index.md` (gps-1, gps-2 - both Complete, no pending work). **The first four
+commits of this work stream were landed with NO review at all**, against D1
+(`.agents/decisions.md` 2026-08-14/08-27) and `AGENTS.md`'s self-review ban. Dispatch codex per
+slice BEFORE moving on; "build clean, suite green" has now twice been reported as if it closed
+a slice.
+
+**The remaining sweep is ADOPTION work, not markup work - this is the thing to understand
+before picking it up.** Roughly 55 of the 60 remaining spinners sit on operations that report
+nothing, so rule 2 binds on nearly all of them: wire the operation to report FIRST, delete the
+spinner last. Per page, spinners vs operations already reporting:
+
+| Page | Spinners | Reporting |
+|---|---|---|
+| Migration | 13 | **0 - does not inject `IActivityProgress` at all** |
+| SelfServiceGroups | 9 | 1 of 7 (`LoadOwnedGroups` only) |
+| GroupManagement | 6 | 1 |
+| M365GroupManagement | 5 | 1 |
+| MessageTrace | 5 | 2 |
+| ConferenceRooms | 4 | 1 |
+| 10 smaller pages | 18 | mixed |
+
+SelfServiceGroups' six unreported operations, with the line that sets each busy flag:
+`SearchGroup` (1143 `isSearching`), `RemoveListedMember` (638), `RemoveSelectedAsync` (807),
+`ChangeMember` (868), `AddResolvedAsync` (1040) - all `isChanging` - and `ResolvePasteAsync`
+(999 `isResolving`); `LoadMembers` (559) drives the "Loading members..." spinner at line 310.
+
 **IN PROGRESS: migrate EVERY module's spinners to the status bar, Migration included.**
 Started 2026-10-02 at 86 `spinner-border` instances across 32 pages; **60 across 16 pages
 remain.** Count fresh with `grep -rc "spinner-border" Components/Pages/*.razor`.
