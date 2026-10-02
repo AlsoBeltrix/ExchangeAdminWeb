@@ -703,7 +703,7 @@ public sealed class ModuleCatalog
             // "Back to groups" had nulled it (a throw inside a catch, which took the circuit
             // down), and the bulk-add paste was parsed after a yield from a box still accepting
             // keystrokes.
-            Version = "1.11.1",
+            Version = "1.11.2",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",

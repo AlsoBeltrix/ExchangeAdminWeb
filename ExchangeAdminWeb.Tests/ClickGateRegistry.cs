@@ -4156,7 +4156,7 @@ public static class ClickGateRegistry
     private static PageGateEntry SelfServiceGroups => new()
     {
         Page = "SelfServiceGroups.razor",
-        ExpectedLineCount = 1167,
+        ExpectedLineCount = 1204,
 
         // Two, and the list field exists for exactly this. Both scopes have real flags and real
         // controls; see the remarks for why a single page-wide predicate cannot work here and why
@@ -4483,17 +4483,18 @@ public static class ClickGateRegistry
         // Containment cannot tell two copies of one string apart, so deleting exactly one of the
         // two `@if (isLoading)` occurrences (62 and 65) passes - this comment is the only record
         // that there are two.
-        SpinnerExpressions =
-        [
-            "@if (isLoading)",
-            "@if (isSearching)",
-            "@if (isLoadingMembers)",
-            "@if (isChanging)",
-            "@if (isChanging && pendingOp == MembershipOperation.Add)",
-            "@if (isChanging && pendingOp == MembershipOperation.Remove)",
-            "@if (isChanging && pendingOp == MembershipOperation.Add && resolution != null)",
-            "@if (isResolving)",
-        ],
+        // SpinnerExpressions is EMPTY on purpose, and the emptiness is the record. Eight
+        // conditions across nine spinners - the most of any page - removed 2026-10-02 once all
+        // seven of this page's operations report to the global status frame: group load, search,
+        // member load, single add, single remove, bulk add, bulk remove and paste resolve
+        // (owner ruling, `.agents/decisions.md`).
+        //
+        // Three of the eight differed only by pendingOp, purely so the spinner landed on the Add
+        // button rather than Remove. The frame names the operation and the group instead, so
+        // that distinction is no longer encoded in markup conditions nobody could keep aligned.
+        // isLoading, isSearching, isChanging, isLoadingMembers and isResolving all STAY as click
+        // gates, and pendingOp still drives which confirm is armed.
+        SpinnerExpressions = [],
 
         // Four. Two were found and fixed by this slice; two were already correct and are pinned so
         // they stay that way. See the remarks for the three obligations that exist in the page and

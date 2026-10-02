@@ -48,7 +48,7 @@
                  reliably raise the events a tooltip needs, and because a title naming the predicate
                  would satisfy the button sweep on its own and hollow out the gate beside it. -->
             <div class="alert alert-info py-2 mb-3">
-                <small><span class="spinner-border spinner-border-sm me-1"></span> Finishing a change
+                <small> Finishing a change
                 on the group you just left. You can load, filter and search now; opening a group to
                 manage waits until it is done.</small>
             </div>
@@ -59,7 +59,7 @@
         <div class="card mb-3">
             <div class="card-body">
                 <button class="btn btn-primary" @onclick="LoadOwnedGroups" disabled="@IsBrowseBusy">
-                    @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    @* No spinner: the group load reports to the bar. *@
                     Load the groups I can manage
                 </button>
                 @if (isLoading)
@@ -150,7 +150,7 @@
                            placeholder="Exact group name or sAMAccountName" disabled="@IsBrowseBusy" />
                     <button class="btn btn-outline-primary" @onclick="SearchGroup"
                             disabled="@(IsBrowseBusy || string.IsNullOrWhiteSpace(searchName))">
-                        @if (isSearching) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        @* No spinner: the search reports to the bar. *@
                         Search
                     </button>
                 </div>
@@ -231,12 +231,12 @@
                     <div class="col-auto">
                         <button class="btn btn-success" @onclick="() => ChangeMember(MembershipOperation.Add)"
                                 disabled="@(IsManageBusy || string.IsNullOrWhiteSpace(memberIdentity))">
-                            @if (isChanging && pendingOp == MembershipOperation.Add) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            @* No spinner: the add reports to the bar. *@
                             Add
                         </button>
                         <button class="btn btn-outline-danger" @onclick="() => ChangeMember(MembershipOperation.Remove)"
                                 disabled="@(IsManageBusy || string.IsNullOrWhiteSpace(memberIdentity))">
-                            @if (isChanging && pendingOp == MembershipOperation.Remove) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            @* No spinner: the remove reports to the bar. *@
                             Remove
                         </button>
                     </div>
@@ -257,13 +257,13 @@
                                           disabled="@IsManageBusy" placeholder="jdoe&#10;jane.doe@contoso.com"></textarea>
                                 <div class="d-flex align-items-center gap-2">
                                     <button class="btn btn-outline-primary btn-sm" @onclick="ResolvePasteAsync" disabled="@(IsManageBusy || string.IsNullOrWhiteSpace(pasteText))">
-                                        @if (isResolving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                        @* No spinner: the resolve reports to the bar. *@
                                         Resolve
                                     </button>
                                     <button class="btn btn-success btn-sm" @onclick="AddResolvedAsync"
                                             disabled="@(IsManageBusy || ResolvedCount == 0)"
                                             title="@(ResolvedCount == 0 ? "Resolve the list first; only resolved lines can be added." : null)">
-                                        @if (isChanging && pendingOp == MembershipOperation.Add && resolution != null) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                        @* No spinner: the bulk add reports to the bar. *@
                                         Add resolved (@ResolvedCount)
                                     </button>
                                     @if (resolution != null)
@@ -307,7 +307,7 @@
                 <h6 class="mb-2">Current members</h6>
                 @if (isLoadingMembers)
                 {
-                    <div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span> Loading members...</div>
+                    <div class="text-muted">Loading members...</div>
                 }
                 else if (memberLoadError != null)
                 {
@@ -340,7 +340,7 @@
                             <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
                                 <strong>Remove @SelectedCount member(s) from @selected.Name?</strong>
                                 <button class="btn btn-danger btn-sm" @onclick="RemoveSelectedAsync" disabled="@IsManageBusy">
-                                    @if (isChanging) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                    @* No spinner: the write reports to the bar. *@
                                     Remove @SelectedCount member(s)
                                 </button>
                                 <button class="btn btn-outline-secondary btn-sm" @onclick="() => showRemoveConfirm = false" disabled="@IsManageBusy">Cancel</button>
@@ -571,6 +571,9 @@
         isLoadingMembers = true;
         memberLoadError = null;
         groupMembers = [];
+
+        using var loadActivity = Progress.Begin(
+            "Self-Service Groups", $"Loading members of {group.Name}", ActivitySize.Unknown);
         // gmn-4: a pending group-removal confirm never survives a list reload or a group
         // switch - a stale one would make "Remove group" the FIRST action on another group.
         pendingGroupRemoval = null;
@@ -593,6 +596,7 @@
         finally
         {
             isLoadingMembers = false;
+            loadActivity.Complete(memberLoadError is null, memberLoadError);
         }
     }
 
@@ -640,6 +644,12 @@
         changeResult = null;
         await Task.Yield();
 
+        // Completed from a LOCAL, never changeResult - another control can clear that field
+        // while this handler is suspended.
+        PermissionResult? completed = null;
+        using var activity = Progress.Begin(
+            "Self-Service Groups", $"Removing a member from {group?.Name}", ActivitySize.Unknown);
+
         // The per-member path - authorization re-check, eligibility/protection-gated service
         // write, audit, admin email and the affected-member notification - is RemoveOneAsync,
         // shared byte-for-byte with the bulk loop (docs/GroupBulkActions-Plan.md S4, AC3). It
@@ -647,11 +657,12 @@
         try
         {
             var outcome = await RemoveOneAsync(group, member, sendAdminEmail: true);
-            changeResult = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
+            changeResult = completed = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
         }
         finally
         {
             isChanging = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
             pendingOp = null;
         }
 
@@ -810,13 +821,17 @@
         bulkOutcome = null;
         await Task.Yield();
 
+        PermissionResult? completed = null;
+        using var activity = Progress.Begin(
+            "Self-Service Groups", $"Removing {rows.Count} member(s) from {group.Name}", ActivitySize.Items(rows.Count));
+
         const string action = "SelfServiceGroups_BulkRemoveMembers";
         var notAttempted = rows.Select(r => $"{r.DisplayName}: Not attempted").ToList();
         try
         {
             if (string.IsNullOrWhiteSpace(callerSid))
             {
-                changeResult = PermissionResult.Fail("Your Windows identity could not be determined. Sign out and back in, then try again.");
+                changeResult = completed = PermissionResult.Fail("Your Windows identity could not be determined. Sign out and back in, then try again.");
                 AuditBatch(action, group, false, "Caller SID unavailable", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -825,7 +840,7 @@
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "SelfServiceGroups");
             if (!authCheck.Succeeded)
             {
-                changeResult = PermissionResult.Fail("Authorization denied.");
+                changeResult = completed = PermissionResult.Fail("Authorization denied.");
                 AuditBatch(action, group, false, "Authorization denied", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -841,13 +856,14 @@
             selectedGuids.Clear();
             bulkOutcome = outcomes;
             bulkOutcomeTitle = $"Remove selected: {summary.Done} of {summary.Requested} removed";
-            changeResult = summary.Success
+            changeResult = completed = summary.Success
                 ? PermissionResult.Ok($"{summary.Done} member(s) removed from {group.Name}.")
                 : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not removed - see the outcome table.");
         }
         finally
         {
             isChanging = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
             pendingOp = null;
         }
 
@@ -870,6 +886,10 @@
         changeResult = null;
         await Task.Yield();
 
+        PermissionResult? completed = null;
+        using var activity = Progress.Begin(
+            "Self-Service Groups", $"{operation} on {group?.Name}", ActivitySize.Unknown);
+
         // The per-member typed path - authorization re-check, eligibility/protection-gated
         // service write, audit, admin email and the affected-member notification - is
         // ChangeOneAsync, shared byte-for-byte with the bulk add loop
@@ -877,13 +897,14 @@
         try
         {
             var outcome = await ChangeOneAsync(group, identity, operation, sendAdminEmail: true);
-            changeResult = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
+            changeResult = completed = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
             if (outcome.Done)
                 memberIdentity = "";
         }
         finally
         {
             isChanging = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
             pendingOp = null;
         }
 
@@ -1000,6 +1021,9 @@
         resolution = null;
         changeResult = null;
         await Task.Yield();
+
+        using var resolveActivity = Progress.Begin(
+            "Self-Service Groups", "Resolving the pasted identities", ActivitySize.Unknown);
         try
         {
             if (string.IsNullOrWhiteSpace(callerSid))
@@ -1017,7 +1041,11 @@
             Logger.LogError(ex, "Self-service bulk resolution failed for {User}", callerSid);
             changeResult = PermissionResult.Fail("The pasted lines could not be resolved right now. Please try again; if the problem persists, contact the IT Support Desk.");
         }
-        finally { isResolving = false; }
+        finally
+        {
+            isResolving = false;
+            resolveActivity.Complete(resolution is { Count: > 0 });
+        }
     }
 
     /// <summary>
@@ -1043,13 +1071,17 @@
         bulkOutcome = null;
         await Task.Yield();
 
+        PermissionResult? completed = null;
+        using var activity = Progress.Begin(
+            "Self-Service Groups", $"Adding {rows.Count} member(s) to {group.Name}", ActivitySize.Items(rows.Count));
+
         const string action = "SelfServiceGroups_BulkAddMembers";
         var notAttempted = rows.Select(r => $"{r.Line.Text}: Not attempted").ToList();
         try
         {
             if (string.IsNullOrWhiteSpace(callerSid))
             {
-                changeResult = PermissionResult.Fail("Your Windows identity could not be determined. Sign out and back in, then try again.");
+                changeResult = completed = PermissionResult.Fail("Your Windows identity could not be determined. Sign out and back in, then try again.");
                 AuditBatch(action, group, false, "Caller SID unavailable", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -1058,7 +1090,7 @@
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "SelfServiceGroups");
             if (!authCheck.Succeeded)
             {
-                changeResult = PermissionResult.Fail("Authorization denied.");
+                changeResult = completed = PermissionResult.Fail("Authorization denied.");
                 AuditBatch(action, group, false, "Authorization denied", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -1073,7 +1105,7 @@
 
             bulkOutcome = outcomes;
             bulkOutcomeTitle = $"Add resolved: {summary.Done} of {summary.Requested} added";
-            changeResult = summary.Success
+            changeResult = completed = summary.Success
                 ? PermissionResult.Ok($"{summary.Done} member(s) added to {group.Name}.")
                 : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not added - see the outcome table.");
             if (summary.Success)
@@ -1085,6 +1117,7 @@
         finally
         {
             isChanging = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
             pendingOp = null;
         }
 
@@ -1143,6 +1176,9 @@
         isSearching = true;
         searchMessage = null;
         searchResult = null;
+
+        using var searchActivity = Progress.Begin(
+            "Self-Service Groups", $"Searching for {searchName.Trim()}", ActivitySize.Unknown);
         try
         {
             if (string.IsNullOrWhiteSpace(callerSid))
@@ -1162,6 +1198,7 @@
         finally
         {
             isSearching = false;
+            searchActivity.Complete(searchResult != null, searchMessage);
         }
     }
 }
