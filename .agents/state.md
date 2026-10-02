@@ -25,9 +25,34 @@ app version unchanged (only this module's behaviour changes - nothing else calls
 of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
 `ask`.**
 
-**NEXT ACTION: queue item 24 remaining work - the owner's acceptance pass on dev, plus the
-Migration ruling. The agent-executable remainder is spinner removal on the 12 line-pinned
-pages and threading cancellation tokens through more services.**
+**NEXT ACTION: migrate EVERY module's spinners to the status bar, Migration included.**
+
+**OWNER RULING, 2026-10-02, verbatim: *"all modules need their spinners migrated to the bar,
+including migration."*** That settles two things that were open:
+
+- **Migration is IN.** Its standing closure does not exempt it from this. Do not re-raise it.
+- **"All" means all.** During the 2026-10-01 session the agent carved out two exceptions on
+  its own reading - the pre-authorization block and per-row indicators in tables - raised them
+  as a question, and then kept applying its own answer. The ruling is "all". Migrate them.
+  Raise a case only if migrating one would genuinely lose information the bar cannot carry,
+  and raise it BEFORE acting, not after.
+
+**UNCOMMITTED WORK IS IN THE TREE as of this handoff.** Spinner removals on
+`DhcpAuthorization`, `TrueLastLogon`, `DefenderEndpointDevices` and `IntuneDevices`, plus the
+emptied `SpinnerExpressions` entry for DhcpAuthorization in `ClickGateRegistry.cs`. Build was
+clean and ClickGate was 316/316, but **the full suite was NOT run on it and it is not
+committed**. Another agent may be working in this repo - check `git status` and `git log`
+before assuming any of it is still there or still yours.
+
+**THE TECHNIQUE THAT MAKES THIS CHEAP, and it is the whole reason the 12 line-pinned pages are
+not a re-anchoring nightmare:** replace each removed spinner block with a comment of THE SAME
+NUMBER OF LINES. The file's line count never changes, so `ExpectedLineCount` stays valid and
+not one of the 491 line-keyed `ClickGateRegistry` entries moves. Proven on DhcpAuthorization:
+two spinners removed, 316/316 still green, no re-anchor. The scanner strips comments, so the
+replacement text cannot satisfy or trip any gating assertion.
+
+When a page loses its last spinner, EMPTY its `SpinnerExpressions` entry rather than deleting
+the field, and put the reason in the comment above it - the emptiness is the record.
 
 `docs/GlobalProgressSystem-Plan.md` is APPROVED (owner, 2026-10-01); S1-S3 are authorised and
 S4's module order needs no further go (*"I don't care about the order"*). App `2.26.0`, suite

@@ -72,10 +72,10 @@
                 </div>
                 <div class="col-md-4 order-1">
                     <button class="btn btn-primary w-100" @onclick="SearchAsync" disabled="@ActionsDisabled">
-                        @if (isSearching)
-                        {
-                            <span class="spinner-border spinner-border-sm me-1"></span>
-                        }
+                        @* No spinner: the device search reports to the status frame, which
+                           shows it with its elapsed time. The disabled state stays - that is
+                           refusal, not reporting. *@
+
                         Search
                     </button>
                 </div>
@@ -87,10 +87,10 @@
        spinner - a blank results area during a Graph round trip reads as a hung page. *@
     @if (isSearching)
     {
-        <div class="alert alert-info d-flex align-items-center">
-            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-            <span>Searching Intune managed devices...</span>
-        </div>
+        @* The in-flight banner is gone; the frame carries "Searching devices" and how long it
+           has been running. The guard around it is untouched and still load-bearing - without
+           it the zero-results branch renders during a live search. *@
+
     }
 
     @* hasSearched is cleared at the start of every search, not only the first, and set again only

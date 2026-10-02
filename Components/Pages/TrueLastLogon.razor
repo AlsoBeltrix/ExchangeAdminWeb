@@ -59,10 +59,10 @@
                 <div class="col-md-4">
                     <button class="btn btn-primary w-100" @onclick="SearchAsync"
                             disabled="@(IsBusy || string.IsNullOrWhiteSpace(identity))">
-                        @if (isSearching)
-                        {
-                            <span class="spinner-border spinner-border-sm me-1"></span>
-                        }
+                        @* No spinner: the lookup reports to the status frame, which shows it
+                           with its elapsed time and both halves as they land. The disabled
+                           state stays on this button - that is refusal, not reporting, and it
+                           belongs on the control being clicked. *@
                         Look up
                     </button>
                 </div>

@@ -191,10 +191,10 @@
                 <div class="col-md-8 d-flex align-items-end justify-content-md-end gap-2">
                     <button class="btn btn-outline-secondary" @onclick="ClearFilters" disabled="@IsBusy">Clear</button>
                     <button class="btn btn-primary" @onclick="LoadAsync" disabled="@IsBusy">
-                        @if (IsBusy)
-                        {
-                            <span class="spinner-border spinner-border-sm me-1"></span>
-                        }
+                        @* No spinner: the device list reports to the status frame. Two
+                           reporters on screen disagreed with each other, which is the defect
+                           this replaced rather than a tidy-up. *@
+
                         Load devices
                     </button>
                 </div>
@@ -222,10 +222,10 @@
            been asked for yet. Keyed on the absence of a result rather than on isLoading because
            isLoading cannot be raised in OnInitializedAsync: it is the page's in-flight flag and
            every raise of it has to sit inside a try whose finally lowers it again. *@
-        <div class="alert alert-info d-flex align-items-center">
-            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-            <span>Reading the device inventory...</span>
-        </div>
+        @* The in-flight banner is gone - the frame carries "Reading the device inventory"
+           and its elapsed time. The surrounding guard is untouched and still load-bearing. *@
+
+
     }
     else if (result.Outcome != DefenderDeviceListOutcome.Complete)
     {

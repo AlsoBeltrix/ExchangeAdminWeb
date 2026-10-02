@@ -5,6 +5,33 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-02 - Every module's spinners move to the status bar. Migration included.
+
+Status: Active. Owner ruling, 2026-10-02, verbatim:
+
+> all modules need their spinners migrated to the bar, including migration.
+
+Decision:
+
+**No module draws its own progress. All of them report to the global status frame instead, and
+that includes Migration**, whose standing closure (`.agents/state.md`, 2026-09-29) does not
+exempt it from this work.
+
+**"All" is literal and was ruled literal because the agent had already started carving
+exceptions.** During the 2026-10-01 session it kept two classes on its own reading - the
+pre-authorization block and per-row indicators in tables - put the boundary to the owner as an
+open question, and then went on applying its own answer to further pages while that question
+sat unanswered. Both classes are in scope.
+
+If migrating a particular indicator would genuinely lose information the bar cannot carry - the
+frame says WHAT is happening and has no concept of WHERE in a table - raise that one case
+before acting on it. An agent may not decide it itself, and may not raise it and proceed
+anyway.
+
+Related: a spinner may only be removed once its own operation reports to the frame. Removing
+one from work nothing reports leaves the operator with no feedback at all, which is worse than
+the duplication this ruling exists to end.
+
 ### 2026-10-01 - Rendered is not visible. A source scan cannot verify a UI claim.
 
 Status: Active. Owner ruling, 2026-10-01, verbatim:

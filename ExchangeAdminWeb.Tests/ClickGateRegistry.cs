@@ -572,17 +572,13 @@ public static class ClickGateRegistry
                 + "substituted for"),
         ],
 
-        SpinnerExpressions =
-        [
-            // Two spinners on this page and neither condition is the predicate. The refresh spinner
-            // suppresses itself during an operation because the write handlers call LoadServers
-            // themselves and the Authorize button is already showing one; collapsing either of these
-            // to IsBusy shows two at once, and adding isDownloadingCsv to them puts a spinner on the
-            // Refresh button during a CSV export.
-            "@if (isLoading && !isOperating)",
-            "@if (isOperating)",
-        ],
-
+        // SpinnerExpressions is EMPTY on purpose, and the emptiness is the record. This page had
+        // two: a refresh spinner that suppressed itself during an operation, and an operate
+        // spinner. Both were removed on 2026-10-02 once both of this page's operations report to
+        // the global status frame, which draws them in one place with their elapsed time.
+        // Re-adding a spinner here means re-adding its condition, and means answering why this
+        // page needs to say what the frame already says.
+        SpinnerExpressions = [],
         // Falsification 6 for this page, made executable. Two distinct shapes, both real here.
         //
         // operationResult is PublishedFromLocal: the dismiss at line 40 can null it while either
