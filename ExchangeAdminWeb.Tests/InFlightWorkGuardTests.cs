@@ -47,6 +47,25 @@ public class InFlightWorkGuardTests
     }
 
     [Fact]
+    public void TheBackgroundPromptDoesNotPromiseAStatusBarCompletionNotice()
+    {
+        var source = StripComments(Guard());
+
+        // The frame is LIVE ONLY (owner ruling 2026-10-02, `.agents/decisions.md`): a job's
+        // line disappears when it ends and the bar returns to Idle, saying nothing about
+        // whether it succeeded. This prompt used to say "the status bar will tell you when it
+        // is done", which sent the operator to watch a surface that no longer reports the
+        // event - a worse outcome than sending them nowhere. Found by codex review of
+        // ad3c1e9..e5f9e5c; the removal and the prompt shipped in the same range.
+        Assert.DoesNotContain("tell you when it is done", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("status bar will tell", source, StringComparison.Ordinal);
+
+        // Bulk Jobs is where a finished job's result actually lands, so the prompt must point
+        // there rather than at the bar.
+        Assert.Contains("Bulk Jobs page", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AFailedPromptNeitherNavigatesNorCancels()
     {
         var source = StripComments(Guard());

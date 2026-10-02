@@ -117,10 +117,16 @@
             ? background[0].JobType.Replace('_', ' ')
             : $"{background.Count} background jobs";
 
+        // NO PROMISE ABOUT THE STATUS BAR. It used to say "the status bar will tell you when
+        // it is done", which stopped being true when the frame became live only (owner ruling
+        // 2026-10-02, `.agents/decisions.md`): the job's line disappears when it ends and the
+        // frame returns to Idle, saying nothing about whether it succeeded. Sending the
+        // operator to watch a surface that no longer reports the event is worse than sending
+        // them nowhere. Bulk Jobs is where the result actually lands.
         return
             $"{what} is running in the background.\n\nLeaving is safe - it keeps going and "
-            + "finishes on its own. The status bar will tell you when it is done, and the "
-            + "results are on the Bulk Jobs page.";
+            + "finishes on its own. The status bar shows it while it runs, and the result is "
+            + "on the Bulk Jobs page when it is done.";
     }
 
     private async Task<bool> Confirm(string message)
