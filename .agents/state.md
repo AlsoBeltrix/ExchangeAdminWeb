@@ -19,11 +19,14 @@ success ever recorded. Fixed by projecting inside PowerShell (`AddScript`), the 
 `ResolveGlobalCatalog` in the same class had already discovered and documented. The `HadErrors`
 branch now logs the error it clears, which is why diagnosis needed a log dig. Module `1.0.1`; base
 app version unchanged (only this module's behaviour changes - nothing else calls the lookup).
-**NEEDS A DEV DEPLOY AND AN OPERATOR CHECK against a cloud account with an employee ID.**
+**CONFIRMED BY THE OWNER 2026-10-02: the reset worked.** Deployed to dev and exercised against
+a real cloud account; the owner-lookup path that had never once succeeded now does. This entry
+is history - do not re-raise it as outstanding.
 
-**HANDOFF 2026-10-01. Branch `master`, verified head `ae7833d`, tree clean, 67 commits ahead
-of both remotes (`0b7122a`), NOTHING PUSHED - owner ruled HOLD 2026-09-30 and push policy is
-`ask`.**
+**PUSHED 2026-10-02 on the owner's explicit `git push all`.** Branch `master`, head `6a7588d`,
+tree clean, both remotes verified at the same SHA. The 2026-09-30 HOLD is SPENT - it was lifted
+by that request, not by an agent. Push policy remains `ask` in `.agents/push-policy.md`, so a
+future agent-initiated push still needs the owner's word.
 
 **LANDED 2026-10-02: the status frame retains nothing.** App `2.27.0`, suite 3576 green. The
 owner reported a "Resolving ... finished" line that sat on screen for 30+ seconds and asked who
@@ -245,10 +248,14 @@ failing tests and a "0 failed" claim in its message, because the commit was chai
 test command with `&&` and the result was never read. `cc3e8c9` corrects it. Do not chain a
 commit onto an unread verification run.
 
-**NOTHING IN THIS WORK STREAM IS VERIFIED IN A BROWSER AND NOTHING HERE CAN VERIFY IT**
-(`.agents/decisions.md` 2026-10-01, "Rendered is not visible"). Three dev rejections in a row
-came from source scans passing while the feature was visibly broken. Do not report any of it as
-working.
+**PARTIALLY ACCEPTED IN A BROWSER, 2026-10-02.** The owner deployed to dev and reported: *"browser
+check looks fine for the modules I checked. reset worked."* **That is a sample, not a sweep** -
+he did not say which modules, and 32 pages changed. Treat the status bar as working in principle
+and each unchecked page as unverified.
+
+**NOTHING HERE CAN VERIFY THE REST** (`.agents/decisions.md` 2026-10-01, "Rendered is not
+visible"). Three dev rejections in a row came from source scans passing while the feature was
+visibly broken. Do not report an unchecked page as working.
 
 **The owner's own clarifications during the 2026-10-01 drafting session are binding and are
 recorded verbatim in section 1 of the plan. Read them before touching this work stream** - the
