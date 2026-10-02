@@ -474,6 +474,36 @@ public class GlobalProgressWiringTests
         }
     }
 
+    [Fact]
+    public void CloudPasswordResetReportsItsDirectoryLookupInsteadOfFinishingBeforeIt()
+    {
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "CloudPasswordReset.razor")));
+
+        var resolve = source.IndexOf("ResolveTargetAsync(", StringComparison.Ordinal);
+        var derive = source.IndexOf("DeriveDestination(", StringComparison.Ordinal);
+        Assert.True(resolve >= 0 && derive > resolve,
+            "Expected the preflight to resolve the cloud account and then derive the destination.");
+
+        // THE DEFECT: the page completed its activity the moment the Graph call returned and
+        // then ran DeriveDestination - a synchronous Get-ADForest plus one Get-ADUser per
+        // forest domain - outside any activity. The frame read "Resolving ... finished" while
+        // the operator waited another 30 seconds for the row that lookup produces. The line was
+        // true about a scope nobody can see, which is the same thing as a lie.
+        //
+        // Asserted against the WHOLE file rather than the window between the two calls: a
+        // success reported anywhere before the destination lookup is the same defect, and the
+        // first version of this guard only watched the window. A probe that moved the call one
+        // line earlier than the window slipped straight past it.
+        var firstSuccess = source.IndexOf("Complete(true", StringComparison.Ordinal);
+        Assert.True(firstSuccess > derive,
+            "The preflight must not report success before the directory lookup that produces "
+            + "the destination row has run.");
+
+        // ...and it must not run on the renderer thread, or the circuit cannot repaint and the
+        // frame cannot advance even once the work IS reported.
+        Assert.Contains("Task.Run(() => ResetService.DeriveDestination(", source, StringComparison.Ordinal);
+    }
+
     private static string ReadRepoFile(string relativePath) =>
         File.ReadAllText(Path.Combine(RepoRoot(), relativePath));
 

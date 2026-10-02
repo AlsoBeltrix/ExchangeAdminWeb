@@ -746,7 +746,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",

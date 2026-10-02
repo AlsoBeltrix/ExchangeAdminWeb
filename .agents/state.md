@@ -33,16 +33,21 @@ had asked for sticky progress messages. Nobody had - it came from a plan body, n
 announcement are gone; two tripwires stop them coming back. **An expiring version of the same
 thing was proposed and rejected on the same grounds - do not re-propose one.**
 
-**NEXT ACTION, and it is the other half of the same bug report: `CloudPasswordReset` lies about
-when it is finished.** `LookupAsync` (`Components/Pages/CloudPasswordReset.razor`) calls
-`activity.Complete(...)` the moment the Graph resolve returns, then calls
-`ResetService.DeriveDestination(resolved)` - which runs `ADEmployeeIdLookup`'s synchronous
-`Get-ADForest` plus one synchronous `Get-ADUser` PER FOREST DOMAIN, on the renderer thread,
-outside any activity. That is the 30 seconds the operator waited with no feedback, and it
-produces the "Password goes to" row they were waiting for. Fix is one activity spanning both
-stages and the AD search off the renderer thread. **It is NEW: before `f0c5df9` the forest
-lookup returned empty and that path bailed instantly, so making it work is what exposed this.**
-**Check every other adopted page for the same shape** - `Complete` called before the slow part.
+**LANDED 2026-10-02: `CloudPasswordReset`'s preflight no longer reports finished before it is.**
+Module `1.0.1` -> `1.0.2`. `LookupAsync` used to call `activity.Complete(...)` the moment the
+Graph resolve returned and then run `ResetService.DeriveDestination(resolved)` - which is
+`ADEmployeeIdLookup`'s synchronous `Get-ADForest` plus one synchronous `Get-ADUser` PER FOREST
+DOMAIN - on the renderer thread, outside any activity. That was the 30 seconds the operator sat
+in front of an unchanged page, and it produces the "Password goes to" row they were waiting for.
+Now one `Steps(2)` activity spans both stages and the AD search runs on `Task.Run`.
+**It was NEW: before `f0c5df9` the forest lookup returned empty and that path bailed instantly,
+so making the lookup work is what exposed it.** Guarded by
+`GlobalProgressWiringTests.CloudPasswordResetReportsItsDirectoryLookupInsteadOfFinishingBeforeIt`.
+
+**STILL OPEN from that fix: `ExecuteResetAsync` on the same page reports NOTHING** - it has no
+activity at all, and it does the PATCH plus the email send. **And the same shape - `Complete`
+called before the slow part, or slow sync work on the renderer thread - has NOT been audited on
+the other 23 adopted pages.** Do that before trusting any of their lines.
 
 **THEN: migrate EVERY module's spinners to the status bar, Migration included.** 86
 `spinner-border` instances across 32 pages at the time of writing; count it fresh with
