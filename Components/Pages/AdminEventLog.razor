@@ -17,6 +17,7 @@
 @using ExchangeAdminWeb.Services.Storage
 @inject UsageEventRepository UsageEvents
 @inject ModuleCatalog Catalog
+@inject IActivityProgress Progress
 
 <PageTitle>Event Log</PageTitle>
 
@@ -346,11 +347,7 @@
         <div class="p-3 flex-grow-1 overflow-auto">
             @if (undoLoading)
             {
-                <div class="text-center py-4">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Loading preview...</span>
-                    </div>
-                </div>
+                @* No spinner: the preview build reports to the status bar. *@
             }
             else if (undoPreview.Error != null && !undoPreview.CanUndo)
             {
@@ -428,10 +425,7 @@
             @if (undoPreview.CanUndo && undoSuccess == null)
             {
                 <button class="btn btn-warning btn-sm" @onclick="ExecuteUndo" disabled="@(undoExecuting || string.IsNullOrWhiteSpace(undoTicket))">
-                    @if (undoExecuting)
-                    {
-                        <span class="spinner-border spinner-border-sm me-1"></span>
-                    }
+                    @* No spinner: the undo reports to the status bar. *@
                     Confirm Undo
                 </button>
             }
@@ -852,6 +846,9 @@
         undoPreview = new UndoPreview(false, null, "", "", "", null, null, false, null); // placeholder while loading
         StateHasChanged();
 
+        using var activity = Progress.Begin(
+            "Event Log", "Building undo preview", ActivitySize.Unknown);
+
         try
         {
             var handler = UndoRegistry.FindHandler(evt.RawFields);
@@ -873,6 +870,7 @@
         }
         finally
         {
+            activity.Complete(undoError == null);
             undoLoading = false;
             StateHasChanged();
         }
@@ -895,6 +893,12 @@
         undoExecuting = true;
         undoError = null;
         StateHasChanged();
+
+        // Opened before the try so refusals inside it are covered; completed in the finally
+        // from undoError, which is this handler's own field and is not written by any other
+        // control while it is suspended.
+        using var activity = Progress.Begin(
+            "Event Log", "Undoing the selected action", ActivitySize.Unknown);
 
         try
         {
@@ -960,6 +964,7 @@
         }
         finally
         {
+            activity.Complete(undoError == null, undoError);
             undoExecuting = false;
             StateHasChanged();
         }

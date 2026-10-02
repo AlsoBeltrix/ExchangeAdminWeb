@@ -840,7 +840,7 @@ public sealed class ModuleCatalog
             // handlers snapshot the form and their result so a mid-flight dismiss or keystroke can
             // no longer retarget a Conditional Access write, blank its ticket, or report a
             // successful write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 2).
-            Version = "1.2.1",
+            Version = "1.2.2",
             MainPermission = new(
                 "Access",
                 "NamedLocations",
@@ -932,7 +932,7 @@ public sealed class ModuleCatalog
             // field is "Risk level", which made it look like a risk-level control with an
             // unexplained Refresh button bolted on. Each card now states its purpose, and
             // Refresh is "Search", which is what it does (queue item 19, owner 2026-09-29).
-            Version = "1.5.1",
+            Version = "1.5.2",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
@@ -1089,7 +1089,7 @@ public sealed class ModuleCatalog
             // detailLoading (docs/ClickGatingAudit-Plan.md Revision 1, tier 1 page 5). A search can
             // no longer be started - by click or by Enter - while a device action is queued, which
             // used to discard that action's on-screen verdict.
-            Version = "1.4.1",
+            Version = "1.4.2",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",
@@ -1229,7 +1229,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Administration,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.2.2",
+            Version = "1.2.3",
             MainPermission = new(
                 "Access",
                 "EventLog",

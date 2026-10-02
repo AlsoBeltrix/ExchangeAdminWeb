@@ -359,7 +359,6 @@
                                 {
                                     <tr>
                                         <td colspan="@DetailColspan">
-                                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
                                             <small>Applying to @user.UserPrincipalName...</small>
                                         </td>
                                     </tr>
@@ -385,7 +384,7 @@
                                         <td colspan="@DetailColspan" class="bg-light">
                                             @if (historyLoading)
                                             {
-                                                <span class="spinner-border spinner-border-sm me-2"></span> <small>Loading history...</small>
+                                                <small>Loading history...</small>
                                             }
                                             else if (historyError != null)
                                             {
@@ -740,9 +739,13 @@
         historyEntries = [];
         await Task.Yield();
 
+        using var activity = Progress.Begin(
+            "Risky Users", $"Loading risk history for {user.UserPrincipalName}", ActivitySize.Unknown);
+
         try
         {
             var entries = await RiskyUsersService.GetHistoryAsync(user.Id);
+            activity.Complete(true);
 
             if (generation != historyGeneration) return;
             historyEntries = [.. entries];
@@ -840,6 +843,12 @@
         // ticket pre-gates, which never reached it.
         var notifyAdmins = false;
         RiskyUserActionResult? result = null;
+
+        // Opened BEFORE the try so every refusal path inside it is still covered: a gate that
+        // refuses without throwing returns through the finally below, which completes this
+        // with the real outcome rather than leaving the frame showing work that stopped.
+        using var activity = Progress.Begin(
+            "Risky Users", $"{auditAction} for {upn}", ActivitySize.Unknown);
 
         try
         {
@@ -999,6 +1008,11 @@
         {
             actingUserId = null;
             actionTicket = "";
+
+            // The row outcome is the authority on what happened, including for refusals that
+            // never set `result`. Completing here rather than on the success path keeps the
+            // frame honest on every exit from this method.
+            activity.Complete(OutcomeFor(userId)?.Success ?? false, OutcomeFor(userId)?.Message);
 
             // Mandatory admin notification on every real attempt (Constitution, Notifications),
             // in finally and wrapped so a send failure cannot change the reported result (AC15).

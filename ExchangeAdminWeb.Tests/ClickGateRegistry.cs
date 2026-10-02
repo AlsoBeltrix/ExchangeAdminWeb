@@ -703,7 +703,7 @@ public static class ClickGateRegistry
     private static PageGateEntry NamedLocations => new()
     {
         Page = "NamedLocations.razor",
-        ExpectedLineCount = 547,
+        ExpectedLineCount = 570,
 
         Predicates =
         [
@@ -867,16 +867,17 @@ public static class ClickGateRegistry
                 + "front of, never substituted for; SaveLocation re-checks neither"),
         ],
 
-        SpinnerExpressions =
-        [
-            // Two spinners and neither condition is the predicate. The refresh spinner suppresses
-            // itself while a location is being edited, because a save or a delete ends by calling
-            // LoadLocations itself and the Save button is already showing one; collapsing either to
-            // IsBusy shows two at once, and adding isDownloadingCsv to them puts a spinner on the
-            // Refresh button during a CSV export.
-            "@if (isLoading && editingLocation == null)",
-            "@if (isOperating)",
-        ],
+        // SpinnerExpressions is EMPTY on purpose, and the emptiness is the record. This page had
+        // two: a refresh spinner that suppressed itself while a location was being edited, and an
+        // operate spinner on Save. Both were removed on 2026-10-02 once the load, the save and the
+        // delete all report to the global status frame, which draws them in one place with their
+        // elapsed time (owner ruling 2026-10-02, `.agents/decisions.md`).
+        //
+        // The suppression logic those conditions encoded is gone with them and must not come back:
+        // the frame shows one line per running activity, so the "two spinners at once" problem the
+        // old conditions existed to avoid cannot arise. Re-adding a spinner here means re-adding
+        // its condition, and means answering why this page needs to say what the frame says.
+        SpinnerExpressions = [],
 
         // Falsification 6 for this page, made executable. Two shapes, both real here.
         //
@@ -1891,7 +1892,7 @@ public static class ClickGateRegistry
     private static PageGateEntry IntuneDevices => new()
     {
         Page = "IntuneDevices.razor",
-        ExpectedLineCount = 1637,
+        ExpectedLineCount = 1648,
 
         // Kept as ActionsDisabled rather than renamed to IsBusy, which is what the four pages before
         // it call their predicate. The name was already on the page and is quoted by

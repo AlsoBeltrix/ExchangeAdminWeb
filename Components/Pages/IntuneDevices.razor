@@ -419,7 +419,7 @@
                                 {
                                     <tr>
                                         <td colspan="@DetailColspan">
-                                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                            @* Spinner removed; the bar names the device. *@
                                             <small>Acting on @DeviceLabel(device)...</small>
                                         </td>
                                     </tr>
@@ -482,7 +482,7 @@
                                         <td colspan="@DetailColspan" class="bg-light">
                                             @if (detailLoading)
                                             {
-                                                <span class="spinner-border spinner-border-sm me-2"></span> <small>Loading detail...</small>
+                                                <small>Loading detail...</small>
                                             }
                                             else if (detailError != null)
                                             {
@@ -853,9 +853,13 @@
 
         var target = $"{device.DeviceName} ({device.Id})";
 
+        using var activity = Progress.Begin(
+            "Intune Devices", $"Loading detail for {device.DeviceName}", ActivitySize.Unknown);
+
         try
         {
             detailDevice = await IntuneDeviceService.GetDeviceAsync(device.Id);
+            activity.Complete(true);
 
             SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress, "IntuneDevices_Detail", target, true));
         }
@@ -976,6 +980,12 @@
         confirmAction = null;
         deviceOutcomes.Remove(deviceId);
         await Task.Yield();
+
+        // Opened before the try so the refusals inside it are covered, and completed in the
+        // finally AFTER the admin notification rather than at the Graph call - the bar must not
+        // read Idle while an email is still in flight.
+        using var activity = Progress.Begin(
+            "Intune Devices", $"{auditAction} on {target}", ActivitySize.Unknown);
 
         // Set when an authorised servicer overrode a protected-principal refusal, and carried into
         // the SUCCESS audit's extra below and onto the screen.
@@ -1203,6 +1213,7 @@
         {
             actingDeviceId = null;
             actionTicket = "";
+            activity.Complete(OutcomeFor(deviceId)?.Success ?? false, OutcomeFor(deviceId)?.Message);
             // The panel's controls are retracted, but the outcome (including the one-time PIN
             // display) keeps its own copy, so this cannot erase what the operator still needs.
             ResetActionOptions();

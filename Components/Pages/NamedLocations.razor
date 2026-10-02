@@ -54,7 +54,7 @@
                     <div>
                         <button class="btn btn-outline-secondary btn-sm me-1" @onclick="DownloadCsvAsync" disabled="@(IsBusy || locations.Count == 0)">Download CSV</button>
                         <button class="btn btn-outline-primary btn-sm me-1" @onclick="LoadLocations" disabled="@IsBusy">
-                            @if (isLoading && editingLocation == null) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            @* No spinner: the load reports to the status bar. *@
                             Refresh
                         </button>
                         <button class="btn btn-primary btn-sm" @onclick="ShowCreateForm" disabled="@IsBusy">New Location</button>
@@ -199,7 +199,7 @@
                             </div>
                             <button class="btn btn-primary" @onclick="SaveLocation"
                                     disabled="@(IsBusy || string.IsNullOrWhiteSpace(formDisplayName) || string.IsNullOrWhiteSpace(formTicketNumber))">
-                                @if (isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                @* No spinner: the save reports to the status bar. *@
                                 @(editingLocation != null ? "Update" : "Create")
                             </button>
                         </div>
@@ -351,6 +351,18 @@
 
         await Task.Yield();
 
+        // Before the try, so refusals inside it are covered too, and completed in the finally
+        // AFTER the admin notification - not at the write - so the bar does not go idle while
+        // an email is still in flight.
+        //
+        // Completed from a LOCAL, never from operationResult: the banner dismiss control can
+        // null that field while this handler is suspended, which is the post-await live-read
+        // trap ClickGateRegistry records for this very page. Reading it here failed three
+        // ClickGate assertions before this was a local.
+        NamedLocationResult? completed = null;
+        using var activity = Progress.Begin(
+            "Named Locations", $"{action} {auditTarget}", ActivitySize.Unknown);
+
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -386,6 +398,7 @@
                     ? LocationService.CreateIpLocationAsync(name, values, trusted)
                     : LocationService.CreateCountryLocationAsync(name, values, includeUnknown)));
             operationResult = result;
+            completed = result;
 
             try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "NamedLocations", auditTarget, result.Success, ticket, result.Success ? null : result.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
@@ -411,6 +424,7 @@
         finally
         {
             isOperating = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
         }
     }
 
@@ -430,6 +444,13 @@
 
         await Task.Yield();
 
+        // Same placement, local and reasoning as SaveLocation: before the try so refusals are
+        // covered, completed in the finally after the notification, and from a LOCAL because
+        // the dismiss control can null operationResult mid-handler.
+        NamedLocationResult? completed = null;
+        using var activity = Progress.Begin(
+            "Named Locations", $"Deleting {target}", ActivitySize.Unknown);
+
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -443,6 +464,7 @@
 
             var result = await LocationService.DeleteAsync(loc.Id, loc.DisplayName);
             operationResult = result;
+            completed = result;
 
             try { Audit.LogModuleAction(currentUser, clientIpAddress, "NamedLocations_Delete", "NamedLocations", target, result.Success, ticket, result.Success ? null : result.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations delete"); }
@@ -468,6 +490,7 @@
         finally
         {
             isOperating = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
         }
     }
 
