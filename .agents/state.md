@@ -63,9 +63,34 @@ The exception:
 Cloud Password Reset defect** - slow SYNCHRONOUS work on the renderer thread - which grep
 cannot find by shape and which needs a read of each page's service calls.
 
-**THEN: migrate EVERY module's spinners to the status bar, Migration included.** 86
-`spinner-border` instances across 32 pages at the time of writing; count it fresh with
-`grep -rc "spinner-border" Components/Pages/*.razor` rather than trusting that number.
+**IN PROGRESS: migrate EVERY module's spinners to the status bar, Migration included.**
+Started 2026-10-02 at 86 `spinner-border` instances across 32 pages; **60 across 16 pages
+remain.** Count fresh with `grep -rc "spinner-border" Components/Pages/*.razor`.
+
+**DONE - the pre-authorization block, all 25 pages that had one.** Nothing replaces it, and
+that is a measured decision rather than a preference: `GroupAuthorizationHandler` is
+synchronous end to end (claims plus `IsInRole` on the local Windows token,
+`Task.CompletedTask` on every path, no network, no directory round trip), so the check
+finishes faster than a frame and a bar line flickering inside one render is noise. **Do not
+"fix" the absence by adding an activity there.** Guarded by
+`GlobalProgressWiringTests.NoPageDrawsItsOwnSpinnerWhileTheAuthorizationCheckRuns`.
+
+**The eleven-line comment technique held perfectly** - all 12 pinned pages came back at
+exactly their `ExpectedLineCount`, the registry needed no edit, and no ClickGate entry moved.
+**Verify it the same way: compare each pinned page's `wc -l` against its `ExpectedLineCount`
+BEFORE running any test.** A bulk `perl -0777` left a stray blank line after each block and
+that check caught it on nine pages in one pass.
+
+**Write the guard against the RULE, not the markup you replaced.** The block match keyed on
+the shared markup and missed `ServiceHealth.razor`, which wrapped the same spinner in its own
+`.sh-loading` div; the rule-shaped tripwire caught it on the first full run.
+
+**What is left, biggest first:** Migration 13, SelfServiceGroups 9, GroupManagement 6,
+MessageTrace 5, M365GroupManagement 5, ConferenceRooms 4, MailboxPermissions 3,
+CalendarPermissions 3, then RiskyUsers / NamedLocations / IntuneDevices / AdminEventLog at 2
+and five pages at 1. **These are the hard ones** - in-page spinners tied to real operations,
+so state.md's rule 2 applies: remove one ONLY after its operation reports, or the page is left
+with no feedback at all. Several of those operations do not report yet.
 
 **OWNER RULING, 2026-10-02, verbatim: *"all modules need their spinners migrated to the bar,
 including migration."*** That settles two things that were open:

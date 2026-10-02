@@ -15,11 +15,12 @@
 
 @if (!authChecked)
 {
-    <div class="sh-loading">
-        <div class="spinner-border text-primary" role="status">
-            <span class="visually-hidden">Checking authorization...</span>
-        </div>
-    </div>
+    @* NO SPINNER. No module draws its own progress (owner ruling 2026-10-02,
+       `.agents/decisions.md`), and nothing replaces this one: GroupAuthorizationHandler
+       is synchronous end to end, so the check finishes faster than a frame. The GUARD
+       stays - it stops the page rendering before the check has passed, which is refusal,
+       not progress. This page wrapped its spinner in .sh-loading rather than the shared
+       markup, which is why the sweep's block match missed it and the guard test did not. *@
     return;
 }
 

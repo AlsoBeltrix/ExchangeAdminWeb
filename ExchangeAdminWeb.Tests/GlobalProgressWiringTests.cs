@@ -475,6 +475,30 @@ public class GlobalProgressWiringTests
     }
 
     [Fact]
+    public void NoPageDrawsItsOwnSpinnerWhileTheAuthorizationCheckRuns()
+    {
+        var offenders = new List<string>();
+
+        foreach (var file in Directory.GetFiles(Path.Combine(RepoRoot(), "Components", "Pages"), "*.razor"))
+        {
+            var source = StripComments(File.ReadAllText(file));
+
+            // 24 pages carried an identical eleven-line block here: a centred spinner reading
+            // "Checking authorization...". Owner ruling 2026-10-02 - no module draws its own
+            // progress - and nothing replaces these, because GroupAuthorizationHandler is
+            // synchronous end to end and the check finishes faster than a frame. The guard
+            // itself stays; it is refusal, not progress.
+            var guard = Regex.Match(source, @"@if \(!authChecked\)\s*\{(.*?)\n\s*return;", RegexOptions.Singleline);
+            if (guard.Success && guard.Groups[1].Value.Contains("spinner-border", StringComparison.Ordinal))
+                offenders.Add(Path.GetFileName(file));
+        }
+
+        Assert.True(offenders.Count == 0,
+            "The authorization guard must render nothing - the status bar is the only place "
+            + "progress is drawn:\n" + string.Join("\n", offenders));
+    }
+
+    [Fact]
     public void CloudPasswordResetReportsItsDirectoryLookupInsteadOfFinishingBeforeIt()
     {
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "CloudPasswordReset.razor")));

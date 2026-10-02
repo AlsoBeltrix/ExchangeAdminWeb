@@ -161,7 +161,7 @@ public class ModuleCatalogTests
         // not reachable, which is what makes landing it before the live reconnaissance safe.
         Assert.False(module.EnabledByDefault);
         Assert.False(module.IsSystemModule);
-        Assert.Equal("1.1.0", module.Version);
+        Assert.Equal("1.1.1", module.Version);
     }
 
     [Fact]
@@ -221,7 +221,7 @@ public class ModuleCatalogTests
         // ships configurable but not reachable, so landing it before the live check is safe.
         Assert.False(module.EnabledByDefault);
         Assert.False(module.IsSystemModule);
-        Assert.Equal("1.0.1", module.Version);
+        Assert.Equal("1.0.2", module.Version);
     }
 
     [Fact]
@@ -272,7 +272,7 @@ public class ModuleCatalogTests
         // Versioning; .agents/decisions.md 2026-07-21). This pins the rule where it is easiest to
         // break: the next person to touch this module bumps THIS line, not the csproj.
         var module = _catalog.GetById("TrueLastLogon")!;
-        Assert.Equal("1.0.1", module.Version);
+        Assert.Equal("1.0.2", module.Version);
     }
 
     [Fact]

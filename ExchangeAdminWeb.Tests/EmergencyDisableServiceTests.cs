@@ -111,7 +111,7 @@ public class EmergencyDisableServiceTests : IDisposable
         // override recorded in the audit event (not only the operation trace - see pps-3).
         // 1.1.0 was protection resolving through Exchange (docs/ProtectedPrincipalGapFix-Plan.md
         // GAP B).
-        Assert.Equal("1.2.0", module.Version);
+        Assert.Equal("1.2.1", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");

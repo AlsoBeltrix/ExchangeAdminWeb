@@ -509,7 +509,7 @@ public sealed class ModuleCatalog
             // 1.1.0: unblock now gates the TARGET through the protected-principal check. The module
             // previously re-checked only the operator, so a protected principal could be unblocked.
             // 1.4.0: CSV export of the blocked-sender list (docs/ModuleCsvExport-Plan.md).
-            Version = "1.4.1",
+            Version = "1.4.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -564,7 +564,7 @@ public sealed class ModuleCatalog
             // of it for the first time - the protection check owned no in-flight flag at all - and
             // Load Members no longer reads the selection back after its await, which used to tear
             // the circuit down if the operator closed the panel or picked another group mid-load.
-            Version = "2.11.0",
+            Version = "2.11.1",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -589,7 +589,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.DirectoryAndGroups,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.4.0",
+            Version = "1.4.1",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
@@ -641,7 +641,7 @@ public sealed class ModuleCatalog
             //   interleave and leave the list holding neither file; each run's read-back
             //   reports that rather than claiming success. Transient audit faults retry per
             //   operation, never per run.
-            Version = "1.3.0",
+            Version = "1.3.1",
             MainPermission = new(
                 "Access",
                 "Comms10k",
@@ -703,7 +703,7 @@ public sealed class ModuleCatalog
             // "Back to groups" had nulled it (a throw inside a catch, which took the circuit
             // down), and the bulk-add paste was parsed after a yield from a box still accepting
             // keystrokes.
-            Version = "1.11.0",
+            Version = "1.11.1",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",
@@ -726,7 +726,7 @@ public sealed class ModuleCatalog
             // 1.1.0: protection now resolves through Exchange. The AD-only lookup reported every
             // cloud-only user as "no AD object" and skipped the check, which for a Graph module is
             // the normal case - so protection was close to inert here.
-            Version = "1.2.0",
+            Version = "1.2.1",
             MainPermission = new(
                 "Access",
                 "MfaReset",
@@ -746,7 +746,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.0.3",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",
@@ -772,7 +772,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.0",
+            Version = "1.2.1",
             MainPermission = new(
                 "Access",
                 "AccountLockoutRemediation",
@@ -802,7 +802,7 @@ public sealed class ModuleCatalog
             // 2.6.0: click-gating conversion (tier 1, page 8 of 9). Every Room Finder and Room Type
             // control now names the IsBusy predicate; the Bulk Jobs panel is a second scope with no
             // busy state, and its Remove control acts on the rendered row instead of a live lookup.
-            Version = "2.6.0",
+            Version = "2.6.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -840,7 +840,7 @@ public sealed class ModuleCatalog
             // handlers snapshot the form and their result so a mid-flight dismiss or keystroke can
             // no longer retarget a Conditional Access write, blank its ticket, or report a
             // successful write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 2).
-            Version = "1.2.0",
+            Version = "1.2.1",
             MainPermission = new(
                 "Access",
                 "NamedLocations",
@@ -860,7 +860,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.0",
+            Version = "1.2.1",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
@@ -895,7 +895,7 @@ public sealed class ModuleCatalog
             // on every DC with "Cannot find an object with identity" - the module's first live
             // run. Now an RFC 4515 filter matching either attribute, escaped in C# so the
             // escaping is testable; no match and more than one match both fail closed.
-            Version = "1.0.1",
+            Version = "1.0.2",
             // One permission, no granular tier: the module reads and mutates nothing anywhere.
             // Classified NON-ALERTING under the Constitution's notification rule - it exposes
             // logon timestamps already visible in AD and Entra, and it is an account-hygiene
@@ -932,7 +932,7 @@ public sealed class ModuleCatalog
             // field is "Risk level", which made it look like a risk-level control with an
             // unexplained Refresh button bolted on. Each card now states its purpose, and
             // Refresh is "Search", which is what it does (queue item 19, owner 2026-09-29).
-            Version = "1.5.0",
+            Version = "1.5.1",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
@@ -961,7 +961,7 @@ public sealed class ModuleCatalog
             // 1.4.0: every control on the page is gated on one in-flight predicate, and both write
             // handlers snapshot their inputs and their result so a mid-flight dismiss can no longer
             // report a successful AD write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 1).
-            Version = "1.4.0",
+            Version = "1.4.1",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",
@@ -986,7 +986,7 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.1.0: mandatory ticket before any search, written on the search and
             // reveal audit events; ValidateTickets per-module validation switch.
-            Version = "1.2.0",
+            Version = "1.2.1",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new(
                 "Access",
@@ -1050,7 +1050,7 @@ public sealed class ModuleCatalog
             // at all (docs/DefenderEndpointDevices-Plan.md Revision 3, R1(g)); the two hardcoded
             // filters are replaced by the machine record's real fields, and the default ceiling
             // rises from 20000 to 100000.
-            Version = "1.1.0",
+            Version = "1.1.1",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",
@@ -1089,7 +1089,7 @@ public sealed class ModuleCatalog
             // detailLoading (docs/ClickGatingAudit-Plan.md Revision 1, tier 1 page 5). A search can
             // no longer be started - by click or by Enter - while a device action is queued, which
             // used to discard that action's on-screen verdict.
-            Version = "1.4.0",
+            Version = "1.4.1",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",
@@ -1133,7 +1133,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Infrastructure,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.3.2",
+            Version = "1.3.3",
             // One permission, no granular tier: the module reads and renders, and mutates
             // nothing (docs/ServiceHealth-Plan.md).
             MainPermission = new(
@@ -1157,7 +1157,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.1.1",
+            Version = "1.1.2",
             MainPermission = new(
                 "Access",
                 "LicensingUpdates",
@@ -1179,7 +1179,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.DirectoryAndGroups,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.4.0",
+            Version = "1.4.1",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",

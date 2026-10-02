@@ -19,13 +19,12 @@
 
 @if (!authChecked)
 {
-    <div class="container-fluid">
-        <div class="text-center py-5">
-            <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Checking authorization...</span>
-            </div>
-        </div>
-    </div>
+    @* NO SPINNER HERE. The authorization check reports to the status bar like every other
+       operation (owner ruling 2026-10-02, `.agents/decisions.md`) - no module draws its own
+       progress, and this block was the duplication the sweep exists to remove.
+
+       The GUARD stays and must stay: it is what stops the page rendering before the check has
+       passed. That is refusal, not progress, and the bar has nothing to say about it. *@
     return;
 }
 
@@ -143,6 +142,12 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // NOT reported to the status bar, and that is deliberate. GroupAuthorizationHandler is
+        // synchronous end to end - claims plus IsInRole against the local Windows token,
+        // Task.CompletedTask on every path, no network and no directory round trip - so this
+        // completes faster than a frame. A bar line that appears and vanishes inside one
+        // render is noise, and noise in the one surface the operator is being taught to trust
+        // is worse than nothing there at all.
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         var user = authState.User;
         currentUser = user.Identity?.Name ?? "Unknown";
