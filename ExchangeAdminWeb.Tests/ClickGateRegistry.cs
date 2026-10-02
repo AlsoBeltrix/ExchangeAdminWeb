@@ -2878,7 +2878,7 @@ public static class ClickGateRegistry
     private static PageGateEntry M365GroupManagement => new()
     {
         Page = "M365GroupManagement.razor",
-        ExpectedLineCount = 723,
+        ExpectedLineCount = 747,
 
         Predicates =
         [
@@ -3228,17 +3228,15 @@ public static class ClickGateRegistry
                 + "whole parenthesised clause is registered rather than its inner test"),
         ],
 
-        SpinnerExpressions =
-        [
-            // Four, and not one of them is the predicate. Collapsing any to IsBusy shows a spinner
-            // on a control that is not the one working: the Search button would spin during a
-            // member write, the row spinner would appear on every row at once rather than on the
-            // one being loaded, and both Add buttons and Save would spin during a search.
-            "@if (isSearching)",
-            "@if (isLoadingDetails && selectedGroup?.Id == g.Id)",
-            "@if (isMemberOp)",
-            "@if (isOperating)",
-        ],
+        // SpinnerExpressions is EMPTY on purpose, and the emptiness is the record. There were
+        // four, one per distinct operation. Removed 2026-10-02 once the search, the detail load,
+        // the group write and the member write all report to the global status frame (owner
+        // ruling, `.agents/decisions.md`).
+        //
+        // The reason they were four and never one is now the frame's job: it names the operation
+        // and its target, so a member write can no longer look like a search. All four flags STAY
+        // as click gates.
+        SpinnerExpressions = [],
 
         // Thirteen. Ten entry captures and three publishes, and on this page the captures matter
         // more than the gate: the ticket defect falsification 6 names, the editingGroup read that

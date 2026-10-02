@@ -58,7 +58,7 @@
                             <input type="text" class="form-control" placeholder="Search by display name..." @bind="searchTerm"
                                    @bind:event="oninput" @onkeydown="HandleSearchKeyDown" disabled="@IsBusy" />
                             <button class="btn btn-outline-primary" @onclick="SearchGroups" disabled="@(IsBusy || string.IsNullOrWhiteSpace(searchTerm))">
-                                @if (isSearching) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                @* No spinner: the search reports to the status bar. *@
                                 Search
                             </button>
                         </div>
@@ -95,7 +95,7 @@
                                             <td><small class="text-muted">@FormatDate(g.CreatedDateTime)</small></td>
                                             <td>
                                                 <button class="btn btn-outline-secondary btn-sm" @onclick="() => SelectGroup(g)" disabled="@IsBusy">
-                                                    @if (isLoadingDetails && selectedGroup?.Id == g.Id) { <span class="spinner-border spinner-border-sm"></span> }
+                                                    @* No spinner: the detail load reports to the bar. *@
                                                     else { <span>View</span> }
                                                 </button>
                                             </td>
@@ -123,7 +123,7 @@
                                 <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addMemberIdentity" @bind:event="oninput" disabled="@IsBusy" />
                                 <button class="btn btn-outline-primary" @onclick="AddMember"
                                         disabled="@(IsBusy || string.IsNullOrWhiteSpace(addMemberIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
-                                    @if (isMemberOp) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                    @* No spinner: the member write reports to the bar. *@
                                     Add
                                 </button>
                             </div>
@@ -165,7 +165,7 @@
                                 <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addOwnerIdentity" @bind:event="oninput" disabled="@IsBusy" />
                                 <button class="btn btn-outline-primary" @onclick="AddOwner"
                                         disabled="@(IsBusy || string.IsNullOrWhiteSpace(addOwnerIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
-                                    @if (isMemberOp) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                    @* No spinner: the member write reports to the bar. *@
                                     Add
                                 </button>
                             </div>
@@ -294,7 +294,7 @@
                             </div>
                             <button class="btn btn-primary" @onclick="SaveGroup"
                                     disabled="@(IsBusy || string.IsNullOrWhiteSpace(formDisplayName) || string.IsNullOrWhiteSpace(formTicketNumber) || (editingGroup == null && string.IsNullOrWhiteSpace(formMailNickname)))">
-                                @if (isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                @* No spinner: the group write reports to the bar. *@
                                 @(editingGroup != null ? "Update" : "Create")
                             </button>
                         </div>
@@ -428,6 +428,9 @@
         owners = null;
         await Task.Yield();
 
+        using var detailActivity = Progress.Begin(
+            "M365 Group Management", $"Loading {group.DisplayName}", ActivitySize.Unknown);
+
         try
         {
             var details = await GroupService.GetGroupDetailsAsync(group.Id);
@@ -445,6 +448,7 @@
         finally
         {
             isLoadingDetails = false;
+            detailActivity.Complete(members != null || owners != null);
         }
     }
 
@@ -502,6 +506,12 @@
         operationResult = null;
         await Task.Yield();
 
+        // Completed in the finally from a LOCAL, never from operationResult: the dismiss
+        // control at line 44 can null that field while this handler is suspended.
+        M365GroupResult? completed = null;
+        using var activity = Progress.Begin(
+            "M365 Group Management", $"{action} {target}", ActivitySize.Unknown);
+
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -521,6 +531,7 @@
                 ? GroupService.UpdateGroupAsync(existing.Id, name, description, visibility)
                 : GroupService.CreateGroupAsync(name, nickname, description, visibility));
             operationResult = result;
+            completed = result;
 
             try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, result.Success, ticket, result.Success ? null : result.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
@@ -547,6 +558,7 @@
         finally
         {
             isOperating = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
         }
     }
 
@@ -564,6 +576,10 @@
         confirmDelete = null;
         await Task.Yield();
 
+        M365GroupResult? completed = null;
+        using var activity = Progress.Begin(
+            "M365 Group Management", $"Deleting {target}", ActivitySize.Unknown);
+
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -580,6 +596,7 @@
             // is gone as still there, and skip the confirming refresh.
             var result = await GroupService.DeleteGroupAsync(group.Id, group.DisplayName);
             operationResult = result;
+            completed = result;
 
             try { Audit.LogModuleAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", "M365GroupManagement", target, result.Success, ticket, result.Success ? null : result.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365 group delete"); }
@@ -609,6 +626,7 @@
         finally
         {
             isOperating = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
         }
     }
 
@@ -667,6 +685,10 @@
         operationResult = null;
         await Task.Yield();
 
+        M365GroupResult? completed = null;
+        using var activity = Progress.Begin(
+            "M365 Group Management", $"Updating membership: {target}", ActivitySize.Unknown);
+
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -681,6 +703,7 @@
 
             var result = await op(group, authState.User);
             operationResult = result;
+            completed = result;
 
             // A serviced override succeeded, so it cannot ride errorDetail - that field is
             // written as null on success and the record of who permitted it would vanish.
@@ -711,6 +734,7 @@
         finally
         {
             isMemberOp = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
         }
     }
 
