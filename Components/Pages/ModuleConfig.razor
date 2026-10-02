@@ -17,6 +17,7 @@
 @inject ADAttributeEditorService AttrEditorService
 @inject ADOrganizationalUnitService OUService
 @inject ILogger<ModuleConfig> Logger
+@inject IActivityProgress Progress
 
 <PageTitle>Module Config — @(module?.DisplayName ?? ModuleId)</PageTitle>
 
@@ -390,10 +391,7 @@
                                     {
                                         <button class="btn btn-outline-secondary" type="button"
                                                 @onclick="ToggleOUBrowser" disabled="@ouLoading">
-                                            @if (ouLoading)
-                                            {
-                                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                                            }
+                                            @* No spinner: the OU load reports to the status bar. *@
                                             @(showOUBrowser ? "Close" : "Browse OUs")
                                         </button>
                                     }
@@ -1694,10 +1692,14 @@
         ouLoading = true;
         await Task.Yield();
 
+        using var activity = Progress.Begin(
+            "Module Config", "Loading organizational units", ActivitySize.Unknown);
+
         try
         {
             ouAllEntries = await Task.Run(() => OUService.GetOrganizationalUnits());
             ouBrowseAvailable = OUService.IsAvailable;
+            activity.Complete(ouBrowseAvailable);
 
             if (!ouBrowseAvailable)
             {

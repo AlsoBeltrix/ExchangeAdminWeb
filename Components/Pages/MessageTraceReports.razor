@@ -10,6 +10,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject IJSRuntime JS
+@inject IActivityProgress Progress
 
 <PageTitle>Downloadable Reports</PageTitle>
 
@@ -91,10 +92,7 @@
                                 <button type="button" class="btn btn-sm btn-outline-primary"
                                         disabled="@(busy || !item.CanDownload || string.IsNullOrWhiteSpace(ticketNumber))"
                                         @onclick="() => Download(item.JobId)">
-                                    @if (busy && busyJobId == item.JobId)
-                                    {
-                                        <span class="spinner-border spinner-border-sm me-1"></span>
-                                    }
+                                    @* No spinner: the download reports to the status bar. *@
                                     Download
                                 </button>
                             </td>
@@ -151,10 +149,14 @@
         var ticket = ticketNumber.Trim();
         try
         {
+            using var activity = Progress.Begin(
+                "Message Trace Reports", $"Preparing export {jobId}", ActivitySize.Unknown);
+
             // The listing owns the whole decision (ticket presence, re-resolution at click time, and
             // the read), so a row rendered before the retention task ran cannot download a file that
             // is already gone, and a blank ticket never reaches the filesystem.
             var result = await Exports.TryDownloadAsync(jobId, ticket);
+            activity.Complete(result.Succeeded, result.Error);
 
             if (result.Succeeded)
             {

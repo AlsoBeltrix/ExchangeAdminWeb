@@ -10,6 +10,7 @@
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
+@inject IActivityProgress Progress
 
 <PageTitle>Recipient Lookup</PageTitle>
 
@@ -30,10 +31,9 @@
                 <div class="col-md-2 d-flex align-items-end">
                     <button class="btn btn-primary" @onclick="RunLookup"
                             disabled="@(string.IsNullOrWhiteSpace(emailAddress) || isLoading)">
-                        @if (isLoading)
-                        {
-                            <span class="spinner-border spinner-border-sm me-2"></span>
-                        }
+                        @* No spinner: the lookup reports to the status bar (owner ruling
+                           2026-10-02). isLoading still gates the button - that is the click
+                           gate, not progress. *@
                         Lookup
                     </button>
                 </div>
@@ -155,7 +155,11 @@
 
         try
         {
+            using var activity = Progress.Begin(
+                "Recipient Lookup", $"Looking up {emailAddress.Trim()}", ActivitySize.Unknown);
+
             result = await LookupService.GetRecipientInfoAsync(emailAddress.Trim());
+            activity.Complete(result.Error == null, result.Error);
             Audit.LogLookupAction(currentUser, clientIpAddress, "RecipientLookup", emailAddress.Trim(), result.Error == null, result.Error);
         }
         catch (Exception ex)

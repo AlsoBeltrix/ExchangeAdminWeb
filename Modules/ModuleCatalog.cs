@@ -440,7 +440,7 @@ public sealed class ModuleCatalog
             // analysis versus trace (owner ruling 2026-09-22). They now head as Header Analysis
             // and Trace Search, with the alias still beside each - it is the storage key and the
             // name in the denial log.
-            Version = "1.5.2",
+            Version = "1.5.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -468,7 +468,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.0.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -772,7 +772,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.1",
+            Version = "1.2.2",
             MainPermission = new(
                 "Access",
                 "AccountLockoutRemediation",
