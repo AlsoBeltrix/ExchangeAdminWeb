@@ -52,12 +52,8 @@ Scan was `grep -n -A 6 "\.Complete("` over `Components/Pages/*.razor` filtered f
 calls and awaits. Most matches are benign - a flag reset or an audit write after `Complete`.
 The exception:
 
-- **`Components/Pages/ConferenceRooms.razor:979-982`.** `activity.Complete(r.Success, ...)`
-  fires, then `AuditFinderAction(...)` and `await NotifyRoomAdminAsync(...)` run - an SMTP
-  send. The frame reads Idle while the notification is still in flight, and a hanging mail
-  host leaves the operator on a blocked page with no readout. Same class as the Cloud
-  Password Reset defect, smaller blast radius. NOT FIXED - its own finding, its own commit,
-  and it bumps the Conference Rooms module version.
+- **FIXED 2026-10-02.** `ConferenceRooms` completed its activity before `NotifyRoomAdminAsync`;
+  it now completes after the notification. Module `2.6.1` -> `2.6.2`.
 
 **The audit only covers `Complete` called too early. It does NOT cover the other half of the
 Cloud Password Reset defect** - slow SYNCHRONOUS work on the renderer thread - which grep

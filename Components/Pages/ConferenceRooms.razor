@@ -124,7 +124,7 @@
                         </div>
                         <button class="btn btn-primary" @onclick="SetupSingleRoom"
                                 disabled="@(IsBusy || string.IsNullOrWhiteSpace(roomEmail) || string.IsNullOrWhiteSpace(ticketNumber))">
-                            @if (isLoading && !isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            @* No spinner: the single-room write reports to the bar. *@
                             Setup Room
                         </button>
                     </div>
@@ -157,7 +157,7 @@
                             }
                             <button class="btn btn-success" @onclick="ApplyFinderCsv"
                                     disabled="@(IsBusy || string.IsNullOrWhiteSpace(csvFinderTicket))">
-                                @if (isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                @* No spinner: the CSV apply reports to the bar. *@
                                 Apply Changes
                             </button>
                         }
@@ -311,7 +311,7 @@
                         </div>
                         <button class="btn btn-primary" @onclick="SetSingleRoomType"
                                 disabled="@(IsBusy || string.IsNullOrWhiteSpace(typeRoomEmail) || string.IsNullOrWhiteSpace(selectedRoomType) || string.IsNullOrWhiteSpace(typeTicketNumber))">
-                            @if (isLoading && !isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            @* No spinner: the single-room write reports to the bar. *@
                             Set Type
                         </button>
                     </div>
@@ -338,7 +338,7 @@
                             </div>
                             <button class="btn btn-success" @onclick="ApplyTypeCsv"
                                     disabled="@(IsBusy || string.IsNullOrWhiteSpace(csvTypeTicket))">
-                                @if (isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                @* No spinner: the CSV apply reports to the bar. *@
                                 Apply Changes
                             </button>
                         }
@@ -976,10 +976,16 @@
                         country, stateName, tz);
 
                     op.Complete(r.Success, r.Message);
-                    activity.Complete(r.Success, r.Message);
 
                     AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced);
                     await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message);
+
+                    // Completed AFTER the notification, not before it. Completing next to
+                    // op.Complete put the bar back to Idle while an admin email was still in
+                    // flight, so a hanging mail host left the operator on a page that looked
+                    // finished and was not. Recorded as a finding in `.agents/state.md` before
+                    // this fix; same class as gps-1.
+                    activity.Complete(r.Success, r.Message);
                     return r;
                 });
         }
@@ -1134,6 +1140,12 @@
         result = null;
         await Task.Yield();
 
+        // Opened before the try so the ticket and preview refusals inside it are covered, and
+        // sized to the preview the operator approved rather than to the raw file.
+        using var csvActivity = Progress.Begin(
+            "Conference Rooms", "Applying the room CSV",
+            previewRows is { Count: > 0 } ? ActivitySize.Items(previewRows.Count) : ActivitySize.Unknown);
+
         try
         {
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
@@ -1180,7 +1192,12 @@
             result = new RoomOperationResult { Success = false, Message = ex.Message };
             AuditFinderAction("(bulk)", false, ticket, ex.Message);
         }
-        finally { isLoading = false; isCsvProcessing = false; }
+        finally
+        {
+            isLoading = false;
+            isCsvProcessing = false;
+            csvActivity.Complete(result?.Success ?? false, result?.Message);
+        }
     }
 
     // =========================================================================
@@ -1377,6 +1394,12 @@
         result = null;
         await Task.Yield();
 
+        // Opened before the try so the ticket and preview refusals inside it are covered, and
+        // sized to the preview the operator approved rather than to the raw file.
+        using var csvActivity = Progress.Begin(
+            "Conference Rooms", "Applying the room CSV",
+            previewRows is { Count: > 0 } ? ActivitySize.Items(previewRows.Count) : ActivitySize.Unknown);
+
         try
         {
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
@@ -1422,7 +1445,12 @@
             result = new RoomOperationResult { Success = false, Message = ex.Message };
             AuditTypeAction("(bulk)", false, ticket, ex.Message);
         }
-        finally { isLoading = false; isCsvProcessing = false; }
+        finally
+        {
+            isLoading = false;
+            isCsvProcessing = false;
+            csvActivity.Complete(result?.Success ?? false, result?.Message);
+        }
     }
 
     // Builds a BulkJob from the captured submission context and enqueues it. Returns the job id.

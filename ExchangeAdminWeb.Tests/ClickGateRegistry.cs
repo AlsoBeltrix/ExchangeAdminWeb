@@ -3487,7 +3487,7 @@ public static class ClickGateRegistry
     private static PageGateEntry ConferenceRooms => new()
     {
         Page = "ConferenceRooms.razor",
-        ExpectedLineCount = 1548,
+        ExpectedLineCount = 1576,
 
         Predicates =
         [
@@ -3882,18 +3882,17 @@ public static class ClickGateRegistry
                 + "shape as 158"),
         ],
 
-        SpinnerExpressions =
-        [
-            // Two distinct conditions, each written twice (127 and 314; 160 and 341), one pair per
-            // tab. Neither is the predicate and neither may be collapsed into it: the single-room
-            // spinner suppresses itself during a CSV apply because the Apply button beside it is
-            // already showing one, and the CSV spinner is on isCsvProcessing alone so a single-room
-            // setup does not put a spinner on Apply Changes. Containment cannot tell the two copies
-            // apart, so deleting exactly one of a pair passes this - the line numbers here are the
-            // only record that there are two of each.
-            "@if (isLoading && !isCsvProcessing)",
-            "@if (isCsvProcessing)",
-        ],
+        // SpinnerExpressions is EMPTY on purpose, and the emptiness is the record. There were
+        // four: two conditions each written twice, one pair per tab. Removed 2026-10-02 once the
+        // single-room write and both CSV applies report to the global status frame (owner ruling,
+        // `.agents/decisions.md`).
+        //
+        // The mutual suppression those conditions encoded is gone with them and must not return:
+        // the single-room spinner hid itself during a CSV apply, and the CSV spinner keyed on
+        // isCsvProcessing alone, purely so the two could not appear together. The frame shows one
+        // line per running activity, so that problem cannot arise. isLoading and isCsvProcessing
+        // both STAY as click gates.
+        SpinnerExpressions = [],
 
         // Twenty obligations. Falsification 6 for this page, and the larger half of the fix: the
         // gate narrows these windows and only the locals close them. Five more exist in the page

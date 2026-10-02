@@ -802,7 +802,7 @@ public sealed class ModuleCatalog
             // 2.6.0: click-gating conversion (tier 1, page 8 of 9). Every Room Finder and Room Type
             // control now names the IsBusy predicate; the Bulk Jobs panel is a second scope with no
             // busy state, and its Remove control acts on the rendered row instead of a live lookup.
-            Version = "2.6.1",
+            Version = "2.6.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
