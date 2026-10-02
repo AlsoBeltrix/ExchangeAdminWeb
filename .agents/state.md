@@ -45,9 +45,23 @@ so making the lookup work is what exposed it.** Guarded by
 `GlobalProgressWiringTests.CloudPasswordResetReportsItsDirectoryLookupInsteadOfFinishingBeforeIt`.
 
 **STILL OPEN from that fix: `ExecuteResetAsync` on the same page reports NOTHING** - it has no
-activity at all, and it does the PATCH plus the email send. **And the same shape - `Complete`
-called before the slow part, or slow sync work on the renderer thread - has NOT been audited on
-the other 23 adopted pages.** Do that before trusting any of their lines.
+activity at all, and it does the PATCH plus the email send.
+
+**Audit of the other 23 adopted pages for the same shape, done 2026-10-02, one real hit.**
+Scan was `grep -n -A 6 "\.Complete("` over `Components/Pages/*.razor` filtered for service
+calls and awaits. Most matches are benign - a flag reset or an audit write after `Complete`.
+The exception:
+
+- **`Components/Pages/ConferenceRooms.razor:979-982`.** `activity.Complete(r.Success, ...)`
+  fires, then `AuditFinderAction(...)` and `await NotifyRoomAdminAsync(...)` run - an SMTP
+  send. The frame reads Idle while the notification is still in flight, and a hanging mail
+  host leaves the operator on a blocked page with no readout. Same class as the Cloud
+  Password Reset defect, smaller blast radius. NOT FIXED - its own finding, its own commit,
+  and it bumps the Conference Rooms module version.
+
+**The audit only covers `Complete` called too early. It does NOT cover the other half of the
+Cloud Password Reset defect** - slow SYNCHRONOUS work on the renderer thread - which grep
+cannot find by shape and which needs a read of each page's service calls.
 
 **THEN: migrate EVERY module's spinners to the status bar, Migration included.** 86
 `spinner-border` instances across 32 pages at the time of writing; count it fresh with
