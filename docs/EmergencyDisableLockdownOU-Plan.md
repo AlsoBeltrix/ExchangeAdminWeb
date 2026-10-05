@@ -5,10 +5,8 @@ Grounding and the owner's rulings of 2026-10-05 are recorded in `.agents/state.m
 "Queue item 18"; this plan is the durable version of that work and supersedes the state
 entry's design notes once approved.
 
-**Revision 1, 2026-10-05:** the stamp target changed from `description` to `info` (the ADUC
-**Notes** box on the Telephones tab) by owner ruling. The queue text's "or other applicable
-attribute that can be seen in ADUC" permits it, and `info` is what the source script already
-writes. Nothing else in this plan changed.
+**Revision 1, 2026-10-05:** stamp target is `info` (ADUC Notes), not `description`. Owner
+ruling. Nothing else changed.
 
 ---
 
@@ -82,12 +80,8 @@ Four of its decisions are adopted deliberately:
 - Already in the destination OU is a skip, not a failure.
 - Bind the post-move attribute write by **ObjectGUID, not DN** - the DN changed when the
   object moved. This is the single most likely implementation bug in the whole change.
-- **Stamp the `info` attribute, read-append-write, exactly as the script's `-StampInfo` branch
-  does** (`Set-AccountSecurityHold.ps1:193-201`). Owner ruling 2026-10-05, superseding the
-  earlier reading of the queue text. The queue says "description **or other applicable
-  attribute that can be seen in ADUC**"; `info` is that attribute, and the script already
-  demonstrates the write. What is NOT adopted is the switch being off by default - here the
-  stamp always accompanies a move.
+- Stamp `info` read-append-write, as `Set-AccountSecurityHold.ps1:193-201` does. Not adopted:
+  the switch being off by default - here the stamp always accompanies a move.
 
 Its `-StampInfo` discretion warning does **not** carry over: it argues a visible stamp leaks a
 discreet hold, but the move itself relocates the account into an OU named for lockdown, so the
@@ -150,14 +144,10 @@ an honest record of two events rather than noise.
 
 Two concrete consequences:
 
-- **One stamp per line.** ADUC renders Notes as a multi-line box, so an existing value is
-  separated from the new stamp with a CRLF, matching `Set-AccountSecurityHold.ps1:200`. An
-  empty existing value is written with no leading newline.
-- **1024-character ceiling.** AD's `info` upper range is 1024, the same as `description`.
-  If appending would exceed it, nothing is written and the stamp step reports `FAILED` with
-  the reason. It does not truncate silently, and the origin survives in the snapshot and the
-  audit either way. **Verify the 1024 figure against the live schema during S1** rather than
-  trusting it from this plan.
+- **CRLF separator**, matching `Set-AccountSecurityHold.ps1:200`. Empty existing value gets no
+  leading newline.
+- **1024-character ceiling** (`info` rangeUpper; verify against the live schema in S1). Over
+  it, nothing is written and the step reports `FAILED`. Never truncate silently.
 
 Stamp form (illustrative; no code may depend on it):
 `[EMERGENCY DISABLE 2026-10-05] previous OU: OU=Staff,DC=example,DC=test`
@@ -309,8 +299,7 @@ Nothing here can be proven by the test suite; it needs a dev deploy and a dispos
   is permission-restricted (it refers to a companion `Set-SecurityHoldOUPermissions.ps1` that
   is not available). Whether the move is self-disclosing to ordinary readers therefore cannot
   be confirmed, and no part of this design rests on either answer.
-- **Nothing here is undone by the app.** Re-enabling, moving the account back and clearing the
-  stamp are all manual. The stamp is the one most easily forgotten.
+- Nothing here is undone by the app: re-enable, move back and clear the stamp are all manual.
 
 ## Owner gate
 
