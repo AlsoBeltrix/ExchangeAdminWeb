@@ -1,9 +1,9 @@
 # edl-1: A declined lockdown renders as a red failure row
 
 **Severity**: MEDIUM - a routine, authorised operator choice is presented as an error on a security screen, and S1 ships that row before any choice exists
-**Status**: In progress
+**Status**: Verified
 **Branch**: - (direct to main)
-**Commit**: <this commit>
+**Commit**: 9b23e7a
 
 ## Evidence
 
@@ -75,6 +75,25 @@ churn. Recorded rather than silently accepted.
 Change review of `1bbbb73..1313fb4`, finding 1 of 2.
 Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard
 
+### Verdict round, `0870e9e..9b23e7a`, 2026-10-05
+
+**SOUND / accepted.**
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard
+Harness: codex-cli 0.159.0. No escalation triggers matched (T1: no sensitive path in
+the diff; severity MEDIUM, so no T2).
+Raw output: `.agents/review/edl-1.result.json`; prompt and stream log alongside.
+
+It traced the status value through `StepStatusFor` -> `RowClassFor` -> the rendered
+`<tr class="@rowClass">` and independently reproduced both probes in a disposable
+worktree at the pinned head, with counts matching the coder-side run: probe a 2 failed
+/ 3 passed, probe b 1 failed / 0 passed, unmutated head 0 failed / 56 passed. It noted
+that `git worktree add` from the main checkout was blocked by its sandbox and that it
+worked around this with a bundle-based bare copy, which it then removed - the proof
+still ran against the pinned head in an isolated tree, so the isolation requirement
+held. No adjacent regression: `FAILED`, `BLOCKED` and unknown statuses all still map
+to `table-danger`.
+
 ## Closeout
 
-<pending>
+Verified on main at `9b23e7a`. Push is outstanding - `.agents/push-policy.md` is
+`ask`, and the owner has not been asked for this range yet.
