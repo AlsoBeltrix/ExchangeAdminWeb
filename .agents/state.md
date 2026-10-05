@@ -12,11 +12,36 @@ the latest sweep is Archived 2026-10-05).
 handoff so we can start in a new session."* The grounding below was gathered in that session;
 nothing is implemented.
 
-**PLAN DRAFTED 2026-10-05: `docs/EmergencyDisableLockdownOU-Plan.md`, status DRAFT, awaiting a
-go.** It answers both questions the grounding below left open (append-never-rewrite the
-stamp; do not attempt the move when the AD disable failed) and carries the
-design, slices S1/S2, tests, verification and the manual acceptance list. On approval the plan
-supersedes the design notes below; until then both stand and the plan is the fuller one.
+**OWNER APPROVED THE PLAN 2026-10-05 ("go"), AND S1 HAS LANDED.
+`docs/EmergencyDisableLockdownOU-Plan.md` owns the design; it supersedes the notes below.**
+
+**S1 is complete, reviewed and green at `dbd19c2`. S2 IS THE NEXT ACTION.** S1 shipped the
+service-side capability with nothing able to reach it - the page passes
+`moveToLockdownOu: false` - and did NOT bump the module version, which is S2's job along with
+the checkbox. Suite 3579 -> 3626, 0 failed; format, ASCII and `git diff --check` clean.
+
+Commits: `1313fb4` (S1), `9b23e7a` (edl-1), `dbd19c2` (edl-2), with records at `0870e9e`,
+`549c95d` and the verdict commit after `dbd19c2`.
+
+**Codex reviewed S1 and found two real defects, both now fixed and both independently
+verified.** Records in `.agents/review/findings/edl-1.md` and `edl-2.md`; see
+`.agents/review/index.md`. Both were invisible to every test that existed:
+- **edl-1** - the page painted any step status other than `OK`/`SKIPPED` red, so a lockdown
+  the operator is entitled to decline rendered as a failure. Classification moved into a pure
+  `RowClassFor` so it is testable at all.
+- **edl-2** - a failed Notes stamp rode inside a green `LockdownMove` row, and because
+  `AuditService` writes `error` as null on success it reached no durable field either. The
+  stamp now has its own outcome, its own red step row, its own audit key and a sentence in the
+  security notification.
+
+**Two things are outstanding and neither is optional:**
+1. **PUSH.** `.agents/push-policy.md` is `ask` and the owner has not been asked for this
+   range. Local is ahead of both remotes.
+2. **The plan's manual acceptance list** (six steps) needs a dev deploy and a disposable
+   account. Nothing here reaches a live directory, so the move, the OU-exists check and the
+   stamp write are all unproven in reality - and the reviewer noted that two of edl-2's three
+   guards are source-level string assertions, not behavioural proof. Manual step 3 is what
+   actually closes that.
 
 **OWNER RULING 2026-10-05, Revision 1 of the plan: the stamp goes in `info` (the ADUC Notes box
 on the Telephones tab), NOT `description`.** Asked which attribute, the owner answered "notes."

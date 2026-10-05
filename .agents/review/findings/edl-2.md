@@ -2,9 +2,9 @@
 
 **Severity**: MEDIUM - the plan requires a stamp failure to be visible in the step
 table, the notification and the audit; all three currently show success
-**Status**: In progress
+**Status**: Verified
 **Branch**: - (direct to main)
-**Commit**: -
+**Commit**: dbd19c2
 
 ## Evidence
 
@@ -84,6 +84,16 @@ None. Confirmed, and it is a plan-conformance defect rather than a judgment call
 The stamp stays excluded from overall success, which the plan states deliberately.
 Only its visibility is fixed.
 
+**Two of the three guards are source-level and the reviewer judged them weak, which
+is accepted rather than argued.** Its words: the audit guard "could be satisfied by a
+dead/comment occurrence of `extra["lockdownStampOutcome"]`, or by assigning a
+constant/wrong value", and the move guard "could be bypassed with equivalent
+concatenation, target-typed `new`, a helper, or a dead `LockdownStamp` constructor".
+Both bite against the exact regression probed and neither is behavioural proof that a
+failed stamp produces a red row and a durable audit value at runtime. Reaching
+`ExecuteMoveToLockdownOu` needs a live directory, so that proof is manual acceptance
+step 3 of the plan, not something this suite can close.
+
 ## Reviewer comments
 
 Change review of `1bbbb73..1313fb4`, finding 2 of 2.
@@ -92,3 +102,28 @@ Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard
 ## Closeout
 
 <pending>
+
+### Verdict round, `549c95d..dbd19c2`, 2026-10-05
+
+**SOUND / accepted.**
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard
+Harness: codex-cli 0.159.0. No escalation triggers matched (T1 no, severity MEDIUM so
+no T2).
+Raw output: `.agents/review/edl-2.result.json`; prompt and stream log alongside.
+
+It traced all three surfaces the finding names - step table through `RowClassFor` to
+`table-danger`, notification through `LockdownSummary` and the widened step filter,
+audit through `MergeExtra` running after `error` is set, which is why the key survives
+a successful event. It reproduced all three probes with counts matching the
+coder-side run (1/5, 1/0, 1/0) and 61 passed on the unmutated head.
+
+Adjacent checks it ran and cleared: every no-move return path leaves
+`NotAttempted`; no path emits a `LockdownStamp` row without a successful
+`Move-ADObject`, and the successful path always emits one; PowerShell command and
+error streams are cleared between the OU lookup, the move, the stamp read and the
+stamp write; overall success still ignores the stamp outcome, as the plan specifies.
+
+Two environment notes it reported rather than hid: `git worktree add` was blocked by
+its sandbox (`.git/worktrees` read-only), so it extracted an archive of the pinned
+head under `%TEMP%` instead - still an isolated tree at the right commit - and its
+policy then blocked deleting that temp copy. The primary repo stayed clean.
