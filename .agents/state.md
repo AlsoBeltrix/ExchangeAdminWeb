@@ -100,17 +100,57 @@ either way** (repo invariant 7: a safety argument may not rest on this environme
   2026-10-02 session and the owner had to ask; both findings it then raised were real and
   unreachable by any test here.
 
-### Open design questions for the plan, not for an agent to settle alone
+### Owner rulings, 2026-10-05 - these settle the shape
 
-1. **Where does release read the original OU from** once the CSV is gone - parse it back out of
-   `info`? That makes a free-text field load-bearing. Decide the format, and decide what happens
-   when an operator has edited the field by hand.
-2. **`info` vs `description`.** The owner named description first ("description or other
-   applicable attribute"). `description` is far more visible in ADUC lists than `info`, and is
-   also more likely to already hold something. The script chose `info`. Needs a decision.
-3. **Does hold also disable?** The script deliberately does not. The module is called Emergency
-   Disable and already disables. Whether hold is a separate action, or a step in the existing
-   disable flow, is the shape question the plan opens with.
+Asked for the open questions and answered them. Verbatim:
+
+> 1. the request was to add this to the emergency disable process so the user cannot be
+> reenabled inappropriately. this is not a separate process.
+> 2, 3. irrelevant because 4. release is not part of this process.
+> 5. no. we're not fundamentally changing the emergency disable module, only moving the account
+> to the lockdown OU.
+
+What that settles:
+
+- **HOLD IS A STEP IN EMERGENCY DISABLE, not a second action and not a second module.** Its
+  PURPOSE is stated and is the thing to design against: *so the user cannot be reenabled
+  inappropriately*. The lockdown OU is presumed to carry delegation that ordinary helpdesk
+  cannot re-enable through. The move is what buys that; the disable alone does not.
+- **RELEASE IS OUT OF SCOPE ENTIRELY.** No release action, no round trip, no reading the
+  original OU back, no state file and nothing in the app that parses the attribute. Releasing
+  an account is a human doing it in ADUC.
+- **SINGLE ACCOUNT.** The script's array input does not come across. The module stays
+  single-identity.
+- **The original OU is written to `description`, appended, per the queue text** ("append to ad
+  object's description"). With release gone the attribute is a BREADCRUMB FOR A HUMAN, not an
+  input to any code path - which also means nothing in the app may ever depend on its format.
+- Most of `Set-AccountSecurityHold.ps1` is therefore NOT ported. What survives is: resolve,
+  capture the current parent OU, move to the lockdown OU, stamp the old OU. Its release half,
+  its CSV, its GUID matching and its dry-run mode are all out.
+
+### Decided by existing rule, not open questions
+
+- **Ordering: disable first, then move.** The disable is the urgent safety act and must not be
+  held hostage to an OU move. A move failure cannot roll back or obscure a completed disable.
+- **A failed or skipped move must be reported as its own unmistakable outcome, never folded
+  into a blanket success** (Known Failure Class 2). The owner's stated purpose is the
+  protection the move buys, so "disabled, but NOT moved to lockdown" is a materially different
+  result from "disabled and moved" and the operator has to see which one they got.
+- **Already in the lockdown OU is a skip, not a failure** (the script's behaviour, and correct).
+- **The lockdown OU is a `ConfigFields` entry on the module descriptor**, like its three
+  existing fields. Never defaulted, never named in source (invariant 7). Missing, unreadable or
+  non-existent fails the move closed and says so - it does not guess a destination.
+- **The protected-principal check covers the move**, as it covers every other write here.
+
+### Still genuinely open
+
+Nothing blocking a plan draft. Two things the plan itself should answer rather than assume:
+
+1. Whether an existing `description` value is preserved and appended to, or whether a prior
+   lockdown stamp is replaced - an account disabled twice should not accumulate noise forever.
+2. Whether the move is attempted when the AD disable step itself failed. Moving an account that
+   is still enabled is what the script warns about in red.
+
 
 ## Previously - queue item 24, the global progress system
 
