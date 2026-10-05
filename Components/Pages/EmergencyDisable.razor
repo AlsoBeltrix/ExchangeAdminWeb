@@ -111,7 +111,7 @@
                             <tbody>
                                 @foreach (var step in disableResult.Steps)
                                 {
-                                    var rowClass = step.Status == "OK" ? "table-success" : step.Status == "SKIPPED" ? "table-secondary" : "table-danger";
+                                    var rowClass = EmergencyDisableService.RowClassFor(step.Status);
                                     <tr class="@rowClass">
                                         <td>@step.Step</td>
                                         <td><strong>@step.Status</strong></td>

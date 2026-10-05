@@ -952,6 +952,20 @@ public class EmergencyDisableService
         _ => "NOT REQUESTED"
     };
 
+    /// <summary>
+    /// Table row class for a step status in the result table (edl-1). Declining the lockdown is
+    /// a decision the operator is entitled to make, so NOT REQUESTED is neutral and must never
+    /// land in the danger bucket beside a genuine failure - the page previously painted every
+    /// status other than OK and SKIPPED red, which made an authorised choice look like an error
+    /// on every run. Lives here rather than inline in the page so it is testable. Pure.
+    /// </summary>
+    internal static string RowClassFor(string status) => status switch
+    {
+        "OK" => "table-success",
+        "SKIPPED" or "NOT REQUESTED" => "table-secondary",
+        _ => "table-danger"
+    };
+
     private void LogAudit(
         ResolvedDirectoryPrincipal target,
         string performedBy,

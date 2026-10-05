@@ -9,7 +9,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 |---|---|---|---|---|---|
 | [x] | [gps-1](findings/gps-1.md) | LOW - prompt points the operator at a surface that no longer reports job completion | Complete | - | codex / gpt-5.5-dzs / xhigh |
 | [x] | [gps-2](findings/gps-2.md) | LOW - four changed module pages render a stale version number | Complete | - | codex / gpt-5.5-dzs / xhigh |
-| [ ] | [edl-1](findings/edl-1.md) | MEDIUM - a declined lockdown renders as a red failure row | Open | - | codex / gpt-5.5-dzs / xhigh |
+| [~] | [edl-1](findings/edl-1.md) | MEDIUM - a declined lockdown renders as a red failure row | In progress | - | codex / gpt-5.5-dzs / xhigh |
 | [ ] | [edl-2](findings/edl-2.md) | MEDIUM - a failed Notes stamp is reported inside a green LockdownMove row | Open | - | codex / gpt-5.5-dzs / xhigh |
 
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.

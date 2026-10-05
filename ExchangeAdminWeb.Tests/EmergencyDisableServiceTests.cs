@@ -359,6 +359,62 @@ public class EmergencyDisableServiceTests : IDisposable
     }
 
     [Fact]
+    public void RowClassFor_DeclinedLockdown_IsNeutral_NotDanger()
+    {
+        // edl-1: the page painted every status other than OK and SKIPPED red, so a lockdown
+        // the operator was entitled to decline rendered as a failure on an otherwise
+        // successful run.
+        Assert.Equal("table-secondary", EmergencyDisableService.RowClassFor("NOT REQUESTED"));
+    }
+
+    [Fact]
+    public void RowClassFor_EveryLockdownOutcome_ColoursAsTheOutcomeDeserves()
+    {
+        // Walks the real status vocabulary rather than hard-coded strings, so a new outcome
+        // whose status word is not classified cannot slip through as an accidental red row.
+        Assert.Equal("table-success", EmergencyDisableService.RowClassFor(EmergencyDisableService.StepStatusFor(LockdownOutcome.Moved)));
+        Assert.Equal("table-secondary", EmergencyDisableService.RowClassFor(EmergencyDisableService.StepStatusFor(LockdownOutcome.AlreadyInPlace)));
+        Assert.Equal("table-secondary", EmergencyDisableService.RowClassFor(EmergencyDisableService.StepStatusFor(LockdownOutcome.Skipped)));
+        Assert.Equal("table-secondary", EmergencyDisableService.RowClassFor(EmergencyDisableService.StepStatusFor(LockdownOutcome.NotRequested)));
+        Assert.Equal("table-danger", EmergencyDisableService.RowClassFor(EmergencyDisableService.StepStatusFor(LockdownOutcome.Failed)));
+    }
+
+    [Theory]
+    [InlineData("FAILED")]
+    [InlineData("BLOCKED")]
+    [InlineData("")]
+    public void RowClassFor_FailureAndAnythingUnrecognised_StaysDanger(string status)
+    {
+        // The neutral bucket is an allowlist. An unknown status must still read as a problem.
+        Assert.Equal("table-danger", EmergencyDisableService.RowClassFor(status));
+    }
+
+    [Fact]
+    public void ResultTable_UsesTheSharedRowClass_NotItsOwnInlineChain()
+    {
+        // edl-1 lived in an inline ternary in the page, where no test could see it. Pinning
+        // the call keeps the classification in the one place that is covered above; an
+        // inline chain reintroduced here would pass every test in this file otherwise.
+        var page = ReadPageSource("EmergencyDisable.razor");
+
+        Assert.Contains("EmergencyDisableService.RowClassFor(step.Status)", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"table-danger\"", page, StringComparison.Ordinal);
+    }
+
+    private static string ReadPageSource(string fileName)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir.FullName, "Components", "Pages", fileName);
+            if (File.Exists(candidate)) return File.ReadAllText(candidate);
+            dir = dir.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not locate Components/Pages/{fileName} from {AppContext.BaseDirectory}");
+    }
+
+    [Fact]
     public void LockdownSummary_RequestedButNotDone_SaysTheProtectionIsAbsent()
     {
         // The security team reads this line to learn whether routine delegation can switch the
