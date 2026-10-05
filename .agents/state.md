@@ -116,6 +116,14 @@ What that settles:
   PURPOSE is stated and is the thing to design against: *so the user cannot be reenabled
   inappropriately*. The lockdown OU is presumed to carry delegation that ordinary helpdesk
   cannot re-enable through. The move is what buys that; the disable alone does not.
+- **AN OPTIONAL CHECKBOX, DEFAULT CHECKED** (owner, 2026-10-05: *"add this lockdown step as an
+  optional checkbox, default checked. until the stakeholder clarifies what they actually want,
+  we need this working with an escape hatch."*). A RUNTIME option on the form, never a setting
+  buried in config - same shape and the same reasoning as Cloud Password Reset's "Force
+  password change at next sign-in" (queue item 11, which the owner asked for in exactly these
+  terms). **The default carries the intent and the checkbox carries the doubt:** the stakeholder
+  has not settled what they want, so the operator can decline the move without declining the
+  disable.
 - **RELEASE IS OUT OF SCOPE ENTIRELY.** No release action, no round trip, no reading the
   original OU back, no state file and nothing in the app that parses the attribute. Releasing
   an account is a human doing it in ADUC.
@@ -141,6 +149,14 @@ What that settles:
   existing fields. Never defaulted, never named in source (invariant 7). Missing, unreadable or
   non-existent fails the move closed and says so - it does not guess a destination.
 - **The protected-principal check covers the move**, as it covers every other write here.
+- **The checkbox state is audited on every run.** "Disabled WITHOUT lockdown" is a different
+  act from "disabled and locked down" - it is the operator declining the protection the step
+  exists to provide - so the audit row and the security-team notification must both say which
+  one happened. An unchecked box is a decision, not an absence.
+- **An unconfigured lockdown OU disables the checkbox rather than failing a checked run.** The
+  operator should not be able to arm a step that cannot run; show it unavailable with the
+  reason. This keeps the fail-closed rule without turning a missing config into a surprise
+  mid-disable.
 
 ### Still genuinely open
 
@@ -150,6 +166,11 @@ Nothing blocking a plan draft. Two things the plan itself should answer rather t
    lockdown stamp is replaced - an account disabled twice should not accumulate noise forever.
 2. Whether the move is attempted when the AD disable step itself failed. Moving an account that
    is still enabled is what the script warns about in red.
+
+**The escape hatch is explicitly temporary.** It exists because the stakeholder has not said
+what they want. When they do, the checkbox either goes away or becomes the settled default -
+whoever closes that loop should come back to this entry rather than leaving an unexplained
+option on a security screen forever.
 
 
 ## Previously - queue item 24, the global progress system
