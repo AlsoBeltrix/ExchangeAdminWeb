@@ -111,7 +111,7 @@ public class EmergencyDisableServiceTests : IDisposable
         // override recorded in the audit event (not only the operation trace - see pps-3).
         // 1.1.0 was protection resolving through Exchange (docs/ProtectedPrincipalGapFix-Plan.md
         // GAP B).
-        Assert.Equal("1.2.1", module.Version);
+        Assert.Equal("1.3.0", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");
@@ -356,6 +356,74 @@ public class EmergencyDisableServiceTests : IDisposable
     public void StepStatusFor_MapsEveryOutcome(LockdownOutcome outcome, string expected)
     {
         Assert.Equal(expected, EmergencyDisableService.StepStatusFor(outcome));
+    }
+
+    // ---- S2: the checkbox on the page -------------------------------------------------------
+
+    [Fact]
+    public void Page_LockdownCheckbox_DefaultsChecked()
+    {
+        // Owner ruling 2026-10-05: an opt-OUT, not an opt-in. The default carries the intent
+        // (the move is the protection the step exists for) and the checkbox carries the doubt.
+        // A field initialised false would silently drop the protection on every run.
+        var page = ReadPageSource("EmergencyDisable.razor");
+
+        Assert.Contains("private bool moveToLockdownOu = true;", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Page_ResetForm_ReturnsTheCheckboxToItsDefault_NotToFalse()
+    {
+        // The plan names this trap explicitly. ResetForm clears every other field to empty or
+        // false; doing the same here would mean the second and every later operation in a
+        // session ran unprotected while the first ran protected, with nothing on screen to say
+        // the default had changed.
+        var page = ReadPageSource("EmergencyDisable.razor");
+        var resetBody = Between(page, "private void ResetForm()", "\n    }");
+
+        Assert.Contains("moveToLockdownOu = lockdownOuConfigured;", resetBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("moveToLockdownOu = false;", resetBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Page_UnconfiguredLockdownOu_DisablesTheCheckboxAndDisarmsIt()
+    {
+        // Fail-closed without a surprise: the operator must not be able to arm a step that
+        // cannot run. Both halves matter - disabling the control without forcing the bound
+        // field false would send a checked value the service then has to refuse.
+        var page = ReadPageSource("EmergencyDisable.razor");
+
+        Assert.Contains("disabled=\"@(isDisabling || !lockdownOuConfigured)\"", page, StringComparison.Ordinal);
+        Assert.Contains("moveToLockdownOu = lockdownOuConfigured;", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Page_PassesTheOperatorsChoice_NotAHardcodedValue()
+    {
+        // S1 deliberately passed a literal false. If that literal survived S2 the checkbox
+        // would render, tick, and do nothing at all - the defect this test exists to prevent.
+        var page = ReadPageSource("EmergencyDisable.razor");
+
+        Assert.Contains("authState.User, moveToLockdownOu)", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("moveToLockdownOu: false", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Page_ConfirmPanel_StatesTheMoveWhenItIsArmed()
+    {
+        // The "You are about to:" list is the last thing read before an irreversible action.
+        var page = ReadPageSource("EmergencyDisable.razor");
+
+        Assert.Contains("Move the account to the lockdown OU", page, StringComparison.Ordinal);
+    }
+
+    private static string Between(string haystack, string start, string end)
+    {
+        var from = haystack.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(from >= 0, $"Could not find '{start}' in the page source.");
+        var to = haystack.IndexOf(end, from, StringComparison.Ordinal);
+        Assert.True(to > from, $"Could not find '{end}' after '{start}'.");
+        return haystack[from..to];
     }
 
     // ---- edl-2: a failed stamp must not hide behind a successful move ----------------------

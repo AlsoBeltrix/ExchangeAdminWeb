@@ -12,6 +12,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ILogger<EmergencyDisable> Logger
+@inject ModuleConfigService ModuleConfig
 
 <PageTitle>Emergency Disable</PageTitle>
 
@@ -140,6 +141,10 @@
                             <li>Reset password to random value</li>
                             <li>Revoke all Entra ID sessions</li>
                             <li>Disable Entra ID sign-in</li>
+                            @if (moveToLockdownOu)
+                            {
+                                <li>Move the account to the lockdown OU</li>
+                            }
                         </ul>
                         <p class="text-danger mb-3"><strong>This is not easily reversible.</strong></p>
                         <div class="mb-3">
@@ -149,6 +154,23 @@
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="chkConfirm" @bind="confirmed" disabled="@isDisabling" />
                             <label class="form-check-label" for="chkConfirm">I understand this will immediately lock out <strong>@resolvedPrincipal.DisplayName</strong></label>
+                        </div>
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="chkLockdown" @bind="moveToLockdownOu"
+                                   disabled="@(isDisabling || !lockdownOuConfigured)" />
+                            <label class="form-check-label" for="chkLockdown">Move to the lockdown OU</label>
+                            @if (!lockdownOuConfigured)
+                            {
+                                <div class="form-text text-muted">
+                                    Unavailable: no lockdown OU is configured for this module. Set one in Admin Settings to enable this step.
+                                </div>
+                            }
+                            else if (!moveToLockdownOu)
+                            {
+                                <div class="form-text text-danger">
+                                    Without this, the account can be re-enabled by anyone with routine helpdesk rights.
+                                </div>
+                            }
                         </div>
                         <button class="btn btn-danger w-100" @onclick="ExecuteDisable"
                                 disabled="@(isDisabling || !confirmed || string.IsNullOrWhiteSpace(ticketNumber))">
@@ -208,6 +230,14 @@
 
     private string ticketNumber = "";
     private bool confirmed;
+
+    // Default CHECKED: the lockdown move is the protection the step exists to provide, and the
+    // owner asked for the escape hatch to be an opt-OUT (2026-10-05). The checkbox carries the
+    // doubt - the stakeholder has not settled what they want - while the default carries the
+    // intent. Forced false and disabled when no lockdown OU is configured, so the operator
+    // cannot arm a step that cannot run; the service refuses independently either way.
+    private bool moveToLockdownOu = true;
+    private bool lockdownOuConfigured;
     private EmergencyDisableResult? disableResult;
     private (bool success, string message)? operationResult;
 
@@ -227,6 +257,13 @@
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
+
+        // Read once. An unconfigured lockdown OU makes the step unavailable rather than
+        // failing a checked run mid-disable; the service refuses independently, so this gate
+        // is a courtesy to the operator and not the control.
+        lockdownOuConfigured = !string.IsNullOrWhiteSpace(ModuleConfig.GetValue("EmergencyDisable", "LockdownOuDn"));
+        moveToLockdownOu = lockdownOuConfigured;
+
         authChecked = true;
     }
 
@@ -330,7 +367,7 @@
             using var activity = Progress.Begin(
                 "Emergency Disable", $"Disabling {resolvedPrincipal.DisplayName}", ActivitySize.Unknown);
 
-            disableResult = await DisableService.DisableAsync(resolvedPrincipal, ticketNumber.Trim(), currentUser, clientIpAddress, authState.User, moveToLockdownOu: false);
+            disableResult = await DisableService.DisableAsync(resolvedPrincipal, ticketNumber.Trim(), currentUser, clientIpAddress, authState.User, moveToLockdownOu);
             activity.Complete(disableResult.Success, disableResult.Error);
 
             if (disableResult.Success)
@@ -364,5 +401,9 @@
         operationResult = null;
         confirmed = false;
         ticketNumber = "";
+        // Back to the DEFAULT, not to false: a new operation starts armed, exactly as the first
+        // one did. Resetting to false would silently drop the protection on every run after the
+        // first.
+        moveToLockdownOu = lockdownOuConfigured;
     }
 }
