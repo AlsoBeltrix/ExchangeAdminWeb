@@ -14,7 +14,13 @@ owner's `git push all` authorised the earlier push, not this one.**
 
 **NEXT TASK: QUEUE ITEM 18.** Owner, 2026-10-02: *"prepare to begin item #18 in the queue &
 handoff so we can start in a new session."* The grounding below was gathered in that session;
-nothing was implemented and no plan exists yet.
+nothing is implemented.
+
+**PLAN DRAFTED 2026-10-05: `docs/EmergencyDisableLockdownOU-Plan.md`, status DRAFT, awaiting a
+go.** It answers both questions the grounding below left open (append-never-rewrite the
+`description` stamp; do not attempt the move when the AD disable failed) and carries the
+design, slices S1/S2, tests, verification and the manual acceptance list. On approval the plan
+supersedes the design notes below; until then both stand and the plan is the fuller one.
 
 ### Queue item 18 - what it is
 
