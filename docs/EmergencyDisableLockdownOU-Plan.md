@@ -5,6 +5,11 @@ Grounding and the owner's rulings of 2026-10-05 are recorded in `.agents/state.m
 "Queue item 18"; this plan is the durable version of that work and supersedes the state
 entry's design notes once approved.
 
+**Revision 1, 2026-10-05:** the stamp target changed from `description` to `info` (the ADUC
+**Notes** box on the Telephones tab) by owner ruling. The queue text's "or other applicable
+attribute that can be seen in ADUC" permits it, and `info` is what the source script already
+writes. Nothing else in this plan changed.
+
 ---
 
 ## Exec summary
@@ -14,7 +19,7 @@ entry's design notes once approved.
 
 **What it does.** Emergency Disable gains one more step: after it disables the account, it
 moves that account into a lockdown OU and writes where the account came from into its
-Description, so anyone looking at it in ADUC can see it. A checkbox on the form turns the move
+Notes field, which anyone can read in ADUC. A checkbox on the form turns the move
 on or off; it is ticked by default.
 
 **What it gets you.** The reason for the move is the thing the disable alone does not buy: the
@@ -35,7 +40,7 @@ exists, by never moving an account whose disable did not succeed, and by reporti
 "disabled, but NOT moved" as its own loud, separate outcome rather than folding it into a
 success.
 
-**One thing worth knowing.** The Description stamp is permanent. Releasing an account later is
+**One thing worth knowing.** The Notes stamp is permanent. Releasing an account later is
 a human doing it in ADUC, and nothing in this app reads the stamp back, so the account carries
 a visible note that it was once emergency-disabled for as long as someone leaves it there. For
 a security hold that is closer to a feature than a leak - the move into a lockdown OU is
@@ -57,7 +62,8 @@ In scope:
 - One new module config field: the lockdown OU distinguished name.
 - One new runtime option on the Emergency Disable form: a checkbox, default checked.
 - One new service step: move the target into the lockdown OU after a successful AD disable.
-- One further write: append the account's previous parent OU to its `description`.
+- One further write: append the account's previous parent OU to its `info` attribute, which
+  ADUC labels **Notes** (Telephones tab).
 - Audit, security-team notification and the on-screen step table all report which of
   "disabled and locked down" / "disabled WITHOUT lockdown" happened.
 - Tests for every decision that can be made without a live directory.
@@ -77,12 +83,18 @@ Only four of its behaviours survive into this work: resolve the account, capture
 parent OU, move it to the hold OU, stamp the old OU onto the object. Its release half, its CSV
 state file, its GUID-matched release lookup and its dry-run mode are all out of scope.
 
-Three of its decisions are adopted deliberately:
+Four of its decisions are adopted deliberately:
 
 - Confirm the destination OU exists before doing anything, and refuse rather than guess.
 - Already in the destination OU is a skip, not a failure.
 - Bind the post-move attribute write by **ObjectGUID, not DN** - the DN changed when the
   object moved. This is the single most likely implementation bug in the whole change.
+- **Stamp the `info` attribute, read-append-write, exactly as the script's `-StampInfo` branch
+  does** (`Set-AccountSecurityHold.ps1:193-201`). Owner ruling 2026-10-05, superseding the
+  earlier reading of the queue text. The queue says "description **or other applicable
+  attribute that can be seen in ADUC**"; `info` is that attribute, and the script already
+  demonstrates the write. What is NOT adopted is the switch being off by default - here the
+  stamp always accompanies a move.
 
 Its `-StampInfo` discretion warning does **not** carry over: it argues a visible stamp leaks a
 discreet hold, but the move itself relocates the account into an OU named for lockdown, so the
@@ -102,7 +114,7 @@ move is the disclosure and the stamp announces nothing new.
    own reported outcome and fails the operation overall.
 4. **Side-effect ordering (Known Failure Class 1).** The pre-action snapshot, which already
    records the target's full DN including its parent OU, is persisted before any mutation and
-   is the authoritative record of where the account came from. The `description` stamp is a
+   is the authoritative record of where the account came from. The `info` stamp is a
    convenience breadcrumb for a human in ADUC, not the record of truth.
 5. **No spinner.** The page already reports through `IActivityProgress`
    (`Progress.Begin(...)` in `ExecuteDisable`). Nothing new is drawn; the existing activity
@@ -138,21 +150,21 @@ those failing does not make the move wrong or more dangerous.
 
 ### The stamp appends and never rewrites
 
-Previously open; decided here. `description` routinely carries real content (a job title, a
-"service account for X" note). It is read, appended to, and written back as a single value. A
-prior stamp is **not** removed, because removing it would mean parsing the format, which
+Previously open; decided here. The existing `info` value is read, appended to, and written back.
+A prior stamp is **not** removed, because removing it would mean parsing the format, which
 constraint 7 forbids. An account emergency-disabled twice therefore carries two notes, which is
 an honest record of two events rather than noise.
 
 Two concrete consequences:
 
-- **Single line, no newline.** ADUC renders Description as a single-line box, so the stamp is
-  appended with a space separator, not CRLF. (This is why the source script chose the
-  multi-line `info` attribute instead; the owner's queue text names `description`, and a
-  single-line append is the cost of that choice.)
-- **1024-character ceiling.** AD's `description` upper range is 1024. If appending would exceed
-  it, nothing is written and the stamp step reports `FAILED` with the reason. It does not
-  truncate silently, and the origin survives in the snapshot and the audit either way.
+- **One stamp per line.** ADUC renders Notes as a multi-line box, so an existing value is
+  separated from the new stamp with a CRLF, matching `Set-AccountSecurityHold.ps1:200`. An
+  empty existing value is written with no leading newline.
+- **1024-character ceiling.** AD's `info` upper range is 1024, the same as `description`.
+  If appending would exceed it, nothing is written and the stamp step reports `FAILED` with
+  the reason. It does not truncate silently, and the origin survives in the snapshot and the
+  audit either way. **Verify the 1024 figure against the live schema during S1** rather than
+  trusting it from this plan.
 
 Stamp form (illustrative; no code may depend on it):
 `[EMERGENCY DISABLE 2026-10-05] previous OU: OU=Staff,DC=example,DC=test`
@@ -202,14 +214,14 @@ step table, in the notification and in the audit, and is not silent.
      "configured OU DN", "target DN", return either the outcome to report without touching AD
      or an instruction to proceed. Everything decidable without a directory lives here so it is
      testable.
-   - New **pure static** stamp builder: given the existing description, the previous parent DN
-     and a timestamp, return the new description value or a refusal when the result would
-     exceed 1024 characters.
+   - New **pure static** stamp builder: given the existing `info` value, the previous parent DN
+     and a timestamp, return the new `info` value or a refusal when the result would
+     exceed 1024 characters. Joins with CRLF when the existing value is non-empty.
    - New private `ExecuteMoveToLockdownOu`, following the shape of `ExecuteDisableAD`:
      own runspace, `Import-Module ActiveDirectory`, credential from the same Delinea secret,
      `VerifyBoundObject` before mutating, `Get-ADOrganizationalUnit` on the configured DN to
      confirm the destination exists, then `Move-ADObject -Identity <dn> -TargetPath <ou>`.
-     Then re-read and `Set-ADUser -Identity <ObjectGUID> -Replace @{description=...}`.
+     Then re-read and `Set-ADUser -Identity <ObjectGUID> -Replace @{info=...}`.
      **Bind the attribute write by GUID, not DN.**
    - Take the AD throttle slot once and hold it across move and stamp, exactly as the existing
      code holds it across disable and reset.
@@ -255,8 +267,9 @@ New, in `ExchangeAdminWeb.Tests/EmergencyDisableServiceTests.cs`, all without a 
    destination OU; requested and proceeding; requested with a null target DN.
 2. `IsOverallSuccess` with each lockdown outcome, including the case that currently has no
    analogue: everything else OK, lockdown `Failed`, overall failure.
-3. Stamp builder: empty existing description; existing content preserved and appended to; a
-   prior stamp left in place (two notes, by design); a result over 1024 characters refused.
+3. Stamp builder: empty existing `info` (no leading newline); existing content preserved and
+   appended after a CRLF; a prior stamp left in place (two notes, by design); a result over
+   1024 characters refused.
 4. Catalog: the `LockdownOuDn` field exists, is `Required: false`, and the version is `1.3.0`
    (S2).
 5. Audit: the lockdown request flag and outcome reach the audit event, extending the harness
@@ -284,7 +297,8 @@ Nothing here can be proven by the test suite; it needs a dev deploy and a dispos
    disable behaves exactly as before.
 2. Configure the lockdown OU on the module config screen.
 3. Disable a disposable test account with the box ticked: confirm in ADUC that the account is
-   disabled, sits in the lockdown OU, and its Description carries the previous OU.
+   disabled, sits in the lockdown OU, and the Notes box on its Telephones tab carries the
+   previous OU.
 4. Confirm the security-team notification and the audit entry both say it was locked down.
 5. Disable a second disposable account with the box unticked: confirm it is disabled, has NOT
    moved, and that the audit and the notification both say so explicitly.

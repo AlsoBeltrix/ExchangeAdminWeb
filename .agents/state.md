@@ -14,9 +14,19 @@ nothing is implemented.
 
 **PLAN DRAFTED 2026-10-05: `docs/EmergencyDisableLockdownOU-Plan.md`, status DRAFT, awaiting a
 go.** It answers both questions the grounding below left open (append-never-rewrite the
-`description` stamp; do not attempt the move when the AD disable failed) and carries the
+stamp; do not attempt the move when the AD disable failed) and carries the
 design, slices S1/S2, tests, verification and the manual acceptance list. On approval the plan
 supersedes the design notes below; until then both stand and the plan is the fuller one.
+
+**OWNER RULING 2026-10-05, Revision 1 of the plan: the stamp goes in `info` (the ADUC Notes box
+on the Telephones tab), NOT `description`.** Asked which attribute, the owner answered "notes."
+The queue text allows it ("description **or other applicable attribute that can be seen in
+ADUC**") and `info` is what `Set-AccountSecurityHold.ps1:193-201` already writes. Practical
+difference: Notes is multi-line so repeat stamps append on their own line, and it is almost
+never already populated, where `description` routinely carries a job title. Cost: a reader has
+to open the object and go to the Telephones tab, where `description` shows as a column in the
+ADUC list. The owner took the tidier field over the louder one. This ruling is not yet in
+`.agents/decisions.md`.
 
 ### Queue item 18 - what it is
 
@@ -131,8 +141,9 @@ What that settles:
   an account is a human doing it in ADUC.
 - **SINGLE ACCOUNT.** The script's array input does not come across. The module stays
   single-identity.
-- **The original OU is written to `description`, appended, per the queue text** ("append to ad
-  object's description"). With release gone the attribute is a BREADCRUMB FOR A HUMAN, not an
+- **The original OU is written to `info` (ADUC Notes), appended** - owner ruling 2026-10-05,
+  superseding the earlier `description` reading of the queue text; see the ruling recorded at
+  the top of this entry. With release gone the attribute is a BREADCRUMB FOR A HUMAN, not an
   input to any code path - which also means nothing in the app may ever depend on its format.
 - Most of `Set-AccountSecurityHold.ps1` is therefore NOT ported. What survives is: resolve,
   capture the current parent OU, move to the lockdown OU, stamp the old OU. Its release half,
@@ -162,12 +173,12 @@ What that settles:
 
 ### Still genuinely open
 
-Nothing blocking a plan draft. Two things the plan itself should answer rather than assume:
+Nothing. Both items that stood here are now answered in the plan and no longer open:
 
-1. Whether an existing `description` value is preserved and appended to, or whether a prior
-   lockdown stamp is replaced - an account disabled twice should not accumulate noise forever.
-2. Whether the move is attempted when the AD disable step itself failed. Moving an account that
-   is still enabled is what the script warns about in red.
+1. An existing `info` value is preserved and appended to after a CRLF; a prior lockdown stamp
+   is left in place, because removing it would mean parsing a format nothing may parse.
+2. The move is NOT attempted when the AD disable step failed - it reports a skip with that
+   reason rather than relocating a still-enabled account.
 
 **The escape hatch is explicitly temporary.** It exists because the stakeholder has not said
 what they want. When they do, the checkbox either goes away or becomes the settled default -
