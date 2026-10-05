@@ -1,6 +1,9 @@
 # Emergency Disable - Lockdown OU Move - Plan
 
-Status: **DRAFT - awaiting owner go.** Queue item 18. Nothing below is authorised yet.
+Status: **IMPLEMENTED 2026-10-05, manual acceptance OUTSTANDING.** Queue item 18. Owner
+approved 2026-10-05 ("go"); S1 and S2 both landed, reviewed per slice, three findings
+(`edl-1`, `edl-2`, `edl-3`) found and fixed. The six manual acceptance steps below are the
+remaining work and nothing in the repo can close them.
 Grounding and the owner's rulings of 2026-10-05 are recorded in `.agents/state.md` under
 "Queue item 18"; this plan is the durable version of that work and supersedes the state
 entry's design notes once approved.
