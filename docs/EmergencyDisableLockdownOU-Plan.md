@@ -40,13 +40,6 @@ exists, by never moving an account whose disable did not succeed, and by reporti
 "disabled, but NOT moved" as its own loud, separate outcome rather than folding it into a
 success.
 
-**One thing worth knowing.** The Notes stamp is permanent. Releasing an account later is
-a human doing it in ADUC, and nothing in this app reads the stamp back, so the account carries
-a visible note that it was once emergency-disabled for as long as someone leaves it there. For
-a security hold that is closer to a feature than a leak - the move into a lockdown OU is
-already visible to anyone who can see the object - but it is a deliberate choice, not an
-accident.
-
 **The checkbox is temporary and the plan says so in the code.** It exists because the
 stakeholder has not said what they actually want. When they do, it either goes away or becomes
 the settled behaviour.
@@ -316,8 +309,8 @@ Nothing here can be proven by the test suite; it needs a dev deploy and a dispos
   is permission-restricted (it refers to a companion `Set-SecurityHoldOUPermissions.ps1` that
   is not available). Whether the move is self-disclosing to ordinary readers therefore cannot
   be confirmed, and no part of this design rests on either answer.
-- **The stamp is permanent and the release path is human.** An account released back by hand
-  keeps the note. That is accepted, not overlooked.
+- **Nothing here is undone by the app.** Re-enabling, moving the account back and clearing the
+  stamp are all manual. The stamp is the one most easily forgotten.
 
 ## Owner gate
 
