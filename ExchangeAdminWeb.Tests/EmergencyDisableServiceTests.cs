@@ -371,54 +371,56 @@ public class EmergencyDisableServiceTests : IDisposable
         Assert.Contains("private bool moveToLockdownOu = true;", page, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void Page_ResetForm_ReturnsTheCheckboxToItsDefault_NotToFalse()
-    {
-        // The plan names this trap explicitly. ResetForm clears every other field to empty or
-        // false; doing the same here would mean the second and every later operation in a
-        // session ran unprotected while the first ran protected, with nothing on screen to say
-        // the default had changed.
-        var page = ReadPageSource("EmergencyDisable.razor");
-        var resetBody = Between(page, "private void ResetForm()", "\n    }");
+    // ResetForm's own re-arm assertion was folded into the two helper tests below when edl-3
+    // centralised the reset: asserting that ResetForm calls BeginNewOperation and that the
+    // helper re-arms covers strictly more than checking ResetForm's body did.
 
-        Assert.Contains("moveToLockdownOu = lockdownOuConfigured;", resetBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("moveToLockdownOu = false;", resetBody, StringComparison.Ordinal);
+    [Fact]
+    public void Page_BothEntryPoints_StartAFreshOperationThroughTheOneHelper()
+    {
+        // edl-3. Originally PerformLookup and ResetForm each cleared their own list of fields
+        // and PerformLookup was missed, so an operator who declined the lockdown for one
+        // account carried that decision onto the next person they looked up.
+        var page = ReadPageSource("EmergencyDisable.razor");
+
+        Assert.Contains("BeginNewOperation();", Between(page, "private async Task PerformLookup()", "await Task.Yield();"), StringComparison.Ordinal);
+        Assert.Contains("BeginNewOperation();", Between(page, "private void ResetForm()", "\n    }"), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Page_PerformLookup_AlsoReturnsTheCheckboxToItsDefault()
+    public void Page_FreshOperationState_IsClearedInExactlyOnePlace()
     {
-        // edl-3. PerformLookup starts a new operation on a DIFFERENT account and clears every
-        // other field, but originally left the checkbox alone - so an operator who unticked it
-        // for one person and then searched for the next carried that opt-out onto someone they
-        // never made the decision about. ResetForm is not the only entry point.
-        var page = ReadPageSource("EmergencyDisable.razor");
-        var lookupBody = Between(page, "private async Task PerformLookup()", "await Task.Yield();");
-
-        Assert.Contains("moveToLockdownOu = lockdownOuConfigured;", lookupBody, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Page_EveryStateClearingPath_ReArmsTheCheckbox()
-    {
-        // The rule, not the two call sites: any method that clears `confirmed` is starting a
-        // fresh operation and must re-arm the lockdown step with it. Written this way so a
-        // THIRD clearing path added later cannot quietly reintroduce edl-3.
+        // Locality, not arithmetic. The first version of this guard counted occurrences of
+        // `confirmed = false;` and `moveToLockdownOu = lockdownOuConfigured;` across the whole
+        // code block and asserted the totals matched - which the reviewer correctly called a
+        // proxy rather than the invariant: a future change could add an unrelated re-arm while
+        // a new clearing path omitted one, and the count would still balance.
+        //
+        // Pinning single ownership instead makes the defect class structurally unreachable. A
+        // third entry point cannot clear operation state without either calling the helper or
+        // failing this test, and the helper cannot forget the checkbox without failing the
+        // test below.
         var page = ReadPageSource("EmergencyDisable.razor");
         var code = page[page.IndexOf("@code {", StringComparison.Ordinal)..];
 
         var clearingSites = code.Split("confirmed = false;").Length - 1;
-        var reArmSites = code.Split("moveToLockdownOu = lockdownOuConfigured;").Length - 1;
-
-        // The +1 is OnInitializedAsync, which re-arms without clearing `confirmed`. Writing
-        // this as `reArmSites >= clearingSites` made the test VACUOUS: with two clearing paths
-        // and three re-arms, deleting one re-arm still satisfied it. The probe caught that.
-        Assert.True(clearingSites > 0, "Expected at least one state-clearing path to exist.");
         Assert.True(
-            reArmSites == clearingSites + 1,
-            $"{clearingSites} path(s) clear `confirmed`, so {clearingSites + 1} re-arm sites are expected " +
-            $"(one per clearing path, plus OnInitializedAsync) but {reArmSites} were found. " +
-            "Every path that starts a fresh operation must restore the default (edl-3).");
+            clearingSites == 1,
+            $"`confirmed = false;` appears {clearingSites} time(s); it must appear only inside " +
+            "BeginNewOperation(). A second site means a path starts a fresh operation without " +
+            "going through the one place that knows what a fresh operation is (edl-3).");
+    }
+
+    [Fact]
+    public void Page_TheFreshOperationHelper_ReArmsTheCheckbox()
+    {
+        // The other half: single ownership is worthless if the owner forgets the field.
+        var page = ReadPageSource("EmergencyDisable.razor");
+        var helper = Between(page, "private void BeginNewOperation()", "\n    }");
+
+        Assert.Contains("confirmed = false;", helper, StringComparison.Ordinal);
+        Assert.Contains("moveToLockdownOu = lockdownOuConfigured;", helper, StringComparison.Ordinal);
+        Assert.DoesNotContain("moveToLockdownOu = false;", helper, StringComparison.Ordinal);
     }
 
     [Fact]

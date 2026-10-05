@@ -276,19 +276,7 @@
     private async Task PerformLookup()
     {
         isLoading = true;
-        lookupError = null;
-        protectedBlocked = false;
-        servicedNote = null;
-        resolvedPrincipal = null;
-        disableResult = null;
-        operationResult = null;
-        confirmed = false;
-        ticketNumber = "";
-        // edl-3: a lookup starts a NEW operation on a different account, so it must re-arm the
-        // lockdown step exactly as ResetForm does. Without this, an operator who unticks the box
-        // for one account and then searches for the next one carries the opt-out across to a
-        // person they never made that decision about.
-        moveToLockdownOu = lockdownOuConfigured;
+        BeginNewOperation();
         await Task.Yield();
 
         try
@@ -398,6 +386,22 @@
     private void ResetForm()
     {
         searchIdentity = "";
+        BeginNewOperation();
+    }
+
+    /// <summary>
+    /// Clears everything that belongs to ONE disable operation. Both entry points that start a
+    /// fresh one - a new lookup and the New Operation button - go through here, so the set can
+    /// only be got wrong in one place.
+    ///
+    /// edl-3 was exactly the alternative: the two call sites each cleared their own list,
+    /// PerformLookup was missed, and an operator who declined the lockdown for one account
+    /// carried that decision onto the next person they looked up. The lockdown checkbox returns
+    /// to its DEFAULT here rather than to false - a new operation starts armed, exactly as the
+    /// first one of the session did.
+    /// </summary>
+    private void BeginNewOperation()
+    {
         lookupError = null;
         protectedBlocked = false;
         servicedNote = null;
@@ -406,9 +410,6 @@
         operationResult = null;
         confirmed = false;
         ticketNumber = "";
-        // Back to the DEFAULT, not to false: a new operation starts armed, exactly as the first
-        // one did. Resetting to false would silently drop the protection on every run after the
-        // first.
         moveToLockdownOu = lockdownOuConfigured;
     }
 }
