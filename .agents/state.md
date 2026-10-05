@@ -15,17 +15,18 @@ nothing is implemented.
 **OWNER APPROVED THE PLAN 2026-10-05 ("go"), AND S1 HAS LANDED.
 `docs/EmergencyDisableLockdownOU-Plan.md` owns the design; it supersedes the notes below.**
 
-**S1 is complete, reviewed and green at `dbd19c2`. S2 IS THE NEXT ACTION.** S1 shipped the
-service-side capability with nothing able to reach it - the page passes
-`moveToLockdownOu: false` - and did NOT bump the module version, which is S2's job along with
-the checkbox. Suite 3579 -> 3626, 0 failed; format, ASCII and `git diff --check` clean.
+**BOTH SLICES HAVE LANDED. The module ships at `EmergencyDisable` 1.3.0; base app unchanged
+at 2.27.0 (module-scoped change).** Suite 3579 -> 3634, 0 failed; format, ASCII and
+`git diff --check` clean at every commit.
 
-Commits: `1313fb4` (S1), `9b23e7a` (edl-1), `dbd19c2` (edl-2), with records at `0870e9e`,
-`549c95d` and the verdict commit after `dbd19c2`.
+Commits: `1313fb4` (S1), `9b23e7a` (edl-1), `dbd19c2` (edl-2), `b164d7b` (S2), `e1a0fbd`
+(edl-3), `7e11c64` (edl-3 repair), with record commits interleaved.
 
-**Codex reviewed S1 and found two real defects, both now fixed and both independently
-verified.** Records in `.agents/review/findings/edl-1.md` and `edl-2.md`; see
-`.agents/review/index.md`. Both were invisible to every test that existed:
+**Codex reviewed both slices and found THREE real defects, all mine, all fixed.** Records in
+`.agents/review/findings/edl-1.md`, `edl-2.md` and `edl-3.md`; `.agents/review/index.md` owns
+their status. **Every one of the three lived in presentation or reporting - the surface this
+repo's suite structurally cannot see, because there is no bUnit harness.** That is the
+argument for the manual acceptance list, not a formality:
 - **edl-1** - the page painted any step status other than `OK`/`SKIPPED` red, so a lockdown
   the operator is entitled to decline rendered as a failure. Classification moved into a pure
   `RowClassFor` so it is testable at all.
@@ -33,6 +34,12 @@ verified.** Records in `.agents/review/findings/edl-1.md` and `edl-2.md`; see
   `AuditService` writes `error` as null on success it reached no durable field either. The
   stamp now has its own outcome, its own red step row, its own audit key and a sentence in the
   security notification.
+- **edl-3** - `PerformLookup` cleared every operation field except the checkbox, so unticking
+  it for one account and then searching for the next carried that opt-out onto a person nobody
+  had made the decision about. **The plan named this exact trap** ("check both, they both clear
+  state today") and S2 did half of it. The reviewer then rejected the first fix's guard as
+  arithmetic rather than an invariant; both entry points now route through one
+  `BeginNewOperation()` helper and `confirmed = false;` is pinned to a single site.
 
 **Two things are outstanding and neither is optional:**
 1. **PUSH.** `.agents/push-policy.md` is `ask` and the owner has not been asked for this
