@@ -4,13 +4,9 @@ Current work and blockers only. Rules live in `docs/ProjectConstitution.md` and
 `.agents/repo-guidance.md`, decisions in `.agents/decisions.md`, and machine observations in
 `.agents/machines.md`. Each plan owns its implementation and manual acceptance checklist.
 Superseded descriptions are verbatim in `docs/history/state-archive.md` (newest section first;
-the latest sweep is Archived 2026-10-01).
+the latest sweep is Archived 2026-10-05).
 
 ## Now
-
-**HANDOFF 2026-10-02. Branch `master`, head `a4d38eb`, tree clean. Both remotes verified at
-`6a7588d`; `a4d38eb` (the acceptance record) is local only - push policy is `ask` and the
-owner's `git push all` authorised the earlier push, not this one.**
 
 **NEXT TASK: QUEUE ITEM 18.** Owner, 2026-10-02: *"prepare to begin item #18 in the queue &
 handoff so we can start in a new session."* The grounding below was gathered in that session;
@@ -178,12 +174,13 @@ what they want. When they do, the checkbox either goes away or becomes the settl
 whoever closes that loop should come back to this entry rather than leaving an unexplained
 option on a security screen forever.
 
-
 ## Previously - queue item 24, the global progress system
 
 **ITEM 24 IS FUNCTIONALLY COMPLETE AND PARTIALLY ACCEPTED.** 86 page spinners to ZERO across 32
-pages; every module reports to the bottom status bar instead. App `2.27.0`, suite 3579 green,
-ClickGate 316/316. The owner deployed to dev 2026-10-02 and reported *"browser check looks fine
+pages; every module reports to the bottom status bar instead. Re-measured 2026-10-05 as of
+`25bb108`: `grep -rc "spinner-border" Components/Pages/*.razor` returns zero, suite **3579
+passed / 0 failed / 3 skipped**, ClickGate **316/316**. `ExchangeAdminWeb.csproj` owns the base
+app version. The owner deployed to dev 2026-10-02 and reported *"browser check looks fine
 for the modules I checked. reset worked."* - **a sample, not a sweep**; he did not say which
 modules.
 
@@ -200,28 +197,6 @@ modules.
    waiting rather than the work. Pre-dates this session; the last real gap in the system.
 
 ### The item 24 record, kept because the acceptance pass is not finished
-
-
-**PROD BUG FIXED, DEPLOYED AND CONFIRMED 2026-10-02. Cloud Password Reset could never find an
-owner.**
-`ADEmployeeIdLookup.GetForestDomains()` read `(Get-ADForest).Domains` out of the returned PSObject
-through an `is IEnumerable<object>` test. That type is `ADPropertyValueCollection`, which derives
-from `CollectionBase` and implements only the NON-generic `IEnumerable`, so the test was false
-whatever AD returned; the method returned empty, and every reset refused with "The directory could
-not be searched". Confirmed in prod logs: every occurrence since the module shipped is
-`AD employeeID lookup could not enumerate forest domains`, with no exception ever logged and no
-success ever recorded. Fixed by projecting inside PowerShell (`AddScript`), the workaround
-`ResolveGlobalCatalog` in the same class had already discovered and documented. The `HadErrors`
-branch now logs the error it clears, which is why diagnosis needed a log dig. Module `1.0.1`; base
-app version unchanged (only this module's behaviour changes - nothing else calls the lookup).
-**CONFIRMED BY THE OWNER 2026-10-02: the reset worked.** Deployed to dev and exercised against
-a real cloud account; the owner-lookup path that had never once succeeded now does. This entry
-is history - do not re-raise it as outstanding.
-
-**PUSHED 2026-10-02 on the owner's explicit `git push all`.** Branch `master`, head `6a7588d`,
-tree clean, both remotes verified at the same SHA. The 2026-09-30 HOLD is SPENT - it was lifted
-by that request, not by an agent. Push policy remains `ask` in `.agents/push-policy.md`, so a
-future agent-initiated push still needs the owner's word.
 
 **LANDED 2026-10-02: the status frame retains nothing.** App `2.27.0`, suite 3576 green. The
 owner reported a "Resolving ... finished" line that sat on screen for 30+ seconds and asked who
@@ -265,104 +240,6 @@ commits of this work stream were landed with NO review at all**, against D1
 slice BEFORE moving on; "build clean, suite green" has now twice been reported as if it closed
 a slice.
 
-**The remaining sweep is ADOPTION work, not markup work - this is the thing to understand
-before picking it up.** Roughly 55 of the 60 remaining spinners sit on operations that report
-nothing, so rule 2 binds on nearly all of them: wire the operation to report FIRST, delete the
-spinner last. Per page, spinners vs operations already reporting:
-
-| Page | Spinners | Reporting |
-|---|---|---|
-| Migration | 13 | **0 - does not inject `IActivityProgress` at all** |
-| SelfServiceGroups | 9 | 1 of 7 (`LoadOwnedGroups` only) |
-| GroupManagement | 6 | 1 |
-| M365GroupManagement | 5 | 1 |
-| MessageTrace | 5 | 2 |
-| ConferenceRooms | 4 | 1 |
-| 10 smaller pages | 18 | mixed |
-
-SelfServiceGroups' six unreported operations, with the line that sets each busy flag:
-`SearchGroup` (1143 `isSearching`), `RemoveListedMember` (638), `RemoveSelectedAsync` (807),
-`ChangeMember` (868), `AddResolvedAsync` (1040) - all `isChanging` - and `ResolvePasteAsync`
-(999 `isResolving`); `LoadMembers` (559) drives the "Loading members..." spinner at line 310.
-
-**IN PROGRESS: migrate EVERY module's spinners to the status bar, Migration included.**
-Started 2026-10-02 at 86 `spinner-border` instances across 32 pages; **60 across 16 pages
-remain.** Count fresh with `grep -rc "spinner-border" Components/Pages/*.razor`.
-
-**DONE - the pre-authorization block, all 25 pages that had one.** Nothing replaces it, and
-that is a measured decision rather than a preference: `GroupAuthorizationHandler` is
-synchronous end to end (claims plus `IsInRole` on the local Windows token,
-`Task.CompletedTask` on every path, no network, no directory round trip), so the check
-finishes faster than a frame and a bar line flickering inside one render is noise. **Do not
-"fix" the absence by adding an activity there.** Guarded by
-`GlobalProgressWiringTests.NoPageDrawsItsOwnSpinnerWhileTheAuthorizationCheckRuns`.
-
-**The eleven-line comment technique held perfectly** - all 12 pinned pages came back at
-exactly their `ExpectedLineCount`, the registry needed no edit, and no ClickGate entry moved.
-**Verify it the same way: compare each pinned page's `wc -l` against its `ExpectedLineCount`
-BEFORE running any test.** A bulk `perl -0777` left a stray blank line after each block and
-that check caught it on nine pages in one pass.
-
-**Write the guard against the RULE, not the markup you replaced.** The block match keyed on
-the shared markup and missed `ServiceHealth.razor`, which wrapped the same spinner in its own
-`.sh-loading` div; the rule-shaped tripwire caught it on the first full run.
-
-**What is left, 42 spinners across 6 pages:** Migration 13, SelfServiceGroups 9,
-GroupManagement 6, MessageTrace 5, M365GroupManagement 5, ConferenceRooms 4. Count fresh with
-`grep -rc "spinner-border" Components/Pages/*.razor`.
-
-**THE PATTERN THAT WORKS, proven over 10 pages on 2026-10-02 - follow it exactly:**
-
-1. Map each spinner to the busy flag it reads, then to the method that sets that flag. A
-   spinner whose operation does not report CANNOT come out until it does (rule 2 above).
-2. Open the activity BEFORE the `try`, not inside it, so refusal paths that return without
-   throwing are still covered. Complete it in the `finally`, AFTER any admin notification -
-   completing at the service call puts the bar back to Idle while an email is still sending,
-   which is the gps-1 defect.
-3. **Complete from a LOCAL, never from a field another control can touch.** ClickGateRegistry
-   caught this three separate times in one session - `operationResult` on NamedLocations,
-   `bulkResult` twice on the permissions pages. The registry names the local to read instead.
-   Where it also pins a form like `var bulk = await ...`, keep that line EXACTLY and mirror
-   into a second hoisted local rather than hoisting the pinned one.
-4. On a pinned page, pad each replacement comment to the HEIGHT of the markup it replaces so
-   no registered line key moves; `` additions below the controls are free and change only
-   `ExpectedLineCount`. Check `wc -l` against the registry BEFORE running tests.
-5. When a page loses its LAST spinner, empty its `SpinnerExpressions` with the reason. Done so
-   far for DhcpAuthorization, NamedLocations, MailboxPermissions, CalendarPermissions.
-6. Busy flags STAY. They are click gates; deleting one reopens a double-submit window.
-7. Bump the module version. Verify it IS a catalog module rather than assuming - gps-2 was
-   exactly that mistake, and `ExchangeOnlineConfig.razor`'s descriptor id is `ExchangeOnline`.
-
-**Run `--filter "FullyQualifiedName~ClickGate"` (1 second, 316 tests) after every pinned-page
-edit.** The full suite is ~5 minutes and most of it cannot be affected by a page edit.
-
-**OWNER RULING, 2026-10-02, verbatim: *"all modules need their spinners migrated to the bar,
-including migration."*** That settles two things that were open:
-
-- **Migration is IN.** Its standing closure does not exempt it from this. Do not re-raise it.
-- **"All" means all.** During the 2026-10-01 session the agent carved out two exceptions on
-  its own reading - the pre-authorization block and per-row indicators in tables - raised them
-  as a question, and then kept applying its own answer. The ruling is "all". Migrate them.
-  Raise a case only if migrating one would genuinely lose information the bar cannot carry,
-  and raise it BEFORE acting, not after.
-
-**UNCOMMITTED WORK IS IN THE TREE as of this handoff.** Spinner removals on
-`DhcpAuthorization`, `TrueLastLogon`, `DefenderEndpointDevices` and `IntuneDevices`, plus the
-emptied `SpinnerExpressions` entry for DhcpAuthorization in `ClickGateRegistry.cs`. Build was
-clean and ClickGate was 316/316, but **the full suite was NOT run on it and it is not
-committed**. Another agent may be working in this repo - check `git status` and `git log`
-before assuming any of it is still there or still yours.
-
-**THE TECHNIQUE THAT MAKES THIS CHEAP, and it is the whole reason the 12 line-pinned pages are
-not a re-anchoring nightmare:** replace each removed spinner block with a comment of THE SAME
-NUMBER OF LINES. The file's line count never changes, so `ExpectedLineCount` stays valid and
-not one of the 491 line-keyed `ClickGateRegistry` entries moves. Proven on DhcpAuthorization:
-two spinners removed, 316/316 still green, no re-anchor. The scanner strips comments, so the
-replacement text cannot satisfy or trip any gating assertion.
-
-When a page loses its last spinner, EMPTY its `SpinnerExpressions` entry rather than deleting
-the field, and put the reason in the comment above it - the emptiness is the record.
-
 `docs/GlobalProgressSystem-Plan.md` is APPROVED (owner, 2026-10-01); S1-S3 are authorised and
 S4's module order needs no further go (*"I don't care about the order"*). App `2.26.0`, suite
 3573 green.
@@ -382,21 +259,19 @@ S4's module order needs no further go (*"I don't care about the order"*). App `2
 - **S2** - `Components/Shared/InFlightWorkGuard.razor`. Warns before leaving running work,
   cancels on OK, and tells the operator background jobs are safe to leave.
 
-**MIGRATION IS NOT ADOPTED AND THIS IS AN UNRESOLVED CONTRADICTION, NOT AN OVERSIGHT.** The
-approved plan names it; this file carries a standing owner closure ("DO NOT TOUCH IT") with two
-scoped exceptions, neither of which covers progress reporting. A plan approval does not repeal a
-standing order. It is also the module with the twenty-minute operations, so it is the largest
-remaining gap. **Needs an owner word either way.**
-
 **No module honours a cancellation token yet.** S2's OK path cancels the token, so today it
 stops the UI waiting rather than stopping the work. Wiring tokens into module calls is part of
 finishing adoption and is not done.
 
 **STANDING CONSTRAINT, owner 2026-10-01: no deployments until item 24 is done**
 (`.agents/decisions.md`). That blocks every outstanding acceptance check in this file - item 23,
-the True Last Logon re-run, Comms-10k, the Migration `@key` case, items 15/16/21/22. The owner
-has deployed to dev several times during this work to check the frame, so the freeze is being
-read as prod-only in practice; it has not been restated either way.
+the True Last Logon re-run, Comms-10k, the Migration `@key` case, items 15/16/21/22.
+**The "it is being read as prod-only in practice" reading recorded here is FALSIFIED, measured
+on this host 2026-10-05 as of `25bb108`: BOTH instances are deployed at FileVersion `2.27.0.0`,
+written 2026-10-02 13:18, and both carry Migration `1.22.6` and `BuildIdentityFilter`.** Prod
+shipped during the freeze too, so the freeze is not being observed on either instance. The
+receipt is canonical in `.agents/machines.md`. Whether the ruling still stands is the owner's
+to say; nothing here reinterprets it.
 
 ### Queue item 24 - exactly what is left, and the rules a fresh session needs
 
@@ -430,12 +305,16 @@ for:**
   bulk detail download, which was first because its service already accepted a token. Every
   other module ignores it, so S2's OK path stops the UI waiting rather than the work for
   those. Extending it means threading tokens through service signatures, module by module.
-- **Spinner removal on the 12 click-gate-converted pages.** The riskiest remaining work: each
-  also needs its `SpinnerExpressions` registry entry deleted in the same commit, and markup
-  removal from the MIDDLE of a page shifts every entry below it - which is the full re-anchor
-  case, not the cheap one. `difflib` is unavailable on this host, so use the playbook's step 4
-  (run the tests and read the reported positions) one page at a time.
-- **Migration.** Flagged above as an unresolved contradiction. Needs an owner word.
+- **Spinner removal on the 12 click-gate-converted pages - DONE.** Measured 2026-10-05 as of
+  `25bb108`: `grep -rc "spinner-border" Components/Pages/*.razor` returns zero across every
+  page. One `SpinnerExpressions` entry is still non-empty in
+  `ExchangeAdminWeb.Tests/ClickGateRegistry.cs` (IntuneDevices, four `@if` conditions); that
+  file owns whether those entries still describe anything, and nothing here edits it.
+- **Migration - DONE, and the contradiction it used to carry is spent.** Measured 2026-10-05 as
+  of `25bb108`: `Components/Pages/Migration.razor:1511` injects `IActivityProgress` and the page
+  opens twelve `Progress.Begin` activities. The owner ruling of 2026-10-02 (*"all modules need
+  their spinners migrated to the bar, including migration"*, `.agents/decisions.md`) was applied;
+  there is no owner word still owed here.
 - **The owner's acceptance pass**, which nothing here can substitute for.
 
 **A process failure from 2026-10-01 worth not repeating:** `ed669a8` was committed with two
@@ -498,7 +377,7 @@ aggregation was working. Item 25 is about the PROSE only.
 
 **`docs/Comms10kBulkResolveScale-Plan.md` IS FULLY IMPLEMENTED. All four slices landed;
 nothing in it has run against the real group, and its Acceptance section is outstanding in
-full and is the owner's.** The module is at `1.3.0`, which the plan sets once on S1 and
+full and is the owner's.** The module version is owned by `Modules/ModuleCatalog.cs`; the plan sets it once on S1 and
 deliberately does not bump per slice.
 
 **READ `.agents/decisions.md` 2026-09-30 "Plan approval is not approval of plan contents"
@@ -570,7 +449,6 @@ re-verified at 3487 passed / 0 failed / 3 skipped as of `370381d`:**
 
 **Owner-side work outstanding, none of it agent-executable:**
 
-- **The push.** 29 commits, on HOLD.
 - **True Last Logon:** the UPN defect is CLOSED - `Get-ADUser -Identity` could not resolve a UPN
   (fixed in `fcc94a4`, module `1.0.1`), and the owner confirmed the UPN search works on dev
   2026-10-01. Still outstanding and still owner work: `AuditLog.Read.All` consent and the
@@ -615,7 +493,6 @@ now verifies the mutation landed before trusting the result. Related:
 one mutation probe PASSED and was nearly recorded as bitten - the "mutation" was an equivalent
 implementation. A probe that passes is either a vacuous test or a bad probe, and assuming the
 first without checking is how a vacuous test gets certified.
-
 
 **2026-09-30 - Module development architecture plan revised for a complete cutover.**
 [`docs/ModuleDevelopmentPlatform-Plan.md`](../docs/ModuleDevelopmentPlatform-Plan.md)
@@ -667,10 +544,10 @@ and the `1-3 OF 3 TICKED` pager were correct; the checkboxes were not.
 - **NOT verified in a browser.** Nothing in this repo can render a Blazor component, so the
   fix is proven at the source level only. The owner's own screenshot case - tick three
   mailboxes, read the boxes below the divider - is the acceptance check and is outstanding.
-- **It IS deployed, on both instances. Measured on this host 2026-10-01 as of `370381d`**, by
-  reading the two deployed assemblies directly: `D:\inetpub\ExchangeAdminWebDev` and
-  `D:\inetpub\ExchangeAdminWeb` both report FileVersion `2.25.0.0` and both carry the Migration
-  descriptor version literal `1.22.5`, which is later than the `1.22.3` this fix shipped in.
+- **It IS deployed, on both instances. Re-measured on this host 2026-10-05 as of `25bb108`**:
+  both deployed assemblies carry a Migration descriptor version later than the `1.22.3` this
+  fix shipped in. The receipt itself - FileVersion, write times and the scanned literals - is
+  canonical in `.agents/machines.md` and is not copied here.
   So the earlier reading - that this defect was blocking the next deploy and every finished
   item behind it stayed invisible until one ran - is spent: the deploy ran.
 - **This was the owner's explicit exception to "do not touch migration":** *"we cannot deploy
@@ -692,11 +569,11 @@ line says so. Status lives here.
 | 1 | Licensing under Identity | **DONE** (owner-marked). |
 | 2 | Add status.cloud.microsoft to the O365 status page | **PLAN IS DRAFT, needs owner approval before any code.** `docs/ServiceHealthPublicStatus-Plan.md`, `Status: Draft`. |
 | 3 | Migration report survives batch recreate | **DONE** (owner-marked). |
-| 4 | Split message trace vs header analysis permissions | **DONE** (owner-marked). |
+| 4 | Split message trace vs header analysis permissions | **DONE** (owner-marked) **but the code disagrees and this needs the owner's word.** Measured 2026-10-05 as of `25bb108`: `MessageTraceSearch` appears only as a declaration in `Modules/ModuleCatalog.cs:452` and in `ModuleCatalogTests`; no page, handler or policy consults it, so the alias is still inert exactly as slice 1 left it. `docs/MessageTracePermissionSplit-Plan.md` still reads `APPROVED ... and IN PROGRESS` and slices 2-4 are unstarted. Either the owner considers the declaration sufficient, or the DONE marker is premature. Flagged, not resolved. |
 | 5 | Other tenants/domains in message trace | **FEASIBILITY ONLY, no code proposed.** `docs/MessageTraceMultiTenant-Plan.md`, `Status: Draft. Scoping and feasibility only.` Needs an owner decision on whether to proceed at all. |
 | 6 | Containerize the app | **ON-HOLD** (owner-marked). `docs/Containerization-Feasibility.md`. |
 | 7 | O365 status module loading affordance | **DONE** (owner-marked). |
-| 8 | Defender for Endpoint devices | **PARTLY BUILT. S1-S5 landed, module registered and shipping at `1.1.0`; S6, S7 and S8 are WRITTEN and NOT IMPLEMENTED.** `docs/DefenderEndpointDevices-Plan.md`. Secret ID 657, both permissions consented. |
+| 8 | Defender for Endpoint devices | **PARTLY BUILT. S1-S5 landed, module registered and shipping (`Modules/ModuleCatalog.cs` owns the version); S6, S7 and S8 are WRITTEN and NOT IMPLEMENTED.** `docs/DefenderEndpointDevices-Plan.md`. Secret ID 657, both permissions consented. |
 | 9 | App-wide click-gating audit | **TIER 1 COMPLETE. Tiers 2, 3 and 4 are UNAPPROVED and not started.** `docs/ClickGatingAudit-Plan.md`. Largest single block of remaining effort in the queue. |
 | 10 | O365 password change matches on EmployeeID | **BUILT, REVIEWED, NEVER RUN AGAINST A REAL TENANT.** `docs/CloudPasswordReset-Plan.md`. Needs a deploy and owner validation, not code. |
 | 11 | Force-change-at-next-login option at runtime | **Same build as 10.** Same pending deploy and validation. |
@@ -705,10 +582,10 @@ line says so. Status lives here.
 | 14 | Migration interface redesign | **DONE** (owner-marked). The checkbox defect that was blocking the deploy is in this surface and is now FIXED in code, unverified on dev - see the top of this file. |
 | 15 | Risky Users complete results | **DONE.** Browser check outstanding, owner's. |
 | 16 | Sidebar scrollbar | **DONE.** `ExchangeAdminWeb.Tests/SidebarScrollCssTests.cs`. Browser check outstanding, owner's. |
-| 17 | True Last Logon module | **BUILT, and its first live run found a defect that is now fixed. S1-S3 landed; module at `1.0.1` (`fcc94a4`) after `Get-ADUser -Identity` proved unable to resolve a UPN - every DC answered "cannot find". NOT done: the re-run and the mandatory live comparison are outstanding owner work.** Detail block below. |
-| 18 | Security hold | **SKIPPED BY OWNER, 2026-09-29.** Do not start it. The hold record lives in a CSV on one person's OneDrive, which a web app cannot use. |
+| 17 | True Last Logon module | **BUILT, and its first live run found a defect that is now fixed. S1-S3 landed, with the UPN fix in `fcc94a4` (`Modules/ModuleCatalog.cs` owns the version) after `Get-ADUser -Identity` proved unable to resolve a UPN - every DC answered "cannot find". NOT done: the re-run and the mandatory live comparison are outstanding owner work.** Detail block below. |
+| 18 | Security hold | **REINSTATED AND ACTIVE - this is the current task.** The 2026-09-29 skip ("the hold record lives in a CSV on one person's OneDrive, which a web app cannot use") was overtaken by the owner on 2026-10-02 and by his rulings of 2026-10-05, which drop the CSV, drop release entirely and make the lockdown-OU move one optional step inside Emergency Disable. `## Now` owns the current standing; `docs/EmergencyDisableLockdownOU-Plan.md` is DRAFT and awaiting a go. |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
-| 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN FULLY IMPLEMENTED 2026-09-30, all four slices. NOT ACCEPTED - it fails the stakeholder's test (owner, 2026-10-01) and the plan's Acceptance section is outstanding in full.** Module `1.3.0`, set once on S1. The stakeholder's three points, and the three things to know before touching any of it, are at the top of this file. |
+| 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN FULLY IMPLEMENTED 2026-09-30, all four slices. NOT ACCEPTED - it fails the stakeholder's test (owner, 2026-10-01) and the plan's Acceptance section is outstanding in full.** `Modules/ModuleCatalog.cs` owns the module version; the plan sets it once on S1. The stakeholder's three points, and the three things to know before touching any of it, are at the top of this file. |
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
 | 23 | Migration batch tick boxes drop ticks when clicked in rapid succession | **DONE. Fixed 2026-09-30 (`af4fb4c`), owner-verified on dev 2026-10-01.** Was an owner-declared P1 prod blocker. A handler guard on a DOM-synced control: the browser applied the tick, `if (IsBusy) return;` discarded it, and Blazor sent no correction because its last-rendered value still matched the model. Guard removed from `ToggleBatchSelected` and `ToggleSelectAllBatches`; D2(a) rules out the disabled-attribute repair. Migration `1.22.4` -> `1.22.5`. Acceptance is the owner's rapid-click case. |
@@ -717,18 +594,10 @@ line says so. Status lives here.
 
 ### Queue item 17 - True Last Logon, built and awaiting a live check
 
-**All three slices are landed and the module ships at `1.0.1`** (`Modules/ModuleCatalog.cs`
+**All three slices are landed and the module ships** (`Modules/ModuleCatalog.cs`
 owns that number). **It is NOT done, but the reason has narrowed:** the on-prem half HAS now
 run against a real domain - the owner exercised the UPN search on dev 2026-10-01 - while the
 cloud half has still never touched a real tenant.
-
-**Nothing is pushed, and the owner ruled HOLD on 2026-09-30 when asked directly.** Do not push
-without a fresh ask. Both `github` and `origin` still sit at `0b7122a`, a clean ancestor of
-local, no divergence. Count the backlog with `git log --oneline 0b7122a..HEAD` rather than
-trusting a number written here, because a second session has been committing into this same
-working tree today (`046e3d2`, `a24d685`) - neither touched this work stream's files, verified
-by reading their stats, but the shared-tree hazard recorded further down this file is live right
-now.
 
 **Landed:**
 
@@ -825,8 +694,8 @@ enabled in Module Config before anyone can see it.
    sign-ins" and a source that FAILED are different facts. `signInActivity` under-reports - 9
    of 557 measured - so `ActivityOnly` is never sufficient evidence of dormancy.
 
-**Still blocked / not startable:** 15, 16 and 19 are complete; 18 is cancelled. Do not open new
-queue items without a go.
+**Still blocked / not startable:** 15, 16 and 19 are complete; 18 is active and is the current
+task (see `## Now`). Do not open new queue items without a go.
 
 **The owner deployed `94d9173`, and the three supplied screenshots still showed no mailboxes.**
 The deployed DLL matched the verified local DLL byte for byte. Read-only diagnosis now proves
@@ -860,10 +729,6 @@ identical - proved by swapping it for a plain-ASCII `"cafe"` and watching the te
 **Worth carrying: that lint failure also aborted the `powershell` job before PSScriptAnalyzer and
 Pester ran, so neither had executed in CI since 2026-09-23.** A red gate early in a job hides
 every gate behind it.
-
-**Origin was verified at `bceef0e` on 2026-09-29; the recovery base `3a1644d` was 48 commits
-ahead.** The local GitHub tracking ref also names `bceef0e`, but the live GitHub check was
-blocked by the sandbox proxy and its retry was interrupted. Push policy remains ask.
 
 - **COMMS-10K AT FULL SIZE: PLAN APPROVED BY THE OWNER 2026-09-28 AT REVISION 15. NO CODE
   WRITTEN. FOUR SLICES, NONE STARTED.** `docs/Comms10kBulkResolveScale-Plan.md`. Reported defect:
@@ -920,7 +785,7 @@ blocked by the sandbox proxy and its retry was interrupted. Push policy remains 
   - **NEXT ACTION: finish verification of the pending-state correction, then deploy to dev.**
     Deployment still requires an elevated Windows PowerShell session; this session is not
     elevated. Do not start/resume these live batches as a diagnostic: that changes migration
-    state and is outside the recovery implementation authority. Push is still ask.
+    state and is outside the recovery implementation authority.
   - The owner's priority remains recovery of this pane, then other modules. No broader
     Migration redesign or independent review was started.
 
@@ -946,11 +811,17 @@ blocked by the sandbox proxy and its retry was interrupted. Push policy remains 
     produced three of. **If a large batch ever feels sluggish while typing in the mailbox
     filter, this is the first place to look**, and the fix is to compute the list once per
     render rather than to cache it between renders.
-  - **DRIFT IN THE OLDER ENTRIES BELOW, left for the owner rather than rewritten by me.** The
-    `ToggleBatchSelected` open question appears twice, and the plan status is given as
-    `Implemented` in one place and `Approved / In progress` about thirty lines later - the
-    plan file itself says `IMPLEMENTED`. These are prior sessions' records; `playbook drift`
-    is the verb for consolidating them and the owner has not invoked it.
+  - **DRIFT IN THE OLDER ENTRIES BELOW, resolved by the 2026-10-05 drift sweep.** The
+    `ToggleBatchSelected` open question appears twice and the plan status is stated twice,
+    inconsistently (`Implemented` in one place, `Approved / In progress` about thirty lines
+    later). **Neither restatement is authoritative and the plan owns its own status:
+    `docs/MigrationInterfaceRedesign-Plan.md` reads "Implementation landed; dev acceptance
+    pending. Mailbox-loading recovery 2026-09-29" as of `25bb108`** - which is also no longer
+    the bare `IMPLEMENTED` an earlier version of this note claimed. The duplicated
+    `ToggleBatchSelected` question is ONE question, still open and still the owner's: ruling
+    D2(a) registered the control as ungated because it "makes no call and awaits nothing", and
+    S3 made that false. Read the older blocks below for their reasoning only, never for a
+    status.
   **Everything below this line is the record as it stood at `8b8b8be`** (module `1.19.0`,
   3261 passed), kept for its reasoning. Where it states a version, a gate result or a plan
   status, the block above supersedes it - PSScriptAnalyzer 0 errors and Pester 157/0 were
@@ -1155,7 +1026,7 @@ blocked by the sandbox proxy and its retry was interrupted. Push policy remains 
 
 - **TWO OWNER-REPORTED DEFECTS, 2026-09-24. THE SIDEBAR ONE IS LANDED; RISKY USERS IS PLANNED,
   REVIEWED AND UNSTARTED.** Both jumped ahead of queue item 14. **Queue item 15 - implement the
-  Risky Users plan - is the next code task and nothing blocks it: no open owner questions, five
+  Risky Users plan - WAS the next code task when this was written; it is DONE (queue table). No open owner questions, five
   slices, all reviewed.**
   - **`docs/RiskyUsersCompleteResults-Plan.md` - IMPLEMENTED AND REVIEWED. ALL FIVE SLICES LANDED 2026-09-25, plus three review fixes.**
     Go was queue item 15. `fa108d3` S1, `7715780` S2+notice, `0f89272` termination fix +
@@ -1262,7 +1133,7 @@ unblocked.
   on 2026-09-24 and the plan is revised to match (`cb548cb`).**
   **CORRECTED 2026-09-30: the sentence that used to stand here - "the module is still not
   deployed and no code has been written; the next move is an OWNER APPROVAL, not a slice" - was
-  true when written and is now false.** Code evidence disproves it: `Modules/ModuleCatalog.cs:947`
+  true when written and is now false.** Code evidence disproves it: `Modules/ModuleCatalog.cs:1036` (re-anchored 2026-10-05 as of `25bb108`)
   registers `DefenderEndpointDevices`, `Services/DefenderEndpointDeviceService.cs` and
   `Services/DefenderApiClient.cs` exist with tests, and the plan header records S1-S5 landed at
   module `1.1.0` with S6-S8 written. The live state is in the queue table near the top of this
@@ -1326,7 +1197,7 @@ unblocked.
   each other; the audit-completeness half of the ruling existed only in the ruling and not in the
   CSV or S3 sections; **nothing held the resume state** that "Keep going" needs, so S6 or S7 must
   add it or the control cannot exist; and the shipped code still refuses in two named places
-  (`ModuleCatalog.cs:841`, `DefenderEndpointDeviceService.cs:307`), recorded as part of the
+  (the descriptor's ceiling copy at `ModuleCatalog.cs:1065`, and `Refusal(` in `DefenderEndpointDeviceService.cs` - citations re-anchored 2026-10-05 as of `25bb108`), recorded as part of the
   implementing slice rather than as drift.
   **Two defects are open against the shipped module and neither is fixed:**
   1. *The page is unusable at tenant scale.* It renders every device row, so the Blazor circuit
@@ -1367,7 +1238,7 @@ unblocked.
   all seen by" link. So the data is obtainable, the stakeholder's document does not have to
   change, and the route was found - `SeenBy()`. Do not re-ask it.
 
-- **NEXT AGREED ITEM: queue 4, break out permissions for message trace vs header analysis.**
+- **Queue 4, break out permissions for message trace vs header analysis. HISTORY - the queue table marks item 4 DONE (owner-marked); the "next agreed item" header this block carried is spent.**
   Picked 2026-09-22 when the owner parked queue 8 and said "pick and handoff". Reasons it was
   chosen over 2, 5 and 6: it is self-contained, needs no new credential or app registration, has
   no blocked decision in front of it, and `.agents/state.md` already named it "the obvious
@@ -1478,7 +1349,7 @@ unblocked.
      force-change case against an account whose sign-in path cannot service a change prompt,
      because that path is the reason the checkbox still exists.
 
-- **NEXT SESSION STARTS HERE: QUEUE ITEM 14, REDESIGN THE MIGRATIONS INTERFACE. It is a PLANNING
+- **Queue item 14, redesign the migrations interface. HISTORY - the queue table marks item 14 DONE (owner-marked), and the plan was written and implemented. Kept for the owner's own framing of the failure mode. It WAS a PLANNING
   task and the owner said so - "handoff so I can plan in a new session".** Added to `queue.txt`
   2026-09-23, verbatim:
   > 14. Precedes 12 & 13. Design a better, safer, and easier to use interface for managing
@@ -1655,17 +1526,21 @@ unblocked.
     plus AppId/Organization from module config, and `MessageTrace`'s `DelineaSecretId` is the
     on-prem credential only.
 - **A live defect was found while scoping queue 4 and is NOT fixed. It needs its own commit.**
-  `Components/Pages/MessageTraceReports.razor` carries only the main `MessageTrace` policy
-  (`:4`, `:126`), and `Exports.GetExports()` (`:143`) calls
-  `_jobs.GetFinishedByType(ModuleName, JobType, ListLimit)` with **no submitter filter** - the
-  table renders `@item.SubmittedBy` per row (`:78`) precisely because it is an all-operators
-  listing - while `Download` (`:146`) serves any listed export to any policy holder. So every
+  **Citations re-anchored 2026-10-05 as of `25bb108`; the defect itself is unchanged and still
+  live.** `Components/Pages/MessageTraceReports.razor` carries only the main `MessageTrace`
+  policy (`:4`, and the handler re-check at `:124`), and the listing has since moved into
+  `Services/MessageTraceExportListing.cs` - `GetExports()` (`:119`) calls
+  `_jobs.GetFinishedByType(ModuleName, JobType, ListLimit)` (`:121`) with **no submitter
+  filter** - the table renders `@item.SubmittedBy` per row (`:79`) precisely because it is an
+  all-operators listing - while `TryDownloadAsync` (`MessageTraceExportListing.cs:170`, reached
+  from the page's `Download` at `:144`) checks ticket presence and job type and **no
+  submitter**, so it serves any listed export to any policy holder. So every
   operator can download every other operator's full message-trace detail exports. This is
   independent of the permission split; the split makes it worse by admitting header-only
   operators to that page. Not caused by this run's work.
 
 - **A defect in committed TEST infrastructure, found in plan review and not yet fixed.**
-  `ExchangeAdminWeb.Tests/ClickGateSource.cs:364-384` (re-verified 2026-10-01 as of `370381d`
+  `ExchangeAdminWeb.Tests/ClickGateSource.cs:364-384` (re-verified 2026-10-05 as of `25bb108`
   - the citation is still exact and the method is still not quote-aware;
   the earlier `:213-228` citation was stale), `ExtractBlock`, counts `{` and `}`
   without being quote-aware, so a brace inside a string or interpolated string miscounts the
@@ -1835,9 +1710,10 @@ unblocked.
 - **The owner's issue queue is the enumeration of outstanding items and this file does not copy
   it.** It lives at the path recorded in `.agents/machines.md` (machine-local, not in the repo,
   and not ours to write to - its own first line says so). Read it for the owner's wording and
-  their own status markers. Each item's current standing is in `## Now`: 14 is next and is a
-  planning task, 12 and 13 sit behind it, 8 is parked, 4 is in progress, 9's tier 1 is complete
-  with tiers 2-4 unapproved, and 2, 5 and 6 are covered in the weekend-run entry. The previous
+  their own status markers. **The queue table in `## Now` (swept 2026-10-01) owns each item's
+  current standing and this paragraph does not restate it** - the per-item summary that used to
+  sit here was stale within days. The one thing worth saying: 18 is the current task, 24 is
+  functionally complete and awaiting the owner's acceptance pass. The previous
   copy of the queue was rotated to `docs/history/state-archive.md` on 2026-09-23: its "not yet
   started" header was false for four of its six items, and the entries for 5 and 6 had been
   overtaken by owner rulings of 2026-09-21.
@@ -1867,9 +1743,9 @@ unblocked.
 - **Falsified deployment/configuration blockers:**
   the old dev/prod versions, incomplete shared cutover and missing initial ServiceHealth,
   RiskyUsers and IntuneDevices configuration disagree with the host. Evidence is canonical in
-  `.agents/machines.md`, whose receipt was re-measured 2026-10-01 as of `370381d` - **the
-  2026-09-23 divergence is itself now falsified: dev and prod are back at the same base
-  version, and it is the repo's current one.** Manual acceptance remains unverified.
+  `.agents/machines.md`, whose receipt was re-measured 2026-10-05 as of `25bb108` - **dev and
+  prod are at the same base version and the same build, redeployed 2026-10-02.** Manual
+  acceptance remains unverified.
 - **Queue 6, containerize: the SPN and gMSA work is not ours to do.** The owner's 2026-09-21
   ruling makes containerization a requirement, but a containerised app runs under Kestrel rather
   than IIS, so Windows Authentication needs a gMSA, a credential spec and SPNs registered in the
@@ -1878,7 +1754,7 @@ unblocked.
   container outside line of sight of on-prem AD and Exchange cannot do the AD, on-prem Exchange or
   DHCP work at all. Evidence: `.agents/decisions.md` 2026-09-21, items 3 and the closing paragraph.
 - **SQLite upgrade is no longer blocked by package availability.** The 2026-06-26 decision's
-  "no patched package exists" basis is falsified, re-verified 2026-10-01 as of `370381d`:
+  "no patched package exists" basis is falsified, re-verified 2026-10-05 as of `25bb108`:
   `obj/project.assets.json` still resolves `SQLitePCLRaw.lib.e_sqlite3/2.1.11`, while
   [NuGet publishes newer builds](https://www.nuget.org/packages/SQLitePCLRaw.lib.e_sqlite3),
   including 3.53.3 (the package version identifies its SQLite engine).
@@ -1901,7 +1777,7 @@ unblocked.
   implementation uses the store's change token with a throttle. The additive-only rule has
   operative homes in the decision, guidance and test but is absent from the Constitution.
   Evidence: `docs/SharedConfigDb-Plan.md` section 9. No ruling inferred.
-- **Plan-status drift remains, re-verified 2026-10-01 as of `370381d`:**
+- **Plan-status drift remains, re-verified 2026-10-05 as of `25bb108`:**
   `docs/BlockedSendersLoadTiming-Plan.md` and
   `docs/Comms10kReplaceUx-Plan.md` still say Approved;
   `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` still says Approved / In progress.
@@ -1909,7 +1785,7 @@ unblocked.
   `docs/AdminUIRedesign-Plan.md` remains In progress with manual checks.
 - **Unscheduled M365 protection gap:** group update/delete and owner adds were recorded as
   ungated, and protection configuration cannot identify a cloud-only group. Re-verified
-  2026-10-01 as of `370381d`: `Services/M365GroupManagementService.cs` calls its
+  2026-10-05 as of `25bb108`: `Services/M365GroupManagementService.cs` calls its
   `CheckProtectedAsync` gate from the member/owner paths only - `UpdateGroupAsync` and
   `DeleteGroupAsync` still call neither.
   The owner excluded this module from the on-prem target work; no work approved.
@@ -1925,10 +1801,11 @@ unblocked.
 ## Verification
 
 Commands and mandatory guards are owned by `.agents/repo-guidance.md` and `AGENTS.md`.
-**Re-verified 2026-10-01 as of `370381d`:** full Release suite **3487 passed / 0 failed /
-3 skipped**, with `-- xUnit.MaxParallelThreads=4`, 5m10s. That supersedes the 3294 recorded
-for the 2026-09-29 recovery run, which was the figure for that commit and not for this head.
-Build, format, ASCII lint and `git diff --check` were NOT re-run by this sweep.
+**Re-verified 2026-10-05 as of `25bb108`:** Release build 0 errors, full Release suite
+**3579 passed / 0 failed / 3 skipped** with `-- xUnit.MaxParallelThreads=4`, 5m08s, and the
+ClickGate filter **316/316**. That supersedes the 3487 recorded for `370381d`, which was the
+figure for that commit and not for this head.
+Format check, ASCII lint and `git diff --check` were NOT re-run by that sweep.
 The 2026-09-29 recovery run reported Release build 0 errors; format, ASCII lint and
 `git diff --check` passing. Existing dependency and compiler warnings remain.
 All five new regression cases fail against the original service/page and pass with the fix;
@@ -1937,9 +1814,9 @@ the proof includes compiled Razor render output, not just source scans. Local re
 the recovery section of `docs/MigrationInterfaceRedesign-Plan.md`.
 PSScriptAnalyzer/Pester were not rerun because no PowerShell source changed; their last recorded
 2026-09-28 result was 0 errors and 157 passed / 0 failed. Browser acceptance, live writes and
-reviewer dispatches were not run. **Dev deployment is no longer pending** - both instances were
-deployed 2026-09-30, measured on this host 2026-10-01 and recorded in `.agents/machines.md`. Current
-CI status does not belong here.
+reviewer dispatches were not run. **Deployment is no longer pending on either instance** - both
+were redeployed 2026-10-02, re-measured on this host 2026-10-05 as of `25bb108` and recorded in
+`.agents/machines.md`, which owns the receipt. Current CI status does not belong here.
 Per-finding status is owned by `.agents/review/index.md`.
 
 ## Active sources

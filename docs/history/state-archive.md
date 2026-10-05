@@ -13,6 +13,149 @@ still ran it inline.
 > can be run from the dev instance. Read every "no dev tenant" below as "live validation
 > not yet performed."
 
+## Archived 2026-10-05 (drift sweep, as of `25bb108`)
+
+Preserved verbatim. Rotated out of `.agents/state.md` because each block was completed, or
+falsified by current repo evidence measured in this sweep. What is still live has a home
+elsewhere and is named here:
+
+- **Cloud Password Reset's forest-domain enumeration bug** - fixed, deployed and confirmed by
+  the owner on 2026-10-02; the entry itself said "this entry is history". The code fix lives in
+  `Services/ADEmployeeIdLookup.cs`; `Modules/ModuleCatalog.cs` owns the module's current
+  version.
+- **The whole per-page spinner sweep** - DONE. `grep -rc "spinner-border" Components/Pages/*.razor`
+  returns zero matches across every page as of `25bb108`, so the "60 across 16 pages remain" and
+  "42 spinners across 6 pages" counts, the per-page table, the uncommitted-work note (the tree is
+  clean) and the working technique notes are all spent. The four surviving spinners are in
+  `Components/Shared` (`ADGroupAutocomplete`, `ADIdentityAutocomplete`, `RecipientAutocomplete`,
+  `TicketNumberInput`), plus `GlobalProgress.razor`'s own, which is the bar itself - that is the
+  open question `.agents/state.md` still carries. The owner ruling the block quotes has its
+  canonical home in `.agents/decisions.md` 2026-10-02, "Every module's spinners move to the
+  status bar. Migration included."
+- **"Migration is not adopted and this is an unresolved contradiction"** - FALSIFIED.
+  `Components/Pages/Migration.razor:1511` injects `IActivityProgress` and the page opens twelve
+  `Progress.Begin` activities as of `25bb108`. There is no contradiction left to put to the
+  owner; the ruling was applied.
+
+**PROD BUG FIXED, DEPLOYED AND CONFIRMED 2026-10-02. Cloud Password Reset could never find an
+owner.**
+`ADEmployeeIdLookup.GetForestDomains()` read `(Get-ADForest).Domains` out of the returned PSObject
+through an `is IEnumerable<object>` test. That type is `ADPropertyValueCollection`, which derives
+from `CollectionBase` and implements only the NON-generic `IEnumerable`, so the test was false
+whatever AD returned; the method returned empty, and every reset refused with "The directory could
+not be searched". Confirmed in prod logs: every occurrence since the module shipped is
+`AD employeeID lookup could not enumerate forest domains`, with no exception ever logged and no
+success ever recorded. Fixed by projecting inside PowerShell (`AddScript`), the workaround
+`ResolveGlobalCatalog` in the same class had already discovered and documented. The `HadErrors`
+branch now logs the error it clears, which is why diagnosis needed a log dig. Module `1.0.1`; base
+app version unchanged (only this module's behaviour changes - nothing else calls the lookup).
+**CONFIRMED BY THE OWNER 2026-10-02: the reset worked.** Deployed to dev and exercised against
+a real cloud account; the owner-lookup path that had never once succeeded now does. This entry
+
+**The remaining sweep is ADOPTION work, not markup work - this is the thing to understand
+before picking it up.** Roughly 55 of the 60 remaining spinners sit on operations that report
+nothing, so rule 2 binds on nearly all of them: wire the operation to report FIRST, delete the
+spinner last. Per page, spinners vs operations already reporting:
+
+| Page | Spinners | Reporting |
+|---|---|---|
+| Migration | 13 | **0 - does not inject `IActivityProgress` at all** |
+| SelfServiceGroups | 9 | 1 of 7 (`LoadOwnedGroups` only) |
+| GroupManagement | 6 | 1 |
+| M365GroupManagement | 5 | 1 |
+| MessageTrace | 5 | 2 |
+| ConferenceRooms | 4 | 1 |
+| 10 smaller pages | 18 | mixed |
+
+SelfServiceGroups' six unreported operations, with the line that sets each busy flag:
+`SearchGroup` (1143 `isSearching`), `RemoveListedMember` (638), `RemoveSelectedAsync` (807),
+`ChangeMember` (868), `AddResolvedAsync` (1040) - all `isChanging` - and `ResolvePasteAsync`
+(999 `isResolving`); `LoadMembers` (559) drives the "Loading members..." spinner at line 310.
+
+**IN PROGRESS: migrate EVERY module's spinners to the status bar, Migration included.**
+Started 2026-10-02 at 86 `spinner-border` instances across 32 pages; **60 across 16 pages
+remain.** Count fresh with `grep -rc "spinner-border" Components/Pages/*.razor`.
+
+**DONE - the pre-authorization block, all 25 pages that had one.** Nothing replaces it, and
+that is a measured decision rather than a preference: `GroupAuthorizationHandler` is
+synchronous end to end (claims plus `IsInRole` on the local Windows token,
+`Task.CompletedTask` on every path, no network, no directory round trip), so the check
+finishes faster than a frame and a bar line flickering inside one render is noise. **Do not
+"fix" the absence by adding an activity there.** Guarded by
+`GlobalProgressWiringTests.NoPageDrawsItsOwnSpinnerWhileTheAuthorizationCheckRuns`.
+
+**The eleven-line comment technique held perfectly** - all 12 pinned pages came back at
+exactly their `ExpectedLineCount`, the registry needed no edit, and no ClickGate entry moved.
+**Verify it the same way: compare each pinned page's `wc -l` against its `ExpectedLineCount`
+BEFORE running any test.** A bulk `perl -0777` left a stray blank line after each block and
+that check caught it on nine pages in one pass.
+
+**Write the guard against the RULE, not the markup you replaced.** The block match keyed on
+the shared markup and missed `ServiceHealth.razor`, which wrapped the same spinner in its own
+`.sh-loading` div; the rule-shaped tripwire caught it on the first full run.
+
+**What is left, 42 spinners across 6 pages:** Migration 13, SelfServiceGroups 9,
+GroupManagement 6, MessageTrace 5, M365GroupManagement 5, ConferenceRooms 4. Count fresh with
+`grep -rc "spinner-border" Components/Pages/*.razor`.
+
+**THE PATTERN THAT WORKS, proven over 10 pages on 2026-10-02 - follow it exactly:**
+
+1. Map each spinner to the busy flag it reads, then to the method that sets that flag. A
+   spinner whose operation does not report CANNOT come out until it does (rule 2 above).
+2. Open the activity BEFORE the `try`, not inside it, so refusal paths that return without
+   throwing are still covered. Complete it in the `finally`, AFTER any admin notification -
+   completing at the service call puts the bar back to Idle while an email is still sending,
+   which is the gps-1 defect.
+3. **Complete from a LOCAL, never from a field another control can touch.** ClickGateRegistry
+   caught this three separate times in one session - `operationResult` on NamedLocations,
+   `bulkResult` twice on the permissions pages. The registry names the local to read instead.
+   Where it also pins a form like `var bulk = await ...`, keep that line EXACTLY and mirror
+   into a second hoisted local rather than hoisting the pinned one.
+4. On a pinned page, pad each replacement comment to the HEIGHT of the markup it replaces so
+   no registered line key moves; `` additions below the controls are free and change only
+   `ExpectedLineCount`. Check `wc -l` against the registry BEFORE running tests.
+5. When a page loses its LAST spinner, empty its `SpinnerExpressions` with the reason. Done so
+   far for DhcpAuthorization, NamedLocations, MailboxPermissions, CalendarPermissions.
+6. Busy flags STAY. They are click gates; deleting one reopens a double-submit window.
+7. Bump the module version. Verify it IS a catalog module rather than assuming - gps-2 was
+   exactly that mistake, and `ExchangeOnlineConfig.razor`'s descriptor id is `ExchangeOnline`.
+
+**Run `--filter "FullyQualifiedName~ClickGate"` (1 second, 316 tests) after every pinned-page
+edit.** The full suite is ~5 minutes and most of it cannot be affected by a page edit.
+
+**OWNER RULING, 2026-10-02, verbatim: *"all modules need their spinners migrated to the bar,
+including migration."*** That settles two things that were open:
+
+- **Migration is IN.** Its standing closure does not exempt it from this. Do not re-raise it.
+- **"All" means all.** During the 2026-10-01 session the agent carved out two exceptions on
+  its own reading - the pre-authorization block and per-row indicators in tables - raised them
+  as a question, and then kept applying its own answer. The ruling is "all". Migrate them.
+  Raise a case only if migrating one would genuinely lose information the bar cannot carry,
+  and raise it BEFORE acting, not after.
+
+**UNCOMMITTED WORK IS IN THE TREE as of this handoff.** Spinner removals on
+`DhcpAuthorization`, `TrueLastLogon`, `DefenderEndpointDevices` and `IntuneDevices`, plus the
+emptied `SpinnerExpressions` entry for DhcpAuthorization in `ClickGateRegistry.cs`. Build was
+clean and ClickGate was 316/316, but **the full suite was NOT run on it and it is not
+committed**. Another agent may be working in this repo - check `git status` and `git log`
+before assuming any of it is still there or still yours.
+
+**THE TECHNIQUE THAT MAKES THIS CHEAP, and it is the whole reason the 12 line-pinned pages are
+not a re-anchoring nightmare:** replace each removed spinner block with a comment of THE SAME
+NUMBER OF LINES. The file's line count never changes, so `ExpectedLineCount` stays valid and
+not one of the 491 line-keyed `ClickGateRegistry` entries moves. Proven on DhcpAuthorization:
+two spinners removed, 316/316 still green, no re-anchor. The scanner strips comments, so the
+replacement text cannot satisfy or trip any gating assertion.
+
+When a page loses its last spinner, EMPTY its `SpinnerExpressions` entry rather than deleting
+the field, and put the reason in the comment above it - the emptiness is the record.
+
+**MIGRATION IS NOT ADOPTED AND THIS IS AN UNRESOLVED CONTRADICTION, NOT AN OVERSIGHT.** The
+approved plan names it; this file carries a standing owner closure ("DO NOT TOUCH IT") with two
+scoped exceptions, neither of which covers progress reporting. A plan approval does not repeal a
+standing order. It is also the module with the twenty-minute operations, so it is the largest
+remaining gap. **Needs an owner word either way.**
+
 ## Archived 2026-10-01 (drift sweep)
 
 Preserved verbatim. Rotated out of `.agents/state.md` because each entry was completed or

@@ -73,15 +73,16 @@ _First recorded 2026-07-21._
   (the `WebAdministration` IIS provider does not load under PowerShell 7). Dev app root:
   `D:\inetpub\ExchangeAdminWebDev`.
 - `sqlite3.exe` is on PATH via winget (ops-script dependency for config backup). Re-verified
-  2026-08-14 at
+  2026-10-05 as of `25bb108` at
   `C:\Users\mcoelho\AppData\Local\Microsoft\WinGet\Packages\SQLite.SQLite_Microsoft.Winget.Source_8wekyb3d8bbwe\sqlite3.exe`.
 - **Shared config database path** (SharedConfigDb-Plan, decision 2026-09-04):
   `D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db` - the default `-SharedDbPath` of
   `tools/Move-ConfigDbToShared.ps1` and the value both instances' `appsettings.json` carry
   under `ConfigStore:Path` after the cutover. Prod app root: `D:\inetpub\ExchangeAdminWeb`.
   **Cutover configuration verified 2026-09-14 as of `a16c316`: both deployed
-  appsettings files name this same existing path.** Startup-log and cross-instance
-  refresh acceptance checks were not run by this records sweep.
+  appsettings files name this same existing path.** The path itself was re-confirmed to
+  exist 2026-10-05 as of `25bb108`; the two appsettings files were not re-read by that
+  sweep. Startup-log and cross-instance refresh acceptance checks have never been run.
 
 ### Owner's issue queue
 
@@ -97,17 +98,18 @@ Read-only evidence: DLL FileVersion/LastWriteTime, the `ConfigStore:Path` field 
 both deployed appsettings files, and selected rows in the shared config database.
 No secret values or directory data were read.
 
-**Deployed base versions re-measured 2026-10-01 as of `370381d`. The 2026-09-23 reading
-(dev `2.22.0.0`, prod `2.20.2.0`, "dev and prod have diverged") is FALSIFIED - both
-instances were redeployed on 2026-09-30 and are converged again:**
+**Deployed base versions re-measured 2026-10-05 as of `25bb108`. The 2026-10-01 reading
+(both at `2.25.0.0`, written 2026-09-30, "prod is one commit short of the UPN fix") is
+SUPERSEDED - both instances were redeployed on 2026-10-02 and are identical:**
 
-- Dev DLL `D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll` - FileVersion matches the
-  repo's current `<VersionPrefix>`, LastWriteTime `2026-09-30 17:29` (host local time).
-  It carries the Migration descriptor version literal `1.22.5` and the `BuildIdentityFilter`
-  member added by `fcc94a4`, so the dev instance includes the True Last Logon UPN fix.
-- Prod DLL `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll` - same FileVersion,
-  LastWriteTime `2026-09-30 17:17`. It carries Migration `1.22.5` but NOT
-  `BuildIdentityFilter`, so prod is one commit short of the UPN fix.
+- Dev DLL `D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll` - FileVersion `2.27.0.0`,
+  LastWriteTime `2026-10-02 13:18` (host local time). It carries the Migration descriptor
+  version literal `1.22.6` and the `BuildIdentityFilter` member added by `fcc94a4`.
+- Prod DLL `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll` - same FileVersion, the same
+  LastWriteTime, the same Migration literal and `BuildIdentityFilter` present. **The
+  dev/prod divergence recorded on 2026-10-01 is gone, and so is the reading that the
+  2026-10-01 deployment freeze was being observed on prod: prod shipped during it.** That
+  freeze is `.agents/decisions.md` 2026-10-01 and is the owner's to restate or lift.
 - `ExchangeAdminWeb.csproj` owns the base version number and `Modules/ModuleCatalog.cs` owns
   the module versions; neither is copied here. Method: FileVersion off each assembly plus a
   UTF-16 literal scan of the two DLLs for the version strings and the member name. That
@@ -121,11 +123,11 @@ The old separate dev/prod and missing-initial-configuration records are supersed
 
 ### Cloud owner diagnostic files (2026-09-14)
 
-**Re-measured 2026-10-01 as of `370381d`: NEITHER file is in the workspace any more.** A
-recursive search of the repo for `CloudAccountOwnerCoverage*` returns nothing, so the
-2026-09-14 reading below is stale as to location. Both were gitignored, so git cannot say
-where they went and this sweep did not look outside the repo; treat their disposition as
-unknown rather than as settled.
+**Re-measured 2026-10-05 as of `25bb108`: NEITHER file is in the workspace any more** (same
+reading as 2026-10-01). A recursive search of the repo for `CloudAccountOwnerCoverage*`
+returns nothing, so the 2026-09-14 reading below is stale as to location. Both were
+gitignored, so git cannot say where they went and this sweep did not look outside the repo;
+treat their disposition as unknown rather than as settled.
 
 The 2026-09-14 record, kept for what it says about the files themselves: the original ignored
 `CloudAccountOwnerCoverage-20260911-154815.csv` was then in the workspace. The earlier record
@@ -174,7 +176,8 @@ The app-only Graph context was left available in PTK's default session.
 **Run the xUnit suite with `-- xUnit.MaxParallelThreads=4` on this box.** At full parallelism
 it spreads over every core and each worker holds its own fixtures, which peaked near 27GB and
 got a run killed by the harness for memory pressure on 2026-09-25. Capped, it costs nothing
-measurable: re-timed 2026-10-01 as of `370381d` at 5m10s for the full Release suite.
+measurable: re-timed 2026-10-05 as of `25bb108` at 5m08s for the full Release suite
+(3579 passed / 0 failed / 3 skipped).
 
 _Re-probed 2026-09-14 as of `a16c316`._ Pester `6.0.1`, PSScriptAnalyzer `1.25.0`,
 and ActiveDirectory `1.0.1.0` are installed; the
