@@ -330,7 +330,7 @@
             using var activity = Progress.Begin(
                 "Emergency Disable", $"Disabling {resolvedPrincipal.DisplayName}", ActivitySize.Unknown);
 
-            disableResult = await DisableService.DisableAsync(resolvedPrincipal, ticketNumber.Trim(), currentUser, clientIpAddress, authState.User);
+            disableResult = await DisableService.DisableAsync(resolvedPrincipal, ticketNumber.Trim(), currentUser, clientIpAddress, authState.User, moveToLockdownOu: false);
             activity.Complete(disableResult.Success, disableResult.Error);
 
             if (disableResult.Success)

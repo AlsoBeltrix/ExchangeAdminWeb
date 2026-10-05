@@ -870,7 +870,13 @@ public sealed class ModuleCatalog
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential with account disable and password reset permissions"),
                 new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields"),
-                new("NotifySecurityTeam", "Security Team Email", "Email address for immediate notification on disable actions")
+                new("NotifySecurityTeam", "Security Team Email", "Email address for immediate notification on disable actions"),
+                // Optional on purpose. Required: true would flip IsModuleConfigured to false for
+                // every existing install (Services/ModuleConfigService.cs). Blank means the
+                // lockdown step is unavailable, not that a disable fails.
+                new("LockdownOuDn", "Lockdown OU",
+                    "Distinguished name of the OU a disabled account is moved into, where delegation does not allow routine re-enablement. Leave blank to make the lockdown step unavailable.",
+                    Required: false, FieldType: ConfigFieldType.OU)
             ]
         },
         new()

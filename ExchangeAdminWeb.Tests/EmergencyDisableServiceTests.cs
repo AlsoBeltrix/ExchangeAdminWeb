@@ -30,7 +30,7 @@ public class EmergencyDisableServiceTests : IDisposable
     {
         var service = CreateService();
 
-        var result = await service.DisableAsync(MakePrincipal(), "  ", "DOMAIN\\admin", "10.0.0.1", actingUser: null);
+        var result = await service.DisableAsync(MakePrincipal(), "  ", "DOMAIN\\admin", "10.0.0.1", actingUser: null, moveToLockdownOu: false);
 
         Assert.False(result.Success);
         Assert.Null(result.Snapshot);
@@ -55,7 +55,7 @@ public class EmergencyDisableServiceTests : IDisposable
         });
         var service = CreateService(protectedPrincipalsJson: protectedConfig);
 
-        var result = await service.DisableAsync(MakePrincipal("ceo@contoso.com"), "INC001", "DOMAIN\\admin", "10.0.0.1", actingUser: null);
+        var result = await service.DisableAsync(MakePrincipal("ceo@contoso.com"), "INC001", "DOMAIN\\admin", "10.0.0.1", actingUser: null, moveToLockdownOu: false);
 
         Assert.False(result.Success);
         Assert.Null(result.Snapshot);
@@ -71,7 +71,7 @@ public class EmergencyDisableServiceTests : IDisposable
         File.WriteAllText(Path.Combine(_configDir, "protected-principals.json"), "not valid json {{{");
         var service = CreateService();
 
-        var result = await service.DisableAsync(MakePrincipal(), "INC001", "DOMAIN\\admin", "10.0.0.1", actingUser: null);
+        var result = await service.DisableAsync(MakePrincipal(), "INC001", "DOMAIN\\admin", "10.0.0.1", actingUser: null, moveToLockdownOu: false);
 
         Assert.False(result.Success);
         Assert.Null(result.Snapshot);
@@ -85,7 +85,7 @@ public class EmergencyDisableServiceTests : IDisposable
     {
         var service = CreateService();
 
-        var result = await service.DisableAsync(MakePrincipal(), "INC001", "DOMAIN\\admin", "10.0.0.1", actingUser: null);
+        var result = await service.DisableAsync(MakePrincipal(), "INC001", "DOMAIN\\admin", "10.0.0.1", actingUser: null, moveToLockdownOu: false);
 
         Assert.False(result.Success);
         Assert.Null(result.Snapshot);
@@ -117,6 +117,276 @@ public class EmergencyDisableServiceTests : IDisposable
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");
     }
 
+    [Fact]
+    public void Catalog_LockdownOuField_IsOptional_SoExistingInstallsStayConfigured()
+    {
+        // Required: true would flip IsModuleConfigured to false for every install that has not
+        // set a lockdown OU, which would take the whole module offline to add an optional step.
+        var catalog = new ModuleCatalog();
+        var module = catalog.GetById("EmergencyDisable");
+
+        Assert.NotNull(module);
+        var field = Assert.Single(module.ConfigFields, f => f.Key == "LockdownOuDn");
+        Assert.False(field.Required);
+        Assert.Equal(ConfigFieldType.OU, field.FieldType);
+        Assert.Equal("", field.DefaultValue);
+    }
+
+    [Fact]
+    public void Catalog_LockdownOuField_NamesNoEnvironment()
+    {
+        // Repo invariant 7: no source file names an OU, domain or host as behaviour. The field
+        // ships empty and is discovered from config at runtime.
+        var catalog = new ModuleCatalog();
+        var field = catalog.GetById("EmergencyDisable")!.ConfigFields.Single(f => f.Key == "LockdownOuDn");
+
+        Assert.DoesNotContain("DC=", field.DefaultValue, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("OU=", field.DefaultValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ---- Lockdown decision (pure) -----------------------------------------------------------
+
+    [Fact]
+    public void DecideLockdown_NotRequested_DoesNothing()
+    {
+        var d = EmergencyDisableService.DecideLockdown(
+            requested: false, disableAdSucceeded: true, "OU=Lockdown,DC=example,DC=test", "CN=u,OU=Staff,DC=example,DC=test");
+
+        Assert.False(d.Proceed);
+        Assert.Equal(LockdownOutcome.NotRequested, d.Outcome);
+    }
+
+    [Fact]
+    public void DecideLockdown_RequestedButNoOuConfigured_FailsClosed()
+    {
+        // Fail-closed: a requested move with nowhere to go never guesses a destination, and it
+        // is a FAILURE rather than a quiet skip so the operator learns the protection is absent.
+        var d = EmergencyDisableService.DecideLockdown(
+            requested: true, disableAdSucceeded: true, configuredOuDn: "   ", "CN=u,OU=Staff,DC=example,DC=test");
+
+        Assert.False(d.Proceed);
+        Assert.Equal(LockdownOutcome.Failed, d.Outcome);
+        Assert.Contains("no lockdown OU is configured", d.Detail);
+    }
+
+    [Fact]
+    public void DecideLockdown_RequestedButAdDisableFailed_SkipsTheMove()
+    {
+        // Moving a still-enabled account into a lockdown OU produces an object that lies to the
+        // next reader. The disable is already a failure, so this changes no overall verdict.
+        var d = EmergencyDisableService.DecideLockdown(
+            requested: true, disableAdSucceeded: false, "OU=Lockdown,DC=example,DC=test", "CN=u,OU=Staff,DC=example,DC=test");
+
+        Assert.False(d.Proceed);
+        Assert.Equal(LockdownOutcome.Skipped, d.Outcome);
+        Assert.Contains("AD disable did not succeed", d.Detail);
+    }
+
+    [Fact]
+    public void DecideLockdown_AlreadyInTheLockdownOu_IsASkipNotAFailure()
+    {
+        var d = EmergencyDisableService.DecideLockdown(
+            requested: true, disableAdSucceeded: true,
+            "OU=Lockdown,DC=example,DC=test", "CN=user,OU=Lockdown,DC=example,DC=test");
+
+        Assert.False(d.Proceed);
+        Assert.Equal(LockdownOutcome.AlreadyInPlace, d.Outcome);
+    }
+
+    [Fact]
+    public void DecideLockdown_AlreadyInTheLockdownOu_IgnoresCaseAndSurroundingSpace()
+    {
+        var d = EmergencyDisableService.DecideLockdown(
+            requested: true, disableAdSucceeded: true,
+            "  ou=lockdown,dc=example,dc=test  ", "CN=user,OU=Lockdown,DC=example,DC=test");
+
+        Assert.Equal(LockdownOutcome.AlreadyInPlace, d.Outcome);
+    }
+
+    [Fact]
+    public void DecideLockdown_RequestedAndReady_Proceeds()
+    {
+        var d = EmergencyDisableService.DecideLockdown(
+            requested: true, disableAdSucceeded: true,
+            "OU=Lockdown,DC=example,DC=test", "CN=user,OU=Staff,DC=example,DC=test");
+
+        Assert.True(d.Proceed);
+        Assert.Equal(LockdownOutcome.Moved, d.Outcome);
+    }
+
+    [Fact]
+    public void DecideLockdown_NullTargetDn_FailsClosed()
+    {
+        var d = EmergencyDisableService.DecideLockdown(
+            requested: true, disableAdSucceeded: true, "OU=Lockdown,DC=example,DC=test", targetDn: null);
+
+        Assert.False(d.Proceed);
+        Assert.Equal(LockdownOutcome.Failed, d.Outcome);
+    }
+
+    // ---- Parent-DN extraction (pure) --------------------------------------------------------
+
+    [Fact]
+    public void ParentDnOf_ReturnsTheContainer()
+    {
+        Assert.Equal("OU=Staff,DC=example,DC=test",
+            EmergencyDisableService.ParentDnOf("CN=Jane Doe,OU=Staff,DC=example,DC=test"));
+    }
+
+    [Fact]
+    public void ParentDnOf_EscapedCommaInTheRdn_IsNotASeparator()
+    {
+        // RFC 4514 allows an escaped comma inside an RDN value. A naive Split(',') returns
+        // " Jane,OU=Staff,..." here and would compare the wrong container against the config,
+        // so a "Doe, Jane" account would move when it should skip, or skip when it should move.
+        Assert.Equal("OU=Staff,DC=example,DC=test",
+            EmergencyDisableService.ParentDnOf(@"CN=Doe\, Jane,OU=Staff,DC=example,DC=test"));
+    }
+
+    [Fact]
+    public void ParentDnOf_EscapedBackslashBeforeComma_StillSeparates()
+    {
+        // A doubled backslash is a literal backslash, so the comma after it IS a separator.
+        Assert.Equal("OU=Staff,DC=example,DC=test",
+            EmergencyDisableService.ParentDnOf(@"CN=Back\\slash,OU=Staff,DC=example,DC=test"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("DC=test")]
+    public void ParentDnOf_NoParent_IsNull(string? dn)
+    {
+        Assert.Null(EmergencyDisableService.ParentDnOf(dn));
+    }
+
+    // ---- Stamp builder (pure) ---------------------------------------------------------------
+
+    [Fact]
+    public void BuildLockdownStamp_EmptyExistingValue_HasNoLeadingNewline()
+    {
+        var r = EmergencyDisableService.BuildLockdownStamp(
+            existingInfo: "", "OU=Staff,DC=example,DC=test", new DateTime(2026, 10, 5));
+
+        Assert.True(r.Ok);
+        Assert.Equal("[EMERGENCY DISABLE 2026-10-05] previous OU: OU=Staff,DC=example,DC=test", r.Value);
+    }
+
+    [Fact]
+    public void BuildLockdownStamp_ExistingContent_IsPreservedAndAppendedAfterACrlf()
+    {
+        var r = EmergencyDisableService.BuildLockdownStamp(
+            "Service account for the nightly import.", "OU=Staff,DC=example,DC=test", new DateTime(2026, 10, 5));
+
+        Assert.True(r.Ok);
+        Assert.StartsWith("Service account for the nightly import.\r\n", r.Value);
+        Assert.EndsWith("previous OU: OU=Staff,DC=example,DC=test", r.Value);
+    }
+
+    [Fact]
+    public void BuildLockdownStamp_PriorStamp_IsLeftInPlace()
+    {
+        // Nothing in this app may parse the stamp (owner ruling 2026-10-05), so a prior stamp
+        // cannot be recognised in order to be replaced. Two disables leave two notes, by design.
+        const string prior = "[EMERGENCY DISABLE 2026-01-01] previous OU: OU=Old,DC=example,DC=test";
+
+        var r = EmergencyDisableService.BuildLockdownStamp(
+            prior, "OU=Staff,DC=example,DC=test", new DateTime(2026, 10, 5));
+
+        Assert.True(r.Ok);
+        Assert.Contains(prior, r.Value);
+        Assert.Equal(2, r.Value!.Split("\r\n").Length);
+    }
+
+    [Fact]
+    public void BuildLockdownStamp_OverTheSchemaLimit_RefusesRatherThanTruncating()
+    {
+        var existing = new string('x', EmergencyDisableService.InfoAttributeMaxLength - 10);
+
+        var r = EmergencyDisableService.BuildLockdownStamp(
+            existing, "OU=Staff,DC=example,DC=test", new DateTime(2026, 10, 5));
+
+        Assert.False(r.Ok);
+        Assert.Null(r.Value);
+        Assert.Contains("1024", r.Error);
+    }
+
+    [Fact]
+    public void BuildLockdownStamp_ExactlyAtTheLimit_IsAccepted()
+    {
+        var line = "[EMERGENCY DISABLE 2026-10-05] previous OU: OU=Staff,DC=example,DC=test";
+        var existing = new string('x', EmergencyDisableService.InfoAttributeMaxLength - line.Length - 2);
+
+        var r = EmergencyDisableService.BuildLockdownStamp(
+            existing, "OU=Staff,DC=example,DC=test", new DateTime(2026, 10, 5));
+
+        Assert.True(r.Ok);
+        Assert.Equal(EmergencyDisableService.InfoAttributeMaxLength, r.Value!.Length);
+    }
+
+    // ---- Lockdown outcome and overall success ------------------------------------------------
+
+    [Theory]
+    [InlineData(LockdownOutcome.NotRequested, true)]
+    [InlineData(LockdownOutcome.Moved, true)]
+    [InlineData(LockdownOutcome.AlreadyInPlace, true)]
+    [InlineData(LockdownOutcome.Skipped, false)]
+    [InlineData(LockdownOutcome.Failed, false)]
+    public void IsOverallSuccess_LockdownOutcome_DecidesTheVerdict(LockdownOutcome outcome, bool expected)
+    {
+        // Everything else OK. A requested move that did not happen must fail the operation:
+        // "disabled, but NOT locked down" is a materially different result (Known Failure
+        // Class 2 - no blanket success).
+        Assert.Equal(expected, EmergencyDisableService.IsOverallSuccess("OK", "OK", "OK", "OK", outcome));
+    }
+
+    [Fact]
+    public void IsOverallSuccess_LockdownMoved_DoesNotPaperOverAFailedDisable()
+    {
+        Assert.False(EmergencyDisableService.IsOverallSuccess("FAILED", "OK", "OK", "SKIPPED", LockdownOutcome.Moved));
+    }
+
+    [Theory]
+    [InlineData(LockdownOutcome.Moved, "OK")]
+    [InlineData(LockdownOutcome.AlreadyInPlace, "SKIPPED")]
+    [InlineData(LockdownOutcome.Skipped, "SKIPPED")]
+    [InlineData(LockdownOutcome.Failed, "FAILED")]
+    [InlineData(LockdownOutcome.NotRequested, "NOT REQUESTED")]
+    public void StepStatusFor_MapsEveryOutcome(LockdownOutcome outcome, string expected)
+    {
+        Assert.Equal(expected, EmergencyDisableService.StepStatusFor(outcome));
+    }
+
+    [Fact]
+    public void LockdownSummary_RequestedButNotDone_SaysTheProtectionIsAbsent()
+    {
+        // The security team reads this line to learn whether routine delegation can switch the
+        // account back on. A requested-but-failed move must not read like a decline.
+        var failed = EmergencyDisableService.LockdownSummary(requested: true, LockdownOutcome.Failed);
+
+        Assert.Contains("WITHOUT LOCKDOWN", failed);
+        Assert.Contains("requested but did NOT happen", failed);
+        Assert.Contains("Manual follow-up required", failed);
+    }
+
+    [Fact]
+    public void LockdownSummary_Declined_ReadsAsADecision_NotAFailure()
+    {
+        var declined = EmergencyDisableService.LockdownSummary(requested: false, LockdownOutcome.NotRequested);
+
+        Assert.Contains("did not request", declined);
+        Assert.DoesNotContain("Manual follow-up", declined);
+    }
+
+    [Theory]
+    [InlineData(LockdownOutcome.Moved)]
+    [InlineData(LockdownOutcome.AlreadyInPlace)]
+    public void LockdownSummary_LockedDown_SaysSo(LockdownOutcome outcome)
+    {
+        Assert.Contains("DISABLED AND LOCKED DOWN", EmergencyDisableService.LockdownSummary(true, outcome));
+    }
+
     // ---- Synced-user Entra-disable decision (pure) ------------------------------------------
 
     [Fact]
@@ -137,26 +407,26 @@ public class EmergencyDisableServiceTests : IDisposable
     public void IsOverallSuccess_SyncedUser_EntraSkipped_IsSuccess()
     {
         // AD/reset/revoke all OK and the Entra disable SKIPPED (synced) => overall success.
-        Assert.True(EmergencyDisableService.IsOverallSuccess("OK", "OK", "OK", "SKIPPED"));
+        Assert.True(EmergencyDisableService.IsOverallSuccess("OK", "OK", "OK", "SKIPPED", LockdownOutcome.NotRequested));
     }
 
     [Fact]
     public void IsOverallSuccess_CloudUser_EntraOk_IsSuccess()
     {
-        Assert.True(EmergencyDisableService.IsOverallSuccess("OK", "OK", "OK", "OK"));
+        Assert.True(EmergencyDisableService.IsOverallSuccess("OK", "OK", "OK", "OK", LockdownOutcome.NotRequested));
     }
 
     [Fact]
     public void IsOverallSuccess_EntraFailed_IsFailure()
     {
-        Assert.False(EmergencyDisableService.IsOverallSuccess("OK", "OK", "OK", "FAILED"));
+        Assert.False(EmergencyDisableService.IsOverallSuccess("OK", "OK", "OK", "FAILED", LockdownOutcome.NotRequested));
     }
 
     [Fact]
     public void IsOverallSuccess_AdFailed_IsFailure_EvenIfEntraSkipped()
     {
         // A SKIPPED Entra step must not paper over a failed AD mutation.
-        Assert.False(EmergencyDisableService.IsOverallSuccess("FAILED", "OK", "OK", "SKIPPED"));
+        Assert.False(EmergencyDisableService.IsOverallSuccess("FAILED", "OK", "OK", "SKIPPED", LockdownOutcome.NotRequested));
     }
 
     [Fact]
@@ -186,7 +456,7 @@ public class EmergencyDisableServiceTests : IDisposable
                 "TestAuth"));
 
         var result = await service.DisableAsync(
-            MakePrincipal("ceo@contoso.com"), "INC001", "DOMAIN\\admin", "10.0.0.1", actingUser);
+            MakePrincipal("ceo@contoso.com"), "INC001", "DOMAIN\\admin", "10.0.0.1", actingUser, moveToLockdownOu: false);
 
         // The gate allowed it: an ordinary operator gets BLOCKED here, this one gets SERVICED.
         Assert.Contains(result.Steps, s => s.Step == "ProtectedPrincipalCheck" && s.Status == "SERVICED");
@@ -210,13 +480,19 @@ public class EmergencyDisableServiceTests : IDisposable
         // backends (see the test above), so no unit test can drive it. NOT behavioural coverage.
         var source = ReadServiceSource();
 
-        // The note is threaded to LogAudit rather than stopping at the trace step.
-        Assert.Contains("LogAudit(target, performedBy, ip, ticket, overallSuccess, steps, overallError, servicedNote)",
+        // The note is threaded to LogAudit rather than stopping at the trace step. Re-anchored
+        // when the lockdown arguments joined the call; the guard is unchanged.
+        Assert.Contains("LogAudit(target, performedBy, ip, ticket, overallSuccess, steps, overallError, servicedNote,",
             source, StringComparison.Ordinal);
 
         // And LogAudit puts it in extra. errorDetail is written as null on success, so a serviced
         // disable - which SUCCEEDS - would have it silently discarded there.
         Assert.Contains("ProtectedPrincipalServicing.Extra(servicedNote)", source, StringComparison.Ordinal);
+
+        // The lockdown keys are added to that same dictionary, never in place of it: an
+        // assignment that replaced Extra(...) would drop the serviced note on the floor.
+        Assert.Contains("extra[\"lockdownRequested\"]", source, StringComparison.Ordinal);
+        Assert.Contains("extra[\"lockdownOutcome\"]", source, StringComparison.Ordinal);
     }
 
     private static string ReadServiceSource()
