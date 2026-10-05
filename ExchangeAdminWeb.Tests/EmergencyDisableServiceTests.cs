@@ -386,15 +386,63 @@ public class EmergencyDisableServiceTests : IDisposable
     }
 
     [Fact]
-    public void Page_UnconfiguredLockdownOu_DisablesTheCheckboxAndDisarmsIt()
+    public void Page_PerformLookup_AlsoReturnsTheCheckboxToItsDefault()
+    {
+        // edl-3. PerformLookup starts a new operation on a DIFFERENT account and clears every
+        // other field, but originally left the checkbox alone - so an operator who unticked it
+        // for one person and then searched for the next carried that opt-out onto someone they
+        // never made the decision about. ResetForm is not the only entry point.
+        var page = ReadPageSource("EmergencyDisable.razor");
+        var lookupBody = Between(page, "private async Task PerformLookup()", "await Task.Yield();");
+
+        Assert.Contains("moveToLockdownOu = lockdownOuConfigured;", lookupBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Page_EveryStateClearingPath_ReArmsTheCheckbox()
+    {
+        // The rule, not the two call sites: any method that clears `confirmed` is starting a
+        // fresh operation and must re-arm the lockdown step with it. Written this way so a
+        // THIRD clearing path added later cannot quietly reintroduce edl-3.
+        var page = ReadPageSource("EmergencyDisable.razor");
+        var code = page[page.IndexOf("@code {", StringComparison.Ordinal)..];
+
+        var clearingSites = code.Split("confirmed = false;").Length - 1;
+        var reArmSites = code.Split("moveToLockdownOu = lockdownOuConfigured;").Length - 1;
+
+        // The +1 is OnInitializedAsync, which re-arms without clearing `confirmed`. Writing
+        // this as `reArmSites >= clearingSites` made the test VACUOUS: with two clearing paths
+        // and three re-arms, deleting one re-arm still satisfied it. The probe caught that.
+        Assert.True(clearingSites > 0, "Expected at least one state-clearing path to exist.");
+        Assert.True(
+            reArmSites == clearingSites + 1,
+            $"{clearingSites} path(s) clear `confirmed`, so {clearingSites + 1} re-arm sites are expected " +
+            $"(one per clearing path, plus OnInitializedAsync) but {reArmSites} were found. " +
+            "Every path that starts a fresh operation must restore the default (edl-3).");
+    }
+
+    [Fact]
+    public void Page_UnconfiguredLockdownOu_DisablesTheCheckbox()
     {
         // Fail-closed without a surprise: the operator must not be able to arm a step that
-        // cannot run. Both halves matter - disabling the control without forcing the bound
-        // field false would send a checked value the service then has to refuse.
+        // cannot run. The disarm half is covered by the re-arm tests above, which assign
+        // lockdownOuConfigured - false when nothing is configured.
         var page = ReadPageSource("EmergencyDisable.razor");
+        var checkbox = Between(page, "id=\"chkLockdown\"", "</div>");
 
-        Assert.Contains("disabled=\"@(isDisabling || !lockdownOuConfigured)\"", page, StringComparison.Ordinal);
-        Assert.Contains("moveToLockdownOu = lockdownOuConfigured;", page, StringComparison.Ordinal);
+        Assert.Contains("!lockdownOuConfigured", checkbox, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Page_InitialisesTheCheckboxFromConfig_BeforeTheFormIsUsable()
+    {
+        // The field initialiser is `true`, so without this read an unconfigured install would
+        // render an armed checkbox for the first operation of every session.
+        var page = ReadPageSource("EmergencyDisable.razor");
+        var init = Between(page, "protected override async Task OnInitializedAsync()", "authChecked = true;");
+
+        Assert.Contains("lockdownOuConfigured =", init, StringComparison.Ordinal);
+        Assert.Contains("moveToLockdownOu = lockdownOuConfigured;", init, StringComparison.Ordinal);
     }
 
     [Fact]

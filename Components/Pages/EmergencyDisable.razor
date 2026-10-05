@@ -284,6 +284,11 @@
         operationResult = null;
         confirmed = false;
         ticketNumber = "";
+        // edl-3: a lookup starts a NEW operation on a different account, so it must re-arm the
+        // lockdown step exactly as ResetForm does. Without this, an operator who unticks the box
+        // for one account and then searches for the next one carries the opt-out across to a
+        // person they never made that decision about.
+        moveToLockdownOu = lockdownOuConfigured;
         await Task.Yield();
 
         try
