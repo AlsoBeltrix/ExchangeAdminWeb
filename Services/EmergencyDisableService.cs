@@ -54,6 +54,20 @@ public sealed record LockdownDecision(bool Proceed, LockdownOutcome Outcome, str
 /// </summary>
 public sealed record LockdownStampResult(bool Ok, string? Value, string? Error);
 
+/// <summary>
+/// Outcome of the previous-OU breadcrumb written to the moved object's info attribute. It is
+/// tracked and reported separately from <see cref="LockdownOutcome"/> rather than folded into
+/// the move's step: the move can succeed while the stamp fails, and a missing breadcrumb must
+/// not be invisible behind a green row (edl-2). It still does not fail the operation - the
+/// previous OU is held authoritatively in the snapshot and the audit.
+/// </summary>
+public enum LockdownStampOutcome
+{
+    NotAttempted,
+    Stamped,
+    Failed
+}
+
 public class EmergencyDisableService
 {
     private readonly ModuleCredentialService _moduleCredentials;
@@ -268,6 +282,7 @@ public class EmergencyDisableService
         DisableStepResult disableAdResult;
         DisableStepResult resetPwResult;
         LockdownOutcome lockdownOutcome;
+        var lockdownStampOutcome = LockdownStampOutcome.NotAttempted;
         var lockdownOuDn = _moduleConfig.GetValue("EmergencyDisable", "LockdownOuDn");
 
         if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
@@ -302,10 +317,11 @@ public class EmergencyDisableService
 
                 if (lockdownDecision.Proceed)
                 {
-                    var (lockdownStep, outcome) = await ExecuteMoveToLockdownOu(
+                    var (lockdownSteps, outcome, stampOutcome) = await ExecuteMoveToLockdownOu(
                         target, adCreds.Value, lockdownOuDn!.Trim(), adSlotHeld: true);
-                    steps.Add(lockdownStep);
+                    steps.AddRange(lockdownSteps);
                     lockdownOutcome = outcome;
+                    lockdownStampOutcome = stampOutcome;
                 }
                 else
                 {
@@ -360,11 +376,11 @@ public class EmergencyDisableService
 
         // 8. Audit the operation
         LogAudit(target, performedBy, ip, ticket, overallSuccess, steps, overallError, servicedNote,
-            moveToLockdownOu, lockdownOutcome);
+            moveToLockdownOu, lockdownOutcome, lockdownStampOutcome);
 
         // 9. Send security team notification
         await SendSecurityNotificationAsync(target, performedBy, ip, ticket, overallSuccess, steps,
-            moveToLockdownOu, lockdownOutcome);
+            moveToLockdownOu, lockdownOutcome, lockdownStampOutcome);
 
         // 10. Return result
         opScope.Complete(overallSuccess, overallError);
@@ -634,14 +650,14 @@ public class EmergencyDisableService
     /// authoritatively in the snapshot and the audit, so a stamp failure is reported loudly in
     /// the step detail while the move itself still counts as done.
     /// </summary>
-    private async Task<(DisableStepResult Step, LockdownOutcome Outcome)> ExecuteMoveToLockdownOu(
+    private async Task<(List<DisableStepResult> Steps, LockdownOutcome Outcome, LockdownStampOutcome Stamp)> ExecuteMoveToLockdownOu(
         ResolvedDirectoryPrincipal target,
         (string username, string password, string domain) creds,
         string lockdownOuDn,
         bool adSlotHeld = false)
     {
         if (!adSlotHeld && !await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
-            return (new DisableStepResult("LockdownMove", "FAILED", "AD throttle timeout."), LockdownOutcome.Failed);
+            return (Only("LockdownMove", "FAILED", "AD throttle timeout."), LockdownOutcome.Failed, LockdownStampOutcome.NotAttempted);
 
         try
         {
@@ -664,7 +680,7 @@ public class EmergencyDisableService
                 if (verifyError != null)
                 {
                     _operationTrace.Step("LockdownMove", "Failed", backend: "ActiveDirectory", details: new Dictionary<string, object?> { ["reason"] = verifyError });
-                    return (new DisableStepResult("LockdownMove", "FAILED", verifyError), LockdownOutcome.Failed);
+                    return (Only("LockdownMove", "FAILED", verifyError), LockdownOutcome.Failed, LockdownStampOutcome.NotAttempted);
                 }
 
                 // Confirm the destination exists rather than letting Move-ADObject guess or
@@ -683,7 +699,7 @@ public class EmergencyDisableService
                 {
                     var err = $"Configured lockdown OU could not be read: {ouLookupError ?? "no such organizational unit."} The account was NOT moved.";
                     _operationTrace.Step("LockdownMove", "Failed", backend: "ActiveDirectory", command: "Get-ADOrganizationalUnit");
-                    return (new DisableStepResult("LockdownMove", "FAILED", err), LockdownOutcome.Failed);
+                    return (Only("LockdownMove", "FAILED", err), LockdownOutcome.Failed, LockdownStampOutcome.NotAttempted);
                 }
 
                 var previousParent = ParentDnOf(target.DistinguishedName) ?? "(unknown)";
@@ -703,22 +719,31 @@ public class EmergencyDisableService
                 {
                     var err = moveError ?? "Move-ADObject failed.";
                     _operationTrace.Step("LockdownMove", "Failed", backend: "ActiveDirectory", command: "Move-ADObject");
-                    return (new DisableStepResult("LockdownMove", "FAILED", err), LockdownOutcome.Failed);
+                    return (Only("LockdownMove", "FAILED", err), LockdownOutcome.Failed, LockdownStampOutcome.NotAttempted);
                 }
 
                 _operationTrace.Step("LockdownMove", "Success", backend: "ActiveDirectory", command: "Move-ADObject", target: lockdownOuDn);
 
                 // The DN changed with the move, so every write from here binds by ObjectGUID.
-                var stampDetail = StampPreviousOu(ps, target, credential, previousParent);
+                // The stamp gets its OWN step row rather than a sentence inside this one: a
+                // failed breadcrumb behind a green LockdownMove is invisible in the table, the
+                // notification and the audit at once (edl-2).
+                var (stampOutcome, stampDetail) = StampPreviousOu(ps, target, credential, previousParent);
 
-                return (new DisableStepResult("LockdownMove", "OK", $"Moved to {lockdownOuDn}. {stampDetail}"), LockdownOutcome.Moved);
+                return (
+                    [
+                        new DisableStepResult("LockdownMove", "OK", $"Moved to {lockdownOuDn}."),
+                        new DisableStepResult("LockdownStamp", stampOutcome == LockdownStampOutcome.Stamped ? "OK" : "FAILED", stampDetail)
+                    ],
+                    LockdownOutcome.Moved,
+                    stampOutcome);
             });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "LockdownMove step failed for {Target}", target.UserPrincipalName);
             _operationTrace.Step("LockdownMove", "Failed", backend: "ActiveDirectory", exception: ex);
-            return (new DisableStepResult("LockdownMove", "FAILED", ex.Message), LockdownOutcome.Failed);
+            return (Only("LockdownMove", "FAILED", ex.Message), LockdownOutcome.Failed, LockdownStampOutcome.NotAttempted);
         }
         finally
         {
@@ -727,16 +752,22 @@ public class EmergencyDisableService
         }
     }
 
+    /// <summary>One step, as the list shape the move method returns.</summary>
+    private static List<DisableStepResult> Only(string step, string status, string? detail) =>
+        [new DisableStepResult(step, status, detail)];
+
     /// <summary>
     /// Appends the previous parent OU to the moved object's info attribute, bound by ObjectGUID
-    /// because the DN changed when the object moved. Returns a human-readable detail string; it
-    /// never throws out of the move step, because the stamp is a breadcrumb and not the record.
+    /// because the DN changed when the object moved. Returns its own outcome and a human-readable
+    /// detail; it never throws out of the move step, because the stamp is a breadcrumb and not
+    /// the record. The outcome is reported separately so a failed breadcrumb is visible rather
+    /// than buried in a successful move's detail text (edl-2).
     /// </summary>
-    private string StampPreviousOu(
+    private (LockdownStampOutcome Outcome, string Detail) StampPreviousOu(
         PowerShell ps, ResolvedDirectoryPrincipal target, PSCredential credential, string previousParentDn)
     {
         if (string.IsNullOrEmpty(target.ObjectGuid))
-            return "Previous OU NOT stamped: the target has no recorded ObjectGUID to bind the write to.";
+            return (LockdownStampOutcome.Failed, "Previous OU NOT stamped: the target has no recorded ObjectGUID to bind the write to.");
 
         try
         {
@@ -752,14 +783,14 @@ public class EmergencyDisableService
             ps.Streams.Error.Clear();
 
             if (readFailed)
-                return $"Previous OU NOT stamped: could not re-read the moved object ({readError ?? "no object returned"}).";
+                return (LockdownStampOutcome.Failed, $"Previous OU NOT stamped: could not re-read the moved object ({readError ?? "no object returned"}).");
 
             var existingInfo = reRead[0].Properties["info"]?.Value?.ToString();
             var stamp = BuildLockdownStamp(existingInfo, previousParentDn, DateTime.UtcNow);
             if (!stamp.Ok)
             {
                 _operationTrace.Step("LockdownStamp", "Failed", backend: "ActiveDirectory", details: new Dictionary<string, object?> { ["reason"] = stamp.Error });
-                return $"Previous OU NOT stamped: {stamp.Error}";
+                return (LockdownStampOutcome.Failed, $"Previous OU NOT stamped: {stamp.Error}");
             }
 
             ps.AddCommand("Set-ADUser")
@@ -776,17 +807,17 @@ public class EmergencyDisableService
             if (writeFailed)
             {
                 _operationTrace.Step("LockdownStamp", "Failed", backend: "ActiveDirectory", command: "Set-ADUser -Replace info");
-                return $"Previous OU NOT stamped: {writeError ?? "Set-ADUser -Replace info failed."}";
+                return (LockdownStampOutcome.Failed, $"Previous OU NOT stamped: {writeError ?? "Set-ADUser -Replace info failed."}");
             }
 
             _operationTrace.Step("LockdownStamp", "Success", backend: "ActiveDirectory", command: "Set-ADUser -Replace info");
-            return $"Previous OU {previousParentDn} appended to the Notes (info) attribute.";
+            return (LockdownStampOutcome.Stamped, $"Previous OU {previousParentDn} appended to the Notes (info) attribute.");
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Lockdown stamp failed for {Target}", target.UserPrincipalName);
             _operationTrace.Step("LockdownStamp", "Failed", backend: "ActiveDirectory", exception: ex);
-            return $"Previous OU NOT stamped: {ex.Message}";
+            return (LockdownStampOutcome.Failed, $"Previous OU NOT stamped: {ex.Message}");
         }
     }
 
@@ -976,10 +1007,11 @@ public class EmergencyDisableService
         string? errorDetail,
         string? servicedNote,
         bool lockdownRequested,
-        LockdownOutcome lockdownOutcome)
+        LockdownOutcome lockdownOutcome,
+        LockdownStampOutcome lockdownStampOutcome)
     {
         var stepSummary = steps
-            .Where(s => s.Step is "DisableAD" or "ResetPassword" or "RevokeEntraSessions" or "DisableEntra" or "LockdownMove")
+            .Where(s => s.Step is "DisableAD" or "ResetPassword" or "RevokeEntraSessions" or "DisableEntra" or "LockdownMove" or "LockdownStamp")
             .Select(s => $"{s.Step}={s.Status}")
             .ToArray();
 
@@ -989,6 +1021,9 @@ public class EmergencyDisableService
         var extra = ProtectedPrincipalServicing.Extra(servicedNote) ?? new Dictionary<string, object?>();
         extra["lockdownRequested"] = lockdownRequested;
         extra["lockdownOutcome"] = lockdownOutcome.ToString();
+        // edl-2: AuditService writes error as null on a successful event, so a stamp failure
+        // that does not fail the operation reaches no other durable field.
+        extra["lockdownStampOutcome"] = lockdownStampOutcome.ToString();
 
         // The operation trace already records a "Serviced" step, but the trace is diagnostic and
         // the audit log is the durable record - different stores, different retention, different
@@ -1017,7 +1052,8 @@ public class EmergencyDisableService
         bool success,
         List<DisableStepResult> steps,
         bool lockdownRequested,
-        LockdownOutcome lockdownOutcome)
+        LockdownOutcome lockdownOutcome,
+        LockdownStampOutcome lockdownStampOutcome)
     {
         try
         {
@@ -1035,10 +1071,10 @@ public class EmergencyDisableService
                 // Stated outright rather than left to be inferred from the step rows: the
                 // reader of this mail needs to know whether the account can be re-enabled by
                 // routine helpdesk rights.
-                ["Lockdown"] = LockdownSummary(lockdownRequested, lockdownOutcome),
+                ["Lockdown"] = LockdownSummary(lockdownRequested, lockdownOutcome, lockdownStampOutcome),
             };
 
-            foreach (var step in steps.Where(s => s.Step is "DisableAD" or "ResetPassword" or "RevokeEntraSessions" or "DisableEntra" or "LockdownMove"))
+            foreach (var step in steps.Where(s => s.Step is "DisableAD" or "ResetPassword" or "RevokeEntraSessions" or "DisableEntra" or "LockdownMove" or "LockdownStamp"))
             {
                 stepDetails[step.Step] = step.Status + (step.Detail != null ? $" - {step.Detail}" : "");
             }
@@ -1061,15 +1097,25 @@ public class EmergencyDisableService
     /// <summary>
     /// One unambiguous line for the security team: was the account locked down or not. Pure.
     /// </summary>
-    internal static string LockdownSummary(bool requested, LockdownOutcome outcome) => outcome switch
+    internal static string LockdownSummary(
+        bool requested, LockdownOutcome outcome, LockdownStampOutcome stamp)
     {
-        LockdownOutcome.Moved => "DISABLED AND LOCKED DOWN - the account was moved to the lockdown OU.",
-        LockdownOutcome.AlreadyInPlace => "DISABLED AND LOCKED DOWN - the account was already in the lockdown OU.",
-        LockdownOutcome.NotRequested => "DISABLED WITHOUT LOCKDOWN - the operator did not request the lockdown move.",
-        _ => requested
-            ? "DISABLED WITHOUT LOCKDOWN - the lockdown move was requested but did NOT happen. The account may still be re-enabled through routine delegation. Manual follow-up required."
-            : "DISABLED WITHOUT LOCKDOWN - the operator did not request the lockdown move."
-    };
+        var line = outcome switch
+        {
+            LockdownOutcome.Moved => "DISABLED AND LOCKED DOWN - the account was moved to the lockdown OU.",
+            LockdownOutcome.AlreadyInPlace => "DISABLED AND LOCKED DOWN - the account was already in the lockdown OU.",
+            LockdownOutcome.NotRequested => "DISABLED WITHOUT LOCKDOWN - the operator did not request the lockdown move.",
+            _ => requested
+                ? "DISABLED WITHOUT LOCKDOWN - the lockdown move was requested but did NOT happen. The account may still be re-enabled through routine delegation. Manual follow-up required."
+                : "DISABLED WITHOUT LOCKDOWN - the operator did not request the lockdown move."
+        };
+
+        // edl-2: the move can succeed while the breadcrumb does not. Said here rather than left
+        // to the step rows, because this is the line the security team reads.
+        return stamp == LockdownStampOutcome.Failed
+            ? line + " The previous OU was NOT recorded on the account; see the LockdownStamp step. The original location is in the operation snapshot and this audit entry."
+            : line;
+    }
 
     private static string? VerifyBoundObject(PowerShell ps, ResolvedDirectoryPrincipal target, PSCredential credential)
     {

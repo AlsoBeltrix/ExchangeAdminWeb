@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM - the plan requires a stamp failure to be visible in the step
 table, the notification and the audit; all three currently show success
-**Status**: Open
+**Status**: In progress
 **Branch**: - (direct to main)
 **Commit**: -
 
@@ -39,15 +39,41 @@ notification and in the audit, and is not silent."
 
 ## Approach
 
-<pending>
+The stamp gets its own outcome (`LockdownStampOutcome`) and its own `LockdownStamp`
+step row, so a failed breadcrumb is a red row beside the green move rather than a
+sentence inside it. `ExecuteMoveToLockdownOu` now returns a list of steps plus both
+outcomes; `StampPreviousOu` returns its outcome instead of prose alone.
+
+The outcome also rides the audit extra as `lockdownStampOutcome` - necessary because
+`AuditService.cs:220` writes `error` as null on a successful event, so nothing else in
+the record could carry it - and `LockdownSummary` appends an explicit sentence when the
+stamp failed, since that line is what the security team reads.
+
+The stamp still does not fail the operation. The plan states that deliberately: the
+previous OU is held authoritatively in the snapshot and the audit. Only its visibility
+changed.
 
 ## Files changed
 
-<pending>
+- `Services/EmergencyDisableService.cs`
+- `ExchangeAdminWeb.Tests/EmergencyDisableServiceTests.cs` - five cases
 
 ## Guard proof
 
-<pending>
+Full Release suite 3626 passed / 0 failed / 3 skipped. Format, ASCII and
+`git diff --check` clean.
+
+Three probes, all bite:
+
+1. Removing the stamp warning from `LockdownSummary` fails
+   `LockdownSummary_MovedButStampFailed_SaysTheBreadcrumbIsMissing` (1 failed / 5 passed).
+2. Deleting `extra["lockdownStampOutcome"]` fails
+   `StampOutcome_ReachesTheAuditExtra_NotOnlyTheStepTable` (1 failed / 0 passed).
+3. Folding the stamp detail back into the `LockdownMove` step - the exact original
+   defect - fails `MoveStep_DoesNotCarryTheStampResultInItsOwnDetail` (1 failed / 0 passed).
+
+Probes 2 and 3 are source-level because `ExecuteMoveToLockdownOu` needs a live
+directory; stated plainly rather than presented as behavioural coverage.
 
 ## Coder dispute
 

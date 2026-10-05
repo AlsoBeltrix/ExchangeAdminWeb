@@ -358,6 +358,62 @@ public class EmergencyDisableServiceTests : IDisposable
         Assert.Equal(expected, EmergencyDisableService.StepStatusFor(outcome));
     }
 
+    // ---- edl-2: a failed stamp must not hide behind a successful move ----------------------
+
+    [Fact]
+    public void LockdownSummary_MovedButStampFailed_SaysTheBreadcrumbIsMissing()
+    {
+        // edl-2: the move can succeed while the info write does not. The security team reads
+        // this line, and before the fix it said LOCKED DOWN with no hint the record was absent.
+        var s = EmergencyDisableService.LockdownSummary(
+            requested: true, LockdownOutcome.Moved, LockdownStampOutcome.Failed);
+
+        Assert.Contains("DISABLED AND LOCKED DOWN", s);
+        Assert.Contains("previous OU was NOT recorded", s);
+        Assert.Contains("snapshot", s);
+    }
+
+    [Fact]
+    public void LockdownSummary_MovedAndStamped_AddsNoWarning()
+    {
+        var s = EmergencyDisableService.LockdownSummary(
+            requested: true, LockdownOutcome.Moved, LockdownStampOutcome.Stamped);
+
+        Assert.DoesNotContain("NOT recorded", s);
+    }
+
+    [Fact]
+    public void LockdownStampStep_FailedStamp_RendersAsDanger()
+    {
+        // The whole point of edl-2 is that the failure is VISIBLE. A stamp failure produces a
+        // FAILED step, and FAILED is in the danger bucket (edl-1's allowlist excludes it).
+        Assert.Equal("table-danger", EmergencyDisableService.RowClassFor("FAILED"));
+    }
+
+    [Fact]
+    public void MoveStep_DoesNotCarryTheStampResultInItsOwnDetail()
+    {
+        // edl-2 was exactly this shape: the stamp outcome was interpolated into the
+        // LockdownMove step's detail string, so a failure rode inside a green OK row. Pinned
+        // at source because reaching ExecuteMoveToLockdownOu needs a live directory.
+        var source = ReadServiceSource();
+
+        Assert.DoesNotContain("\"LockdownMove\", \"OK\", $\"Moved to {lockdownOuDn}. {stampDetail}\"",
+            source, StringComparison.Ordinal);
+        Assert.Contains("new DisableStepResult(\"LockdownStamp\",", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StampOutcome_ReachesTheAuditExtra_NotOnlyTheStepTable()
+    {
+        // AuditService writes ["error"] = success ? null : errorDetail, so on a successful
+        // disable a stamp failure has no other durable field to land in. If this key is
+        // dropped, the audit record cannot answer "was the breadcrumb written?" at all.
+        var source = ReadServiceSource();
+
+        Assert.Contains("extra[\"lockdownStampOutcome\"]", source, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void RowClassFor_DeclinedLockdown_IsNeutral_NotDanger()
     {
@@ -419,7 +475,7 @@ public class EmergencyDisableServiceTests : IDisposable
     {
         // The security team reads this line to learn whether routine delegation can switch the
         // account back on. A requested-but-failed move must not read like a decline.
-        var failed = EmergencyDisableService.LockdownSummary(requested: true, LockdownOutcome.Failed);
+        var failed = EmergencyDisableService.LockdownSummary(requested: true, LockdownOutcome.Failed, LockdownStampOutcome.NotAttempted);
 
         Assert.Contains("WITHOUT LOCKDOWN", failed);
         Assert.Contains("requested but did NOT happen", failed);
@@ -429,7 +485,7 @@ public class EmergencyDisableServiceTests : IDisposable
     [Fact]
     public void LockdownSummary_Declined_ReadsAsADecision_NotAFailure()
     {
-        var declined = EmergencyDisableService.LockdownSummary(requested: false, LockdownOutcome.NotRequested);
+        var declined = EmergencyDisableService.LockdownSummary(requested: false, LockdownOutcome.NotRequested, LockdownStampOutcome.NotAttempted);
 
         Assert.Contains("did not request", declined);
         Assert.DoesNotContain("Manual follow-up", declined);
@@ -440,7 +496,7 @@ public class EmergencyDisableServiceTests : IDisposable
     [InlineData(LockdownOutcome.AlreadyInPlace)]
     public void LockdownSummary_LockedDown_SaysSo(LockdownOutcome outcome)
     {
-        Assert.Contains("DISABLED AND LOCKED DOWN", EmergencyDisableService.LockdownSummary(true, outcome));
+        Assert.Contains("DISABLED AND LOCKED DOWN", EmergencyDisableService.LockdownSummary(true, outcome, LockdownStampOutcome.Stamped));
     }
 
     // ---- Synced-user Entra-disable decision (pure) ------------------------------------------
