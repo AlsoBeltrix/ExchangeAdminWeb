@@ -54,13 +54,25 @@ attribute visible in ADUC** instead. The script already has this as an off-by-de
 `-StampInfo` switch writing `info` - the ADUC **Notes** field on the Telephones tab - in the
 form `[SEC-HOLD yyyy-MM-dd] from <original parent DN>`.
 
-**Its author argued against it, and the owner has chosen the other way.** The script's NOTES
-say `info` is readable by anyone who can read the object, including the service desk, so a
-discreet hold leaks. The owner's instruction is explicit that the value must be visible in
-ADUC, which is the point - an attribute travels with the object and survives loss of a file
-share. **Do not re-litigate this; do raise it once in the plan's exec summary as a stated
-consequence, because "who is under investigation" becoming service-desk-readable is a real
-change in who knows.**
+**The script's stated objection to stamping does not hold, and an earlier version of this
+handoff repeated it uncritically.** Its NOTES say `info` is visible in ADUC to anyone who can
+read the object, including the service desk, so a discreet hold leaks. **The move is the
+disclosure.** The operation relocates the account into an OU named for security hold; anyone
+who can see the object sees the new DN. A stamp announces nothing the move has not already
+announced, so discretion is not a reason to withhold it.
+
+The only argument that survives is a different one, and it is about AFTER release: OU
+membership reverts and leaves no trace, while the attribute persists as a permanent, visible
+record that this account was once held. For a security hold that is closer to a feature than a
+risk - but decide it deliberately, and decide whether release should clear the stamp, leave it,
+or append a release line (the script appends).
+
+One thing could have revived the original objection and could not be verified: the script
+throws `"Run Set-SecurityHoldOUPermissions.ps1 first"`, implying the hold OU is ACL-restricted.
+If ordinary readers cannot enumerate that OU, the move would NOT be self-disclosing. **That
+companion script is not on the owner's Desktop and nothing here can confirm the OU's ACLs - so
+treat hold-OU visibility as an unverified environment fact and fail closed rather than assume
+either way** (repo invariant 7: a safety argument may not rest on this environment's shape).
 
 ### Constraints a plan must satisfy
 
