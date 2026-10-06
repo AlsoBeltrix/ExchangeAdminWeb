@@ -221,3 +221,20 @@ key was truly a Graph key, over this plan's "skip modules declaring both". The p
 kept - an allowlist is a second list to forget to update, and the dual-key test is exactly
 the condition that makes the key non-residue - but the alternative is recorded as a real
 option rather than dismissed.
+
+## Fix review, 2026-10-06
+
+`codereview`, pins `3a0aa23..d1ccd07`.
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard.
+Raw output: `.agents/review/remap-fix.result.json`.
+
+**Clean - no findings.** It confirmed the dual-key guard stops the EmergencyDisable path
+reaching `RemapKey` while Graph-only modules such as `MfaReset` still migrate, ran
+`GraphSecretKeyMigrationTests` itself (8 passed) and `git diff --check` on the range, and
+checked the version bump against the Constitution - shared service, so base app moves and no
+module version does.
+
+It was asked directly whether the four catalog-driven tests would pass vacuously if the
+catalog contained no dual-key module, and whether it still preferred its own allowlist
+recommendation over the shape built. It judged the tests not empty-passing and raised no
+material objection to the chosen shape.
