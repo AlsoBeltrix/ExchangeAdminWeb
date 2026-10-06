@@ -160,14 +160,20 @@ What that settles:
   PURPOSE is stated and is the thing to design against: *so the user cannot be reenabled
   inappropriately*. The lockdown OU is presumed to carry delegation that ordinary helpdesk
   cannot re-enable through. The move is what buys that; the disable alone does not.
-- **AN OPTIONAL CHECKBOX, DEFAULT CHECKED** (owner, 2026-10-05: *"add this lockdown step as an
+- **AN OPTIONAL CHECKBOX. DEFAULT UNCHECKED since the owner ruling of 2026-10-06** ("change the
+  checkbox for lockdown to default unchecked"), which SUPERSEDES his 2026-10-05 ruling quoted
+  next. Shipped 1.3.0 default-checked and 1.3.1 default-unchecked; the step is now opt-IN.
+  The superseded ruling, kept because it carries the reasoning the original design was built
+  on (owner, 2026-10-05: *"add this lockdown step as an
   optional checkbox, default checked. until the stakeholder clarifies what they actually want,
   we need this working with an escape hatch."*). A RUNTIME option on the form, never a setting
   buried in config - same shape and the same reasoning as Cloud Password Reset's "Force
   password change at next sign-in" (queue item 11, which the owner asked for in exactly these
-  terms). **The default carries the intent and the checkbox carries the doubt:** the stakeholder
-  has not settled what they want, so the operator can decline the move without declining the
-  disable.
+  terms). The 2026-10-05 reasoning was "the default carries the intent and the checkbox
+  carries the doubt". **Since 2026-10-06 the doubt is in the default itself:** the operator
+  opts IN per run. The escape-hatch half of the reasoning is unchanged - the stakeholder still
+  has not settled what they want - but the safe-by-default half was reversed. **A reader of
+  the superseded ruling should not reinstate default-checked from its reasoning alone.**
 - **RELEASE IS OUT OF SCOPE ENTIRELY.** No release action, no round trip, no reading the
   original OU back, no state file and nothing in the app that parses the attribute. Releasing
   an account is a human doing it in ADUC.
@@ -215,7 +221,9 @@ Nothing. Both items that stood here are now answered in the plan and no longer o
 **The escape hatch is explicitly temporary.** It exists because the stakeholder has not said
 what they want. When they do, the checkbox either goes away or becomes the settled default -
 whoever closes that loop should come back to this entry rather than leaving an unexplained
-option on a security screen forever.
+option on a security screen forever. **The default has now moved once already (checked
+2026-10-05, unchecked 2026-10-06), which is why it lives in a single `LockdownDefaultArmed`
+constant on the page rather than as a literal at each of its three sites.**
 
 ## Previously - queue item 24, the global progress system
 

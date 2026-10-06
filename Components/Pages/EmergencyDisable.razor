@@ -167,8 +167,12 @@
                             }
                             else if (!moveToLockdownOu)
                             {
-                                <div class="form-text text-danger">
-                                    Without this, the account can be re-enabled by anyone with routine helpdesk rights.
+                                @* Muted, not danger. Since the owner's 2026-10-06 ruling this is the
+                                   DEFAULT state, and a default must not be styled as an error - that
+                                   was edl-1. It says what ticking buys rather than scolding the
+                                   operator for a box they have not touched. *@
+                                <div class="form-text text-muted">
+                                    Tick this to also move the account out of reach of routine helpdesk re-enablement.
                                 </div>
                             }
                         </div>
@@ -233,10 +237,23 @@
 
     // Default CHECKED: the lockdown move is the protection the step exists to provide, and the
     // owner asked for the escape hatch to be an opt-OUT (2026-10-05). The checkbox carries the
-    // doubt - the stakeholder has not settled what they want - while the default carries the
-    // intent. Forced false and disabled when no lockdown OU is configured, so the operator
-    // cannot arm a step that cannot run; the service refuses independently either way.
-    private bool moveToLockdownOu = true;
+    /// <summary>
+    /// Whether the lockdown step starts armed. **Owner ruling 2026-10-06: UNCHECKED**, which
+    /// supersedes the 2026-10-05 ruling that made it an opt-out (default checked). The step is
+    /// therefore opt-IN: an emergency disable does not move the account unless the operator
+    /// says so on that run.
+    ///
+    /// One constant rather than a literal at each site, because the default is the thing most
+    /// likely to be changed again and it has to move in all three places at once - the field
+    /// initialiser, the post-auth read, and the fresh-operation reset. Getting one of those
+    /// wrong is edl-3.
+    /// </summary>
+    private const bool LockdownDefaultArmed = false;
+
+    // Never armed when no lockdown OU is configured, whatever the default says: the operator
+    // cannot arm a step that cannot run. The service refuses independently either way, so this
+    // is a courtesy to the operator and not the control.
+    private bool moveToLockdownOu = LockdownDefaultArmed;
     private bool lockdownOuConfigured;
     private EmergencyDisableResult? disableResult;
     private (bool success, string message)? operationResult;
@@ -262,7 +279,7 @@
         // failing a checked run mid-disable; the service refuses independently, so this gate
         // is a courtesy to the operator and not the control.
         lockdownOuConfigured = !string.IsNullOrWhiteSpace(ModuleConfig.GetValue("EmergencyDisable", "LockdownOuDn"));
-        moveToLockdownOu = lockdownOuConfigured;
+        moveToLockdownOu = LockdownDefaultArmed && lockdownOuConfigured;
 
         authChecked = true;
     }
@@ -397,8 +414,8 @@
     /// edl-3 was exactly the alternative: the two call sites each cleared their own list,
     /// PerformLookup was missed, and an operator who declined the lockdown for one account
     /// carried that decision onto the next person they looked up. The lockdown checkbox returns
-    /// to its DEFAULT here rather than to false - a new operation starts armed, exactly as the
-    /// first one of the session did.
+    /// to its DEFAULT here - whatever that default currently is - rather than carrying the last
+    /// operation.s choice forward onto a different person.
     /// </summary>
     private void BeginNewOperation()
     {
@@ -410,6 +427,6 @@
         operationResult = null;
         confirmed = false;
         ticketNumber = "";
-        moveToLockdownOu = lockdownOuConfigured;
+        moveToLockdownOu = LockdownDefaultArmed && lockdownOuConfigured;
     }
 }

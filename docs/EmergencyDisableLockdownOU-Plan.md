@@ -11,6 +11,11 @@ entry's design notes once approved.
 **Revision 1, 2026-10-05:** stamp target is `info` (ADUC Notes), not `description`. Owner
 ruling. Nothing else changed.
 
+**Revision 2, 2026-10-06: the checkbox defaults UNCHECKED.** Owner ruling, superseding the
+2026-10-05 opt-out ruling. The step is opt-IN; a disable does not move the account unless the
+operator ticks the box on that run. Module `1.3.0` -> `1.3.1`. The config gate still ANDs with
+the default, so an unconfigured OU can never arm it.
+
 ---
 
 ## Exec summary

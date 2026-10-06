@@ -111,7 +111,7 @@ public class EmergencyDisableServiceTests : IDisposable
         // override recorded in the audit event (not only the operation trace - see pps-3).
         // 1.1.0 was protection resolving through Exchange (docs/ProtectedPrincipalGapFix-Plan.md
         // GAP B).
-        Assert.Equal("1.3.0", module.Version);
+        Assert.Equal("1.3.1", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");
@@ -361,14 +361,38 @@ public class EmergencyDisableServiceTests : IDisposable
     // ---- S2: the checkbox on the page -------------------------------------------------------
 
     [Fact]
-    public void Page_LockdownCheckbox_DefaultsChecked()
+    public void Page_LockdownCheckbox_DefaultsUnchecked()
     {
-        // Owner ruling 2026-10-05: an opt-OUT, not an opt-in. The default carries the intent
-        // (the move is the protection the step exists for) and the checkbox carries the doubt.
-        // A field initialised false would silently drop the protection on every run.
+        // Owner ruling 2026-10-06, superseding 2026-10-05: the lockdown step is opt-IN. An
+        // emergency disable does not move the account unless the operator says so on that run.
         var page = ReadPageSource("EmergencyDisable.razor");
 
-        Assert.Contains("private bool moveToLockdownOu = true;", page, StringComparison.Ordinal);
+        Assert.Contains("private const bool LockdownDefaultArmed = false;", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Page_TheDefault_LivesInOneConstant_NotALiteralPerSite()
+    {
+        // Three places have to agree about the default - the field initialiser, the post-auth
+        // read and the fresh-operation reset - and the owner has already changed his mind about
+        // it once. A literal at each site is edl-3 waiting to happen in a new direction: flip
+        // two of three and the first operation of a session behaves differently from the rest.
+        var page = ReadPageSource("EmergencyDisable.razor");
+        var code = page[page.IndexOf("@code {", StringComparison.Ordinal)..];
+
+        Assert.Equal(3, code.Split("LockdownDefaultArmed").Length - 1 - 1); // minus the declaration
+        Assert.DoesNotContain("moveToLockdownOu = true;", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("moveToLockdownOu = false;", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Page_UnconfiguredLockdownOu_IsNeverArmed_WhateverTheDefaultSays()
+    {
+        // The config gate ANDs with the default rather than replacing it, so flipping the
+        // default back to armed cannot arm a step with nowhere to move the account to.
+        var page = ReadPageSource("EmergencyDisable.razor");
+
+        Assert.Contains("LockdownDefaultArmed && lockdownOuConfigured", page, StringComparison.Ordinal);
     }
 
     // ResetForm's own re-arm assertion was folded into the two helper tests below when edl-3
@@ -419,7 +443,7 @@ public class EmergencyDisableServiceTests : IDisposable
         var helper = Between(page, "private void BeginNewOperation()", "\n    }");
 
         Assert.Contains("confirmed = false;", helper, StringComparison.Ordinal);
-        Assert.Contains("moveToLockdownOu = lockdownOuConfigured;", helper, StringComparison.Ordinal);
+        Assert.Contains("moveToLockdownOu = LockdownDefaultArmed && lockdownOuConfigured;", helper, StringComparison.Ordinal);
         Assert.DoesNotContain("moveToLockdownOu = false;", helper, StringComparison.Ordinal);
     }
 
@@ -444,7 +468,7 @@ public class EmergencyDisableServiceTests : IDisposable
         var init = Between(page, "protected override async Task OnInitializedAsync()", "authChecked = true;");
 
         Assert.Contains("lockdownOuConfigured =", init, StringComparison.Ordinal);
-        Assert.Contains("moveToLockdownOu = lockdownOuConfigured;", init, StringComparison.Ordinal);
+        Assert.Contains("moveToLockdownOu = LockdownDefaultArmed && lockdownOuConfigured;", init, StringComparison.Ordinal);
     }
 
     [Fact]

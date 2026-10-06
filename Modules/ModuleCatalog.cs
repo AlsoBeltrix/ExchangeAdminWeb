@@ -860,13 +860,17 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
+            // 1.3.1: the lockdown step defaults to UNCHECKED (owner ruling 2026-10-06,
+            // superseding the 2026-10-05 opt-out ruling). Capability unchanged; what changes is
+            // what happens when the operator touches nothing, which is a behaviour change and
+            // so bumps the module version.
             // 1.3.0: an optional lockdown step, default checked. After the AD disable the
             // account is moved to a configured lockdown OU - where delegation does not let
             // routine helpdesk re-enable it - and its previous OU is appended to the info
             // attribute (the ADUC Notes box) as a breadcrumb nothing in the app ever reads.
             // Unavailable until a lockdown OU is configured. Queue item 18;
             // docs/EmergencyDisableLockdownOU-Plan.md.
-            Version = "1.3.0",
+            Version = "1.3.1",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
