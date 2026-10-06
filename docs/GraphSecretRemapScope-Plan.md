@@ -171,3 +171,51 @@ plan - so the reviewer read the diagnosis before judging it. What it did do on i
 read `Services/ModuleConfigService.cs` at the pinned head and grep both key names across the
 catalog, so the mechanism was checked against source rather than taken on the plan's word.
 An unprimed second opinion on the CAUSE would need a review that is not handed this file.
+
+## Unprimed cause review, 2026-10-06
+
+The approach review above was primed - it read this plan. This one was not: codex was given
+the operator's symptom verbatim, the repository, and an explicit prohibition on reading this
+plan, anything under `.agents/review/` matching "remap", and any commit from `4a1dd66`
+onward. It confirmed compliance unprompted.
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / frontier (`fallback`
+alias). Effort `max` RE-PROBED on codex-cli 0.159.0 and still rejected by the gateway
+("Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'"), so xhigh is the
+ceiling, not a shortcut.
+Raw output: `.agents/review/remap-cause.result.json`.
+
+**It reached the same mechanism from the symptom alone, rated HIGH**, with the same call
+chain and the same evidence lines, plus two the plan had not cited:
+`Services/ModuleCredentialService.cs:27-31` and `Services/EmergencyDisableService.cs:195-199`
+are where the AD path still reads `DelineaSecretId`, which is what makes the deletion
+operationally fatal rather than cosmetic.
+
+It also refined the dev/prod point: the pattern is real but it is a TRIGGER pattern, not a
+promotion artefact - any startup of either instance does it, and promotion copies nothing.
+
+**Three further candidates it raised, none folded into this fix:**
+
+1. **MEDIUM, genuinely separate and still open.** Whole-module config save replaces the
+   module: `Services/Storage/ModuleConfigRepository.cs:78-92` deletes every row for the
+   module then writes the page's snapshot, and `Components/Pages/ModuleConfig.razor` loads
+   that snapshot once (`:927`, `:945`) and saves it at `:1112-1113`. A stale page, or a
+   snapshot taken during a transient read failure, can therefore delete rows written
+   elsewhere. It is dev/prod-shaped too. It fits "lose one specific value repeatedly" worse
+   than the startup bug, because it would usually lose several at once - which is why it is
+   recorded as its own question rather than merged here. **Needs its own plan.**
+2. LOW, one-time: legacy JSON import during first shared-DB adoption can let one instance's
+   incomplete config win while the other's file is archived unread
+   (`Services/ModuleConfigService.cs:157-172`, `Services/Storage/LegacyConfigImport.cs:25-26`).
+   Not a fit for repeated loss after re-entry.
+3. Scope check: the startup path touches only those two keys and only the numeric ID, never
+   the secret contents. Its explicit warnings for the repair step - do not bulk-copy
+   `GraphDelineaSecretId` back across modules, do not resurrect `OnPremDelineaSecretId`, do
+   not abandon the shared config DB - are adopted into the manual acceptance section's
+   intent.
+
+Its one approach difference: it would prefer an explicit allowlist of modules whose retired
+key was truly a Graph key, over this plan's "skip modules declaring both". The plan's form is
+kept - an allowlist is a second list to forget to update, and the dual-key test is exactly
+the condition that makes the key non-residue - but the alternative is recorded as a real
+option rather than dismissed.
