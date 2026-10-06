@@ -1,6 +1,8 @@
 # Graph Secret Remap Scope - Plan
 
-Status: **DRAFT - awaiting owner go.** Nothing below is authorised yet.
+Status: **IMPLEMENTED 2026-10-06.** Owner approved ("go"). The code fix, its tests and the
+base app version bump have landed. **The deleted value still has to be restored** - that was
+explicitly NOT authorised by the approval and needs its own go.
 
 ---
 

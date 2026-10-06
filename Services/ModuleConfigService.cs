@@ -110,6 +110,15 @@ public class ModuleConfigService
             if (!module.ConfigFields.Any(f => string.Equals(f.Key, newKey, StringComparison.OrdinalIgnoreCase)))
                 continue;
 
+            // A module that declares BOTH keys owns both: the old key is a LIVE field there,
+            // not pre-rename residue, and remapping it destroys a credential reference the
+            // module still reads. "Declares the new key" was treated as proof the old one was
+            // stale; it is not, because a module can be an on-prem module and a Graph module at
+            // once. The rule is written against the field list rather than a module name so a
+            // future dual-key module is covered without an edit here.
+            if (module.ConfigFields.Any(f => string.Equals(f.Key, oldKey, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
             try
             {
                 if (_repository.RemapKey(module.Id, oldKey, newKey))
