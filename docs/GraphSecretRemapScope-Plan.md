@@ -147,3 +147,27 @@ version moves - no module's own behaviour changes.
 
 Go or no-go on the fix as described in the exec summary, and separately: say which part of
 the diagnosis you rejected, or that review should settle it.
+
+---
+
+## Approach review, 2026-10-06
+
+`openreview`, pins `6fd1e5e..4a1dd66`.
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / frontier (grade
+`fallback`, and this machine's frontier pair is an alias of standard; the gateway rejects
+effort `max`, so xhigh is its ceiling - `.agents/review/harnesses.local.json`). The owner
+named the harness but did not explicitly accept the fallback grade for this dispatch, which
+the playbook asks for. Recorded, not glossed.
+Raw output: `.agents/review/remap-open.result.json`; prompt and stream log alongside.
+
+**Verdict: best approach, no material changes needed.** It stated the goal in its own words,
+said it would narrow `MigrateGraphSecretKeys` to skip dual-key modules while leaving
+`RemapKey`'s delete intact for genuinely graph-only legacy rows, and named the same
+catalog-driven tests, the version bump and the separate operational restore.
+
+**This is NOT independent corroboration of the root cause, and must not be cited as such.**
+The review question is answered by reading the pinned change, and the pinned change IS this
+plan - so the reviewer read the diagnosis before judging it. What it did do on its own:
+read `Services/ModuleConfigService.cs` at the pinned head and grep both key names across the
+catalog, so the mechanism was checked against source rather than taken on the plan's word.
+An unprimed second opinion on the CAUSE would need a review that is not handed this file.
