@@ -8,9 +8,22 @@ the latest sweep is Archived 2026-10-05).
 
 ## Now
 
-**NEXT TASK: QUEUE ITEM 18.** Owner, 2026-10-02: *"prepare to begin item #18 in the queue &
-handoff so we can start in a new session."* The grounding below was gathered in that session;
-nothing is implemented.
+**CURRENT TASK: PROGRESS COVERAGE, `docs/ProgressCoverage-Plan.md`, approved 2026-10-07.**
+S1 landed at `d5f3b3b`; S2 is next. Queue item 18 is DONE and its record follows below.
+
+**S1 built the guard, fixed nothing.** `ExchangeAdminWeb.Tests/ProgressRegistry.cs` is now the
+live gap list - 36 pages enumerated from the filesystem, 291 handlers discovered, 312 entries
+(71 Reports, 52 KnownGap, 189 Exempt). **Read the registry, not the plan, for what is still
+broken:** the plan says 41 defects, the registry holds 52, because S1 found 11 more of shapes
+the survey already classifies (7 CSV exports, 3 unbounded job-store reads, 1 report-zip
+export). Those 11 land in the final slice; S2-S4 are unchanged.
+
+Each later fix is one entry moving `KnownGap` -> `Reports`, which makes the test demand the
+call. All five failure conditions were probed and each isolated exactly one test.
+
+**S1 IS NOT REVIEWED.** The codex dispatch was killed by the harness for low system memory,
+not by anything in the change. Re-run it before S2 lands, per the owner standing instruction
+that codex reviews each code change.
 
 **OWNER APPROVED THE PLAN 2026-10-05 ("go"), AND S1 HAS LANDED.
 `docs/EmergencyDisableLockdownOU-Plan.md` owns the design; it supersedes the notes below.**
