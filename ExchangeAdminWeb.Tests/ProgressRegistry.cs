@@ -233,11 +233,11 @@ public static class ProgressRegistry
         Page = "AdminBulkJobs.razor",
         KnownGaps =
         [
-            new("ToggleDetails", 208,
+            new("ToggleDetails", 218,
                 "SILENT, READ. BulkJobs.GetRows has no LIMIT, so expanding a 10,000-row job "
                 + "blocks the render thread with the bar idle. The missing LIMIT is a separate "
                 + "defect, recorded as a candidate and NOT fixed by this plan"),
-            new("RefreshJobs", 177,
+            new("RefreshJobs", 187,
                 "SILENT, READ. The same unbounded GetRows runs here whenever a details row is "
                 + "open, on every refresh. NOT in docs/ProgressCoverage-Plan.md's survey, which "
                 + "named only ToggleDetails on this page"),
