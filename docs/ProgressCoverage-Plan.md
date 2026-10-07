@@ -10,7 +10,7 @@ Status: **DRAFT - awaiting owner go.** Nothing below is authorised yet.
 (`.agents/decisions.md` 2026-09-30, 2026-10-01). Everything below it is agent-facing.*
 
 **What it does.** You reported one page where the progress bar stays idle. Checking all 33
-pages found 42 places with the same problem - including six where an operator starts a change
+pages found 41 places with the same problem - including six where an operator starts a change
 that writes to AD, Exchange or Intune and the bar shows nothing at all. This fixes them, and
 replaces the test that was supposed to prevent them.
 
@@ -25,7 +25,7 @@ beside it is silent. Worse, the list of pages it checks is maintained by hand, s
 that report nothing at all are not checked at all. Fixing the pages without fixing that leaves
 the next one free to ship the same way.
 
-**What it costs.** Five or more slices across several sessions. Twelve pages are tied to a
+**What it costs.** Several sessions, one fix per commit. Twelve pages are tied to a
 line-numbered registry from earlier work, so each of those needs a careful re-anchoring pass
 on top of its edit - that is the bulk of the effort, and it is why the cheap pages go first.
 Each module touched gets its version bumped; the base app version does not move.
