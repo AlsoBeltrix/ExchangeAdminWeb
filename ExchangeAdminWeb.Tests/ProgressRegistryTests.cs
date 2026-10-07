@@ -53,9 +53,21 @@ internal static class ProgressScan
     internal sealed record PageMethod(string Name, int Line, int Start, int End);
 
     /// <summary>What a page's source says, once scanned.</summary>
+    /// <param name="Source">
+    /// The DISCOVERY view: the raw file with comment bodies blanked and string literals left
+    /// intact. Handler names live inside quoted markup attributes (<c>@onclick="Foo"</c>), so
+    /// blanking literals here would delete the operation list outright.
+    /// </param>
+    /// <param name="Code">
+    /// The CODE view: the raw file with comment bodies AND string/char literal contents blanked,
+    /// so everything still readable in it is code. Every scan that asks "does this method DO x"
+    /// reads this one. Blanking is same-length, so a method span found in <paramref name="Source"/>
+    /// addresses the same text here.
+    /// </param>
     internal sealed record PageScan(
         string Page,
         string Source,
+        string Code,
         IReadOnlyDictionary<string, PageMethod> Methods,
         IReadOnlyList<string> Operations,
         IReadOnlyList<string> UnextractedLambdas);
@@ -127,46 +139,82 @@ internal static class ProgressScan
     }
 
     /// <summary>
-    /// The same same-length blanking as <see cref="StripComments"/>, applied to the CONTENTS of
-    /// string literals. Comments were blanked because prose naming a service would satisfy a
-    /// Reports entry on its own; a string literal holding the same text does exactly that too,
-    /// and it was demonstrated: deleting CloudPasswordReset's real DeriveDestination call and
-    /// leaving `var x = "ResetService.DeriveDestination(";` inside the activity passed all three
-    /// conditions (review finding prog-1, known gaps).
+    /// The CODE view: one left-to-right lexical pass over the raw file that blanks comment bodies
+    /// AND whole string and char literals, delimiters included, replacing each with same-length
+    /// blanks so every index stays a real source position. What survives this pass is code.
     /// </summary>
     /// <remarks>
-    /// Used ONLY for locating covered calls, never for finding activities and never for method
-    /// discovery. Discovery reads handler names out of markup attributes, which ARE quoted, so
-    /// blanking there would delete the operation list; and <see cref="ActivitiesIn"/> keeps the
-    /// raw body so that a blanking mistake can only hide an activity's Complete from itself -
-    /// the direction that fails a test rather than passing one. Indices are preserved, so the
-    /// blanked body and the raw body address the same positions.
+    /// <para>
+    /// Both halves have been demonstrated to matter. Prose naming a service satisfied a Reports
+    /// entry on its own (three guards in this repo have failed that way); so did a string literal
+    /// holding the same text - deleting CloudPasswordReset's real DeriveDestination call and
+    /// leaving <c>var x = "ResetService.DeriveDestination(";</c> inside the activity passed all
+    /// three conditions (review finding prog-1).
+    /// </para>
+    /// <para>
+    /// The two are blanked in ONE pass, not in two, and that is load-bearing. Blanking comments
+    /// first ends a line at any <c>//</c>, including a <c>//</c> that is inside a string
+    /// ("https://..."), which deletes that string's closing quote; every literal after it on the
+    /// page then pairs one quote out of step and real string content lands OUTSIDE a literal,
+    /// unblanked. A single pass asks at each position which construct starts here, so a
+    /// <c>//</c> inside a literal is text and a quote inside a comment is text.
+    /// </para>
+    /// <para>
+    /// This is NOT the view handler discovery reads - see <see cref="PageScan.Source"/>. That
+    /// asymmetry is deliberate: handler names are quoted markup attribute values, so discovery
+    /// must keep literals. Every scan that asks what a method DOES reads the code view.
+    /// </para>
     /// </remarks>
-    internal static string StripStringLiterals(string source)
+    internal static string CodeView(string source)
     {
         var text = new StringBuilder(source);
 
-        for (var i = 0; i < text.Length; i++)
+        for (var i = 0; i < source.Length; i++)
         {
-            if (text[i] != '"' && text[i] != '\'')
+            var c = source[i];
+            var next = i + 1 < source.Length ? source[i + 1] : '\0';
+
+            int end;
+            if (c == '/' && next == '*')
+                end = CloseOf(source, i + 2, "*/");
+            else if (c == '@' && next == '*')
+                end = CloseOf(source, i + 2, "*@");
+            else if (c == '/' && next == '/')
+                end = EndOfLine(source, i);
+            else if (c == '"' || c == '\'')
+                end = SkipLiteral(source, i);
+            else
                 continue;
 
-            // SkipLiteral answers i-1 for a single-quoted run that hits a newline unterminated.
-            // Without this the cursor would walk backwards onto the same quote for ever.
-            var close = SkipLiteral(source, i);
-            if (close <= i)
+            // CloseOf answers -1 for a block comment that is never closed, which is not a
+            // construct and must not move the cursor backwards onto itself for ever. SkipLiteral
+            // and EndOfLine never answer below i, so this arm is CloseOf's alone.
+            if (end < i)
                 continue;
 
-            for (var j = i + 1; j < close && j < text.Length; j++)
+            for (var j = i; j <= end && j < text.Length; j++)
             {
                 if (text[j] != '\n')
                     text[j] = ' ';
             }
 
-            i = close;
+            i = end;
         }
 
         return text.ToString();
+    }
+
+    /// <summary>Index of the last character of <paramref name="closer"/>, or -1 if unclosed.</summary>
+    private static int CloseOf(string source, int from, string closer)
+    {
+        var at = source.IndexOf(closer, Math.Min(from, source.Length), StringComparison.Ordinal);
+        return at < 0 ? -1 : at + closer.Length - 1;
+    }
+
+    private static int EndOfLine(string source, int from)
+    {
+        var at = source.IndexOf('\n', from);
+        return at < 0 ? source.Length - 1 : at - 1;
     }
 
     internal static int LineOf(string source, int index) =>
@@ -181,11 +229,13 @@ internal static class ProgressScan
             if (Cache.TryGetValue(path, out var cached))
                 return cached;
 
-            var source = StripComments(File.ReadAllText(path));
+            var raw = File.ReadAllText(path);
+            var source = StripComments(raw);
+            var code = CodeView(raw);
             var methods = DeclaredMethods(source);
             var (operations, unextracted) = Handlers(source, methods);
 
-            var scan = new PageScan(Path.GetFileName(path), source, methods, operations, unextracted);
+            var scan = new PageScan(Path.GetFileName(path), source, code, methods, operations, unextracted);
             Cache[path] = scan;
             return scan;
         }
@@ -283,24 +333,141 @@ internal static class ProgressScan
         return -1;
     }
 
+    /// <summary>
+    /// The index of the character that CLOSES the literal opening at <paramref name="start"/>;
+    /// for a single-line literal that runs off the end of its line, the last character on that
+    /// line. Never answers below <paramref name="start"/>, so every caller advances.
+    /// </summary>
+    /// <remarks>
+    /// The prefix decides the escape rules and reading one character back got it wrong, which is
+    /// review finding prog-3: <c>$</c> alone is an INTERPOLATED string and still honours
+    /// backslash escapes - only <c>@</c> makes a literal verbatim. Treating <c>$"..\".."</c> as
+    /// verbatim ended the literal on the escaped quote, and every literal after it on the page
+    /// then paired one quote out of step, leaving real string content outside every literal and
+    /// therefore unblanked. A verbatim literal escapes its quote by DOUBLING it and may span
+    /// lines; a raw literal (three or more quotes, no <c>@</c> prefix) closes on a quote run at
+    /// least as long as the one that opened it and escapes nothing at all.
+    /// </remarks>
     private static int SkipLiteral(string source, int start)
     {
         var quote = source[start];
-        var verbatim = start > 0 && (source[start - 1] == '@' || source[start - 1] == '$');
+
+        var verbatim = false;
+        var interpolated = false;
+        for (var p = start - 1; p >= 0 && (source[p] == '@' || source[p] == '$'); p--)
+        {
+            if (source[p] == '@')
+                verbatim = true;
+            else
+                interpolated = true;
+        }
+
+        if (quote == '"' && !verbatim)
+        {
+            var opener = 0;
+            while (start + opener < source.Length && source[start + opener] == '"')
+                opener++;
+
+            // Two quotes is the empty string, not a raw literal; three or more opens one.
+            if (opener >= 3)
+                return SkipRawLiteral(source, start, opener);
+        }
 
         for (var i = start + 1; i < source.Length; i++)
         {
-            if (source[i] == '\\' && !verbatim)
+            if (interpolated && source[i] == '{')
             {
+                if (i + 1 < source.Length && source[i + 1] == '{')
+                {
+                    i++;
+                    continue;
+                }
+
+                i = SkipInterpolationHole(source, i, verbatim);
+                continue;
+            }
+
+            if (verbatim)
+            {
+                if (source[i] != quote)
+                    continue;
+
+                if (i + 1 < source.Length && source[i + 1] == quote)
+                {
+                    i++;
+                    continue;
+                }
+
+                return i;
+            }
+
+            if (source[i] == '\n')
+                return i - 1;
+
+            if (source[i] == '\\')
+            {
+                // A backslash immediately before the newline escapes nothing in C#; treating it
+                // as an escape would carry the literal onto the next line and swallow code.
+                if (i + 1 < source.Length && source[i + 1] == '\n')
+                    return i - 1;
+
                 i++;
                 continue;
             }
 
             if (source[i] == quote)
                 return i;
+        }
 
-            if (source[i] == '\n' && !verbatim)
+        return source.Length - 1;
+    }
+
+    /// <summary>
+    /// The closing brace of the interpolation hole opening at <paramref name="start"/>. A hole
+    /// holds CODE, and since C# 11 that code may carry its own string literals: without this, a
+    /// quote inside a hole closed the surrounding literal early, and the text between that hole
+    /// and the next quote - string content - was left readable as code.
+    /// </summary>
+    private static int SkipInterpolationHole(string source, int start, bool verbatim)
+    {
+        var depth = 0;
+        for (var i = start; i < source.Length; i++)
+        {
+            var c = source[i];
+
+            if (c == '"' || c == '\'')
+            {
+                i = SkipLiteral(source, i);
+                continue;
+            }
+
+            if (c == '\n' && !verbatim)
                 return i - 1;
+
+            if (c == '{')
+                depth++;
+            else if (c == '}' && --depth == 0)
+                return i;
+        }
+
+        return source.Length - 1;
+    }
+
+    private static int SkipRawLiteral(string source, int start, int opener)
+    {
+        for (var i = start + opener; i < source.Length; i++)
+        {
+            if (source[i] != '"')
+                continue;
+
+            var run = 0;
+            while (i + run < source.Length && source[i + run] == '"')
+                run++;
+
+            if (run >= opener)
+                return i + run - 1;
+
+            i += run - 1;
         }
 
         return source.Length - 1;
@@ -368,9 +535,14 @@ internal static class ProgressScan
         }
     }
 
-    internal static string BodyOf(PageScan page, string method) =>
+    /// <summary>
+    /// The method's body in the CODE view - comments and literals blanked. Everything that asks
+    /// what a method does reads this; nothing asks the discovery view, which still holds the
+    /// quoted markup attribute values handler discovery is made of.
+    /// </summary>
+    internal static string CodeOf(PageScan page, string method) =>
         page.Methods.TryGetValue(method, out var found)
-            ? page.Source[found.Start..found.End]
+            ? page.Code[found.Start..found.End]
             : string.Empty;
 
     /// <summary>An activity opened in a method body, with the span over which it is open.</summary>
@@ -386,15 +558,21 @@ internal static class ProgressScan
     /// </param>
     internal sealed record OpenActivity(string Name, int Begin, int Complete, int ScopeEnd);
 
-    internal static IReadOnlyList<OpenActivity> ActivitiesIn(string body)
+    /// <summary>
+    /// The activities a method opens. <paramref name="code"/> must be the CODE view
+    /// (<see cref="CodeOf"/>): before review finding prog-3 this read the raw body, so a method
+    /// holding the literal <c>"using var activity = Progress.Begin("</c> had an activity as far
+    /// as the regex was concerned, and conditions 2 and 3 then passed with no activity at all.
+    /// </summary>
+    internal static IReadOnlyList<OpenActivity> ActivitiesIn(string code)
     {
         var found = new List<OpenActivity>();
 
-        foreach (Match match in ActivityOpened.Matches(body))
+        foreach (Match match in ActivityOpened.Matches(code))
         {
             var name = match.Groups[1].Value;
-            var complete = body.IndexOf($"{name}.Complete(", match.Index, StringComparison.Ordinal);
-            found.Add(new OpenActivity(name, match.Index, complete, EnclosingBlockEnd(body, match.Index)));
+            var complete = code.IndexOf($"{name}.Complete(", match.Index, StringComparison.Ordinal);
+            found.Add(new OpenActivity(name, match.Index, complete, EnclosingBlockEnd(code, match.Index)));
         }
 
         return found;
@@ -406,15 +584,19 @@ internal static class ProgressScan
     /// any depth - inside a try, inside a local function - and what matters is only where the
     /// variable goes out of scope and the activity is disposed.
     /// </summary>
-    private static int EnclosingBlockEnd(string body, int from)
+    private static int EnclosingBlockEnd(string code, int from)
     {
         var depth = 0;
-        for (var i = from; i < body.Length; i++)
+        for (var i = from; i < code.Length; i++)
         {
-            var c = body[i];
+            var c = code[i];
+
+            // The code view has no literals left in it, so this arm should never fire. It stays
+            // because a brace inside a literal must never count, and leaving the guard here
+            // costs nothing if a caller ever hands this the raw body again.
             if (c == '"' || c == '\'')
             {
-                i = SkipLiteral(body, i);
+                i = SkipLiteral(code, i);
                 continue;
             }
 
@@ -424,7 +606,7 @@ internal static class ProgressScan
                 return i;
         }
 
-        return body.Length;
+        return code.Length;
     }
 }
 
@@ -549,24 +731,23 @@ public class ProgressRegistryTests
     /// several, and conditions 1 to 3 each hold for every one of them independently - which is the
     /// whole point of allowing several (see <see cref="ProgressRegistry.Reported"/>).
     /// </summary>
-    /// <param name="Body">
-    /// The method's source as written. Activities are found in THIS, not in <c>Code</c>.
-    /// </param>
     /// <param name="Code">
-    /// The same body with string-literal contents blanked, which is where a covered call is
-    /// looked for. Same length and therefore the same indices as <c>Body</c>.
+    /// The method's body in the CODE view - comments and string literals blanked. The call is
+    /// looked for in this, the activity is found in this, and the window is measured in this.
+    /// Before review finding prog-3 the activity was found in the RAW body instead, and a string
+    /// literal reading <c>"using var activity = Progress.Begin("</c> was enough to satisfy
+    /// conditions 2 and 3 with no activity in the method at all.
     /// </param>
-    private static IEnumerable<(ProgressScan.PageScan Page, ProgressRegistry.Reported Entry, string Call, string Body, string Code)>
+    private static IEnumerable<(ProgressScan.PageScan Page, ProgressRegistry.Reported Entry, string Call, string Code)>
         CoveredCalls()
     {
         foreach (var page in ProgressScan.ScanAll())
         {
             foreach (var reported in EntryFor(page.Page).Reports)
             {
-                var body = ProgressScan.BodyOf(page, reported.Method);
-                var code = ProgressScan.StripStringLiterals(body);
+                var code = ProgressScan.CodeOf(page, reported.Method);
                 foreach (var call in reported.CoveredCalls)
-                    yield return (page, reported, call, body, code);
+                    yield return (page, reported, call, code);
             }
         }
     }
@@ -628,16 +809,17 @@ public class ProgressRegistryTests
 
     /// <summary>
     /// Failure condition 1: a Reports entry whose named call does not appear in the method.
-    /// Matched against the comment-stripped body, so prose naming a service cannot satisfy it.
+    /// Matched against the code view, so neither prose nor a string literal naming a service can
+    /// satisfy it.
     /// </summary>
     [Fact]
     public void AReportedOperationContainsTheCallItClaimsToCover()
     {
         var offenders = new List<string>();
 
-        foreach (var (page, reported, call, body, code) in CoveredCalls())
+        foreach (var (page, reported, call, code) in CoveredCalls())
         {
-            if (body.Length == 0)
+            if (code.Length == 0)
                 continue; // Reported by EveryRegisteredOperationNamesAMethodThatStillExists.
 
             if (!code.Contains(call, StringComparison.Ordinal))
@@ -662,9 +844,9 @@ public class ProgressRegistryTests
     {
         var offenders = new List<string>();
 
-        foreach (var (page, reported, call, body, code) in CoveredCalls())
+        foreach (var (page, reported, call, code) in CoveredCalls())
         {
-            var activities = ProgressScan.ActivitiesIn(body);
+            var activities = ProgressScan.ActivitiesIn(code);
 
             foreach (var at in OccurrencesOf(code, call))
             {
@@ -696,9 +878,9 @@ public class ProgressRegistryTests
     {
         var offenders = new List<string>();
 
-        foreach (var (page, reported, call, body, code) in CoveredCalls())
+        foreach (var (page, reported, call, code) in CoveredCalls())
         {
-            var activities = ProgressScan.ActivitiesIn(body);
+            var activities = ProgressScan.ActivitiesIn(code);
 
             foreach (var at in OccurrencesOf(code, call))
             {
@@ -763,7 +945,10 @@ public class ProgressRegistryTests
 
             foreach (var exempt in entry.Exempt.Where(e => e.DelegatesTo.Length > 0))
             {
-                var body = ProgressScan.BodyOf(page, exempt.Method);
+                // The code view, for the same reason conditions 1 to 3 read it: a dispatcher
+                // whose delegation target appeared only inside a string literal would otherwise
+                // satisfy "it really calls it" without calling it (review finding prog-3).
+                var body = ProgressScan.CodeOf(page, exempt.Method);
                 if (body.Length > 0 && !body.Contains(exempt.DelegatesTo, StringComparison.Ordinal))
                     offenders.Add($"{page.Page}: {exempt.Method} does not call {exempt.DelegatesTo}");
 
@@ -831,5 +1016,168 @@ public class ProgressRegistryTests
                 + "fixed and is now Reported; dropping it to Exempt needs an owner decision, not "
                 + "a registry edit.");
         }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The scanner's own tests. Everything above asks what the pages say; everything below asks
+    // whether the thing doing the asking can tell code from data. Review findings prog-1 and
+    // prog-3 were both "the rule can be satisfied by text that is not code", so the answer is
+    // now asserted rather than assumed.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The headline negative: the literal review finding prog-3 was written about. A method that
+    /// merely CONTAINS the text of a Progress.Begin opens no activity, and conditions 2 and 3
+    /// must find none.
+    /// </summary>
+    [Fact]
+    public void AProgressBeginInsideAStringLiteralOpensNoActivity()
+    {
+        const string method = """
+            private async Task Probe()
+            {
+                var pretend = "using var activity = Progress.Begin(";
+                await Svc.SlowCallAsync();
+            }
+            """;
+
+        var code = ProgressScan.CodeView(method);
+
+        Assert.Empty(ProgressScan.ActivitiesIn(code));
+        Assert.DoesNotContain("Progress.Begin(", code, StringComparison.Ordinal);
+
+        // And the same text as real code still is one, so the assertion above is about the
+        // quoting and not about the pattern having stopped working.
+        var real = ProgressScan.CodeView(method.Replace("\"using var", "using var", StringComparison.Ordinal));
+        Assert.Single(ProgressScan.ActivitiesIn(real));
+    }
+
+    /// <summary>
+    /// The other half: a covered call's name inside a string literal does not satisfy condition
+    /// 1, which is the prog-1 probe re-run against the scanner instead of against a live page.
+    /// </summary>
+    [Fact]
+    public void ACoveredCallNameInsideAStringLiteralIsNotACall()
+    {
+        const string method = """
+            private async Task Probe()
+            {
+                using var activity = Progress.Begin("Resetting");
+                var pretend = "ResetService.DeriveDestination(";
+                await Svc.SomethingElseAsync();
+            }
+            """;
+
+        var code = ProgressScan.CodeView(method);
+
+        Assert.DoesNotContain("ResetService.DeriveDestination(", code, StringComparison.Ordinal);
+        Assert.Single(ProgressScan.ActivitiesIn(code));
+    }
+
+    /// <summary>
+    /// Every literal form that has to be blanked, each one a bypass attempted against the
+    /// blanker. The payload is the same in all of them, so a row that survives shows up as the
+    /// payload surviving rather than as a parse detail.
+    /// </summary>
+    [Theory]
+    // The prog-3 defect itself: '$' alone is interpolated, not verbatim, so the escaped quote
+    // does not end the literal. Reading one character back called this verbatim, ended the
+    // literal early and left everything after it outside any literal.
+    [InlineData("""var s = $"he said \"hi\" {Payload.Call(} and more";""")]
+    // An escaped backslash immediately before the closing quote: the quote really does close,
+    // so the NEXT literal still starts where it should.
+    [InlineData("""var a = "C:\\"; var s = "Payload.Call(";""")]
+    // Verbatim escapes its quote by doubling it, and nothing by backslash.
+    [InlineData(""" var s = @"a ""Payload.Call("" b"; """)]
+    // An interpolation hole holding its own quoted string.
+    [InlineData(""" var s = $"{Fmt("Payload.Call(")} tail"; """)]
+    // A char literal that IS a quote: the quote it holds must not open a literal.
+    [InlineData(""" var c = '"'; var s = "Payload.Call("; """)]
+    // A '//' inside a string is text, not a comment - the reason comments and literals are
+    // blanked in ONE pass. Blanking comments first eats this literal's closing quote; a VERBATIM
+    // literal then runs on past the end of its line, the next literal pairs one quote out of
+    // step, and the payload - real string content - is left outside every literal and readable
+    // as code. Verbatim deliberately: a single-line literal ends at the newline, so the same
+    // mistake on a plain string is self-limiting and would not show the defect.
+    [InlineData("""
+                var s = @"a // b";
+                var t = "Payload.Call(";
+                """)]
+    // The plain-string form of the same attempt. It does NOT discriminate - a non-verbatim
+    // literal ends at the newline, so a comment-first pass would swallow the payload with the
+    // rest of that line rather than expose it. Kept because it is the obvious shape to try and
+    // because it pins the newline rule that makes it harmless.
+    [InlineData("""
+                var u = "https://example.test/x";
+                var s = "Payload.Call(";
+                """)]
+    // A quote inside a comment is text, not a literal.
+    [InlineData("""
+                // he said "hi
+                var s = "Payload.Call(";
+                """)]
+    public void NoStringFormSmugglesTextPastTheBlanker(string line)
+    {
+        Assert.DoesNotContain("Payload.Call(", ProgressScan.CodeView(line), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Raw string literals, which the blanker could not see at all before: the multi-line form
+    /// does not terminate at a newline, so its contents were left as code.
+    /// </summary>
+    [Fact]
+    public void ARawStringLiteralIsBlankedWholeIncludingItsNewlines()
+    {
+        var method = "private void Probe()\n{\n    var s = \"\"\"\n"
+            + "        using var activity = Progress.Begin(\n"
+            + "        ResetService.DeriveDestination(\n"
+            + "        \"\"\";\n"
+            + "    Done();\n}\n";
+
+        var code = ProgressScan.CodeView(method);
+
+        Assert.DoesNotContain("Progress.Begin(", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("ResetService.DeriveDestination(", code, StringComparison.Ordinal);
+        Assert.Empty(ProgressScan.ActivitiesIn(code));
+
+        // The code around it survives, so the blanker is not simply erasing the method.
+        Assert.Contains("Done();", code, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Blanking is same-length, which is what lets a method span found in the discovery view
+    /// address the same text in the code view. A shortening blanker would silently mis-slice
+    /// every body and the conditions would be reading the wrong method.
+    /// </summary>
+    [Fact]
+    public void TheCodeViewIsTheSameLengthAndShapeAsTheSource()
+    {
+        foreach (var page in ProgressScan.ScanAll())
+        {
+            Assert.Equal(page.Source.Length, page.Code.Length);
+            Assert.Equal(
+                page.Source.Count(c => c == '\n'),
+                page.Code.Count(c => c == '\n'));
+        }
+    }
+
+    /// <summary>
+    /// The asymmetry, asserted so it cannot be "tidied up". Handler discovery reads the
+    /// DISCOVERY view because handler names are quoted markup attribute values; blanking
+    /// literals before discovery would delete the operation list and leave every assertion over
+    /// it passing on an empty set. This is the shape review finding prog-2 already cost once.
+    /// </summary>
+    [Fact]
+    public void HandlerDiscoveryStillReadsQuotedMarkupAttributes()
+    {
+        var page = ProgressScan.ScanAll()
+            .Single(p => string.Equals(p.Page, "CloudPasswordReset.razor", StringComparison.Ordinal));
+
+        // Both are @onclick="..." in the markup at :51 and :167 - quoted values, invisible to
+        // any scan that reads the code view.
+        Assert.Contains("LookupAsync", page.Operations);
+        Assert.Contains("ExecuteResetAsync", page.Operations);
+
+        Assert.DoesNotContain("ExecuteResetAsync\"", page.Code, StringComparison.Ordinal);
     }
 }

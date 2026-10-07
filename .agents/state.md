@@ -69,9 +69,13 @@ after the owner recycled the pool and returned UNSOUND with two findings, both n
 closed: `prog-1` (the registry named only the PATCH, so nothing asserted the ~30s derive was
 inside the activity) and `prog-2` (DOM `@onchange` was discovered by nothing, while Migration
 already uses it to reach slow work). Fixes at `8aef667` and `8456780`; records in
-`.agents/review/findings/`. **Those two fixes are themselves awaiting a codex pass over
-`931d005..8456780`** - that is the open obligation now, and the five remaining S2 writes
-should not start ahead of it.
+`.agents/review/findings/`. **That codex pass over `931d005..8456780` has now run** and
+returned one further finding, `prog-3`: the prog-2 fix blanked string literals when locating a
+covered call but not when finding the activity, so a method holding the TEXT of a
+`Progress.Begin` satisfied conditions 2 and 3 with no activity in it. Fixed and verified in the
+commit carrying this record - the scanner now keeps one code view, built in a single lexical
+pass, and the record states which scan reads which view. The five remaining S2 writes are
+unblocked.
 
 **S2, first fix: `CloudPasswordReset.ExecuteResetAsync` now reports, and its destination derive
 runs off the renderer thread.** `CloudPasswordReset` `1.0.3` -> `1.0.4`; base app unchanged at
