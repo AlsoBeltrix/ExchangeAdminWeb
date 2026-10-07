@@ -746,7 +746,13 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.3",
+            // 1.0.4: the reset itself now reports to the status frame. The whole irreversible
+            // operation - ticket, protection gate, fresh resolve, destination derive, the PATCH
+            // and the delivery email - ran with the bar reading Idle. The destination derive also
+            // moved off the renderer thread, as the preflight's did in 1.0.2: it is a ~30 second
+            // synchronous forest search and a bar cannot paint on a frozen circuit, so reporting
+            // alone would have changed nothing the operator can see.
+            Version = "1.0.4",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",

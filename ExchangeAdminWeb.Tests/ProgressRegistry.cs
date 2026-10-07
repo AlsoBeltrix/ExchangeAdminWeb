@@ -392,17 +392,18 @@ public static class ProgressRegistry
             new("LookupAsync", "ResetService.ResolveTargetAsync",
                 "the destination lookup that follows is additionally guarded by a bespoke "
                 + "assertion in GlobalProgressWiringTests, which this registry does not replace"),
-        ],
-        KnownGaps =
-        [
-            new("ExecuteResetAsync", 336,
-                "SILENT, MUTATING - the worst finding in the survey. The ticket check, the "
-                + "protection gate, the fresh Graph resolve, DeriveDestination, the PATCH and the "
-                + "delivery email all run with the bar reading Idle. It is not only a reporting "
-                + "gap: DeriveDestination is a ~30 second blocking forest search run on the "
-                + "renderer thread, so the circuit cannot repaint even once the work IS reported. "
-                + "LookupAsync was fixed for exactly that on 2026-10-02; this path was named and "
-                + "deferred at the time (.agents/token-log.md)"),
+            new("ExecuteResetAsync", "ResetService.ResetPasswordAsync(",
+                "was the worst finding in the survey (docs/ProgressCoverage-Plan.md S2): the "
+                + "ticket check, the protection gate, the fresh Graph resolve, DeriveDestination, "
+                + "the PATCH and the delivery email all ran with the bar reading Idle. The "
+                + "activity now opens before the try, so the refusals are covered too, and "
+                + "completes in the finally after the admin notification. The covered call named "
+                + "here is the irreversible PATCH deliberately: it is the last heavy call before "
+                + "delivery, so condition 3 also pins the single Complete to the finally - an "
+                + "early Complete on any refusal path would land before it and fail. Fixing the "
+                + "reporting was not sufficient on its own: DeriveDestination was a ~30 second "
+                + "blocking forest search on the renderer thread, and a bar cannot paint on a "
+                + "frozen circuit, so it moved to Task.Run in the same commit"),
         ],
         Exempt = [new("OnInitializedAsync", AuthPreambleOnly)],
     };

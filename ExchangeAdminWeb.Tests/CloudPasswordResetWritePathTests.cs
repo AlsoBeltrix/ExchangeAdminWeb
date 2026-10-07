@@ -73,8 +73,13 @@ public class CloudPasswordResetWritePathTests
         // Strengthened after review finding cpr-9: the original assertion accepted deriving from
         // the CACHED preflight target, which refreshed only the directory half of the lookup. The
         // account itself must be re-read too, or the employeeId is minutes old.
+        //
+        // The derive is pinned in its Task.Run form: it is a ~30 second synchronous forest search
+        // and running it inline froze the circuit for the whole reset, so the hop is part of what
+        // this guard holds in place (docs/ProgressCoverage-Plan.md S2). Re-deriving from `fresh`
+        // is still the assertion; the pool hop is how it is reached.
         Assert.Contains("await ResetService.ResolveTargetAsync(upn)", HandlerBody());
-        Assert.Contains("destination = ResetService.DeriveDestination(fresh);", HandlerBody());
+        Assert.Contains("destination = await Task.Run(() => ResetService.DeriveDestination(fresh));", HandlerBody());
     }
 
     [Fact]
