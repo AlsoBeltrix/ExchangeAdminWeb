@@ -52,9 +52,14 @@ namespace ExchangeAdminWeb.Tests;
 /// held by nothing.
 /// </para>
 /// <para>
-/// Discovery covers @onclick, @onsubmit, @onkeydown, InputFile's OnChange, @bind:after and the
-/// three lifecycle entry points. It does NOT cover the DOM's own @onchange; that surface carries
-/// no recorded gap today and widening to it is not in this plan's scope.
+/// Discovery covers @onclick, @onsubmit, @onkeydown, the DOM's @onchange, InputFile's OnChange,
+/// @bind:after and the three lifecycle entry points. @onchange was excluded when this file was
+/// written, recorded as a limitation outside the plan's named surfaces, and the exclusion was
+/// wrong: Migration.razor wires tick boxes straight at AdoptSelectionAsOpenBatch, so the same
+/// work was classified when a click reached it and unclassified when a checkbox did (review
+/// finding prog-2). It surfaced 25 further handlers across seven pages, every one of them a tick
+/// box, radio, select or text input editing page state - which is what that surface is used for
+/// here, and is a finding about the shape of the app rather than a clean bill of health.
 /// </para>
 /// </remarks>
 public static class ProgressRegistry
@@ -167,6 +172,23 @@ public static class ProgressRegistry
         + "jobs for the submitter via BulkJobService, a channel separate from IActivityProgress, "
         + "so the long part IS visible by that route and the enqueue itself is fast";
 
+    /// <summary>
+    /// The DOM @onchange tick-box shape, which is most of what widening discovery to that
+    /// surface turned up (review finding prog-2). A tick box is an input to a later confirm
+    /// step: it adds or removes a row key already on the page and calls nothing.
+    /// </summary>
+    /// <summary>
+    /// ModuleConfig's attribute-allowlist grid: one cell edit on an in-memory row, plus the
+    /// section's dirty counter. Nothing reaches the configuration store until SaveAllowlistAsync.
+    /// </summary>
+    private const string AllowlistRowEdit =
+        "edits one cell of an attribute-allowlist row held in memory and bumps the section's "
+        + "dirty count; the write is SaveAllowlistAsync";
+
+    private const string TickBoxSelection =
+        "ticks rows already in the page's result set; adds or removes a key in the selection "
+        + "set and calls nothing. The work it arms is registered on the handler that runs it";
+
     private const string StagesConfirmation =
         "stages a confirmation; nothing runs until the operator confirms, and the execution path "
         + "reports through ExecuteUserAction / ExecuteBatchAction / ExecuteBulkMailboxAction";
@@ -239,6 +261,9 @@ public static class ProgressRegistry
         [
             new("OnInitializedAsync", AuthPreambleOnly),
             new("OnSearchKeyDown", "Enter key; the search is PerformSearch", "PerformSearch"),
+            new("SetEditValue",
+                LocalUiState + "; buffers one attribute's typed value in editValues until "
+                + "ConfirmSave writes it"),
             new("ResetAttribute", LocalUiState),
             new("ShowPreview", LocalUiState),
             new("CancelSave", LocalUiState),
@@ -364,6 +389,11 @@ public static class ProgressRegistry
             new("AddPpPattern",
                 "a pattern is a string, not a directory object, so this one Add does NOT reach "
                 + "the AD validation path its four siblings do"),
+            new("ToggleModule",
+                LocalUiState + "; flips one module's enablement in the in-memory map and recounts "
+                + "the section against its baseline. Like AddPpPattern and unlike the four "
+                + "AddPp* handlers, it reaches no directory call; the write is "
+                + "SaveCurrentTabAsync"),
             new("OnPpPatternKey", "Enter key; the add is AddPpPattern", "AddPpPattern"),
         ],
     };
@@ -631,6 +661,8 @@ public static class ProgressRegistry
         [
             new("OnInitializedAsync", AuthPreambleOnly),
             new("HandleSearchKey", "Enter key; the search is Search", "Search"),
+            new("ToggleSelected", TickBoxSelection),
+            new("ToggleSelectAll", TickBoxSelection),
             new("ClearBulkState", LocalUiState),
         ],
     };
@@ -779,6 +811,10 @@ public static class ProgressRegistry
                 "runs inside AnalyzeHeadersAsync's activity", "AnalyzeHeadersAsync"),
             new("UseHeaderTraceSuggestion", "fills the form and runs RunTrace", "RunTrace"),
             new("ClearHeaderAnalysis", LocalUiState),
+            new("ToggleRowSelection", TickBoxSelection + " - here DownloadSelectedDetails and "
+                + "EmailSelectedDetails, both of which report"),
+            new("ToggleSelectAll", TickBoxSelection + "; caps itself at MessageTraceDetailReport"
+                + ".EmailMax rows, so it cannot grow unbounded either"),
             new("ClearSelection", LocalUiState),
         ],
     };
@@ -864,6 +900,19 @@ public static class ProgressRegistry
             new("SelectOnlyBatch", "selection only", "AdoptSelectionAsOpenBatch"),
             new("RemoveFromSelection", "selection only", "AdoptSelectionAsOpenBatch"),
             new("ClearBatchSelection", "selection only", "AdoptSelectionAsOpenBatch"),
+            // The two handlers review finding prog-2 was written about. They reach
+            // LoadMailboxesFor by exactly the route SelectOnlyBatch does, and were invisible to
+            // the scanner only because the control is a tick box rather than a div.
+            new("ToggleBatchSelected", "selection only", "AdoptSelectionAsOpenBatch"),
+            new("ToggleSelectAllBatches", "selection only", "AdoptSelectionAsOpenBatch"),
+            new("ToggleMailboxSelected", TickBoxSelection + "; also clamps the two mailbox "
+                + "pagers, because the row moves between the pinned block and the list"),
+            new("ToggleSelectAllMailboxes", TickBoxSelection + "; FilteredSortedMailboxes is an "
+                + "in-memory filter and sort over batchUsers, not a re-read"),
+            new("OnBatchSortColumnChanged",
+                LocalUiState + "; re-orders the batches already loaded and returns to page one"),
+            new("OnMailboxSortColumnChanged",
+                LocalUiState + "; re-orders the mailboxes already loaded and returns to page one"),
             new("RefreshBatchUsers", "the mailbox read is LoadMailboxesFor", "LoadMailboxesFor"),
             new("StepSelectionPage", LocalUiState),
             new("StepPinnedMailboxPage", LocalUiState),
@@ -931,6 +980,25 @@ public static class ProgressRegistry
             new("RemoveModuleAdmin", LocalUiState + "; the save is a separate action"),
             new("AddAttribute", LocalUiState + "; the save is a separate action"),
             new("RemoveAttribute", LocalUiState + "; the save is a separate action"),
+            // The DOM @onchange handlers on this page, all of the same shape: a field edit on an
+            // in-memory row plus a dirty recount. ModuleConfig is the page the plan names as
+            // correct-as-it-stands, and these are why: nothing here reaches the configuration
+            // store, let alone the directory, until a Save* runs.
+            new("ToggleModuleEnabled", LocalUiState + "; the save is a separate action"),
+            new("SetBooleanConfigValue",
+                LocalUiState + "; writes one key into currentConfigState. The save is a separate "
+                + "action"),
+            new("ToggleOU",
+                LocalUiState + "; a tick in the OU browser is not a config edit until "
+                + "ApplySelectedOUs writes DefaultSearchBase"),
+            new("UpdateAttrName", AllowlistRowEdit),
+            new("UpdateAttrLabel", AllowlistRowEdit),
+            new("UpdateAttrType", AllowlistRowEdit),
+            new("UpdateAttrRequired", AllowlistRowEdit),
+            new("UpdateAttrAllowClear", AllowlistRowEdit),
+            new("UpdateAttrMaxLength", AllowlistRowEdit),
+            new("UpdateAttrLevel", AllowlistRowEdit),
+            new("UpdateAttrChoices", AllowlistRowEdit),
             new("ApplySelectedOUs", LocalUiState),
             new("ToggleOUBrowser", "the directory read is LoadOUsAsync", "LoadOUsAsync"),
             new("RefreshOUs", "drops the cache; the directory read is LoadOUsAsync", "LoadOUsAsync"),
@@ -1037,6 +1105,8 @@ public static class ProgressRegistry
             new("RemoveMember", "the removal is RemoveListedMember", "RemoveListedMember"),
             new("ConfirmGroupRemoval", "the removal is RemoveListedMember", "RemoveListedMember"),
             new("BeginGroupRemoval", LocalUiState + "; stages the confirm panel"),
+            new("ToggleSelected", TickBoxSelection),
+            new("ToggleSelectAll", TickBoxSelection),
             new("OnSearchKeyDown", "Enter key; the search is SearchGroup", "SearchGroup"),
         ],
     };

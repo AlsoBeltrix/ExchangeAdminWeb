@@ -26,9 +26,16 @@ internal static class ProgressScan
         new(@"@onkeydown\s*=\s*(?:""([^""]*)""|'([^']*)')", RegexOptions.Compiled),
         new(@"@bind(?:-\w+)?:after\s*=\s*(?:""([^""]*)""|'([^']*)')", RegexOptions.Compiled),
         // InputFile's OnChange, and any component parameter spelled the same way. The negative
-        // lookbehind keeps this off the DOM's own @onchange, which is a different surface and
-        // carries no recorded gap today.
+        // lookbehind keeps this off the DOM's own @onchange, which the pattern below owns; the
+        // two are different surfaces and both are scanned.
         new(@"(?<![@\w])OnChange\s*=\s*(?:""([^""]*)""|'([^']*)')", RegexOptions.Compiled),
+        // The DOM's own @onchange. This was excluded when the registry was written, recorded as a
+        // limitation outside the plan's named surfaces - and the exclusion was not safe.
+        // Migration.razor:510 and :641 wire tick boxes straight at AdoptSelectionAsOpenBatch,
+        // which reaches LoadMailboxesFor: the same work, classified when a click reaches it and
+        // unclassified when a checkbox does (review finding prog-2). A select element or a tick
+        // box is an operator control like any other.
+        new(@"@onchange\s*=\s*(?:""([^""]*)""|'([^']*)')", RegexOptions.Compiled),
     ];
 
     /// <summary>
