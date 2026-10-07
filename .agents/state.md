@@ -8,6 +8,44 @@ the latest sweep is Archived 2026-10-05).
 
 ## Now
 
+**CIRCUIT LIFETIME LEAK, `docs/CircuitLifetimeLeak-Plan.md`, approved 2026-10-07. ALL THREE
+SLICES LANDED: `98b29d1` (S1a), `c6c73d2` (S1b), `9741f7c` (S2), plus the record commit carrying
+this block (S3).** Step 1 of `docs/ProductionMemory-Plan.md`'s sequence; steps 2-4 are untouched.
+
+`ConferenceRooms` 2.6.2 -> 2.6.3 and `AdminBulkJobs` 1.0.1 -> 1.0.2; base app unmoved at
+`2.27.1` (both module-scoped). Suite 3651 -> 3660 passed, 0 failed, 3 skipped.
+
+**The plan's two line-number claims both held exactly** - `ConferenceRooms.razor` was 1576 lines
+and ClickGate-pinned at `ExpectedLineCount = 1576`; `AdminBulkJobs.razor` is not line-pinned. Ten
+lines went in at `ConferenceRooms:735`, above every line-keyed ClickGate entry on that page (the
+highest is 575), so the re-anchor was `ExpectedLineCount` alone plus the `ProgressRegistry`
+KnownGap pointers below the insertion.
+
+**S3 AUDIT, done independently of the investigation's claim and agreeing with it.** Nine `+=`
+occurrences exist under `Components/`; seven are delegate subscriptions, two are string
+accumulations in `GlobalProgress` and `InFlightWorkGuard`. All seven have a matching `-=`, all
+five owning components declare `@implements IDisposable` and define `Dispose`, and all seven now
+satisfy the rule. Only `BulkJobService.JobChanged` and `PageLoadTracker.Changed` are events on
+SINGLETONS and therefore leak-capable; `IActivityProgress.Changed` is scoped and
+`NavigationManager.LocationChanged` is per-circuit, so a stuck handler on those dies with the
+circuit that owns it. `UsageTracker` subscribes in `OnAfterRenderAsync` BEFORE its only await, so
+it has no window and needs no guard. No component registers a callback by any shape other than
+`+=`. Two subscriptions outside `Components/` were checked and are clean:
+`PermissionValidator.cs:42` is a singleton subscribing to a singleton event in its constructor,
+and `ServiceHealthService.cs:375` subscribes to an object it owns locally.
+
+**S2 is the recurrence guard, `ExchangeAdminWeb.Tests/EventSubscriptionLifetimeTests.cs`**, and
+it is written against the shape rather than against the two pages - it was probed with a
+brand-new eighth page named nowhere in the suite and fired on it. It also fires on all four
+`Components/Shared` sites, so it reaches past `Components/Pages`, which is the sweep `1ed797a`
+did not do in reverse.
+
+**NOT REVIEWED.** Per the owner's standing instruction, codex reviews each code change; this
+work stream has had none. **Nothing here proves the leak is gone** - a source guard cannot. The
+acceptance check is the production worker's private bytes at deploy and 24 hours later against
+the 2026-10-07 baseline (13.8 GB working set / 15.0 GB private at 1.0 days uptime). Continued
+growth means this was not the dominant cause, which is information and points at step 2.
+
 **CURRENT TASK: PROGRESS COVERAGE, `docs/ProgressCoverage-Plan.md`, approved 2026-10-07.**
 S1 landed at `d5f3b3b`. The first S2 fix - `CloudPasswordReset.ExecuteResetAsync`, the survey's
 worst finding - landed in the commit carrying this record. Queue item 18 is DONE and its record

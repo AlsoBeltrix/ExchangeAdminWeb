@@ -1,6 +1,12 @@
 # Circuit Lifetime Leak - Plan
 
-Status: **DRAFT - awaiting owner go.** Nothing below is authorised yet.
+Status: **Implemented.** Approved by the owner 2026-10-07; S1a, S2 and S3 landed the same day
+at `98b29d1`, `c6c73d2`, `9741f7c` and the record commit that follows them. Codex review is
+still outstanding, and the manual memory acceptance below is the only thing that can say
+whether the leak mattered. Current state lives in `.agents/state.md`, not here.
+
+The parent, `docs/ProductionMemory-Plan.md`, still reads DRAFT: the go covered this child plan
+by name, not the parent's sequence or its later steps.
 
 **`docs/ProductionMemory-Plan.md` is the parent and owns the ORDER and the measurement
 gates - read it first.** This is step 1 of that sequence, and the only one of the three that
