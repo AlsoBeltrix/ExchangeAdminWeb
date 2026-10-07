@@ -1,6 +1,11 @@
 # Progress Coverage - Plan
 
-Status: **DRAFT - awaiting owner go.** Nothing below is authorised yet.
+Status: **APPROVED 2026-10-07 ("go"), IN PROGRESS.** S1 (the registry) and two S2 fixes have
+landed and been reviewed. Four S2 silent writes remain: `ADAttributeEditor.ConfirmSave`,
+`ConferenceRooms.SetSingleRoomType`, `BlockedSenders.ConfirmUnblock`,
+`ExchangeOnlineConfig.SaveExoConfig`. **The live gap list is
+`ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this document** - the counts here were
+correct at drafting and have moved twice since.
 
 ---
 
