@@ -440,20 +440,20 @@ public static class ProgressRegistry
         ],
         KnownGaps =
         [
-            new("SetSingleRoomType", 1207,
+            new("SetSingleRoomType", 1217,
                 "SILENT, MUTATING. Ticket validation, the protection gate and the Set-Place write "
                 + "run with no activity; the page records an OperationTrace and nothing else"),
-            new("SetupSingleRoom", 895,
-                "PARTIAL. The activity opens at :970, inside onAllowed - after the ticket check, "
+            new("SetupSingleRoom", 905,
+                "PARTIAL. The activity opens at :980, inside onAllowed - after the ticket check, "
                 + "the protection gate and the room read"),
-            new("HandleFinderCsvUpload", 1005,
+            new("HandleFinderCsvUpload", 1015,
                 "SILENT, READ. Per-row Exchange lookups while building the preview"),
-            new("HandleTypeCsvUpload", 1286,
+            new("HandleTypeCsvUpload", 1296,
                 "SILENT, READ. Per-row Exchange lookups while building the preview"),
-            new("ToggleJobDetails", 794,
+            new("ToggleJobDetails", 804,
                 "SILENT, READ. The unbounded BulkJobs.GetRows, identical to the shape the plan "
                 + "records on AdminBulkJobs.ToggleDetails. NOT in the plan's survey"),
-            new("RefreshJobs", 747,
+            new("RefreshJobs", 757,
                 "SILENT, READ. Reads the job store and calls GetRows for both selected jobs on "
                 + "every job event. NOT in the plan's survey"),
         ],

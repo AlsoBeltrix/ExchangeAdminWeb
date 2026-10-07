@@ -732,6 +732,16 @@
         authSnapshot = ExchangeAdminWeb.Services.Jobs.JobAuthorizationSnapshot.Capture(
             user, "ConferenceRooms", SectionAccess.GetGroupsForSection("ConferenceRooms"));
 
+        // Dispose can run DURING the awaits above, on a circuit that went away while
+        // authentication was still resolving. Its -= would find nothing subscribed, unsubscribe
+        // nothing, and return - and then this continuation would subscribe a dead component to a
+        // SINGLETON event (BulkJobService, Program.cs), where it stays reachable for the life of
+        // the process, holding this circuit and everything on it. Checking here is the only place
+        // that closes it, because Dispose has already been and gone. Same guard, same reason, as
+        // Components/Shared/GlobalProgress.razor.
+        if (_disposed)
+            return;
+
         // Subscribe to job-state changes so the live view refreshes as rows stream in, and load the
         // current jobs (which may include jobs submitted from another tab/operator).
         BulkJobs.JobChanged += OnJobChanged;
