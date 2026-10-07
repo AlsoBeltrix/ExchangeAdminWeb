@@ -1031,15 +1031,36 @@ public static class ProgressRegistry
     private static PageEntry OutOfOffice => new()
     {
         Page = "OutOfOffice.razor",
-        Reports = [new("CheckStatus", "OofService.GetOutOfOfficeAsync")],
-        KnownGaps =
+        Reports =
         [
-            new("SetOof", 260,
-                "SILENT, MUTATING. Resolves the target, reads the current state, writes a live "
-                + "EXO mailbox configuration and sends two emails with no activity at any point - "
-                + "while the READ path at :233 on the same page reports correctly. Rated worse "
-                + "than the operator-reported BlockedSenders case, which at least lights the bar "
-                + "late via its trailing refresh; this never lights it at all"),
+            new("CheckStatus", "OofService.GetOutOfOfficeAsync"),
+            new("SetOof",
+                [
+                    "Validator.ValidateTargetMailboxAsync(",
+                    "OofService.GetOutOfOfficeAsync(",
+                    "OofService.SetOutOfOfficeAsync(",
+                    "Email.SendOofNotificationAsync(",
+                ],
+                "was the survey's second-worst finding (docs/ProgressCoverage-Plan.md S2), and "
+                + "rated worse than the operator-reported BlockedSenders case: that one at least "
+                + "lights the bar late via its trailing refresh, while this resolved the target, "
+                + "read the current state, wrote a live EXO mailbox configuration and sent two "
+                + "emails without ever lighting it - on a page whose READ path reported "
+                + "correctly. The activity now opens above the protected-principal resolve and "
+                + "completes in the finally after both emails. FOUR calls are named because no "
+                + "one of them holds the window, which is review finding prog-1 applied here "
+                + "rather than rediscovered. ValidateTargetMailboxAsync is the OPENING pin and is "
+                + "not ceremony: it reaches ResolveWithExchangeFallbackAsync whenever a Group, OU "
+                + "or pattern rule is configured, the 10-15 second Exchange round trip this plan "
+                + "rates MfaReset.ExecuteReset PARTIAL for leaving outside its window, so the "
+                + "'authorization re-check sits outside' rule does not cover it. "
+                + "SendOofNotificationAsync is the CLOSING pin, chosen over the EXO write that "
+                + "CloudPasswordReset's entry stops at: it is the last remote call in the "
+                + "handler, so it is what forbids a Complete moved up to the write and leaves the "
+                + "reference shape's actual promise - the bar does not read Idle while an email "
+                + "is still in flight - asserted rather than merely commented. The EXO read and "
+                + "the write are named between them because each is a remote call an entry that "
+                + "did not name it would hold with nothing"),
         ],
         Exempt = [new("OnInitializedAsync", AuthPreambleOnly)],
     };

@@ -48,8 +48,12 @@ growth means this was not the dominant cause, which is information and points at
 
 **CURRENT TASK: PROGRESS COVERAGE, `docs/ProgressCoverage-Plan.md`, approved 2026-10-07.**
 S1 landed at `d5f3b3b`. The first S2 fix - `CloudPasswordReset.ExecuteResetAsync`, the survey's
-worst finding - landed in the commit carrying this record. Queue item 18 is DONE and its record
-follows below.
+worst finding - landed at `ed7754f`; the second, `OutOfOffice.SetOof`, landed in the commit
+carrying this record. Queue item 18 is DONE and its record follows below.
+
+**The plan file's own `Status:` header still reads `DRAFT - awaiting owner go` while this
+section and the plan's slice work both record the approval of 2026-10-07. Drift in the plan,
+not in the work; left for its own commit under one-fix-per-commit.**
 
 **S1 built the guard, fixed nothing.** `ExchangeAdminWeb.Tests/ProgressRegistry.cs` is now the
 live gap list. **The counts move as discovery widens, so read the file rather than this line:**
@@ -82,9 +86,39 @@ runs off the renderer thread.** `CloudPasswordReset` `1.0.3` -> `1.0.4`; base ap
 `2.27.1` (module-scoped). Registry: one entry moved `KnownGap` -> `Reports`, so 52 KnownGap ->
 51. Suite 3651 passed, 0 failed, 3 skipped. The thread half was not optional dressing: `DeriveDestination` is a ~30 second
 synchronous forest search and it was on the circuit's dispatcher, so a bar wrapped around it
-would have satisfied the registry and shown the operator nothing. Five S2 silent writes remain:
-`OutOfOffice.SetOof`, `ADAttributeEditor.ConfirmSave`, `ConferenceRooms.SetSingleRoomType`,
-`BlockedSenders.ConfirmUnblock`, `ExchangeOnlineConfig.SaveExoConfig`.
+would have satisfied the registry and shown the operator nothing.
+
+**S2, second fix: `OutOfOffice.SetOof` now reports.** `OutOfOffice` `1.1.0` -> `1.1.1`; base app
+unchanged at `2.27.1` (module-scoped). Registry: one entry moved `KnownGap` -> `Reports`, so 51
+KnownGap -> 50. Suite 3674 passed, 0 failed, 3 skipped (unchanged - no test was added or
+removed). Page is NOT ClickGate line-pinned: `ClickGateRegistry` carries it only as a
+page-name-keyed declaration ("tier 3, not approved"), so no re-anchor pass was owed, and the
+`ClickGate` filter is green at 316. `ProgressRegistry` held exactly one line-keyed pointer into
+this page, the `SetOof` `KnownGap` itself, which the fix removes.
+
+**The entry names FOUR covered calls, and the choice is the record here.**
+`Validator.ValidateTargetMailboxAsync(` is the OPENING pin: it reaches
+`ProtectedPrincipalService.ResolveWithExchangeFallbackAsync` whenever a Group, OU or pattern
+rule is configured, which is the 10-15 second Exchange round trip the plan rates
+`MfaReset.ExecuteReset` PARTIAL for leaving outside its window - so the plan's own "the
+authorization re-check sits outside the window and that is still REPORTS" rule does not reach
+it, and the activity opens ABOVE it rather than at the write.
+`Email.SendOofNotificationAsync(` is the CLOSING pin, and it goes one call further than
+`CloudPasswordReset`'s entry, which stops at the write: it is the last remote call in the
+handler, so it is what actually forbids a `Complete` moved up to the write and makes the
+reference shape's promise - the bar does not read Idle while an email is still in flight -
+asserted instead of merely commented. The EXO read and the EXO write are named between them
+because each is a remote call that nothing else would hold.
+
+**One consequence worth knowing before editing this handler:** the protected-principal refusal
+returns WITHOUT an explicit `Complete`, on purpose. The `using` disposes on that return and
+ends the activity as the non-success it was; an explicit `Complete` there would be the FIRST
+one in source order, which is what condition 3 reads, and all four covered calls below it would
+then register as running past a completed activity.
+
+Four S2 silent writes remain: `ADAttributeEditor.ConfirmSave`,
+`ConferenceRooms.SetSingleRoomType`, `BlockedSenders.ConfirmUnblock`,
+`ExchangeOnlineConfig.SaveExoConfig`.
 
 **OWNER APPROVED THE PLAN 2026-10-05 ("go"), AND S1 HAS LANDED.
 `docs/EmergencyDisableLockdownOU-Plan.md` owns the design; it supersedes the notes below.**

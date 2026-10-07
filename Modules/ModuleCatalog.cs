@@ -488,7 +488,11 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.1.0",
+            // 1.1.1: setting or clearing an auto-reply now reports to the status frame. The whole
+            // chain - the protected-principal resolve, the authorization re-check, the read of the
+            // current state, the live mailbox write and both notification emails - ran with the
+            // bar reading Idle, on a page whose Check Status tab reported correctly.
+            Version = "1.1.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -265,6 +265,31 @@
         setValidationError = ValidateOofSchedule(oofState, startTime, endTime);
         if (setValidationError != null) return;
 
+        var oofLabel = oofState == "Disabled"
+            ? $"Disabling auto-reply for {setEmail.Trim()}"
+            : $"Setting auto-reply for {setEmail.Trim()}";
+
+        // Opened HERE, above the protected-principal resolve, and completed in the finally AFTER
+        // both notification emails. NamedLocations.SaveLocation is the shape this copies.
+        //
+        // Above the resolve, not at the write, because ValidateTargetMailboxAsync reaches
+        // ProtectedPrincipalService.ResolveWithExchangeFallbackAsync whenever a Group, OU or
+        // pattern rule is configured - the Exchange round trip this codebase documents at 10-15
+        // seconds. Leaving that above the Begin is exactly the PARTIAL shape
+        // docs/ProgressCoverage-Plan.md records against MfaReset.ExecuteReset.
+        //
+        // The protected-principal refusal below returns without an explicit Complete, and that is
+        // deliberate. The `using` disposes on that return and ends the activity as the non-success
+        // it was. An explicit Complete there would be the FIRST one in source order, which is what
+        // the registry's condition 3 reads, so every covered call after it would register as
+        // running past a completed activity.
+        //
+        // Five steps, because the sequence is fixed once the operation proceeds. A refusal
+        // completes early at the step it reached, which is what happened, not a lie about size.
+        using var activity = Progress.Begin("Out of Office", oofLabel, ActivitySize.Steps(5));
+
+        activity.Step("checking the target");
+
         // Own module id. This validator is shared with Mailbox Permissions and Calendar, so
         // borrowing one of theirs would let a grant there authorise Out of Office changes to
         // protected principals - the per-module boundary is the containment for this whole design.
@@ -296,6 +321,7 @@
 
         try
         {
+            activity.Step("checking your permission");
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "OutOfOffice");
             if (!authCheck.Succeeded)
@@ -317,12 +343,14 @@
             string previousState = "Unknown";
             try
             {
+                activity.Step("reading the current auto-reply state");
                 var currentOof = await OofService.GetOutOfOfficeAsync(setEmail.Trim());
                 if (currentOof != null && currentOof.Error == null)
                     previousState = currentOof.State ?? "Unknown";
             }
             catch (Exception ex) { Logger.LogWarning(ex, "Could not retrieve current OOF state for {Target} before mutation", setEmail.Trim()); }
 
+            activity.Step(oofState == "Disabled" ? "disabling the auto-reply" : "writing the auto-reply");
             setResult = await OofService.SetOutOfOfficeAsync(
                 setEmail.Trim(), oofState,
                 oofState != "Disabled" ? internalMessage : null,
@@ -353,6 +381,8 @@
             {
                 Logger.LogWarning(ex, "Failed to write audit log for SetOutOfOffice on {Target}", setEmail.Trim());
             }
+
+            activity.Step("sending notifications");
 
             try
             {
@@ -400,6 +430,13 @@
         finally
         {
             isSetting = false;
+
+            // Completed from the fields rather than a local, and that is safe HERE rather than a
+            // pattern to copy: every path out of this try assigns setResult before it leaves, and
+            // this page renders its result banner with no dismiss control, so there is nothing
+            // that can null it while the handler is suspended at an email await - which is the
+            // post-await live-read trap ClickGateRegistry records against NamedLocations.
+            activity.Complete(setResult?.Success ?? false, setResult?.Message);
         }
     }
 
