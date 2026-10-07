@@ -46,8 +46,10 @@ namespace ExchangeAdminWeb.Tests;
 /// prove the named call is reached on the path that opened the activity, nor catch a no-op
 /// Begin/Complete pair above an unreachable branch -
 /// <c>GlobalProgressWiringTests.CloudPasswordResetReportsItsDirectoryLookupInsteadOfFinishingBeforeIt</c>
-/// remains the precedent for a bespoke per-page assertion where that matters. And an entry names
-/// ONE call, so an operation whose cost is spread across a chain is proven only at the first link.
+/// remains the precedent for a bespoke per-page assertion where that matters. And an entry proves
+/// only the calls it NAMES: a <see cref="Reported"/> entry may name several and every one of them
+/// is pinned at both ends, but slow work inside a callee, or a call nobody thought to list, is
+/// held by nothing.
 /// </para>
 /// <para>
 /// Discovery covers @onclick, @onsubmit, @onkeydown, InputFile's OnChange, @bind:after and the
@@ -58,10 +60,62 @@ namespace ExchangeAdminWeb.Tests;
 public static class ProgressRegistry
 {
     /// <summary>
-    /// An operation whose work IS reported. <paramref name="CoveredCall"/> is a literal source
-    /// fragment that must appear in the method's own body, inside the activity's window.
+    /// An operation whose work IS reported. Each entry in <see cref="CoveredCalls"/> is a literal
+    /// source fragment that must appear in the method's own body, inside the activity's window.
     /// </summary>
-    public sealed record Reported(string Method, string CoveredCall, string Note = "");
+    /// <remarks>
+    /// <para>
+    /// AN ENTRY MAY NAME MORE THAN ONE CALL, and that is not a convenience. One covered call
+    /// cannot hold both ends of the window. Naming the LAST heavy call pins Complete into the
+    /// finally - an early Complete on a refusal path lands before it and fails condition 3 - but
+    /// proves nothing about anything above it. Naming the FIRST pins Begin and proves nothing
+    /// about the tail. A handler that does two slow things therefore needs both named.
+    /// </para>
+    /// <para>
+    /// CloudPasswordReset.ExecuteResetAsync is why this exists. It was registered against the
+    /// irreversible PATCH alone, deliberately and for the right reason, while the ~30 second
+    /// destination derive above it was held by nothing: moving that derive above the
+    /// Progress.Begin, which is exactly the behaviour the fix removed, left every test passing
+    /// (review finding prog-1).
+    /// </para>
+    /// <para>
+    /// Every named call is checked independently by all three conditions, so Begin must dominate
+    /// ALL of them and the activity must still be open at ALL of them. Naming a call costs one
+    /// string and is the only thing that pins it, so name every slow or mutating call the
+    /// activity is supposed to cover rather than the one that reads worst.
+    /// </para>
+    /// </remarks>
+    public sealed record Reported
+    {
+        /// <summary>The single-call form, which is most entries.</summary>
+        public Reported(string method, string coveredCall, string note = "")
+            : this(method, [coveredCall], note)
+        {
+        }
+
+        /// <summary>
+        /// The multi-call form, for a handler whose cost is spread across more than one call.
+        /// </summary>
+        public Reported(string method, IReadOnlyList<string> coveredCalls, string note = "")
+        {
+            Method = method;
+            CoveredCalls = coveredCalls;
+            Note = note;
+        }
+
+        /// <summary>The page method this entry is about.</summary>
+        public string Method { get; }
+
+        /// <summary>
+        /// Every slow or mutating call the activity claims to cover. Never empty - an entry that
+        /// named nothing would satisfy all three conditions vacuously, which is the failure class
+        /// this whole registry exists to stop.
+        /// </summary>
+        public IReadOnlyList<string> CoveredCalls { get; }
+
+        /// <summary>Free text for the reader; nothing is asserted about it.</summary>
+        public string Note { get; }
+    }
 
     /// <summary>
     /// A defect recorded rather than fixed, so the suite is green on the repo as it stands today
@@ -392,18 +446,24 @@ public static class ProgressRegistry
             new("LookupAsync", "ResetService.ResolveTargetAsync",
                 "the destination lookup that follows is additionally guarded by a bespoke "
                 + "assertion in GlobalProgressWiringTests, which this registry does not replace"),
-            new("ExecuteResetAsync", "ResetService.ResetPasswordAsync(",
+            new("ExecuteResetAsync",
+                ["ResetService.DeriveDestination(", "ResetService.ResetPasswordAsync("],
                 "was the worst finding in the survey (docs/ProgressCoverage-Plan.md S2): the "
                 + "ticket check, the protection gate, the fresh Graph resolve, DeriveDestination, "
                 + "the PATCH and the delivery email all ran with the bar reading Idle. The "
                 + "activity now opens before the try, so the refusals are covered too, and "
-                + "completes in the finally after the admin notification. The covered call named "
-                + "here is the irreversible PATCH deliberately: it is the last heavy call before "
-                + "delivery, so condition 3 also pins the single Complete to the finally - an "
-                + "early Complete on any refusal path would land before it and fail. Fixing the "
-                + "reporting was not sufficient on its own: DeriveDestination was a ~30 second "
-                + "blocking forest search on the renderer thread, and a bar cannot paint on a "
-                + "frozen circuit, so it moved to Task.Run in the same commit"),
+                + "completes in the finally after the admin notification. BOTH heavy calls are "
+                + "named, and that is the fix for review finding prog-1. The PATCH alone was the "
+                + "original entry, chosen because it is the LAST heavy call and so pins the "
+                + "single Complete into the finally - an early Complete on any refusal path lands "
+                + "before it and fails condition 3. That reasoning was right and incomplete: it "
+                + "held the closing end and nothing else, so the ~30 second DeriveDestination "
+                + "above it could have been moved back above the Progress.Begin with the whole "
+                + "suite still green. Naming the derive as well pins the opening end at the call "
+                + "that actually costs the operator the wait. Fixing the reporting was not "
+                + "sufficient on its own either: DeriveDestination was a blocking forest search "
+                + "on the renderer thread, and a bar cannot paint on a frozen circuit, so it "
+                + "moved to Task.Run in the same commit"),
         ],
         Exempt = [new("OnInitializedAsync", AuthPreambleOnly)],
     };
@@ -1001,9 +1061,11 @@ public static class ProgressRegistry
         Page = "TrueLastLogon.razor",
         Reports =
         [
-            new("SearchAsync", "LookupOnPremAsync",
+            new("SearchAsync", ["LookupOnPremAsync(", "LookupCloudAsync("],
                 "uses ActivitySize.Steps(2) across its on-premises and cloud halves, which start "
-                + "together inside the one activity"),
+                + "together inside the one activity. Both halves are named: an entry holding only "
+                + "the on-premises lookup would have let the cloud half drift out of the window "
+                + "unnoticed, which is review finding prog-1 on a second page"),
         ],
         Exempt =
         [

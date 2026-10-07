@@ -119,6 +119,49 @@ internal static class ProgressScan
         }
     }
 
+    /// <summary>
+    /// The same same-length blanking as <see cref="StripComments"/>, applied to the CONTENTS of
+    /// string literals. Comments were blanked because prose naming a service would satisfy a
+    /// Reports entry on its own; a string literal holding the same text does exactly that too,
+    /// and it was demonstrated: deleting CloudPasswordReset's real DeriveDestination call and
+    /// leaving `var x = "ResetService.DeriveDestination(";` inside the activity passed all three
+    /// conditions (review finding prog-1, known gaps).
+    /// </summary>
+    /// <remarks>
+    /// Used ONLY for locating covered calls, never for finding activities and never for method
+    /// discovery. Discovery reads handler names out of markup attributes, which ARE quoted, so
+    /// blanking there would delete the operation list; and <see cref="ActivitiesIn"/> keeps the
+    /// raw body so that a blanking mistake can only hide an activity's Complete from itself -
+    /// the direction that fails a test rather than passing one. Indices are preserved, so the
+    /// blanked body and the raw body address the same positions.
+    /// </remarks>
+    internal static string StripStringLiterals(string source)
+    {
+        var text = new StringBuilder(source);
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] != '"' && text[i] != '\'')
+                continue;
+
+            // SkipLiteral answers i-1 for a single-quoted run that hits a newline unterminated.
+            // Without this the cursor would walk backwards onto the same quote for ever.
+            var close = SkipLiteral(source, i);
+            if (close <= i)
+                continue;
+
+            for (var j = i + 1; j < close && j < text.Length; j++)
+            {
+                if (text[j] != '\n')
+                    text[j] = ' ';
+            }
+
+            i = close;
+        }
+
+        return text.ToString();
+    }
+
     internal static int LineOf(string source, int index) =>
         source[..Math.Clamp(index, 0, source.Length)].Count(c => c == '\n') + 1;
 
@@ -495,6 +538,88 @@ public class ProgressRegistryTests
     }
 
     /// <summary>
+    /// Every covered call an entry names, paired with its method body. One Reported entry may name
+    /// several, and conditions 1 to 3 each hold for every one of them independently - which is the
+    /// whole point of allowing several (see <see cref="ProgressRegistry.Reported"/>).
+    /// </summary>
+    /// <param name="Body">
+    /// The method's source as written. Activities are found in THIS, not in <c>Code</c>.
+    /// </param>
+    /// <param name="Code">
+    /// The same body with string-literal contents blanked, which is where a covered call is
+    /// looked for. Same length and therefore the same indices as <c>Body</c>.
+    /// </param>
+    private static IEnumerable<(ProgressScan.PageScan Page, ProgressRegistry.Reported Entry, string Call, string Body, string Code)>
+        CoveredCalls()
+    {
+        foreach (var page in ProgressScan.ScanAll())
+        {
+            foreach (var reported in EntryFor(page.Page).Reports)
+            {
+                var body = ProgressScan.BodyOf(page, reported.Method);
+                var code = ProgressScan.StripStringLiterals(body);
+                foreach (var call in reported.CoveredCalls)
+                    yield return (page, reported, call, body, code);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every position in <paramref name="body"/> at which <paramref name="call"/> appears. Checked
+    /// at EVERY occurrence, not just the first: an operation that does the named call once inside
+    /// the window and again after it has completed is the same defect as doing it outside the
+    /// window altogether, and a first-occurrence check cannot see the second one.
+    /// </summary>
+    private static List<int> OccurrencesOf(string body, string call)
+    {
+        var found = new List<int>();
+        for (var i = body.IndexOf(call, StringComparison.Ordinal); i >= 0;
+             i = body.IndexOf(call, i + 1, StringComparison.Ordinal))
+        {
+            found.Add(i);
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// An entry that named NOTHING would satisfy conditions 1 to 3 vacuously - every one of them
+    /// iterates the covered calls, and iterating an empty list passes. That is precisely the
+    /// failure class this registry exists to stop, so the empty entry is refused here.
+    /// </summary>
+    [Fact]
+    public void EveryReportedOperationNamesAtLeastOneCallAndNamesEachOnce()
+    {
+        var offenders = new List<string>();
+
+        foreach (var entry in ProgressRegistry.Pages)
+        {
+            foreach (var reported in entry.Reports)
+            {
+                if (reported.CoveredCalls.Count == 0)
+                {
+                    offenders.Add($"{entry.Page}: {reported.Method} names no covered call at all");
+                    continue;
+                }
+
+                if (reported.CoveredCalls.Any(string.IsNullOrWhiteSpace))
+                    offenders.Add($"{entry.Page}: {reported.Method} names a blank covered call");
+
+                var duplicated = reported.CoveredCalls
+                    .GroupBy(c => c, StringComparer.Ordinal)
+                    .Where(g => g.Count() > 1)
+                    .Select(g => $"{entry.Page}: {reported.Method} names '{g.Key}' more than once");
+                offenders.AddRange(duplicated);
+            }
+        }
+
+        Assert.True(offenders.Count == 0,
+            "A Reported entry claims its activity covers something, so it has to say what. An "
+            + "entry naming nothing passes conditions 1 to 3 by having nothing to check, which "
+            + "is a vacuous guard wearing the costume of a real one:\n" + string.Join("\n", offenders));
+    }
+
+    /// <summary>
     /// Failure condition 1: a Reports entry whose named call does not appear in the method.
     /// Matched against the comment-stripped body, so prose naming a service cannot satisfy it.
     /// </summary>
@@ -503,22 +628,19 @@ public class ProgressRegistryTests
     {
         var offenders = new List<string>();
 
-        foreach (var page in ProgressScan.ScanAll())
+        foreach (var (page, reported, call, body, code) in CoveredCalls())
         {
-            foreach (var reported in EntryFor(page.Page).Reports)
-            {
-                var body = ProgressScan.BodyOf(page, reported.Method);
-                if (body.Length == 0)
-                    continue; // Reported by EveryRegisteredOperationNamesAMethodThatStillExists.
+            if (body.Length == 0)
+                continue; // Reported by EveryRegisteredOperationNamesAMethodThatStillExists.
 
-                if (!body.Contains(reported.CoveredCall, StringComparison.Ordinal))
-                    offenders.Add($"{page.Page}: {reported.Method} does not call '{reported.CoveredCall}'");
-            }
+            if (!code.Contains(call, StringComparison.Ordinal))
+                offenders.Add($"{page.Page}: {reported.Method} does not call '{call}'");
         }
 
         Assert.True(offenders.Count == 0,
-            "A Reported entry names the slow or mutating call its activity covers, and the call "
-            + "must be in the method's OWN body. Crediting a call made by a helper is what let "
+            "A Reported entry names the slow or mutating call its activity covers, the call must "
+            + "be in the method's OWN body, and it must be CODE - comments and string literals "
+            + "are blanked before the search. Crediting a call made by a helper is what let "
             + "BlockedSenders.ConfirmUnblock - which calls the reporting LoadBlockedSenders - "
             + "pass the first draft of this guard while its Exchange write stayed silent:\n"
             + string.Join("\n", offenders));
@@ -526,32 +648,28 @@ public class ProgressRegistryTests
 
     /// <summary>
     /// Failure condition 2: a Reports entry where Progress.Begin does not dominate the named call
-    /// in source order.
+    /// in source order. Every named call, at every occurrence.
     /// </summary>
     [Fact]
     public void AReportedOperationOpensItsActivityBeforeTheCallItCovers()
     {
         var offenders = new List<string>();
 
-        foreach (var page in ProgressScan.ScanAll())
+        foreach (var (page, reported, call, body, code) in CoveredCalls())
         {
-            foreach (var reported in EntryFor(page.Page).Reports)
-            {
-                var body = ProgressScan.BodyOf(page, reported.Method);
-                var call = body.IndexOf(reported.CoveredCall, StringComparison.Ordinal);
-                if (call < 0)
-                    continue; // Reported by condition 1.
+            var activities = ProgressScan.ActivitiesIn(body);
 
-                var activities = ProgressScan.ActivitiesIn(body);
-                if (!activities.Any(a => a.Begin < call))
-                {
-                    offenders.Add(
-                        $"{page.Page}: {reported.Method} opens no activity before "
-                        + $"'{reported.CoveredCall}'"
-                        + (activities.Count == 0
-                            ? " (it begins no activity at all)"
-                            : $" (its earliest Begin is after it)"));
-                }
+            foreach (var at in OccurrencesOf(code, call))
+            {
+                if (activities.Any(a => a.Begin < at))
+                    continue;
+
+                offenders.Add(
+                    $"{page.Page}: {reported.Method} opens no activity before '{call}' "
+                    + $"at offset {at}"
+                    + (activities.Count == 0
+                        ? " (it begins no activity at all)"
+                        : " (its earliest Begin is after it)"));
             }
         }
 
@@ -564,33 +682,30 @@ public class ProgressRegistryTests
 
     /// <summary>
     /// Failure condition 3: a Reports entry where Complete, or the end of the using scope,
-    /// precedes the named call.
+    /// precedes the named call. Every named call, at every occurrence.
     /// </summary>
     [Fact]
     public void AReportedOperationIsStillReportingWhenTheCoveredCallRuns()
     {
         var offenders = new List<string>();
 
-        foreach (var page in ProgressScan.ScanAll())
+        foreach (var (page, reported, call, body, code) in CoveredCalls())
         {
-            foreach (var reported in EntryFor(page.Page).Reports)
-            {
-                var body = ProgressScan.BodyOf(page, reported.Method);
-                var call = body.IndexOf(reported.CoveredCall, StringComparison.Ordinal);
-                if (call < 0)
-                    continue; // Reported by condition 1.
+            var activities = ProgressScan.ActivitiesIn(body);
 
-                var dominating = ProgressScan.ActivitiesIn(body).Where(a => a.Begin < call).ToList();
+            foreach (var at in OccurrencesOf(code, call))
+            {
+                var dominating = activities.Where(a => a.Begin < at).ToList();
                 if (dominating.Count == 0)
                     continue; // Reported by condition 2.
 
-                if (dominating.Any(a => a.ScopeEnd > call && (a.Complete < 0 || a.Complete > call)))
+                if (dominating.Any(a => a.ScopeEnd > at && (a.Complete < 0 || a.Complete > at)))
                     continue;
 
                 var first = dominating[0];
-                var why = first.Complete >= 0 && first.Complete < call
-                    ? $"'{first.Name}.Complete(' runs at offset {first.Complete}, before the call at {call}"
-                    : $"'{first.Name}' leaves scope at offset {first.ScopeEnd}, before the call at {call}";
+                var why = first.Complete >= 0 && first.Complete < at
+                    ? $"'{first.Name}.Complete(' runs at offset {first.Complete}, before '{call}' at {at}"
+                    : $"'{first.Name}' leaves scope at offset {first.ScopeEnd}, before '{call}' at {at}";
 
                 offenders.Add($"{page.Page}: {reported.Method} - {why}");
             }
