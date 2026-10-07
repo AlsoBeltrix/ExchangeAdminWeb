@@ -2,8 +2,9 @@
 
 Status: **DRAFT - awaiting owner go.** Nothing below is authorised yet.
 
-One of three plans addressing production memory growth. The others are
-`docs/CircuitLifetimeLeak-Plan.md` and `docs/DownloadMemoryRetention-Plan.md`.
+**`docs/ProductionMemory-Plan.md` is the parent and owns the ORDER - read it first.** This is
+step 2 of that sequence and must land IMMEDIATELY AFTER the circuit-leak fix, not
+independently: landing it alone leaves the rows pinnable by a leaked circuit.
 
 ---
 

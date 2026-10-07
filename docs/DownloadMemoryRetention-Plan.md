@@ -2,8 +2,9 @@
 
 Status: **DRAFT - awaiting owner go, and DEPENDENT ON A MEASUREMENT NOT YET TAKEN.**
 
-One of three plans addressing production memory growth. The others are
-`docs/CircuitLifetimeLeak-Plan.md` and `docs/BoundedJobQueries-Plan.md`.
+**`docs/ProductionMemory-Plan.md` is the parent and owns the ORDER - read it first.** This is
+step 3 of that sequence and is GATED on step 0.s measurement and the re-measurement after
+step 2.
 
 ---
 
@@ -83,6 +84,11 @@ Run the counters step of `capture-exchangeadminweb-memory.ps1` (elevated) agains
 production worker and compare GC heap size against ~15 GB private bytes:
 
 - **GC heap large (>8 GB):** managed retention. This plan is justified; proceed.
+
+The reading must capture ALL of: process private bytes, managed GC heap size, Gen2 size, LOH
+size and allocation rate - and preferably a gcdump object-type breakdown. Private bytes alone
+cannot distinguish these cases, and "GC heap size" alone cannot tell LOH churn from a large
+live object graph.
 - **GC heap small (<2 GB):** the memory is native. This plan is aimed at the wrong thing.
   Discard it and investigate native sources - the long-lived singleton AD runspace at
   `Services/ADDirectorySearchService.cs:486-501` is the standing candidate.
@@ -93,15 +99,17 @@ Do not approve this plan before that number exists.
 
 ## Scope, if justified
 
-**S1 - a hard memory ceiling, first and on its own.** Set an explicit `GCHeapHardLimit` (or
-`GCHeapHardLimitPercent`) sized against the 32 GB host and what else runs on it. This is one
-line of configuration, is independently useful whatever the cause, and converts "the app can
-take the whole machine" into "the app is bounded and must collect". It is first because it is
-the cheapest real protection and it does not depend on the rest of this plan being right.
+**S1 - a hard memory ceiling. NOT a first slice, and not automatic.** Review finding, and it
+is right: `web.config` runs `hostingModel="inprocess"`, so a `GCHeapHardLimit` applies INSIDE
+w3wp rather than around it. If the retained memory is still being leaked, or if the pressure
+is native, a managed cap does not address the cause - it converts host starvation into
+`OutOfMemoryException`, dropped circuits and possible app-pool instability. Trading a slow
+machine for a failing app is not obviously the better outcome.
 
-Note it changes failure mode: under the ceiling the app collects harder, and if it genuinely
-needs more it will throw `OutOfMemoryException` rather than starve the host. That is a
-deliberate trade and the owner should know it.
+So: a heap limit is an OPERATIONAL OPTION requiring explicit owner and ops acceptance,
+sizing against what else runs on the host, a staged rollout and a rollback. Preferably AFTER
+the leak fix, the bounded queries and streaming downloads have had their effect measured -
+not before.
 
 **S2 - stream downloads instead of base64.** Replace the JS-interop string with a streamed
 response - a minimal API endpoint or `IJSStreamReference` - so the payload is never held

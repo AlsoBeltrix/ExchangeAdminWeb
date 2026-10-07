@@ -2,9 +2,9 @@
 
 Status: **DRAFT - awaiting owner go.** Nothing below is authorised yet.
 
-One of three plans addressing production memory growth. The others are
-`docs/DownloadMemoryRetention-Plan.md` and `docs/BoundedJobQueries-Plan.md`. This one is
-the only one of the three that fixes an outright defect.
+**`docs/ProductionMemory-Plan.md` is the parent and owns the ORDER and the measurement
+gates - read it first.** This is step 1 of that sequence, and the only one of the three that
+fixes an outright defect.
 
 ---
 
@@ -28,9 +28,11 @@ exists in this codebase. The bulk of the work is the test that stops it recurrin
 re-checking the other pages for the same shape.
 
 **Biggest risk.** The fix itself is near-trivial and well precedented. The real risk is
-believing it is the whole answer. It explains unbounded growth; it does not obviously explain
-the sheer size, and a second plan covers the part that probably does. Fixing this and seeing
-memory still climb would not mean this fix was wrong.
+believing it is the whole answer. This is the only VERIFIED unbounded defect found - that is
+why it goes first - but it is not proven to be the largest contributor, and a review named
+five more places this app can hold gigabytes that nobody has ruled out. Fixing this and
+seeing memory still climb would not mean this fix was wrong, and the parent plan refuses to
+close the incident on this fix alone.
 
 **One thing you should know.** This was already found, understood and fixed in this app in
 August - there is a comment in `GlobalProgress.razor` describing this exact failure in plain
