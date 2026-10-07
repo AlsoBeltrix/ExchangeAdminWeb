@@ -52,8 +52,10 @@ worst finding - landed in the commit carrying this record. Queue item 18 is DONE
 follows below.
 
 **S1 built the guard, fixed nothing.** `ExchangeAdminWeb.Tests/ProgressRegistry.cs` is now the
-live gap list - 36 pages enumerated from the filesystem, 291 handlers discovered, 312 entries
-(71 Reports, 52 KnownGap, 189 Exempt). **Read the registry, not the plan, for what is still
+live gap list. **The counts move as discovery widens, so read the file rather than this line:**
+S1 shipped 36 pages / 291 handlers / 312 entries (71 Reports, 52 KnownGap, 189 Exempt), and
+`prog-2` then added DOM `@onchange` discovery, surfacing 25 more handlers across 7 pages - all
+classified Exempt after reading each body and its helpers, so NO new KnownGap. **Read the registry, not the plan, for what is still
 broken:** the plan says 41 defects, the registry holds 52, because S1 found 11 more of shapes
 the survey already classifies (7 CSV exports, 3 unbounded job-store reads, 1 report-zip
 export). Those 11 land in the final slice; S2-S4 are unchanged.
@@ -61,11 +63,15 @@ export). Those 11 land in the final slice; S2-S4 are unchanged.
 Each later fix is one entry moving `KnownGap` -> `Reports`, which makes the test demand the
 call. All five failure conditions were probed and each isolated exactly one test.
 
-**S1 IS NOT REVIEWED, AND NEITHER IS THE FIRST S2 FIX.** The S1 codex dispatch was killed by the
-harness for low system memory, not by anything in the change, and the `CloudPasswordReset` fix
-landed before it could be re-run. Both need one codex pass over `d5f3b3b..HEAD`, per the owner
-standing instruction that codex reviews each code change. This is the open obligation on this
-work stream; the five remaining S2 writes should not start ahead of it.
+**S1 AND THE FIRST S2 FIX HAVE BEEN REVIEWED.** The first dispatch was killed by the harness
+for low system memory (a prod w3wp holding 15GB - see the memory work above); it was re-run
+after the owner recycled the pool and returned UNSOUND with two findings, both now fixed and
+closed: `prog-1` (the registry named only the PATCH, so nothing asserted the ~30s derive was
+inside the activity) and `prog-2` (DOM `@onchange` was discovered by nothing, while Migration
+already uses it to reach slow work). Fixes at `8aef667` and `8456780`; records in
+`.agents/review/findings/`. **Those two fixes are themselves awaiting a codex pass over
+`931d005..8456780`** - that is the open obligation now, and the five remaining S2 writes
+should not start ahead of it.
 
 **S2, first fix: `CloudPasswordReset.ExecuteResetAsync` now reports, and its destination derive
 runs off the renderer thread.** `CloudPasswordReset` `1.0.3` -> `1.0.4`; base app unchanged at
