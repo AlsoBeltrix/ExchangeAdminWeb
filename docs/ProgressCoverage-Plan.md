@@ -88,14 +88,13 @@ silent operation ships the same way.
 ## Survey
 
 Three parallel classification passes over all 33 pages under `Components/Pages` that make a
-service call, one shared rubric, disjoint page sets. **198 operator-initiated operations
-examined.** An operation is operator-initiated if it is reached from `@onclick`, `@onsubmit`,
+service call, one shared rubric, disjoint page sets. **198 operator-initiated operations examined.** An operation is operator-initiated if it is reached from `@onclick`, `@onsubmit`,
 `@onkeydown`, or from `OnInitializedAsync`/`OnAfterRenderAsync` as an initial load.
 
 | Verdict | Count | Meaning |
 |---|---|---|
 | SILENT, MUTATING | **6** | writes to AD, Exchange, Graph or Intune with the bar idle |
-| SILENT, READ | **27** | slow remote or disk read, unreported |
+| SILENT, READ | **26** | slow remote or disk read, unreported |
 | PARTIAL | **9** | reports, but the window misses slow work it still does |
 | REPORTS / N/A | 156 | correct, or fast and local |
 
@@ -114,7 +113,10 @@ existing test looks at any of them.
 
 ### Group A - 11 pages, 77 operations
 
-`SILENT+MUTATING` 3, `SILENT+READ` 3, `PARTIAL` 6.
+`SILENT+MUTATING` 3, `SILENT+READ` 2, `PARTIAL` 6. (The surveyor also returned
+`Migration.StartReportExport:2682` as SILENT; the reviewer corrected it - it enqueues a
+durable job whose progress `BulkJobService` already renders, so it is Exempt, not a defect.
+The counts here are the corrected ones.)
 
 These are the heaviest pages and most of them are correct. `Migration` (4,070 lines, 20
 operations) and `GroupManagement` report everything they should. The gaps are concentrated.
@@ -155,8 +157,7 @@ a mailbox validation; `ConferenceRooms.SetupSingleRoom:895` opens inside `onAllo
 ticket check, protection gate and room read; `ADAttributeEditor.PerformSearch:291` completes at
 :313 before the protection check at :329.
 
-**Silent reads:** `Migration.StartReportExport:2682` (enqueues a durable report job),
-`ConferenceRooms.HandleFinderCsvUpload:1005` and `HandleTypeCsvUpload:1286` (per-row Exchange
+**Silent reads:** `ConferenceRooms.HandleFinderCsvUpload:1005` and `HandleTypeCsvUpload:1286` (per-row Exchange
 lookups during preview).
 
 **`ConferenceRooms` has the widest spread on one page** - two silent CSV preview handlers doing
@@ -189,7 +190,9 @@ lights it at all.
   AD staleness sweep, and `SweepExistingEntriesAsync:771` makes N serialized
   `ADSearch.ValidateExists` calls **each able to block 30 seconds**. The four
   `AddPp*` handlers (:700-707) all reach the same unreported AD path.
-- `AdminEventLog.razor` - six unreported operations. `LoadEvents:486` synchronously scans and
+- `AdminEventLog.razor` - six unreported operations, though NOT a wholly unreported page: the
+  reviewer corrected an earlier wording here, and its undo paths (`ShowUndoPreview:839`,
+  `ExecuteUndo:888`) do report. `LoadEvents:486` synchronously scans and
   parses every JSONL log in the date range; `LoadUsage:1271` runs three SQLite aggregates.
   Every entry point to them (`OnInitializedAsync`, `OnDateRangeChanged`, `ShowEventsView`,
   `ShowUsageView`) is silent.
@@ -221,7 +224,9 @@ right, and the fix should copy it rather than invent one.
 
 **`ModuleConfig.razor` is correct as it stands** and must not be "fixed": its single activity
 covers `OUService.GetOrganizationalUnits`, the page's only remote call. Every `Save*` there is
-a local JSON write, which is why they are N/A rather than SILENT.
+a local write to the config store, which is why they are N/A rather than SILENT. (The
+surveyor called these JSON file writes; the reviewer corrected it - config moved to SQLite
+under `docs/SqliteConfigStore-Plan.md`. The N/A verdict is unchanged, the reason is not.)
 ### Group C - 11 pages, 53 operations
 
 `SILENT+MUTATING` 1, `SILENT+READ` 5, `PARTIAL` 2.
@@ -273,17 +278,38 @@ caught `AdminSettings`, which no current test looks at.
 
 Every operator-initiated operation on a covered page is enumerated with one of:
 
-- `Reports` - the method is expected to carry an activity covering its slow work.
+- `Reports` - **and the entry must NAME the slow or mutating call it covers**, e.g.
+  `BlockedSenderSvc.UnblockSenderAsync`.
+- `KnownGap` - a defect recorded with its line, so the suite is green on the repo as it is
+  today and each fix is "move this entry to `Reports`".
 - `Exempt` - with a written reason, the way `ClickGateRegistry` requires a `RefusalMechanism`.
-  "Local and fast", "enqueues a job that reports its own progress", "pure navigation".
+  "Local and fast", "enqueues a job `BulkJobService` already renders", "pure navigation".
 
-The test then fails on three conditions:
+The test fails on five conditions:
 
-1. a registered `Reports` method whose body has no `Progress.Begin`;
-2. a `@onclick`/`@onsubmit`/`@onkeydown` handler on a covered page that is in NEITHER list -
-   this is the one that makes the registry self-defending, because a new button cannot be
-   added silently;
-3. an `Exempt` entry with an empty reason.
+1. a `Reports` entry whose named call does not appear in the method;
+2. a `Reports` entry where `Progress.Begin` does not DOMINATE the named call - the activity
+   must open before it in source order;
+3. a `Reports` entry where `Complete` or the end of the `using` scope precedes the named call;
+4. an operation handler on a covered page that is in none of the three lists;
+5. an `Exempt` entry with an empty reason.
+
+**Conditions 1-3 are the reviewer's correction and they are the difference between this guard
+working and this guard being theatre.** The first draft of this plan said the check could
+credit "this method, or something it directly calls". Codex pointed out that
+`ConfirmUnblock` calls `LoadBlockedSenders`, which HAS a `Progress.Begin` - so the
+reported defect, unchanged, would have passed the very guard written to catch it. Naming the
+covered call and asserting source order is what closes that. A helper's activity is credited
+only when an entry says explicitly that the helper is the operation.
+
+**Condition 4 must look for more than three attribute names.** The survey's rubric counted
+`@onclick`, `@onsubmit`, `@onkeydown`, AND lifecycle loads - and real gaps use shapes outside
+all of those: `InputFile` `OnChange` (`ConferenceRooms.razor:144`, `:331`,
+`Comms10k.razor:91`), `@bind:after` (`AdminEventLog.razor:98`), and
+`OnAfterRenderAsync` reaching slow work (`AdminSettings.razor:546-556`). A scanner that only
+knows the three click attributes would let a new slow upload or bind-after refresh in
+silently. Discovery must cover the same surface the survey did, and an inline lambda either
+classifies as pure local UI or gets its method extracted and registered.
 
 **Keyed by method name, deliberately.** `ClickGateRegistry` is line-keyed, which is why any
 page edit invalidates every entry below it and needs the manual re-anchor procedure in
@@ -296,14 +322,15 @@ work does not inherit that cost and does not add a second line-keyed artefact to
 - It cannot prove an activity actually RENDERS. There is no bUnit harness here; every guard in
   this plan is a source-level scan. Three defects found in Emergency Disable on 2026-10-05
   were all presentation-layer and all invisible to this suite.
-- It cannot tell a well-placed activity from a badly scoped one. `PARTIAL` cases - a bar that
-  completes before work it still does - are found by the survey and fixed, but a future one
-  is only caught if it happens to drop the call entirely.
-  `CloudPasswordResetReportsItsDirectoryLookupInsteadOfFinishingBeforeIt`
-  (`GlobalProgressWiringTests.cs:502`) is the existing precedent: that shape needs a bespoke
-  per-page assertion, and the registry does not replace it.
-- It cannot see a handler that reaches slow work through a helper several calls deep. The
-  check is "this method, or something it directly calls, begins an activity".
+- Source-order dominance is a WEAKER claim than runtime coverage. The guard proves the
+  activity opens before the named call lexically; it cannot prove the call is reached on the
+  path that opened it, nor catch an early no-op `Begin`/`Complete` pair sitting above an
+  unreachable branch. `CloudPasswordResetReportsItsDirectoryLookupInsteadOfFinishingBeforeIt`
+  (`GlobalProgressWiringTests.cs:502`) remains the precedent for a bespoke per-page assertion
+  where that matters, and the registry does not replace it.
+- It cannot follow slow work several calls deep. An entry names ONE covered call; an
+  operation whose cost is spread across a chain is registered against the first one and the
+  rest is unproven.
 
 ## Cost drivers
 
@@ -318,7 +345,9 @@ work does not inherit that cost and does not add a second line-keyed artefact to
 
 ## Scope and slice order
 
-42 defects: 6 silent writes, 27 silent reads, 9 partials. Sliced by cost, not by module.
+41 defects: 6 silent writes, 26 silent reads, 9 partials. **One finding or fix per commit**
+(`.agents/repo-guidance.md`), so the groupings below are slice THEMES, not single commits.
+Each ClickGate-pinned page carries its own re-anchor pass and its own proof.
 
 **S1 - the registry and its test, no page edits.** Build `ProgressRegistry` enumerated from
 the filesystem, seeded with the survey's verdicts, and every current gap entered as
@@ -329,14 +358,16 @@ moving its entry from `KnownGap` to `Reports` and watching the test demand the c
 Doing it first also means the gap list stops living in this document, which goes stale, and
 starts living in a file CI reads.
 
-**S2 - the six silent writes.** One slice. These are the operations where an operator can
+**S2 - the six silent writes, one commit each, highest risk first.** Not one slice: repo
+guidance is one finding or fix per commit, and several of these pages are ClickGate-pinned. These are the operations where an operator can
 start an irreversible change and see nothing. `CloudPasswordReset.ExecuteResetAsync` leads,
 and carries the one piece of non-reporting work this plan does take on: moving
 `DeriveDestination` off the renderer thread. A bar cannot paint on a frozen circuit, so
 wrapping it without that fix would produce a guard that passes and an operator who still sees
 nothing - the exact vacuous outcome this plan exists to stop.
 
-**S3 - the nine partials.** Mostly moving a `Begin` earlier or a `Complete` later.
+**S3 - the nine partials, one commit each.** Mostly moving a `Begin` earlier or a `Complete`
+later.
 `NamedLocations:363,451` is the reference shape: `Begin` before the `try`, `Complete` in the
 `finally` after the email. `IntuneDevices` and `RiskyUsers` are included because their
 comments promise the behaviour their code does not have.
@@ -350,7 +381,7 @@ its own slice with its own re-anchor pass.
 
 ### Registered as exempt, not fixed
 
-- `ModuleConfig.razor`'s `Save*` handlers - local JSON writes, correctly N/A today. Entered as
+- `ModuleConfig.razor`'s `Save*` handlers - local config-store writes, correctly N/A today. Entered as
   `Exempt` with that reason so a later agent does not "fix" them.
 - Enqueue handlers (`Comms10k.ExecuteReplace`, `MessageTrace.EmailSelectedDetails`,
   `Migration.StartReportExport`) - see the corrected note below.
@@ -408,3 +439,32 @@ still working.
 
 Go or no-go on the registry design and the slice order. The survey's gap list is reported, not
 negotiated - those are defects or they are not.
+
+---
+
+## Plan review, 2026-10-07
+
+`openreview`, pins `dd57684..1eb14e7`.
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / frontier (`fallback` alias;
+effort `max` re-probed 2026-10-06 and still rejected by the gateway).
+Raw output: `.agents/review/progress-plan.result.json`.
+
+**Verdict: acceptable with changes.** Four findings, all four applied above.
+
+1. **HIGH - the registry needed call-anchored proof.** The draft would have credited "this
+   method, or something it directly calls", and `ConfirmUnblock` calls `LoadBlockedSenders`,
+   which has an activity - so the reported defect would have passed the guard written to
+   catch it. Entries now name the covered call and assert `Begin` dominates it.
+2. **HIGH - handler discovery was narrower than the survey's own rubric.** It cited
+   `InputFile OnChange`, `@bind:after` and lifecycle paths already carrying gaps. Discovery
+   widened to match.
+3. **MEDIUM - three survey corrections**, all applied: `Migration.StartReportExport` is a
+   background-job enqueue and is Exempt, not a defect (total 42 -> 41);
+   `AdminEventLog` does report its undo paths and was overstated as wholly unreported;
+   `ModuleConfig`'s `Save*` are config-store writes, not JSON file writes.
+4. **MEDIUM - S2 and S3 were too broad**, against the one-finding-per-commit rule. Split.
+
+It spot-checked the survey as asked: verified `CloudPasswordReset.ExecuteResetAsync`,
+`OutOfOffice.SetOof` and `MfaReset.ExecuteReset` as classified, and tried and failed to
+falsify `NamedLocations.SaveLocation`/`DeleteLocation` and `TrueLastLogon.SearchAsync`. The
+survey's shape holds; its three errors were all in the direction of overstating the problem.
