@@ -1164,8 +1164,27 @@ public static class ProgressRegistry
             new("LoadServers", "DhcpService.GetAuthorizedServersAsync"),
             new("AuthorizeServer", "DhcpService.AuthorizeServerAsync"),
             new("RemoveServer", "DhcpService.DeauthorizeServerAsync"),
+            new("DownloadCsvAsync",
+                [
+                    "BuildCsv(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the sixth of the silent CSV-export shape to be fixed, and the twin of "
+                + "DefenderEndpointDevices.DownloadCsvAsync one commit earlier: a "
+                + "ClickGate-converted page that already had the guard, the snapshot, the "
+                + "isDownloadingCsv raise and the yield, so the Begin slots between the raise and "
+                + "the yield and reaches the operator in the same frame as the greyed controls. "
+                + "BuildCsv( opens and JS.InvokeVoidAsync( closes, with the Complete BELOW the "
+                + "transfer and at the bottom of the TRY rather than in the finally - the finally "
+                + "lowers the flag on every exit, but only the straight-line path is a finished "
+                + "export. Unknown rather than Items(rows.Count) although the count is known, "
+                + "because nothing between the Begin and the Complete can Report; the count is "
+                + "in the label. This is the SMALLEST export in the batch by row count - a DHCP "
+                + "server list is tens of rows, not thousands - and it is reported anyway, "
+                + "because the shape is what is being closed out and an export that is fast "
+                + "today is not an export that is fast by contract. The transfer MECHANISM is "
+                + "untouched: docs/DownloadMemoryRetention-Plan.md is a DRAFT"),
         ],
-        KnownGaps = [new("DownloadCsvAsync", 199, SilentCsvExport)],
         Exempt =
         [
             new("OnInitializedAsync", AuthPreambleOnly + ", then the server list", "LoadServers"),

@@ -1017,7 +1017,7 @@ public sealed class ModuleCatalog
             // 1.4.0: every control on the page is gated on one in-flight predicate, and both write
             // handlers snapshot their inputs and their result so a mid-flight dismiss can no longer
             // report a successful AD write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 1).
-            Version = "1.4.1",
+            Version = "1.4.2",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",

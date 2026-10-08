@@ -208,6 +208,20 @@
 
         var rows = servers;
         isDownloadingCsv = true;
+
+        // The Begin sits between the raise and the yield already on this page, so the greyed
+        // controls and the status bar reach the operator in ONE frame. ActivitySize.Unknown rather
+        // than Items(rows.Count) although the count is known here: nothing between the Begin and
+        // the Complete can Report - the projection, the CSV write and both encodes are one
+        // synchronous stretch - so a determinate bar would sit at 0% and read as hung. The count
+        // goes in the label instead, which is AdminEventLog.DownloadCsv's and
+        // MessageTrace.ExportCsv's settled choice. The yield below is what makes it visible at
+        // all, and it was already here.
+        using var activity = Progress.Begin(
+            "DHCP Authorization",
+            $"Exporting {rows.Count:N0} server(s) to CSV",
+            ActivitySize.Unknown);
+
         await Task.Yield();
 
         try
@@ -227,6 +241,16 @@
             {
                 Logger.LogError(auditEx, "Audit failed for DHCP Authorization CSV export");
             }
+
+            // Completed BELOW the transfer, the settled order on both worked examples: the base64
+            // push over the SignalR circuit is the last thing the operator waits on. The audit
+            // above is inside the window because its own catch swallows and logs. At the bottom
+            // of the TRY rather than in the finally, deliberately: the finally lowers the flag on
+            // every exit, but only the straight-line path is a finished export and a throw falls
+            // to the dispose fallback, which is what that fallback is for. The transfer MECHANISM
+            // is untouched - docs/DownloadMemoryRetention-Plan.md is a DRAFT. The read is `rows`,
+            // the local the page already captured before its first await.
+            activity.Complete(true, $"{rows.Count:N0} server(s) exported.");
         }
         finally
         {
