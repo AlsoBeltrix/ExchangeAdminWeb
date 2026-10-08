@@ -707,15 +707,52 @@ public static class ProgressRegistry
                 + "LOCAL, not the result field: the banner on this page renders a dismiss button "
                 + "wired at () => result = null, so the field can be nulled while the handler is "
                 + "suspended at an email await"),
+            new("SetupSingleRoom",
+                [
+                    "ServiceNow.ValidateTicketAsync(",
+                    "ProtectionGate.GuardThenRunAsync(",
+                    "RoomService.GetRoomInfoAsync(",
+                    "RoomService.SetRoomMetadataAndListAsync(",
+                    "NotifyRoomAdminAsync(",
+                ],
+                "the seventh of the survey's nine PARTIALs (docs/ProgressCoverage-Plan.md S3) and "
+                + "the one SetSingleRoomType's own comment names as the nearest example in the "
+                + "file NOT to copy. The activity opened INSIDE the onAllowed lambda and closed "
+                + "next to the write, so it covered neither end: above it sat the ServiceNow call, "
+                + "the shared protection gate and the room read, and below it sat the admin "
+                + "notification. It now opens above the try and completes in the finally, which is "
+                + "the shape the sibling handler settled on. FIVE calls are named, every remote "
+                + "call in the handler's own body, the onAllowed lambda included - the lambda is "
+                + "part of the method's own code, so condition 1 reaches it. Each was measured by "
+                + "reading the callee. ServiceNow.ValidateTicketAsync is the OPENING pin and the "
+                + "one call that forbids a Begin hoisted into the try, but it is NOT the argument "
+                + "for the window: Services/ServiceNowService.cs returns a local IsValid = true "
+                + "without opening a socket when ServiceNow:Enabled is false. GuardThenRunAsync is "
+                + "that argument and it holds in every configuration - it reaches "
+                + "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync, a Delinea "
+                + "credential fetch, then an AD search behind a throttle that waits up to thirty "
+                + "seconds, then the Exchange fallback this codebase documents as 10 to 15 "
+                + "seconds. GetRoomInfoAsync is the room read the gap entry named: three EXO "
+                + "cmdlets in a pooled runspace, Get-Mailbox then Get-Place then "
+                + "Get-MailboxRegionalConfiguration, and it has no sibling on SetSingleRoomType, "
+                + "which is why this entry names one call more than that one does. "
+                + "SetRoomMetadataAndListAsync is the operation: recipient validation, the "
+                + "Set-ADUser preflight and the live Set-Place write. NotifyRoomAdminAsync is the "
+                + "CLOSING pin, because its CATCH-block occurrence is the last remote call "
+                + "anywhere in the body - it reaches Email.SendAdminNotificationAsync, which "
+                + "cannot be named directly because it runs in the helper and condition 1 requires "
+                + "the method's own code. ReauthorizeAsync and CurrentUserAsync were read and "
+                + "deliberately NOT named, as on SetSingleRoomType: both decide from the Windows "
+                + "token's group SIDs plus a cached section-access read and make no remote hop. "
+                + "Complete reads a LOCAL for the reason the sibling records, and the dismiss "
+                + "button that makes it necessary is pinned at ClickGateRegistry's ExemptControl "
+                + "452"),
         ],
         KnownGaps =
         [
-            new("SetupSingleRoom", 905,
-                "PARTIAL. The activity opens at :980, inside onAllowed - after the ticket check, "
-                + "the protection gate and the room read"),
-            new("HandleFinderCsvUpload", 1015,
+            new("HandleFinderCsvUpload", 1035,
                 "SILENT, READ. Per-row Exchange lookups while building the preview"),
-            new("HandleTypeCsvUpload", 1337,
+            new("HandleTypeCsvUpload", 1357,
                 "SILENT, READ. Per-row Exchange lookups while building the preview"),
             new("ToggleJobDetails", 804,
                 "SILENT, READ. The unbounded BulkJobs.GetRows, identical to the shape the plan "

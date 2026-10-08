@@ -57,10 +57,48 @@ way, one commit each: the first, `IntuneDevices.ExecuteActionAsync`, landed at `
 second, `RiskyUsers.ExecuteActionAsync`, at `3c2df38`; the third,
 `MailboxPermissions.SubmitSingle`, at `f2a8c75`; the fourth,
 `CalendarPermissions.SubmitSingle`, at `63cd170`; the fifth, `MfaReset.ExecuteReset`, at
-`270ec34`; the sixth, `Comms10k.ValidateEmails`, is in the commit carrying this record.
-**Three of the nine partials remain.** The live list is
+`270ec34`; the sixth, `Comms10k.ValidateEmails`, at `bada294`; the seventh,
+`ConferenceRooms.SetupSingleRoom`, is in the commit carrying this record.
+**Two of the nine partials remain.** The live list is
 `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this file. Queue item 18 is DONE and its
 record follows below.
+
+**S3, seventh fix: `ConferenceRooms.SetupSingleRoom`, the first partial on a ClickGate-PINNED
+page and the first whose activity covered neither end.** The `Begin` sat inside the protection
+gate's `onAllowed` callback and the `Complete` next to the write, so above the window sat the
+ServiceNow call, the gate's own directory resolve and a three-cmdlet room read, and below it sat
+the admin notification. `Begin` moved above the `try`, `Complete` into the `finally` below the
+catch's own notification, reading a captured local because this page's banner carries a live
+`() => result = null` dismiss. `ConferenceRooms` `2.6.4` -> `2.6.5`; base app unchanged at
+`2.27.1`. Registry: one entry `KnownGap` -> `Reports`. Suite 3674, unchanged.
+
+**FIVE calls named, one more than the sibling `SetSingleRoomType` needs**, because this handler
+also does a room read: `RoomService.GetRoomInfoAsync(` is three EXO cmdlets in a pooled runspace
+(`Get-Mailbox`, `Get-Place`, `Get-MailboxRegionalConfiguration`). It sits inside the `onAllowed`
+lambda, which is still the method's own code, so condition 1 reaches it. The ticket call is the
+opening pin but NOT the argument for the window (`ServiceNow:Enabled` false returns a local
+`IsValid = true`); `ProtectionGate.GuardThenRunAsync(` is, and it holds in every configuration.
+`NotifyRoomAdminAsync(` is the closing pin at its CATCH occurrence.
+
+**Re-anchor: `ExpectedLineCount` 1627 -> 1647 and two `ProgressRegistry` pointers**, mapped from
+`git diff -U0` rather than computed: `HandleFinderCsvUpload` 1015 -> 1035, `HandleTypeCsvUpload`
+1337 -> 1357. The page's ten `ClickGateRegistry` line-keyed controls top out at 575, above the
+first hunk at 941, so none moved; `ToggleJobDetails` 804 and `RefreshJobs` 757 likewise.
+
+**Three probes, each applied ALONE and each scored on the FULL 3674-test suite.** Strip
+(commented out, so the line count stays 1647 and `ExpectedLineCount` is not a spurious second
+fault): **1 failed / 3673 passed, single-fault** - the registry condition naming all five calls
+at six occurrences. `GlobalProgressWiringTests`' adopted-module theory did NOT fire, unlike the
+two slices before: this page keeps three other activities, so the per-file guard still passes,
+which is the hole this registry exists to close, demonstrated rather than argued. Hoist of the
+covered `ServiceNow.ValidateTicketAsync(` call across the method-scope `Begin`: **2 failed /
+3672 passed**, and the second fault is structural and honest - `f2a8c75` predicted exactly this
+and could only avoid scoring it by using a filter. The `Begin` sits between the `isLoading` raise
+and the `try`, so hoisting any covered call across it plants a real `await` there and
+`ClickGateTests.NoRealAwaitSitsBetweenARaiseAndItsProtectingTry` fires alongside. The registry
+condition still named only the hoisted call. Early `Complete` above the notification: 1 failed /
+3673 passed, naming only `NotifyRoomAdminAsync` at both its occurrences. Page restored
+byte-identical by `md5sum` and `touch`ed after each.
 
 **S3, sixth fix: `Comms10k.ValidateEmails`, the first partial whose CLOSING end needed
 nothing.** `ResolveEmailsAsync` is the last remote call the handler makes - this page has no

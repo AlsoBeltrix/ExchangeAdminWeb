@@ -938,12 +938,30 @@
         result = null;
         await Task.Yield();
 
+        // Opened HERE, above the try, so the ticket round trip and both refusals are inside the
+        // window, and completed in the finally BELOW the admin notification. It used to open
+        // inside onAllowed and close next to the write, which left the two slowest waits on this
+        // handler outside it at the top - the ServiceNow call and the shared protection gate,
+        // where ProtectedPrincipalService.ResolveWithExchangeFallbackAsync runs - and the admin
+        // email outside it at the bottom (docs/ProgressCoverage-Plan.md S3, the seventh partial).
+        // SetSingleRoomType below is the shape this now copies; its own comment already records
+        // that THIS handler was the nearest example in the file not to copy.
+        //
+        // Completed from a LOCAL, never from `result`. This page's banner renders a dismiss button
+        // wired straight at () => result = null and it stays clickable while this handler is
+        // suspended at the gate, the write or the notification await, so a live read past an await
+        // can see null on an operation that succeeded. Every assignment to `result` below writes
+        // the local in the same statement.
+        RoomOperationResult? completed = null;
+        using var activity = Progress.Begin(
+            "Conference Rooms", $"Updating {email}", ActivitySize.Unknown);
+
         try
         {
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
-                result = new RoomOperationResult { Email = email, Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                result = completed = new RoomOperationResult { Email = email, Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
                 AuditFinderAction(email, false, ticket, $"Ticket validation failed: {ticketValidation.Message}");
                 return;
             }
@@ -954,7 +972,7 @@
             // or fail-closed target never reaches old-value capture, the trace scope, or Set-Place.
             // A denial is audited here under the Finder (SetMetadata) action. This closes the
             // single-room Finder gap via the same shared gate the Type and bulk paths use.
-            result = await ProtectionGate.GuardThenRunAsync(email, await CurrentUserAsync(),
+            result = completed = await ProtectionGate.GuardThenRunAsync(email, await CurrentUserAsync(),
                 onDenied: denial =>
                 {
                     AuditFinderAction(email, false, ticket, denial.AuditDetail);
@@ -972,13 +990,12 @@
                     }
                     catch { }
 
+                    // OperationTrace writes to the diagnostic log; the activity opened at the top
+                    // of this method is the operator-facing half. The two are deliberately
+                    // separate - one is for reading afterwards, the other for watching now - and
+                    // treating the trace as if it were the second is how a live Set-Place shipped
+                    // with the bar reading Idle on the Type handler.
                     using var op = OpTrace.BeginOperation("ConferenceRooms", "SetMetadata", currentUser, clientIpAddress, email, ticket);
-
-                    // OperationTrace writes to the diagnostic log; this is the operator-facing
-                    // half. The two are deliberately separate - one is for reading afterwards,
-                    // the other for watching now.
-                    using var activity = Progress.Begin(
-                        "Conference Rooms", $"Updating {email}", ActivitySize.Unknown);
 
                     var r = await RoomService.SetRoomMetadataAndListAsync(
                         email, cityName, buildingName, seats,
@@ -989,23 +1006,26 @@
 
                     AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced);
                     await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message);
-
-                    // Completed AFTER the notification, not before it. Completing next to
-                    // op.Complete put the bar back to Idle while an admin email was still in
-                    // flight, so a hanging mail host left the operator on a page that looked
-                    // finished and was not. Recorded as a finding in `.agents/state.md` before
-                    // this fix; same class as gps-1.
-                    activity.Complete(r.Success, r.Message);
                     return r;
                 });
         }
         catch (Exception ex)
         {
-            result = new RoomOperationResult { Email = email, Success = false, Message = ex.Message };
+            result = completed = new RoomOperationResult { Email = email, Success = false, Message = ex.Message };
             AuditFinderAction(email, false, ticket, ex.Message);
             await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, false, ticket, ex.Message);
         }
-        finally { isLoading = false; }
+        finally
+        {
+            isLoading = false;
+            // Below the catch's own NotifyRoomAdminAsync, which is the last remote call anywhere
+            // in this handler's body. `completed` stays null when ReauthorizeAsync refuses: that
+            // path writes its own reason into `result`, and reading the field back here - after
+            // an await, with the dismiss control queued ahead of our continuation - is the trap
+            // the local exists to avoid. The activity ends as a non-success with no message and
+            // the banner carries the reason.
+            activity.Complete(completed?.Success ?? false, completed?.Message);
+        }
     }
 
     // =========================================================================

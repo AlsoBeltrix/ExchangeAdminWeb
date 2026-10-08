@@ -828,7 +828,11 @@ public sealed class ModuleCatalog
             // 2.6.4: SetSingleRoomType reports its Set-Place write to the status frame. It had an
             // OperationTrace scope and nothing else, which is the diagnostic trail rather than the
             // bar, so the single-room type change ran with the frame reading Idle.
-            Version = "2.6.4",
+            // 2.6.5: SetupSingleRoom's activity now covers the whole handler. It opened inside the
+            // protection gate's onAllowed callback and closed next to the write, so the ticket
+            // call, the gate's own directory resolve and the room read ran with the frame idle,
+            // and so did the admin notification after it.
+            Version = "2.6.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
