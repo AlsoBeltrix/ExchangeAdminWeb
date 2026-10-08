@@ -8,6 +8,33 @@ the latest sweep is Archived 2026-10-05).
 
 ## Now
 
+### Read this first - what is waiting on the owner, 2026-10-08
+
+Nothing is in flight. Tree clean, every dispatched review returned and recorded, suite 3674
+passed / 0 failed / 3 skipped.
+
+**32 commits ahead of both remotes and NOTHING IS DEPLOYED.** The production memory fix, the
+config-deletion fix and queue item 18 all exist only in this repository.
+`.agents/push-policy.md` is `ask`.
+
+| Waiting on | What happens without it |
+|---|---|
+| **Push + deploy** | The circuit leak keeps pinning sessions in prod. The recycled pool is the clean baseline for measuring whether the fix worked, and that baseline ages |
+| **Re-enter the on-prem Delinea secret** | Emergency Disable cannot fetch AD credentials. The code fix stops the value being deleted again; it does not restore it |
+| **Roslyn decision** (`prog-4`, `leak-1`) | Two guards keep two known blind spots. Neither is reachable by any current page |
+| **Remove-completed: filtered set or whole batch?** | `docs/MigrationRemoveCompleted-Plan.md` stays DRAFT |
+| **Manual acceptance** | Nothing here proves a progress bar renders. Every S2/S3 fix is source-verified only |
+
+**Next work, if asked:** S4 of `docs/ProgressCoverage-Plan.md` - the three pages that report
+nothing (`AdminSettings` first; its staleness sweep makes N serialized AD lookups, each able
+to block 30 seconds), then the silent reads. The live gap list is
+`ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not any document.
+
+**This file is 2,600+ lines, far over the repo-guidance target.** Run `playbook drift` before
+adding to it.
+
+---
+
 **CIRCUIT LIFETIME LEAK, `docs/CircuitLifetimeLeak-Plan.md`, approved 2026-10-07. ALL THREE
 SLICES LANDED: `98b29d1` (S1a), `c6c73d2` (S1b), `9741f7c` (S2), plus the record commit carrying
 this block (S3).** Step 1 of `docs/ProductionMemory-Plan.md`'s sequence; steps 2-4 are untouched.
