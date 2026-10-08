@@ -56,9 +56,53 @@ this record. **S2 IS COMPLETE: all six silent writes report.** S3, the nine part
 way, one commit each: the first, `IntuneDevices.ExecuteActionAsync`, landed at `b95bd5d`; the
 second, `RiskyUsers.ExecuteActionAsync`, at `3c2df38`; the third,
 `MailboxPermissions.SubmitSingle`, at `f2a8c75`; the fourth,
-`CalendarPermissions.SubmitSingle`, is in the commit carrying this record. **Five of the nine
-partials remain.** The live list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this
-file. Queue item 18 is DONE and its record follows below.
+`CalendarPermissions.SubmitSingle`, at `63cd170`; the fifth, `MfaReset.ExecuteReset`, is in the
+commit carrying this record. **Four of the nine partials remain.** The live list is
+`ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this file. Queue item 18 is DONE and its
+record follows below.
+
+**S3, fifth fix: `MfaReset.ExecuteReset`, the first partial needing BOTH ends moved.** The
+`Begin` sat at the Graph reset, below the ticket call and the whole protected-principal
+preamble, and the `Complete` sat immediately after that reset, above the administrator email
+in the `finally` - so the window covered the one call on this page that is not the slow part.
+`MfaReset` `1.2.1` -> `1.2.2`; base app unchanged at `2.27.1`. Registry: one entry `KnownGap`
+-> `Reports`. Suite 3674, unchanged. The page is ClickGate-UNCONVERTED ("tier 3, not
+approved"), so there is nothing line-keyed on it to re-anchor; the only line-keyed
+`ProgressRegistry` pointer left on the page is `ListMethods` at 176, above every hunk.
+
+**Five calls named, and the pin that carries the argument is not the ticket call.**
+`ServiceNow.ValidateTicketAsync(` is named first and holds the top of the window at the first
+call that CAN be remote, but `f2a8c75` already established that it opens no socket when
+`ServiceNow:Enabled` is false. `ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(`
+is the pin that holds regardless, and reading `ResolveWithStatusAsync` made the case stronger
+than the plan's own wording: before the 10-15 second Exchange fallback there is a Delinea
+credential fetch over HTTP, a 2-permit AD throttle that waits up to **30 seconds**, and a
+`DirectorySearcher` on a thread-pool thread. It short-circuits locally in exactly one
+configuration - no `DirectoryReadSecretId` - and that configuration returns `Unavailable`,
+which this handler treats as a refusal. **So there is no configuration in which this handler
+does work and this call is fast**, which is the thing the ticket call cannot claim.
+`ProtectedPrincipalService.CheckAsync(` is pinned at both branches,
+`MfaService.ResetAllMethodsAsync(` is the Graph write, `Email.SendAdminNotificationAsync(` is
+the closing pin in the handler's own `finally`.
+
+**Both shapes of the Complete-reads-a-local race are present on this page at once**, which is
+the first time that has happened in this work stream: the result alert carries a literal
+`@onclick="() => result = null"` dismiss button, AND `ListMethods` - whose button is gated on
+`isLoading`, which this `finally` drops two lines before the email await - sets `result = null`
+on entry. The `Complete` reads `completed`/`completedOk`, captured synchronously on entry to
+the `finally`, and the notification now reads the same capture instead of re-reading the field.
+
+**Three probes, each applied ALONE and each scored on the FULL 3674-test suite**, not on a
+filter. Strip: 2 failed - `AReportedOperationOpensItsActivityBeforeTheCallItCovers` naming all
+five calls at six occurrences, plus `GlobalProgressWiringTests`' adopted-module theory, which
+is honest rather than noise (the page then begins no activity anywhere). Hoist: the covered
+call `var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);` itself moved above
+the method-scope `Begin`, line count unchanged at 453, no preamble dragged - **1 failed /
+3673 passed, single-fault against the whole suite**, naming only that call. This page is not
+ClickGate-converted, so the `NoRealAwaitSitsBetweenARaiseAndItsProtectingTry` qualification
+`f2a8c75` had to record does not arise here. Early `Complete` above the send: 1 failed / 3673
+passed, naming only `Email.SendAdminNotificationAsync(`. Page restored byte-identical by
+`md5sum` and `touch`ed.
 
 **S3, fourth fix: `CalendarPermissions.SubmitSingle`, the twin of the fix below.** The same
 move - the `Begin` from inside the `try`, below the ticket call and the target validation, to

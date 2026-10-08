@@ -240,6 +240,18 @@
         // ticket-invalid / auth-denied pre-gates. Set once those gates pass.
         var notifyAdmins = false;
 
+        // One Graph delete per registered method, and the method count is known from the list the
+        // operator is looking at. Opened HERE, above the try, rather than at the Graph call it used
+        // to sit on: the slowest thing the operator waits on is the protected-principal resolve
+        // below, not the reset. That resolve is a Delinea credential fetch, then an AD search
+        // behind a throttle that waits up to 30 seconds, then - on a cloud-only target, which is
+        // this module's ORDINARY input - the Exchange fallback this codebase documents as 10 to 15
+        // seconds. All of it used to run with the bar idle (docs/ProgressCoverage-Plan.md S3, the
+        // fifth of the nine partials). Every refusal inside the try is now inside the window too.
+        using var activity = Progress.Begin(
+            "MFA Reset", $"Resetting MFA methods for {upn}",
+            methods is null ? ActivitySize.Unknown : ActivitySize.Items(methods.Count));
+
         try
         {
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
@@ -377,14 +389,7 @@
                 return;
             }
 
-            // One Graph delete per registered method, and the method count is known from the
-            // list the operator is looking at.
-            using var activity = Progress.Begin(
-                "MFA Reset", $"Resetting MFA methods for {upn}",
-                methods is null ? ActivitySize.Unknown : ActivitySize.Items(methods.Count));
-
             result = await MfaService.ResetAllMethodsAsync(upn);
-            activity.Complete(result.Success, result.Success ? null : result.Message);
 
             // The serviced note rides `extra`, never errorDetail: this call is the SUCCESS path,
             // and LogMfaResetAction writes ["error"] = success ? null : errorDetail - so the one
@@ -411,23 +416,38 @@
             isLoading = false;
             methods = new();
 
+            // Captured synchronously on entry to the finally, BEFORE the notification await, and
+            // everything below reads the capture rather than the field. Two things can null
+            // `result` while this handler is suspended at that await, and both are live the moment
+            // isLoading drops two lines above: the alert's own dismiss button is
+            // @onclick="() => result = null", and ListMethods - whose button ungates with
+            // isLoading - sets result = null on entry. A re-read past the await would report a
+            // failed reset with no message on a reset that succeeded.
+            var completed = result;
+            var completedOk = completed?.Success ?? false;
+
             // Mandatory admin notification on every real MFA reset attempt (Constitution
             // §Notifications). Fail-safe: a send failure must not change the operation result.
             if (notifyAdmins)
             {
-                var success = result?.Success ?? false;
                 try
                 {
                     await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "MfaReset_Execute",
-                        success, ticket,
+                        completedOk, ticket,
                         new Dictionary<string, string> { ["Target User"] = upn },
-                        success ? null : result?.Message);
+                        completedOk ? null : completed?.Message);
                 }
                 catch (Exception ex)
                 {
                     Logger.LogError(ex, "Failed to send MFA reset admin notification for {Upn}", upn);
                 }
             }
+
+            // Completed LAST, below the administrator notification, so the frame does not read
+            // Idle while an email is still in flight. This is the closing end of the same fix:
+            // the Complete used to sit immediately after the Graph reset, which left the send -
+            // the last remote call this handler makes - outside the window.
+            activity.Complete(completedOk, completedOk ? null : completed?.Message);
         }
     }
 }

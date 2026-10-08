@@ -1093,14 +1093,61 @@ public static class ProgressRegistry
     private static PageEntry MfaReset => new()
     {
         Page = "MfaReset.razor",
+        Reports =
+        [
+            new("ExecuteReset",
+                [
+                    "ServiceNow.ValidateTicketAsync(",
+                    "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(",
+                    "ProtectedPrincipalService.CheckAsync(",
+                    "MfaService.ResetAllMethodsAsync(",
+                    "Email.SendAdminNotificationAsync(",
+                ],
+                "the fifth of the survey's nine PARTIALs (docs/ProgressCoverage-Plan.md S3), and "
+                + "the first to need BOTH ends moved. The Begin sat at the Graph reset, below the "
+                + "ticket call and the whole protected-principal preamble, and the Complete sat "
+                + "immediately after that reset, above the administrator email in the finally - "
+                + "so the window covered the one call on this page that is NOT the slow part. "
+                + "FIVE calls are named, every remote call in the handler's own body, each "
+                + "measured by reading the callee. ServiceNow.ValidateTicketAsync is named first "
+                + "and holds the top of the window at the first call that CAN be remote, but it "
+                + "is NOT the argument for the window: Services/ServiceNowService.cs returns a "
+                + "local IsValid = true without opening a socket when ServiceNow:Enabled is "
+                + "false, so an argument resting on it is an argument about one deployment's "
+                + "configuration. ResolveWithExchangeFallbackAsync is the pin that holds "
+                + "regardless, and it is three waits in a trench coat: "
+                + "ProtectedPrincipalService.ResolveWithStatusAsync fetches the directory-read "
+                + "credential from Delinea over HTTP, then waits on a 2-permit AD throttle for up "
+                + "to 30 seconds, then runs a DirectorySearcher on a thread-pool thread; only on "
+                + "NotFound does the Exchange fallback - the 10-15 second trip BlockedSenders and "
+                + "OutOfOffice both name - run on top. It short-circuits locally in exactly one "
+                + "configuration, no DirectoryReadSecretId, and that configuration returns "
+                + "Unavailable, which this handler treats as a refusal - so there is no "
+                + "configuration in which this handler does work and this call is fast. And on "
+                + "THIS module the Exchange half is the normal case rather than the exception, "
+                + "for the reason PageAuthorizationRecheckTests pins the resolver choice: a Graph "
+                + "MFA target is a cloud identity, so the AD half routinely misses. "
+                + "ProtectedPrincipalService.CheckAsync is named once and pinned at BOTH its "
+                + "occurrences, the resolved and the directory-unresolved branch, and is remote "
+                + "CONDITIONALLY: it answers from the config store unless protected GROUP rules "
+                + "are configured, in which case CheckGroupMembershipAsync queries the directory. "
+                + "MfaService.ResetAllMethodsAsync is the operation itself, one Graph DELETE per "
+                + "registered method. Email.SendAdminNotificationAsync is the CLOSING pin and "
+                + "sits in the handler's own finally, so it is named directly. Two calls were "
+                + "read and deliberately NOT named: GetAuthenticationStateAsync and "
+                + "AuthorizationService.AuthorizeAsync decide from the Windows token's group SIDs "
+                + "plus a cached section-access read and make no remote hop. Complete reads a "
+                + "LOCAL captured on entry to the finally, and here BOTH shapes of the race are "
+                + "present: the result alert carries a dismiss button that is literally "
+                + "@onclick=\"() => result = null\", and ListMethods - whose button is gated on "
+                + "isLoading, which this finally drops two lines before the await - also sets "
+                + "result = null on entry. A re-read past the email await would report a failed "
+                + "reset with no message on a reset that succeeded"),
+        ],
         KnownGaps =
         [
             new("ListMethods", 176,
                 "SILENT, READ. A Graph round trip for the user's registered methods"),
-            new("ExecuteReset", 226,
-                "PARTIAL. The activity opens at :382, but ResolveWithExchangeFallbackAsync runs "
-                + "before it - a round trip this codebase's own comments document as 10 to 15 "
-                + "seconds - and the email tail sits in a finally with no reported activity after it"),
         ],
         Exempt =
         [

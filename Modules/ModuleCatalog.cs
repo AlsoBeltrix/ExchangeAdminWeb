@@ -738,7 +738,10 @@ public sealed class ModuleCatalog
             // 1.1.0: protection now resolves through Exchange. The AD-only lookup reported every
             // cloud-only user as "no AD object" and skipped the check, which for a Graph module is
             // the normal case - so protection was close to inert here.
-            Version = "1.2.1",
+            // 1.2.2: ExecuteReset's activity opens above the ticket validation and the whole
+            // protected-principal preamble instead of at the Graph reset, and completes below the
+            // administrator email instead of above it (docs/ProgressCoverage-Plan.md S3).
+            Version = "1.2.2",
             MainPermission = new(
                 "Access",
                 "MfaReset",
