@@ -508,15 +508,49 @@ public static class ProgressRegistry
         Page = "CalendarPermissions.razor",
         Reports =
         [
+            new("SubmitSingle",
+                [
+                    "ServiceNow.ValidateTicketAsync(",
+                    "Validator.ValidateTargetMailboxAsync(",
+                    "Validator.ValidateSelfGrantAsync(",
+                    "CalendarService.GetMailboxLocationAsync(",
+                    "CalendarService.SetCalendarPermissionAsync(",
+                    "CalendarService.RemoveCalendarPermissionAsync(",
+                    "Email.SendAdminNotificationAsync(",
+                    "Email.SendUserNotificationAsync(",
+                    "Email.SendOwnerNotificationAsync(",
+                ],
+                "the fourth of the survey's nine PARTIALs (docs/ProgressCoverage-Plan.md S3) and "
+                + "the near-twin of MailboxPermissions.SubmitSingle - read rather than assumed, "
+                + "because ClickGateRegistry records one place where these two pages had to "
+                + "diverge. On the reporting question they do not: the same preamble, the same "
+                + "Begin below it, the same Complete already past all three notification mails, "
+                + "so the same fix. The Begin now opens above the try and the refusals end the "
+                + "activity by disposing the using. NINE calls are named, every remote call in "
+                + "the handler's own body. ServiceNow.ValidateTicketAsync is named first and is "
+                + "NOT what makes this handler slow: it returns a local true without leaving the "
+                + "machine when ServiceNow:Enabled is false. Validator"
+                + ".ValidateTargetMailboxAsync is the pin that holds whatever that switch says - "
+                + "it reaches ProtectedPrincipalService.ResolveWithExchangeFallbackAsync, the "
+                + "10-15 second Exchange round trip, whenever Group/OU/pattern rules are "
+                + "configured, and Get-Recipient through IIdentityResolver whenever the "
+                + "30-minute exclusion cache is cold or object-id exclusions exist. "
+                + "ValidateSelfGrantAsync resolves BOTH identities through that same lookup. "
+                + "GetMailboxLocationAsync is the shared ExchangeServiceBase probe: Get-Mailbox "
+                + "against the cloud and, on a miss, a fresh on-prem runspace behind the Delinea "
+                + "credential fetch. The Set and Remove writes are named separately because an "
+                + "if/else picks between them - the one structural difference from the twin, "
+                + "which uses a ternary. Email.SendOwnerNotificationAsync is the CLOSING pin, "
+                + "the last remote call in the handler's own body. GetAuthenticationStateAsync "
+                + "and AuthorizationService.AuthorizeAsync were read and deliberately NOT named: "
+                + "both decide from the Windows token's group SIDs plus a cached section-access "
+                + "read and make no remote hop"),
             new("ProcessBulk", "CalendarService.ProcessCalendarPermissionsCsvAsync"),
             new("ExecuteOnPrem", "CalendarService.SetCalendarPermissionOnPremAsync"),
         ],
         KnownGaps =
         [
-            new("SubmitSingle", 346,
-                "PARTIAL. The activity opens at :420, after the ServiceNow ticket call and the "
-                + "target-mailbox validation the operator is already waiting on"),
-            new("DownloadCsvReport", 686, SilentCsvExportUnsurveyed),
+            new("DownloadCsvReport", 692, SilentCsvExportUnsurveyed),
         ],
         Exempt =
         [

@@ -55,9 +55,26 @@ reported - at `5a428c2`; the sixth, `ExchangeOnlineConfig.SaveExoConfig`, in the
 this record. **S2 IS COMPLETE: all six silent writes report.** S3, the nine partials, is under
 way, one commit each: the first, `IntuneDevices.ExecuteActionAsync`, landed at `b95bd5d`; the
 second, `RiskyUsers.ExecuteActionAsync`, at `3c2df38`; the third,
-`MailboxPermissions.SubmitSingle`, is in the commit carrying this record. **Six of the nine
+`MailboxPermissions.SubmitSingle`, at `f2a8c75`; the fourth,
+`CalendarPermissions.SubmitSingle`, is in the commit carrying this record. **Five of the nine
 partials remain.** The live list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this
 file. Queue item 18 is DONE and its record follows below.
+
+**S3, fourth fix: `CalendarPermissions.SubmitSingle`, the twin of the fix below.** The same
+move - the `Begin` from inside the `try`, below the ticket call and the target validation, to
+above the `try` - the same nine covered calls with `CalendarService` in place of
+`MailboxService`, the same `ExpectedLineCount`-only re-anchor (707 -> 713, highest line-keyed
+entry 211), the same three probes with the same three results.
+`CalendarPermissions` `1.2.1` -> `1.2.2`; base app unchanged at `2.27.1`. Suite 3674.
+
+**It was read, not assumed, and the brief was right to insist.** `ClickGateRegistry`'s own
+remarks record a place where these two pages HAD to diverge - `ProcessBulk`'s try was extended
+upward on both, but `SubmitSingle`'s could not be on this page because `action` and
+`ipAddress` are declared in nested scopes and merging them is a CS0136 conflict, so it gained
+an OUTER try instead. On the reporting question they do not diverge: same preamble, same
+`Begin` below it, same `Complete` already past all three mails. One structural difference
+worth the reader's time and no more: the twin picks its write with a ternary, this page with
+an `if/else`, which is why both writes are named here for a different reason than there.
 
 **S3, third fix: `MailboxPermissions.SubmitSingle` now opens its activity above the ticket
 validation and the protected-target check.** `MailboxPermissions` `1.2.1` -> `1.2.2`; base app

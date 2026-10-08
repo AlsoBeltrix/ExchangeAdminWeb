@@ -355,6 +355,17 @@
         result = null;
         await Task.Yield();
 
+        // Opened HERE, above the try, and that move IS this fix. It used to open below the ticket
+        // validation and the protected-target check, so the operator watched an idle bar through
+        // both - the PARTIAL docs/ProgressCoverage-Plan.md S3 records against this handler. The
+        // closing end needed nothing: the Complete already sits past all three notification mails.
+        //
+        // The refusal returns above the write end the activity by disposing the using, which is
+        // what BlockedSenders.ConfirmUnblock settled on for the same preamble. ProcessBulk below
+        // and ExecuteOnPrem both already opened above their own try; this handler was the odd one.
+        using var activity = Progress.Begin(
+            "Calendar Permissions", $"Updating calendar permissions on {target}", ActivitySize.Unknown);
+
         try
         {
             if (!await ReauthorizeAsync())
@@ -414,11 +425,6 @@
                     return;
                 }
             }
-
-            // Covers the whole write, not just the location probe: the operator is waiting on
-            // the permission change, and the probe is only its first step.
-            using var activity = Progress.Begin(
-                "Calendar Permissions", $"Updating calendar permissions on {target}", ActivitySize.Unknown);
 
             try
             {
