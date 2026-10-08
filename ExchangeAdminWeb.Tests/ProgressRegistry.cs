@@ -665,8 +665,37 @@ public static class ProgressRegistry
     private static PageEntry BitLockerRecovery => new()
     {
         Page = "BitLockerRecovery.razor",
-        Reports = [new("SearchAsync", "RecoveryService.SearchByKeyIdAsync")],
-        KnownGaps = [new("DownloadCsvAsync", 483, SilentCsvExportUnsurveyed)],
+        Reports =
+        [
+            new("SearchAsync", "RecoveryService.SearchByKeyIdAsync"),
+            new("DownloadCsvAsync",
+                [
+                    "BuildCsv(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the third of the silent CSV-export shape to be fixed, after "
+                + "AdminEventLog.DownloadCsv and MessageTrace.ExportCsv, and the first of the "
+                + "batch that closes the shape out. Two calls, the two ends: BuildCsv( projects "
+                + "and formats every recovery key in the result set, which is operation-scale "
+                + "LOCAL work under rule 1 as the S3 reviewer settled it, and "
+                + "JS.InvokeVoidAsync( base64-pushes the file over the SignalR circuit and is "
+                + "the last thing the operator waits on, so the Complete sits BELOW it. The "
+                + "transfer MECHANISM is deliberately untouched: "
+                + "docs/DownloadMemoryRetention-Plan.md proposes replacing it with streaming and "
+                + "is a DRAFT, not approved. The empty-set guard returns ABOVE the Begin - it is "
+                + "a count of rows already on the page and calls nothing. Unknown rather than "
+                + "Items(rows.Count) although the count is known at the Begin, because nothing "
+                + "between the Begin and the Complete can Report and a determinate bar would sit "
+                + "at 0%; the count is in the label instead. THE SNAPSHOT IS PART OF THE FIX "
+                + "RATHER THAN A TIDY-UP: the yield this shape requires is a new suspension "
+                + "point between the guard and the build, and SearchAsync clears results and "
+                + "rewrites searchTicket on its own first synchronous lines, so the handler now "
+                + "holds both in locals - the same reason DhcpAuthorization, NamedLocations and "
+                + "DefenderEndpointDevices already snapshot theirs. The audit write sits INSIDE "
+                + "the window, below the transfer: SafeAudit swallows and logs, so it cannot "
+                + "fail an export the operator already has, and it is one local row rather than "
+                + "operation-scale work, which is why it is not named"),
+        ],
         Exempt =
         [
             new("OnInitializedAsync", AuthPreambleOnly),

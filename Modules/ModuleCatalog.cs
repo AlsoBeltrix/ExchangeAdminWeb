@@ -1042,7 +1042,7 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.1.0: mandatory ticket before any search, written on the search and
             // reveal audit events; ValidateTickets per-module validation switch.
-            Version = "1.2.1",
+            Version = "1.2.2",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new(
                 "Access",

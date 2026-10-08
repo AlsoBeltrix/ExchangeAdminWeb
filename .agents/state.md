@@ -36,6 +36,17 @@ document. **The next batch is where the CSV-export shape concentrates**: nine of
 are that one shape, and `AdminEventLog.DownloadCsv` and `MessageTrace.ExportCsv` are now the two
 worked examples for it.
 
+**S5's SECOND batch is landing now** - the CSV-export shape plus `ConferenceRooms`' two CSV
+upload previews, ten gaps over seven commits, one per page: `BitLockerRecovery`,
+`BlockedSenders`, `DefenderEndpointDevices`, `DhcpAuthorization`, `NamedLocations`, `Migration`
+(3 gaps) and `ConferenceRooms` (2 of its 4). Target `KnownGap` count 17 -> 7. **One correction
+to the brief that drove it, recorded here because the next agent will hit the same thing:** the
+brief called `DefenderEndpointDevices`, `DhcpAuthorization` and `NamedLocations` "unpinned" and
+cheap, and all three are in fact `ClickGateRegistry.Pages` with an `ExpectedLineCount` and
+line-keyed controls. Only `BitLockerRecovery` and `BlockedSenders` are genuinely unpinned. The
+batch record is below, one compact paragraph at the end rather than one per commit, because
+this file is already over budget.
+
 **This file is 2,600+ lines, far over the repo-guidance target.** Run `playbook drift` before
 adding to it.
 

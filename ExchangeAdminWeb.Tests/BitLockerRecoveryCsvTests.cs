@@ -120,7 +120,16 @@ public class BitLockerRecoveryCsvTests
         Assert.Contains("if (results.Count == 0)", body);
         Assert.Contains("\"ExportRecoveryKeysCsv\"", body);
         Assert.Contains("LogModuleAction", body);
-        Assert.Contains("ticketNumber: searchTicket", body);
+
+        // RE-ANCHORED, not weakened (docs/ProgressCoverage-Plan.md S5). This read
+        // "ticketNumber: searchTicket" until the export gained a progress activity, and the
+        // activity's await Task.Yield() put a suspension point between the guard and the audit
+        // where there had been none - so the handler now captures the field first and audits the
+        // capture. Both halves are pinned, which is strictly more than the single string was
+        // asserting: the ticket must be taken from searchTicket, and it must be what the
+        // bulk-disclosure audit records.
+        Assert.Contains("var ticket = searchTicket;", body);
+        Assert.Contains("ticketNumber: ticket", body);
 
         // blr-1: the bulk-disclosure audit must never reference key material.
         Assert.DoesNotContain("RecoveryPassword", body);
