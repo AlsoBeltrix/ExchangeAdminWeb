@@ -443,10 +443,39 @@
     private async Task ConfirmSave()
     {
         isSaving = true;
+
+        // Read before the first await, because the success branch below empties pendingChanges
+        // while this handler is still running and the label must not change under the operator.
+        var saveTarget = lookupResult?.Principal?.UserPrincipalName ?? searchIdentity.Trim();
+        var changeCount = pendingChanges.Count;
+
         await Task.Yield();
+
+        // Opened HERE, above the try, so the authorization and allowlist refusals inside it are
+        // covered too, and completed in the finally AFTER the notification email - not at the
+        // write - so the bar does not read Idle while an email is still in flight.
+        // NamedLocations.SaveLocation is the shape this copies.
+        //
+        // Completed from a LOCAL, never from operationResult. That field has a dismiss control
+        // in this page's own banner markup (a bare @onclick that nulls it), and it stays
+        // clickable while this handler is suspended at the write or at an email await, so
+        // reading the field down in the finally is the post-await live-read trap
+        // ClickGateRegistry records against NamedLocations - with a live control here to spring
+        // it. OutOfOffice.SetOof completes from its field instead, and says in place that this
+        // is why: that page renders no dismiss.
+        //
+        // Three steps, because the sequence is fixed once the operation proceeds: permission,
+        // the AD write, the notification. A refusal completes early at the step it reached,
+        // which is what happened, not a lie about size.
+        (bool success, string message)? completed = null;
+        using var activity = Progress.Begin(
+            "AD Attribute Editor",
+            $"Saving {changeCount} attribute change(s) for {saveTarget}",
+            ActivitySize.Steps(3));
 
         try
         {
+            activity.Step("checking your permission");
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ADAttributeEditor");
             if (!authCheck.Succeeded)
@@ -474,11 +503,16 @@
             foreach (var change in pendingChanges)
                 proposedValues[change.Name] = change.NewValue;
 
+            activity.Step("writing the attributes to Active Directory");
             var result = await EditorService.SaveAsync(lookupResult!.Principal!, proposedValues, currentUser, clientIpAddress, ticketNumber.Trim(), actingUser: authState.User, maxLevel: saveMaxLevel);
+
+            // One step for both outcomes: the success and failure branches below each send the
+            // admin notification, so the remaining wait is the same either way.
+            activity.Step("sending the notification");
 
             if (result.Success)
             {
-                operationResult = (true, $"Successfully updated {result.AppliedChanges?.Count ?? 0} attribute(s) for {lookupResult.Principal!.DisplayName}.");
+                operationResult = completed = (true, $"Successfully updated {result.AppliedChanges?.Count ?? 0} attribute(s) for {lookupResult.Principal!.DisplayName}.");
 
                 try
                 {
@@ -505,7 +539,7 @@
             }
             else
             {
-                operationResult = (false, result.Error ?? "Save failed.");
+                operationResult = completed = (false, result.Error ?? "Save failed.");
 
                 try
                 {
@@ -522,13 +556,14 @@
         }
         catch (Exception ex)
         {
-            operationResult = (false, ex.Message);
+            operationResult = completed = (false, ex.Message);
             Logger.LogError(ex, "AD attribute save failed");
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Target"] = lookupResult?.Principal?.UserPrincipalName ?? searchIdentity }, ex.Message); } catch { }
         }
         finally
         {
             isSaving = false;
+            activity.Complete(completed?.success ?? false, completed?.message);
         }
     }
 }

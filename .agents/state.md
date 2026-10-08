@@ -48,12 +48,13 @@ growth means this was not the dominant cause, which is information and points at
 
 **CURRENT TASK: PROGRESS COVERAGE, `docs/ProgressCoverage-Plan.md`, approved 2026-10-07.**
 S1 landed at `d5f3b3b`. The first S2 fix - `CloudPasswordReset.ExecuteResetAsync`, the survey's
-worst finding - landed at `ed7754f`; the second, `OutOfOffice.SetOof`, landed in the commit
-carrying this record. Queue item 18 is DONE and its record follows below.
+worst finding - landed at `ed7754f`; the second, `OutOfOffice.SetOof`, at `2d93c26`; the third,
+`ADAttributeEditor.ConfirmSave`, in the commit carrying this record. Three of the six silent
+writes remain: `ConferenceRooms.SetSingleRoomType`, `BlockedSenders.ConfirmUnblock`,
+`ExchangeOnlineConfig.SaveExoConfig`. Queue item 18 is DONE and its record follows below.
 
-**The plan file's own `Status:` header still reads `DRAFT - awaiting owner go` while this
-section and the plan's slice work both record the approval of 2026-10-07. Drift in the plan,
-not in the work; left for its own commit under one-fix-per-commit.**
+**The plan file's `Status:` header drift is CLOSED** - it was corrected to `APPROVED 2026-10-07`
+at `976562b`, and this note had outlived it by one commit.
 
 **S1 built the guard, fixed nothing.** `ExchangeAdminWeb.Tests/ProgressRegistry.cs` is now the
 live gap list. **The counts move as discovery widens, so read the file rather than this line:**

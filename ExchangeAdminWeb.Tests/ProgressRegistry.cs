@@ -248,14 +248,41 @@ public static class ProgressRegistry
     private static PageEntry ADAttributeEditor => new()
     {
         Page = "ADAttributeEditor.razor",
+        Reports =
+        [
+            new("ConfirmSave",
+                [
+                    "EditorService.SaveAsync(",
+                    "Email.SendAdminNotificationAsync(",
+                ],
+                "the survey's third silent write (docs/ProgressCoverage-Plan.md S2): an "
+                + "authorization re-check, the allowlist read, a live on-prem AD attribute write "
+                + "and a notification email, with no activity open at any point. One activity "
+                + "now opens above the try - so the refusals inside it are covered too - and "
+                + "completes in the finally after the email, over three honest steps. "
+                + "TWO calls are named, not four as on OutOfOffice.SetOof, and the difference is "
+                + "a measurement rather than a lighter touch: everything above the write here is "
+                + "genuinely local. GroupAuthorizationHandler decides from the Windows token's "
+                + "group SIDs and a cached section-access read, so AuthorizeAsync and the three "
+                + "level probes in DetermineMaxLevelAsync make no remote call - unlike "
+                + "OutOfOffice's validator, which reaches a 10-15 second Exchange round trip and "
+                + "had to be pinned - and GetAllowlistForLevel is a cached local SQLite read on "
+                + "a synchronous path. Naming any of them would pad the entry with calls that "
+                + "prove nothing about a wait. EditorService.SaveAsync is the OPENING pin and is "
+                + "the first call with real latency: inside it sit the protected-principal "
+                + "check, a Delinea credential fetch and an AD throttle that waits up to two "
+                + "minutes before the write even starts. SendAdminNotificationAsync is the "
+                + "CLOSING pin, chosen over the write the way OutOfOffice chose its OOF mail: it "
+                + "is the last remote call in the handler, at all three of its occurrences - the "
+                + "success branch, the failure branch and the catch - so it is what forbids a "
+                + "Complete hoisted up to the write and leaves the reference shape's actual "
+                + "promise asserted rather than merely commented"),
+        ],
         KnownGaps =
         [
             new("PerformSearch", 291,
                 "PARTIAL. The activity completes at :313, before the protected-principal check at "
                 + ":329, so the frame reads finished while the operator is still waiting on it"),
-            new("ConfirmSave", 443,
-                "SILENT, MUTATING. Authorization, the allowlist read, the AD write and the "
-                + "notification email all run with the bar idle"),
         ],
         Exempt =
         [

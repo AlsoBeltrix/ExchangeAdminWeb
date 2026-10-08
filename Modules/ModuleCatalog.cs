@@ -1205,7 +1205,11 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.DirectoryAndGroups,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.4.1",
+            // 1.4.2: saving an attribute change now reports to the status frame. The whole
+            // confirm path - the authorization re-check, the level and allowlist read, the live
+            // on-prem AD write and the notification email - ran with the bar reading Idle, on a
+            // page whose lookup already reported.
+            Version = "1.4.2",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",
