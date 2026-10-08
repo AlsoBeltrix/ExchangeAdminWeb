@@ -130,7 +130,9 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             IsConfigOnly = true,
-            Version = "1.0.2",
+            // 1.0.3: the connection save reports to the status frame, including the pooled
+            // runspace drain (docs/ProgressCoverage-Plan.md S2).
+            Version = "1.0.3",
             MainPermission = new(
                 "Access",
                 "ExchangeOnline",

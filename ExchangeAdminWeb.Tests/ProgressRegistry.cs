@@ -738,12 +738,45 @@ public static class ProgressRegistry
     private static PageEntry ExchangeOnlineConfig => new()
     {
         Page = "ExchangeOnlineConfig.razor",
-        KnownGaps =
+        Reports =
         [
-            new("SaveExoConfig", 237,
-                "SILENT, MUTATING. Saves the module configuration and then runs "
-                + "ExoPool.DrainPool, a synchronous teardown of the pooled runspaces, on a page "
-                + "that injects IActivityProgress nowhere"),
+            new("SaveExoConfig",
+                [
+                    "ModuleConfigSvc.SaveModuleConfig(",
+                    "ExoPool.DrainPool(",
+                ],
+                "the last of the survey's six silent writes (docs/ProgressCoverage-Plan.md S2), "
+                + "and one of the three pages that injected IActivityProgress NOWHERE - absent "
+                + "from GlobalProgressWiringTests' hand-maintained adopted list, so no test "
+                + "looked at it at all. That is the second of the two holes this registry "
+                + "exists to close, and it is the reason the page set here comes from the "
+                + "filesystem. The activity opens above the try, so the four validation "
+                + "refusals inside it are covered too, and completes in the finally. "
+                + "ModuleConfigSvc.SaveModuleConfig is the opening pin: it is the MUTATION - the "
+                + "three connection values written to the shared SQLite config store - rather "
+                + "than the slow part, and naming it is what stops an activity opened below it "
+                + "leaving the write itself unreported. ExoPool.DrainPool is the closing pin and "
+                + "the only genuinely slow call, and it was MEASURED rather than inherited from "
+                + "the survey, which flagged it without measuring: DrainPoolCore empties the "
+                + "bag one runspace at a time, DestroyRunspace runs a synchronous "
+                + "Disconnect-ExchangeOnline against the service for each one, and DrainPool "
+                + "then re-reads the three connection values from the shared config database "
+                + "uncached. The cost is therefore exactly the pool depth - zero to five "
+                + "Exchange Online round trips, capped by the pool's five slots - and which it "
+                + "is depends on how many runspaces happen to be pooled when Save is pressed. "
+                + "So the drain IS slow, conditionally, and the activity is Indeterminate for "
+                + "that reason: Steps(2) would tell the operator the local SQLite write is half "
+                + "the wait. Three calls were read and deliberately NOT named: "
+                + "GetAuthenticationStateAsync and AuthorizationService.AuthorizeAsync decide "
+                + "from the Windows token's group SIDs plus a cached section-access read, "
+                + "ModuleConfigSvc.GetModuleConfig is the uncached local read of the very "
+                + "document the save below it already pins, and Audit.LogSettingsChange is a "
+                + "local append. The Begin sits ABOVE the page's await Task.Yield, which the "
+                + "other S2 fixes did not need: everything after it here is synchronous, so the "
+                + "Yield is the handler's only guaranteed flush point and an activity opened "
+                + "after it would pass this guard while the operator still saw nothing. "
+                + "Complete reads a LOCAL, because the banner renders a dismiss button wired at "
+                + "() => statusMessage = null"),
         ],
         Exempt =
         [

@@ -51,9 +51,64 @@ S1 landed at `d5f3b3b`. The first S2 fix - `CloudPasswordReset.ExecuteResetAsync
 worst finding - landed at `ed7754f`; the second, `OutOfOffice.SetOof`, at `2d93c26`; the third,
 `ADAttributeEditor.ConfirmSave`, at `f1257bd`; the fourth, `ConferenceRooms.SetSingleRoomType`,
 at `94361fd`; the fifth, `BlockedSenders.ConfirmUnblock` - the one the operator actually
-reported - in the commit carrying this record. ONE of the six silent writes remains:
-`ExchangeOnlineConfig.SaveExoConfig`. **This is the only place that list is kept.** Queue item
-18 is DONE and its record follows below.
+reported - at `5a428c2`; the sixth, `ExchangeOnlineConfig.SaveExoConfig`, in the commit carrying
+this record. **S2 IS COMPLETE: all six silent writes report.** Next is S3, the nine partials,
+one commit each; the live list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this file.
+Queue item 18 is DONE and its record follows below.
+
+**S2, sixth and last fix: `ExchangeOnlineConfig.SaveExoConfig` now reports its save and drain.**
+`ExchangeOnline` `1.0.2` -> `1.0.3`; base app unchanged at `2.27.1` (module-scoped). Registry:
+one entry `KnownGap` -> `Reports`. Suite 3674, unchanged. **The page injected `IActivityProgress`
+NOWHERE**, and no test looked at it - it is absent from `GlobalProgressWiringTests`'
+hand-maintained adopted list, which is the second of the two holes the plan exists to close and
+the reason `ProgressRegistry`'s page set comes from the filesystem. The `@inject` was added here.
+
+**Is the drain actually slow? YES, conditionally - and the survey never measured it.**
+`DrainPoolCore` empties the bag one runspace at a time and `DestroyRunspace` runs a synchronous
+`Disconnect-ExchangeOnline` against the service for each, after which `DrainPool` re-reads the
+three connection values from the shared config database, uncached. The cost is exactly the pool
+depth: zero to five Exchange Online round trips, capped by the pool's five slots, and which it
+is depends on how many runspaces happen to be pooled when Save is pressed. **So the activity is
+`ActivitySize.Unknown` on purpose** - `Steps(2)` would tell the operator the local SQLite write
+is half the wait, and the page cannot count the runspaces (`AvailableCount` is an internal test
+seam).
+
+**Two calls named.** `ModuleConfigSvc.SaveModuleConfig(` is the opening pin and the MUTATION
+rather than the slow part - naming it is what stops an activity opened lower leaving the write
+itself unreported. `ExoPool.DrainPool(` is the closing pin and the only genuinely slow call.
+`GetAuthenticationStateAsync`, `AuthorizeAsync`, `ModuleConfigSvc.GetModuleConfig` and
+`Audit.LogSettingsChange` were read and NOT named - token SIDs plus a cached section-access
+read, the uncached local read of the very document the save already pins, and a local append.
+
+**The `Begin` sits ABOVE this page's `await Task.Yield()`, which no earlier S2 fix needed.**
+Their first covered call was genuinely async, so the renderer was freed and the bar painted.
+Everything after the `Begin` here is synchronous - auth state and `AuthorizeAsync` complete
+without yielding, the config write is SQLite, the drain blocks - so the Yield is the handler's
+only guaranteed flush point. An activity opened after it would pass the guard while the operator
+still saw nothing, which is the vacuous outcome the plan exists to stop. **What this does NOT
+do:** the drain still runs on the renderer thread. The bar paints before the freeze and stays
+painted through it, so the operator is told; moving `DrainPool` to `Task.Run` is a threading
+change the plan took on only for `CloudPasswordReset`, and it is NOT done here. Recorded as a
+candidate, not a defect closed.
+
+**`Complete` reads a LOCAL**, because the banner renders a dismiss button wired at
+`() => statusMessage = null`. The four validation refusals deliberately leave the local null and
+end as a non-success with no message; the banner carries the reason, as on `ConferenceRooms`.
+
+**No re-anchor owed.** Not ClickGate line-pinned (`ClickGateRegistry` carries it page-name-keyed
+as "tier 2, not approved"), and the page's only line-keyed `ProgressRegistry` pointer was the
+`SaveExoConfig` gap this fix deletes. ClickGate filter green at 316.
+
+**Three probes, each applied ALONE, each 1 failed / 24 passed and each isolating one test.**
+Strip failed condition 2 naming both calls, "it begins no activity at all". Early `Complete`
+(moved from the `finally` to just above the drain) failed condition 3 naming only
+`ExoPool.DrainPool(`. **The hoist probe is the STRONG form again**, by the other route: the
+covered call `ExoPool.DrainPool();` moved above the method-scope `Begin` - a real relocation of
+real code, no added lines, no preamble dragged along - failing condition 2 with "its earliest
+Begin is after it". Moving the `Begin` itself is still blocked here for `f1257bd`'s structural
+reason (the `Complete` is in the `finally`, so a `Begin` inside the `try` does not compile), and
+hoisting the OPENING pin would have meant dragging its preamble, which is the weak substitution.
+Hoisting the closing pin needs neither. Page restored byte-identical by `md5sum` and `touch`ed.
 
 **S2, fifth fix: `BlockedSenders.ConfirmUnblock` now reports its Exchange Online unblock.**
 This is the operation the owner reported and the one the whole work stream came from.

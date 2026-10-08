@@ -13,6 +13,10 @@
 @inject ModuleEnablementService Enablement
 @inject ModuleConfigService ModuleConfigSvc
 @inject ExoConnectionPool ExoPool
+@* This page injected nothing here until docs/ProgressCoverage-Plan.md S2, and no test noticed:
+   GlobalProgressWiringTests' adopted list is hand-maintained and this page is absent from it,
+   which is the second of the two holes that plan exists to close. *@
+@inject IActivityProgress Progress
 @inject IConfiguration Config
 
 <PageTitle>Exchange Online Configuration</PageTitle>
@@ -238,6 +242,42 @@
     {
         saving = true;
         statusMessage = null;
+
+        // Opened HERE, above the try, so the validation refusals inside it are covered too, and
+        // completed in the finally so the bar does not read Idle while the pool teardown is
+        // still running. NamedLocations.SaveLocation is the shape this copies.
+        //
+        // ABOVE the Task.Yield as well, which the other fixes in this work stream did not need.
+        // Their first covered call was genuinely async, so the renderer was freed and the bar
+        // painted. Everything after the Begin on THIS page is synchronous - the auth state and
+        // AuthorizeAsync both complete without yielding, the config write is SQLite and the
+        // drain is a blocking call - so the Yield is the handler's only guaranteed flush point
+        // and the activity has to be open on the near side of it. An activity opened after it
+        // would be a guard that passes while the operator still sees nothing.
+        //
+        // INDETERMINATE, and that is a measurement rather than a default. The survey called
+        // DrainPool the slow part without measuring it. Reading ExoConnectionPool: DrainPoolCore
+        // empties the bag one runspace at a time and DestroyRunspace runs a synchronous
+        // Disconnect-ExchangeOnline against the service for each one, after which DrainPool
+        // re-reads the three connection values from the shared config database, uncached. So the
+        // cost is exactly the pool depth - zero to five Exchange Online round trips, the cap
+        // being the pool's five slots - and which it is depends on how many runspaces happen to
+        // be pooled when Save is pressed, which this page cannot know or count. Steps(2) would
+        // tell the operator the local SQLite write is half the wait, and it is not.
+        //
+        // Completed from a LOCAL, never from statusMessage: the banner above renders a dismiss
+        // button wired straight at () => statusMessage = null, so the field can be nulled while
+        // this handler is still running, and reading it back in the finally is the post-await
+        // live-read trap BlockedSenders.ConfirmUnblock and ADAttributeEditor.ConfirmSave both
+        // record. The validation refusals deliberately leave the local null and end the activity
+        // as a non-success with no message; the banner carries the reason, as it does on
+        // ConferenceRooms.
+        (bool success, string? message)? completed = null;
+        using var activity = Progress.Begin(
+            "Exchange Online",
+            "Saving the connection settings and draining pooled connections",
+            ActivitySize.Unknown);
+
         await Task.Yield();
 
         try
@@ -307,12 +347,18 @@
                 ? "Exchange Online configuration cleared. EXO features are disabled until reconfigured."
                 : "Exchange Online configuration saved. Existing pooled connections have been drained; new connections will use the updated config.";
             statusIsError = false;
+            completed = (true, statusMessage);
         }
         catch (Exception ex)
         {
             statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
+            completed = (false, statusMessage);
         }
-        finally { saving = false; }
+        finally
+        {
+            saving = false;
+            activity.Complete(completed?.success ?? false, completed?.message);
+        }
     }
 }
