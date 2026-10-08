@@ -653,7 +653,9 @@ public sealed class ModuleCatalog
             //   interleave and leave the list holding neither file; each run's read-back
             //   reports that rather than claiming success. Transient audit faults retry per
             //   operation, never per run.
-            Version = "1.3.1",
+            // 1.3.2: ValidateEmails' activity opens above the try instead of below the optional
+            // ticket check (docs/ProgressCoverage-Plan.md S3).
+            Version = "1.3.2",
             MainPermission = new(
                 "Access",
                 "Comms10k",

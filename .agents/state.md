@@ -56,10 +56,45 @@ this record. **S2 IS COMPLETE: all six silent writes report.** S3, the nine part
 way, one commit each: the first, `IntuneDevices.ExecuteActionAsync`, landed at `b95bd5d`; the
 second, `RiskyUsers.ExecuteActionAsync`, at `3c2df38`; the third,
 `MailboxPermissions.SubmitSingle`, at `f2a8c75`; the fourth,
-`CalendarPermissions.SubmitSingle`, at `63cd170`; the fifth, `MfaReset.ExecuteReset`, is in the
-commit carrying this record. **Four of the nine partials remain.** The live list is
+`CalendarPermissions.SubmitSingle`, at `63cd170`; the fifth, `MfaReset.ExecuteReset`, at
+`270ec34`; the sixth, `Comms10k.ValidateEmails`, is in the commit carrying this record.
+**Three of the nine partials remain.** The live list is
 `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this file. Queue item 18 is DONE and its
 record follows below.
+
+**S3, sixth fix: `Comms10k.ValidateEmails`, the first partial whose CLOSING end needed
+nothing.** `ResolveEmailsAsync` is the last remote call the handler makes - this page has no
+notification tail, because the write it arms is `ExecuteReplace`'s durable job - and the
+`Complete` already sat below it. The whole fix is the opening end: the `Begin` moved from
+below the optional ticket check to above the `try`. `Comms10k` `1.3.1` -> `1.3.2`; base app
+unchanged at `2.27.1`. Registry: one entry `KnownGap` -> `Reports`. Suite 3674, unchanged.
+The page is ClickGate-UNCONVERTED ("tier 3, not approved"), so nothing line-keyed on it moved;
+the three remaining `ProgressRegistry` pointers (`LoadPreview` 202, `DownloadFull` 211,
+`HandleFileUpload` 234) are all above the first hunk at 299.
+
+**Two calls named, and the ticket call is DOUBLY conditional here** - more so than anywhere
+else in this work stream. The ticket is optional on this page by design, so the call is
+skipped outright when the operator enters none, on top of `ServiceNow:Enabled` deciding
+whether it opens a socket at all. It is pinned because it is a call that CAN leave the machine
+above the activity, which is what the gap entry recorded; it is not the argument for the
+window. `Comms10kService.ResolveEmailsAsync(` is: a Delinea credential fetch over HTTP, then
+`QueryBatchCandidates` on a thread-pool thread - one `Get-ADObject -LDAPFilter` per batch
+inside one runspace, over an uploaded list whose parser allows roughly half a million rows.
+Its two local short-circuits are the unconfigured cases, which are reported failures rather
+than fast work.
+
+**No captured local, and that was checked rather than assumed.** `resolveResult` is assigned
+on one line and read on the next with no `await` between them, so nothing can interleave and
+null it the way `MfaReset`'s dismiss button and `IntuneDevices`' Search button can.
+
+**Three probes, each applied ALONE and each scored on the FULL 3674-test suite.** Strip: 2
+failed, the registry condition naming both calls plus `GlobalProgressWiringTests`'
+adopted-module theory, the same honest pair as `270ec34`. Hoist: **by the CLOSING-pin route
+this time**, because the opening pin would drag a preamble here - `trimmedTicket` is declared
+inside the try - while `resolveResult = await Comms10kService.ResolveEmailsAsync(parsedEmails);`
+reads only fields and drags none. 1 failed / 3673 passed, single-fault, naming only that call,
+line count unchanged at 465. Early `Complete` above the resolve: 1 failed / 3673 passed,
+naming only that call. Page restored byte-identical by `md5sum` and `touch`ed.
 
 **S3, fifth fix: `MfaReset.ExecuteReset`, the first partial needing BOTH ends moved.** The
 `Begin` sat at the Graph reset, below the ticket call and the whole protected-principal

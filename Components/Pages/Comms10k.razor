@@ -297,6 +297,20 @@
     {
         isLoading = true;
         await Task.Yield();
+
+        // Items, not indeterminate: the uploaded address count IS known here, so the frame can
+        // show a true "x of y" while the batched directory lookups run. The Validate button only
+        // renders when parsedEmails.Count > 0, so the count is never zero on this path.
+        //
+        // Opened ABOVE the try rather than below the ticket check (docs/ProgressCoverage-Plan.md
+        // S3, the sixth of the nine partials). The optional ticket call ran outside the window,
+        // and so did the refusal return under it. Both are now inside it; a refusal ends the
+        // activity by disposing the using, which records "This did not finish." - true of a
+        // refusal - the same shape BlockedSenders.ConfirmUnblock and MailboxPermissions
+        // .SubmitSingle settled on for the same preamble.
+        using var resolving = Progress.Begin(
+            "Comms-10k", "Resolving addresses in AD", ActivitySize.Items(parsedEmails.Count));
+
         try
         {
             // Ticket is optional (comms team won't always have one). Only validate a
@@ -314,11 +328,10 @@
             }
             validatedTicket = trimmedTicket;
 
-            // Items, not indeterminate: the uploaded address count IS known here, so the frame
-            // can show a true "x of y" while the batched directory lookups run.
-            using var resolving = Progress.Begin(
-                "Comms-10k", "Resolving addresses in AD", ActivitySize.Items(parsedEmails.Count));
-
+            // The closing end needed nothing: ResolveEmailsAsync is the LAST remote call this
+            // handler makes - there is no notification tail here - and the Complete already sat
+            // below it, with no await between the assignment above and the read below, so the
+            // outcome it reports cannot be raced by another handler.
             resolveResult = await Comms10kService.ResolveEmailsAsync(parsedEmails);
             resolving.Report(resolveResult.ResolvedDns.Count);
             resolving.Complete(resolveResult.Success, resolveResult.Success

@@ -616,6 +616,40 @@ public static class ProgressRegistry
     private static PageEntry Comms10k => new()
     {
         Page = "Comms10k.razor",
+        Reports =
+        [
+            new("ValidateEmails",
+                [
+                    "ServiceNow.ValidateTicketAsync(",
+                    "Comms10kService.ResolveEmailsAsync(",
+                ],
+                "the sixth of the survey's nine PARTIALs (docs/ProgressCoverage-Plan.md S3), and "
+                + "the only one so far whose CLOSING end needed nothing at all. "
+                + "ResolveEmailsAsync is the last remote call the handler makes - this page has "
+                + "no notification tail, because the write it arms is ExecuteReplace's durable "
+                + "job - and the Complete already sat below it. The whole fix is the opening "
+                + "end: the Begin moved from below the ticket check to above the try. "
+                + "TWO calls are named, which is every remote call in the handler's own body. "
+                + "ServiceNow.ValidateTicketAsync is the call the gap entry named, and it is "
+                + "DOUBLY conditional here, more so than anywhere else in this work stream: the "
+                + "ticket is optional on this page by design, so the call is skipped outright "
+                + "when the operator enters none, and Services/ServiceNowService.cs returns a "
+                + "local IsValid = true without opening a socket when ServiceNow:Enabled is "
+                + "false. It is pinned because it is a call that CAN leave the machine above the "
+                + "activity, which is what the defect was; it is not the argument for the "
+                + "window. Comms10kService.ResolveEmailsAsync is that argument and it is slow "
+                + "across every configuration in which this handler does anything: it fetches "
+                + "the module's AD credential from Delinea over HTTP, then runs QueryBatchCandidates "
+                + "on a thread-pool thread - one Get-ADObject -LDAPFilter per batch inside one "
+                + "runspace, over an uploaded list whose parser allows roughly half a million "
+                + "rows. Its two local short-circuits are the unconfigured cases, 'Module not "
+                + "configured.' and 'AD credentials unavailable.', which are reported failures "
+                + "rather than fast work. Complete does NOT need to read a captured local here, "
+                + "and that was checked rather than assumed: resolveResult is assigned on the "
+                + "line above and read on the line below with no await between them, so no other "
+                + "handler can interleave and null it the way MfaReset's dismiss button and "
+                + "IntuneDevices' Search button can"),
+        ],
         KnownGaps =
         [
             new("LoadPreview", 202, "SILENT, READ. AD credential fetch plus the group query"),
@@ -624,8 +658,6 @@ public static class ProgressRegistry
             new("HandleFileUpload", 234,
                 "SILENT, READ. Parses a browser upload; the malformed-upload guard allows roughly "
                 + "half a million rows"),
-            new("ValidateEmails", 296,
-                "PARTIAL. The ServiceNow ticket call runs BEFORE the activity opens at :319"),
         ],
         Exempt =
         [
