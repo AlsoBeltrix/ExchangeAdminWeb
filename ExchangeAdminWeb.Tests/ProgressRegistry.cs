@@ -1392,13 +1392,58 @@ public static class ProgressRegistry
                 "completes AFTER its download rather than before, which is the opposite of "
                 + "MessageTraceReports.Download and is what made that defect visible"),
             new("EmailSelectedDetails", "BulkJobs.Enqueue"),
-        ],
-        KnownGaps =
-        [
-            new("OnAfterRenderAsync", 661,
-                "SILENT, READ. Resolves the operator's address from AD behind a lock this "
-                + "codebase documents as able to hold for 30 seconds"),
-            new("ExportCsv", 917, SilentCsvExportUnsurveyed),
+            new("OnAfterRenderAsync", "ResolveOperatorEmailAsync(",
+                "the page's first-paint AD lookup, and the only operation in S5's first batch "
+                + "that the operator never asked for: it runs on its own, once per circuit, and "
+                + "OperatorEmailResolver's own comment records the directory call as sitting "
+                + "behind a process-wide lock that can wait 30 seconds. The covered call is "
+                + "named THROUGH A HELPER, which condition 1 requires - the fragment has to be "
+                + "in the method's own code and ResolveOperatorEmailAsync is a one-line "
+                + "expression-bodied task cache (emailResolve ??= ...) with no block body of its "
+                + "own to hold a using. Same indirection AdminBulkJobs.RefreshJobs records for "
+                + "LoadJobsFromStore; what runs inside is held by nothing, the limitation this "
+                + "registry's remarks state. THE BEGIN SITS BELOW THE LATCH, not above the "
+                + "guard, and that is what makes an activity possible here at all: "
+                + "OnAfterRenderAsync runs after EVERY render, so a Begin above the gate would "
+                + "flash a bar on each one, and below emailResolveStarted it runs exactly once "
+                + "per circuit - the AdminSettings.OnAfterRenderAsync shape. The Begin's "
+                + "StateHasChanged re-enters this method, which the latch turns into one wasted "
+                + "comparison rather than a loop. No yield: the resolver puts the blocking "
+                + "directory call on Task.Run, so the renderer is free the moment the await is "
+                + "reached. COMPLETES TRUE EVEN WHEN NOTHING CAME BACK, which is the reviewer's "
+                + "2026-10-08 ruling and the hardest case for it so far - the page genuinely "
+                + "cannot tell a refusal from an empty answer, because OperatorEmailResolver is "
+                + "fail-soft by contract and returns null alike for an absent SID claim, a user "
+                + "it could not find, and a directory that was down. Reporting false would be "
+                + "guessing; the message says which of the two the operator got. The Complete "
+                + "reads userEmail, a field, whose only other writer is the callee being "
+                + "awaited on the line above"),
+            new("ExportCsv",
+                [
+                    "CsvEscape(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the second of the silent CSV-export shape to be fixed, after "
+                + "AdminEventLog.DownloadCsv, and the one the plan's survey MISSED - it named "
+                + "four pages and the registry found three more. Unlike the others this export "
+                + "is deliberately UNBOUNDED: the table renders 50 rows and this walks every row "
+                + "the search found, by owner direction 2026-08-06, so exporting the rendered "
+                + "page would make the render limit silently become the answer. CsvEscape( is "
+                + "the opening pin and the unusual choice on this page: it is a LOCAL pure "
+                + "helper, but it is called eleven times per ROW and every one of its "
+                + "occurrences is inside the build loop, so naming it pins the Begin above the "
+                + "loop - which no other fragment here does, the loop having no service call in "
+                + "it at all. That is rule 1 read strictly: operation-scale local work, and the "
+                + "scale is the result set. JS.InvokeVoidAsync( is the closing pin, the base64 "
+                + "push over the SignalR circuit, and the Complete sits below it - which is this "
+                + "page's own order on DownloadSelectedDetails and the order "
+                + "MessageTraceReports.Download had to be corrected to. The transfer MECHANISM "
+                + "is deliberately untouched: docs/DownloadMemoryRetention-Plan.md is a DRAFT. "
+                + "The empty guard returns ABOVE the Begin. Unknown rather than "
+                + "Items(response.Results.Count) although the count is known, for the same "
+                + "reason the yield is needed: nothing between the Begin and the Complete can "
+                + "Report, so a determinate bar would sit at 0% and read as hung. The Complete "
+                + "reads filename, a local"),
         ],
         Exempt =
         [

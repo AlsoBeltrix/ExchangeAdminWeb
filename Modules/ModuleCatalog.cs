@@ -449,7 +449,9 @@ public sealed class ModuleCatalog
             // 1.5.5: the Downloadable Reports sub-page completes its activity below the browser
             // transfer instead of on the line after the disk read, so the frame no longer reads
             // finished while the whole export is still being pushed over the circuit.
-            Version = "1.5.5",
+            // 1.5.6: the first-paint operator-address lookup and the trace CSV export report
+            // instead of running with the frame idle (docs/ProgressCoverage-Plan.md S5).
+            Version = "1.5.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

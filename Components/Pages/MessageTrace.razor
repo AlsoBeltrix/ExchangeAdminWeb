@@ -676,10 +676,38 @@
 
         emailResolveStarted = true;
 
+        // The activity opens BELOW the latch, not above the guard, and that is the whole reason
+        // this method can carry one at all: OnAfterRenderAsync runs after every render, so a
+        // Begin above the gate would flash a bar on each one. Below the latch it runs exactly
+        // once per circuit, which is the AdminSettings.OnAfterRenderAsync shape.
+        //
+        // No await Task.Yield() is needed or wanted here. The resolve itself goes async - the
+        // resolver puts the blocking directory call on Task.Run - so the renderer is free the
+        // moment it is awaited, and the render StateHasChanged queues from the Begin is
+        // dispatched then. Raising it from inside OnAfterRenderAsync re-enters this method, and
+        // the latch above is what makes that one wasted comparison rather than a loop.
+        using var activity = Progress.Begin(
+            "Message Trace", "Looking up your address in the directory", ActivitySize.Unknown);
+
         // Deferred off the render path: the AD call sits behind a process-wide lock that can
         // wait up to 30 seconds, and this page must not stall on it to populate a text box
         // (plan "Asynchronous by construction").
         userEmail = await ResolveOperatorEmailAsync();
+
+        // Completes with success TRUE even when nothing came back, which is the reviewer's
+        // 2026-10-08 ruling: the question is "did the work finish", not "did the operator get
+        // what they wanted". OperatorEmailResolver is fail-soft by contract and returns null for
+        // an absent SID claim, a user it could not find and a directory that was down alike, so
+        // the page CANNOT tell a refusal from an empty answer - reporting false would be
+        // guessing. The message says which of the two the operator got.
+        //
+        // Reads userEmail, a field, and that was checked rather than assumed: the only other
+        // writer is ResolveOperatorEmailCoreAsync, the callee this line is awaiting.
+        activity.Complete(
+            true,
+            string.IsNullOrEmpty(userEmail)
+                ? "The directory returned no address for you."
+                : $"Notifications will go to {userEmail}.");
 
         // Pre-fill only, and only while the operator has not touched the box - a late-arriving
         // resolution must never overwrite something they typed (plan D4(a) + F2).
@@ -913,10 +941,29 @@
     ///
     /// Columns match the table's, in the same order, so the file is the page extended rather than
     /// a second differently-shaped artifact.
+    ///
+    /// That unboundedness is exactly why it reports. The table renders 50 rows; this walks every
+    /// row the search found, escapes thirteen columns of each into a StringBuilder, then
+    /// base64-encodes the whole file and pushes it over the circuit - and until now it did all of
+    /// that with the frame reading Idle.
+    ///
+    /// The yield is load-bearing rather than tidy: the build is synchronous end to end and the
+    /// only await is the transfer AFTER it, so without a flush point the bar would not appear
+    /// until the expensive part was already over. ActivitySize stays Unknown although the row
+    /// count is known at the Begin, because nothing between the Begin and the Complete can
+    /// Report - a determinate bar would sit at 0% for the whole export and read as hung. The
+    /// count goes in the label instead, where it says the same thing honestly.
     /// </remarks>
     private async Task ExportCsv()
     {
         if (response?.Results == null || !response.Results.Any()) return;
+
+        using var activity = Progress.Begin(
+            "Message Trace",
+            $"Exporting {response.Results.Count:N0} row(s) to CSV",
+            ActivitySize.Unknown);
+
+        await Task.Yield();
 
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("Origin Date-Time,Backend,Sender Address,Recipient Address,Message Subject,Status,Event ID,Server,Message ID,Message Size,Sender IP,Recipient IP,Message Trace ID");
@@ -955,6 +1002,14 @@
         var base64 = Convert.ToBase64String(bytes);
         var filename = $"MessageTrace_{startDate:yyyyMMdd}-{endDate:yyyyMMdd}.csv";
         await JS.InvokeVoidAsync("downloadFile", filename, "text/csv", base64);
+
+        // Completed BELOW the transfer, which is this page's own order on
+        // DownloadSelectedDetails and the one MessageTraceReports.Download had to be moved to.
+        // The transfer MECHANISM is deliberately untouched:
+        // docs/DownloadMemoryRetention-Plan.md proposes replacing it with streaming and is a
+        // DRAFT. Reads filename, a local, so nothing another handler owns is read after an
+        // await.
+        activity.Complete(true, $"{filename} sent to your browser.");
     }
 
     private async Task ToggleDetail(int index, MessageTraceResult msg)

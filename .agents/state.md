@@ -29,8 +29,12 @@ config-deletion fix and queue item 18 all exist only in this repository.
 reads. S4 is complete (`AdminSettings` `4e84482`, `AdminBulkJobs` `6a561df`; the plan's third S4
 page, `ExchangeOnlineConfig`, was already closed by S2), and no page under `Components/Pages`
 injects `IActivityProgress` nowhere any more. **S5's first batch is landing now** -
-`AdminEventLog` (7 gaps), `Comms10k` (3) and `MessageTrace` (2), one commit per page; the record
-is below. The live gap list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not any document.
+`AdminEventLog` (7 gaps), `Comms10k` (3) and `MessageTrace` (2), one commit per page, all three
+landed; the record is below. **`KnownGap` count 29 -> 17**, and every one of the 17 remaining is
+a silent READ. The live gap list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not any
+document. **The next batch is where the CSV-export shape concentrates**: nine of the seventeen
+are that one shape, and `AdminEventLog.DownloadCsv` and `MessageTrace.ExportCsv` are now the two
+worked examples for it.
 
 **This file is 2,600+ lines, far over the repo-guidance target.** Run `playbook drift` before
 adding to it.
@@ -155,6 +159,37 @@ defect, and this is the FIRST of the seven pages carrying the silent CSV-export 
 fixed), and the delegation probe on `OnDateRangeChanged` (the rule carrying four of the seven
 entries). The hoist is the `Begin`-relocated form, not the covered-call form: every named call
 on this page is inside a loop or a `try` and moving one drags its declarations.
+
+**S5, third fix: `MessageTrace` reports its first-paint directory lookup and its CSV export.**
+`MessageTrace` `1.5.5` -> `1.5.6`; base app unchanged at `2.27.1`. Suite 3674, unchanged.
+**`OnAfterRenderAsync` is the only operation in this batch the operator never asked for** - it
+runs on its own, once per circuit, behind a lock `OperatorEmailResolver`'s own comment records
+as able to hold 30 seconds. Its `Begin` sits BELOW the `emailResolveStarted` latch, not above
+the guard, because `OnAfterRenderAsync` runs after EVERY render and a `Begin` above the gate
+would flash a bar on each one; the `Begin`'s own `StateHasChanged` re-enters the method and the
+latch turns that into one wasted comparison. The covered call is named through the
+expression-bodied task cache `ResolveOperatorEmailAsync(`, the `AdminBulkJobs.RefreshJobs`
+indirection.
+
+**It is the hardest case yet for the reviewer's success ruling and it completes TRUE.**
+`OperatorEmailResolver` is fail-soft by contract and returns null alike for an absent SID claim,
+a user it could not find, and a directory that was down - so the page genuinely cannot tell a
+refusal from an empty answer, and reporting `false` would be guessing. The message says which of
+the two the operator got.
+
+**`ExportCsv` pins its `Begin` with `CsvEscape(`, a LOCAL pure helper, and that is deliberate.**
+The build loop contains no service call at all, so nothing else on the page could hold the
+`Begin` above it; `CsvEscape` runs eleven times per ROW over the whole unbounded result set (the
+table renders 50; the export carries everything, by owner direction 2026-08-06), which is rule 1
+read strictly. `JS.InvokeVoidAsync(` closes, with the `Complete` below it - this page's own order
+on `DownloadSelectedDetails`.
+
+**Three probes, each ALONE, each on the FULL suite, every one 1 failed / 3673 passed,
+single-fault:** strip of `OnAfterRenderAsync`; the `Begin` relocated below the CSV build loop,
+which fires condition 2 on `CsvEscape(` and is the probe that pin exists to earn; early
+`Complete` on `ExportCsv`. **The strip is also the clearest `GlobalProgressWiringTests`
+demonstration in the batch** - `MessageTrace` IS in its hand-maintained adopted list, and
+removing one of its five activities left that guard GREEN because it is per-FILE.
 
 **S5, second fix: `Comms10k` reports its three silent reads.** `LoadPreview`, `DownloadFull`
 and `HandleFileUpload`, one activity each. `Comms10k` `1.3.2` -> `1.3.3`; base app unchanged at
