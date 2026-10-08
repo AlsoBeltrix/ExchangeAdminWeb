@@ -156,6 +156,31 @@ fixed), and the delegation probe on `OnDateRangeChanged` (the rule carrying four
 entries). The hoist is the `Begin`-relocated form, not the covered-call form: every named call
 on this page is inside a loop or a `try` and moving one drags its declarations.
 
+**S5, second fix: `Comms10k` reports its three silent reads.** `LoadPreview`, `DownloadFull`
+and `HandleFileUpload`, one activity each. `Comms10k` `1.3.2` -> `1.3.3`; base app unchanged at
+`2.27.1`. Suite 3674, unchanged. `DownloadFull` names THREE calls because the cost is in three
+consecutive places on the same ten thousand people - the unlimited AD resolve, the in-memory
+CSV build, the base64 push - and the `Complete` sits below the transfer,
+`MessageTraceReports.Download`'s order. `LoadPreview`'s `Complete` reads a LOCAL rather than
+the `preview` field, one extra line that removes the post-await live-read question instead of
+answering it.
+
+**`HandleFileUpload` is the structurally distinct one and it needed NO yield.** Its single
+named fragment, `csv.ReadAsync(`, occurs TWICE - the header read and the row loop - so one
+string holds both ends of the window, the tidiest shape this stream has found for a read loop.
+And unlike the three `AdminEventLog` handlers it is not synchronous: `InputFile`'s stream is
+pulled from the browser over the circuit, so the renderer is free the moment the first read is
+awaited and the bar paints without help. Its `Complete` reads `parsedEmails`, a FIELD, and that
+was checked rather than assumed - the resets at the top of the handler run before the first
+await and un-render both controls that could touch it.
+
+**Three probes, each ALONE, each on the FULL suite, every one 1 failed / 3673 passed,
+single-fault.** Strip of `DownloadFull` (the slowest, three named calls); the `Begin` relocated
+below the FIRST `csv.ReadAsync()` on `HandleFileUpload`, which fires condition 2 on that
+occurrence alone and is the demonstration that the two-occurrence pin is real; early `Complete`
+on `LoadPreview`. No re-anchor owed - ClickGate tier 3, unconverted, and all three
+`ProgressRegistry` pointers were the gaps this deletes.
+
 **S4, second and last fix: `AdminBulkJobs` reports its job-store reads.** The page injected
 `IActivityProgress` nowhere and, like `AdminSettings`, is absent from
 `GlobalProgressWiringTests`' hand-maintained adopted list, so nothing looked at it.

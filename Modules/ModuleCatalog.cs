@@ -658,7 +658,9 @@ public sealed class ModuleCatalog
             //   operation, never per run.
             // 1.3.2: ValidateEmails' activity opens above the try instead of below the optional
             // ticket check (docs/ProgressCoverage-Plan.md S3).
-            Version = "1.3.2",
+            // 1.3.3: the three silent reads report - the member preview, the full export, and
+            // the CSV upload parse (docs/ProgressCoverage-Plan.md S5).
+            Version = "1.3.3",
             MainPermission = new(
                 "Access",
                 "Comms10k",

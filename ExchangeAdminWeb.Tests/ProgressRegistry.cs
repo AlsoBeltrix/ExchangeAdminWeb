@@ -886,15 +886,55 @@ public static class ProgressRegistry
                 + "line above and read on the line below with no await between them, so no other "
                 + "handler can interleave and null it the way MfaReset's dismiss button and "
                 + "IntuneDevices' Search button can"),
-        ],
-        KnownGaps =
-        [
-            new("LoadPreview", 202, "SILENT, READ. AD credential fetch plus the group query"),
-            new("DownloadFull", 211,
-                "SILENT, READ. Resolves the full 10,000-member AD group and builds a CSV"),
-            new("HandleFileUpload", 234,
-                "SILENT, READ. Parses a browser upload; the malformed-upload guard allows roughly "
-                + "half a million rows"),
+            new("LoadPreview", "Comms10kService.GetMembersAsync(",
+                "not a cheap read despite the limit: 25 - GetMembersAsync fetches the module's "
+                + "AD credential from Delinea over HTTP before it queries the group, which is "
+                + "the same preamble that makes ValidateEmails slow above. ONE call named, "
+                + "because it is the whole of the handler. The Begin sits ABOVE the existing "
+                + "isLoading raise so the yield already on this page flushes both in one frame; "
+                + "no second flush point was added. The Complete reads a LOCAL rather than the "
+                + "preview field - one extra line, and it removes the post-await live-read "
+                + "question instead of answering it. A thrown read is a genuine failure and "
+                + "falls out of scope to the dispose fallback, which is what ValidateEmails on "
+                + "this same page already does"),
+            new("DownloadFull",
+                [
+                    "Comms10kService.GetMembersAsync(",
+                    "csvWriter.WriteRecords(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the page's slowest read. THREE calls named because the cost is in three "
+                + "consecutive places and each is operation-scale on the same ten thousand "
+                + "people: the unlimited GetMembersAsync resolves every member of the broadcast "
+                + "group out of AD, WriteRecords builds the whole CSV from them in memory, and "
+                + "JS.InvokeVoidAsync base64-encodes the file and pushes it over the SignalR "
+                + "circuit. The middle one is LOCAL and is named under rule 1 as the S3 "
+                + "reviewer settled it on 2026-10-08. The Complete sits BELOW the transfer, "
+                + "which is MessageTraceReports.Download's settled order - the transfer is the "
+                + "last thing the operator waits on - with only a local JSONL audit beneath it. "
+                + "The transfer MECHANISM is deliberately untouched: "
+                + "docs/DownloadMemoryRetention-Plan.md proposes replacing it with streaming and "
+                + "is a DRAFT, not approved. The Complete reads full, a local"),
+            new("HandleFileUpload", "csv.ReadAsync(",
+                "reported because the cost is the FILE rather than a round trip: the "
+                + "malformed-upload guard admits roughly half a million rows and every one of "
+                + "them is pulled off the browser stream over the circuit, parsed, trimmed and "
+                + "de-duplicated on the server before anything is shown. ONE fragment is named "
+                + "and it is pinned at BOTH its occurrences - the header read and the row loop - "
+                + "so one string holds both ends of the window, which is the tidiest shape this "
+                + "work stream has found for a read loop. NO await Task.Yield() here, and that "
+                + "is a decision rather than an omission: the three handlers fixed on "
+                + "AdminEventLog needed one because they were synchronous end to end, whereas "
+                + "InputFile's stream is pulled from the browser over the circuit, so the "
+                + "renderer is free the moment the first csv.ReadAsync is awaited and the bar "
+                + "paints without help. The Begin sits below the field resets, which are instant "
+                + "local assignments, so the first painted frame shows the cleared panel the new "
+                + "file deserves. The Complete reads parsedEmails, a FIELD, and that was checked "
+                + "rather than assumed: those same resets run before the first await and "
+                + "un-render both controls that could touch it - Validate needs "
+                + "parsedEmails.Count > 0 and Replace needs confirmPending - so nothing can "
+                + "interleave. A missing header column is a refusal and falls to the dispose "
+                + "fallback, as do both catches"),
         ],
         Exempt =
         [

@@ -199,17 +199,60 @@
         authChecked = true;
     }
 
+    /// <summary>
+    /// Loads the first 25 current members for the preview panel.
+    /// </summary>
+    /// <remarks>
+    /// The Begin sits ABOVE the existing isLoading raise so the one yield already on this page
+    /// flushes both - the bar and the disabled buttons arrive in the same frame, and no second
+    /// flush point is needed. GetMembersAsync is not a cheap read: it fetches the module's AD
+    /// credential from Delinea over HTTP before it queries the group.
+    ///
+    /// Completed on the straight-line path, not in the finally, which closes with isLoading.
+    /// A thrown read is a genuine failure and falls out of scope to the dispose fallback, which
+    /// is the BlockedSenders.ConfirmUnblock shape and the same choice ValidateEmails made on
+    /// this page.
+    /// </remarks>
     private async Task LoadPreview()
     {
+        using var activity = Progress.Begin(
+            "Comms-10k", "Loading the current member list", ActivitySize.Unknown);
+
         isLoading = true;
         await Task.Yield();
-        try { preview = await Comms10kService.GetMembersAsync(limit: 25); }
+        try
+        {
+            var loaded = await Comms10kService.GetMembersAsync(limit: 25);
+            preview = loaded;
+
+            // Reads the local rather than the preview field, which costs one line and removes
+            // the post-await live-read question entirely instead of answering it.
+            activity.Complete(true, $"{loaded.TotalCount:N0} member(s) in the list.");
+        }
         catch (Exception ex) { result = new Comms10kUpdateResult { Success = false, Message = ex.Message }; }
         finally { isLoading = false; }
     }
 
+    /// <summary>
+    /// Exports the WHOLE membership, roughly ten thousand people, as a CSV download.
+    /// </summary>
+    /// <remarks>
+    /// The page's slowest read and the one most worth a bar: an unlimited GetMembersAsync
+    /// resolves every member of the broadcast group out of AD, the CSV is then built from all of
+    /// them in memory, and the whole file is base64-encoded and pushed to the browser over the
+    /// SignalR circuit.
+    ///
+    /// Completed BELOW the transfer rather than after the read, which is
+    /// MessageTraceReports.Download's settled order - the transfer is the last thing the
+    /// operator waits on. The audit beneath it is a local JSONL write. The transfer MECHANISM is
+    /// deliberately untouched: docs/DownloadMemoryRetention-Plan.md proposes replacing it with
+    /// streaming and is a DRAFT, not approved.
+    /// </remarks>
     private async Task DownloadFull()
     {
+        using var activity = Progress.Begin(
+            "Comms-10k", "Exporting the full member list", ActivitySize.Unknown);
+
         isLoading = true;
         await Task.Yield();
         try
@@ -222,6 +265,9 @@
             var base64 = Convert.ToBase64String(bytes);
             await JS.InvokeVoidAsync("downloadFile", $"comms10k_members_{DateTime.Now:yyyyMMdd}.csv", "text/csv", base64);
             Audit.LogLookupAction(currentUser, clientIpAddress, "Comms10k_Export", full.GroupName, true);
+
+            // Reads full, a local, so nothing another handler owns is read after an await.
+            activity.Complete(true, $"{full.Members.Count:N0} member(s) exported.");
         }
         catch (Exception ex) { result = new Comms10kUpdateResult { Success = false, Message = ex.Message }; }
         finally { isLoading = false; }
@@ -231,6 +277,26 @@
     // job reads "the membership was replaced" with no way to tell with what.
     private string? uploadedFileName;
 
+    /// <summary>
+    /// Parses the uploaded CSV into the address list the Validate step then resolves.
+    /// </summary>
+    /// <remarks>
+    /// Reported because the cost is the FILE, not a round trip: the upload guard admits roughly
+    /// half a million rows, and every one of them is read off the browser stream over the
+    /// circuit, parsed, trimmed and de-duplicated here on the server before anything is shown.
+    /// That is operation-scale work under the rule the S3 reviewer settled on 2026-10-08, the
+    /// same ground AdminBulkJobs.ToggleDetails and MessageTraceReports.Download stand on.
+    ///
+    /// NO await Task.Yield() HERE, and that is a decision rather than an omission. The three
+    /// handlers fixed on AdminEventLog needed one because they were synchronous end to end;
+    /// this one's first read genuinely goes async - InputFile's stream is pulled from the
+    /// browser over the circuit, so the renderer is free the moment csv.ReadAsync is awaited and
+    /// the bar paints without help.
+    ///
+    /// The Begin sits below the field resets, which are instant local assignments, so the frame
+    /// the first await buys shows the cleared panel the new file deserves rather than the
+    /// previous upload's banner.
+    /// </remarks>
     private async Task HandleFileUpload(InputFileChangeEventArgs e)
     {
         uploadedFileName = e.File?.Name;
@@ -238,6 +304,9 @@
         resolveResult = null;
         confirmPending = false;
         result = null;
+
+        using var activity = Progress.Begin(
+            "Comms-10k", "Reading the uploaded address list", ActivitySize.Unknown);
 
         try
         {
@@ -273,6 +342,14 @@
                 if (!string.IsNullOrWhiteSpace(val) && val.Contains('@') && seen.Add(val))
                     parsedEmails.Add(val);
             }
+
+            // Reads parsedEmails, a field, and that IS safe here rather than assumed to be: the
+            // resets at the top of this handler run before the first await and they un-render
+            // both controls that could touch it - Validate needs parsedEmails.Count > 0 and
+            // Replace needs confirmPending - so no other handler can reach it while this one is
+            // suspended on the stream. A missing header column and both catches are refusals
+            // and fall out of scope to the dispose fallback.
+            activity.Complete(true, $"{parsedEmails.Count:N0} address(es) parsed.");
         }
         catch (IOException ex) when (ex.Message.Contains("exceeds the maximum", StringComparison.OrdinalIgnoreCase))
         {
