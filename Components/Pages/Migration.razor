@@ -2751,6 +2751,18 @@
 
         isDownloadingCsv = true;
 
+        // SNAPSHOT, and the review finding prog-9 sweep forced it: 430e929 claimed this page
+        // needed none because isDownloadingCsv is a member of IsBusy and is raised above the
+        // yield, and that claim was checked rather than re-asserted. It does not hold for the
+        // mailbox selection. The two tick boxes that write selectedMailboxes - the select-all at
+        // :959 and the per-row box at :1235 - carry NO disabled="@IsBusy", so a click already
+        // queued when the operator hits the download runs on the dispatcher during the yield and
+        // this handler would package a set the label above has already counted differently.
+        // expandedBatch goes with it: OnParametersSetAsync reaches SyncOpenBatchFromUrl on any
+        // navigation, which is not IsBusy-gated either, and a null there would throw below.
+        var batch = expandedBatch;
+        var mailboxes = selectedMailboxes.ToList();
+
         // ActivitySize.Unknown although the mailbox count is known here: nothing between the Begin
         // and the Complete can Report - the zip is assembled inside one synchronous call - so a
         // determinate bar would sit at 0% for the whole build and read as hung. The count goes in
@@ -2758,21 +2770,18 @@
         // settled choice.
         using var activity = Progress.Begin(
             "Exchange Migration",
-            $"Packaging {selectedMailboxes.Count:N0} report(s) for download",
+            $"Packaging {mailboxes.Count:N0} report(s) for download",
             ActivitySize.Unknown);
 
         // Load-bearing. The zip build and the base64 encode are synchronous and the only await
         // this method had was the interop transfer AFTER both, so without a flush point the first
         // paint would not arrive until the expensive part was over - the vacuous open-and-close
-        // ExchangeOnlineConfig.SaveExoConfig recorded. isDownloadingCsv is a member of this page's
-        // IsBusy, and it is raised ABOVE the yield, so the page is closed for the whole window and
-        // nothing else can edit the fields read below it.
+        // ExchangeOnlineConfig.SaveExoConfig recorded.
         await Task.Yield();
 
         try
         {
-            var batch = expandedBatch;
-            var bytes = ReportStore.BuildExportZip(batch, selectedMailboxes, DateTime.UtcNow);
+            var bytes = ReportStore.BuildExportZip(batch, mailboxes, DateTime.UtcNow);
 
             // THE EARLY RETURN BECAME AN IF/ELSE AND THE SCANNER FORCED IT, not tidiness.
             // ProgressScan.ActivitiesIn takes the FIRST activity.Complete( after the Begin as the
@@ -2806,7 +2815,7 @@
                     // is a second, distinct read - migration diagnostics leaving for a
                     // workstation.
                     Audit.LogModuleAction(currentUser, clientIpAddress, "DownloadUserReports",
-                        "Migration", $"{selectedMailboxes.Count} mailbox(es) in {batch}", true);
+                        "Migration", $"{mailboxes.Count} mailbox(es) in {batch}", true);
                 }
                 catch (Exception ex)
                 {
@@ -4060,13 +4069,25 @@
         // cannot leave the page dead.
         isDownloadingCsv = true;
 
+        // SNAPSHOT, and this one is a NULL DEREFERENCE rather than a mismatch (review finding
+        // prog-9 sweep). 430e929 said this page needed no capture because isDownloadingCsv is a
+        // member of IsBusy; the Close button at :1210 is the counter-example, because it carries
+        // no disabled="@IsBusy" and DismissReportModal sets reportUser and userReport to null.
+        // A Close already queued when the operator hits Export runs on the dispatcher during the
+        // yield, and Encoding.UTF8.GetBytes(null) throws where the guard above proved non-null.
+        // reportFetchedAtUtc is captured with them because DismissReportModal clears all three
+        // together and the filename would otherwise stamp a different moment than the report.
+        var user = reportUser;
+        var reportText = userReport;
+        var fetchedAtUtc = reportFetchedAtUtc;
+
         // ActivitySize.Unknown: nothing between the Begin and the Complete can Report, and here
         // there is not even a row count to put in the label - a migration report is one text
         // document of whatever size the service returned, which R24 notes can be tens of
         // thousands of lines. The address is what the operator recognises, so that is the label.
         using var activity = Progress.Begin(
             "Exchange Migration",
-            $"Exporting the report for {reportUser}",
+            $"Exporting the report for {user}",
             ActivitySize.Unknown);
 
         // Load-bearing: the UTF-8 encode and the base64 encode both walk the whole report and are
@@ -4076,14 +4097,14 @@
 
         try
         {
-            var bytes = System.Text.Encoding.UTF8.GetBytes(userReport);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(reportText);
             var base64 = Convert.ToBase64String(bytes);
 
             // The address is operator-supplied text and this becomes a filename, so everything
             // outside a known-safe set is replaced rather than trusted.
-            var safeName = new string(reportUser.Select(c =>
+            var safeName = new string(user.Select(c =>
                 char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_').ToArray());
-            var timestamp = (reportFetchedAtUtc ?? DateTime.UtcNow).ToLocalTime().ToString("yyyyMMdd_HHmmss");
+            var timestamp = (fetchedAtUtc ?? DateTime.UtcNow).ToLocalTime().ToString("yyyyMMdd_HHmmss");
 
             await JS.InvokeVoidAsync(
                 "downloadFile", $"MigrationReport_{safeName}_{timestamp}.txt", "text/plain", base64);
@@ -4091,7 +4112,7 @@
             try
             {
                 Audit.LogModuleAction(currentUser, clientIpAddress, "ExportUserReport", "Migration",
-                    reportUser, true);
+                    user, true);
             }
             catch (Exception auditEx)
             {

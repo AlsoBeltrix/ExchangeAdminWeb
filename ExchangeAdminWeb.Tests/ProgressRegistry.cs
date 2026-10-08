@@ -1585,7 +1585,12 @@ public static class ProgressRegistry
                 + "Items(response.Results.Count) although the count is known, for the same "
                 + "reason the yield is needed: nothing between the Begin and the Complete can "
                 + "Report, so a determinate bar would sit at 0% and read as hung. The Complete "
-                + "reads filename, a local"),
+                + "reads filename, a local. SNAPSHOT ADDED LATER, by review finding prog-9: this "
+                + "handler never raises isLoading, so the Run Trace button stays live for the "
+                + "whole export and RunTrace nulls response on its own first synchronous lines - "
+                + "the yield this shape requires turned a guarded read into an unguarded one and "
+                + "the export threw. rows, rangeStart and rangeEnd are captured above the Begin, "
+                + "which is BitLockerRecovery.DownloadCsvAsync's form"),
         ],
         Exempt =
         [
@@ -1759,9 +1764,14 @@ public static class ProgressRegistry
                 + "completes FALSE with the banner's own words rather than falling out of scope "
                 + "to the dispose fallback, whose 'This did not finish.' would be wrong about "
                 + "work that finished and said no. That is the reviewer's 2026-10-08 success "
-                + "ruling applied to its easy half. No snapshot was added: isDownloadingCsv is a "
-                + "member of this page's IsBusy and is raised ABOVE the yield, so the page is "
-                + "shut for the whole window"),
+                + "ruling applied to its easy half. SNAPSHOT ADDED LATER, by the review finding "
+                + "prog-9 sweep, which checked this page's 'isDownloadingCsv is in IsBusy so the "
+                + "page is shut' claim rather than re-asserting it and found it false here: the "
+                + "select-all tick box at Migration.razor:959 and the per-row one at :1235 carry "
+                + "no disabled=\"@IsBusy\" and write selectedMailboxes, and OnParametersSetAsync "
+                + "reaches SyncOpenBatchFromUrl, which writes expandedBatch, on any navigation. "
+                + "Both are captured above the Begin, so the zip, the label and the audit are "
+                + "the same set"),
             new("DownloadCsvAsync",
                 [
                     "GetSortedBatches(",
@@ -1777,7 +1787,13 @@ public static class ProgressRegistry
                 + "the closing pin with the Complete below it. Unknown rather than "
                 + "Items(rows.Count) for the usual reason: nothing between the Begin and the "
                 + "Complete can Report. The transfer MECHANISM is untouched: "
-                + "docs/DownloadMemoryRetention-Plan.md is a DRAFT"),
+                + "docs/DownloadMemoryRetention-Plan.md is a DRAFT. The ONE handler on this page "
+                + "the prog-9 sweep cleared without a capture, and the clearance was checked "
+                + "rather than assumed: every input GetSortedBatches( reads is shut while this "
+                + "runs - the filter box at Migration.razor:518, the sort select at :529 and the "
+                + "direction button at :539 all carry disabled=\"@IsBusy\", and migrationBatches "
+                + "is written only by LoadBatchList, which raises isLoadingStatus above its own "
+                + "first await"),
             new("ExportOpenReportAsync",
                 [
                     "System.Text.Encoding.UTF8.GetBytes(",
@@ -1793,7 +1809,13 @@ public static class ProgressRegistry
                 + "the Complete below. The Complete's message is a LITERAL and reads nothing at "
                 + "all - the label above already names the address, and a literal cannot "
                 + "disagree with a field another handler owns. The transfer MECHANISM is "
-                + "untouched: docs/DownloadMemoryRetention-Plan.md is a DRAFT"),
+                + "untouched: docs/DownloadMemoryRetention-Plan.md is a DRAFT. SNAPSHOT ADDED "
+                + "LATER, by the review finding prog-9 sweep, and this one is a NULL "
+                + "DEREFERENCE rather than a mismatch: the report pane's Close button at "
+                + "Migration.razor:1210 carries no disabled=\"@IsBusy\" and DismissReportModal "
+                + "nulls reportUser, userReport and reportFetchedAtUtc together, so a Close "
+                + "processed during the yield made Encoding.UTF8.GetBytes( throw where the "
+                + "guard above had proved non-null. All three are captured above the Begin"),
         ],
         Exempt =
         [

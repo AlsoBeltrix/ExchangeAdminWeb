@@ -379,7 +379,12 @@ public sealed class ModuleCatalog
             // drawn - the box read ticked, the right pane did not list the batch and the action
             // bar counted one fewer. The window opened in S3, when ticking down to one batch
             // started fetching that batch's mailboxes and so held IsBusy for a round trip.
-            Version = "1.22.7",
+            // 1.22.8: the report zip and the single-report export snapshot what they are
+            // exporting. The progress yield added in 1.22.7 is a suspension point between the
+            // guard and the work, and the report pane's Close button and the two mailbox tick
+            // boxes are deliberately ungated, so a click landing in that window could null the
+            // report under the encode (review finding prog-9).
+            Version = "1.22.8",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -451,7 +456,10 @@ public sealed class ModuleCatalog
             // finished while the whole export is still being pushed over the circuit.
             // 1.5.6: the first-paint operator-address lookup and the trace CSV export report
             // instead of running with the frame idle (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.5.6",
+            // 1.5.7: the CSV export snapshots the result set and the date range. The progress
+            // yield added in 1.5.6 let a trace started across it null the response under the
+            // export loop, which threw (review finding prog-9).
+            Version = "1.5.7",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
