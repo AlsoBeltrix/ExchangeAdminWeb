@@ -53,9 +53,59 @@ worst finding - landed at `ed7754f`; the second, `OutOfOffice.SetOof`, at `2d93c
 at `94361fd`; the fifth, `BlockedSenders.ConfirmUnblock` - the one the operator actually
 reported - at `5a428c2`; the sixth, `ExchangeOnlineConfig.SaveExoConfig`, in the commit carrying
 this record. **S2 IS COMPLETE: all six silent writes report.** S3, the nine partials, is under
-way, one commit each: the first, `IntuneDevices.ExecuteActionAsync`, is in the commit carrying
-this record. The live list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this file.
-Queue item 18 is DONE and its record follows below.
+way, one commit each: the first, `IntuneDevices.ExecuteActionAsync`, landed at `b95bd5d`; the
+second, `RiskyUsers.ExecuteActionAsync`, is in the commit carrying this record. **Seven of the
+nine partials remain.** The live list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this
+file. Queue item 18 is DONE and its record follows below.
+
+**S3, second fix: `RiskyUsers.ExecuteActionAsync` now completes below the administrator email.**
+`RiskyUsers` `1.5.2` -> `1.5.3`; base app unchanged at `2.27.1` (module-scoped). Registry: one
+entry `KnownGap` -> `Reports`. Suite 3674, unchanged. The quiet twin of the fix above: the
+identical ordering with no comment promising otherwise, which made it the quieter defect and
+not the smaller one - the operator watches the same idle bar either way. The `Begin` already
+dominated everything, so only the closing end moved.
+
+**FIVE calls named, every remote call in the handler's own body.**
+`ServiceNow.ValidateTicketAsync(` is the opening pin;
+`ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(` is the 10-15 second Exchange round
+trip and on THIS module it is the normal case rather than the exception, because a risky user is
+a cloud identity so the AD half routinely misses and the fallback routinely runs;
+`ProtectedPrincipalService.CheckAsync(` is pinned at both branches and is remote only when
+protected GROUP rules are configured; `RiskyUsersService.ApplyActionAsync(` is the Graph write,
+called directly rather than through a per-action switch; `Email.SendAdminNotificationAsync(` is
+the closing pin. Auth state and `AuthorizeAsync` read and NOT named.
+
+**`Complete` reads a LOCAL, and the race is NOT a dismiss button - it is the page's own
+refresh.** The "Search" button carries `disabled="@isLoading"` only and `ExecuteActionAsync`
+never raises `isLoading`, so `LoadRiskyUsersAsync` - which calls `rowOutcomes.Clear()` - is
+reachable while this handler is suspended at the email await. A read taken afterwards would
+answer null and report a failure with no message. **Worth carrying forward: the house check is
+"does a control null the field the Complete reads", and on this page the answer came from a
+REFRESH path, not from a `() => x = null` dismiss. Grepping for the dismiss shape alone would
+have missed it.**
+
+**No re-anchor owed.** `ClickGateRegistry` carries the page name-keyed as "tier 3, not approved;
+has a partial ActionsDisabled already", so it is not line-pinned, and the page's only line-keyed
+`ProgressRegistry` pointer was the gap this fix deletes.
+
+**One real test failure on the way, and it is a finding rather than a slip.**
+`RiskyUsersPageTests.RiskyUsers_ExecuteAction_NotifiesAdminsFromFinallyWrappedAgainstSendFailure`
+reads `body.LastIndexOf("finally")` over the RAW method text and asserts the send comes after
+it. The first draft of the new trailing comment used the word "finally" BELOW the send, which
+moved that anchor past the send and failed the test. The comment was reworded. **That guard is
+anchored on a word that can appear in prose, so any future comment added below an admin send on
+these pages can break it without the code changing** - noted, not fixed; it is outside this
+slice.
+
+**Three probes, each applied ALONE, each 1 failed / 24 passed and each isolating one test.**
+Strip failed condition 2, "it begins no activity at all", naming all five calls at six
+occurrences. Early `Complete` (above the `if (notifyAdmins)` block) failed condition 3 naming
+only `Email.SendAdminNotificationAsync(`. **The hoist is the STRONG form** by the same
+opening-pin route as `b95bd5d`: the covered call
+`var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);` itself moved above the
+method-scope `Begin`, line count unchanged at 1185, no preamble dragged because `ticket` is
+bound above the `Begin`; it failed condition 2 with "its earliest Begin is after it", naming
+only that call. Page restored byte-identical by `md5sum` and `touch`ed.
 
 **S3, first fix: `IntuneDevices.ExecuteActionAsync` now completes below BOTH administrator
 emails.** `IntuneDevices` `1.4.2` -> `1.4.3`; base app unchanged at `2.27.1` (module-scoped).

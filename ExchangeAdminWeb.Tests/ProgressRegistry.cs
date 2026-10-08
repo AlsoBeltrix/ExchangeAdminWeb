@@ -1267,13 +1267,43 @@ public static class ProgressRegistry
             new("LookupUserAsync", "RiskyUsersService.LookupAsync"),
             new("LoadRiskyUsersAsync", "RiskyUsersService.GetRiskyUsersAsync"),
             new("ToggleHistoryAsync", "RiskyUsersService.GetHistoryAsync"),
-        ],
-        KnownGaps =
-        [
-            new("ExecuteActionAsync", 816,
-                "PARTIAL. The activity completes before the admin notification email, the same "
-                + "ordering IntuneDevices.ExecuteActionAsync has - here with no comment promising "
-                + "otherwise"),
+            new("ExecuteActionAsync",
+                [
+                    "ServiceNow.ValidateTicketAsync(",
+                    "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(",
+                    "ProtectedPrincipalService.CheckAsync(",
+                    "RiskyUsersService.ApplyActionAsync(",
+                    "Email.SendAdminNotificationAsync(",
+                ],
+                "the second of the survey's nine PARTIALs (docs/ProgressCoverage-Plan.md S3), and "
+                + "the quiet twin of IntuneDevices.ExecuteActionAsync: the identical ordering, "
+                + "the activity completing above the administrator notification, with no comment "
+                + "promising otherwise. The missing comment is why it is the quieter defect and "
+                + "not the smaller one - the operator watches the same idle bar either way. The "
+                + "Begin already dominated everything, opening above the try so the "
+                + "authorization, ticket and protection refusals are covered, so only the closing "
+                + "end moved. FIVE calls are named, every remote call in the handler's own body, "
+                + "each measured by reading the callee. ServiceNow.ValidateTicketAsync is the "
+                + "OPENING pin, an HttpClient GET against the ServiceNow table API and the first "
+                + "call that leaves the machine. ResolveWithExchangeFallbackAsync is the 10-15 "
+                + "second Exchange round trip, and on this module it is the normal case rather "
+                + "than the exception: a risky user is a CLOUD identity, so the AD half routinely "
+                + "misses and the Exchange fallback routinely runs. CheckAsync is named at BOTH "
+                + "its occurrences, the resolved and the directory-unresolved branch, and is "
+                + "remote CONDITIONALLY: it answers from the config store unless protected GROUP "
+                + "rules are configured, in which case CheckGroupMembershipAsync queries the "
+                + "directory. RiskyUsersService.ApplyActionAsync is the Graph write, the "
+                + "operation itself, and unlike IntuneDevices it is called directly rather than "
+                + "through a per-action switch. Email.SendAdminNotificationAsync is the CLOSING "
+                + "pin and sits in the handler's own body, so it is named directly. Two calls "
+                + "were read and deliberately NOT named: GetAuthenticationStateAsync and "
+                + "AuthorizationService.AuthorizeAsync decide from the Windows token's group SIDs "
+                + "plus a cached section-access read and make no remote hop. Complete reads a "
+                + "LOCAL captured on entry to the finally. The race here is not a dismiss button "
+                + "but the page's own refresh: the Search button carries disabled=\"@isLoading\" "
+                + "only and this handler never raises isLoading, so LoadRiskyUsersAsync - which "
+                + "calls rowOutcomes.Clear() - is reachable while the handler is suspended at the "
+                + "email await, and OutcomeFor(userId) read afterwards would answer null"),
         ],
         Exempt =
         [

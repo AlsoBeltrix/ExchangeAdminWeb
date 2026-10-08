@@ -1010,9 +1010,16 @@
             actionTicket = "";
 
             // The row outcome is the authority on what happened, including for refusals that
-            // never set `result`. Completing here rather than on the success path keeps the
-            // frame honest on every exit from this method.
-            activity.Complete(OutcomeFor(userId)?.Success ?? false, OutcomeFor(userId)?.Message);
+            // never set `result`. Captured here rather than read back at the Complete below:
+            // this runs synchronously on entry to the finally, so rowOutcomes still holds this
+            // action's verdict, and past the first await it may not. The "Search" button at the
+            // top of the page carries disabled="@isLoading" only, and ExecuteActionAsync never
+            // raises isLoading - so LoadRiskyUsersAsync, which calls rowOutcomes.Clear(), is
+            // reachable while this handler is suspended at the notification await, and a read
+            // taken afterwards would report a failure with no message. That is the post-await
+            // live-read trap BlockedSenders.ConfirmUnblock and ExchangeOnlineConfig.SaveExoConfig
+            // both record, reached here through a refresh rather than a dismiss control.
+            var completed = OutcomeFor(userId);
 
             // Mandatory admin notification on every real attempt (Constitution, Notifications),
             // in finally and wrapped so a send failure cannot change the reported result (AC15).
@@ -1037,6 +1044,16 @@
                     Logger.LogError(ex, "Failed to send Risky Users admin notification for {Upn}", upn);
                 }
             }
+
+            // Completed LAST, below the administrator notification, so the frame does not read
+            // Idle while an email is still in flight (docs/ProgressCoverage-Plan.md S3). Until
+            // that slice the Complete sat above the send, the same ordering
+            // IntuneDevices.ExecuteActionAsync had - there against a comment promising the
+            // opposite, here against no comment at all, which is why it was the quieter of the
+            // two defects and not the smaller one. Completing on this exit path rather than on
+            // the success path is unchanged: it keeps the frame honest on every return from
+            // this method, refusals included.
+            activity.Complete(completed?.Success ?? false, completed?.Message);
         }
     }
 

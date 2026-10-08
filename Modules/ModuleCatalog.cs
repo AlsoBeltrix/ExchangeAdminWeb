@@ -965,7 +965,10 @@ public sealed class ModuleCatalog
             // field is "Risk level", which made it look like a risk-level control with an
             // unexplained Refresh button bolted on. Each card now states its purpose, and
             // Refresh is "Search", which is what it does (queue item 19, owner 2026-09-29).
-            Version = "1.5.2",
+            // 1.5.3: a remediation's activity now completes below the administrator
+            // notification, so the bar no longer reads Idle while that email is still in flight
+            // (docs/ProgressCoverage-Plan.md S3).
+            Version = "1.5.3",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
