@@ -1319,7 +1319,9 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Administration,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.2",
+            // 1.0.3: the page reports to the status frame at all - the job-list reload and the
+            // per-row detail expansion were silent (docs/ProgressCoverage-Plan.md S4).
+            Version = "1.0.3",
             // FailClosed: this page aggregates EVERY module's jobs - submitters, tickets, targets
             // and per-row outcomes across section-access boundaries. That aggregation is exactly
             // what those boundaries exist to prevent leaking, so a failure to evaluate the policy

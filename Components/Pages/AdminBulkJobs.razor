@@ -9,6 +9,7 @@
 @inject IAuthorizationService AuthorizationService
 @inject ClientInfoService ClientInfo
 @inject ILogger<AdminBulkJobs> Logger
+@inject IActivityProgress Progress
 @implements IDisposable
 
 <PageTitle>Bulk Jobs</PageTitle>
@@ -178,19 +179,49 @@
             return;
 
         BulkJobs.JobChanged += OnJobChanged;
-        RefreshJobs();
+        await RefreshJobs();
         authChecked = true;
     }
 
     // The honest cross-module reads. Every module page uses the scoped variants; this is the one
     // surface entitled to the unfiltered view, which is why the policy is fail-closed.
-    private void RefreshJobs()
+    //
+    // Deliberately SILENT and deliberately separate from RefreshJobs, which reports. BulkJobService
+    // raises JobChanged once per ROW while a job executes - the RecordRow loop in
+    // Services/Jobs/BulkJobService.cs - so an activity opened here would open and close ten
+    // thousand times during a ten-thousand-row job and the status frame would strobe for the whole
+    // run, while GlobalProgress is already rendering that job for its submitter through
+    // BulkJobService's own channel. The operator-initiated refreshes go through RefreshJobs.
+    private void LoadJobsFromStore()
     {
         activeJobs = BulkJobs.GetActiveJobs();
         recentJobs = BulkJobs.GetRecentJobs();
 
         if (detailsJobId is not null)
             detailsRows = BulkJobs.GetRows(detailsJobId);
+    }
+
+    /// <summary>
+    /// The operator-initiated reload: the Refresh button, the initial load, and the view refresh
+    /// after a cancel or a remove.
+    /// </summary>
+    /// <remarks>
+    /// The yield is load-bearing rather than tidy, and it is the ExchangeOnlineConfig.SaveExoConfig
+    /// shape. Every read below it is synchronous, so without a flush point between the Begin and
+    /// the work the circuit cannot repaint and the activity would open and close inside one
+    /// uninterrupted stretch of renderer time - a bar that satisfies the registry and shows the
+    /// operator nothing, which is the vacuous outcome docs/ProgressCoverage-Plan.md exists to stop.
+    /// The intermediate render it buys shows the page exactly as it was, plus the bar.
+    /// </remarks>
+    private async Task RefreshJobs()
+    {
+        using var activity = Progress.Begin(
+            "Bulk Jobs", "Loading the bulk job list", ActivitySize.Unknown);
+
+        await Task.Yield();
+
+        LoadJobsFromStore();
+        activity.Complete(true, "The job list is up to date.");
     }
 
     private bool _disposed;
@@ -205,7 +236,7 @@
             {
                 if (_disposed)
                     return;
-                RefreshJobs();
+                LoadJobsFromStore();
                 StateHasChanged();
             });
         }
@@ -215,7 +246,28 @@
         }
     }
 
-    private void ToggleDetails(string jobId)
+    /// <summary>
+    /// Expands or collapses one job's per-row detail.
+    /// </summary>
+    /// <remarks>
+    /// THE ACTIVITY HERE IS HONEST REPORTING OF A PROBLEM THAT SHOULD NOT EXIST, and saying so is
+    /// the point rather than an apology. BulkJobRepository.GetRows has no LIMIT, so expanding a
+    /// 10,000-row job materialises every row and blocks the render thread while it does. That
+    /// missing LIMIT is a separate defect - docs/BoundedJobQueries-Plan.md, step 2 of
+    /// docs/ProductionMemory-Plan.md - and it is NOT approved and NOT fixed here. A bar on a
+    /// page-deadening read does not make the read bounded; it stops the operator wondering
+    /// whether their click registered.
+    ///
+    /// The collapse branch returns above the Begin: it frees a list and calls nothing, so there
+    /// is nothing to wait on and an activity on it would be a flash with no work behind it.
+    ///
+    /// The Begin and its yield sit above the detailsJobId assignment, not below it, so the
+    /// intermediate render the yield buys shows the page exactly as it was plus the bar. Moving
+    /// detailsJobId first would paint one frame of the NEW job's panel carrying the OLD job's
+    /// rows. The yield itself is required for the same reason as RefreshJobs': GetRows is
+    /// synchronous, so without a flush point nothing repaints and the bar never appears.
+    /// </remarks>
+    private async Task ToggleDetails(string jobId)
     {
         if (detailsJobId == jobId)
         {
@@ -224,22 +276,28 @@
             return;
         }
 
+        using var activity = Progress.Begin(
+            "Bulk Jobs", "Loading this job's rows", ActivitySize.Unknown);
+
+        await Task.Yield();
+
         detailsJobId = jobId;
         detailsRows = BulkJobs.GetRows(jobId);
+        activity.Complete(true, "The job's rows are loaded.");
     }
 
     // Cancel and Remove here are deliberately NOT module-scoped: crossing modules is this page's
     // purpose, and it is gated behind a fail-closed admin policy for exactly that reason. Both
     // audit, naming the module the job belonged to.
-    private void CancelJob(BulkJob job)
+    private async Task CancelJob(BulkJob job)
     {
         BulkJobs.CancelJob(job.Id);
         WriteAudit("AdminBulkJobs_CancelJob", job, success: true);
         actionMessage = $"Cancellation requested for {job.ModuleId} job {job.JobType}.";
-        RefreshJobs();
+        await RefreshJobs();
     }
 
-    private void RemoveJob(BulkJob job)
+    private async Task RemoveJob(BulkJob job)
     {
         // DeleteJob keeps its module argument; this page passes the job's own module, which it
         // knows. No id-only overload exists, so the guard cannot be skipped by a future caller.
@@ -256,7 +314,7 @@
             detailsRows = Array.Empty<BulkJobRow>();
         }
 
-        RefreshJobs();
+        await RefreshJobs();
     }
 
     // Audit failure must never make a completed action look failed (Constitution, Auditing And

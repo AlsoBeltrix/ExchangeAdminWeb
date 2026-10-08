@@ -25,10 +25,11 @@ config-deletion fix and queue item 18 all exist only in this repository.
 | **Remove-completed: filtered set or whole batch?** | `docs/MigrationRemoveCompleted-Plan.md` stays DRAFT |
 | **Manual acceptance** | Nothing here proves a progress bar renders. Every S2/S3 fix is source-verified only |
 
-**Next work, if asked:** finish S4 of `docs/ProgressCoverage-Plan.md` - `AdminSettings` has
-landed, `AdminBulkJobs` is the last page injecting `IActivityProgress` nowhere (the plan says
-three pages; `ExchangeOnlineConfig` was closed by S2) - then the silent reads. The live gap
-list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not any document.
+**Next work, if asked:** S5 of `docs/ProgressCoverage-Plan.md` - the remaining silent reads,
+unpinned pages first. **S4 IS COMPLETE**: `AdminSettings` at `4e84482` and `AdminBulkJobs` in
+the commit carrying this record, and the plan's third S4 page, `ExchangeOnlineConfig`, was
+already closed by S2. No page under `Components/Pages` injects `IActivityProgress` nowhere any
+more. The live gap list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not any document.
 
 **This file is 2,600+ lines, far over the repo-guidance target.** Run `playbook drift` before
 adding to it.
@@ -92,9 +93,66 @@ second, `RiskyUsers.ExecuteActionAsync`, at `3c2df38`; the third,
 `ExchangeAdminWeb.Tests/ProgressRegistry.cs` is a partial any more - `grep -c 'PARTIAL\.'`
 on that file is 0. **S4 is TWO pages, not the three the plan names:** `ExchangeOnlineConfig`
 got its `@inject` in the S2 sixth fix, so only `AdminSettings` and `AdminBulkJobs` were still
-injecting `IActivityProgress` nowhere. `AdminSettings` landed in the commit carrying this
-record; `AdminBulkJobs` is next, then S5. The live gap list is that file, not this one. Queue
-item 18 is DONE and its record follows below.
+injecting `IActivityProgress` nowhere. `AdminSettings` landed at `4e84482` and
+`AdminBulkJobs` in the commit carrying this record. **S4 IS COMPLETE; S5, the remaining silent
+reads, is next.** The live gap list is that file, not this one. Queue item 18 is DONE and its
+record follows below.
+
+**S4, second and last fix: `AdminBulkJobs` reports its job-store reads.** The page injected
+`IActivityProgress` nowhere and, like `AdminSettings`, is absent from
+`GlobalProgressWiringTests`' hand-maintained adopted list, so nothing looked at it.
+`AdminBulkJobs` `1.0.2` -> `1.0.3`; base app unchanged at `2.27.1`. Registry: two `KnownGap`
+-> two `Reports`. Suite 3674, unchanged. **S4 IS COMPLETE and the plan's count was one too
+high** - it names three unreported pages, but `ExchangeOnlineConfig` got its `@inject` in the
+S2 sixth fix.
+
+**The activity on `ToggleDetails` is honest reporting of a problem that should not exist, and
+the entry says so in place.** `BulkJobRepository.GetRows` has no `LIMIT`, so expanding a
+10,000-row job materialises every row on the render thread. That is
+`docs/BoundedJobQueries-Plan.md`, step 2 of `docs/ProductionMemory-Plan.md`, NOT approved and
+NOT fixed here - the plan names it out of scope by name. The read is named as a covered call
+under the reviewer's rule 1 (operation-scale LOCAL work counts), the same ground
+`MessageTraceReports.Download` named its disk read on.
+
+**Two things about this page were NOT in the brief and are the finding.** First, both handlers
+were fully SYNCHRONOUS, so an activity wrapped round either would have opened and completed
+inside one uninterrupted stretch of renderer time and painted nothing - the vacuous outcome
+`ExchangeOnlineConfig.SaveExoConfig` recorded. Both are now `async Task` with
+`await Task.Yield()` between the `Begin` and the work, which is that page's shape; on
+`ToggleDetails` the `Begin` and the yield sit ABOVE the `detailsJobId` assignment so the frame
+the yield buys shows the page as it was, not the new job's panel holding the old job's rows.
+
+**Second, and this is the one that changed the design: `RefreshJobs` could not simply be
+wrapped.** `BulkJobService` raises `JobChanged` once per ROW while a job executes (the
+`RecordRow` loop), and `OnJobChanged` called `RefreshJobs`. An activity there would open and
+close ten thousand times during a ten-thousand-row job and strobe the status frame - while
+`GlobalProgress` is already rendering that job for its submitter through `BulkJobService`'s own
+channel. So the three store reads were extracted into a new silent `LoadJobsFromStore`, which
+`OnJobChanged` now calls; `RefreshJobs` keeps the name, the registry entry and the reporting,
+and is the OPERATOR-initiated reload only - the Refresh button, the initial load, and the view
+refresh after a cancel or a remove. `CancelJob` and `RemoveJob` became `async Task` to await
+it, which keeps their existing exemption reason ("the view refresh it triggers is registered on
+RefreshJobs") true rather than requiring it to be re-worded.
+
+**`RefreshJobs` names its covered call THROUGH the helper** - `LoadJobsFromStore(`, because
+condition 1 needs the fragment in the method's own code, the same indirection
+`IntuneDevices.ExecuteActionAsync` records for `PerformActionAsync`. What runs inside the
+helper is held by nothing, which is the limitation the registry's own remarks state.
+
+**Neither `Complete` reads a field**, which was a choice rather than luck: both take literal
+messages, so the post-await live-read question this stream keeps hitting does not arise here at
+all. **No re-anchor owed** - `ClickGateRegistry` carries the page name-keyed as "tier 4, not
+approved", so no `ExpectedLineCount` and no line-keyed control, and both `ProgressRegistry`
+pointers into it were the gaps this fix deletes. ClickGate filter green at 316.
+
+**Six probes, each applied ALONE and each scored on the FULL 3674-test suite; every one 1
+failed / 3673 passed, single-fault.** Strip / strong hoist / early `Complete` on each of the
+two handlers. Both hoists are the clean strong form - the covered call itself relocated above
+the `Begin`, line count unchanged at 404, no preamble dragged, because `BulkJobs.GetRows(jobId)`
+reads only the parameter and `LoadJobsFromStore()` reads nothing. Strips: condition 2, "it
+begins no activity at all", naming `BulkJobs.GetRows(` and `LoadJobsFromStore(` respectively.
+Early `Complete`s: condition 3, at offsets 347-before-499 and 173-before-281. Page restored
+byte-identical by `md5sum` and `touch`ed after each.
 
 **S4, first fix: `AdminSettings` reports at all.** The page injected `IActivityProgress`
 NOWHERE and no test looked at it - it is absent from `GlobalProgressWiringTests`'

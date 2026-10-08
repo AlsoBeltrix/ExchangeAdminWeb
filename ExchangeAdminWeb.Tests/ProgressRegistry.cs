@@ -359,19 +359,56 @@ public static class ProgressRegistry
         ],
     };
 
+    /// <remarks>
+    /// The second of the two pages docs/ProgressCoverage-Plan.md S4 names as injecting
+    /// IActivityProgress nowhere; the @inject was added by the S4 fix. Both activities report a
+    /// problem that should not exist, and the registry says so in place rather than quietly
+    /// wrapping it: BulkJobRepository.GetRows has no LIMIT. That is a separate defect
+    /// (docs/BoundedJobQueries-Plan.md, step 2 of docs/ProductionMemory-Plan.md), it is NOT
+    /// approved, and it is NOT fixed here - the plan names it out of scope explicitly. A bar on
+    /// a page-deadening read does not make the read bounded.
+    /// </remarks>
     private static PageEntry AdminBulkJobs => new()
     {
         Page = "AdminBulkJobs.razor",
-        KnownGaps =
+        Reports =
         [
-            new("ToggleDetails", 218,
-                "SILENT, READ. BulkJobs.GetRows has no LIMIT, so expanding a 10,000-row job "
-                + "blocks the render thread with the bar idle. The missing LIMIT is a separate "
-                + "defect, recorded as a candidate and NOT fixed by this plan"),
-            new("RefreshJobs", 187,
-                "SILENT, READ. The same unbounded GetRows runs here whenever a details row is "
-                + "open, on every refresh. NOT in docs/ProgressCoverage-Plan.md's survey, which "
-                + "named only ToggleDetails on this page"),
+            new("ToggleDetails", "BulkJobs.GetRows(",
+                "the survey's entry for this page. BulkJobs.GetRows has no LIMIT, so expanding a "
+                + "10,000-row job materialises every row and blocks the render thread while it "
+                + "does - THE ACTIVITY IS HONEST REPORTING OF A PROBLEM THAT SHOULD NOT EXIST, "
+                + "recorded that way by docs/ProgressCoverage-Plan.md's own out-of-scope section "
+                + "rather than fixed. Named by rule 1 as the S3 reviewer settled it on "
+                + "2026-10-08: operation-scale LOCAL work counts, and this read's cost is the "
+                + "job's row count, exactly as MessageTraceReports.Download's file size is. The "
+                + "collapse branch returns ABOVE the Begin - it frees a list and calls nothing. "
+                + "The Begin carries an await Task.Yield() with it, and that is load-bearing "
+                + "rather than tidy: GetRows is synchronous, so with no flush point between the "
+                + "Begin and the read the circuit cannot repaint and the activity would open and "
+                + "close inside one uninterrupted stretch of renderer time - a bar that passes "
+                + "this guard and shows the operator nothing, which is the vacuous outcome the "
+                + "plan exists to stop. It is ExchangeOnlineConfig.SaveExoConfig's shape, and "
+                + "the Begin sits ABOVE the detailsJobId assignment so the frame the yield buys "
+                + "shows the page as it was rather than the new job's panel holding the old "
+                + "job's rows. The Complete reads no field at all"),
+            new("RefreshJobs", "LoadJobsFromStore(",
+                "NOT in docs/ProgressCoverage-Plan.md's survey, which named only ToggleDetails "
+                + "on this page; S1 found it, because the same unbounded GetRows runs here "
+                + "whenever a details row is open. The covered call is named THROUGH A HELPER, "
+                + "and the indirection is the point of the fix rather than a shortcut: the three "
+                + "store reads were extracted into LoadJobsFromStore so the JobChanged path can "
+                + "still run them SILENTLY. BulkJobService raises JobChanged once per ROW while "
+                + "a job executes, so an activity on that path would open and close ten thousand "
+                + "times during a ten-thousand-row job and strobe the frame, while GlobalProgress "
+                + "is already rendering that job for its submitter through BulkJobService's own "
+                + "channel. RefreshJobs is now the operator-initiated reload only - the Refresh "
+                + "button, the initial load, and the view refresh after a cancel or a remove. "
+                + "Condition 1 needs the fragment in the method's own code, which is why the "
+                + "entry names LoadJobsFromStore( rather than BulkJobs.GetRows(, the same "
+                + "indirection IntuneDevices.ExecuteActionAsync records for PerformActionAsync; "
+                + "what runs inside that helper is held by nothing, which is the limitation this "
+                + "registry's own remarks state. Same yield, same reason, as ToggleDetails. The "
+                + "Complete reads no field"),
         ],
         Exempt =
         [
