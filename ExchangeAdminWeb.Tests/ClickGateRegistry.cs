@@ -1894,7 +1894,7 @@ public static class ClickGateRegistry
     private static PageGateEntry IntuneDevices => new()
     {
         Page = "IntuneDevices.razor",
-        ExpectedLineCount = 1648,
+        ExpectedLineCount = 1668,
 
         // Kept as ActionsDisabled rather than renamed to IsBusy, which is what the four pages before
         // it call their predicate. The name was already on the page and is quoted by

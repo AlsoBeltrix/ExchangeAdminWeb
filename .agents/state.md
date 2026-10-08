@@ -52,9 +52,55 @@ worst finding - landed at `ed7754f`; the second, `OutOfOffice.SetOof`, at `2d93c
 `ADAttributeEditor.ConfirmSave`, at `f1257bd`; the fourth, `ConferenceRooms.SetSingleRoomType`,
 at `94361fd`; the fifth, `BlockedSenders.ConfirmUnblock` - the one the operator actually
 reported - at `5a428c2`; the sixth, `ExchangeOnlineConfig.SaveExoConfig`, in the commit carrying
-this record. **S2 IS COMPLETE: all six silent writes report.** Next is S3, the nine partials,
-one commit each; the live list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this file.
+this record. **S2 IS COMPLETE: all six silent writes report.** S3, the nine partials, is under
+way, one commit each: the first, `IntuneDevices.ExecuteActionAsync`, is in the commit carrying
+this record. The live list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this file.
 Queue item 18 is DONE and its record follows below.
+
+**S3, first fix: `IntuneDevices.ExecuteActionAsync` now completes below BOTH administrator
+emails.** `IntuneDevices` `1.4.2` -> `1.4.3`; base app unchanged at `2.27.1` (module-scoped).
+Registry: one entry `KnownGap` -> `Reports`. Suite 3674, unchanged. **This was the survey's one
+DOCUMENTED-INTENT violation**: the comment above the `Begin` said the activity is completed in
+the `finally` AFTER the admin notification, "the bar must not read Idle while an email is still
+in flight", and the `Complete` sat above BOTH sends. A page whose comment and code disagree is a
+defect whichever behaviour is preferred, which is why the plan declined to scope admin-email
+latency out of S3. **The `Begin` already dominated everything** - it opens above the `try`, so
+authorization, ticket and protection refusals were covered - so only the closing end moved.
+
+**SEVEN calls named, every remote call in the handler's own body**, each measured by reading the
+callee. `ServiceNow.ValidateTicketAsync(` is the opening pin (HttpClient GET against the
+ServiceNow table API, the first call that leaves the machine);
+`ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(` is the 10-15 second Exchange round
+trip; `ProtectedPrincipalService.CheckAsync(` is pinned at BOTH branches and is remote only
+CONDITIONALLY, when protected GROUP rules are configured and `CheckGroupMembershipAsync` queries
+the directory; `PerformActionAsync(` is the Graph write, named through the helper because
+condition 1 needs the fragment in the method's own code; `RemoveEntraObjectAsync(` is the second
+write; `NotifyPrimaryUserAsync(` reaches the affected user's mail;
+`Email.SendAdminNotificationAsync(` is the closing pin, named ONCE and pinned at BOTH
+occurrences. `GetAuthenticationStateAsync` and `AuthorizeAsync` were read and NOT named - token
+SIDs plus a cached section-access read.
+
+**`Complete` reads a LOCAL captured on entry to the `finally`**, and this one is not boilerplate:
+`actingDeviceId = null` two lines above drops `ActionsDisabled`, which makes the Search button
+live again, and `SearchAsync` calls `deviceOutcomes.Clear()`. A re-read of `OutcomeFor(deviceId)`
+past the first email await would answer null and report a failure with no message.
+
+**Re-anchor: `ExpectedLineCount` alone, `1648` -> `1668`.** The page IS ClickGate line-pinned,
+but the diff map puts all three hunks at `:987` and below, and the highest line-keyed entry on
+the page is `523`, so no registered control moved. ClickGate filter green at 316.
+
+**Three probes, each applied ALONE, each 1 failed / 24 passed and each isolating one test.**
+Strip failed condition 2, "it begins no activity at all", naming all seven calls at nine
+occurrences. Early `Complete` (moved above the `if (notifyAdmins)` block) failed condition 3
+naming only `Email.SendAdminNotificationAsync(`, at BOTH its occurrences - which is the pin on
+the Entra half's send working. **The hoist is the STRONG form**: the covered call
+`var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);` itself moved above the
+method-scope `Begin`, no added lines and no preamble dragged along because `ticket` is already
+bound above the `Begin`; it failed condition 2 with "its earliest Begin is after it", naming only
+that call. Moving the `Begin` itself remains impossible wherever the `Complete` is in the
+`finally` - the activity would not be in scope there and the page would not compile - so
+hoisting a covered call is the route, and here the OPENING pin had no preamble to drag. Page
+restored byte-identical by `md5sum` and `touch`ed.
 
 **S2, sixth and last fix: `ExchangeOnlineConfig.SaveExoConfig` now reports its save and drain.**
 `ExchangeOnline` `1.0.2` -> `1.0.3`; base app unchanged at `2.27.1` (module-scoped). Registry:

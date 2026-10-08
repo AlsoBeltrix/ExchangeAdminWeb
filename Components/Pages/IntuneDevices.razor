@@ -984,6 +984,12 @@
         // Opened before the try so the refusals inside it are covered, and completed in the
         // finally AFTER the admin notification rather than at the Graph call - the bar must not
         // read Idle while an email is still in flight.
+        //
+        // That sentence was written when this page shipped and the code did the opposite of it
+        // until docs/ProgressCoverage-Plan.md S3: the Complete sat ABOVE both administrator
+        // sends, so the frame went Idle while two emails were still in flight. A page whose
+        // comment and its code disagree is a defect whichever of the two is preferred, and this
+        // one was fixed in the direction the comment already promised.
         using var activity = Progress.Begin(
             "Intune Devices", $"{auditAction} on {target}", ActivitySize.Unknown);
 
@@ -1213,7 +1219,15 @@
         {
             actingDeviceId = null;
             actionTicket = "";
-            activity.Complete(OutcomeFor(deviceId)?.Success ?? false, OutcomeFor(deviceId)?.Message);
+            // Captured HERE and never re-read after the notification awaits below. This runs
+            // synchronously on entry to the finally, so deviceOutcomes still holds this action's
+            // verdict; past the first await it may not. actingDeviceId has just been cleared,
+            // which drops ActionsDisabled and makes the Search button live again, and SearchAsync
+            // calls deviceOutcomes.Clear() - so OutcomeFor(deviceId) read after an email would
+            // answer null and the frame would report a failure with no message. That is the
+            // post-await live-read trap BlockedSenders.ConfirmUnblock and
+            // ExchangeOnlineConfig.SaveExoConfig both record.
+            var completed = OutcomeFor(deviceId);
             // The panel's controls are retracted, but the outcome (including the one-time PIN
             // display) keeps its own copy, so this cannot erase what the operator still needs.
             ResetActionOptions();
@@ -1254,6 +1268,12 @@
                     Logger.LogError(ex, "Failed to send Intune Devices Entra removal admin notification for {DeviceId}", deviceId);
                 }
             }
+
+            // Completed LAST, below BOTH administrator sends, which is the only position that
+            // makes the comment above the Begin true. Both sends are the handler's own code and
+            // both are named in ExchangeAdminWeb.Tests/ProgressRegistry.cs, so the guard fails if
+            // a later edit puts a Complete back above either of them.
+            activity.Complete(completed?.Success ?? false, completed?.Message);
         }
     }
 

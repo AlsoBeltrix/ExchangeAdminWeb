@@ -828,16 +828,55 @@ public static class ProgressRegistry
         [
             new("SearchAsync", "IntuneDeviceService.SearchDevicesAsync"),
             new("ToggleDetailAsync", "IntuneDeviceService.GetDeviceAsync"),
-        ],
-        KnownGaps =
-        [
-            new("ExecuteActionAsync", 941,
-                "PARTIAL, and a documented-intent violation. The page's own comment at :984-986 "
-                + "states the activity is completed in the finally AFTER the admin notification, "
-                + "because the bar must not read Idle while an email is still in flight. "
-                + "Complete() is at :1216 and the two emails are at :1229 and :1247. A page whose "
-                + "comment and code disagree is a defect regardless of which behaviour is "
-                + "preferred; ConferenceRooms.SetupSingleRoom does it the way the comment describes"),
+            new("ExecuteActionAsync",
+                [
+                    "ServiceNow.ValidateTicketAsync(",
+                    "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(",
+                    "ProtectedPrincipalService.CheckAsync(",
+                    "PerformActionAsync(",
+                    "RemoveEntraObjectAsync(",
+                    "NotifyPrimaryUserAsync(",
+                    "Email.SendAdminNotificationAsync(",
+                ],
+                "the first of the survey's nine PARTIALs (docs/ProgressCoverage-Plan.md S3), and "
+                + "the one that was a DOCUMENTED-INTENT violation: the comment above the Begin "
+                + "said the activity is completed in the finally AFTER the admin notification, "
+                + "because the bar must not read Idle while an email is still in flight, and the "
+                + "Complete sat above BOTH sends. A page whose comment and code disagree is a "
+                + "defect whichever behaviour is preferred, which is why the plan declined to "
+                + "scope admin-email latency out. The Begin already dominated everything - it "
+                + "opens above the try, so the authorization, ticket and protection refusals were "
+                + "covered - so the fix is the closing end alone: the Complete moved below both "
+                + "sends. SEVEN calls are named, which is every remote call in the handler's own "
+                + "body, and each was measured by reading the callee rather than inferred from "
+                + "its shape. ServiceNow.ValidateTicketAsync is the OPENING pin: an HttpClient GET "
+                + "against the ServiceNow table API, and the first call here that leaves the "
+                + "machine. ResolveWithExchangeFallbackAsync is the 10-15 second Exchange round "
+                + "trip BlockedSenders.ConfirmUnblock and OutOfOffice.SetOof both name, and is the "
+                + "slowest thing the operator waits on. CheckAsync is named at BOTH its "
+                + "occurrences, the resolved and the directory-unresolved branch, and is remote "
+                + "CONDITIONALLY: it answers from the config store unless protected GROUP rules "
+                + "are configured, in which case CheckGroupMembershipAsync queries the directory. "
+                + "PerformActionAsync is the Graph write, the operation itself, and is named "
+                + "through the helper because condition 1 needs the fragment in the method's own "
+                + "code - the switch inside it reaches DeleteDeviceAsync, RetireDeviceAsync, "
+                + "WipeDeviceAsync or RemoveEntraDeviceAsync, and the indirection is recorded here "
+                + "rather than hidden. RemoveEntraObjectAsync is the second write, the Entra "
+                + "device object DELETE, reached only when the Intune half succeeded. "
+                + "NotifyPrimaryUserAsync reaches Email.SendDeviceActionUserNotificationAsync, the "
+                + "affected user's own mail. Email.SendAdminNotificationAsync is the CLOSING pin "
+                + "and is named DIRECTLY, because unlike ConferenceRooms.SetSingleRoomType it sits "
+                + "in the handler's own body; it is named ONCE and pinned at BOTH occurrences, the "
+                + "Intune send and the Entra half's own send, so a Complete put back above either "
+                + "of them fails condition 3. Two calls were read and deliberately NOT named: "
+                + "GetAuthenticationStateAsync and AuthorizationService.AuthorizeAsync decide from "
+                + "the Windows token's group SIDs plus a cached section-access read and make no "
+                + "remote hop, the same answer BlockedSenders.ConfirmUnblock and "
+                + "ADAttributeEditor.ConfirmSave got for their own prechecks. Complete reads a "
+                + "LOCAL captured on entry to the finally, not OutcomeFor(deviceId) re-read after "
+                + "the sends: clearing actingDeviceId drops ActionsDisabled and makes the Search "
+                + "button live, and SearchAsync calls deviceOutcomes.Clear(), so a read past the "
+                + "first email await would answer null and report a failure with no message"),
         ],
         Exempt =
         [

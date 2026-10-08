@@ -1122,7 +1122,10 @@ public sealed class ModuleCatalog
             // detailLoading (docs/ClickGatingAudit-Plan.md Revision 1, tier 1 page 5). A search can
             // no longer be started - by click or by Enter - while a device action is queued, which
             // used to discard that action's on-screen verdict.
-            Version = "1.4.2",
+            // 1.4.3: a device action's activity now completes below BOTH administrator
+            // notifications, which is what the page's own comment always claimed it did
+            // (docs/ProgressCoverage-Plan.md S3).
+            Version = "1.4.3",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",
