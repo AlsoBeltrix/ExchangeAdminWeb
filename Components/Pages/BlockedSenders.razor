@@ -241,7 +241,30 @@
         if (blockedSenders.Count == 0)
             return;
 
-        var csv = BuildCsv(blockedSenders);
+        // Snapshot the list being exported. LoadBlockedSenders REPLACES this field rather than
+        // mutating it, on its success path and in its catch alike, and ConfirmUnblock finishes by
+        // calling it - so without the capture a refresh landing while the file is in flight over
+        // the circuit would put a different row count in the audit record, and in this activity's
+        // Complete, than the file the operator actually received. That is the same reason
+        // DhcpAuthorization, NamedLocations and DefenderEndpointDevices snapshot theirs.
+        var rows = blockedSenders;
+
+        // Unknown rather than Items(rows.Count) although the count IS known here: nothing between
+        // the Begin and the Complete can Report, so a determinate bar would sit at 0% for the
+        // whole export and read as hung. The count goes in the label instead -
+        // AdminEventLog.DownloadCsv's and MessageTrace.ExportCsv's settled choice.
+        using var activity = Progress.Begin(
+            "Blocked Senders",
+            $"Exporting {rows.Count:N0} blocked sender(s) to CSV",
+            ActivitySize.Unknown);
+
+        // Load-bearing. The projection, the CSV write and both encodes are synchronous end to end
+        // and the only await was the interop transfer AFTER all of them, so without a flush point
+        // here the first paint would not arrive until the expensive part was over - the vacuous
+        // open-and-close ExchangeOnlineConfig.SaveExoConfig recorded.
+        await Task.Yield();
+
+        var csv = BuildCsv(rows);
         var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
         var base64 = Convert.ToBase64String(bytes);
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
@@ -250,12 +273,20 @@
         try
         {
             Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv", "BlockedSenders",
-                $"{blockedSenders.Count} rows", true);
+                $"{rows.Count} rows", true);
         }
         catch (Exception auditEx)
         {
             Logger.LogError(auditEx, "Audit failed for Blocked Senders CSV export");
         }
+
+        // Completed BELOW the transfer, which is the settled order on both worked examples: the
+        // base64 push over the SignalR circuit is the last thing the operator waits on. The audit
+        // above sits INSIDE the window because its own catch swallows and logs, so it cannot fail
+        // an export the operator already has. The transfer MECHANISM is untouched -
+        // docs/DownloadMemoryRetention-Plan.md proposes replacing it and is a DRAFT. The read is
+        // a local captured before the first await.
+        activity.Complete(true, $"{rows.Count:N0} blocked sender(s) exported.");
     }
 
     private void BeginUnblock(BlockedSenderInfo sender)

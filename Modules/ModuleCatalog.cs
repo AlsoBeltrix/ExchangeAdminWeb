@@ -526,7 +526,7 @@ public sealed class ModuleCatalog
             // 1.4.0: CSV export of the blocked-sender list (docs/ModuleCsvExport-Plan.md).
             // 1.4.3: the unblock write reports to the status frame (the operator-reported gap,
             // docs/ProgressCoverage-Plan.md S2).
-            Version = "1.4.3",
+            Version = "1.4.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

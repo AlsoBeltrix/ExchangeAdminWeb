@@ -758,8 +758,33 @@ public static class ProgressRegistry
                 + "isLoading clear past the refresh and make the refresh a silent no-op - so the "
                 + "single Complete sits on the straight-line path and the refusal returns end the "
                 + "activity by disposing the using"),
+            new("DownloadCsvAsync",
+                [
+                    "BuildCsv(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the fourth of the silent CSV-export shape to be fixed, and the first of the "
+                + "four the plan's survey DID name. Identical two-pin form to "
+                + "BitLockerRecovery.DownloadCsvAsync: BuildCsv( projects and formats every row "
+                + "in the list, operation-scale LOCAL work under rule 1 as the S3 reviewer "
+                + "settled it, and JS.InvokeVoidAsync( base64-pushes the file over the SignalR "
+                + "circuit, so the Complete sits BELOW it. The transfer MECHANISM is "
+                + "deliberately untouched: docs/DownloadMemoryRetention-Plan.md proposes "
+                + "replacing it with streaming and is a DRAFT, not approved. The empty-set guard "
+                + "returns ABOVE the Begin - it is a count of rows already on the page and calls "
+                + "nothing. Unknown rather than Items(rows.Count) although the count is known at "
+                + "the Begin, because nothing between the Begin and the Complete can Report and "
+                + "a determinate bar would sit at 0%; the count is in the label instead. The "
+                + "list is SNAPSHOTTED into a local after the guard, which the activity's yield "
+                + "makes necessary and which also removes the pre-existing question: "
+                + "LoadBlockedSenders replaces this field wholesale on its success path AND in "
+                + "its catch, and ConfirmUnblock ends by calling it, so a refresh landing while "
+                + "the file is in flight would otherwise put one row count in the audit and "
+                + "another in the file. The audit sits INSIDE the window, below the transfer: "
+                + "its own catch swallows and logs, so it cannot fail an export the operator "
+                + "already has, and it is one local row rather than operation-scale work, which "
+                + "is why it is not named"),
         ],
-        KnownGaps = [new("DownloadCsvAsync", 239, SilentCsvExport)],
         Exempt =
         [
             new("OnInitializedAsync", AuthPreambleOnly),
