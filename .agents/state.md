@@ -2247,3 +2247,41 @@ Per-finding status is owned by `.agents/review/index.md`.
 - Referenced plans own scope, status and acceptance checklists.
 - `Modules/ModuleCatalog.cs` owns module versions and enumeration;
   `ExchangeAdminWeb.csproj` owns the current base app version.
+
+### The KnownGap count is not recorded here, deliberately
+
+Three slices recorded a running KnownGap count in their commit messages and one of them was
+off by one - codex's cheap check across `94361fd`, `5a428c2` and `1cb1284` gives 49 -> 48 ->
+47 -> 46, while one commit message claims 50 -> 49. Commit messages are immutable, so that
+one stays wrong forever.
+
+**The fix is to stop copying the number.** `ExchangeAdminWeb.Tests/ProgressRegistry.cs` owns
+it; get it with
+
+```
+grep -cE 'new\("[A-Za-z0-9_]+", *[0-9]+' ExchangeAdminWeb.Tests/ProgressRegistry.cs
+```
+
+This is the same rule `.agents/playbooks/drift.md` already states - a count another file owns
+is pointed to, not duplicated - and it has now been broken twice in this work stream: once by
+the plan document (41 defects, registry held 52) and once here.
+
+### Two corrections to the house pattern I have been handing agents
+
+Both found by the S3 agent contradicting its brief, and both would have caused defects if
+followed literally.
+
+1. **"Check for a dismiss control" is the wrong question.** It asks for
+   `@onclick="() => someField = null"`. Neither `IntuneDevices` nor `RiskyUsers` has one, so
+   the check says "no local needed" - and it is wrong on both. `IntuneDevices` clears
+   `actingDeviceId` early in its `finally`, which re-enables Search, whose handler calls
+   `deviceOutcomes.Clear()`; `RiskyUsers` is worse, because its Search button is gated on
+   `isLoading` and `ExecuteActionAsync` never raises it, so the clear is reachable
+   throughout. **The question is "can anything null the field the `Complete` reads",
+   not "is there a dismiss button".**
+2. **A latent fragility in two existing tests, found by tripping it.**
+   `RiskyUsersPageTests.RiskyUsers_ExecuteAction_NotifiesAdminsFromFinallyWrappedAgainstSendFailure`
+   takes `body.LastIndexOf("finally")` over the RAW method text and asserts the admin send
+   comes after it. A trailing COMMENT containing the word "finally" below the send moves the
+   anchor and fails the test with correct code. `IntuneDevicesPageTests` carries the same
+   guard. Not fixed - outside that slice - but any future comment wording can break either.
