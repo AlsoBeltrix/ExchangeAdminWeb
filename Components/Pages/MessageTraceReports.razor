@@ -156,7 +156,6 @@
             // the read), so a row rendered before the retention task ran cannot download a file that
             // is already gone, and a blank ticket never reaches the filesystem.
             var result = await Exports.TryDownloadAsync(jobId, ticket);
-            activity.Complete(result.Succeeded, result.Error);
 
             if (result.Succeeded)
             {
@@ -170,6 +169,20 @@
                 // not only on the row that was clicked.
                 items = Exports.GetExports();
             }
+
+            // Completed BELOW the transfer, not on the line after the read. The whole export is
+            // base64-encoded and pushed to the browser over the circuit, and that is the last
+            // thing the operator waits on; completing above it reported finished while the file
+            // was still in flight (docs/ProgressCoverage-Plan.md S3, the last of the nine
+            // partials). MessageTrace.DownloadSelectedDetails already completes in this order,
+            // which is what made the difference visible. The transfer MECHANISM is untouched:
+            // docs/DownloadMemoryRetention-Plan.md proposes replacing it with streaming and is a
+            // DRAFT, so nothing here anticipates it - this change only makes the activity cover
+            // the transfer the page already does.
+            //
+            // Reads `result`, a local assigned above and never reassigned, so there is no field
+            // for another handler to null while this one is suspended at the interop await.
+            activity.Complete(result.Succeeded, result.Error);
 
             // Audit every attempt, hit and miss (plan slice 2). The ticket is recorded, never
             // validated (D2). An audit failure must never fail the download (Constitution).

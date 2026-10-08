@@ -1171,11 +1171,40 @@ public static class ProgressRegistry
     private static PageEntry MessageTraceReports => new()
     {
         Page = "MessageTraceReports.razor",
-        KnownGaps =
+        Reports =
         [
-            new("Download", 144,
-                "PARTIAL. The activity completes at :159 and the base64 transfer to the browser "
-                + "runs at :163, outside it"),
+            new("Download",
+                [
+                    "Exports.TryDownloadAsync(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the ninth and LAST of the survey's nine PARTIALs (docs/ProgressCoverage-Plan.md "
+                + "S3), and the one the survey found by contrast rather than by shape: "
+                + "MessageTrace.DownloadSelectedDetails completes AFTER its transfer and this "
+                + "page completed before it, so the activity went Idle while the whole export "
+                + "was still being pushed to the browser. Only the Complete moved, down below the "
+                + "if/else; the Begin already dominated both calls. "
+                + "JS.InvokeVoidAsync( is the CLOSING pin and the point of the entry: it "
+                + "base64-encodes the whole file and sends it over the SignalR circuit, so its "
+                + "cost is the export's size and it is the last thing the operator waits on. The "
+                + "audit below it is a local JSONL log write (AuditService.WriteAuditEvent, read "
+                + "rather than assumed) and the catch adds nothing remote, so nothing follows it "
+                + "that needs covering. The transfer MECHANISM is deliberately "
+                + "untouched - docs/DownloadMemoryRetention-Plan.md proposes replacing it with "
+                + "streaming and is a DRAFT under docs/ProductionMemory-Plan.md step 3, not "
+                + "approved, so this entry pins the transfer the page does today and will need "
+                + "renaming, not loosening, if that plan ever lands. "
+                + "Exports.TryDownloadAsync( is the OPENING pin and is named although it does NOT "
+                + "leave the machine, which is a departure from ADAttributeEditor.ConfirmSave's "
+                + "rule and is deliberate: there the unnamed calls were authorization prechecks "
+                + "that prove nothing about a wait, whereas this one IS the operation the "
+                + "activity's label describes - it resolves the row again at click time, refuses "
+                + "a blank ticket, and reads the export's bytes off disk, so its cost is the same "
+                + "file size the transfer below it pays for. Naming it is what forbids a Begin "
+                + "pushed down between the read and the transfer. Exports.GetExports( on the "
+                + "failure branch is NOT named: it relists the store from disk, the same call the "
+                + "Refresh exemption below already records as carrying no remote hop, and it runs "
+                + "only where there is no file to send"),
         ],
         Exempt =
         [

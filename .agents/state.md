@@ -59,10 +59,62 @@ second, `RiskyUsers.ExecuteActionAsync`, at `3c2df38`; the third,
 `CalendarPermissions.SubmitSingle`, at `63cd170`; the fifth, `MfaReset.ExecuteReset`, at
 `270ec34`; the sixth, `Comms10k.ValidateEmails`, at `bada294`; the seventh,
 `ConferenceRooms.SetupSingleRoom`, at `bc9be8b`; the eighth,
-`ADAttributeEditor.PerformSearch`, is in the commit carrying this record.
-**One of the nine partials remains.** The live list is
-`ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this file. Queue item 18 is DONE and its
-record follows below.
+`ADAttributeEditor.PerformSearch`, at `a5300d8`; the ninth,
+`MessageTraceReports.Download`, is in the commit carrying this record.
+**S3 IS COMPLETE: all nine partials report.** No `KnownGap` in
+`ExchangeAdminWeb.Tests/ProgressRegistry.cs` is a partial any more - `grep -c 'PARTIAL\.'`
+on that file is 0. **S4 (the three unreported pages: `AdminSettings`, `AdminBulkJobs`,
+`ExchangeOnlineConfig` - `AdminSettings` first) is next, then S5.** The live gap list is that
+file, not this one. Queue item 18 is DONE and its record follows below.
+
+**A correction to the brief this stream has been handing agents.** It says
+`grep -c 'PARTIAL' ExchangeAdminWeb.Tests/ProgressRegistry.cs` should reach 0 when S3 is
+done. It reaches 10 and S3 is still complete: every `Reports` entry S3 wrote records its own
+provenance as "the Nth of the survey's nine PARTIALs", so finishing S3 ADDS matches rather
+than removing them. The check that means what the brief meant is `grep -c 'PARTIAL\.'` - the
+`KnownGap` entries all opened "PARTIAL. The activity ...", and that is 0. Same failure class
+as the KnownGap-count drift recorded further down: a count read off the wrong expression.
+
+**S3, ninth and last fix: `MessageTraceReports.Download`.** The `Complete` sat on the line
+after the disk read and the base64 transfer ran below it, so the frame read finished while the
+whole export was still being pushed to the browser over the circuit. Only the `Complete`
+moved, down past the `if/else`; the `Begin` already dominated both calls, and the shape now
+matches `MessageTrace.DownloadSelectedDetails`, which is the contrast that made the defect
+visible in the first place. `MessageTrace` `1.5.4` -> `1.5.5` - the page is a SUB-PAGE of
+Message Analysis and reuses that module's descriptor, so there is no `MessageTraceReports`
+module to bump. Base app unchanged at `2.27.1`. Registry: one entry `KnownGap` -> `Reports`,
+and the page now has no `KnownGaps`. Suite 3674, unchanged.
+
+**The transfer mechanism is untouched, deliberately.** `docs/DownloadMemoryRetention-Plan.md`
+(DRAFT, step 3 of `docs/ProductionMemory-Plan.md`, NOT approved) wants to replace this
+base64-over-the-circuit push with streaming. This change only makes the activity cover the
+transfer the page already does; the registry entry says so, so a later agent renames the pin
+rather than loosening it if that plan lands.
+
+**Two calls named, and one of them breaks a rule on purpose.** `JS.InvokeVoidAsync(` is the
+closing pin and the point of the fix. `Exports.TryDownloadAsync(` is named although it does
+NOT leave the machine, which departs from `ADAttributeEditor.ConfirmSave`'s "do not pad with
+local calls" rule: there the unnamed calls were authorization prechecks that prove nothing
+about a wait, whereas this one IS the operation the activity's label describes and its cost is
+the export's file size. Naming it forbids a `Begin` pushed down between the read and the
+transfer. `Exports.GetExports(` on the failure branch is not named - same local relist the
+`Refresh` exemption already covers, and it runs only where there is no file to send.
+
+**Three probes, each applied ALONE and each scored on the FULL 3674-test suite.** Strip: 1
+failed / 3673 passed, single-fault, naming both calls. Hoist of the covered
+`Exports.TryDownloadAsync(` call above the `Begin` (it reads only the `jobId` parameter and a
+local bound above the try, so nothing came with it): 1 failed / 3673 passed, naming only that
+call. Early `Complete`: this one is the strongest in the whole stream, because it is the
+ORIGINAL DEFECT restored verbatim - the `Complete` put back on the line after the read - and
+condition 3 named `JS.InvokeVoidAsync` exactly: 1 failed / 3673 passed. Page restored
+byte-identical by `md5sum` and `touch`ed after each. **No re-anchor:** ClickGate-UNCONVERTED
+("tier 4, not approved"), and the page's only line pointer is the one this fix deletes.
+
+**One more hole in the predecessor guard, found by probing.** `MessageTraceReports.razor` is
+absent from `GlobalProgressWiringTests`' hand-maintained adopted list, so stripping its only
+activity entirely fired NOTHING but the registry condition. The plan knew the list lets a
+silent page escape; this is the same hole seen from the other side - a page that DID report,
+and was never checked for it.
 
 **S3, eighth fix: `ADAttributeEditor.PerformSearch`.** The `Begin` already dominated
 everything inside the `try`; the `Complete` sat on the line after the lookup, above the
