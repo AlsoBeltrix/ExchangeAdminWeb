@@ -304,17 +304,31 @@
         operationResult = null;
         await Task.Yield();
 
+        // Opened HERE, above the try, and completed in the finally. It used to open inside the
+        // try and complete on the line after the lookup, which put the protected-principal check
+        // below it outside the window: the frame read finished while the operator was still
+        // waiting on that check (docs/ProgressCoverage-Plan.md S3, the eighth of the nine
+        // partials). ConfirmSave on this page is the shape this copies.
+        //
+        // Completed from a LOCAL for a reason that is structural rather than a race: `result` is
+        // declared inside the try and is out of scope in the finally. The race question was asked
+        // anyway and the answer is no - searchError has no dismiss control in this page's markup
+        // (the only btn-close nulls operationResult), this handler is its only writer, and both
+        // entry points to it are gated on isLoading, which the finally drops with no await before
+        // the Complete. A refusal that leaves `completed` null ends the activity as a non-success
+        // with no message and the banner carries the reason, as ConfirmSave records.
+        (bool success, string? message)? completed = null;
+        using var activity = Progress.Begin(
+            "AD Attribute Editor", $"Looking up {searchIdentity.Trim()}", ActivitySize.Unknown);
+
         try
         {
-            using var activity = Progress.Begin(
-                "AD Attribute Editor", $"Looking up {searchIdentity.Trim()}", ActivitySize.Unknown);
-
             var result = await EditorService.LookupAsync(searchIdentity.Trim());
-            activity.Complete(result.Success, result.Error);
 
             if (!result.Success)
             {
                 searchError = result.Error;
+                completed = (false, result.Error);
                 return;
             }
 
@@ -323,6 +337,9 @@
             if (result.IsReadOnly)
             {
                 isReadOnly = true;
+                // A successful lookup that lands on a read-only view, not a refusal: the frame
+                // must not read "This did not finish." for an operation that did.
+                completed = (true, null);
                 return;
             }
 
@@ -330,6 +347,7 @@
             if (protectionCheck.CheckFailed)
             {
                 searchError = protectionCheck.Reason;
+                completed = (false, protectionCheck.Reason);
                 return;
             }
 
@@ -362,26 +380,36 @@
             if (allowlist == null)
             {
                 searchError = "Attribute allowlist is corrupt. Contact your administrator.";
+                completed = (false, searchError);
                 return;
             }
             if (allowlist.Count == 0 && maxLevel == 0)
             {
                 searchError = "You do not have permission to edit any attributes. Contact your administrator.";
+                completed = (false, searchError);
                 return;
             }
 
             editableAttributes = allowlist;
             currentValues = result.CurrentValues ?? new();
             editValues = new Dictionary<string, string?>(currentValues, StringComparer.OrdinalIgnoreCase);
+            completed = (true, null);
         }
         catch (Exception ex)
         {
             searchError = ex.Message;
+            completed = (false, ex.Message);
             Logger.LogError(ex, "AD attribute lookup failed for {Identity}", searchIdentity);
         }
         finally
         {
             isLoading = false;
+            // Below everything, because the protected-principal check the old Complete sat above
+            // is the last call in this handler that can leave the machine: it reads the config
+            // store, and when protected GROUP rules are configured it resolves group membership
+            // against the directory. DetermineMaxLevelAsync and GetAllowlistForLevel below it
+            // were read and are local.
+            activity.Complete(completed?.success ?? false, completed?.message);
         }
     }
 

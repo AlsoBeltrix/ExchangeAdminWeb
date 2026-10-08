@@ -58,10 +58,45 @@ second, `RiskyUsers.ExecuteActionAsync`, at `3c2df38`; the third,
 `MailboxPermissions.SubmitSingle`, at `f2a8c75`; the fourth,
 `CalendarPermissions.SubmitSingle`, at `63cd170`; the fifth, `MfaReset.ExecuteReset`, at
 `270ec34`; the sixth, `Comms10k.ValidateEmails`, at `bada294`; the seventh,
-`ConferenceRooms.SetupSingleRoom`, is in the commit carrying this record.
-**Two of the nine partials remain.** The live list is
+`ConferenceRooms.SetupSingleRoom`, at `bc9be8b`; the eighth,
+`ADAttributeEditor.PerformSearch`, is in the commit carrying this record.
+**One of the nine partials remains.** The live list is
 `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this file. Queue item 18 is DONE and its
 record follows below.
+
+**S3, eighth fix: `ADAttributeEditor.PerformSearch`.** The `Begin` already dominated
+everything inside the `try`; the `Complete` sat on the line after the lookup, above the
+protected-principal check, so the frame read finished while the operator waited on the check
+that decides whether the edit UI appears at all. `Begin` moved above the `try` (so the
+`using` reaches the `finally`), `Complete` into the `finally`. `ADAttributeEditor` `1.4.2` ->
+`1.4.3`; base app unchanged at `2.27.1`. Registry: one entry `KnownGap` -> `Reports`, and the
+page now has NO `KnownGaps` left. Suite 3674, unchanged.
+
+**Two calls named.** `EditorService.LookupAsync(` carries the window - a Delinea credential
+fetch over HTTP, an AD throttle waited on for up to TWO MINUTES, then a `DirectorySearcher` on
+a thread-pool thread; its local short-circuits are the unconfigured and corrupt-allowlist
+cases, which are reported failures. `ProtectedPrincipalService.CheckAsync(` is the closing pin
+and the call the gap entry named: config-store read plus, when protected GROUP rules are
+configured, a directory membership resolve. Everything below it is local, the same measurement
+`f1257bd` recorded for `ConfirmSave` on this page.
+
+**The captured local here is forced by SCOPE, not by a race**, and both were checked: `result`
+is declared inside the `try` and does not exist in the `finally`; separately, `searchError`
+has no dismiss control (this page's only `btn-close` nulls `operationResult`), this handler is
+its only writer, and both entry points to it are gated on `isLoading`. The `IsReadOnly` exit
+sets `completed = (true, null)` deliberately - it is a finished lookup, and letting it fall to
+disposal would have reported "This did not finish." for an operation that did.
+
+**Three probes, each applied ALONE and each scored on the FULL 3674-test suite.** Strip: 1
+failed / 3673 passed, single-fault, naming both calls - and once again
+`GlobalProgressWiringTests`' adopted-module theory did NOT fire, because `ConfirmSave` keeps an
+activity on the page. Hoist of the covered `EditorService.LookupAsync(` call across the
+method-scope `Begin` (it reads only `searchIdentity`, so no preamble came with it): 1 failed /
+3673 passed, single-fault, naming only that call. Early `Complete(true)` above the protection
+check: 1 failed / 3673 passed, naming only `ProtectedPrincipalService.CheckAsync`. Page
+restored byte-identical by `md5sum` and `touch`ed after each. **No re-anchor:** the page is
+ClickGate-UNCONVERTED ("tier 2, not approved"), so it has no `ExpectedLineCount` and no
+line-keyed controls, and its only `ProgressRegistry` line pointer is the one this fix deletes.
 
 **S3, seventh fix: `ConferenceRooms.SetupSingleRoom`, the first partial on a ClickGate-PINNED
 page and the first whose activity covered neither end.** The `Begin` sat inside the protection

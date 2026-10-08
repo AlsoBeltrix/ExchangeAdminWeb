@@ -277,12 +277,37 @@ public static class ProgressRegistry
                 + "success branch, the failure branch and the catch - so it is what forbids a "
                 + "Complete hoisted up to the write and leaves the reference shape's actual "
                 + "promise asserted rather than merely commented"),
-        ],
-        KnownGaps =
-        [
-            new("PerformSearch", 291,
-                "PARTIAL. The activity completes at :313, before the protected-principal check at "
-                + ":329, so the frame reads finished while the operator is still waiting on it"),
+            new("PerformSearch",
+                [
+                    "EditorService.LookupAsync(",
+                    "ProtectedPrincipalService.CheckAsync(",
+                ],
+                "the eighth of the survey's nine PARTIALs (docs/ProgressCoverage-Plan.md S3), "
+                + "and the second this registry fixes where only the CLOSING end moved: the "
+                + "Begin already sat above everything inside the try, and the Complete sat on the "
+                + "line after the lookup, above the protected-principal check. TWO calls are "
+                + "named, which is every call in the handler's own body that can leave the "
+                + "machine, and the short list is the same measurement ConfirmSave above records "
+                + "rather than a lighter touch. EditorService.LookupAsync is the OPENING pin and "
+                + "it is the argument for the window: a Delinea credential fetch over HTTP, then "
+                + "an AD throttle this service waits on for up to TWO MINUTES, then a "
+                + "DirectorySearcher on a thread-pool thread. Its local short-circuits are the "
+                + "unconfigured and corrupt-allowlist cases, which are reported failures rather "
+                + "than fast work. ProtectedPrincipalService.CheckAsync is the CLOSING pin and "
+                + "the call the gap entry named: a config-store read, plus - when protected GROUP "
+                + "rules are configured - CheckGroupMembershipAsync against the directory, so it "
+                + "is remote conditionally, exactly as MfaReset.ExecuteReset records for the same "
+                + "call. Everything below it was read and is local: GetAuthenticationStateAsync "
+                + "and the three AuthorizeAsync probes inside DetermineMaxLevelAsync decide from "
+                + "the Windows token's group SIDs plus a cached section-access read, "
+                + "ProtectedPrincipalServicing.NoteFor is a pure match over the rules already in "
+                + "hand, and GetAllowlistForLevel is a cached local SQLite read on a synchronous "
+                + "path. Complete reads a LOCAL, and here that is forced by SCOPE rather than by "
+                + "a race - `result` is declared inside the try and does not exist in the finally "
+                + "- but the race question was asked separately and the answer is no: searchError "
+                + "carries no dismiss control (this page's only btn-close nulls operationResult, "
+                + "which is ConfirmSave's field), this handler is its only writer, and both entry "
+                + "points to it are gated on isLoading"),
         ],
         Exempt =
         [

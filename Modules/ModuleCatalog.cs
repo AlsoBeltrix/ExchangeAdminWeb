@@ -1235,7 +1235,11 @@ public sealed class ModuleCatalog
             // confirm path - the authorization re-check, the level and allowlist read, the live
             // on-prem AD write and the notification email - ran with the bar reading Idle, on a
             // page whose lookup already reported.
-            Version = "1.4.2",
+            // 1.4.3: the lookup's own activity now stays open through the protected-principal
+            // check. It completed on the line after the AD read, so the frame said finished
+            // while the operator was still waiting on the check that decides whether the edit
+            // UI appears at all.
+            Version = "1.4.3",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",
