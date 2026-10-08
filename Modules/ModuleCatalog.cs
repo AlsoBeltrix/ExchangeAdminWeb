@@ -1276,7 +1276,9 @@ public sealed class ModuleCatalog
             IsSystemModule = true,
             // 1.2.0: the protected-principals panel gains the Protected Group Targets list
             // (docs/ProtectedGroupWriteTarget-Plan.md T0) - pgwt-8.
-            Version = "1.2.1",
+            // 1.2.2: the page reports to the status frame at all - the staleness sweep and the
+            // four protected-principal Add paths were silent (docs/ProgressCoverage-Plan.md S4).
+            Version = "1.2.2",
             MainPermission = new(
                 "Access",
                 "AdminSettings",

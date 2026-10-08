@@ -15,6 +15,7 @@
 @inject ProtectedPrincipalService ProtectedPrincipalService
 @inject ModuleConfigService ModuleConfigSvc
 @inject ADDirectorySearchService ADSearch
+@inject IActivityProgress Progress
 
 <PageTitle>Admin Settings</PageTitle>
 
@@ -783,9 +784,25 @@
         if (targets.Count == 0)
             return;
 
+        // Opened ABOVE the Task.Run, which is the first thing here that waits on anything. The
+        // lookups are serialized and each one waits up to 30 seconds on the directory service's
+        // shared runspace lock, so this is the longest unattended wait anywhere on the page and
+        // it used to run with the status frame reading Idle from first paint onwards.
+        //
+        // Items rather than Unknown, deliberately: the number of saved entries IS known here, so
+        // "4 of 37" is honest and a bar that only wobbles for several minutes is not. Report is
+        // raised from the worker thread on purpose - Components/Shared/GlobalProgress.razor
+        // marshals every Changed through InvokeAsync, which is the contract IActivityProgress
+        // documents for exactly this case.
+        using var activity = Progress.Begin(
+            "Admin Settings",
+            "Re-checking saved protected principals against Active Directory",
+            ActivitySize.Items(targets.Count));
+
         var stale = await Task.Run(() =>
         {
             var found = new List<string>();
+            var done = 0;
             foreach (var (entry, kind) in targets)
             {
                 try
@@ -801,15 +818,29 @@
                     // Same reasoning: a failed lookup is not evidence the entry is bad.
                     Logger.LogWarning(ex, "Stale-entry sweep failed for a {Kind} entry", kind);
                 }
+
+                // Counted whatever the lookup answered: the operator is waiting on the lookup,
+                // not on its verdict, so a skipped-because-unavailable row still used the time.
+                activity.Report(++done);
             }
             return found;
         });
 
-        if (stale.Count == 0)
-            return;
-
+        // The badge pass is a no-op on an empty list, so it runs before the outcome is reported
+        // rather than behind an early return that would complete the activity twice.
         foreach (var s in stale)
             ppStaleEntries.Add(s);
+
+        // A sweep that RAN finished, even when it flagged nothing: success is "did the work
+        // complete", not "did the operator get an answer they wanted" (reviewer ruling,
+        // `.agents/state.md` 2026-10-08). Said explicitly rather than left to the using, which
+        // records "This did not finish." for a sweep that did.
+        activity.Complete(true, stale.Count == 0
+            ? "No saved entry is missing from Active Directory."
+            : $"{stale.Count} saved entries no longer resolve in Active Directory.");
+
+        if (stale.Count == 0)
+            return;
 
         await InvokeAsync(StateHasChanged);
     }
@@ -840,6 +871,15 @@
         ppValidating = true;
         ppAddError = null;
         StateHasChanged();
+
+        // Opened here and not at the top of the method: everything above this point is the
+        // blank/duplicate short-circuit, which settles without touching the directory, and an
+        // activity that flashes for a rejected empty box is noise rather than information. From
+        // here on the operator is waiting on the same 30-second runspace lock the sweep waits on.
+        using var activity = Progress.Begin(
+            "Admin Settings",
+            "Checking the entry against Active Directory",
+            ActivitySize.Unknown);
 
         DirectoryValidationResult result;
         try
@@ -885,6 +925,16 @@
 
         ppAddError = decision.ErrorMessage;
         if (decision.ClearInput) setInput("");
+
+        // A lookup that ANSWERED finished, whatever it answered: a NotFound is a completed check
+        // that refused the entry, not a check that failed to run (reviewer ruling,
+        // `.agents/state.md` 2026-10-08). Unavailable is the genuine refusal - the question never
+        // reached the directory - and stays a non-success. Read from the two LOCALS rather than
+        // from ppAddError, which the next Add on any of the four kinds clears while this one
+        // could still be suspended on its lookup.
+        activity.Complete(
+            result.Outcome != DirectoryLookupOutcome.Unavailable,
+            decision.ErrorMessage ?? "Active Directory confirmed the entry.");
     }
 
     private async Task SaveProtectedPrincipals()

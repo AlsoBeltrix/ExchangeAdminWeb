@@ -25,10 +25,10 @@ config-deletion fix and queue item 18 all exist only in this repository.
 | **Remove-completed: filtered set or whole batch?** | `docs/MigrationRemoveCompleted-Plan.md` stays DRAFT |
 | **Manual acceptance** | Nothing here proves a progress bar renders. Every S2/S3 fix is source-verified only |
 
-**Next work, if asked:** S4 of `docs/ProgressCoverage-Plan.md` - the three pages that report
-nothing (`AdminSettings` first; its staleness sweep makes N serialized AD lookups, each able
-to block 30 seconds), then the silent reads. The live gap list is
-`ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not any document.
+**Next work, if asked:** finish S4 of `docs/ProgressCoverage-Plan.md` - `AdminSettings` has
+landed, `AdminBulkJobs` is the last page injecting `IActivityProgress` nowhere (the plan says
+three pages; `ExchangeOnlineConfig` was closed by S2) - then the silent reads. The live gap
+list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not any document.
 
 **This file is 2,600+ lines, far over the repo-guidance target.** Run `playbook drift` before
 adding to it.
@@ -90,9 +90,98 @@ second, `RiskyUsers.ExecuteActionAsync`, at `3c2df38`; the third,
 `MessageTraceReports.Download`, is in the commit carrying this record.
 **S3 IS COMPLETE: all nine partials report.** No `KnownGap` in
 `ExchangeAdminWeb.Tests/ProgressRegistry.cs` is a partial any more - `grep -c 'PARTIAL\.'`
-on that file is 0. **S4 (the three unreported pages: `AdminSettings`, `AdminBulkJobs`,
-`ExchangeOnlineConfig` - `AdminSettings` first) is next, then S5.** The live gap list is that
-file, not this one. Queue item 18 is DONE and its record follows below.
+on that file is 0. **S4 is TWO pages, not the three the plan names:** `ExchangeOnlineConfig`
+got its `@inject` in the S2 sixth fix, so only `AdminSettings` and `AdminBulkJobs` were still
+injecting `IActivityProgress` nowhere. `AdminSettings` landed in the commit carrying this
+record; `AdminBulkJobs` is next, then S5. The live gap list is that file, not this one. Queue
+item 18 is DONE and its record follows below.
+
+**S4, first fix: `AdminSettings` reports at all.** The page injected `IActivityProgress`
+NOWHERE and no test looked at it - it is absent from `GlobalProgressWiringTests`'
+hand-maintained adopted list, which is the hole `ProgressRegistry`'s filesystem-derived page
+set exists to close. `AdminSettings` `1.2.1` -> `1.2.2`; base app unchanged at `2.27.1`.
+Registry: six `KnownGap` entries gone, two new `Reports` and five `Exempt`. Suite 3674,
+unchanged.
+
+**SIX gaps, TWO activities, and that is the page's shape rather than a shortcut.** All six
+reach one of exactly two directory paths. `OnAfterRenderAsync` is a once-only gate - three
+flags, a latch, a call - in front of `SweepExistingEntriesAsync`. The four `AddPp*` handlers
+are one-line expression-bodied dispatchers to `AddValidatedAsync`; they have no block body to
+put a `using` in, and four separate activities would put two bars in the frame for one click.
+So the five are `Exempt` with `DelegatesTo`, which the suite then holds to: each must really
+call what it names, and what it names carries its own entry.
+
+**`SweepExistingEntriesAsync` is the survey's worst unreported READ and the activity says so
+with a NUMBER.** N serialized `ADSearch.ValidateExists` calls over every saved user, group and
+OU entry, each waiting up to 30 seconds on `ADDirectorySearchService`'s shared runspace lock
+before it even issues its cmdlet. `ActivitySize.Items(targets.Count)`, not `Unknown`: the
+entry count IS known at the `Begin`, and `activity.Report` is raised from inside the
+`Task.Run` worker, which `GlobalProgress.razor` marshals through `InvokeAsync` exactly as
+`IActivityProgress` documents. One call named, because there is only one remote call on the
+path; it sits inside the `Task.Run` lambda, which is still the method's own code for condition
+1 (verified on `bc9be8b`, re-confirmed by the S3 reviewer). The `Begin` sits above the
+`Task.Run`, which is also what forbids an activity opened per iteration inside it.
+
+**`AddValidatedAsync`'s `Begin` is deliberately NOT at the top of the method.** Above it sits
+`ProtectedPrincipalEntryValidator.ShouldConsultDirectory`, the blank/duplicate short-circuit
+that settles without a round trip; an activity that flashes for a rejected empty box is noise.
+`Decide`, `ProtectedGroupTargetEntry.Parse` and `RecountProtected` are local and pure and are
+NOT named - `f1257bd`'s no-padding rule, not the one `0eba929` departed from, because these
+are prechecks and bookkeeping rather than the operation the label describes. The `Complete`
+sits on the straight-line path at the end of the method, not in the existing `finally`, which
+closes above the decision; there is no return between the `Begin` and the end, so the `using`
+covers every exception path by disposal - the `BlockedSenders.ConfirmUnblock` shape.
+
+**Both Completes apply the reviewer's 2026-10-08 ruling, and one of them is the first use of
+its second half.** The sweep completes with success TRUE even when it flags nothing: a sweep
+that ran finished. `AddValidatedAsync` reads `result.Outcome`, not `decision.Accepted` - a
+`NotFound` is a check that RAN and refused the entry, while `Unavailable` is the genuine
+refusal where the question never reached the directory. Neither `Complete` reads a field:
+the sweep reads `stale.Count`, returned one statement above with no `await` between, and the
+Add reads two locals rather than `ppAddError`, which any of the four Add buttons clears on
+entry while this one can still be suspended on its lookup.
+
+**No re-anchor owed, checked rather than assumed.** `ClickGateRegistry` carries the page
+name-keyed as "tier 2, not approved", so there is no `ExpectedLineCount` and no line-keyed
+control on it, and all six `ProgressRegistry` line pointers into the page were the gaps this
+fix deletes - the page now has zero. ClickGate filter green at 316. One stale pointer WAS
+created and fixed: `ClickGateRegistry`'s ADIdentityAutocomplete census names
+`AdminSettings 144/172/200/259`, and the single `@inject` line shifts all four by one, so they
+are now `145/173/201/260`. A second one could NOT be fixed - `ProgressRegistryTests.cs`'s
+scanner remarks cite `AdminSettings.razor:546` as the `OnAfterRenderAsync` example and that is
+now 547, but this brief forbids touching that file. Comment only, nothing asserted.
+
+**SEVEN probes, each applied ALONE and each scored on the FULL 3674-test suite.** Three per
+activity plus one on the delegation rule, chosen because those are the structurally distinct
+things here: the sweep is the slowest operation on the page and its covered call lives inside
+a lambda inside a `Task.Run`, `AddValidatedAsync` is the one reached only through registered
+dispatchers, and `DelegatesTo` is what carries FIVE of the six gap entries. The four `AddPp*`
+handlers were not probed identically - they are the same one-line shape through the same rule,
+and the seventh probe fires on that rule. Every probe: **1 failed / 3673 passed, single-fault.**
+Strip of the sweep (commented out, not deleted): condition 2, "it begins no activity at all".
+Strong hoist of the sweep - the whole `var stale = await Task.Run(...)` statement relocated
+ABOVE the `Begin`, line count unchanged at 999: condition 2, "its earliest Begin is after it".
+**That hoist forced a second edit and it is not a second fault:** `activity.Report(++done)`
+inside the lambda cannot compile above the variable's declaration, so it became `done++`; the
+registry reads nothing about `Report`, and there is no hoist of this handler in either
+direction that avoids the coupling. Early `Complete` on the sweep: condition 3, naming the
+call at offset 2346 against a `Complete` at 1781. Strip of `AddValidatedAsync`: condition 2.
+Hoist of `AddValidatedAsync` **by relocating the `Begin` itself** below the try/catch/finally
+(`5a428c2`'s form): condition 2. The covered-call route was rejected here on the brief's own
+"drags no preamble" test - the call assigns `result`, declared above the `try`, so moving the
+call would have moved its declaration too. Early `Complete` on `AddValidatedAsync`: condition
+3. Seventh, the delegation probe: `AddPpUser` rewritten to do its own
+`ADSearch.ValidateExists` instead of delegating fired
+`ADispatchersExemptionNamesAMethodItActuallyCallsAndThatIsItselfRegistered` with "AddPpUser
+does not call AddValidatedAsync". Page restored byte-identical by `md5sum` and `touch`ed after
+each of the seven.
+
+**`GlobalProgressWiringTests`' adopted-module theory never fired on any of them, and this page
+is the cleanest demonstration in the stream of why.** `MessageTraceReports` showed the
+hand-maintained list failing to check a page that DID report; this one is the original shape -
+a page with six silent operations, absent from the list, so stripping every activity it has
+still leaves that guard green. The page was NOT added to the list, deliberately, following
+`ExchangeOnlineConfig`'s precedent: the registry is the mechanism now.
 
 **A correction to the brief this stream has been handing agents.** It says
 `grep -c 'PARTIAL' ExchangeAdminWeb.Tests/ProgressRegistry.cs` should reach 0 when S3 is

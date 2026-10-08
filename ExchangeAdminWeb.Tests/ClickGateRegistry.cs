@@ -999,7 +999,7 @@ public static class ClickGateRegistry
     /// guard alone leaves visibly clickable rows that silently do nothing. Base app version bumped;
     /// no module version moved. What follows is the census as found, and it was short by one.
     /// Revision 1 schedules one contract change, ADIdentityAutocomplete, at page 6. There were three.
-    /// ADIdentityAutocomplete is instantiated 9 times across 4 pages (AdminSettings 144/172/200/259,
+    /// ADIdentityAutocomplete is instantiated 9 times across 4 pages (AdminSettings 145/173/201/260,
     /// GroupManagement 111, ModuleConfig 217/317/615, SelfServiceGroups 202) and is NOT on this page
     /// at all. RecipientAutocomplete - the one this page uses - is instantiated 8 times across 4
     /// pages: MailboxPermissions 58/66, CalendarPermissions 46/53, ConferenceRooms 70/260,

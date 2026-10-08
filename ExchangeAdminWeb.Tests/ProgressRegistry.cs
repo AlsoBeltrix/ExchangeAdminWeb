@@ -416,25 +416,95 @@ public static class ProgressRegistry
         ],
     };
 
+    /// <remarks>
+    /// <para>
+    /// The first of the two pages docs/ProgressCoverage-Plan.md S4 names as injecting
+    /// IActivityProgress NOWHERE, and the worse of them: six silent operations, no @inject, and
+    /// no existing test looking at the file at all, because the predecessor guard's adopted list
+    /// is hand-maintained and this page is absent from it. The @inject was added by the S4 fix.
+    /// </para>
+    /// <para>
+    /// SIX gaps, TWO activities, and that is the shape of the page rather than a shortcut. All
+    /// six reach one of exactly two directory paths: OnAfterRenderAsync is a once-only gate in
+    /// front of SweepExistingEntriesAsync, and the four AddPp* handlers are one-line
+    /// expression-bodied dispatchers to AddValidatedAsync. Giving each of the five its own
+    /// activity would put two bars in the frame for one click; registering them as dispatchers
+    /// through DelegatesTo is what the test then holds - each must really call the method it
+    /// names, and the method it names carries its own entry.
+    /// </para>
+    /// </remarks>
     private static PageEntry AdminSettings => new()
     {
         Page = "AdminSettings.razor",
-        KnownGaps =
+        Reports =
         [
-            new("OnAfterRenderAsync", 546,
-                "SILENT, READ. Fires the protected-principal staleness sweep on a page that "
-                + "injects IActivityProgress nowhere, so no existing test looks at it"),
-            new("SweepExistingEntriesAsync", 771,
-                "SILENT, READ. N serialized ADSearch.ValidateExists calls, each able to block for "
-                + "30 seconds, with the bar idle throughout. The worst unreported read in the survey"),
-            new("AddPpUser", 700, "SILENT, READ. Reaches the same unreported AD validation path"),
-            new("AddPpGroup", 701, "SILENT, READ. Reaches the same unreported AD validation path"),
-            new("AddPpOu", 702, "SILENT, READ. Reaches the same unreported AD validation path"),
-            new("AddPpTarget", 707, "SILENT, READ. Reaches the same unreported AD validation path"),
+            new("SweepExistingEntriesAsync", "ADSearch.ValidateExists(",
+                "docs/ProgressCoverage-Plan.md's worst unreported READ, and the reason S4 names "
+                + "this page first. The sweep runs N serialized ADSearch.ValidateExists calls "
+                + "over every saved user, group and OU entry, and each one waits up to 30 "
+                + "seconds on ADDirectorySearchService's shared runspace lock before it even "
+                + "issues its Get-ADUser / Get-ADGroup / Get-ADOrganizationalUnit, so a page "
+                + "holding a few dozen entries can sit there for minutes. It ran from "
+                + "OnAfterRenderAsync with the status frame reading Idle from first paint. ONE "
+                + "call is named because there is only one remote call on the path: the Begin "
+                + "sits above the Task.Run that wraps the whole loop, which is also what forbids "
+                + "an activity opened per iteration inside it, and the single Complete is below "
+                + "the loop. The call sits inside a lambda, which is still the method's own code "
+                + "for condition 1 - verified on ConferenceRooms.SetupSingleRoom (bc9be8b) and "
+                + "re-confirmed by the S3 reviewer. ActivitySize.Items, not Unknown, because the "
+                + "entry count IS known at the Begin; Report is raised from the Task.Run worker "
+                + "thread, which GlobalProgress.razor marshals through InvokeAsync as "
+                + "IActivityProgress documents. Completed with success TRUE even when nothing is "
+                + "flagged: a sweep that ran finished, and the reviewer's 2026-10-08 ruling is "
+                + "that a lookup which finished reports success even in an empty state. No "
+                + "captured local - the Complete reads only stale.Count, a local returned from "
+                + "the Task.Run one statement above it with no await in between"),
+            new("AddValidatedAsync", "ADSearch.ValidateExists(",
+                "the one directory path behind all four AddPp* handlers, which is why the "
+                + "activity is here and they are dispatchers. The Begin is deliberately NOT at "
+                + "the top of the method: above it sits ProtectedPrincipalEntryValidator"
+                + ".ShouldConsultDirectory, the blank/duplicate short-circuit that settles "
+                + "without a round trip, and an activity that flashes for a rejected empty box "
+                + "is noise. Everything below the Begin waits on the same 30-second runspace "
+                + "lock the sweep waits on. ShouldConsultDirectory, Decide, "
+                + "ProtectedGroupTargetEntry.Parse and RecountProtected are local and pure and "
+                + "are NOT named, which is f1257bd's no-padding rule rather than the one "
+                + "0eba929 departed from: these are prechecks and bookkeeping, not the operation "
+                + "the label describes. The Complete sits on the straight-line path at the end "
+                + "of the method rather than in a finally - the existing finally closes above "
+                + "the decision, and there is no return between the Begin and the end, so the "
+                + "using covers every exception path by disposal (the BlockedSenders"
+                + ".ConfirmUnblock shape). Success is read from result.Outcome, not from "
+                + "decision.Accepted: a NotFound is a check that RAN and refused the entry, "
+                + "Unavailable is the one that never reached the directory. The Complete reads "
+                + "two LOCALS rather than ppAddError, which any of the four Add buttons clears "
+                + "on entry while this one can still be suspended on its lookup"),
         ],
         Exempt =
         [
             new("OnInitializedAsync", AuthPreambleOnly + ", plus " + ConfigStoreRead),
+            new("OnAfterRenderAsync",
+                "a once-only gate and nothing else: it tests three flags, latches ppSweepDone "
+                + "and calls the sweep. The work - and the wait - is SweepExistingEntriesAsync, "
+                + "which reports it",
+                "SweepExistingEntriesAsync"),
+            new("AddPpUser",
+                "a one-line dispatcher; the directory lookup and its activity are in "
+                + "AddValidatedAsync",
+                "AddValidatedAsync"),
+            new("AddPpGroup",
+                "a one-line dispatcher; the directory lookup and its activity are in "
+                + "AddValidatedAsync",
+                "AddValidatedAsync"),
+            new("AddPpOu",
+                "a one-line dispatcher; the directory lookup and its activity are in "
+                + "AddValidatedAsync",
+                "AddValidatedAsync"),
+            new("AddPpTarget",
+                "a one-line dispatcher; it asks for a GroupTarget decision over a Group "
+                + "directory lookup, but the lookup and its activity are still in "
+                + "AddValidatedAsync",
+                "AddValidatedAsync"),
             new("SaveCurrentTabAsync", ConfigStoreWrite),
             new("DiscardChanges", "reloads the page; pure navigation"),
             new("RemovePp", LocalUiState + "; the save is a separate action"),
