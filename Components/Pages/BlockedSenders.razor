@@ -286,6 +286,33 @@
         var ticket = ticketNumber.Trim();
         var unblockReason = reason.Trim();
 
+        // Opened HERE, above the try, so the authorization and protected-principal refusals
+        // inside it are covered too, and completed AFTER the notification email - not at the
+        // write - so the bar does not read Idle while an email is still in flight.
+        // NamedLocations.SaveLocation is the shape this copies, and the one deviation from it is
+        // forced rather than chosen: ConfirmUnblock_HasNoFinally refuses a finally on this method
+        // because it would move the isLoading clear past the trailing refresh and turn that
+        // refresh into a silent no-op. So the single Complete sits on the straight-line path
+        // after the email, and the three early refusal returns above it end the activity by
+        // disposing the using - which ActivityProgressService documents as always ending it.
+        //
+        // The OperationTrace scope opened further down is NOT this. The trace is the diagnostic
+        // record read afterwards; the activity is the status frame watched now. Confusing the two
+        // is how a live Exchange Online write shipped with the bar Idle on the one page the
+        // operator reported.
+        //
+        // Completed from the LOCAL opResult, never from the result field. This page's banner
+        // renders a dismiss button wired straight at () => result = null, and it stays clickable
+        // while the handler is suspended at the write or at the email await, so reading the field
+        // back down there is the post-await live-read trap ClickGateRegistry records against
+        // NamedLocations - with a live control on this very page to spring it.
+        //
+        // Three steps, because the sequence is fixed once the operation proceeds: the permission
+        // and protection checks, the Exchange Online write, the notification. A refusal ends at
+        // the step it reached, which is what happened, not a lie about size.
+        using var activity = Progress.Begin(
+            "Blocked Senders", $"Unblocking {address}", ActivitySize.Steps(3));
+
         // Everything from here to the opening of the operation scope runs inside one catch. The
         // authorization round trip, the protection gate and BeginOperation can all throw, and an
         // exception escaping a Blazor Server event handler is not recoverable here: there is no
@@ -308,6 +335,8 @@
         OperationTraceService.OperationScope scope;
         try
         {
+            activity.Step("checking whether this sender may be unblocked");
+
             // Re-check authorization immediately before the write: a user removed from the
             // section group (or whose module was disabled) mid-session must not keep mutating.
             // The unblock write requires the granular BlockedSendersUnblock policy; viewing
@@ -390,6 +419,7 @@
         PermissionResult opResult;
         try
         {
+            activity.Step("unblocking the sender in Exchange Online");
             OperationTrace.Step("Reauthorized");
             OperationTrace.Step("BackendWrite", backend: "ExchangeOnline", command: "Remove-BlockedSenderAddress", target: address);
             opResult = await BlockedSenderSvc.UnblockSenderAsync(address, unblockReason);
@@ -433,6 +463,7 @@
 
         // Admin notification (house pattern for mutating modules). A send failure must not
         // change the unblock result, so it is caught and logged separately.
+        activity.Step("sending the notification");
         try
         {
             await Email.SendAdminNotificationAsync(
@@ -448,6 +479,16 @@
         {
             Logger.LogWarning(ex, "Failed to send admin notification for unblock of {Address}", address);
         }
+
+        // The window closes HERE, before the trailing refresh, and that is a decision rather
+        // than a convenience. LoadBlockedSenders opens its OWN activity with its own honest
+        // label, so spanning it would put two bars in the frame for one click, the older one
+        // still claiming the unblock is running after it has already committed - the
+        // MessageTraceReports.Download defect pointed the other way. The write is finished and
+        // its outcome is known at this point, which is exactly when the frame should stop saying
+        // it is running; the refresh that follows is reported, separately and honestly, by the
+        // operation that actually does it.
+        activity.Complete(opResult.Success, opResult.Message);
 
         result = opResult;
         isLoading = false;

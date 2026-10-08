@@ -449,16 +449,51 @@ public static class ProgressRegistry
     private static PageEntry BlockedSenders => new()
     {
         Page = "BlockedSenders.razor",
-        Reports = [new("LoadBlockedSenders", "BlockedSenderSvc.GetBlockedSendersAsync")],
-        KnownGaps =
+        Reports =
         [
-            new("ConfirmUnblock", 276,
-                "SILENT, MUTATING. The operator-reported case. The protection gate, the live EXO "
-                + "BlockedSenderSvc.UnblockSenderAsync write and the notification email all run "
-                + "with the bar idle; the only thing that lights it is the trailing refresh, "
-                + "after the write has already happened"),
-            new("DownloadCsvAsync", 239, SilentCsvExport),
+            new("LoadBlockedSenders", "BlockedSenderSvc.GetBlockedSendersAsync"),
+            new("ConfirmUnblock",
+                [
+                    "ProtectionGate.EvaluateAsync(",
+                    "BlockedSenderSvc.UnblockSenderAsync(",
+                    "Email.SendAdminNotificationAsync(",
+                ],
+                "the fifth of the survey's six silent writes, and the one the operator actually "
+                + "reported (docs/ProgressCoverage-Plan.md S2). It had an OperationTrace scope "
+                + "and nothing else, which is the same confusion ConferenceRooms.SetSingleRoomType "
+                + "shipped: the trace is the diagnostic record read afterwards, the activity is "
+                + "the status frame watched now. The activity opens above the preflight try, so "
+                + "the authorization and protected-principal refusals are covered too. The three "
+                + "remote calls in the handler's own body are named, and each was measured by "
+                + "reading the callee rather than assumed from its shape. "
+                + "ProtectionGate.EvaluateAsync is the OPENING pin: BlockedSenderProtectionGate "
+                + "resolves through ProtectedPrincipalService.ResolveWithExchangeFallbackAsync "
+                + "unconditionally - deliberately, because a blocked sender is often cloud-only "
+                + "or alias-addressed - so it reaches the 10-15 second Exchange round trip that "
+                + "OutOfOffice.SetOof and ConferenceRooms.SetSingleRoomType name for the same "
+                + "reason, and it is the only call that forbids a Begin hoisted into the try. "
+                + "BlockedSenderSvc.UnblockSenderAsync is the live Exchange Online write, the "
+                + "operation itself. Email.SendAdminNotificationAsync is the CLOSING pin, named "
+                + "directly here rather than through a helper, because it is the last remote "
+                + "call in the body and is what forbids a Complete hoisted up to the write. "
+                + "Two calls were read and deliberately NOT named: "
+                + "AuthStateProvider.GetAuthenticationStateAsync and "
+                + "AuthorizationService.AuthorizeAsync decide from the Windows token's group SIDs "
+                + "plus a cached section-access read and make no remote hop, the same answer "
+                + "ADAttributeEditor.ConfirmSave and ConferenceRooms.SetSingleRoomType got for "
+                + "their own prechecks. The window closes BEFORE the trailing LoadBlockedSenders "
+                + "refresh, which is registered and reported in its own right: spanning it would "
+                + "put two bars in the frame for one click, the older one still claiming a write "
+                + "that has already committed. And the Complete reads the LOCAL opResult, not the "
+                + "result field, because this page's banner renders a dismiss button wired at "
+                + "() => result = null. Shape note: this is the one mutating handler in the repo "
+                + "that may NOT complete in a finally - ClickGateStuckFlagTests."
+                + "ConfirmUnblock_HasNoFinally refuses one, because a finally would move the "
+                + "isLoading clear past the refresh and make the refresh a silent no-op - so the "
+                + "single Complete sits on the straight-line path and the refusal returns end the "
+                + "activity by disposing the using"),
         ],
+        KnownGaps = [new("DownloadCsvAsync", 239, SilentCsvExport)],
         Exempt =
         [
             new("OnInitializedAsync", AuthPreambleOnly),

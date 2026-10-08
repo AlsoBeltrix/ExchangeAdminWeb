@@ -50,9 +50,62 @@ growth means this was not the dominant cause, which is information and points at
 S1 landed at `d5f3b3b`. The first S2 fix - `CloudPasswordReset.ExecuteResetAsync`, the survey's
 worst finding - landed at `ed7754f`; the second, `OutOfOffice.SetOof`, at `2d93c26`; the third,
 `ADAttributeEditor.ConfirmSave`, at `f1257bd`; the fourth, `ConferenceRooms.SetSingleRoomType`,
-in the commit carrying this record. Two of the six silent writes remain:
-`BlockedSenders.ConfirmUnblock`, `ExchangeOnlineConfig.SaveExoConfig`. **This is the only place
-that list is kept.** Queue item 18 is DONE and its record follows below.
+at `94361fd`; the fifth, `BlockedSenders.ConfirmUnblock` - the one the operator actually
+reported - in the commit carrying this record. ONE of the six silent writes remains:
+`ExchangeOnlineConfig.SaveExoConfig`. **This is the only place that list is kept.** Queue item
+18 is DONE and its record follows below.
+
+**S2, fifth fix: `BlockedSenders.ConfirmUnblock` now reports its Exchange Online unblock.**
+This is the operation the owner reported and the one the whole work stream came from.
+`BlockedSenders` `1.4.2` -> `1.4.3`; base app unchanged at `2.27.1` (module-scoped). Registry:
+one entry `KnownGap` -> `Reports`. Suite 3674, unchanged - the fix adds no test, it brings a
+silent handler inside existing assertions. Same trap as `ConferenceRooms`: the page had an
+`OperationTrace` scope and nothing else, and having the diagnostic trail reads like having the
+status frame until you look. `LoadBlockedSenders` on the same page already reported, so the
+pattern was in the file the whole time.
+
+**Three remote calls named, each measured by reading the callee.**
+`ProtectionGate.EvaluateAsync(` is the opening pin: `BlockedSenderProtectionGate` resolves
+through `ProtectedPrincipalService.ResolveWithExchangeFallbackAsync` UNCONDITIONALLY - on
+purpose, because a blocked sender is often cloud-only or alias-addressed - so it reaches the
+10-15 second Exchange round trip `OutOfOffice` and `ConferenceRooms` both named, and it is the
+only call forbidding a `Begin` hoisted into the `try`. `BlockedSenderSvc.UnblockSenderAsync(` is
+the live write. `Email.SendAdminNotificationAsync(` is the closing pin and is named DIRECTLY
+here, not through a helper, because it sits in the handler's own body.
+`AuthStateProvider.GetAuthenticationStateAsync` and `AuthorizationService.AuthorizeAsync` were
+read and NOT named - Windows token SIDs plus a cached section-access read, the same answer
+`ADAttributeEditor` and `ConferenceRooms` got for their prechecks.
+
+**The one shape deviation from `NamedLocations.SaveLocation`, and it is forced.**
+`ClickGateStuckFlagTests.ConfirmUnblock_HasNoFinally` refuses a `finally` on this method,
+because a `finally` moves the `isLoading` clear past the trailing refresh and turns that refresh
+into a silent no-op. So the single `Complete` sits on the straight-line path after the email,
+and the three refusal returns above it end the activity by disposing the `using` -
+`ActivityProgressService` documents disposal as always ending it. `Complete` reads the LOCAL
+`opResult`, because this page's banner renders a dismiss button wired at `() => result = null`.
+
+**The window closes BEFORE the trailing `LoadBlockedSenders` refresh, deliberately.** That
+refresh is a registered, separately reported operation with its own honest label; spanning it
+would put two bars in the frame for one click, the older one still claiming a write that has
+already committed. The write's outcome is known at that point, which is when the frame should
+stop saying it is running.
+
+**Neither re-anchor pass was owed.** The page is NOT ClickGate line-pinned - `ClickGateRegistry`
+carries it page-name-keyed as "tier 3, not approved" - and the only remaining line-keyed
+`ProgressRegistry` pointer into it, `DownloadCsvAsync` 239, sits above the edit and did not move.
+ClickGate filter green at 316.
+
+**Three probes, each applied ALONE, each 1 failed / 24 passed and each isolating one test.**
+Stripping the activity failed condition 2 naming all three calls, "it begins no activity at
+all". Moving the `Complete` up above the email failed condition 3 naming only
+`Email.SendAdminNotificationAsync(`. **And the hoist probe was written in the STRONG form for
+the first time in this work stream**: the `Begin` ITSELF moved below `ProtectionGate.EvaluateAsync`
+(to just after the preflight catch), which failed condition 2 with "its earliest Begin is after
+it", naming only that call. `f1257bd` and `94361fd` could not do this and substituted hoisting
+the preamble; the difference is structural, not effort - those two complete in a `finally` with
+their last covered call in a `catch`, so a lowered `Begin` puts that call outside the using
+scope and trips condition 3 as well. `ConfirmUnblock` has neither, so the mutation Codex asked
+for is available here and it bites. Page restored byte-identical by `md5sum` and `touch`ed.
 
 **S2, fourth fix: `ConferenceRooms.SetSingleRoomType` now reports its `Set-Place` write.**
 `ConferenceRooms` `2.6.3` -> `2.6.4`; base app unchanged at `2.27.1` (module-scoped). Registry:

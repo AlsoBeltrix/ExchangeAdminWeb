@@ -1,8 +1,7 @@
 # Progress Coverage - Plan
 
-Status: **APPROVED 2026-10-07 ("go"), IN PROGRESS.** S1 (the registry) and four S2 fixes have
-landed. Two S2 silent writes remain: `BlockedSenders.ConfirmUnblock` and
-`ExchangeOnlineConfig.SaveExoConfig`. **The live gap list is
+Status: **APPROVED 2026-10-07 ("go"), IN PROGRESS.** S1 (the registry) and five S2 fixes have
+landed. One S2 silent write remains: `ExchangeOnlineConfig.SaveExoConfig`. **The live gap list is
 `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this document** - the counts here were
 correct at drafting and have moved twice since.
 
