@@ -204,12 +204,18 @@ public class UsageTrackerWiringTests
         var text = File.ReadAllText(
             AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminEventLog.razor"));
 
-        var changed = AuditCategoryFilingTests.MethodBody(text, "private void OnDateRangeChanged()");
+        // Both signatures are pinned verbatim and both say "async Task" rather than "void"
+        // since docs/ProgressCoverage-Plan.md S5: the loaders they dispatch to report to the
+        // status frame now, and a synchronous handler cannot let the frame paint. The exact
+        // signature stays the anchor - it fails loudly on a real change rather than drifting -
+        // and every assertion below it is unchanged, including the reload anchor, because
+        // "await LoadEvents();" still contains "LoadEvents();".
+        var changed = AuditCategoryFilingTests.MethodBody(text, "private async Task OnDateRangeChanged()");
         var elseAt = changed.IndexOf("else", StringComparison.Ordinal);
         Assert.True(elseAt > 0, "OnDateRangeChanged no longer branches on the current view.");
         Assert.Contains("eventsRangeStale = true;", changed[..elseAt], StringComparison.Ordinal);
 
-        var toEvents = AuditCategoryFilingTests.MethodBody(text, "private void ShowEventsView()");
+        var toEvents = AuditCategoryFilingTests.MethodBody(text, "private async Task ShowEventsView()");
         Assert.Contains("showUsage = false;", toEvents, StringComparison.Ordinal);
 
         var gate = toEvents.IndexOf("if (eventsRangeStale)", StringComparison.Ordinal);

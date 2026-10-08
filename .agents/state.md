@@ -25,11 +25,12 @@ config-deletion fix and queue item 18 all exist only in this repository.
 | **Remove-completed: filtered set or whole batch?** | `docs/MigrationRemoveCompleted-Plan.md` stays DRAFT |
 | **Manual acceptance** | Nothing here proves a progress bar renders. Every S2/S3 fix is source-verified only |
 
-**Next work, if asked:** S5 of `docs/ProgressCoverage-Plan.md` - the remaining silent reads,
-unpinned pages first. **S4 IS COMPLETE**: `AdminSettings` at `4e84482` and `AdminBulkJobs` in
-the commit carrying this record, and the plan's third S4 page, `ExchangeOnlineConfig`, was
-already closed by S2. No page under `Components/Pages` injects `IActivityProgress` nowhere any
-more. The live gap list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not any document.
+**Next work, if asked:** S5 of `docs/ProgressCoverage-Plan.md` continues - the remaining silent
+reads. S4 is complete (`AdminSettings` `4e84482`, `AdminBulkJobs` `6a561df`; the plan's third S4
+page, `ExchangeOnlineConfig`, was already closed by S2), and no page under `Components/Pages`
+injects `IActivityProgress` nowhere any more. **S5's first batch is landing now** -
+`AdminEventLog` (7 gaps), `Comms10k` (3) and `MessageTrace` (2), one commit per page; the record
+is below. The live gap list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not any document.
 
 **This file is 2,600+ lines, far over the repo-guidance target.** Run `playbook drift` before
 adding to it.
@@ -97,6 +98,63 @@ injecting `IActivityProgress` nowhere. `AdminSettings` landed at `4e84482` and
 `AdminBulkJobs` in the commit carrying this record. **S4 IS COMPLETE; S5, the remaining silent
 reads, is next.** The live gap list is that file, not this one. Queue item 18 is DONE and its
 record follows below.
+
+**S5, first fix: `AdminEventLog` reports its log scan, its usage aggregates and its export.**
+The page's SEVEN gaps - the biggest single-page remainder in the plan - close into THREE
+activities, because all seven reach one of exactly three things: `LoadEvents`, `LoadUsage` and
+`DownloadCsv`. The four entry points above the two loaders (`OnInitializedAsync`,
+`ShowEventsView`, `ShowUsageView`, `OnDateRangeChanged`) are `Exempt` + `DelegatesTo`.
+`AdminEventLog` `1.2.3` -> `1.2.4`; base app unchanged at `2.27.1`. Suite 3674, unchanged.
+
+**All three handlers were FULLY SYNCHRONOUS and all three carry an `await Task.Yield()`**;
+`DownloadCsv`'s only await was the interop transfer, AFTER the whole file had been built, so
+the bar would not have appeared until the expensive part was over. Same vacuous outcome
+`ExchangeOnlineConfig.SaveExoConfig` recorded and both `AdminBulkJobs` handlers fixed.
+`LoadUsage` is `Unknown` rather than `Steps(3)` and `DownloadCsv` `Unknown` rather than
+`Items(n)` for the same reason the yield is needed: nothing between the `Begin` and the
+`Complete` can repaint, so a stepped or determinate bar would be a number no operator sees.
+
+**`LoadEvents` is markup-wired in its own right** - the "Show diagnostics" toggle hits it via
+`@bind:after` - so it holds the activity rather than being wrapped. It names THREE covered
+calls (`JsonlLog.GetAuditLogPaths(`, `ReadLinesShared(` at both occurrences,
+`ExtendedLog.GetEntries(`), all local disk work named under the reviewer's rule 1, and it has
+THREE `Complete`s because its three exits differ: an empty range completes TRUE (the ruling's
+first half, second use after `AdminSettings`' sweep), an unreadable file completes FALSE from
+`loadError`, an unhandled throw falls to disposal.
+
+**`ExecuteUndo` changed and it was forced rather than chosen.** Its trailing `LoadEvents()` now
+reports for itself, so its `Complete` moved out of the `finally` onto the line above that
+refresh - `BlockedSenders.ConfirmUnblock`'s settled shape, which exists precisely to stop two
+bars in the frame for one click. `Complete` is idempotent, so the `finally` is a no-op on the
+success path only. One behaviour change falls out and it is an improvement: a fault in the log
+re-scan can no longer brand a committed reversal as failed.
+
+**`OnDateRangeChanged` is HALF-PINNED and the entry says so.** `DelegatesTo` holds ONE name, so
+a two-branch dispatcher cannot have both branches held. `LoadUsage` is the one named, because
+that branch exists only because review finding `utei-4` put it there.
+
+**An existing guard tripped and was re-anchored, not weakened:
+`UsageTrackerWiringTests.EventLog_ReloadsEventsWhenTheRangeMovedInTheUsageView`** pins
+`OnDateRangeChanged` and `ShowEventsView` by VERBATIM SIGNATURE, and both became `async Task`.
+The two anchor strings were updated and nothing else: every assertion below them still bites,
+including the reload anchor, because `await LoadEvents();` still contains `LoadEvents();`. Same
+family as review finding `prog-6` - a source-text guard anchored on text that legitimately
+moves.
+
+**No re-anchor owed**, checked rather than assumed: `ClickGateRegistry` carries the page
+name-keyed as "tier 4, not approved", so no `ExpectedLineCount` and no line keys, all seven
+`ProgressRegistry` pointers into it were the gaps this deletes, and the two markup line
+citations in the scanner's remarks (`AdminEventLog.razor:98`, `Comms10k.razor:91`) sit above
+the `@code` block that every added line went into.
+
+**Four probes, each ALONE, each on the FULL suite, every one 1 failed / 3673 passed,
+single-fault.** Chosen as the slowest and the structurally distinct: strip and hoist on
+`LoadEvents` (the survey's worst read here, three named calls spread across a loop and a
+conditional), early `Complete` on `DownloadCsv` (the exact `MessageTraceReports.Download`
+defect, and this is the FIRST of the seven pages carrying the silent CSV-export shape to be
+fixed), and the delegation probe on `OnDateRangeChanged` (the rule carrying four of the seven
+entries). The hoist is the `Begin`-relocated form, not the covered-call form: every named call
+on this page is inside a loop or a `try` and moving one drags its declarations.
 
 **S4, second and last fix: `AdminBulkJobs` reports its job-store reads.** The page injected
 `IActivityProgress` nowhere and, like `AdminSettings`, is absent from

@@ -480,11 +480,42 @@
         hasUndoPermission = (await AuthorizationService.AuthorizeAsync(user, "UndoAuditedActions")).Succeeded;
 
         authChecked = true;
-        LoadEvents();
+        await LoadEvents();
     }
 
-    private void LoadEvents()
+    /// <summary>
+    /// Scans and parses every JSONL audit, trace and extended log in the selected date range.
+    /// </summary>
+    /// <remarks>
+    /// Operator-initiated in its own right, not only through the four entry points: the "Show
+    /// diagnostics" toggle is wired straight at it with @bind:after, which is one of the surfaces
+    /// ProgressRegistry's scanner was widened to see.
+    ///
+    /// THE YIELD IS LOAD-BEARING RATHER THAN TIDY, and it is why this method is now async. Every
+    /// line below it is synchronous - file enumeration, line reads, JSON parsing, the sort - so
+    /// without a flush point between the Begin and the work the circuit cannot repaint and the
+    /// activity would open and close inside one uninterrupted stretch of renderer time: a bar that
+    /// satisfies ProgressRegistry and shows the operator nothing, which is the vacuous outcome
+    /// docs/ProgressCoverage-Plan.md exists to stop. AdminBulkJobs.ToggleDetails and
+    /// ExchangeOnlineConfig.SaveExoConfig are the same shape.
+    ///
+    /// The Begin and the yield sit ABOVE the field resets, deliberately: the intermediate render
+    /// the yield buys then shows the table the operator was already looking at, plus the bar,
+    /// rather than an empty table for one frame.
+    ///
+    /// Three Completes rather than one finally, because the three exits mean different things.
+    /// An empty range completes with success TRUE - a scan that ran and found nothing finished,
+    /// which is the reviewer's 2026-10-08 ruling - and only a file that could not be read
+    /// (loadError) is a failure. Nothing falls out of scope to the dispose fallback except an
+    /// unhandled throw, which is what that fallback is for.
+    /// </remarks>
+    private async Task LoadEvents()
     {
+        using var activity = Progress.Begin(
+            "Event Log", "Reading the audit logs for the selected dates", ActivitySize.Unknown);
+
+        await Task.Yield();
+
         loadError = null;
         loadWarning = null;
         emptyResultMessage = null;
@@ -597,6 +628,7 @@
                     : $"No events recorded for {effectiveStart:yyyy-MM-dd} to {effectiveEnd:yyyy-MM-dd}.")
                 : "No events matched the selected date range.";
             filteredEvents = new();
+            activity.Complete(true, emptyResultMessage);
             return;
         }
 
@@ -617,6 +649,14 @@
         }
 
         ApplyFilters();
+
+        // Reads loadError and filteredEvents, and both are safe to read here rather than only
+        // assumed to be: this method suspends exactly once, at the Task.Yield above, and
+        // everything from there to here is one synchronous stretch, so no other handler can
+        // interleave and rewrite them. loadError is written by nothing else in the file.
+        activity.Complete(
+            loadError == null,
+            loadError ?? $"{filteredEvents.Count:N0} event(s) in range.");
     }
 
     private MergedLogEntry? ParseAuditLine(string line, DateTime rangeStartUtc, DateTime rangeEndUtc)
@@ -950,7 +990,17 @@
                 undoSuccess = $"Undo completed successfully. Reversal operation ID: {result.ReversalOperationId ?? "N/A"}";
                 if (!string.IsNullOrEmpty(undoPreview?.OriginalOperationId))
                     reversedOperationIds.Add(undoPreview.OriginalOperationId);
-                LoadEvents();
+
+                // The window closes HERE, before the trailing refresh, which is
+                // BlockedSenders.ConfirmUnblock's shape and is a decision rather than a
+                // convenience: LoadEvents now opens its OWN activity with its own honest label,
+                // so spanning it would put two bars in the frame for one click, the older one
+                // still claiming the undo is running after it has already committed. Complete is
+                // idempotent and the first call wins, so the finally below is a no-op on this
+                // path - and that is the intended reading: the reversal is committed, so a fault
+                // in the log re-scan must not brand it failed.
+                activity.Complete(true, undoSuccess);
+                await LoadEvents();
             }
             else
             {
@@ -1123,6 +1173,24 @@
 
         if (csvEntries.Count == 0) return;
 
+        // Both guards return ABOVE the Begin: each is a count of rows already on the page and
+        // neither calls anything, so an activity on them would be a flash with no work behind it.
+        //
+        // Unknown rather than Items(csvEntries.Count), although the count IS known: nothing here
+        // can Report between the Begin and the Complete, so a determinate bar would sit at 0% for
+        // the whole export and read as hung. The count goes in the label instead, where it tells
+        // the operator the same thing honestly.
+        //
+        // The yield is load-bearing for the same reason as LoadEvents': the projection, the
+        // formatter and the base64 encode are all synchronous, so without a flush point the first
+        // paint would not arrive until the interop await - after the expensive part is over.
+        using var activity = Progress.Begin(
+            "Event Log",
+            $"Exporting {csvEntries.Count:N0} event(s) to CSV",
+            ActivitySize.Unknown);
+
+        await Task.Yield();
+
         var rows = csvEntries.Select(evt => new EventLogCsvRow(
             evt.Time, evt.Source, evt.User, evt.Ip,
             evt.Action, evt.Category, evt.FullTarget, evt.Result,
@@ -1132,6 +1200,13 @@
         var base64 = Convert.ToBase64String(bytes);
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         await JS.InvokeVoidAsync("downloadFile", $"event_log_{timestamp}.csv", "text/csv", base64);
+
+        // Completed BELOW the transfer, which is MessageTraceReports.Download's settled order:
+        // the whole file is base64-encoded and pushed over the circuit, and that is the last
+        // thing the operator waits on. The transfer MECHANISM is untouched -
+        // docs/DownloadMemoryRetention-Plan.md proposes replacing it and is a DRAFT. Reads
+        // csvEntries, a local, so no other handler can empty it while this one is suspended.
+        activity.Complete(true, $"{csvEntries.Count:N0} event(s) exported.");
     }
 
     private static List<DetailField> ParseExtendedDetail(string detail)
@@ -1229,20 +1304,20 @@
     /// <see cref="LoadEvents"/> re-reads every log file in the span and resets the expanded
     /// row and the page number; an unconditional reload would pay that on every toggle.
     /// </summary>
-    private void ShowEventsView()
+    private async Task ShowEventsView()
     {
         showUsage = false;
         if (eventsRangeStale)
         {
             eventsRangeStale = false;
-            LoadEvents();
+            await LoadEvents();
         }
     }
 
-    private void ShowUsageView()
+    private async Task ShowUsageView()
     {
         showUsage = true;
-        LoadUsage();
+        await LoadUsage();
     }
 
     /// <summary>
@@ -1251,16 +1326,16 @@
     /// marked stale rather than reloaded here, so the operator does not pay a log-file scan
     /// for a view they are not looking at (review finding utei-4).
     /// </summary>
-    private void OnDateRangeChanged()
+    private async Task OnDateRangeChanged()
     {
         if (showUsage)
         {
             eventsRangeStale = true;
-            LoadUsage();
+            await LoadUsage();
         }
         else
         {
-            LoadEvents();
+            await LoadEvents();
         }
     }
 
@@ -1268,8 +1343,26 @@
     /// Loads the three aggregates for the selected dates. A query fault clears the tables
     /// before it reports, so a stale aggregate can never be shown next to an error.
     /// </summary>
-    private void LoadUsage()
+    /// <remarks>
+    /// Same yield, same reason, as <see cref="LoadEvents"/>: the three aggregates are synchronous
+    /// SQLite queries, so without a flush point the activity would open and close inside one
+    /// uninterrupted stretch of renderer time and paint nothing.
+    ///
+    /// Unknown rather than Steps(3), although there are exactly three reads. Nothing can repaint
+    /// BETWEEN them for the same reason the yield is needed at all, so a stepped bar would jump
+    /// from "step 1 of 3" straight to done and the intermediate steps would be a label the
+    /// operator never sees. A moving bar is the honest shape for a stretch that cannot report.
+    ///
+    /// A query fault falls out of scope to the dispose fallback rather than completing: unlike
+    /// an empty event range, a faulted aggregate is work that did NOT finish.
+    /// </remarks>
+    private async Task LoadUsage()
     {
+        using var activity = Progress.Begin(
+            "Event Log", "Reading usage telemetry for the selected dates", ActivitySize.Unknown);
+
+        await Task.Yield();
+
         usageError = null;
         try
         {
@@ -1280,6 +1373,10 @@
             usageModules = BuildModuleRows(UsageEvents.ModuleSummary(fromUtc, toUtc), Catalog.GetOrdered());
             usageThemes = UsageEvents.ThemeSummary(fromUtc, toUtc);
             usageSessions = UsageEvents.SessionSummary(fromUtc, toUtc);
+
+            // Reads usageModules, assigned three statements above with no await between, so no
+            // other handler can interleave and empty it.
+            activity.Complete(true, $"{usageModules.Count:N0} module row(s).");
         }
         catch (Exception ex)
         {

@@ -422,30 +422,135 @@ public static class ProgressRegistry
         ],
     };
 
+    /// <remarks>
+    /// <para>
+    /// The biggest single-page remainder in docs/ProgressCoverage-Plan.md S5: SEVEN gaps, and
+    /// THREE activities, because all seven reach one of exactly three things. LoadEvents and
+    /// LoadUsage are the two real workers; the four entry points above them are dispatchers and
+    /// are registered as such; DownloadCsv is the page's own copy of the silent CSV-export shape
+    /// and is the FIRST of the seven pages carrying it to be fixed.
+    /// </para>
+    /// <para>
+    /// LoadEvents is not only a worker - the "Show diagnostics" toggle is wired straight at it
+    /// with @bind:after, so it is an operator-initiated handler in its own right, which is why it
+    /// holds the activity rather than being wrapped by one.
+    /// </para>
+    /// <para>
+    /// ALL THREE ACTIVITIES CARRY AN await Task.Yield() AND THAT IS LOAD-BEARING. Every one of
+    /// the three handlers was fully synchronous from its first line to its last (DownloadCsv's
+    /// only await was the interop transfer AFTER the whole file had been built), so an activity
+    /// wrapped round any of them would have opened and completed inside one uninterrupted stretch
+    /// of renderer time and painted nothing - the vacuous outcome recorded on
+    /// ExchangeOnlineConfig.SaveExoConfig and fixed on both AdminBulkJobs handlers.
+    /// </para>
+    /// </remarks>
     private static PageEntry AdminEventLog => new()
     {
         Page = "AdminEventLog.razor",
         Reports =
         [
             new("ShowUndoPreview", "handler.PreviewUndoAsync"),
-            new("ExecuteUndo", "handler.ExecuteUndoAsync"),
-        ],
-        KnownGaps =
-        [
-            new("LoadEvents", 486,
-                "SILENT, READ. Synchronously scans and parses every JSONL audit, trace and "
-                + "extended log in the selected date range"),
-            new("LoadUsage", 1271,
-                "SILENT, READ. Three SQLite aggregates over the usage database"),
-            new("OnInitializedAsync", 468, "SILENT, READ. The initial LoadEvents is unreported"),
-            new("ShowEventsView", 1232, "SILENT, READ. Reaches the unreported LoadEvents"),
-            new("ShowUsageView", 1242, "SILENT, READ. Reaches the unreported LoadUsage"),
-            new("OnDateRangeChanged", 1254,
-                "SILENT, READ. @bind:after entry point; reaches both unreported loaders"),
-            new("DownloadCsv", 1115, SilentCsvExport),
+            new("ExecuteUndo", "handler.ExecuteUndoAsync",
+                "unchanged as a window, but its Complete MOVED UP, out of the finally and onto "
+                + "the line above the trailing LoadEvents, because LoadEvents now opens its own "
+                + "activity. That is BlockedSenders.ConfirmUnblock's settled shape: spanning a "
+                + "refresh that reports for itself would put two bars in the frame for one "
+                + "click, the older one still claiming the undo is running after it has already "
+                + "committed. Complete is idempotent and the first call wins, so the finally is "
+                + "a no-op on the success path only - every other exit still reports from it. "
+                + "One behaviour change falls out and it is an improvement: a fault in the log "
+                + "re-scan can no longer brand a committed reversal as failed"),
+            new("LoadEvents",
+                [
+                    "JsonlLog.GetAuditLogPaths(",
+                    "ReadLinesShared(",
+                    "ExtendedLog.GetEntries(",
+                ],
+                "the survey's worst unreported READ on this page. It scans and parses every "
+                + "JSONL audit, trace and extended log in the selected date range, on the "
+                + "renderer thread, and the range is whatever two date boxes the operator typed. "
+                + "THREE calls are named because the cost is spread across three different "
+                + "readers and one call cannot hold both ends of the window: "
+                + "JsonlLog.GetAuditLogPaths( is the opening pin, the first disk call and the "
+                + "only one that runs for every date unconditionally; ReadLinesShared( is the "
+                + "operation itself, the line-by-line read of each audit and trace file, and it "
+                + "is named at BOTH its occurrences, which is what forbids a Begin pushed into "
+                + "the date loop; ExtendedLog.GetEntries( is the closing pin, the last reader in "
+                + "source order, and it is conditional on the diagnostics toggle, which is "
+                + "allowed - Comms10k.ValidateEmails pins a doubly conditional call for the same "
+                + "reason, that a call which CAN run above the window is what the defect was. "
+                + "All three are LOCAL disk work and are named under rule 1 as the S3 reviewer "
+                + "settled it on 2026-10-08: operation-scale local work counts, the same ground "
+                + "MessageTraceReports.Download named its file read on. THREE Completes rather "
+                + "than one finally, because the three exits mean different things: an empty "
+                + "range completes TRUE (a scan that ran and found nothing finished - the "
+                + "reviewer's ruling, and the second use of its first half after AdminSettings' "
+                + "sweep), a file that could not be read completes FALSE from loadError, and an "
+                + "unhandled throw falls to the dispose fallback. Both field reads were checked "
+                + "rather than assumed: the method suspends exactly once, at the yield on its "
+                + "second line, so everything after it is one synchronous stretch and no other "
+                + "handler can interleave"),
+            new("LoadUsage",
+                [
+                    "UsageEvents.ModuleSummary(",
+                    "UsageEvents.ThemeSummary(",
+                    "UsageEvents.SessionSummary(",
+                ],
+                "the three SQLite aggregates over the usage database, all three named because "
+                + "all three are the operation and the outer two are the window's pins. "
+                + "ActivitySize.Unknown rather than Steps(3), although the step count is exactly "
+                + "known: nothing can repaint BETWEEN the three reads - they are one synchronous "
+                + "stretch, which is the same fact that makes the yield necessary - so a stepped "
+                + "bar would jump from 'step 1 of 3' straight to done and the intermediate "
+                + "labels would be text no operator ever sees. A query fault does NOT complete: "
+                + "it falls out of scope to the dispose fallback, because unlike an empty event "
+                + "range a faulted aggregate is work that did not finish. The Complete reads "
+                + "usageModules, assigned three statements above with no await between"),
+            new("DownloadCsv",
+                [
+                    "EventLogCsvFormatter.Write(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the FIRST of the silent CSV-export shape to be fixed - the plan's survey named "
+                + "four pages carrying it and the registry found three more, and they are "
+                + "otherwise still KnownGaps. Two calls, the two ends: "
+                + "EventLogCsvFormatter.Write( builds the whole file from every filtered row, "
+                + "which is operation-scale local work under rule 1 and is bounded only by this "
+                + "page's MaxTotalEvents of 2,000; JS.InvokeVoidAsync( base64-encodes it and "
+                + "pushes it over the SignalR circuit, so it is the last thing the operator "
+                + "waits on and the Complete sits BELOW it, which is MessageTraceReports"
+                + ".Download's settled order. The transfer MECHANISM is deliberately untouched: "
+                + "docs/DownloadMemoryRetention-Plan.md proposes replacing it with streaming and "
+                + "is a DRAFT, not approved. Both empty-set guards return ABOVE the Begin - each "
+                + "is a count of rows already on the page and calls nothing. Unknown rather than "
+                + "Items(csvEntries.Count) although the count is known, because nothing between "
+                + "the Begin and the Complete can Report, so a determinate bar would sit at 0% "
+                + "for the whole export and read as hung; the count is in the label instead. The "
+                + "Complete reads csvEntries, a local"),
         ],
         Exempt =
         [
+            new("OnInitializedAsync", AuthPreambleOnly + ", then the first log scan", "LoadEvents"),
+            new("ShowEventsView",
+                "returns to the events table and reloads it ONLY when the range moved while "
+                + "Usage was showing (review finding utei-4); the reload it then runs is "
+                + "registered on LoadEvents, which reports",
+                "LoadEvents"),
+            new("ShowUsageView",
+                "switches to the usage tables and reloads them; the reload is registered on "
+                + "LoadUsage, which reports",
+                "LoadUsage"),
+            new("OnDateRangeChanged",
+                "the @bind:after entry point on both date inputs. It calls NEITHER loader of its "
+                + "own accord - it dispatches to whichever view is showing, LoadUsage when Usage "
+                + "is up and LoadEvents otherwise, and both of those report. HALF-PINNED, AND "
+                + "SAID RATHER THAN HIDDEN: DelegatesTo holds ONE name, so a two-branch "
+                + "dispatcher cannot have both branches held by this test. LoadUsage is the one "
+                + "named, because that branch exists only because review finding utei-4 put it "
+                + "there - before it the date inputs silently reloaded events behind the usage "
+                + "tables - so it is the branch worth holding mechanically. The LoadEvents "
+                + "branch is registered in its own right and is the one a reader assumes",
+                "LoadUsage"),
             new("ApplyFilters", LocalUiState + "; filters rows already in memory"),
             new("SetPage", LocalUiState),
             new("ToggleExpand", LocalUiState),

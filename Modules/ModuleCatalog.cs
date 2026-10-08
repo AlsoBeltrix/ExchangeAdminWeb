@@ -1294,7 +1294,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Administration,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.2.3",
+            Version = "1.2.4",
             MainPermission = new(
                 "Access",
                 "EventLog",
