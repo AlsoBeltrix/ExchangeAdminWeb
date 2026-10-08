@@ -938,15 +938,53 @@ public static class ProgressRegistry
         Page = "MailboxPermissions.razor",
         Reports =
         [
+            new("SubmitSingle",
+                [
+                    "ServiceNow.ValidateTicketAsync(",
+                    "Validator.ValidateTargetMailboxAsync(",
+                    "Validator.ValidateSelfGrantAsync(",
+                    "MailboxService.GetMailboxLocationAsync(",
+                    "MailboxService.AddMailboxPermissionsAsync(",
+                    "MailboxService.RemoveMailboxPermissionsAsync(",
+                    "Email.SendAdminNotificationAsync(",
+                    "Email.SendUserNotificationAsync(",
+                    "Email.SendOwnerNotificationAsync(",
+                ],
+                "the third of the survey's nine PARTIALs (docs/ProgressCoverage-Plan.md S3), and "
+                + "the MIRROR of IntuneDevices and RiskyUsers rather than another of them: there "
+                + "the Begin already dominated everything and only the closing end moved, here "
+                + "the Complete already sat past all three notification mails and the whole fix "
+                + "is the opening end. The Begin now opens above the try, so the ticket and "
+                + "protected-target refusals are inside the window too, and they end the activity "
+                + "by disposing the using - the shape BlockedSenders.ConfirmUnblock settled on "
+                + "for the same preamble. NINE calls are named, every remote call in the "
+                + "handler's own body, each measured by reading the callee. "
+                + "ServiceNow.ValidateTicketAsync is named first and is NOT what makes this "
+                + "handler slow: it returns a local true and never leaves the machine when "
+                + "ServiceNow:Enabled is false, so an argument that rested on it would be an "
+                + "argument about one deployment's configuration. "
+                + "Validator.ValidateTargetMailboxAsync is the pin that holds whatever that "
+                + "switch says - it reaches ProtectedPrincipalService"
+                + ".ResolveWithExchangeFallbackAsync, the 10-15 second Exchange round trip, "
+                + "whenever Group/OU/pattern rules are configured, CheckAsync after it, and "
+                + "Get-Recipient through IIdentityResolver whenever the 30-minute exclusion cache "
+                + "is cold or object-id exclusions exist. ValidateSelfGrantAsync resolves BOTH "
+                + "identities through that same Exchange lookup. GetMailboxLocationAsync is "
+                + "Get-Mailbox against the cloud and, on a miss, a fresh on-prem runspace behind "
+                + "the Delinea credential fetch. The Add and Remove writes are named separately "
+                + "because the handler picks between them in a ternary. The three mails are the "
+                + "tail, and Email.SendOwnerNotificationAsync is the CLOSING pin: it is the last "
+                + "remote call in the handler's own body, inside the success branch, and the "
+                + "Complete follows it. Two calls were read and deliberately NOT named: "
+                + "GetAuthenticationStateAsync and AuthorizationService.AuthorizeAsync decide "
+                + "from the Windows token's group SIDs plus a cached section-access read and make "
+                + "no remote hop"),
             new("ProcessBulk", "MailboxService.ProcessMailboxPermissionsCsvAsync"),
             new("ExecuteOnPrem", "MailboxService.AddMailboxPermissionsOnPremAsync"),
         ],
         KnownGaps =
         [
-            new("SubmitSingle", 350,
-                "PARTIAL. The activity opens at :450, after the ServiceNow ticket call and the "
-                + "target-mailbox validation the operator is already waiting on"),
-            new("DownloadCsvReport", 743, SilentCsvExportUnsurveyed),
+            new("DownloadCsvReport", 749, SilentCsvExportUnsurveyed),
         ],
         Exempt =
         [

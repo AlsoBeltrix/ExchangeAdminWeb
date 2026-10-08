@@ -370,11 +370,22 @@
         result = null;
         await Task.Yield();
 
-        // The try opens here, immediately below the raise, rather than below the preflight. An
-        // await between a raise and its try has no finally behind it: a throw or an unbounded stall
-        // in the re-authorization, the ticket validation or the protected-principal check used to
-        // leave isLoading true, and under a page-wide predicate that is a dead page rather than one
-        // dead button. The early returns below therefore no longer clear the flag themselves.
+        // Opened HERE, above the try, and that move IS this fix. It used to open below the ticket
+        // validation and the protected-target check, so the operator watched an idle bar through
+        // both - the PARTIAL docs/ProgressCoverage-Plan.md S3 records against this handler. The
+        // closing end needed nothing: the Complete already sits past all three notification mails.
+        //
+        // The refusal returns above the write end the activity by disposing the using, which is
+        // what BlockedSenders.ConfirmUnblock settled on for the same preamble. ProcessBulk below
+        // and ExecuteOnPrem both already opened above their own try; this handler was the odd one.
+        using var activity = Progress.Begin(
+            "Mailbox Permissions", $"Updating permissions on {target}", ActivitySize.Unknown);
+
+        // The try opens here, below the raise and the activity, rather than below the preflight.
+        // An await between a raise and its try has no finally behind it: a throw or an unbounded
+        // stall in the re-authorization, the ticket validation or the protected-principal check
+        // used to leave isLoading true, and under a page-wide predicate that is a dead page rather
+        // than one dead button. The early returns below therefore no longer clear the flag.
         try
         {
             if (!await ReauthorizeAsync())
@@ -444,11 +455,6 @@
                     return;
                 }
             }
-
-            // Covers the whole write, not just the location probe: the operator is waiting on
-            // the permission change, and the probe is only its first step.
-            using var activity = Progress.Begin(
-                "Mailbox Permissions", $"Updating permissions on {target}", ActivitySize.Unknown);
 
             try
             {

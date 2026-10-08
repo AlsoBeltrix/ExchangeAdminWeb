@@ -153,7 +153,9 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.2.1",
+            // 1.2.2: SubmitSingle's activity opens above the ticket validation and the
+            // protected-target check instead of below them (docs/ProgressCoverage-Plan.md S3).
+            Version = "1.2.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -54,9 +54,72 @@ at `94361fd`; the fifth, `BlockedSenders.ConfirmUnblock` - the one the operator 
 reported - at `5a428c2`; the sixth, `ExchangeOnlineConfig.SaveExoConfig`, in the commit carrying
 this record. **S2 IS COMPLETE: all six silent writes report.** S3, the nine partials, is under
 way, one commit each: the first, `IntuneDevices.ExecuteActionAsync`, landed at `b95bd5d`; the
-second, `RiskyUsers.ExecuteActionAsync`, is in the commit carrying this record. **Seven of the
-nine partials remain.** The live list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this
+second, `RiskyUsers.ExecuteActionAsync`, at `3c2df38`; the third,
+`MailboxPermissions.SubmitSingle`, is in the commit carrying this record. **Six of the nine
+partials remain.** The live list is `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this
 file. Queue item 18 is DONE and its record follows below.
+
+**S3, third fix: `MailboxPermissions.SubmitSingle` now opens its activity above the ticket
+validation and the protected-target check.** `MailboxPermissions` `1.2.1` -> `1.2.2`; base app
+unchanged at `2.27.1` (module-scoped). Registry: one entry `KnownGap` -> `Reports`. Suite 3674,
+unchanged. **This one is the MIRROR of the two above, not another of them.** There the `Begin`
+already dominated everything and only the closing end moved; here the `Complete` already sat
+past all three notification mails and the whole fix is the opening end. The `Begin` moved from
+inside the `try`, below the ticket call and the target validation, to above the `try`.
+
+**The refusal returns are now inside the window and end the activity by DISPOSING the using,
+not by a `Complete` in the `finally`.** That is deliberate and it is `BlockedSenders`'
+precedent, not an omission: this handler's `finally` holds only `isLoading = false`, and
+`ClickGateRegistry`'s exemption for the dismiss control at `MailboxPermissions.razor:179`
+carries "no handler may READ `result` back" as the condition that keeps it true, naming
+`SubmitSingle` as one of the two handlers that honour it. Completing from `result` in the
+`finally` would falsify that written condition, and mirroring `result` into a local at all
+eight assignment sites is a bigger change than the registered defect. Dispose records
+`Complete(false, "This did not finish.")`, which on a refusal is true.
+
+**NINE calls named, every remote call in the handler's own body**, and the brief's own claim
+needed correcting in BOTH directions. `ServiceNow.ValidateTicketAsync(` is named first but is
+NOT what makes this handler slow: `Services/ServiceNowService.cs` returns a local `true` and
+never leaves the machine when `ServiceNow:Enabled` is false, so the two commits above that
+called it "the first call that leaves the machine" were describing one deployment's
+configuration. `Validator.ValidateTargetMailboxAsync(` is the pin that holds whatever that
+switch says - but it is NOT an unconditional round trip either: it reaches
+`ResolveWithExchangeFallbackAsync` only when Group/OU/pattern rules are configured, and
+`Get-Recipient` through `IIdentityResolver` only when the 30-minute exclusion cache is cold or
+object-id exclusions exist. `Validator.ValidateSelfGrantAsync(` resolves BOTH identities
+through that same Exchange lookup. `MailboxService.GetMailboxLocationAsync(` is `Get-Mailbox`
+and, on a miss, a fresh on-prem runspace behind the Delinea fetch. The Add and Remove writes
+are named separately because a ternary picks between them.
+`Email.SendOwnerNotificationAsync(` is the closing pin - the last remote call in the handler's
+own body. `GetAuthenticationStateAsync` and `AuthorizeAsync` read and NOT named.
+
+**Re-anchor: `ExpectedLineCount` alone, 761 -> 767.** The page IS ClickGate line-pinned, but
+the diff map puts both hunks at `:373` and below while the highest line-keyed entry on the page
+is 212, so no registered control moved. The `ProgressRegistry` pointer for `DownloadCsvReport`
+moved 743 -> 749 by the same map.
+
+**Three probes, each applied ALONE, each 1 failed / 24 passed and each isolating one test.**
+Strip failed condition 2, "it begins no activity at all", naming all nine calls. The hoist is
+the STRONG form by the same opening-pin route as `b95bd5d`: the covered call
+`var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);` itself moved above the
+method-scope `Begin`, line count unchanged at 767, no preamble dragged because `ticket` is
+bound above it; condition 2 failed with "its earliest Begin is after it" naming only that call.
+**One honest qualification on that probe, which the two commits above did not face:** because
+the `Begin` here sits between the `isLoading` raise and the `try`, hoisting a covered call
+across it puts a real await there too, which `ClickGateTests
+.NoRealAwaitSitsBetweenARaiseAndItsProtectingTry` would also fail. The probe was scored on the
+`ProgressRegistryTests` filter, so it still isolated one test, but the mutation is not
+single-fault against the whole suite. Early `Complete` (moved above
+`Email.SendOwnerNotificationAsync`) failed condition 3 naming only that call. Page restored
+byte-identical by `md5sum` and `touch`ed.
+
+**A contradiction found and NOT fixed, because it is outside this slice.**
+`ClickGateRegistry`'s `ExemptControl(179, "@onclick=\"() => result = null\"")` says
+"`SubmitSingle` and `ExecuteOnPrem` both hold their outcome in a local `opResult` and only ever
+assign to `result`". `ExecuteOnPrem`'s own `finally` reads it back -
+`onPremActivity.Complete(result?.Success ?? false, result?.Message)`. It is safe as written -
+no await sits between the last `result` write and that read, and `?.` cannot throw - but the
+registry's claim is false as stated, and it is the claim that keeps the exemption honest.
 
 **S3, second fix: `RiskyUsers.ExecuteActionAsync` now completes below the administrator email.**
 `RiskyUsers` `1.5.2` -> `1.5.3`; base app unchanged at `2.27.1` (module-scoped). Registry: one

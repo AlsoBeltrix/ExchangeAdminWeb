@@ -1,8 +1,9 @@
 # Progress Coverage - Plan
 
 Status: **APPROVED 2026-10-07 ("go"), IN PROGRESS.** S1 (the registry) has landed and **S2 IS
-COMPLETE - all six silent writes report.** S3 (the nine partials) is under way; the first two,
-`IntuneDevices.ExecuteActionAsync` and `RiskyUsers.ExecuteActionAsync`, have landed. **The live
+COMPLETE - all six silent writes report.** S3 (the nine partials) is under way; the first three,
+`IntuneDevices.ExecuteActionAsync`, `RiskyUsers.ExecuteActionAsync` and
+`MailboxPermissions.SubmitSingle`, have landed. **The live
 gap list is
 `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this document** - the counts here were
 correct at drafting and have moved twice since.
