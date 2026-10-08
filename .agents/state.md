@@ -49,9 +49,23 @@ growth means this was not the dominant cause, which is information and points at
 **CURRENT TASK: PROGRESS COVERAGE, `docs/ProgressCoverage-Plan.md`, approved 2026-10-07.**
 S1 landed at `d5f3b3b`. The first S2 fix - `CloudPasswordReset.ExecuteResetAsync`, the survey's
 worst finding - landed at `ed7754f`; the second, `OutOfOffice.SetOof`, at `2d93c26`; the third,
-`ADAttributeEditor.ConfirmSave`, in the commit carrying this record. Three of the six silent
-writes remain: `ConferenceRooms.SetSingleRoomType`, `BlockedSenders.ConfirmUnblock`,
-`ExchangeOnlineConfig.SaveExoConfig`. Queue item 18 is DONE and its record follows below.
+`ADAttributeEditor.ConfirmSave`, at `f1257bd`. Three of the six silent writes remain:
+`ConferenceRooms.SetSingleRoomType`, `BlockedSenders.ConfirmUnblock`,
+`ExchangeOnlineConfig.SaveExoConfig`. **This is the only place that list is kept.** Queue item
+18 is DONE and its record follows below.
+
+**`prog-5` IS FIXED AND VERIFIED in the commit carrying this record, registry only.**
+`CloudPasswordReset.ExecuteResetAsync` now names a THIRD covered call, `NotifyAdminsAsync(`,
+which is the genuinely last remote call in that handler's own body - the two-call entry stopped
+at the PATCH, and an `activity.Complete` injected right after the PATCH passed the suite 25/25.
+Both ends of the probe were run here rather than inherited from codex: the same page mutation
+fails 1/25 against the new entry (naming only `NotifyAdminsAsync(`, at all four occurrences) and
+passes 25/25 against the old one, so what catches it is the pin and not the mutation.
+`Email.SendAdminNotificationAsync` - the call that actually leaves the process, and the one
+`f1257bd` names on its own page - CANNOT be named here: it runs inside the `NotifyAdminsAsync`
+helper, and condition 1 requires the fragment to be in the method's own code. That indirection
+is recorded as a known gap rather than fixed by weakening the rule that caught
+`BlockedSenders.ConfirmUnblock`. Page untouched, so no version bump; suite unchanged at 3674.
 
 **The plan file's `Status:` header drift is CLOSED** - it was corrected to `APPROVED 2026-10-07`
 at `976562b`, and this note had outlived it by one commit.
@@ -117,9 +131,8 @@ ends the activity as the non-success it was; an explicit `Complete` there would 
 one in source order, which is what condition 3 reads, and all four covered calls below it would
 then register as running past a completed activity.
 
-Four S2 silent writes remain: `ADAttributeEditor.ConfirmSave`,
-`ConferenceRooms.SetSingleRoomType`, `BlockedSenders.ConfirmUnblock`,
-`ExchangeOnlineConfig.SaveExoConfig`.
+What remains of S2 is listed once, in the CURRENT TASK block above; this copy went stale a
+commit after it was written and is now a pointer.
 
 **OWNER APPROVED THE PLAN 2026-10-05 ("go"), AND S1 HAS LANDED.
 `docs/EmergencyDisableLockdownOU-Plan.md` owns the design; it supersedes the notes below.**

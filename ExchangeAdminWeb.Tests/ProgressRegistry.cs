@@ -504,7 +504,11 @@ public static class ProgressRegistry
                 "the destination lookup that follows is additionally guarded by a bespoke "
                 + "assertion in GlobalProgressWiringTests, which this registry does not replace"),
             new("ExecuteResetAsync",
-                ["ResetService.DeriveDestination(", "ResetService.ResetPasswordAsync("],
+                [
+                    "ResetService.DeriveDestination(",
+                    "ResetService.ResetPasswordAsync(",
+                    "NotifyAdminsAsync(",
+                ],
                 "was the worst finding in the survey (docs/ProgressCoverage-Plan.md S2): the "
                 + "ticket check, the protection gate, the fresh Graph resolve, DeriveDestination, "
                 + "the PATCH and the delivery email all ran with the bar reading Idle. The "
@@ -520,7 +524,22 @@ public static class ProgressRegistry
                 + "that actually costs the operator the wait. Fixing the reporting was not "
                 + "sufficient on its own either: DeriveDestination was a blocking forest search "
                 + "on the renderer thread, and a bar cannot paint on a frozen circuit, so it "
-                + "moved to Task.Run in the same commit"),
+                + "moved to Task.Run in the same commit. THE PATCH IS NOT THE LAST REMOTE CALL, "
+                + "and the two-call entry still stopped there (review finding prog-5): the "
+                + "handler goes on to the delivery email and then to the admin notification on "
+                + "every outcome, and an activity.Complete added immediately after "
+                + "ResetPasswordAsync passed the whole registry suite. NotifyAdminsAsync( is the "
+                + "third covered call because its LAST occurrence - the one on the sent-and-"
+                + "delivered path - is the last remote call anywhere in this method's own body, "
+                + "so it is the only thing that forbids that hoist and makes the reference "
+                + "shape's promise (the bar does not read Idle while an email is in flight) "
+                + "asserted rather than merely commented. Email.SendAdminNotificationAsync "
+                + "cannot be named in its place: it runs inside the NotifyAdminsAsync helper, "
+                + "not in this body, and condition 1 requires the named call to be in the "
+                + "method's own code. Email.SendCloudPasswordResetAsync( is deliberately NOT "
+                + "named either: it sits between the PATCH and the last notification, strictly "
+                + "inside the window those two already pin at both ends, so it would add a "
+                + "string and no constraint"),
         ],
         Exempt = [new("OnInitializedAsync", AuthPreambleOnly)],
     };
