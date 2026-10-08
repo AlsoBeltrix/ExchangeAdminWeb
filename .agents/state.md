@@ -2572,3 +2572,43 @@ followed literally.
    guard at two sites. All three now anchor on `ProgressScan.CodeView(body)`, which blanks
    comments and string literals and preserves every offset, so the raw body still slices at
    the index the code view found. The record is `.agents/review/findings/prog-6.md`.
+
+### S3 verdict and two rules it settled, 2026-10-08
+
+`codereview` of `bada294..0eba929` (the last three partials): **sound, no findings.**
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard. Raw output
+`.agents/review/prog-s3d.result.json`. It ran the three source-guard classes no-build:
+**373/373 passed**, and reproduced the probes in a disposable copy rather than trusting them.
+
+**Two entries had come to disagree with each other. Both are now settled by the reviewer, so
+the next slice should follow these rather than the nearest example:**
+
+1. **What gets named as a covered call.** `f1257bd` refused to name local calls;
+   `0eba929` named `Exports.TryDownloadAsync(` although it never leaves the machine. Ruled:
+   **name operation-scale work, including local disk or file-size work; do not name cheap
+   unrelated local prechecks.** Both entries were right about their own handler - the
+   difference is that `f1257bd`'s unnamed calls were authorization prechecks, while
+   `0eba929`'s named one IS the operation its label describes.
+2. **What a non-success exit should do.** Earlier slices let refusals fall to disposal
+   (`Complete(false, "This did not finish.")`); `a5300d8`'s `IsReadOnly` path sets
+   `completed = (true, null)` instead. Ruled: **a lookup that finished should report
+   success even when it finished in a read-only state; refusals stay non-success.** The
+   distinction is "did the work complete", not "did the operator get what they wanted".
+
+**Three claims verified that had never been tested on this stream:**
+
+- A call inside a lambda IS inside the scanned method body - the scanner brace-matches the
+  whole method and the lambda sits before its closing brace. `RoomService.GetRoomInfoAsync(`
+  is therefore legitimately pinnable from inside `onAllowed`.
+- Commenting an activity out is a sound strip probe on a line-pinned page; deleting it also
+  fails `ExpectedLineCount`, which is noise about the probe rather than evidence about the
+  guard. Verified: the commented file stayed at 1647 lines and produced exactly one failure.
+- `bc9be8b`'s 2-fault hoist is structural and unavoidable: with `Progress.Begin` between the
+  `isLoading` raise and the first `try`, ANY covered await moved above it lands in the
+  unprotected gap. No hoist of that handler avoids it without rewriting the handler.
+
+**And the clearest demonstration yet of why this work stream exists**, reproduced by the
+reviewer: stripping the activity from `ConferenceRooms` and `ADAttributeEditor` left
+`GlobalProgressWiringTests` GREEN, because each page keeps other activities and the old
+guard is per-FILE. `MessageTraceReports` is absent from its hand-maintained list entirely,
+so nothing looked at it at all. The per-operation registry caught all three.
