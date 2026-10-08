@@ -1109,8 +1109,33 @@ public static class ProgressRegistry
     private static PageEntry DefenderEndpointDevices => new()
     {
         Page = "DefenderEndpointDevices.razor",
-        Reports = [new("LoadAsync", "DeviceService.ListDevicesAsync")],
-        KnownGaps = [new("DownloadCsvAsync", 708, SilentCsvExportUnsurveyed)],
+        Reports =
+        [
+            new("LoadAsync", "DeviceService.ListDevicesAsync"),
+            new("DownloadCsvAsync",
+                [
+                    "BuildCsv(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the fifth of the silent CSV-export shape to be fixed and the FIRST of them on a "
+                + "ClickGate-converted page, which changes where the Begin goes and nothing else. "
+                + "The handler already had the guard, the snapshot, the isDownloadingCsv raise "
+                + "and an await Task.Yield() - so the Begin sits between the raise and the yield, "
+                + "and the greyed controls and the bar reach the operator in ONE frame. Two "
+                + "calls, the two ends: BuildCsv( projects every exportable device including the "
+                + "five enrichment cells, operation-scale LOCAL work under rule 1, and "
+                + "JS.InvokeVoidAsync( base64-pushes the file over the circuit, so the Complete "
+                + "sits BELOW it. The transfer MECHANISM is deliberately untouched: "
+                + "docs/DownloadMemoryRetention-Plan.md is a DRAFT. Unknown rather than "
+                + "Items(rows.Count) although the count is known, because nothing between the "
+                + "Begin and the Complete can Report; the count is in the label. The Complete "
+                + "sits at the bottom of the TRY rather than in the finally, deliberately: the "
+                + "finally lowers isDownloadingCsv on every exit, but only the straight-line path "
+                + "is a finished export - a throw falls to the dispose fallback, which is what "
+                + "that fallback is for. No snapshot was added because the page already makes "
+                + "one; ClickGateRegistry's RaiseMustFollowEarlyReturn entry for this handler "
+                + "pins the guard/raise order and is untouched by the Begin landing below both"),
+        ],
         Exempt =
         [
             new("OnInitializedAsync", AuthPreambleOnly),
