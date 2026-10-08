@@ -573,18 +573,48 @@ public static class ProgressRegistry
         [
             new("ApplyFinderCsv", "EnqueueConferenceRoomJob"),
             new("ApplyTypeCsv", "EnqueueConferenceRoomJob"),
+            new("SetSingleRoomType",
+                [
+                    "ServiceNow.ValidateTicketAsync(",
+                    "ProtectionGate.GuardThenRunAsync(",
+                    "RoomService.SetRoomTypeAsync(",
+                    "NotifyRoomAdminAsync(",
+                ],
+                "the fourth of the survey's six silent writes (docs/ProgressCoverage-Plan.md S2). "
+                + "It had an OperationTrace scope and nothing else, and those are not the same "
+                + "thing: the trace is the diagnostic record read afterwards, the activity is the "
+                + "status frame watched now, so a live Set-Place ran with the bar reading Idle. "
+                + "The activity opens above the try, so the ticket, authorization and "
+                + "invalid-type refusals are covered too, and completes in the finally after the "
+                + "admin notification. ALL FOUR remote calls in the handler's own body are named, "
+                + "which is the registry's stated policy rather than a flourish, and each was "
+                + "measured by reading the callee rather than assumed from its shape: "
+                + "ServiceNow.ValidateTicketAsync is an HttpClient GET against the ServiceNow "
+                + "table API and is the OPENING pin, the one call that forbids a Begin hoisted "
+                + "into the try; GuardThenRunAsync reaches "
+                + "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync, the 10-15 second "
+                + "Exchange round trip OutOfOffice.SetOof names for the same reason, and is the "
+                + "slowest thing the operator waits on; SetRoomTypeAsync is the live Set-Place "
+                + "write, the operation itself; NotifyRoomAdminAsync is the CLOSING pin, because "
+                + "its catch-block occurrence is the last remote call anywhere in the body - it "
+                + "reaches Email.SendAdminNotificationAsync, which cannot be named directly "
+                + "because it runs in the helper and condition 1 requires the method's own code. "
+                + "Two calls were read and deliberately NOT named: ReauthorizeAsync and "
+                + "CurrentUserAsync both resolve from the Windows token's group SIDs plus a "
+                + "cached section-access read and make no remote hop, exactly as "
+                + "ADAttributeEditor.ConfirmSave found for its own prechecks. Complete reads a "
+                + "LOCAL, not the result field: the banner on this page renders a dismiss button "
+                + "wired at () => result = null, so the field can be nulled while the handler is "
+                + "suspended at an email await"),
         ],
         KnownGaps =
         [
-            new("SetSingleRoomType", 1217,
-                "SILENT, MUTATING. Ticket validation, the protection gate and the Set-Place write "
-                + "run with no activity; the page records an OperationTrace and nothing else"),
             new("SetupSingleRoom", 905,
                 "PARTIAL. The activity opens at :980, inside onAllowed - after the ticket check, "
                 + "the protection gate and the room read"),
             new("HandleFinderCsvUpload", 1015,
                 "SILENT, READ. Per-row Exchange lookups while building the preview"),
-            new("HandleTypeCsvUpload", 1296,
+            new("HandleTypeCsvUpload", 1337,
                 "SILENT, READ. Per-row Exchange lookups while building the preview"),
             new("ToggleJobDetails", 804,
                 "SILENT, READ. The unbounded BulkJobs.GetRows, identical to the shape the plan "

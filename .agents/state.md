@@ -49,10 +49,54 @@ growth means this was not the dominant cause, which is information and points at
 **CURRENT TASK: PROGRESS COVERAGE, `docs/ProgressCoverage-Plan.md`, approved 2026-10-07.**
 S1 landed at `d5f3b3b`. The first S2 fix - `CloudPasswordReset.ExecuteResetAsync`, the survey's
 worst finding - landed at `ed7754f`; the second, `OutOfOffice.SetOof`, at `2d93c26`; the third,
-`ADAttributeEditor.ConfirmSave`, at `f1257bd`. Three of the six silent writes remain:
-`ConferenceRooms.SetSingleRoomType`, `BlockedSenders.ConfirmUnblock`,
-`ExchangeOnlineConfig.SaveExoConfig`. **This is the only place that list is kept.** Queue item
-18 is DONE and its record follows below.
+`ADAttributeEditor.ConfirmSave`, at `f1257bd`; the fourth, `ConferenceRooms.SetSingleRoomType`,
+in the commit carrying this record. Two of the six silent writes remain:
+`BlockedSenders.ConfirmUnblock`, `ExchangeOnlineConfig.SaveExoConfig`. **This is the only place
+that list is kept.** Queue item 18 is DONE and its record follows below.
+
+**S2, fourth fix: `ConferenceRooms.SetSingleRoomType` now reports its `Set-Place` write.**
+`ConferenceRooms` `2.6.3` -> `2.6.4`; base app unchanged at `2.27.1` (module-scoped). Registry:
+one entry `KnownGap` -> `Reports`, so 50 KnownGap -> 49. Suite 3674, unchanged. **The page had
+an `OperationTrace` scope and nothing else, and conflating the two is how a live write shipped
+with the bar Idle:** the trace is the diagnostic record read afterwards, the activity is the
+status frame watched now. `SetupSingleRoom` ten lines above has both and is still PARTIAL,
+because it opens its activity INSIDE `onAllowed` - the nearest example on the page is the one
+not to copy.
+
+**The entry names ALL FOUR remote calls in the handler's own body, each measured by reading the
+callee:** `ServiceNow.ValidateTicketAsync(` is an `HttpClient` GET and is the opening pin, the
+only thing forbidding a `Begin` hoisted into the `try`; `ProtectionGate.GuardThenRunAsync(`
+reaches `ResolveWithExchangeFallbackAsync`, the 10-15 second Exchange round trip `OutOfOffice`
+names, and is the slowest wait here; `RoomService.SetRoomTypeAsync(` is the write itself;
+`NotifyRoomAdminAsync(` is the closing pin because its CATCH-block occurrence is the last remote
+call anywhere in the body. `ReauthorizeAsync` and `CurrentUserAsync` were read and NOT named -
+Windows token SIDs plus a cached section-access read, no remote hop, the same answer
+`ADAttributeEditor` got for its prechecks and the opposite of the one `OutOfOffice` got.
+
+**`Complete` reads a LOCAL**, because this page's result banner renders a dismiss button wired
+at `() => result = null` (`:452`) that stays clickable while the handler is suspended at the
+notification await. One path deliberately leaves the local null: `ReauthorizeAsync` writes its
+refusal into the field itself, and reading the field back after that await is the very trap the
+local avoids, so the activity ends as a non-success with no message and the banner carries the
+reason.
+
+**ClickGate re-anchor: `ExpectedLineCount` 1586 -> 1627 and nothing else, VERIFIED rather than
+assumed.** `git diff -U0` puts the first changed old line at 1238; every line-keyed ClickGate
+entry on this page is at or below 575, so the map is the identity for all of them. Of
+`ProgressRegistry`'s six line-keyed pointers into this page, only `HandleTypeCsvUpload` moved
+(1296 -> 1337); `SetupSingleRoom` 905, `HandleFinderCsvUpload` 1015, `ToggleJobDetails` 804 and
+`RefreshJobs` 757 all sit above the insertion, and the `SetSingleRoomType` pointer is removed by
+the fix. ClickGate filter green at 316.
+
+**Three probes, each applied ALONE, each 1 failed / 24 passed and each isolating one test:**
+stripping the activity failed condition 2 naming all four calls at all five occurrences; hoisting
+the ticket call above the `Begin` failed condition 2 naming only `ServiceNow.ValidateTicketAsync(`;
+moving the `Complete` from the `finally` up to the write failed condition 3 naming only
+`NotifyRoomAdminAsync(` at both occurrences. **The hoist probe could not move the `Begin` itself**,
+for the reason `f1257bd` hit: `using var` is the only form the scanner recognises, so a `Begin`
+inside the `try` puts the catch-block notification outside the using scope and trips condition 3
+as well. It hoists the preamble instead - same source order, handle still in scope for the
+`finally`. Page restored byte-identical by `md5sum -c` and `touch`ed.
 
 **`prog-5` IS FIXED AND VERIFIED in the commit carrying this record, registry only.**
 `CloudPasswordReset.ExecuteResetAsync` now names a THIRD covered call, `NotifyAdminsAsync(`,

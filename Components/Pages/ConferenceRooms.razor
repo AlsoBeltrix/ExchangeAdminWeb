@@ -1235,27 +1235,60 @@
         result = null;
         await Task.Yield();
 
+        // Opened HERE, above the try, so the ticket refusal, the authorization refusal and the
+        // invalid-type refusal are inside the window too, and completed in the finally AFTER the
+        // admin notification - not next to the Set-Place write - so the bar does not read Idle
+        // while an email is still in flight. NamedLocations.SaveLocation is the reference shape.
+        // SetupSingleRoom above opens its activity INSIDE onAllowed, which is why the registry
+        // still records that one as PARTIAL: do not copy the nearest example in this file.
+        //
+        // OperationTrace is NOT this, and the confusion is how a live Set-Place shipped with the
+        // bar reading Idle. The op scope at the write writes the diagnostic trail, which is for
+        // reading afterwards; this is the status frame, which is for watching now. The page had
+        // the first and not the second.
+        //
+        // Completed from a LOCAL, never from `result`. This page's result banner renders a
+        // dismiss button wired straight at () => result = null, and it stays clickable while this
+        // handler is suspended at the write or at the notification await - the post-await
+        // live-read trap ClickGateRegistry already records fourteen times against this page, with
+        // a live control here to spring it. ADAttributeEditor.ConfirmSave completes from a local
+        // for the same reason; OutOfOffice.SetOof completes from its field and says in place that
+        // this is safe only because that page renders no dismiss.
+        //
+        // Three steps, because the sequence is fixed once the operation proceeds: check, write,
+        // notify. A refusal completes early at the step it reached, which is what happened.
+        RoomOperationResult? completed = null;
+        using var activity = Progress.Begin(
+            "Conference Rooms", $"Setting the type for {email}", ActivitySize.Steps(3));
+
         try
         {
+            activity.Step("checking the request");
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
-                result = new RoomOperationResult { Email = email, Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                result = completed = new RoomOperationResult { Email = email, Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
                 AuditTypeAction(email, false, ticket, $"Ticket validation failed: {ticketValidation.Message}");
                 return;
             }
+
+            // `completed` stays null on this path deliberately. ReauthorizeAsync writes the
+            // refusal into `result` itself, and reading that field back here - after an await,
+            // with the dismiss control queued ahead of our continuation - is the exact live-read
+            // trap the local exists to avoid. The activity ends as a non-success with no message;
+            // the banner carries the reason.
             if (!await ReauthorizeAsync()) return;
 
             if (!Enum.TryParse<RoomType>(typeName, out var roomType))
             {
-                result = new RoomOperationResult { Email = email, Success = false, Message = $"Invalid room type: {typeName}" };
+                result = completed = new RoomOperationResult { Email = email, Success = false, Message = $"Invalid room type: {typeName}" };
                 return;
             }
 
             // Protected-principal gate: the write runs only inside onAllowed, so a protected or
             // fail-closed target never reaches the trace scope or Set-* write. A denial is audited
             // here under the Type action; the shared gate is the single enforcement point.
-            result = await ProtectionGate.GuardThenRunAsync(email, await CurrentUserAsync(),
+            result = completed = await ProtectionGate.GuardThenRunAsync(email, await CurrentUserAsync(),
                 onDenied: denial =>
                 {
                     AuditTypeAction(email, false, ticket, denial.AuditDetail);
@@ -1264,6 +1297,8 @@
                 onAllowed: async serviced =>
                 {
                     using var op = OpTrace.BeginOperation("ConferenceRooms", "SetType", currentUser, clientIpAddress, email, ticket);
+
+                    activity.Step("setting the room type");
                     var r = await RoomService.SetRoomTypeAsync(email, roomType, tz,
                         typeName == "Restricted" ? site : "none",
                         string.IsNullOrWhiteSpace(arbiter) ? null : arbiter,
@@ -1276,17 +1311,23 @@
                         ["site"] = site, ["removePerms"] = removePerms
                     };
                     AuditTypeAction(email, r.Success, ticket, r.Success ? null : r.Message, newValues: newValues, servicedAuditDetail: serviced);
+
+                    activity.Step("notifying the administrators");
                     await NotifyRoomAdminAsync("ConferenceRooms_SetType", email, r.Success, ticket, r.Message);
                     return r;
                 });
         }
         catch (Exception ex)
         {
-            result = new RoomOperationResult { Email = email, Success = false, Message = ex.Message };
+            result = completed = new RoomOperationResult { Email = email, Success = false, Message = ex.Message };
             AuditTypeAction(email, false, ticket, ex.Message);
             await NotifyRoomAdminAsync("ConferenceRooms_SetType", email, false, ticket, ex.Message);
         }
-        finally { isLoading = false; }
+        finally
+        {
+            isLoading = false;
+            activity.Complete(completed?.Success ?? false, completed?.Message);
+        }
     }
 
     // =========================================================================
