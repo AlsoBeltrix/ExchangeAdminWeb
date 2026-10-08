@@ -1039,6 +1039,19 @@
         finderCsvData = new();
         result = null;
         isLoading = true;
+
+        // This is a READ LOOP, not an export, so the shape differs from the CSV downloads twice
+        // over. ActivitySize.Unknown is FORCED rather than chosen: the row count does not exist
+        // until ParseFinderCsvAsync returns, and the Begin has to sit above that call because
+        // pulling a file of up to 16 MB off the browser over the circuit is itself part of what
+        // the operator is waiting for. And no Report calls are added, because Report is a
+        // documented no-op on an indeterminate activity - the loop's own per-row StateHasChanged
+        // is what keeps the frame live, which is more than any export on this page can say.
+        using var activity = Progress.Begin(
+            "Conference Rooms",
+            "Reading the uploaded room list and resolving each row",
+            ActivitySize.Unknown);
+
         await Task.Yield();
 
         try
@@ -1138,6 +1151,17 @@
 
             if (finderPreview.Count == 0)
                 result = new RoomOperationResult { Success = false, Message = "0 rooms parsed. Check that your CSV has a header row with an identity column (PrimarySmtpAddress, Identity, EmailAddress, Mail, or Email)." };
+
+            // The success flag follows the banner the page itself raises: a file that parsed to
+            // nothing is a refusal here, not a scan that ran and found nothing. The count read is
+            // `parsed`, the LOCAL, not finderPreview - this page's own ClickGateRegistry entry
+            // records that a second file can be chosen in the round trip before the InputFile's
+            // disabled attribute reaches the browser, and that handler replaces finderPreview at
+            // its entry. A parse failure never reaches this line and falls to the dispose
+            // fallback, which is Comms10k.HandleFileUpload's shape.
+            activity.Complete(parsed.Count > 0, parsed.Count > 0
+                ? $"{parsed.Count:N0} row(s) previewed."
+                : "No rows were parsed from that file.");
         }
         catch (Exception ex)
         {
@@ -1361,6 +1385,15 @@
         typeCsvData = new();
         result = null;
         isLoading = true;
+
+        // Same read-loop shape as HandleFinderCsvUpload, and Unknown for the same forced reason:
+        // the row count does not exist until ParseTypeCsvAsync returns, and the Begin has to sit
+        // above that call because the upload itself is part of the wait.
+        using var activity = Progress.Begin(
+            "Conference Rooms",
+            "Reading the uploaded room-type list and resolving each row",
+            ActivitySize.Unknown);
+
         await Task.Yield();
 
         try
@@ -1440,6 +1473,12 @@
 
             if (typePreview.Count == 0)
                 result = new RoomOperationResult { Success = false, Message = "0 rooms parsed. Check that your CSV has a header row with an identity column (Identity, PrimarySmtpAddress, EmailAddress, Mail, or Email)." };
+
+            // Reads `parsed`, the local, for the reason the Finder twin records: the page's own
+            // gating entry says a second file can be chosen before the disabled attribute lands.
+            activity.Complete(parsed.Count > 0, parsed.Count > 0
+                ? $"{parsed.Count:N0} row(s) previewed."
+                : "No rows were parsed from that file.");
         }
         catch (Exception ex)
         {

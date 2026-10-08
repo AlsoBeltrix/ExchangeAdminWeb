@@ -1078,13 +1078,57 @@ public static class ProgressRegistry
                 + "Complete reads a LOCAL for the reason the sibling records, and the dismiss "
                 + "button that makes it necessary is pinned at ClickGateRegistry's ExemptControl "
                 + "452"),
+            new("HandleFinderCsvUpload",
+                [
+                    "ConferenceRoomService.ParseFinderCsvAsync(",
+                    "RoomService.GetRoomInfoAsync(",
+                    "RoomService.ResolveRoomListAsync(",
+                ],
+                "a READ LOOP rather than an export, and the shape differs from the nine CSV "
+                + "downloads twice over. THREE calls, and the brief's Comms10k.HandleFileUpload "
+                + "precedent - one fragment pinned at two occurrences - does NOT transfer: there "
+                + "the whole operation was csv.ReadAsync(, so one string held both ends; here a "
+                + "distinct parse call sits above the loop, so different fragments hold the two "
+                + "ends. ConferenceRoomService.ParseFinderCsvAsync( is the opening pin, pulling "
+                + "a file of up to 16 MB off the browser over the circuit and parsing it. "
+                + "RoomService.GetRoomInfoAsync( is the operation: an Exchange round trip PER "
+                + "ROW, and the only await inside the loop body that every non-skipped row "
+                + "reaches. RoomService.ResolveRoomListAsync( is the closing pin, the last "
+                + "remote call in the body, and it is doubly conditional - Building non-blank "
+                + "AND the room resolved - which is allowed for the reason "
+                + "Comms10k.ValidateEmails and AdminEventLog.LoadEvents both record: a call that "
+                + "CAN run above the window is what the defect was. ActivitySize.Unknown is "
+                + "FORCED rather than chosen here, unlike on the exports where it is a judgement "
+                + "about repainting: the row count does not exist until the parse returns, and "
+                + "the Begin has to dominate the parse. No Report calls were added because "
+                + "Report is a documented no-op on an indeterminate activity; the loop's own "
+                + "per-row StateHasChanged is what keeps the frame live, which is more than any "
+                + "export on this page can say. The Complete's count reads `parsed`, the LOCAL, "
+                + "not finderPreview: this page's ClickGateRegistry entry records that a second "
+                + "file can be chosen in the round trip before the InputFile's disabled "
+                + "attribute reaches the browser, and that handler replaces finderPreview at its "
+                + "entry. Success follows the banner the page itself raises - a file that parsed "
+                + "to nothing is a refusal here, not a scan that ran and found nothing - and a "
+                + "parse failure never reaches the Complete and falls to the dispose fallback, "
+                + "which is Comms10k.HandleFileUpload's shape"),
+            new("HandleTypeCsvUpload",
+                [
+                    "ConferenceRoomService.ParseTypeCsvAsync(",
+                    "RoomService.GetRoomInfoAsync(",
+                ],
+                "the Room Type half of the same read loop, and it names TWO calls rather than "
+                + "three because it has no room-list resolve: RoomService.GetRoomInfoAsync( is "
+                + "both the operation and the closing pin, the last remote call in the body. "
+                + "RoomService.BuildTypePreview( runs below it on every resolved row and is "
+                + "deliberately NOT named - it is local object assembly with no await and no "
+                + "remote hop, the same answer ADAttributeEditor.ConfirmSave's prechecks got. "
+                + "Everything else is the Finder twin's reasoning: Unknown forced by the count "
+                + "not existing until the parse returns, no Report on an indeterminate activity, "
+                + "the Complete's count read off the LOCAL `parsed`, and a parse failure falling "
+                + "to the dispose fallback"),
         ],
         KnownGaps =
         [
-            new("HandleFinderCsvUpload", 1035,
-                "SILENT, READ. Per-row Exchange lookups while building the preview"),
-            new("HandleTypeCsvUpload", 1357,
-                "SILENT, READ. Per-row Exchange lookups while building the preview"),
             new("ToggleJobDetails", 804,
                 "SILENT, READ. The unbounded BulkJobs.GetRows, identical to the shape the plan "
                 + "records on AdminBulkJobs.ToggleDetails. NOT in the plan's survey"),

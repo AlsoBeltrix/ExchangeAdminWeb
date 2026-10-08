@@ -839,7 +839,7 @@ public sealed class ModuleCatalog
             // protection gate's onAllowed callback and closed next to the write, so the ticket
             // call, the gate's own directory resolve and the room read ran with the frame idle,
             // and so did the admin notification after it.
-            Version = "2.6.5",
+            Version = "2.6.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

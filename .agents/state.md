@@ -36,16 +36,28 @@ document. **The next batch is where the CSV-export shape concentrates**: nine of
 are that one shape, and `AdminEventLog.DownloadCsv` and `MessageTrace.ExportCsv` are now the two
 worked examples for it.
 
-**S5's SECOND batch is landing now** - the CSV-export shape plus `ConferenceRooms`' two CSV
-upload previews, ten gaps over seven commits, one per page: `BitLockerRecovery`,
-`BlockedSenders`, `DefenderEndpointDevices`, `DhcpAuthorization`, `NamedLocations`, `Migration`
-(3 gaps) and `ConferenceRooms` (2 of its 4). Target `KnownGap` count 17 -> 7. **One correction
-to the brief that drove it, recorded here because the next agent will hit the same thing:** the
-brief called `DefenderEndpointDevices`, `DhcpAuthorization` and `NamedLocations` "unpinned" and
-cheap, and all three are in fact `ClickGateRegistry.Pages` with an `ExpectedLineCount` and
-line-keyed controls. Only `BitLockerRecovery` and `BlockedSenders` are genuinely unpinned. The
-batch record is below, one compact paragraph at the end rather than one per commit, because
-this file is already over budget.
+**S5's SECOND batch LANDED** - ten gaps over seven commits, one per page: `BitLockerRecovery`
+`4f06fbf`, `BlockedSenders` `4c2ace2`, `DefenderEndpointDevices` `bd47271`, `DhcpAuthorization`
+`f138bed`, `NamedLocations` `16a7e22`, `Migration` (3 gaps) `430e929` and `ConferenceRooms`'
+two upload previews. Do not copy the remaining gap count into this file - get it with the grep
+under "The KnownGap count is not recorded here" below. **What is left is seven operations on
+six pages:** `CalendarPermissions.DownloadCsvReport`, `MailboxPermissions.DownloadCsvReport`,
+`ConferenceRooms.ToggleJobDetails` and `.RefreshJobs`, `EmergencyDisable.PerformLookup`,
+`LicensingUpdates.RunPreview`, `MfaReset.ListMethods`.
+
+**Three corrections from that batch, recorded because the next agent will hit all three.**
+(1) The brief called `DefenderEndpointDevices`, `DhcpAuthorization` and `NamedLocations`
+"unpinned" and cheap; all three are in `ClickGateRegistry.Pages` with an `ExpectedLineCount`
+and line-keyed controls, so five of the seven commits owed a re-anchor rather than two. Only
+`BitLockerRecovery` and `BlockedSenders` are genuinely unpinned. (2) **The CSV-export shape is
+NOT finished.** `430e929`'s message and its token-log line both claim all nine are closed and
+both are WRONG: the brief's page list omitted `CalendarPermissions.DownloadCsvReport` and
+`MailboxPermissions.DownloadCsvReport`, which carry the same `SilentCsvExportUnsurveyed`
+reason and are two of the nine. Seven of the nine are closed. Those two are twin pages and are
+the cheapest remaining work in the plan. (3) The rule below - a count another file owns is
+pointed to, not duplicated - was broken again by the brief and by every commit in this batch,
+which all carry a running `KnownGap` number. They happen to be right this time (checked with
+the grep), but the rule exists because the last three such numbers were not.
 
 **This file is 2,600+ lines, far over the repo-guidance target.** Run `playbook drift` before
 adding to it.
