@@ -385,20 +385,29 @@ public class IntuneDevicesPageTests
         // AC13 / Constitution, Notifications: every mutating action notifies administrators, and a
         // send failure must not change the reported result - so the send lives in finally, inside its
         // own try/catch.
+        //
+        // Every anchor below is taken over the CODE view, never the raw text (review finding
+        // prog-6). "finally" and "try" are both ordinary English words that occur in this method's
+        // own comments, and a trailing comment containing one of them moved the anchor past the
+        // send and failed this test against correct code. ProgressScan.CodeView blanks comments
+        // AND string literals in one lexical pass and preserves every offset, so an index found in
+        // it still addresses the same character of the raw body - which is what lets the message
+        // assertion below, whose needle IS a string literal, keep reading the raw text.
         var body = MethodBody("ExecuteActionAsync");
+        var code = ProgressScan.CodeView(body);
 
-        var finallyIndex = body.LastIndexOf("finally", StringComparison.Ordinal);
-        var sendIndex = body.IndexOf("Email.SendAdminNotificationAsync", StringComparison.Ordinal);
+        var finallyIndex = code.LastIndexOf("finally", StringComparison.Ordinal);
+        var sendIndex = code.IndexOf("Email.SendAdminNotificationAsync", StringComparison.Ordinal);
 
         Assert.True(sendIndex >= 0, "ExecuteActionAsync does not notify administrators.");
         Assert.True(finallyIndex >= 0 && sendIndex > finallyIndex,
             "the admin notification is not sent from the finally block.");
 
-        var tail = body[finallyIndex..];
-        var tryIndex = tail.IndexOf("try", StringComparison.Ordinal);
-        Assert.True(tryIndex >= 0 && tryIndex < tail.IndexOf("Email.SendAdminNotificationAsync", StringComparison.Ordinal),
+        var codeTail = code[finallyIndex..];
+        var tryIndex = codeTail.IndexOf("try", StringComparison.Ordinal);
+        Assert.True(tryIndex >= 0 && tryIndex < codeTail.IndexOf("Email.SendAdminNotificationAsync", StringComparison.Ordinal),
             "the admin notification is not wrapped in a try/catch.");
-        Assert.Contains("Failed to send Intune Devices admin notification", tail);
+        Assert.Contains("Failed to send Intune Devices admin notification", body[finallyIndex..]);
     }
 
     [Fact]
@@ -838,13 +847,17 @@ public class IntuneDevicesPageTests
     public void IntuneDevices_ExecuteAction_EntraHalfGetsItsOwnAdminNotification()
     {
         // AC13: an administrator notification on every audited action, and two audited actions here.
+        // The anchor and the count both read the code view, for the reason recorded on
+        // IntuneDevices_ExecuteAction_NotifiesAdminsFromFinallyWrappedAgainstSendFailure (prog-6);
+        // the count in particular would otherwise be inflated by a comment naming the send.
         var body = MethodBody("ExecuteActionAsync");
-        var finallyIndex = body.LastIndexOf("finally", StringComparison.Ordinal);
-        var tail = body[finallyIndex..];
+        var code = ProgressScan.CodeView(body);
+        var finallyIndex = code.LastIndexOf("finally", StringComparison.Ordinal);
+        var codeTail = code[finallyIndex..];
 
-        Assert.Equal(2, Regex.Matches(tail, @"Email\.SendAdminNotificationAsync\(").Count);
-        Assert.Contains("AuditActionFor(IntuneDeviceAction.EntraDelete), entraResult.Success", tail);
-        Assert.Contains("Failed to send Intune Devices Entra removal admin notification", tail);
+        Assert.Equal(2, Regex.Matches(codeTail, @"Email\.SendAdminNotificationAsync\(").Count);
+        Assert.Contains("AuditActionFor(IntuneDeviceAction.EntraDelete), entraResult.Success", codeTail);
+        Assert.Contains("Failed to send Intune Devices Entra removal admin notification", body[finallyIndex..]);
     }
 
     [Fact]

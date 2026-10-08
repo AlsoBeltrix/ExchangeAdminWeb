@@ -2359,9 +2359,12 @@ followed literally.
    `isLoading` and `ExecuteActionAsync` never raises it, so the clear is reachable
    throughout. **The question is "can anything null the field the `Complete` reads",
    not "is there a dismiss button".**
-2. **A latent fragility in two existing tests, found by tripping it.**
+2. **A latent fragility in two existing tests, found by tripping it. FIXED - review finding
+   `prog-6`.**
    `RiskyUsersPageTests.RiskyUsers_ExecuteAction_NotifiesAdminsFromFinallyWrappedAgainstSendFailure`
-   takes `body.LastIndexOf("finally")` over the RAW method text and asserts the admin send
-   comes after it. A trailing COMMENT containing the word "finally" below the send moves the
-   anchor and fails the test with correct code. `IntuneDevicesPageTests` carries the same
-   guard. Not fixed - outside that slice - but any future comment wording can break either.
+   took `body.LastIndexOf("finally")` over the RAW method text and asserted the admin send
+   comes after it. A trailing COMMENT containing the word "finally" below the send moved the
+   anchor and failed the test with correct code. `IntuneDevicesPageTests` carried the same
+   guard at two sites. All three now anchor on `ProgressScan.CodeView(body)`, which blanks
+   comments and string literals and preserves every offset, so the raw body still slices at
+   the index the code view found. The record is `.agents/review/findings/prog-6.md`.
