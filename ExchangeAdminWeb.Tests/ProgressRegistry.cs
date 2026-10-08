@@ -1837,8 +1837,24 @@ public static class ProgressRegistry
             new("LoadLocations", "LocationService.GetAllAsync"),
             new("SaveLocation", "LocationService.UpdateIpLocationAsync"),
             new("DeleteLocation", "LocationService.DeleteAsync"),
+            new("DownloadCsvAsync",
+                [
+                    "BuildCsv(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the seventh of the silent CSV-export shape to be fixed, and the third in a row "
+                + "on a ClickGate-converted page - guard, raise, snapshot and yield were already "
+                + "there, so the Begin slots in above the yield and reaches the operator in the "
+                + "same frame as the greyed controls. BuildCsv( opens and JS.InvokeVoidAsync( "
+                + "closes, with the Complete BELOW the transfer and at the bottom of the TRY "
+                + "rather than in the finally: the finally lowers the flag on every exit, but "
+                + "only the straight-line path is a finished export. Unknown rather than "
+                + "Items(rows.Count) although the count is known, because nothing between the "
+                + "Begin and the Complete can Report; the count is in the label. The projection "
+                + "here is the widest in the batch - eight columns, two of them string joins "
+                + "over a per-row collection - which is what BuildCsv( is pinning. The transfer "
+                + "MECHANISM is untouched: docs/DownloadMemoryRetention-Plan.md is a DRAFT"),
         ],
-        KnownGaps = [new("DownloadCsvAsync", 525, SilentCsvExport)],
         Exempt =
         [
             new("OnInitializedAsync", AuthPreambleOnly + ", then the list", "LoadLocations"),

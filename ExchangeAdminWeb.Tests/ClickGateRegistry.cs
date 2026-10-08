@@ -703,7 +703,7 @@ public static class ClickGateRegistry
     private static PageGateEntry NamedLocations => new()
     {
         Page = "NamedLocations.razor",
-        ExpectedLineCount = 570,
+        ExpectedLineCount = 593,
 
         Predicates =
         [
