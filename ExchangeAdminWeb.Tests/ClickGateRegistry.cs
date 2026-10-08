@@ -121,7 +121,7 @@ public static class ClickGateRegistry
     private static PageGateEntry Migration => new()
     {
         Page = "Migration.razor",
-        ExpectedLineCount = 4070,
+        ExpectedLineCount = 4149,
 
         Predicates =
         [

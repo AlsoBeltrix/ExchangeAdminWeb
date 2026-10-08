@@ -2751,39 +2751,77 @@
 
         isDownloadingCsv = true;
 
+        // ActivitySize.Unknown although the mailbox count is known here: nothing between the Begin
+        // and the Complete can Report - the zip is assembled inside one synchronous call - so a
+        // determinate bar would sit at 0% for the whole build and read as hung. The count goes in
+        // the label instead, which is AdminEventLog.DownloadCsv's and MessageTrace.ExportCsv's
+        // settled choice.
+        using var activity = Progress.Begin(
+            "Exchange Migration",
+            $"Packaging {selectedMailboxes.Count:N0} report(s) for download",
+            ActivitySize.Unknown);
+
+        // Load-bearing. The zip build and the base64 encode are synchronous and the only await
+        // this method had was the interop transfer AFTER both, so without a flush point the first
+        // paint would not arrive until the expensive part was over - the vacuous open-and-close
+        // ExchangeOnlineConfig.SaveExoConfig recorded. isDownloadingCsv is a member of this page's
+        // IsBusy, and it is raised ABOVE the yield, so the page is closed for the whole window and
+        // nothing else can edit the fields read below it.
+        await Task.Yield();
+
         try
         {
             var batch = expandedBatch;
             var bytes = ReportStore.BuildExportZip(batch, selectedMailboxes, DateTime.UtcNow);
 
+            // THE EARLY RETURN BECAME AN IF/ELSE AND THE SCANNER FORCED IT, not tidiness.
+            // ProgressScan.ActivitiesIn takes the FIRST activity.Complete( after the Begin as the
+            // window's close, so a refusal Complete written above the transfer would unpin
+            // JS.InvokeVoidAsync( on every path, including the successful one. One Complete below
+            // both named calls holds both ends. The outcome is read off `bytes` rather than
+            // guessed: nothing to package is a refusal the build RAN and reached, so it completes
+            // FALSE with the banner's own words, rather than falling out of scope to the dispose
+            // fallback, whose "This did not finish." would be wrong about work that finished and
+            // said no.
             if (bytes == null)
             {
                 batchActionResult = PermissionResult.Fail(
                     "No report is held for any ticked mailbox.",
                     "They may have expired, or the export may not have finished. Run Export "
                     + "reports and try again once it has.");
-                return;
             }
-
-            var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var safeBatch = new string(batch.Select(c =>
-                char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_').ToArray());
-
-            await JS.InvokeVoidAsync("downloadFile",
-                $"MigrationReports_{safeBatch}_{stamp}.zip", "application/zip",
-                Convert.ToBase64String(bytes));
-
-            try
+            else
             {
-                // Audited separately from the fetches that produced the reports (R31f): this is a
-                // second, distinct read - migration diagnostics leaving for a workstation.
-                Audit.LogModuleAction(currentUser, clientIpAddress, "DownloadUserReports",
-                    "Migration", $"{selectedMailboxes.Count} mailbox(es) in {batch}", true);
+                var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                var safeBatch = new string(batch.Select(c =>
+                    char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_').ToArray());
+
+                await JS.InvokeVoidAsync("downloadFile",
+                    $"MigrationReports_{safeBatch}_{stamp}.zip", "application/zip",
+                    Convert.ToBase64String(bytes));
+
+                try
+                {
+                    // Audited separately from the fetches that produced the reports (R31f): this
+                    // is a second, distinct read - migration diagnostics leaving for a
+                    // workstation.
+                    Audit.LogModuleAction(currentUser, clientIpAddress, "DownloadUserReports",
+                        "Migration", $"{selectedMailboxes.Count} mailbox(es) in {batch}", true);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Audit failed for Migration report zip download");
+                }
             }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "Audit failed for Migration report zip download");
-            }
+
+            // Below the transfer, which is the settled order on both worked examples: the base64
+            // push over the SignalR circuit is the last thing the operator waits on. In the TRY
+            // rather than the finally, deliberately - the finally lowers the flag on every exit,
+            // but a throw is work that did not finish and belongs to the dispose fallback. The
+            // transfer MECHANISM is untouched: docs/DownloadMemoryRetention-Plan.md is a DRAFT.
+            activity.Complete(bytes != null, bytes == null
+                ? "No report is held for any ticked mailbox."
+                : "The report archive was sent to your browser.");
         }
         finally
         {
@@ -3960,6 +3998,21 @@
         // cleared in a finally so a failed interop cannot leave the page dead.
         isDownloadingCsv = true;
 
+        // ActivitySize.Unknown although the batch count is known here: nothing between the Begin
+        // and the Complete can Report - the sort, the projection and both encodes are one
+        // synchronous stretch - so a determinate bar would sit at 0% and read as hung. The count
+        // goes in the label instead. The raise above it is a member of IsBusy, so the page is
+        // closed for the whole window and nothing can replace migrationBatches under the sort.
+        using var activity = Progress.Begin(
+            "Exchange Migration",
+            $"Exporting {migrationBatches.Count:N0} batch(es) to CSV",
+            ActivitySize.Unknown);
+
+        // Load-bearing: the sort, the CSV build and both encodes are synchronous and the only
+        // await was the interop transfer AFTER all of them, so without a flush point the first
+        // paint would not arrive until the expensive part was over.
+        await Task.Yield();
+
         try
         {
             var rows = GetSortedBatches().ToList();
@@ -3978,6 +4031,11 @@
             {
                 Logger.LogError(auditEx, "Audit failed for Migration status CSV export");
             }
+
+            // Below the transfer and inside the TRY, for the same two reasons the report zip
+            // gives. The read is `rows`, a local. The transfer MECHANISM is untouched:
+            // docs/DownloadMemoryRetention-Plan.md is a DRAFT.
+            activity.Complete(true, $"{rows.Count:N0} batch(es) exported.");
         }
         finally
         {
@@ -4002,6 +4060,20 @@
         // cannot leave the page dead.
         isDownloadingCsv = true;
 
+        // ActivitySize.Unknown: nothing between the Begin and the Complete can Report, and here
+        // there is not even a row count to put in the label - a migration report is one text
+        // document of whatever size the service returned, which R24 notes can be tens of
+        // thousands of lines. The address is what the operator recognises, so that is the label.
+        using var activity = Progress.Begin(
+            "Exchange Migration",
+            $"Exporting the report for {reportUser}",
+            ActivitySize.Unknown);
+
+        // Load-bearing: the UTF-8 encode and the base64 encode both walk the whole report and are
+        // synchronous, and the only await was the interop transfer AFTER both, so without a flush
+        // point the first paint would not arrive until the expensive part was over.
+        await Task.Yield();
+
         try
         {
             var bytes = System.Text.Encoding.UTF8.GetBytes(userReport);
@@ -4025,6 +4097,13 @@
             {
                 Logger.LogError(auditEx, "Audit failed for Migration user report export");
             }
+
+            // Below the transfer and inside the TRY, the same order and the same reason as the
+            // other two exports on this page. The message reads nothing at all - the label above
+            // already names the address, and a literal cannot disagree with a field another
+            // handler owns. The transfer MECHANISM is untouched:
+            // docs/DownloadMemoryRetention-Plan.md is a DRAFT.
+            activity.Complete(true, "The report was sent to your browser.");
         }
         finally
         {

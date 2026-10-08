@@ -1694,14 +1694,62 @@ public static class ProgressRegistry
             new("ExecuteUserAction", "action("),
             new("ExecuteBulkBatchAction", "action("),
             new("ExecuteBulkMailboxAction", "action("),
-        ],
-        KnownGaps =
-        [
-            new("DownloadReportExportAsync", 2745,
-                "SILENT, READ. Builds the export zip from the report store on disk and pushes it "
-                + "over JS interop with no activity. NOT in the plan's survey"),
-            new("DownloadCsvAsync", 3954, SilentCsvExportUnsurveyed),
-            new("ExportOpenReportAsync", 3995, SilentCsvExportUnsurveyed),
+            new("DownloadReportExportAsync",
+                [
+                    "ReportStore.BuildExportZip(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the heaviest of this page's three silent exports and the only one in the whole "
+                + "shape that is not a CSV: it reads every held report off disk and compresses "
+                + "them into a zip, inside one synchronous call, at CLICK time (R31f - the bulk "
+                + "runner persists row outcomes, not files). ReportStore.BuildExportZip( is the "
+                + "opening pin and the operation; JS.InvokeVoidAsync( is the closing pin. THE "
+                + "EARLY RETURN ON THE REFUSAL PATH HAD TO BECOME AN IF/ELSE, and the scanner "
+                + "forced it rather than taste: ProgressScan.ActivitiesIn takes the FIRST "
+                + "'<name>.Complete(' after the Begin as the window's close, so a refusal "
+                + "Complete written above the transfer would have unpinned JS.InvokeVoidAsync( "
+                + "on EVERY path including the successful one - the trap AdminEventLog's three "
+                + "Completes recorded for the next slice, met here for the first time. One "
+                + "Complete below both named calls holds both ends, and its success flag is read "
+                + "off `bytes`: nothing to package is a refusal the build RAN and reached, so it "
+                + "completes FALSE with the banner's own words rather than falling out of scope "
+                + "to the dispose fallback, whose 'This did not finish.' would be wrong about "
+                + "work that finished and said no. That is the reviewer's 2026-10-08 success "
+                + "ruling applied to its easy half. No snapshot was added: isDownloadingCsv is a "
+                + "member of this page's IsBusy and is raised ABOVE the yield, so the page is "
+                + "shut for the whole window"),
+            new("DownloadCsvAsync",
+                [
+                    "GetSortedBatches(",
+                    "BuildCsv(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the eighth of the silent CSV-export shape to be fixed, and the only one of the "
+                + "nine that names THREE calls. GetSortedBatches( is the opening pin and is named "
+                + "in its own right rather than folded into the build: it applies the pane's "
+                + "filter and sort to the whole batch list and is what makes this export the "
+                + "filtered, sorted set rather than the raw one - MigrationStatusPageTests pins "
+                + "that promise separately. BuildCsv( is the projection, and JS.InvokeVoidAsync( "
+                + "the closing pin with the Complete below it. Unknown rather than "
+                + "Items(rows.Count) for the usual reason: nothing between the Begin and the "
+                + "Complete can Report. The transfer MECHANISM is untouched: "
+                + "docs/DownloadMemoryRetention-Plan.md is a DRAFT"),
+            new("ExportOpenReportAsync",
+                [
+                    "System.Text.Encoding.UTF8.GetBytes(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the ninth and last of the silent CSV-export shape, and the one where the ENCODE "
+                + "is the operation - there is no projector to name, because the payload is the "
+                + "report text the store already holds (R24c: the file and the dialog must be "
+                + "the same bytes). System.Text.Encoding.UTF8.GetBytes( opens the window, which "
+                + "is the same rule-1 reading that let MessageTrace.ExportCsv pin a local pure "
+                + "helper: operation-scale LOCAL work counts, and the scale here is a report R24 "
+                + "describes as tens of thousands of lines. JS.InvokeVoidAsync( closes it, with "
+                + "the Complete below. The Complete's message is a LITERAL and reads nothing at "
+                + "all - the label above already names the address, and a literal cannot "
+                + "disagree with a field another handler owns. The transfer MECHANISM is "
+                + "untouched: docs/DownloadMemoryRetention-Plan.md is a DRAFT"),
         ],
         Exempt =
         [
