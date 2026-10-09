@@ -281,16 +281,24 @@ public class IntuneDevicesPageTests
         // T4 / AC10: an empty userPrincipalName on a SUCCESSFULLY read device (shared, kiosk, or
         // Autopilot pre-provisioned) is a determinate answer - there is no principal to protect - so
         // the action proceeds. Get it wrong in this direction and every shared device is stranded.
+        // Anchored on the CODE view (prog-8 sweep): "else" is an ordinary English word and
+        // "Refuse(" is the name this method's own comments keep using, so a comment moves the
+        // branch end or counterfeits the refusal. Offsets are preserved, so the raw body is
+        // still sliced at the code-view index - which matters for the last assertion, whose
+        // needle occurs on this page BOTH in a comment and in the log message it is really
+        // asserting (IntuneDevices.razor:1056 and :1061).
         var body = MethodBody("ExecuteActionAsync");
-        var gate = body[..WriteIndex(body)];
+        var code = ProgressScan.CodeView(body);
+        var gate = code[..WriteIndex(body)];
 
         var emptyUpnBranch = gate.IndexOf("if (string.IsNullOrWhiteSpace(upn))", StringComparison.Ordinal);
         Assert.True(emptyUpnBranch >= 0, "the no-primary-user case is no longer handled explicitly.");
 
         // The branch logs and proceeds; it must not refuse, or shared devices become unactionable.
-        var branch = gate[emptyUpnBranch..gate.IndexOf("else", emptyUpnBranch, StringComparison.Ordinal)];
-        Assert.DoesNotContain("Refuse(", branch);
-        Assert.Contains("no principal to protect", branch);
+        var branchEnd = gate.IndexOf("else", emptyUpnBranch, StringComparison.Ordinal);
+        Assert.True(branchEnd > emptyUpnBranch, "Could not bound the branch - update the tripwire.");
+        Assert.DoesNotContain("Refuse(", gate[emptyUpnBranch..branchEnd]);
+        Assert.Contains("no principal to protect", body[emptyUpnBranch..branchEnd]);
     }
 
     [Fact]
@@ -300,8 +308,10 @@ public class IntuneDevicesPageTests
         // the only way to record a failure, it audits as it refuses, and every early exit before the
         // write goes through it. A refusal that returned without calling Refuse would be a silent
         // block - a protected principal denied with nothing in the audit trail.
+        // Code view, not raw (prog-8 sweep): a comment containing "return;" inflates the census
+        // and a comment naming Refuse( satisfies an exit that has none.
         var body = MethodBody("ExecuteActionAsync");
-        var gate = body[..WriteIndex(body)];
+        var gate = ProgressScan.CodeView(body)[..WriteIndex(body)];
 
         // Nine: authorization, ticket presence, ticket validation, unavailable-or-ambiguous
         // resolution, CheckFailed and unserviced-protected on each of the two resolution branches,
@@ -704,16 +714,21 @@ public class IntuneDevicesPageTests
     public void IntuneDevices_WipeOptionsAreBoundBeforeTheWriteAndResetAfterIt()
     {
         var body = MethodBody("ExecuteActionAsync");
+        var code = ProgressScan.CodeView(body);
 
-        var bindIndex = body.IndexOf("var wipeOptions = action == IntuneDeviceAction.Wipe ? CurrentWipeOptions() : null;", StringComparison.Ordinal);
+        var bindIndex = code.IndexOf("var wipeOptions = action == IntuneDeviceAction.Wipe ? CurrentWipeOptions() : null;", StringComparison.Ordinal);
         Assert.True(bindIndex >= 0, "the wipe flag set is no longer bound before the request.");
         Assert.True(WriteIndex(body) > bindIndex, "the wipe flag set is bound after the write.");
 
-        // The first `finally` after the write, not the last mention of the word - a later comment
-        // saying "finally" would otherwise move the window past the code being asserted.
-        var finallyIndex = body.IndexOf("finally", WriteIndex(body), StringComparison.Ordinal);
+        // The first `finally` after the write, over the CODE view. The forward search was chosen
+        // over LastIndexOf because a later comment saying "finally" moved the window past the
+        // code being asserted - but forward search only moves the slip into the PASSING
+        // direction, which a3da1e3 recorded as the worse of the two and deliberately left
+        // standing. The prog-8 sweep closes it: comments and string literals are blanked, so
+        // neither direction can slip.
+        var finallyIndex = code.IndexOf("finally", WriteIndex(body), StringComparison.Ordinal);
         Assert.True(finallyIndex > 0, "ExecuteActionAsync no longer has a finally block after the write.");
-        Assert.Contains("ResetActionOptions();", body[finallyIndex..]);
+        Assert.Contains("ResetActionOptions();", code[finallyIndex..]);
     }
 
     [Fact]
@@ -765,14 +780,16 @@ public class IntuneDevicesPageTests
         // BEFORE the Intune action runs. Moving the capture after the write must fail this.
         var body = MethodBody("ExecuteActionAsync");
 
-        var captureIndex = body.IndexOf("var entraDeviceId = device.AzureADDeviceId;", StringComparison.Ordinal);
+        var code = ProgressScan.CodeView(body);
+        var captureIndex = code.IndexOf("var entraDeviceId = device.AzureADDeviceId;", StringComparison.Ordinal);
         Assert.True(captureIndex >= 0, "the Entra device id is no longer captured in ExecuteActionAsync.");
         Assert.True(WriteIndex(body) > captureIndex,
             "the Entra device id is captured AFTER the Intune write - a deleted Intune record cannot be read.");
 
         // And it is never re-read from the device afterwards, which would be the same defect with an
-        // extra step.
-        Assert.DoesNotContain("device.AzureADDeviceId", body[WriteIndex(body)..]);
+        // extra step. Over the code view (prog-8 sweep): a comment explaining the capture rule
+        // names device.AzureADDeviceId, and this is a DoesNotContain - prose would fail it.
+        Assert.DoesNotContain("device.AzureADDeviceId", code[WriteIndex(body)..]);
     }
 
     [Fact]
@@ -810,10 +827,14 @@ public class IntuneDevicesPageTests
         // ExecuteActionAsync's catch, which Refuses - reporting the whole action as failed even
         // though the Intune half succeeded, and skipping the Intune audit write entirely.
         var body = MethodBody("RemoveEntraObjectAsync");
+        var code = ProgressScan.CodeView(body);
 
-        Assert.Contains("catch (Exception ex)", body);
+        Assert.Contains("catch (Exception ex)", code);
+        // The needle here IS the log message, so it reads the raw body on purpose.
         Assert.Contains("could not be removed", body);
-        Assert.DoesNotContain("throw", body);
+        // "throw" is an ordinary English word and this test's own subject (prog-8 sweep): a
+        // comment saying the half never throws would fail it against correct code.
+        Assert.DoesNotContain("throw", code);
     }
 
     [Fact]
@@ -1023,11 +1044,13 @@ public class IntuneDevicesPageTests
         // Constitution, Notifications / plan S6: the device is already wiped by then, so a mail
         // failure is caught and logged and the action still reports what it did.
         var body = MethodBody("NotifyPrimaryUserAsync");
+        var code = ProgressScan.CodeView(body);
 
-        Assert.Contains("catch (Exception ex)", body);
+        Assert.Contains("catch (Exception ex)", code);
+        // Both needles ARE log message text, so these two read the raw body on purpose.
         Assert.Contains("could not be sent", body);
         Assert.Contains("The action itself completed.", body);
-        Assert.DoesNotContain("throw", body);
+        Assert.DoesNotContain("throw", code);
     }
 
     [Fact]
@@ -1263,7 +1286,10 @@ public class IntuneDevicesPageTests
     /// <summary>Index of the single Graph write call inside ExecuteActionAsync's body.</summary>
     private static int WriteIndex(string body)
     {
-        var calls = Regex.Matches(body, @"PerformActionAsync\(action");
+        // Over the code view (prog-8 sweep), so a comment or a string literal naming the write
+        // cannot make Assert.Single fail or move the anchor. CodeView preserves every offset, so
+        // the index it returns still addresses the same character of the RAW body.
+        var calls = Regex.Matches(ProgressScan.CodeView(body), @"PerformActionAsync\(action");
         Assert.Single(calls);
         return calls[0].Index;
     }

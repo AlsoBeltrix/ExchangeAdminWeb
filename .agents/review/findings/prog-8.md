@@ -105,6 +105,94 @@ re-run.
 Page restored byte-identical by md5 (`7b07fe69b8a715cfdfab406980295846`) and touched so
 MSBuild rebuilt, after each mutation.
 
+## The sweep this finding called for - done, in the commit after the fix
+
+"Worth a sweep rather than a third one-off fix" was the finding's own instruction. The test
+project was surveyed end to end: **63 files read raw source, 129 of their expressions slice
+it**. The sweep is scoped to the shape the three precedents actually share - a slice whose
+ANCHOR or whose NEEDLE is a token that can occur in prose, which is the false-RED class this
+finding's severity line describes.
+
+**Already defended, found by reading rather than assumed:**
+
+- `ClickGateSource.Text` is comment-blanked at construction (`ClickGateSource.cs:24`), so
+  every slice in `ClickGateTests` and `ClickGateStuckFlagTests` - including
+  `IndexOf("try")`, `IndexOf("await ")` and the `LastIndexOf` anchors - already reads blanked
+  text. It keeps literals on purpose: handler names live inside quoted markup attributes, the
+  same asymmetry `ProgressScan` draws between its two views.
+- Seven classes strip comments in their own helper before slicing: `AppLayoutCssTests`,
+  `Comms10kReplaceSequenceTests`, `GlobalProgressWiringTests`, `InFlightWorkGuardTests`,
+  `MigrationBatchTickBoxTests`, `ServiceHealthPageTests`, `UiThemeCssTests`.
+  `RiskyUsersPageTests.SetPageBody` strips for the `SetPage` body specifically, and
+  `MigrationStatusPageTests` already had `StripLineComments` / `StripRazorComments` on its
+  markup censuses.
+- `EventSubscriptionLifetimeTests` uses `ProgressScan.StripComments` and is out of scope under
+  open finding `leak-1`.
+
+**Converted - nineteen assertion sites across six classes**, two of them shared `WriteIndex`
+helpers that between them anchor every write-ordering assertion in their class:
+
+| Class | What was anchored on prose |
+|---|---|
+| `IntuneDevicesPageTests` | `WriteIndex` helper; `else` branch bound + `DoesNotContain("Refuse(")`; the nine-`return;` census + per-exit `Refuse(`; the forward `finally` anchor `a3da1e3` left standing; `DoesNotContain("device.AzureADDeviceId")`; `DoesNotContain("throw")` twice |
+| `RiskyUsersPageTests` | `WriteIndex` helper; the nine-`return;` census; `DoesNotContain("SendAdminNotificationAsync")` |
+| `MigrationStatusPageTests` | `IndexOf("return;")`; `IndexOf("await ")`; `LastIndexOf("await ")` |
+| `GroupBulkActionsWiringTests` | four snapshot-before-await tests: `IndexOf("await ")` plus `DoesNotContain("selected.")` |
+| `UsageTrackerWiringTests` | the `else` anchor bounding the range-stale assertion |
+| `GroupMemberNestingProtectionTests` | the `else` anchor bounding the Group row branch |
+
+**`ClickGateSource.BlankComments` was the right tool exactly once.** The
+`GroupMemberNestingProtectionTests` branch is MARKUP - a code view blanks the quoted attribute
+values the test anchors and asserts on. Everything else converted is C#, where `CodeView` is
+correct and stricter.
+
+**Left raw deliberately, with the reason in each case:**
+
+- **Needle IS a string literal from the source** - log messages, audit action names, UI text
+  (`"no principal to protect"`, `"could not be removed"`, `"The action itself completed."`,
+  `"RiskyUsers_Lookup"`). A code view blanks it, so these must read raw. Where such an
+  assertion sat beside a code one, the two were SPLIT rather than both moved.
+- **Anchor is a full member signature** - `"public async Task<GroupMemberList> GetMembersAsync("`,
+  `"private async Task DownloadCsvAsync()"` and the like, the shape every method-bounding
+  helper in a dozen classes uses. A declaration carrying modifiers, return type and open paren
+  is not a phrase anyone writes in prose.
+- **Needle is a distinctive multi-token fragment** - `AddCommand("Get-ADGroupMember")`,
+  `objectKind == "Group" && normalized.Contains('=')`, `if (resolvedMember.IsGroup)`. Most
+  carry a literal and so must stay raw regardless; none is reproduced verbatim by prose.
+- **The assertion is about markup or CSS** - the `<thead>` slices in
+  `MigrationStatusPageTests`, the `<li>` checks in `GroupBulkActionsWiringTests`, the
+  declaration blocks in `AppLayoutCssTests`, `UiThemeCssTests` and `SidebarScrollCssTests`. A
+  code view would be wrong, and these are already comment-stripped where it matters.
+- **Positive `Assert.Contains` over a WHOLE file rather than a slice** - e.g.
+  `ProtectedGroupWriteTargetTests.AdminPage_WiresTheTargetList`. This is the weaker false-GREEN
+  variant, not this finding's shape, and its needles are markup attributes anyway. Surveyed and
+  named rather than silently skipped.
+
+**Sweep guard proof: a three-way differential, each mutation line-neutral and the pages'
+CODE correct throughout**, chosen to cover the three distinct mechanisms rather than one per
+site:
+
+| Mutation | Mechanism it exercises |
+|---|---|
+| `IntuneDevices.razor` - `// it must never throw` appended to the return inside `RemoveEntraObjectAsync` | negative assertion over a code slice |
+| `Migration.razor` - a comment inside `FetchUserReport` reworded to contain `await ` between the guard and the write | BACKWARD anchor (`LastIndexOf`) slipping in the failing direction |
+| `SelfServiceGroups.razor` - `@* the else arm is below *@` appended to the Group branch's opening brace | FORWARD anchor slipping, over markup, via `BlankComments` |
+
+The "before" run used a scratch `git worktree` detached at the fix commit `53fcb5d`, so no
+uncommitted work was ever discarded; the three mutated pages were md5-verified
+byte-identical between the two trees.
+
+- Pre-sweep test files + mutated pages: **3 failed / 368 passed**, naming exactly
+  `IntuneDevices_ExecuteAction_EntraHalfNeverThrowsIntoTheIntuneAuditPath`,
+  `NoReportTextIsWrittenByASupersededFetch` and
+  `Page_RemovesByGuid_AndGroupRowsOnlyEnterThePendingState` - and nothing else.
+- Swept test files + the byte-identical mutations: **0 failed / 371 passed**.
+
+Only the test files differ between the runs, so the code view is what turns them green.
+HONESTLY: thirteen of the nineteen sites are not individually probed - they are the same three
+mechanisms on different methods, and a fourth copy of a result is not a fourth result. Pages
+restored byte-identical by md5 and touched; the probe worktree removed.
+
 ## Reviewer comments
 
 Raised during the review of `ee1c0f9..6a561df` (slice S4), which was otherwise **sound**:
@@ -122,7 +210,15 @@ Fixed on main. Release build 0 errors; `dotnet test ExchangeAdminWeb.slnx` 3674 
 failed, 3 skipped (unchanged - no test added, one re-anchored); `dotnet format
 --verify-no-changes` exit 0; `git diff --check HEAD` clean; every added line ASCII.
 
-The sweep this finding calls for - every other test that slices raw page or method text and
-asserts on a token - is a SEPARATE commit immediately after this one, as the finding's "worth
-a sweep rather than a third one-off fix" asks. This record closes on the one guard; the sweep
-commit carries its own survey and its own per-site reasoning.
+The sweep this finding calls for landed in the commit immediately after the fix, as the
+finding's "worth a sweep rather than a third one-off fix" asks. Its survey, conversions,
+deliberate exclusions and three-way differential probe are in the section above. Release
+build 0 errors; `dotnet test ExchangeAdminWeb.slnx` 3674 passed, 0 failed, 3 skipped after
+the sweep too; `dotnet format --verify-no-changes` exit 0; `git diff --check HEAD` clean;
+every added line ASCII.
+
+**Not closed by the sweep, and named so nobody reads it as closed:** the false-GREEN class -
+a positive `Assert.Contains` satisfied by a comment - is surveyed but not converted. It is a
+larger and weaker class than this finding's, and converting it means separating
+literal-needle from code-needle assertions at roughly sixty more sites. If the owner wants
+it, it is a work stream, not a sweep.

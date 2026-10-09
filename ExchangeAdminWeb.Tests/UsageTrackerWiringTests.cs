@@ -210,12 +210,18 @@ public class UsageTrackerWiringTests
         // signature stays the anchor - it fails loudly on a real change rather than drifting -
         // and every assertion below it is unchanged, including the reload anchor, because
         // "await LoadEvents();" still contains "LoadEvents();".
-        var changed = AuditCategoryFilingTests.MethodBody(text, "private async Task OnDateRangeChanged()");
+        // Both bodies are read through the CODE view (prog-8 sweep). "else" is an ordinary
+        // English word, this method's branch is exactly what a comment here would explain, and
+        // the assertion below is bounded by that anchor - so a comment moves the window and
+        // fails correct code. Every needle in this test is code, so nothing needs the raw text.
+        var changed = ProgressScan.CodeView(
+            AuditCategoryFilingTests.MethodBody(text, "private async Task OnDateRangeChanged()"));
         var elseAt = changed.IndexOf("else", StringComparison.Ordinal);
         Assert.True(elseAt > 0, "OnDateRangeChanged no longer branches on the current view.");
         Assert.Contains("eventsRangeStale = true;", changed[..elseAt], StringComparison.Ordinal);
 
-        var toEvents = AuditCategoryFilingTests.MethodBody(text, "private async Task ShowEventsView()");
+        var toEvents = ProgressScan.CodeView(
+            AuditCategoryFilingTests.MethodBody(text, "private async Task ShowEventsView()"));
         Assert.Contains("showUsage = false;", toEvents, StringComparison.Ordinal);
 
         var gate = toEvents.IndexOf("if (eventsRangeStale)", StringComparison.Ordinal);

@@ -1736,7 +1736,10 @@ public class MigrationStatusPageTests
         // renders A's row over B's mailboxes, whose per-mailbox action buttons then act on B. The
         // refusal must come before the assignment AND before the report close, or a superseded load
         // still discards a report it has no business touching.
-        var body = GetMethodBody("ReplaceBatchUsers");
+        // Code view (prog-8 sweep): "return;" is short enough to occur in a comment explaining
+        // this very guard, and it is the anchor the three orderings below are measured from.
+        // Every needle here is code, so nothing needs the raw body.
+        var body = ProgressScan.CodeView(GetMethodBody("ReplaceBatchUsers"));
 
         var guard = body.IndexOf("if (generation != batchUsersGeneration)", StringComparison.Ordinal);
         var bail = body.IndexOf("return;", StringComparison.Ordinal);
@@ -1792,7 +1795,10 @@ public class MigrationStatusPageTests
         foreach (var call in calls)
         {
             var method = EnclosingMethodName(page, call.Index);
-            var body = GetMethodBody(method);
+            // Code view (prog-8 sweep): the "await " anchor below is an ordinary English word
+            // followed by a space, and these handlers' comments discuss awaits by name. Every
+            // needle in this loop is code.
+            var body = ProgressScan.CodeView(GetMethodBody(method));
             var token = call.Groups["token"].Value;
 
             var capture = body.IndexOf($"var {token} = batchUsersGeneration;", StringComparison.Ordinal);
@@ -1905,7 +1911,12 @@ public class MigrationStatusPageTests
         // Anchored on FetchUserReport, not LoadUserReport. S6 split them: opening a report now
         // consults the store first and only calls the fetch on a miss, so the slow await - and
         // the staleness it creates - live in the fetch.
-        var body = GetMethodBody("FetchUserReport");
+        //
+        // Code view (prog-8 sweep): the resumption anchor is LastIndexOf("await "), so a comment
+        // mentioning an await between the guard and a write pushes it PAST the guard and fails
+        // this against correct code - and a comment containing "userReport = " would invent a
+        // write that does not exist. Every needle here is code.
+        var body = ProgressScan.CodeView(GetMethodBody("FetchUserReport"));
 
         Assert.Contains("var generation = reportGeneration;", body, StringComparison.Ordinal);
 

@@ -13,7 +13,22 @@ the latest sweep is Archived 2026-10-05).
 Nothing is in flight. Tree clean, every dispatched review returned and recorded, suite 3674
 passed / 0 failed / 3 skipped.
 
-**32 commits ahead of both remotes and NOTHING IS DEPLOYED.** The production memory fix, the
+**`prog-7` and `prog-8` are both closed, plus the sweep `prog-8` called for - three commits.**
+`prog-7`: both `ExecuteOnPrem` handlers now complete their progress activity from a LOCAL, so
+the ClickGate dismiss exemption's written condition ("no handler reads `result` back") is true
+rather than reworded around a read; `MailboxPermissions` and `CalendarPermissions` `1.2.4`.
+`prog-8`: the target-row sweep guard reads a code view. Then the sweep itself - **nineteen
+prose-anchored assertion sites across six test classes**, converted and probed three ways.
+`prog-4`'s lexer was REFERENCED, never moved: lifting it into a shared home while it carries
+two open blind spots would widen them, and `ProgressRegistryTests.cs` stays untouched. **The
+false-GREEN half is surveyed and NOT closed** - a positive `Assert.Contains` satisfied by a
+comment, roughly sixty more sites; it is a work stream, not a sweep. Details in
+`.agents/review/findings/prog-7.md` and `prog-8.md`.
+
+**25 commits ahead of both remotes and NOTHING IS DEPLOYED.** Corrected from 32, which was
+wrong: both `github` and `origin` answer `ee1c0f9` to `git ls-remote` (checked, not inferred
+from a possibly stale tracking ref), and `git rev-list --count master ^github/master` is 25
+with this commit. The production memory fix, the
 config-deletion fix and queue item 18 all exist only in this repository.
 `.agents/push-policy.md` is `ask`.
 

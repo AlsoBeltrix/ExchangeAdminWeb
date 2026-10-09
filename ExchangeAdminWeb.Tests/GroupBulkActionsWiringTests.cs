@@ -122,7 +122,11 @@ public class GroupBulkActionsWiringTests
     [Fact]
     public void GroupManagement_BulkRemove_SnapshotsGroupBeforeFirstAwait()
     {
-        var bulk = Body(AdminPage(), "private async Task RemoveSelectedAsync()");
+        // Code view (prog-8 sweep). "await " is an ordinary English word, the snapshot rule is
+        // exactly what a comment in this handler would explain, and "selectedGroup." below is a
+        // DoesNotContain - so prose either moves the anchor or invents the live read. Every
+        // needle in this test is code, so nothing needs the raw body.
+        var bulk = ProgressScan.CodeView(Body(AdminPage(), "private async Task RemoveSelectedAsync()"));
 
         var iSnap = bulk.IndexOf("var group = selectedGroup;", StringComparison.Ordinal);
         var iRows = bulk.IndexOf("var rows = SelectedMembers();", StringComparison.Ordinal);
@@ -202,7 +206,9 @@ public class GroupBulkActionsWiringTests
     [Fact]
     public void GroupManagement_BulkAdd_SnapshotsGroupBeforeFirstAwait()
     {
-        var bulk = Body(AdminPage(), "private async Task AddResolvedAsync()");
+        // Code view, for the reason on GroupManagement_BulkRemove_SnapshotsGroupBeforeFirstAwait
+        // (prog-8 sweep): an "await " anchor and a DoesNotContain on a bare member access.
+        var bulk = ProgressScan.CodeView(Body(AdminPage(), "private async Task AddResolvedAsync()"));
 
         var iSnap = bulk.IndexOf("var group = selectedGroup;", StringComparison.Ordinal);
         var iRows = bulk.IndexOf("var rows = resolution?.Where(", StringComparison.Ordinal);
@@ -350,7 +356,9 @@ public class GroupBulkActionsWiringTests
     [Fact]
     public void SelfService_BulkRemove_SnapshotsGroupBeforeFirstAwait()
     {
-        var bulk = Body(SelfServicePage(), "private async Task RemoveSelectedAsync()");
+        // Code view, same reason as the admin twin (prog-8 sweep). Sharper here: the
+        // DoesNotContain needle is "selected.", which is an ordinary English sentence ending.
+        var bulk = ProgressScan.CodeView(Body(SelfServicePage(), "private async Task RemoveSelectedAsync()"));
 
         var iSnap = bulk.IndexOf("var group = selected;", StringComparison.Ordinal);
         var iRows = bulk.IndexOf("var rows = SelectedMembers();", StringComparison.Ordinal);
@@ -433,7 +441,8 @@ public class GroupBulkActionsWiringTests
     [Fact]
     public void SelfService_BulkAdd_CommitsOnlyResolvedRows_AndSnapshotsFirst()
     {
-        var bulk = Body(SelfServicePage(), "private async Task AddResolvedAsync()");
+        // Code view, same reason as the admin twin (prog-8 sweep); "selected." again.
+        var bulk = ProgressScan.CodeView(Body(SelfServicePage(), "private async Task AddResolvedAsync()"));
 
         Assert.Contains("resolution?.Where(r => r.Status == BulkIdentityList.Status.Resolved && r.Match != null)", bulk, StringComparison.Ordinal);
         var iSnap = bulk.IndexOf("var group = selected;", StringComparison.Ordinal);

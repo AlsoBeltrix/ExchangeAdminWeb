@@ -293,11 +293,19 @@ public class GroupMemberNestingProtectionTests
 
         // gmn-5: the GROUP button must only OPEN the pending state - a one-click route to the
         // removal would erase D2's second action. Bound the Group branch of the row markup.
-        var groupBranch = text.IndexOf("@if (member.Kind == \"Group\")", StringComparison.Ordinal);
+        // Comment-blanked, not raw (prog-8 sweep). "else" is an ordinary English word bounding
+        // the slice, and the three DoesNotContains below name the very handlers a Razor comment
+        // here would explain. ClickGateSource.BlankComments rather than ProgressScan.CodeView,
+        // because this slice is MARKUP: the code view blanks string literals, which would
+        // destroy the quoted attribute values this test anchors and asserts on. BlankComments
+        // removes @* *@ and /* */ bodies, leaves literals intact, and preserves every offset.
+        var markup = ClickGateSource.BlankComments(text);
+
+        var groupBranch = markup.IndexOf("@if (member.Kind == \"Group\")", StringComparison.Ordinal);
         Assert.True(groupBranch >= 0, "Group branch not found in the member row - tripwire is stale.");
-        var branchEnd = text.IndexOf("else", groupBranch, StringComparison.Ordinal);
+        var branchEnd = markup.IndexOf("else", groupBranch, StringComparison.Ordinal);
         Assert.True(branchEnd > groupBranch, "Could not bound the Group branch - update the tripwire.");
-        var branch = text[groupBranch..branchEnd];
+        var branch = markup[groupBranch..branchEnd];
         Assert.Contains("BeginGroupRemoval(member)", branch, StringComparison.Ordinal);
         Assert.DoesNotContain("ConfirmGroupRemoval", branch, StringComparison.Ordinal);
         Assert.DoesNotContain("RemoveListedMember(", branch, StringComparison.Ordinal);

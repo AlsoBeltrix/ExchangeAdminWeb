@@ -543,8 +543,10 @@ public class RiskyUsersPageTests
         // the only way to record a failure, it audits as it refuses, and every early exit before
         // the write goes through it. A refusal that returned without calling Refuse would be a
         // silent block - a protected principal denied with nothing in the audit trail.
+        // Code view, not raw (prog-8 sweep): a comment containing "return;" inflates the census
+        // and a comment naming Refuse( satisfies an exit that has none.
         var body = MethodBody("ExecuteActionAsync");
-        var gate = body[..WriteIndex(body)];
+        var gate = ProgressScan.CodeView(body)[..WriteIndex(body)];
 
         var returns = Regex.Matches(gate, @"\breturn;");
         Assert.Equal(9, returns.Count);
@@ -792,7 +794,10 @@ public class RiskyUsersPageTests
     /// <summary>Index of the single Graph write call inside ExecuteActionAsync's body.</summary>
     private static int WriteIndex(string body)
     {
-        var calls = Regex.Matches(body, @"RiskyUsersService\.ApplyActionAsync\(");
+        // Over the code view (prog-8 sweep), so a comment or a string literal naming the write
+        // cannot make Assert.Single fail or move the anchor. CodeView preserves every offset, so
+        // the index it returns still addresses the same character of the RAW body.
+        var calls = Regex.Matches(ProgressScan.CodeView(body), @"RiskyUsersService\.ApplyActionAsync\(");
         Assert.Single(calls);
         return calls[0].Index;
     }
@@ -855,10 +860,14 @@ public class RiskyUsersPageTests
     public void RiskyUsers_LookupIsAudited()
     {
         var body = MethodBody("LookupUserAsync");
+        var code = ProgressScan.CodeView(body);
 
+        // The audit action is a string literal, so that needle reads the raw body; the other two
+        // are code and read the code view (prog-8 sweep). The DoesNotContain is the reason:
+        // "never notifies admins" is exactly what a comment here would say, naming the method.
         Assert.Contains("RiskyUsers_Lookup", body);
-        Assert.Contains("SafeAudit", body);
-        Assert.DoesNotContain("SendAdminNotificationAsync", body);
+        Assert.Contains("SafeAudit", code);
+        Assert.DoesNotContain("SendAdminNotificationAsync", code);
     }
 
     // ---- codex review findings, 2026-09-25 -----------------------------------------------------
