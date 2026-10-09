@@ -56,6 +56,19 @@ namespace ExchangeAdminWeb.Tests;
 /// <c>goto</c> or label is refused outright rather than reasoned about.
 /// </para>
 /// <para>
+/// AND WHY A TREE IS STILL NOT ENOUGH. A tree answers what is WRITTEN WHERE; dominance over a
+/// statement list is such a question, and it is only the same thing as "the guard ran first" while
+/// the enclosing body runs top to bottom from one entry point. A LOCAL FUNCTION and a LAMBDA both
+/// break that: their bodies run where they are CALLED, not where they are written, so a guard
+/// written above one of them can execute after it, or never. Review finding prog-10(a) is exactly
+/// that - a subscription in a local function declared BELOW the guard it was credited with, which
+/// in execution order runs before it. Nothing available here says when the invocation happens, so a
+/// subscription inside either shape is REFUSED rather than reasoned about. The refusal costs two
+/// correct shapes - guarded at the call, and guarded inside the local function - and that is the
+/// price of not guessing. No component carries either today; the fix in both cases is to subscribe
+/// from a method, where the call-site analysis above applies.
+/// </para>
+/// <para>
 /// HONEST LIMITATIONS. It is syntactic, with no semantic model: a method is matched to a call by
 /// NAME, so an overload or a same-named method on another type is treated as the page's own, in the
 /// conservative direction. Classification is deliberately over-inclusive: a <c>+=</c> whose
@@ -92,6 +105,23 @@ internal static class EventSubscriptionScan
         + "await, unsubscribe nothing, and leave this handler on the event for the life of the "
         + "process. Add the guard Components/Shared/GlobalProgress.razor uses, immediately before "
         + "the subscription: if (_disposed) return;";
+
+    private const string NoEnclosingMethod =
+        "the scanner cannot tell which method this subscription is in, so it cannot tell whether "
+        + "an await precedes it. Extend EventSubscriptionScan rather than leaving the "
+        + "subscription unchecked";
+
+    /// <summary>
+    /// Why a deferred body is refused outright. Shared by both shapes so the two messages cannot
+    /// drift apart, and so a failure reads the same whichever one produced it.
+    /// </summary>
+    private const string DeferredBody =
+        ", which does not run where it is written - it runs where it is CALLED. The rule credits "
+        + "a guard by proving it is an earlier statement in a list enclosing the subscription, "
+        + "and that proves nothing about a body invoked somewhere else: a guard written above "
+        + "this one can execute after it, or not at all (review finding prog-10). Nothing here "
+        + "says when the invocation happens, so the shape is refused instead of guessed at. "
+        + "Subscribe from a method of the component, where the call-site analysis applies.";
 
     /// <summary>
     /// Every component source file. Taken from the filesystem, never from a list: a page that is
@@ -142,9 +172,7 @@ internal static class EventSubscriptionScan
             if (method is null)
             {
                 subscriptions.Add(new Subscription(file, "<no enclosing method>", line, target, handler,
-                    "the scanner cannot tell which method this subscription is in, so it cannot "
-                    + "tell whether an await precedes it. Extend EventSubscriptionScan rather than "
-                    + "leaving the subscription unchecked"));
+                    NoEnclosingMethod));
                 continue;
             }
 
@@ -190,6 +218,28 @@ internal static class EventSubscriptionScan
     }
 
     /// <summary>
+    /// The nearest body that encloses <paramref name="node"/> and is entered by a call of its
+    /// own: the method, local function or anonymous function it is written inside, or null when
+    /// it is in none of them (a field initializer, a constructor, a property accessor).
+    /// </summary>
+    private static SyntaxNode? EnclosingCallable(SyntaxNode node) =>
+        node.Ancestors().FirstOrDefault(a => a is
+            MethodDeclarationSyntax or LocalFunctionStatementSyntax or AnonymousFunctionExpressionSyntax);
+
+    /// <summary>
+    /// The refusal for a subscription written inside a deferred body. See the class remarks: this
+    /// is a REFUSAL, not a finding of fault, and it fires on correct code as well as on the
+    /// prog-10(a) shape, because separating the two needs the invocation order the scanner has no
+    /// way to establish.
+    /// </summary>
+    private static string DeferredProblem(SyntaxNode callable) => callable switch
+    {
+        LocalFunctionStatementSyntax local =>
+            $"sits inside the local function '{local.Identifier.ValueText}'" + DeferredBody,
+        _ => "sits inside a lambda or anonymous delegate body" + DeferredBody,
+    };
+
+    /// <summary>
     /// What is wrong with the subscription or call at <paramref name="node"/>, or an empty string
     /// when nothing is.
     /// </summary>
@@ -199,6 +249,16 @@ internal static class EventSubscriptionScan
         MethodDeclarationSyntax method,
         HashSet<string> visiting)
     {
+        // Everything below reasons about POSITION inside this method - which await precedes the
+        // node, which guard encloses it - and position is execution order only for the method's
+        // own statements. A node written inside a local function or a lambda belongs to a body
+        // entered by a call, so refuse it here, at the one place the position reasoning starts.
+        // This catches the subscription itself and, through CallerWindow, a CALL to a
+        // subscribing helper written in one (review finding prog-10a).
+        var callable = EnclosingCallable(node);
+        if (!ReferenceEquals(callable, method))
+            return callable is null ? NoEnclosingMethod : DeferredProblem(callable);
+
         // The LAST await, not the first. A guard that runs before an await is back in the same
         // race the guard exists to lose safely.
         var lastAwait = LastAwaitBefore(method, node);
@@ -1013,6 +1073,237 @@ public class EventSubscriptionLifetimeTests
     public void AGuardThatReallyDominatesIsCreditedWhereverItSits(string fixtureSource)
     {
         var found = EventSubscriptionScan.ScanText("Fixture.razor", fixtureSource);
+
+        Assert.Single(found);
+        Assert.Equal("", found[0].Problem);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Review finding prog-10(a). The rule above proves DOMINANCE over a statement list, which is
+    // a fact about what is WRITTEN WHERE. A local function and a lambda both break the link
+    // between the two: their bodies do not run where they are written, so a guard that is
+    // lexically earlier can execute later, or never. The scanner cannot see when the invocation
+    // happens, so it refuses the shape instead of guessing - the fixtures below are the shapes
+    // it refuses, including the two that happen to be CORRECT code. That cost is deliberate.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// prog-10(a) itself, first row. The subscription runs on the call at line 4 and the guard
+    /// is written at line 5, so the guard runs AFTER it - and the predecessor credited the guard
+    /// anyway, because the local function is DECLARED below it. The second row is the same shape
+    /// guarded at the call and the third is guarded inside the local function; both are correct
+    /// code and both are refused, because proving either one needs the ordering fact the scanner
+    /// does not have.
+    /// </summary>
+    [Theory]
+    [InlineData("""
+        @code {
+            protected override async Task OnInitializedAsync()
+            {
+                var state = await AuthStateProvider.GetAuthenticationStateAsync();
+                SubscribeToJobs();
+
+                if (_disposed)
+                    return;
+
+                void SubscribeToJobs()
+                {
+                    BulkJobs.JobChanged += OnJobChanged;
+                }
+            }
+
+            private bool _disposed;
+
+            private void OnJobChanged(string id) { }
+
+            public void Dispose()
+            {
+                _disposed = true;
+                BulkJobs.JobChanged -= OnJobChanged;
+            }
+        }
+        """)]
+    [InlineData("""
+        @code {
+            protected override async Task OnInitializedAsync()
+            {
+                var state = await AuthStateProvider.GetAuthenticationStateAsync();
+
+                if (_disposed)
+                    return;
+
+                SubscribeToJobs();
+
+                void SubscribeToJobs()
+                {
+                    BulkJobs.JobChanged += OnJobChanged;
+                }
+            }
+
+            private bool _disposed;
+
+            private void OnJobChanged(string id) { }
+
+            public void Dispose()
+            {
+                _disposed = true;
+                BulkJobs.JobChanged -= OnJobChanged;
+            }
+        }
+        """)]
+    [InlineData("""
+        @code {
+            protected override async Task OnInitializedAsync()
+            {
+                var state = await AuthStateProvider.GetAuthenticationStateAsync();
+                SubscribeToJobs();
+
+                void SubscribeToJobs()
+                {
+                    if (_disposed)
+                        return;
+
+                    BulkJobs.JobChanged += OnJobChanged;
+                }
+            }
+
+            private bool _disposed;
+
+            private void OnJobChanged(string id) { }
+
+            public void Dispose()
+            {
+                _disposed = true;
+                BulkJobs.JobChanged -= OnJobChanged;
+            }
+        }
+        """)]
+    public void ASubscriptionInsideALocalFunctionIsRefused(string fixtureSource)
+    {
+        var problem = OneProblem(fixtureSource);
+
+        Assert.Contains("local function 'SubscribeToJobs'", problem, StringComparison.Ordinal);
+        Assert.Contains("does not run where it is written", problem, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The same hole in its other form, and the worse one: a lambda body can be invoked at any
+    /// time, including after Dispose has run and returned. The guard here really does dominate
+    /// the STATEMENT that creates the delegate, which is exactly why dominance is the wrong
+    /// question to be answering about it.
+    /// </summary>
+    [Fact]
+    public void ASubscriptionInsideALambdaIsRefused()
+    {
+        var problem = OneProblem("""
+            @code {
+                protected override async Task OnInitializedAsync()
+                {
+                    var state = await AuthStateProvider.GetAuthenticationStateAsync();
+
+                    if (_disposed)
+                        return;
+
+                    await InvokeAsync(() => { BulkJobs.JobChanged += OnJobChanged; });
+                }
+
+                private bool _disposed;
+
+                private void OnJobChanged(string id) { }
+
+                public void Dispose()
+                {
+                    _disposed = true;
+                    BulkJobs.JobChanged -= OnJobChanged;
+                }
+            }
+            """);
+
+        Assert.Contains("lambda or anonymous delegate body", problem, StringComparison.Ordinal);
+        Assert.Contains("does not run where it is written", problem, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The same hole one hop deeper, and the reason the refusal sits where the position
+    /// reasoning STARTS rather than at the subscription: here the <c>+=</c> is in an ordinary
+    /// method and it is the CALL to it that was written inside a local function. The caller
+    /// window then proved dominance over the declaration's position, which is prog-10(a) again
+    /// with an extra method boundary in front of it.
+    /// </summary>
+    [Fact]
+    public void ACallToASubscribingHelperFromInsideALocalFunctionIsRefused()
+    {
+        var problem = OneProblem("""
+            @code {
+                protected override async Task OnInitializedAsync()
+                {
+                    var state = await AuthStateProvider.GetAuthenticationStateAsync();
+                    Go();
+
+                    if (_disposed)
+                        return;
+
+                    void Go()
+                    {
+                        SubscribeToJobs();
+                    }
+                }
+
+                private void SubscribeToJobs()
+                {
+                    BulkJobs.JobChanged += OnJobChanged;
+                }
+
+                private bool _disposed;
+
+                private void OnJobChanged(string id) { }
+
+                public void Dispose()
+                {
+                    _disposed = true;
+                    BulkJobs.JobChanged -= OnJobChanged;
+                }
+            }
+            """);
+
+        Assert.Contains("is reached from OnInitializedAsync()", problem, StringComparison.Ordinal);
+        Assert.Contains("local function 'Go'", problem, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The refusal is about the body the subscription SITS IN, not about the file containing a
+    /// local function at all. A page may factor anything it likes into one; only a <c>+=</c>
+    /// written inside it is refused, and the ordinary rule still judges the rest.
+    /// </summary>
+    [Fact]
+    public void ALocalFunctionElsewhereInTheMethodDoesNotDisturbTheOrdinaryRule()
+    {
+        var found = EventSubscriptionScan.ScanText("Fixture.razor", """
+            @code {
+                protected override async Task OnInitializedAsync()
+                {
+                    var state = await AuthStateProvider.GetAuthenticationStateAsync();
+
+                    if (_disposed)
+                        return;
+
+                    BulkJobs.JobChanged += OnJobChanged;
+                    Render(Label());
+
+                    string Label() => "jobs";
+                }
+
+                private bool _disposed;
+
+                private void OnJobChanged(string id) { }
+
+                public void Dispose()
+                {
+                    _disposed = true;
+                    BulkJobs.JobChanged -= OnJobChanged;
+                }
+            }
+            """);
 
         Assert.Single(found);
         Assert.Equal("", found[0].Problem);
