@@ -2757,24 +2757,40 @@
     // remove mailboxes the operator never saw counted, and that is the 2026-08-10 objection
     // returning intact: the count in the label is worth nothing without what follows.
     //
-    // So the candidate ADDRESSES are snapshot here into a local the staged callback closes over.
-    // It is not a field, so no refresh, reload or dismiss path can null it and nothing can widen
-    // it. The callback still re-plans against the CURRENT batchUsers from that snapshot, which
-    // keeps the honest half of the live re-plan: a mailbox that has since completed is picked up,
-    // and one that has left the batch is dropped by the planner. The acted set can shrink between
+    // So the addresses are snapshot here into a local the staged callback closes over. It is not
+    // a field, so no refresh, reload or dismiss path can null it and nothing can widen it. The
+    // callback still re-plans against the CURRENT batchUsers from that snapshot, which keeps the
+    // honest half of the live re-plan: a mailbox that is no longer Completed becomes a skip, and
+    // one that has left the batch is dropped by the planner. The acted set can shrink between
     // staging and Confirm. Nothing can make it grow.
+    //
+    // WHAT IS SNAPSHOT IS THE ELIGIBLE LIST, NOT THE CANDIDATES, and the difference is the whole
+    // bound (review finding rc-1). The candidates include every in-scope mailbox that is NOT
+    // completed - they are in the set so the preview can name them as skipped - so re-planning
+    // from THEM against live rows promotes any candidate that finishes syncing while the operator
+    // is at the ticket field. The mailbox pane's Refresh is gated on IsBusy only, not on
+    // pendingActionLabel, so a reload in that window is an ordinary thing to do, and
+    // "Remove completed (3)" could then remove four. Re-planning from the eligible list cannot:
+    // the candidate set handed to the executor IS the set the confirm bar counted.
     private void StageRemoveCompletedMailboxes()
     {
-        var scope = RemoveCompletedCandidates();
-        var staged = MigrationUserActionPlanner.Plan(batchUsers, scope, MigrationUserAction.Clear);
+        var staged = MigrationUserActionPlanner.Plan(
+            batchUsers, RemoveCompletedCandidates(), MigrationUserAction.Clear);
+
+        // The bound. Named for what it is: the addresses the operator is about to agree to.
+        var agreed = staged.Eligible;
 
         StageBatchAction("Remove completed", $"{staged.Eligible.Count} mailbox(es)", ticket =>
             ExecuteBulkMailboxAction(
-                MigrationUserActionPlanner.Plan(batchUsers, scope, MigrationUserAction.Clear),
+                MigrationUserActionPlanner.Plan(batchUsers, agreed, MigrationUserAction.Clear),
                 e => MigrationSvc.RemoveMigrationUserAsync(e),
                 "RemoveMigrationUser", "Migration_RemoveMailboxes", "Queued removal of", ticket));
 
         pendingUserAction = MigrationUserAction.Clear;
+
+        // The PREVIEW is the full plan over the candidates, not the bound: an in-scope mailbox
+        // that will not run is named on its own row with the status that disqualified it, which
+        // is the operator's check before they type a ticket. Only the EXECUTION is bounded.
         pendingUserActionPlan = staged;
     }
 

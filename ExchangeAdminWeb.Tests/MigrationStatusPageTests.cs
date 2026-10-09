@@ -2289,7 +2289,7 @@ public class MigrationStatusPageTests
         // checks the capture is there passes code that captures and then recomputes anyway.
         var body = StripLineComments(GetMethodBody("StageRemoveCompletedMailboxes"));
 
-        Assert.Contains("var scope = RemoveCompletedCandidates();", body, StringComparison.Ordinal);
+        // The candidate set is read ONCE, at staging.
         Assert.Single(Regex.Matches(body, WholeWord("RemoveCompletedCandidates")));
 
         // Nothing in this method may reach the live inputs directly - not even once - because the
@@ -2297,12 +2297,13 @@ public class MigrationStatusPageTests
         Assert.DoesNotContain("selectedMailboxes", body, StringComparison.Ordinal);
         Assert.DoesNotContain("FilteredSortedMailboxes", body, StringComparison.Ordinal);
 
-        // Twice: the plan the label, the confirm bar and the row preview are built from, and the
-        // plan the executor runs. Both from the captured local against the LIVE batchUsers, so a
-        // mailbox that has since completed or left the batch is still noticed.
-        Assert.Equal(2, Regex.Matches(body,
-            Regex.Escape("MigrationUserActionPlanner.Plan(batchUsers, scope, MigrationUserAction.Clear)"))
-            .Count);
+        // WHAT IS CAPTURED IS THE ELIGIBLE LIST, NOT THE CANDIDATES (review finding rc-1). The
+        // candidates deliberately include in-scope mailboxes that are not completed, so that the
+        // preview can name them as skipped; re-planning from THEM at Confirm promotes any one of
+        // them that finishes syncing in the meantime, and the count stops being a bound.
+        Assert.Contains("var agreed = staged.Eligible;", body, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(body,
+            Regex.Escape("MigrationUserActionPlanner.Plan(batchUsers, agreed, MigrationUserAction.Clear)")));
     }
 
     [Fact]

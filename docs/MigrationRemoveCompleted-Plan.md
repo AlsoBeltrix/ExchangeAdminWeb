@@ -146,15 +146,29 @@ boxes are deliberately ungated (`:959-962`, `:1235-1237`); so an operator can st
 **Remove completed (3)**, change the filter or the selection while the ticket field is open,
 and a live recompute at Confirm would act on a set they never saw.
 
-So the candidate ADDRESS SET is captured when the action is staged - a local closed over by the
-staged callback, which no refresh, dismiss or reload path can null - and the callback re-plans
-against the CURRENT `batchUsers` using that snapshot. Both halves are needed:
+So an ADDRESS SET is captured when the action is staged - a local closed over by the staged
+callback, which no refresh, dismiss or reload path can null - and the callback re-plans against
+the CURRENT `batchUsers` using that snapshot. Both halves are needed:
 
 - **Re-planning** handles what still has to be handled while the operator types: a mailbox that
-  has since finished, and a mailbox that has left the batch - `MigrationUserActionPlanner.Plan`
-  drops an address it can no longer find, by design.
+  is no longer `Completed`, and a mailbox that has left the batch -
+  `MigrationUserActionPlanner.Plan` drops an address it can no longer find, by design.
 - **The snapshot** means the acted-on set can only SHRINK. No later filter change, tick or
   untick can add an address that was not in the set the confirm bar counted.
+
+**WHICH set is captured is the whole bound, and revision 2 got it wrong** - corrected here by
+review finding `rc-1`, raised against the implementation. Revision 2 said "the candidate address
+set". The candidates deliberately include in-scope mailboxes that are NOT completed, because that
+is what lets the preview name each one as skipped on its own row; re-planning from them against
+live rows therefore PROMOTES any candidate that finishes syncing while the operator is at the
+ticket field. The mailbox pane's Refresh button is gated on `IsBusy` only, not on
+`pendingActionLabel`, so a reload in that window is an ordinary thing to do - and
+`Remove completed (3)` could remove four. **What is captured is `plan.Eligible`**: the addresses
+the confirm bar counted, which is the only set that is a bound on itself.
+
+The PREVIEW is unaffected and stays the full plan over the candidates. Those are two different
+jobs: the preview is the operator's check before they type a ticket and must name everything in
+scope and why it will or will not run; only the EXECUTION is bounded.
 
 This is a deliberate difference from the other five mailbox actions, which re-plan from the
 live `selectedMailboxes` under owner ruling D2(a), and the difference is the thing that makes
@@ -208,9 +222,10 @@ Out of scope:
      .Eligible.Count`.
    - The button, outside the selection gate and inside `canManage`, beside the filter and
      select-all, with the three-clause gate above.
-   - `StageRemoveCompletedMailboxes`: snapshot the candidates into a local, plan from it for
-     the staged preview and the confirm bar's count, and have the staged callback re-plan from
-     that same local against the live `batchUsers`. It does NOT go through
+   - `StageRemoveCompletedMailboxes`: plan over the candidates for the staged preview and the
+     confirm bar's count, snapshot that plan's `Eligible` list into a local (finding `rc-1`:
+     NOT the candidates), and have the staged callback re-plan from that local against the live
+     `batchUsers`. It does NOT go through
      `StageMailboxAction`, which reads `selectedMailboxes` live - it stages through
      `StageBatchAction` directly, exactly as `StageMailboxAction` does, and executes through
      the same `ExecuteBulkMailboxAction`.

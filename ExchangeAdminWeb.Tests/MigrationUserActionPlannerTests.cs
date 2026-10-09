@@ -324,6 +324,44 @@ public class MigrationUserActionPlannerTests
     }
 
     [Fact]
+    public void ACandidateThatWasSkippedAtStagingCannotBePromotedByTheTimeOfConfirm()
+    {
+        // Review finding rc-1, and the reason the snapshot is the ELIGIBLE list rather than the
+        // candidate list. The candidates deliberately include in-scope mailboxes that are not
+        // completed, so the preview can name each one as skipped on its own row - but the mailbox
+        // pane's Refresh is gated on IsBusy only, so rows can reload while the ticket field is
+        // open. Re-planning from the candidates would then act on a mailbox that finished syncing
+        // in that window, and "Remove completed (2)" would remove three.
+        var atStaging = Loaded(
+            ("a@x.com", "Completed"), ("b@x.com", "Completed"), ("c@x.com", "Syncing"));
+
+        var candidates = MigrationUserActionPlanner.NarrowToSelection(atStaging, []);
+        var staged = MigrationUserActionPlanner.Plan(atStaging, candidates, MigrationUserAction.Clear);
+
+        Assert.Equal(["a@x.com", "b@x.com"], staged.Eligible);
+        Assert.Equal(["c@x.com"], staged.Skipped.Select(s => s.EmailAddress));
+
+        // The pane is refreshed while the operator types the ticket and c has finished syncing.
+        var atConfirm = Loaded(
+            ("a@x.com", "Completed"), ("b@x.com", "Completed"), ("c@x.com", "Completed"));
+
+        // What the page does: re-plan from the ELIGIBLE snapshot.
+        var executed = MigrationUserActionPlanner.Plan(
+            atConfirm, staged.Eligible, MigrationUserAction.Clear);
+
+        Assert.Equal(["a@x.com", "b@x.com"], executed.Eligible);
+        Assert.DoesNotContain("c@x.com", executed.Eligible);
+
+        // Not vacuous: re-planning from the CANDIDATES - which is what this change shipped before
+        // the finding - removes three against a label that said two.
+        var fromCandidates = MigrationUserActionPlanner.Plan(
+            atConfirm, candidates, MigrationUserAction.Clear);
+
+        Assert.Equal(3, fromCandidates.Eligible.Count);
+        Assert.True(fromCandidates.Eligible.Count > staged.Eligible.Count);
+    }
+
+    [Fact]
     public void AStagedScopeStillShrinksWhenMailboxesChangeStatusOrLeaveTheBatch()
     {
         // The other half of the snapshot, and the reason it is a snapshot of ADDRESSES rather
