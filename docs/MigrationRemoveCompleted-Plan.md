@@ -149,6 +149,18 @@ never live and empty. The non-busy clause is registered as an `AnnotatedControl`
 `ClickGateRegistry`, so a later mechanical pass cannot collapse the gate to the page predicate
 and delete it.
 
+**The mailbox FILTER box is frozen while an action is staged** - review finding `rc-3`, raised
+against the implementation. The preview annotates rows BY ADDRESS, and this is the only control
+on the pane whose rows are not ticked: the other five act on ticked rows, and R11 pins those
+above the list where the filter cannot reach them. So the filter is the one control that can
+hide the rows the operator is about to agree to remove, and the count bound holding does not
+make that acceptable - the whole case for a no-selection destructive control is that the
+operator can SEE what it will do, at the moment they type the ticket. The filter therefore
+takes `disabled="@(IsBusy || pendingActionLabel != null)"`, which is a wider gate than any other
+view control on this pane. The sort controls are NOT widened: reordering hides nothing.
+Cancelling the staged action on a filter keystroke was considered and rejected - the box binds
+`oninput`, so one character would silently discard a staged destructive action.
+
 ### The staged scope is a SNAPSHOT, and it is the D6 safety argument's load-bearing part
 
 *Revision 2, taking review finding HIGH 2 whole; the hole was real.* Revision 1 rested on "the

@@ -961,10 +961,22 @@
                                                    checked="@AllMailboxesSelected"
                                                    @onchange="ToggleSelectAllMailboxes" />
                                         }
+                                        @* FROZEN WHILE AN ACTION IS STAGED, and not only while the
+                                           page is busy (review finding rc-3). This filter chooses
+                                           which rows RENDER, and the staged preview annotates rows
+                                           by address - so changing it mid-confirmation can hide
+                                           the very rows the operator is about to agree to remove.
+                                           The other five mailbox actions do not have that problem:
+                                           their rows are ticked, and R11 pins ticked rows above
+                                           the list where the filter cannot reach them. Remove
+                                           completed acts on rows that are NOT ticked, so the
+                                           filter is the one control that can make its preview
+                                           disappear. Cancel is always available and keeps its own
+                                           narrower gate. *@
                                         <input type="text" class="form-control form-control-sm" style="width: 14rem;"
                                                placeholder="Filter these mailboxes"
                                                value="@mailboxFilter" @oninput="OnMailboxFilterChanged"
-                                               disabled="@IsBusy" />
+                                               disabled="@(IsBusy || pendingActionLabel != null)" />
                                         <label class="small text-muted mb-0 flex-shrink-0" for="mailboxSortColumn">Sort</label>
                                         <select id="mailboxSortColumn" class="form-select form-select-sm" style="width: 9rem;"
                                                 value="@mailboxSortColumn" @onchange="OnMailboxSortColumnChanged"

@@ -2356,6 +2356,21 @@ public class MigrationStatusPageTests
         Assert.Contains("Remove completed (@RemoveCompletedCount)", page, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void RemoveCompleted_FreezesTheMailboxFilterWhileAnActionIsStaged()
+    {
+        // Review finding rc-3. The staged preview annotates rows BY ADDRESS, and this control is
+        // the only one on the pane whose rows are not ticked - the other five are, and R11 pins
+        // ticked rows above the list where the filter cannot reach them. So the filter is the one
+        // control that can hide the rows the operator is about to agree to remove, and it is the
+        // one control here that folds pendingActionLabel into its gate.
+        var filter = ExtractSpan(
+            StripRazorComments(ReadPage()), "placeholder=\"Filter these mailboxes\"", "/>");
+
+        Assert.Contains("disabled=\"@(IsBusy || pendingActionLabel != null)\"", filter,
+            StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// <paramref name="source"/> with line comments removed. The scans below look for words that
     /// also occur in prose - "await", "finally", the flag names themselves - so a comment
