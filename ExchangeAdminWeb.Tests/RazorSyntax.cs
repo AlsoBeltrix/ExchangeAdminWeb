@@ -33,6 +33,17 @@ namespace ExchangeAdminWeb.Tests;
 /// same characters of the file on disk and nothing downstream has to know a tree was involved.
 /// </para>
 /// <para>
+/// AND A BLOCK CAN STILL HOLD RAZOR. A <c>RenderFragment</c> whose value is an inline template
+/// (<c>@&lt;text&gt;</c>, <c>@&lt;div&gt;</c>) is written INSIDE the <c>@code</c> block, and that is
+/// markup handed to a C# parser: the block parses with errors and everything after the template is
+/// error-RECOVERY output. The lexical half survives it - comment trivia and literal tokens are
+/// still produced for the whole block, so the two blanked views below are unaffected - but the
+/// STRUCTURE does not, and a question like "which method is this statement in" is then answered by
+/// a guess. Rather than leave that silent, <see cref="RazorParseGate"/> refuses any component whose
+/// block does not parse cleanly unless it is on a written allowlist, and refuses an allowlist entry
+/// for a page that parses. See review finding prog-11.
+/// </para>
+/// <para>
 /// WHAT STAYS TEXT. Markup is outside every region and no syntax tree covers it, so an
 /// assertion about MARKUP - a quoted attribute value, a handler name - is still a text match and
 /// is meant to be. The split is the point: C# questions are answered by the tree, markup
@@ -56,18 +67,57 @@ internal static class RazorSyntax
     internal sealed record CodeRegion(TextSpan Raw, SyntaxTree Tree, int Offset)
     {
         private SyntaxNode? root;
+        private IReadOnlyList<Diagnostic>? errors;
 
         internal SyntaxNode Root => this.root ??= this.Tree.GetRoot();
+
+        /// <summary>
+        /// The parser's own error diagnostics for this region. A non-empty list means the tree is
+        /// error-RECOVERY output rather than a parse, and every structural question asked of it is
+        /// answered by a guess. <see cref="RazorParseGate"/> is what refuses to let that pass
+        /// unnamed.
+        /// </summary>
+        internal IReadOnlyList<Diagnostic> Errors => this.errors ??= this.Tree
+            .GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .ToList();
 
         /// <summary>The raw-file position of <paramref name="treePosition"/>.</summary>
         internal int RawAt(int treePosition) => treePosition + this.Offset;
     }
 
+    /// <summary>
+    /// The earliest parse error in a source file, positioned in the RAW file rather than in a
+    /// synthetic tree, so a failure message names a line someone can open.
+    /// </summary>
+    internal sealed record ParseError(int Line, string Id, string Message, int Count);
+
     /// <summary>A source file split into the C# regions a tree can answer questions about.</summary>
     /// <param name="IsRazor">
     /// True when the regions came from <c>@code</c> blocks, so everything outside them is markup.
     /// </param>
-    internal sealed record ParsedSource(string Raw, IReadOnlyList<CodeRegion> Regions, bool IsRazor);
+    internal sealed record ParsedSource(string Raw, IReadOnlyList<CodeRegion> Regions, bool IsRazor)
+    {
+        /// <summary>
+        /// The first parse error across every region, or null when all of them parsed cleanly.
+        /// </summary>
+        internal ParseError? FirstError()
+        {
+            var all = this.Regions
+                .SelectMany(r => r.Errors.Select(d => (Raw: r.RawAt(d.Location.SourceSpan.Start), Diagnostic: d)))
+                .ToList();
+
+            if (all.Count == 0)
+                return null;
+
+            var first = all.MinBy(e => e.Raw);
+            return new ParseError(
+                LineOf(this.Raw, first.Raw),
+                first.Diagnostic.Id,
+                first.Diagnostic.GetMessage(),
+                all.Count);
+        }
+    }
 
     private static readonly Dictionary<string, ParsedSource> Cache = new(StringComparer.Ordinal);
 
