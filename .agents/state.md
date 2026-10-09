@@ -10,6 +10,11 @@ the latest sweep is Archived 2026-10-09).
 
 ### Read this first - what is waiting on the owner, 2026-10-09
 
+**DONE, do not re-raise:** the on-prem Delinea secret was re-entered by the owner on an
+earlier deploy (confirmed 2026-10-09). It was listed as outstanding for several turns
+because nobody checked - the fix at `d1ccd07` stops it being deleted again, and the value
+itself is back.
+
 **`docs/ProgressCoverage-Plan.md` IS COMPLETE AND SO IS ITS FINDINGS QUEUE.** Measured in this
 sweep as of `390bba6`: `ExchangeAdminWeb.Tests/ProgressRegistry.cs` holds **zero** `KnownGap`
 entries (down from 52; the grep is below under "The count a registry owns is not copied here"),
@@ -29,7 +34,6 @@ work stream has also had no review of its last three batches.**
 | Waiting on | What happens without it |
 |---|---|
 | **Deploy** | Both instances are still at FileVersion `2.27.0.0`, written 2026-10-02, so the circuit-lifetime fix, the config-deletion fix and queue item 18 are on neither of them. The circuit leak keeps pinning sessions in prod, and the recycled pool is the clean baseline for measuring whether the fix worked - that baseline ages |
-| **Re-enter the on-prem Delinea secret** | Emergency Disable cannot fetch AD credentials. The code fix stops the value being deleted again; it does not restore it |
 | **Roslyn decision** (`prog-4`, `leak-1`) | Two guards keep two known blind spots. Neither is reachable by any current page |
 | **Remove-completed: filtered set or whole batch?** | `docs/MigrationRemoveCompleted-Plan.md` stays DRAFT |
 | **Manual acceptance** | Nothing here proves a progress bar renders. Every fix in `docs/ProgressCoverage-Plan.md` is source-verified only |
