@@ -1710,11 +1710,25 @@ public static class ProgressRegistry
                 + "isLoading, which this finally drops two lines before the await - also sets "
                 + "result = null on entry. A re-read past the email await would report a failed "
                 + "reset with no message on a reset that succeeded"),
-        ],
-        KnownGaps =
-        [
-            new("ListMethods", 176,
-                "SILENT, READ. A Graph round trip for the user's registered methods"),
+            new("ListMethods", "MfaService.GetUserMethodsAsync(",
+                "the one gap S3 left on this page, and the rare handler where ONE covered call "
+                + "legitimately holds both ends of the window. That is a fact about the body "
+                + "rather than a shortcut: MfaService.GetUserMethodsAsync( is the only remote "
+                + "work in it - a Graph credential fetch and then "
+                + "GET /users/{upn}/authentication/methods, read in Services/MfaResetService.cs "
+                + "rather than assumed - and everything after it is local and single-row (the "
+                + "empty-set banner, one audit row, a projection of the method types the call "
+                + "just returned). The catch adds no call either, so there is no later pin to "
+                + "name and no tail for the window to miss. Unknown is FORCED rather than "
+                + "chosen: the method count does not exist until the call the Begin has to "
+                + "dominate has returned, so it cannot go in Items or in the label, and it goes "
+                + "in the Complete message instead. An empty result completes TRUE - a lookup "
+                + "that ran and found nothing finished, the reviewer's 2026-10-08 ruling - while "
+                + "a Graph fault falls out of scope to the dispose fallback, because the catch's "
+                + "banner is the refusal and the work did not finish. No snapshot: upn is "
+                + "hoisted above the Begin for the LABEL, the UPN box at MfaReset.razor:50 is "
+                + "disabled=\"@isLoading\" and the raise is above the yield, so the field is shut "
+                + "for the whole window"),
         ],
         Exempt =
         [

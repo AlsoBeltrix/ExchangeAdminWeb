@@ -173,17 +173,51 @@
             await ListMethods();
     }
 
+    /// <summary>
+    /// Reads the user's registered authentication methods from Graph.
+    /// </summary>
+    /// <remarks>
+    /// The one gap left on this page by docs/ProgressCoverage-Plan.md S3, which fixed
+    /// <see cref="ExecuteReset"/> and classified this as a silent READ. It is the only thing the
+    /// operator does before the reset, and until now the whole round trip ran with the frame
+    /// reading Idle.
+    ///
+    /// ONE covered call holds both ends here, which is unusual on this page and is a fact about
+    /// the handler rather than a shortcut. MfaService.GetUserMethodsAsync is the only remote work
+    /// in the body: it fetches the Graph credential and then issues
+    /// GET /users/{upn}/authentication/methods, and everything after it - the empty-set message,
+    /// the audit row, the projection of method types - is local and single-row. The catch adds no
+    /// call either, so there is no later pin to name and no tail for the window to miss.
+    ///
+    /// ActivitySize.Unknown is forced rather than chosen: the method count does not exist until
+    /// the call the window has to dominate has returned, so there is nothing to put in Items and
+    /// nothing to put in the label either. The count goes in the Complete message instead.
+    ///
+    /// upn is hoisted above the Begin so the label names the target, NOT as a race fix: the UPN
+    /// box at :50 is disabled="@isLoading" and the raise is above the yield, so the field is shut
+    /// for the whole window. The catch reads the hoisted local for the same reason it reads it in
+    /// the try - one value, read once, rather than two reads of a field that could disagree.
+    ///
+    /// An empty result completes TRUE: a lookup that ran and found nothing finished, which is
+    /// the reviewer's 2026-10-08 ruling. A Graph fault falls out of scope to the dispose
+    /// fallback, because the catch's own banner is the refusal and the work did not finish.
+    /// </remarks>
     private async Task ListMethods()
     {
         isLoading = true;
         result = null;
         methods = new();
         resetConfirmPending = false;
+
+        var upn = userPrincipalName.Trim();
+
+        using var activity = Progress.Begin(
+            "MFA Reset", $"Reading registered MFA methods for {upn}", ActivitySize.Unknown);
+
         await Task.Yield();
 
         try
         {
-            var upn = userPrincipalName.Trim();
             methods = await MfaService.GetUserMethodsAsync(upn);
             if (methods.Count == 0)
                 result = new MfaResetResult { Success = true, Message = "No MFA methods registered for this user." };
@@ -191,11 +225,17 @@
             Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_ListMethods", upn, true,
                 totalMethods: methods.Count,
                 methodTypes: methods.Select(m => m.MethodType).ToArray());
+
+            // Reads methods, assigned above with no await between, so nothing can empty it under
+            // the message. Below the Graph call, which is the only thing the operator waits on.
+            activity.Complete(true, methods.Count == 0
+                ? "No MFA methods are registered for this user."
+                : $"{methods.Count:N0} registered method(s).");
         }
         catch (Exception ex)
         {
             result = new MfaResetResult { Success = false, Message = $"Error: {ex.Message}" };
-            Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_ListMethods", userPrincipalName.Trim(), false,
+            Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_ListMethods", upn, false,
                 errorDetail: ex.Message);
         }
         finally

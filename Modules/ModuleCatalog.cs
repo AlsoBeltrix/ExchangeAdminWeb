@@ -758,7 +758,10 @@ public sealed class ModuleCatalog
             // 1.2.2: ExecuteReset's activity opens above the ticket validation and the whole
             // protected-principal preamble instead of at the Graph reset, and completes below the
             // administrator email instead of above it (docs/ProgressCoverage-Plan.md S3).
-            Version = "1.2.2",
+            // 1.2.3: the method lookup the operator runs before the reset reports its Graph
+            // round trip instead of running with the frame idle
+            // (docs/ProgressCoverage-Plan.md S5).
+            Version = "1.2.3",
             MainPermission = new(
                 "Access",
                 "MfaReset",
