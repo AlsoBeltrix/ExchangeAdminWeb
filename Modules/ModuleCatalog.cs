@@ -854,7 +854,10 @@ public sealed class ModuleCatalog
             // protection gate's onAllowed callback and closed next to the write, so the ticket
             // call, the gate's own directory resolve and the room read ran with the frame idle,
             // and so did the admin notification after it.
-            Version = "2.6.6",
+            // 2.6.7: the bulk-jobs panel reports the unbounded reads it has to do. The three
+            // store reads were split into a silent LoadJobsFromStore so the per-row JobChanged
+            // path cannot strobe the frame (docs/ProgressCoverage-Plan.md S5).
+            Version = "2.6.7",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

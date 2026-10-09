@@ -1146,15 +1146,45 @@ public static class ProgressRegistry
                 + "not existing until the parse returns, no Report on an indeterminate activity, "
                 + "the Complete's count read off the LOCAL `parsed`, and a parse failure falling "
                 + "to the dispose fallback"),
-        ],
-        KnownGaps =
-        [
-            new("ToggleJobDetails", 804,
-                "SILENT, READ. The unbounded BulkJobs.GetRows, identical to the shape the plan "
-                + "records on AdminBulkJobs.ToggleDetails. NOT in the plan's survey"),
-            new("RefreshJobs", 757,
-                "SILENT, READ. Reads the job store and calls GetRows for both selected jobs on "
-                + "every job event. NOT in the plan's survey"),
+            new("ToggleJobDetails", "BulkJobs.GetRows(",
+                "AdminBulkJobs.ToggleDetails' twin, down to the unbounded read: "
+                + "BulkJobRepository.GetRows has no LIMIT, so expanding a 10,000-row job "
+                + "materialises every row on the render thread. THE ACTIVITY IS HONEST "
+                + "REPORTING OF A PROBLEM THAT SHOULD NOT EXIST and the entry says so in place: "
+                + "the missing LIMIT is docs/BoundedJobQueries-Plan.md, step 2 of "
+                + "docs/ProductionMemory-Plan.md, NOT approved and NOT fixed here, and named "
+                + "out of scope by docs/ProgressCoverage-Plan.md. The read is named under the "
+                + "rule the S3 reviewer settled - operation-scale LOCAL work counts. The "
+                + "handler was fully SYNCHRONOUS and is now async Task with an await "
+                + "Task.Yield(), because GetRows is synchronous and without a flush point the "
+                + "activity would open and close inside one stretch of renderer time and paint "
+                + "nothing. The Begin and the yield sit ABOVE the detailsJobId assignment, so "
+                + "the frame the yield buys shows the page as it was rather than the new job's "
+                + "panel holding the old job's rows. The collapse branch returns above the "
+                + "Begin. No snapshot, checked rather than assumed: everything below the yield "
+                + "is derived from the jobId PARAMETER and the two fields are written, not read "
+                + "back - which is also the condition ClickGateRegistry's exemptions for the "
+                + "two Details buttons at 508 and 572 rest on. The Complete reads no field"),
+            new("RefreshJobs", "LoadJobsFromStore(",
+                "the covered call is named THROUGH A HELPER, and the indirection is the fix "
+                + "rather than a shortcut - AdminBulkJobs.RefreshJobs took the same shape in "
+                + "6a561df for the same reason. BulkJobService raises JobChanged once per ROW "
+                + "while a job executes (the RecordRow loop in Services/Jobs/BulkJobService.cs, "
+                + "read rather than assumed), and OnJobChanged called this method, so an "
+                + "activity here would open and close ten thousand times during a "
+                + "ten-thousand-row job and strobe the frame for the whole run - while "
+                + "Components/Shared/GlobalProgress.razor is already rendering that job for its "
+                + "submitter through BulkJobService's own channel. The three store reads were "
+                + "therefore extracted into a deliberately silent LoadJobsFromStore, which "
+                + "OnJobChanged now calls. RefreshJobs keeps its name, its registry entry and "
+                + "the reporting, and is now the OPERATOR-initiated reload only: the initial "
+                + "load and the refresh after a submit or a remove. Condition 1 needs the "
+                + "fragment in the method's own code, which is why the entry names "
+                + "LoadJobsFromStore( rather than BulkJobs.GetRows(; what runs inside the "
+                + "helper is held by nothing, which is the limitation this registry's own "
+                + "remarks state. RemoveJob became async Task to await it, which keeps its "
+                + "exemption reason true as written. Same yield, same reason, as "
+                + "ToggleJobDetails. The Complete reads no field"),
         ],
         Exempt =
         [

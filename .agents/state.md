@@ -23,10 +23,11 @@ config-deletion fix and queue item 18 all exist only in this repository.
 | **Re-enter the on-prem Delinea secret** | Emergency Disable cannot fetch AD credentials. The code fix stops the value being deleted again; it does not restore it |
 | **Roslyn decision** (`prog-4`, `leak-1`) | Two guards keep two known blind spots. Neither is reachable by any current page |
 | **Remove-completed: filtered set or whole batch?** | `docs/MigrationRemoveCompleted-Plan.md` stays DRAFT |
-| **Manual acceptance** | Nothing here proves a progress bar renders. Every S2/S3 fix is source-verified only |
+| **Manual acceptance** | Nothing here proves a progress bar renders. EVERY fix in docs/ProgressCoverage-Plan.md, now complete, is source-verified only |
 
-**Next work, if asked:** S5 of `docs/ProgressCoverage-Plan.md` continues - the remaining silent
-reads. S4 is complete (`AdminSettings` `4e84482`, `AdminBulkJobs` `6a561df`; the plan's third S4
+**Next work, if asked:** `docs/ProgressCoverage-Plan.md` is COMPLETE as of the third S5 batch
+below - the open items it leaves are the owner's manual acceptance pass and a review of the
+last three batches, both named in the table above and in that record. S4 is complete (`AdminSettings` `4e84482`, `AdminBulkJobs` `6a561df`; the plan's third S4
 page, `ExchangeOnlineConfig`, was already closed by S2), and no page under `Components/Pages`
 injects `IActivityProgress` nowhere any more. **S5's first batch is landing now** -
 `AdminEventLog` (7 gaps), `Comms10k` (3) and `MessageTrace` (2), one commit per page, all three
@@ -40,10 +41,32 @@ worked examples for it.
 `4f06fbf`, `BlockedSenders` `4c2ace2`, `DefenderEndpointDevices` `bd47271`, `DhcpAuthorization`
 `f138bed`, `NamedLocations` `16a7e22`, `Migration` (3 gaps) `430e929` and `ConferenceRooms`'
 two upload previews. Do not copy the remaining gap count into this file - get it with the grep
-under "The KnownGap count is not recorded here" below. **What is left is seven operations on
-six pages:** `CalendarPermissions.DownloadCsvReport`, `MailboxPermissions.DownloadCsvReport`,
-`ConferenceRooms.ToggleJobDetails` and `.RefreshJobs`, `EmergencyDisable.PerformLookup`,
-`LicensingUpdates.RunPreview`, `MfaReset.ListMethods`.
+under "The KnownGap count is not recorded here" below.
+
+**S5's THIRD batch LANDED AND `docs/ProgressCoverage-Plan.md` IS COMPLETE.** The grep now
+returns zero: every operator-initiated operation on every page under `Components/Pages` either
+reports or carries a written exemption. Seven commits, one finding or page each -
+`prog-9` and its sweep `091cc31`, `MfaReset` `2462de7`, `EmergencyDisable` `9ae0279`,
+`LicensingUpdates` `bb382df`, `CalendarPermissions` `8b56902`, `MailboxPermissions` `f2b2b33`,
+`ConferenceRooms` (2 gaps) in the commit carrying this record. **Nothing here proves a bar
+renders**; the plan's manual acceptance pass is still owed and is the only thing that can.
+**This work stream has had no review of its last three batches.**
+
+**Three things from this batch the next agent should have.** (1) **`prog-9` was not one bug but
+three.** The sweep of all eleven yields this stream added found two more, both on `Migration`,
+and both had been cleared in `430e929` on the premise that `isDownloadingCsv` is in `IsBusy` so
+the page is shut. It is not: `ClickGateRegistry.Migration` itself records three deliberately
+UNGATED controls - the report Close button at `:1210` and the two mailbox tick boxes at `:959`
+and `:1235` - that write exactly the fields those handlers read after the yield. **The rule
+"busy flag in `IsBusy`, raised above the yield, therefore safe" is only as good as the gating,
+and on a page with owner-ruled ungated controls it is false.** Check the controls, not the
+flag. (2) **A probe that does not compile is silent and is not evidence.** Two probe runs in
+this batch produced no assertion at all - once because a `perl` anchor on
+`using var activity = Progress.Begin(` matched the FIRST of four on the page, once because of a
+syntax error in the registry - and both looked like clean runs until the output was read.
+Anchor every probe substitution on text unique to the handler, and grep the probe output for
+`error CS` as well as for the failure. (3) The `KnownGap`-count rule below was honoured this
+time: no commit in this batch carries a running number.
 
 **Three corrections from that batch, recorded because the next agent will hit all three.**
 (1) The brief called `DefenderEndpointDevices`, `DhcpAuthorization` and `NamedLocations`

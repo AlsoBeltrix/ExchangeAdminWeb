@@ -745,7 +745,7 @@
         // Subscribe to job-state changes so the live view refreshes as rows stream in, and load the
         // current jobs (which may include jobs submitted from another tab/operator).
         BulkJobs.JobChanged += OnJobChanged;
-        RefreshJobs();
+        await RefreshJobs();
 
         authChecked = true;
     }
@@ -754,7 +754,44 @@
     // Bulk jobs view — durable, server-side, shared across operators
     // =========================================================================
 
-    private void RefreshJobs()
+    /// <summary>
+    /// The OPERATOR-initiated reload: the initial load, and the view refresh after a submit or a
+    /// remove. It reports.
+    /// </summary>
+    /// <remarks>
+    /// The three store reads were split out into <see cref="LoadJobsFromStore"/> rather than
+    /// wrapped where they stood, and the split is the point of the fix rather than tidying.
+    /// BulkJobService raises JobChanged once per ROW while a job executes - the RecordRow loop in
+    /// Services/Jobs/BulkJobService.cs, read rather than assumed - and OnJobChanged called this
+    /// method. An activity there would open and close ten thousand times during a ten-thousand-row
+    /// job and strobe the status frame for the whole run, while Components/Shared/GlobalProgress
+    /// is already rendering that job for its submitter through BulkJobService's own channel.
+    /// AdminBulkJobs.RefreshJobs took exactly this shape in 6a561df for exactly this reason.
+    ///
+    /// The covered call is therefore named THROUGH the helper, because condition 1 requires the
+    /// fragment in the method's own code. What runs inside the helper is held by nothing, which
+    /// is the limitation the registry's own remarks state.
+    ///
+    /// The yield is load-bearing: every read below it is synchronous, so without a flush point
+    /// the activity would open and close inside one uninterrupted stretch of renderer time and
+    /// paint nothing. The Complete reads no field.
+    /// </remarks>
+    private async Task RefreshJobs()
+    {
+        using var activity = Progress.Begin(
+            "Conference Rooms", "Loading the bulk job list", ActivitySize.Unknown);
+
+        await Task.Yield();
+
+        LoadJobsFromStore();
+        activity.Complete(true, "The job list is up to date.");
+    }
+
+    /// <summary>
+    /// The three store reads, deliberately SILENT. OnJobChanged calls this, once per row of a
+    /// running job; see <see cref="RefreshJobs"/> for why that path must not report.
+    /// </summary>
+    private void LoadJobsFromStore()
     {
         // Module-scoped, NOT GetActiveJobs()/GetRecentJobs(): those span every module, which put
         // a Message Analysis export in this panel wearing a Conference Rooms label and offered a
@@ -784,7 +821,10 @@
             {
                 if (_disposed)
                     return;
-                RefreshJobs();
+
+                // LoadJobsFromStore, never RefreshJobs: this fires once per ROW while a job
+                // executes, and an activity here would strobe the frame for the whole run.
+                LoadJobsFromStore();
                 StateHasChanged();
             });
         }
@@ -801,7 +841,32 @@
     private IReadOnlyList<ExchangeAdminWeb.Services.Jobs.BulkJobRow> detailsRows =
         Array.Empty<ExchangeAdminWeb.Services.Jobs.BulkJobRow>();
 
-    private void ToggleJobDetails(string jobId)
+    /// <summary>
+    /// Expands or collapses one job's per-row detail.
+    /// </summary>
+    /// <remarks>
+    /// THE ACTIVITY HERE IS HONEST REPORTING OF A PROBLEM THAT SHOULD NOT EXIST, which is the
+    /// same thing AdminBulkJobs.ToggleDetails records and the same unbounded read.
+    /// BulkJobRepository.GetRows has no LIMIT, so expanding a 10,000-row job materialises every
+    /// row and blocks the render thread while it does. That missing LIMIT is a separate defect -
+    /// docs/BoundedJobQueries-Plan.md, step 2 of docs/ProductionMemory-Plan.md - and it is NOT
+    /// approved and NOT fixed here. A bar on a page-deadening read does not make the read
+    /// bounded; it stops the operator wondering whether their click registered.
+    ///
+    /// The collapse branch returns above the Begin: it frees a list and calls nothing.
+    ///
+    /// The Begin and its yield sit ABOVE the detailsJobId assignment, so the frame the yield buys
+    /// shows the page as it was plus the bar. Moving detailsJobId first would paint one frame of
+    /// the NEW job's panel carrying the OLD job's rows. The yield is required because GetRows is
+    /// synchronous: without a flush point nothing repaints and the bar never appears.
+    ///
+    /// No snapshot is needed and that was checked rather than assumed: everything below the yield
+    /// is derived from the jobId PARAMETER, and the two fields are written, not read back. That
+    /// is also why ClickGateRegistry exempts both Details buttons on the condition that
+    /// "ToggleJobDetails keeps taking an id and keeps reading nothing but BulkJobs.GetRows" -
+    /// still true.
+    /// </remarks>
+    private async Task ToggleJobDetails(string jobId)
     {
         if (detailsJobId == jobId)
         {
@@ -810,10 +875,16 @@
             return;
         }
 
+        using var activity = Progress.Begin(
+            "Conference Rooms", "Loading this job's rows", ActivitySize.Unknown);
+
+        await Task.Yield();
+
         // Rows are fetched on expand, not for every row on every refresh: this panel re-renders
         // on every job event.
         detailsJobId = jobId;
         detailsRows = BulkJobs.GetRows(jobId);
+        activity.Complete(true, "The job's rows are loaded.");
     }
 
     // Server-local, matching MessageTraceReports.razor. Times are rendered in the SERVER's zone
@@ -848,7 +919,8 @@
     // hard delete of a durable record with no ticket and no old values. Taking the row closes it:
     // what the operator saw is what gets audited, and a gate could not have helped - the staleness
     // is between render and click, not across an await inside this method.
-    private void RemoveJob(ExchangeAdminWeb.Services.Jobs.BulkJob job)
+    // async Task so it can await the reporting reload; the markup lambda at :575 is unchanged.
+    private async Task RemoveJob(ExchangeAdminWeb.Services.Jobs.BulkJob job)
     {
         var removed = BulkJobs.DeleteJob(
             ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName, job.Id);
@@ -869,7 +941,7 @@
         }
         catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
 
-        RefreshJobs();
+        await RefreshJobs();
     }
 
     private string JobDisplayStatus(ExchangeAdminWeb.Services.Jobs.BulkJob job)
@@ -1239,7 +1311,7 @@
                 Success = true,
                 Message = $"Submitted {rows.Count} room(s) as a background job. It will keep running if you close this tab — watch progress below.{skipNote}"
             };
-            RefreshJobs();
+            await RefreshJobs();
         }
         catch (Exception ex)
         {
@@ -1548,7 +1620,7 @@
                 Success = true,
                 Message = $"Submitted {rows.Count} room(s) as a background job. It will keep running if you close this tab — watch progress below.{skipNote}"
             };
-            RefreshJobs();
+            await RefreshJobs();
         }
         catch (Exception ex)
         {

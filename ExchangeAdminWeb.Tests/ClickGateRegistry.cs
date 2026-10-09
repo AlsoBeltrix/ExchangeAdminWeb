@@ -3488,7 +3488,7 @@ public static class ClickGateRegistry
     private static PageGateEntry ConferenceRooms => new()
     {
         Page = "ConferenceRooms.razor",
-        ExpectedLineCount = 1686,
+        ExpectedLineCount = 1758,
 
         Predicates =
         [
@@ -3786,11 +3786,14 @@ public static class ClickGateRegistry
 
         UngatedDomSyncedControls = [],
 
-        // Six, and the first is the one that matters: RefreshJobs is called by both CSV Apply
-        // handlers while they are still busy, AND by a background callback where a busy flag is
-        // meaningless. The other five are the shared helpers every busy handler calls; each is
-        // listed because a guard there is silent by construction - the caller reports success and
-        // the side effect simply did not happen.
+        // Seven, and the first two are the ones that matter: RefreshJobs is called by both CSV
+        // Apply handlers while they are still busy, and LoadJobsFromStore under it is called by a
+        // background callback where a busy flag is meaningless. They were ONE entry until
+        // docs/ProgressCoverage-Plan.md S5 split the store reads out so the per-row JobChanged
+        // path could keep running silently; the two halves of the old argument went with the two
+        // methods. The other five are the shared helpers every busy handler calls; each is listed
+        // because a guard there is silent by construction - the caller reports success and the
+        // side effect simply did not happen.
         ForbiddenGuardSites =
         [
             new ForbiddenGuardSite("RefreshJobs", ["ApplyFinderCsv", "ApplyTypeCsv", "RemoveJob"],
@@ -3798,10 +3801,21 @@ public static class ClickGateRegistry
                 + "isCsvProcessing are still true, so IsBusy is true at that call. A guard here "
                 + "makes the confirming refresh a silent no-op: the banner says the job was "
                 + "submitted while the Bulk Jobs tab shows no such job, and the operator submits it "
-                + "again. Worse, OnJobChanged calls this from the runner's thread on every job "
-                + "event, where IsBusy describes nothing relevant - a guard would freeze the live "
-                + "jobs view for the whole of any form operation and leave a running job's progress "
-                + "silently stale."),
+                + "again. The background half of this entry MOVED to LoadJobsFromStore below, "
+                + "when docs/ProgressCoverage-Plan.md S5 split the three store reads out so the "
+                + "JobChanged path could keep running silently: OnJobChanged no longer calls "
+                + "RefreshJobs. The callers above are the whole reason now, and they are enough."),
+
+            new ForbiddenGuardSite("LoadJobsFromStore",
+                ["OnJobChanged", "RefreshJobs", "ApplyFinderCsv", "ApplyTypeCsv", "RemoveJob"],
+                "The three store reads, split out of RefreshJobs by "
+                + "docs/ProgressCoverage-Plan.md S5 so the background path could stay silent, and "
+                + "the background argument moved here with them. OnJobChanged calls this from the "
+                + "runner's thread on every job event - once per ROW while a job executes - where "
+                + "IsBusy describes nothing relevant. A guard would freeze the live jobs view for "
+                + "the whole of any form operation and leave a running job's progress silently "
+                + "stale. Everything RefreshJobs' entry says about the Apply handlers reaches "
+                + "this method through it."),
 
             new ForbiddenGuardSite("ReauthorizeAsync",
                 ["SetupSingleRoom", "ApplyFinderCsv", "SetSingleRoomType", "ApplyTypeCsv"],
