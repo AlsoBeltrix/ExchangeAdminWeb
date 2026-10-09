@@ -2738,9 +2738,15 @@
     // which is what R11 requires. The wider stale-selection condition is pre-existing and is
     // recorded in .agents/state.md; this is the part that would make the new control lie.
     private IReadOnlyList<string> RemoveCompletedCandidates() =>
-        MigrationUserActionPlanner.NarrowToSelection(
-            FilteredSortedMailboxes(),
-            MigrationUserActionPlanner.PruneSelection(batchUsers, selectedMailboxes));
+        MigrationUserActionPlanner.NarrowToSelection(FilteredSortedMailboxes(), TicksInThisBatch());
+
+    // The ticks that are actually in the open batch, which is the ONLY reading of "is anything
+    // ticked" this control may use. Extracted as its own member by review finding rc-4: the
+    // candidate helper pruned and the tooltip did not, so in a batch carrying a stale tick from
+    // another batch the button was correctly scoped to every completed mailbox while the tooltip
+    // said it would remove the ticked ones. One value, one classification, three readers.
+    private IReadOnlyList<string> TicksInThisBatch() =>
+        MigrationUserActionPlanner.PruneSelection(batchUsers, selectedMailboxes);
 
     // The label's N, and the gate's zero test. Taken from the plan, never counted separately.
     //
@@ -2763,7 +2769,10 @@
             if (count == 0)
                 return "No completed mailbox in scope";
 
-            if (selectedMailboxes.Count > 0)
+            // TicksInThisBatch, not selectedMailboxes: finding rc-4. The raw field can hold a tick
+            // left behind by another batch, and this sentence would then describe a narrowing the
+            // control is not doing.
+            if (TicksInThisBatch().Count > 0)
                 return $"Removes the {count} ticked mailbox(es) that have completed";
 
             return MailboxFilterIsSet

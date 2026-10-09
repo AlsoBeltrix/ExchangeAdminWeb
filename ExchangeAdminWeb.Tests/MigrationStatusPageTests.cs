@@ -2265,17 +2265,21 @@ public class MigrationStatusPageTests
         // from the same helper, or the label promises one number and sends another.
         var candidates = StripLineComments(GetMethodBody("RemoveCompletedCandidates"));
 
-        Assert.Contains("MigrationUserActionPlanner.NarrowToSelection(", candidates,
+        Assert.Contains(
+            "MigrationUserActionPlanner.NarrowToSelection(FilteredSortedMailboxes(), TicksInThisBatch())",
+            candidates,
             StringComparison.Ordinal);
-        Assert.Contains("FilteredSortedMailboxes()", candidates, StringComparison.Ordinal);
 
         // Review finding rc-2: the selection reaches the rule PRUNED to the loaded batch, so a
         // mailbox ticked in another batch - which nothing on this page clears - cannot send this
-        // control down the "something is ticked" branch. Pinned as an exact single occurrence,
-        // because reading the raw field anywhere else in this helper is the defect.
+        // control down the "something is ticked" branch. Review finding rc-4: the prune lives in
+        // ONE member, so nothing else can classify the scope from the raw field.
+        Assert.DoesNotContain("selectedMailboxes", candidates, StringComparison.Ordinal);
+
+        var ticks = StripLineComments(GetMethodBody("TicksInThisBatch"));
+
         Assert.Contains("MigrationUserActionPlanner.PruneSelection(batchUsers, selectedMailboxes)",
-            candidates, StringComparison.Ordinal);
-        Assert.Single(Regex.Matches(candidates, WholeWord("selectedMailboxes")));
+            ticks, StringComparison.Ordinal);
 
         var count = StripLineComments(GetMemberBody("RemoveCompletedCount"));
 
@@ -2354,6 +2358,22 @@ public class MigrationStatusPageTests
         // The count is IN the label. It is the only thing bounding a destructive action the
         // operator did not select the rows for.
         Assert.Contains("Remove completed (@RemoveCompletedCount)", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RemoveCompleted_TellsTheOperatorTheScopeItIsActuallyUsing()
+    {
+        // Review finding rc-4. The candidate helper classifies "is anything ticked" from the
+        // PRUNED selection and the tooltip classified it from the raw field, so in a batch
+        // carrying a tick left behind by another batch the button was correctly scoped to every
+        // completed mailbox while the tooltip said it would remove the ticked ones. The tooltip
+        // is the only place the scope is stated in words, so a tooltip that disagrees with the
+        // scope is the operator's only cue being wrong.
+        var title = StripLineComments(
+            ExtractSpan(ReadPage(), "private string RemoveCompletedTitle", "\n    }\n"));
+
+        Assert.Contains("TicksInThisBatch().Count > 0", title, StringComparison.Ordinal);
+        Assert.DoesNotContain("selectedMailboxes", title, StringComparison.Ordinal);
     }
 
     [Fact]
