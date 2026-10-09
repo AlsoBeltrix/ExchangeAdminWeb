@@ -8,10 +8,27 @@ the latest sweep is Archived 2026-10-05).
 
 ## Now
 
-### Read this first - what is waiting on the owner, 2026-10-08
+### Read this first - what is waiting on the owner, 2026-10-09
 
-Nothing is in flight. Tree clean, every dispatched review returned and recorded, suite 3674
-passed / 0 failed / 3 skipped.
+**`docs/ProgressCoverage-Plan.md` IS COMPLETE AND SO IS THE FINDINGS QUEUE.** Verified
+directly, not relayed: Release build 0 errors; full suite **3,690 passed / 0 failed / 3
+skipped**; `dotnet format --verify-no-changes` clean; `git diff --check` clean;
+`grep -cE .new("[A-Za-z0-9_]+", *[0-9]+.` over `ProgressRegistry.cs` = **0** (from 52);
+`.agents/review/index.md` open findings = **0** (nine raised, nine closed).
+
+**What that does and does not mean.** Every operator-initiated operation on every page now
+reports to the status bar, or carries a written exemption a test enforces. **None of it is
+proven to RENDER.** There is no bUnit harness; every guard in this stream is a source or
+syntax-tree check. Three defects in Emergency Disable earlier in this work were all
+presentation-layer and invisible to a green suite. **The manual acceptance pass is the only
+thing that converts this from consistent to correct, and it has not been run.**
+
+**The last two findings were closed on Roslyn, not regex.** Eight guard findings in six days
+had one cause - regex cannot see control flow and cannot tell code from data. Roslyn was
+already in the TEST project transitively via the PowerShell SDK, so nothing shipped gained a
+dependency. All five named bypasses were run against the OLD scanner to confirm acceptance
+before being run against the new one, and the guards were separately mutated to prove they
+still catch what they exist for.
 
 **`prog-7` and `prog-8` are both closed, plus the sweep `prog-8` called for - three commits.**
 `prog-7`: both `ExecuteOnPrem` handlers now complete their progress activity from a LOCAL, so
