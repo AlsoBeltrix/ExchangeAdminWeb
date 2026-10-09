@@ -231,3 +231,30 @@ deploy and again after 24 hours of normal traffic. Against ~14 GB/day:
 
 Note the 2026-10-07 reading was lost to the pool recycle that freed the memory. A recycle or
 deploy resets this clock, so take the reading before the next one.
+
+## 2026-10-09 - prod deploy, and the memory clock restarts here
+
+Prod (`ExchangeAdminWeb`, PID 14212) and dev (PID 8748) both redeployed, each at 0.12 GB
+from cold. **This build is the first in production carrying the circuit-lifetime leak fix**
+(`98b29d1`, `c6c73d2`), and it also carries the Remove-completed control (`c57b41e` plus six
+review fixes).
+
+**This reading supersedes the 2026-10-09 dev-only baseline above**, which was taken when
+prod was still unpatched.
+
+**The measurement.** Pre-fix: prod reached **13.8 GB working set / 15.0 GB private after 1.0
+days** (2026-10-07), against dev on the same build and uptime at 0.89 GB - the difference
+was operator traffic. Take prod's private bytes after ~24 hours of normal use:
+
+- Growth largely gone -> the circuit leak was the dominant cause and the incident closes.
+- Growth continues near ~14 GB/day -> it was not, and the next step is step 0 of
+  `docs/ProductionMemory-Plan.md`: the managed-versus-native counter reading, which has
+  still never been taken. `capture-exchangeadminweb-memory.ps1` is under `%TEMP%` on the
+  owner's machine and needs an elevated shell.
+
+A recycle or redeploy resets this clock. Take the reading before the next one.
+
+**Owner decision, 2026-10-09: acceptance testing happens in production.** The dev manual
+pass in `docs/ProgressCoverage-Plan.md` and `docs/MigrationRemoveCompleted-Plan.md` was
+deliberately skipped, not forgotten. Recorded so a later session reads a decision rather
+than a gap.
