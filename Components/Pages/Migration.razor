@@ -2713,8 +2713,22 @@
     // scope is the selection WHOLE and unfiltered, because a ticked mailbox is deliberately never
     // hidden by the filter (R11; PinnedMailboxes exists for that), so narrowing it again by the
     // filter would act on fewer mailboxes than the pinned block is showing.
+    //
+    // THE SELECTION IS PRUNED TO THE LOADED BATCH FIRST (review finding rc-2). Nothing on this
+    // page clears selectedMailboxes when the open batch changes - AdoptSelectionAsOpenBatch nulls
+    // batchUsers, blanks the filter and resets the page, and leaves the ticks - so an address
+    // ticked in batch A is still in the set while batch B is open, with no row showing a tick.
+    // Unpruned, that stale address would take this control down the "something is ticked" branch
+    // in a batch where the operator has ticked nothing, and Remove completed (0) would render
+    // disabled over a batch full of completed mailboxes. PruneSelection is the planner's own
+    // helper for exactly this and its remarks say it belongs after every reload; it keeps a
+    // ticked mailbox the FILTER hides, because it reads batchUsers rather than the filtered rows,
+    // which is what R11 requires. The wider stale-selection condition is pre-existing and is
+    // recorded in .agents/state.md; this is the part that would make the new control lie.
     private IReadOnlyList<string> RemoveCompletedCandidates() =>
-        MigrationUserActionPlanner.NarrowToSelection(FilteredSortedMailboxes(), selectedMailboxes);
+        MigrationUserActionPlanner.NarrowToSelection(
+            FilteredSortedMailboxes(),
+            MigrationUserActionPlanner.PruneSelection(batchUsers, selectedMailboxes));
 
     // The label's N, and the gate's zero test. Taken from the plan, never counted separately.
     //

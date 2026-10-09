@@ -265,6 +265,46 @@ public class MigrationUserActionPlannerTests
     }
 
     [Fact]
+    public void ASelectionLeftOverFromAnotherBatchDoesNotNarrowThisOne()
+    {
+        // Review finding rc-2. Nothing on the Migration page clears selectedMailboxes when the
+        // open batch changes, so an address ticked in batch A is still in the set while batch B
+        // is open and no row in B shows a tick. Unpruned, that address takes the narrowing branch
+        // in a batch where the operator ticked nothing.
+        var batchB = Loaded(("b1@x.com", "Completed"), ("b2@x.com", "Completed"));
+        string[] tickedInBatchA = ["a1@x.com"];
+
+        var live = MigrationUserActionPlanner.PruneSelection(batchB, tickedInBatchA);
+        Assert.Empty(live);
+
+        var candidates = MigrationUserActionPlanner.NarrowToSelection(batchB, live);
+        Assert.Equal(["b1@x.com", "b2@x.com"], candidates);
+
+        // Not vacuous: unpruned, the stale address wins and the control is scoped to a mailbox
+        // that is not in this batch at all, so it counts and removes nothing.
+        var unpruned = MigrationUserActionPlanner.NarrowToSelection(batchB, tickedInBatchA);
+
+        Assert.Equal(["a1@x.com"], unpruned);
+        Assert.Empty(
+            MigrationUserActionPlanner.Plan(batchB, unpruned, MigrationUserAction.Clear).Eligible);
+    }
+
+    [Fact]
+    public void PruningTheSelectionStillKeepsATickedMailboxTheFilterHides()
+    {
+        // The prune reads the LOADED rows, not the in-view ones, and that is load-bearing: R11
+        // says a ticked mailbox is never hidden by the filter, and pruning against the filtered
+        // set instead would silently drop exactly those rows from the narrowing.
+        var loaded = Loaded(("shown@x.com", "Completed"), ("hidden@x.com", "Completed"));
+        var inView = loaded.Where(u => u.EmailAddress == "shown@x.com");
+
+        var live = MigrationUserActionPlanner.PruneSelection(loaded, ["hidden@x.com"]);
+        var candidates = MigrationUserActionPlanner.NarrowToSelection(inView, live);
+
+        Assert.Equal(["hidden@x.com"], candidates);
+    }
+
+    [Fact]
     public void TheLabelsCountIsTheSetTheActionStages()
     {
         // The assertion that matters most on this control: a count derived beside the set it

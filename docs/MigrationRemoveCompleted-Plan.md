@@ -108,6 +108,19 @@ settles it, and both the label and the staged action read it:
 - `selectedMailboxes` non-empty -> the candidate set IS `selectedMailboxes`.
 - otherwise -> `FilteredSortedMailboxes().Select(u => u.EmailAddress)`.
 
+**The selection is pruned to the loaded batch before that test** - review finding `rc-2`,
+raised against the implementation. Nothing on this page clears `selectedMailboxes` when the
+open batch changes: `AdoptSelectionAsOpenBatch` nulls `batchUsers`, blanks the filter and
+resets the page, and leaves the ticks. So a mailbox ticked in batch A is still in the set
+while batch B is open, with no row in B showing a tick - and unpruned, that stale address
+takes the narrowing branch in a batch where the operator has ticked nothing, rendering
+`Remove completed (0)`, disabled, over a batch full of completed mailboxes.
+`MigrationUserActionPlanner.PruneSelection` is the planner's own helper for exactly this and
+its remarks already say it belongs after every reload; it reads `batchUsers`, not the
+filtered rows, so a ticked mailbox the FILTER hides still narrows, which is what R11
+requires. The wider stale-selection condition is pre-existing, affects the mailbox Actions
+bar's own count, is OUT OF SCOPE here and is recorded in `.agents/state.md`.
+
 That is the owner's ruling verbatim, with the one thing it does not settle made explicit:
 **with nothing ticked AND a filter applied, the candidates are the filtered rows, not the whole
 batch.** The filter narrows for the same reason a tick narrows - both are the operator's own

@@ -2265,10 +2265,17 @@ public class MigrationStatusPageTests
         // from the same helper, or the label promises one number and sends another.
         var candidates = StripLineComments(GetMethodBody("RemoveCompletedCandidates"));
 
-        Assert.Contains(
-            "MigrationUserActionPlanner.NarrowToSelection(FilteredSortedMailboxes(), selectedMailboxes)",
-            candidates,
+        Assert.Contains("MigrationUserActionPlanner.NarrowToSelection(", candidates,
             StringComparison.Ordinal);
+        Assert.Contains("FilteredSortedMailboxes()", candidates, StringComparison.Ordinal);
+
+        // Review finding rc-2: the selection reaches the rule PRUNED to the loaded batch, so a
+        // mailbox ticked in another batch - which nothing on this page clears - cannot send this
+        // control down the "something is ticked" branch. Pinned as an exact single occurrence,
+        // because reading the raw field anywhere else in this helper is the defect.
+        Assert.Contains("MigrationUserActionPlanner.PruneSelection(batchUsers, selectedMailboxes)",
+            candidates, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(candidates, WholeWord("selectedMailboxes")));
 
         var count = StripLineComments(GetMemberBody("RemoveCompletedCount"));
 

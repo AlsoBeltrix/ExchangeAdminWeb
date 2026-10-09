@@ -549,6 +549,22 @@ Each of these sat inside a block that was archived whole. The record is verbatim
 
 ### Live defects found and deliberately not fixed
 
+- **The Migration mailbox selection is never pruned and survives a batch change. Pre-existing,
+  found by the codex review of the Remove completed slice (finding `rc-2`), and only the new
+  control's half is fixed.** `Components/Pages/Migration.razor` -
+  `AdoptSelectionAsOpenBatch` nulls `batchUsers`, blanks `mailboxFilter` and resets the page,
+  and does NOT touch `selectedMailboxes`; `ReplaceBatchUsers` does not either.
+  `MigrationUserActionPlanner.PruneSelection` exists for exactly this and its own remarks say
+  "Called after every reload" - **it is called from nowhere on the mailbox side**, so that
+  sentence is currently false. Observable: tick a mailbox in batch A, open batch B, and B shows
+  no ticked row while the mailbox Actions bar renders with `Actions (1)`; the five bulk actions
+  then plan over an address the planner drops, so the banner reads "Nothing to do: none of 0
+  selected mailboxes is eligible". Confusing, not destructive - the harmful direction is closed
+  because the planner only ever acts on addresses it can find in `batchUsers`.
+  **`RemoveCompletedCandidates()` prunes for itself** and is not affected. The general fix is
+  one call, but it changes behaviour for five shipped actions and needs its own slice and its
+  own guard; the batch side already has a `PruneSelection()` wrapper at `:2299` to copy.
+
 - **A live defect was found while scoping queue 4 and is NOT fixed. It needs its own commit.**
   **Citations re-anchored 2026-10-09 as of `390bba6`; the defect itself is unchanged and still
   live.** `Components/Pages/MessageTraceReports.razor` carries only the main `MessageTrace`
