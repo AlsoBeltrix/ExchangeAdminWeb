@@ -198,3 +198,36 @@ Earlier state recorded nondeterministic xUnit collection loss from a missing Win
 DLL, with CI unaffected. Windows-targeting builds require `-p:EnableWindowsTargeting=true`;
 Pester required `pwsh` and `DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec` on that machine.
 No current macOS host or tool state was checked in this sweep.
+
+## 2026-10-09 - memory baseline after the dev deploy
+
+Taken immediately after the dev deploy of `e9f9da8`, which is the first build carrying the
+circuit-lifetime leak fix (`98b29d1`, `c6c73d2`).
+
+| Pool | PID | Working set | Uptime at reading | Carries the fix |
+|---|---|---|---|---|
+| `ExchangeAdminWebDev` | 6008 | **0.34 GB** | 1.6 min | YES |
+| `ExchangeAdminWeb` (prod) | 19072 | 0.75 GB | 306 min | **NO - not redeployed** |
+
+Free RAM at reading: 18.19 GB of 32.
+
+**The comparison this exists for.** The pre-fix baseline is 2026-10-07: prod at **13.8 GB
+working set / 15.0 GB private after 1.0 days**, against dev on the same build and uptime at
+0.89 GB. The difference was operator traffic, which is what made it look like a leak rather
+than a large baseline.
+
+**Prod's 0.75 GB over 5.1 hours extrapolates to ~3.5 GB/day and proves nothing**: it is the
+OLD code, and today's traffic may simply be lighter. Do not read it as the fix working - the
+fix is not in it.
+
+**What to measure, and when.** Once prod carries this build, record its private bytes at
+deploy and again after 24 hours of normal traffic. Against ~14 GB/day:
+
+- Growth largely gone: the circuit leak was the dominant cause.
+- Growth continues at a similar rate: it was not, and the next step is step 0 of
+  `docs/ProductionMemory-Plan.md` - the managed-vs-native counter reading, which has still
+  never been taken. `capture-exchangeadminweb-memory.ps1` is on the owner's machine under
+  `%TEMP%`; it needs an elevated shell.
+
+Note the 2026-10-07 reading was lost to the pool recycle that freed the memory. A recycle or
+deploy resets this clock, so take the reading before the next one.
