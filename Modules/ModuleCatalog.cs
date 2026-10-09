@@ -392,7 +392,17 @@ public sealed class ModuleCatalog
             // guard and the work, and the report pane's Close button and the two mailbox tick
             // boxes are deliberately ungated, so a click landing in that window could null the
             // report under the encode (review finding prog-9).
-            Version = "1.22.8",
+            // 1.23.0: Remove completed (N) above the mailbox list. The capability already
+            // existed and was buried: it needed every row ticked, an Actions menu, and a red
+            // item called "Remove from batch" that reads as though it removes all of them. The
+            // new control needs no selection - with nothing ticked it acts on every completed
+            // mailbox the filter leaves in view, and ticking NARROWS it to the ticked ones
+            // (owner ruling 2026-10-09). Its scope is SNAPSHOT when the action is staged and
+            // re-planned from that snapshot at Confirm, so a filter typed while the ticket field
+            // is open can never widen what it removes - the count in the label is a bound, which
+            // is what makes this different from the standalone sweep the owner removed on
+            // 2026-08-10 (docs/MigrationRemoveCompleted-Plan.md).
+            Version = "1.23.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

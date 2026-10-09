@@ -200,7 +200,10 @@ Out of scope:
 
 1. `Components/Pages/Migration.razor`:
    - `RemoveCompletedCandidates()` - the one candidate-set helper above. Everything else reads
-     it, so the label can never disagree with what is acted on.
+     it, so the label can never disagree with what is acted on. The RULE itself goes in
+     `MigrationUserActionPlanner` as `NarrowToSelection(inScope, selected)`, where it can be
+     tested against real inputs; the page method is the adapter that supplies the page's two.
+     That is an addition beside `Plan`, not the eligibility change this plan puts out of scope.
    - `RemoveCompletedCount` - `Plan(batchUsers, RemoveCompletedCandidates(), Clear)
      .Eligible.Count`.
    - The button, outside the selection gate and inside `canManage`, beside the filter and

@@ -1999,6 +1999,12 @@ public static class ProgressRegistry
             new("StagePauseMailboxes", StagesConfirmation),
             new("StageResumeMailboxes", StagesConfirmation),
             new("StageRemoveMailboxes", StagesConfirmation),
+            // The no-selection Remove completed control. It stages and returns exactly as the five
+            // beside it do - the work is ExecuteBulkMailboxAction's, which already reports - so it
+            // is Exempt and not Reported. docs/MigrationRemoveCompleted-Plan.md revision 1 said to
+            // register it Reported "naming the call it covers"; there is no call in it to name,
+            // and an entry that named nothing would satisfy all three conditions vacuously.
+            new("StageRemoveCompletedMailboxes", StagesConfirmation),
             new("StageDeleteSelected", StagesConfirmation),
             new("StageRemoveCompletedSelected", StagesConfirmation),
             new("StageResumeSelected", StagesConfirmation),

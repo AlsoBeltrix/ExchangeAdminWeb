@@ -195,4 +195,155 @@ public class MigrationUserActionPlannerTests
         Assert.Equal("", MigrationUserActionPlanner.DescribeSkipped([]));
         Assert.Equal("", MigrationUserActionPlanner.DescribeSkipped(null));
     }
+
+    // ---- NarrowToSelection: the owner's 2026-10-09 narrowing ruling ----------------------------
+    // docs/MigrationRemoveCompleted-Plan.md. A control that does not require a selection acts on
+    // everything in view with nothing ticked, and ticking NARROWS it rather than enabling it.
+
+    [Fact]
+    public void NarrowToSelection_WithNothingTicked_IsEverythingInView()
+    {
+        var inView = Loaded(("a@x.com", "Completed"), ("b@x.com", "Syncing"));
+
+        var candidates = MigrationUserActionPlanner.NarrowToSelection(inView, []);
+
+        Assert.Equal(["a@x.com", "b@x.com"], candidates);
+    }
+
+    [Fact]
+    public void NarrowToSelection_WithSomethingTicked_IsOnlyTheTickedOnes()
+    {
+        // The half the first revision of the plan contradicted: it recorded the ruling and then
+        // described the scope as the in-view set regardless, which is a different set the moment
+        // anything is ticked.
+        var inView = Loaded(("a@x.com", "Completed"), ("b@x.com", "Completed"));
+
+        var candidates = MigrationUserActionPlanner.NarrowToSelection(inView, ["b@x.com"]);
+
+        Assert.Equal(["b@x.com"], candidates);
+    }
+
+    [Fact]
+    public void NarrowToSelection_KeepsATickedMailboxThatIsNotInView()
+    {
+        // The case that proves the two sets are genuinely different rather than usually equal,
+        // and the reason the selection is passed WHOLE instead of intersected with what is in
+        // view. The page pins ticked mailboxes above the list precisely so a filter cannot hide
+        // them (R11), so a ticked row the filter excludes is still on screen and still ticked;
+        // intersecting would act on fewer mailboxes than the pinned block is showing.
+        var inView = Loaded(("a@x.com", "Completed"));
+
+        var candidates = MigrationUserActionPlanner.NarrowToSelection(inView, ["z@x.com"]);
+
+        Assert.Equal(["z@x.com"], candidates);
+    }
+
+    [Fact]
+    public void NarrowToSelection_DoesNotApplyEligibility()
+    {
+        // The candidate set is everything in scope, not everything eligible. Pre-filtering here
+        // would make an ineligible row vanish from the preview instead of being named as skipped
+        // on its own row, which is the whole difference between this control and a silent sweep.
+        var inView = Loaded(("done@x.com", "Completed"), ("moving@x.com", "Syncing"));
+
+        var candidates = MigrationUserActionPlanner.NarrowToSelection(inView, []);
+        var plan = MigrationUserActionPlanner.Plan(inView, candidates, MigrationUserAction.Clear);
+
+        Assert.Equal(["done@x.com", "moving@x.com"], candidates);
+        Assert.Equal(["done@x.com"], plan.Eligible);
+        Assert.Equal(["moving@x.com"], plan.Skipped.Select(s => s.EmailAddress));
+    }
+
+    [Fact]
+    public void NarrowToSelection_DropsBlanksAndDuplicatesFromBothSides()
+    {
+        var inView = Loaded(("a@x.com", "Completed"), ("A@X.com", "Completed"), ("", "Completed"));
+
+        Assert.Equal(["a@x.com"], MigrationUserActionPlanner.NarrowToSelection(inView, []));
+        Assert.Equal(["b@x.com"],
+            MigrationUserActionPlanner.NarrowToSelection(inView, [" b@x.com ", "B@x.com", "  "]));
+    }
+
+    [Fact]
+    public void TheLabelsCountIsTheSetTheActionStages()
+    {
+        // The assertion that matters most on this control: a count derived beside the set it
+        // describes rather than FROM it is how a destructive label promises one number and sends
+        // another. Both the page's RemoveCompletedCount and its staged plan are this expression.
+        var loaded = Loaded(
+            ("a@x.com", "Completed"), ("b@x.com", "Syncing"), ("c@x.com", "Completed"));
+
+        var candidates = MigrationUserActionPlanner.NarrowToSelection(loaded, []);
+        var plan = MigrationUserActionPlanner.Plan(loaded, candidates, MigrationUserAction.Clear);
+
+        Assert.Equal(2, plan.Eligible.Count);
+        Assert.Equal(["a@x.com", "c@x.com"], plan.Eligible);
+    }
+
+    [Fact]
+    public void AStagedScopeCannotGrowWhenTheFilterAndTheSelectionChangeUnderIt()
+    {
+        // docs/MigrationRemoveCompleted-Plan.md test 7, the test review finding HIGH 2 asked for.
+        // The mailbox filter box is gated on IsBusy only, not on pendingActionLabel, so it stays
+        // typeable while the ticket field is open - and the tick boxes are deliberately ungated.
+        // Staging therefore captures the candidate ADDRESSES, and the callback re-plans from that
+        // capture rather than recomputing the scope.
+        var loaded = Loaded(
+            ("a@x.com", "Completed"),
+            ("b@x.com", "Completed"),
+            ("c@x.com", "Syncing"),
+            ("d@x.com", "Completed"),
+            ("e@x.com", "Completed"));
+
+        // Staged with nothing ticked and a filter leaving a, b and c in view.
+        var inViewAtStaging = loaded.Where(u => u.EmailAddress is "a@x.com" or "b@x.com" or "c@x.com");
+        var scope = MigrationUserActionPlanner.NarrowToSelection(inViewAtStaging, []);
+        var staged = MigrationUserActionPlanner.Plan(loaded, scope, MigrationUserAction.Clear);
+
+        Assert.Equal(["a@x.com", "b@x.com"], staged.Eligible);
+        Assert.Equal(["c@x.com"], staged.Skipped.Select(s => s.EmailAddress));
+
+        // The operator now clears the filter AND ticks two mailboxes that were never in scope.
+        // What the callback actually does: re-plan from the capture against live rows.
+        var executed = MigrationUserActionPlanner.Plan(loaded, scope, MigrationUserAction.Clear);
+
+        Assert.Equal(staged.Eligible, executed.Eligible);
+        Assert.True(executed.Eligible.Count <= staged.Eligible.Count);
+        Assert.DoesNotContain("d@x.com", executed.Eligible);
+        Assert.DoesNotContain("e@x.com", executed.Eligible);
+
+        // Not vacuous: the recompute the design forbids - revision 1 of the plan specified it -
+        // reaches a strictly larger set from the same page state, so the assertions above
+        // distinguish the two implementations rather than holding for either.
+        var recomputed = MigrationUserActionPlanner.Plan(
+            loaded,
+            MigrationUserActionPlanner.NarrowToSelection(loaded, ["d@x.com", "e@x.com"]),
+            MigrationUserAction.Clear);
+
+        Assert.Equal(["d@x.com", "e@x.com"], recomputed.Eligible);
+    }
+
+    [Fact]
+    public void AStagedScopeStillShrinksWhenMailboxesChangeStatusOrLeaveTheBatch()
+    {
+        // The other half of the snapshot, and the reason it is a snapshot of ADDRESSES rather
+        // than of the plan: everything that should still be noticed between staging and Confirm
+        // is, because the re-plan runs against the live rows.
+        string[] scope = ["a@x.com", "b@x.com", "c@x.com"];
+
+        var atStaging = Loaded(
+            ("a@x.com", "Completed"), ("b@x.com", "Completed"), ("c@x.com", "Completed"));
+        Assert.Equal(3,
+            MigrationUserActionPlanner.Plan(atStaging, scope, MigrationUserAction.Clear).Eligible.Count);
+
+        // By Confirm b has gone back to Syncing and c has left the batch entirely.
+        var atConfirm = Loaded(("a@x.com", "Completed"), ("b@x.com", "Syncing"));
+        var executed = MigrationUserActionPlanner.Plan(atConfirm, scope, MigrationUserAction.Clear);
+
+        Assert.Equal(["a@x.com"], executed.Eligible);
+
+        // b is NAMED as skipped; c is dropped silently, because naming a row the operator can no
+        // longer see is worse than saying nothing about it.
+        Assert.Equal(["b@x.com"], executed.Skipped.Select(s => s.EmailAddress));
+    }
 }

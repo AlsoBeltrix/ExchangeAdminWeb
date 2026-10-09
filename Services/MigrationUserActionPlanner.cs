@@ -150,6 +150,58 @@ public static class MigrationUserActionPlanner
     }
 
     /// <summary>
+    /// The addresses a mailbox bulk control is in scope for: <paramref name="selectedEmails"/>
+    /// when anything is selected, and otherwise every address in <paramref name="inScope"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Owner ruling 2026-10-09 (docs/MigrationRemoveCompleted-Plan.md): a control that does not
+    /// require a selection acts on everything in view with nothing ticked, and ticking NARROWS it
+    /// rather than enabling it. This is that rule, in one place, so the count a label shows and
+    /// the set the action stages cannot be derived separately and come to disagree - which is the
+    /// specific way a destructive bulk control goes wrong.
+    /// </para>
+    /// <para>
+    /// The two sets are deliberately not symmetrical and the caller must not "fix" that. The
+    /// no-selection scope is whatever the caller passes as in view, which on the mailbox pane is
+    /// the FILTERED rows; the selection is passed WHOLE and is never narrowed by that filter,
+    /// because a ticked mailbox is deliberately never hidden by the filter (R11 - the page pins
+    /// ticked rows above the list precisely so they stay visible). Intersecting the two would act
+    /// on fewer mailboxes than the pinned block shows.
+    /// </para>
+    /// <para>
+    /// ELIGIBILITY IS NOT APPLIED HERE. The result is the candidate set, which
+    /// <see cref="Plan"/> then splits into eligible and skipped. Pre-filtering it to the statuses
+    /// an action accepts would make every ineligible candidate vanish from the preview instead of
+    /// being named as skipped on its own row.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> NarrowToSelection(
+        IEnumerable<MigrationUserInfo>? inScope,
+        IEnumerable<string>? selectedEmails)
+    {
+        var selected = ToAddressList(selectedEmails);
+        if (selected.Count > 0)
+            return selected;
+
+        var scope = new List<string>();
+        if (inScope == null)
+            return scope;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var user in inScope)
+        {
+            if (user == null || string.IsNullOrWhiteSpace(user.EmailAddress))
+                continue;
+            if (seen.Add(user.EmailAddress))
+                scope.Add(user.EmailAddress);
+        }
+
+        return scope;
+    }
+
+    /// <summary>
     /// The subset of <paramref name="selectedEmails"/> still present in <paramref name="loaded"/>.
     /// Called after every reload: a mailbox that has left the batch must not stay ticked.
     /// </summary>
@@ -189,18 +241,32 @@ public static class MigrationUserActionPlanner
         return $" Skipped {skipped.Count}: {detail}.";
     }
 
-    private static HashSet<string> ToAddressSet(IEnumerable<string>? addresses)
+    private static HashSet<string> ToAddressSet(IEnumerable<string>? addresses) =>
+        new(ToAddressList(addresses), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// <paramref name="addresses"/> trimmed, blank-dropped and de-duplicated, in the order given.
+    /// The ordered form of <see cref="ToAddressSet"/>, which is built from it so that "what counts
+    /// as an address here" has one definition.
+    /// </summary>
+    private static List<string> ToAddressList(IEnumerable<string>? addresses)
     {
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var list = new List<string>();
         if (addresses == null)
-            return set;
+            return list;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var address in addresses)
         {
-            if (!string.IsNullOrWhiteSpace(address))
-                set.Add(address.Trim());
+            if (string.IsNullOrWhiteSpace(address))
+                continue;
+
+            var trimmed = address.Trim();
+            if (seen.Add(trimmed))
+                list.Add(trimmed);
         }
 
-        return set;
+        return list;
     }
 }

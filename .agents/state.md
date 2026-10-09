@@ -35,7 +35,7 @@ findings raised, all eleven closed and each closure reviewed in turn.
 |---|---|
 | **PROD deploy** | **Dev runs `e9f9da8` as of 2026-10-09; PROD DOES NOT.** Prod is still on the pre-fix build, so the circuit leak is live there - it was consuming ~14 GB/day and starved the host on 2026-10-07. Baseline for measuring the fix is in `.agents/machines.md`; take prod.s private bytes at deploy and again 24h later |
 | ~~Roslyn decision~~ | **CLOSED.** Both guards were rebuilt on Roslyn syntax trees (`12e1d25`, `e039cd9`); `prog-10` then found two holes in the rewrite and `prog-11` a third, all closed. Known limits are recorded in those finding records, not here |
-| **Remove-completed: filtered set or whole batch?** | `docs/MigrationRemoveCompleted-Plan.md` stays DRAFT |
+| ~~Remove-completed: filtered set or whole batch?~~ | **CLOSED.** The plan is APPROVED and revision 2 takes the FILTERED set, with its reasoning written down: the filter narrows by the operator's own act exactly as a tick does, and the count in the label carries whichever applies. Built and landed; `docs/MigrationRemoveCompleted-Plan.md` owns the design and the manual acceptance list, which has NOT been run |
 | **Manual acceptance** | Nothing here proves a progress bar renders. Every fix is source-verified only. Owner deprioritised it 2026-10-09 (Emergency Disable deferred to "next time there is an emergency"; bar-watching to "later") - a deliberate deferral, not an oversight |
 
 ### What the progress-coverage stream settled - the narration is archived

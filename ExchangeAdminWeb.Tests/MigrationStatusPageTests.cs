@@ -2253,6 +2253,101 @@ public class MigrationStatusPageTests
         }
     }
 
+    // ---- The no-selection "Remove completed" control -------------------------------------------
+    // docs/MigrationRemoveCompleted-Plan.md. The rule itself is tested against real inputs in
+    // MigrationUserActionPlannerTests; these three prove the PAGE still reaches it, which is the
+    // part nothing else in this repo can see.
+
+    [Fact]
+    public void RemoveCompleted_TakesItsCountAndItsScopeFromOneCandidateSet()
+    {
+        // Review finding HIGH 1. The number in the label and the set the action stages must come
+        // from the same helper, or the label promises one number and sends another.
+        var candidates = StripLineComments(GetMethodBody("RemoveCompletedCandidates"));
+
+        Assert.Contains(
+            "MigrationUserActionPlanner.NarrowToSelection(FilteredSortedMailboxes(), selectedMailboxes)",
+            candidates,
+            StringComparison.Ordinal);
+
+        var count = StripLineComments(GetMemberBody("RemoveCompletedCount"));
+
+        Assert.Contains("RemoveCompletedCandidates()", count, StringComparison.Ordinal);
+        Assert.Contains("MigrationUserAction.Clear", count, StringComparison.Ordinal);
+        Assert.Contains(".Eligible.Count", count, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RemoveCompleted_StagesASnapshotAndNeverRecomputesItsScopeAtConfirm()
+    {
+        // Review finding HIGH 2, and the half that cannot be tested in the planner: the planner
+        // acts on whatever set it is handed, so only the page decides whether that set is a
+        // capture or a live recompute. The mailbox filter box is gated on IsBusy only, so it
+        // stays typeable while the ticket field is open.
+        //
+        // Asserted as an ABSENCE as well as a presence, on the msr-1 lesson: a guard that only
+        // checks the capture is there passes code that captures and then recomputes anyway.
+        var body = StripLineComments(GetMethodBody("StageRemoveCompletedMailboxes"));
+
+        Assert.Contains("var scope = RemoveCompletedCandidates();", body, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(body, WholeWord("RemoveCompletedCandidates")));
+
+        // Nothing in this method may reach the live inputs directly - not even once - because the
+        // staged callback is written inside it and would close over them.
+        Assert.DoesNotContain("selectedMailboxes", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("FilteredSortedMailboxes", body, StringComparison.Ordinal);
+
+        // Twice: the plan the label, the confirm bar and the row preview are built from, and the
+        // plan the executor runs. Both from the captured local against the LIVE batchUsers, so a
+        // mailbox that has since completed or left the batch is still noticed.
+        Assert.Equal(2, Regex.Matches(body,
+            Regex.Escape("MigrationUserActionPlanner.Plan(batchUsers, scope, MigrationUserAction.Clear)"))
+            .Count);
+    }
+
+    [Fact]
+    public void RemoveCompleted_SitsOutsideTheSelectionGateAndKeepsThePendingActionClause()
+    {
+        // The control exists because the mailbox Actions bar does not render at all until
+        // something is ticked - that gate is the whole reason a no-selection control needed its
+        // own home - so being inside it would silently restore the requirement the owner removed.
+        //
+        // And review finding MEDIUM 3: it still carries the pending-action clause every other
+        // mutating control on this page has. StageBatchAction holds ONE pending label, target and
+        // callback, so a second staging overwrites the action the ticket field is confirming.
+        var page = ReadPage();
+        var bar = ExtractBlock(page, "@if (canManage && selectedMailboxes.Count > 0)");
+        var barEnd = page.IndexOf(bar, StringComparison.Ordinal) + bar.Length;
+        var button = page.IndexOf("@onclick=\"StageRemoveCompletedMailboxes\"", StringComparison.Ordinal);
+
+        Assert.True(button > barEnd,
+            "the Remove completed control is inside the selection-gated mailbox Actions bar, so it "
+            + "does not render until something is ticked - which is the requirement the owner's "
+            + "2026-10-09 ruling removed.");
+
+        // Not being inside that bar is not enough on its own: the same requirement comes back if
+        // the control grows a selection clause in its OWN conditional, and that edit moves it
+        // nowhere. So the conditional it renders under is read and pinned.
+        var before = StripRazorComments(page[..button]);
+        var lastIf = before.LastIndexOf("@if (", StringComparison.Ordinal);
+        Assert.True(lastIf >= 0, "no enclosing @if found before the Remove completed control");
+
+        var condition = before[(lastIf + "@if (".Length)..].Split(')')[0];
+        Assert.Equal("canManage", condition);
+
+        var tag = GetButtonTags(StripRazorComments(page))
+            .Single(t => t.Contains("StageRemoveCompletedMailboxes", StringComparison.Ordinal));
+
+        Assert.Contains(
+            "disabled=\"@(IsBusy || pendingActionLabel != null || RemoveCompletedCount == 0)\"",
+            tag,
+            StringComparison.Ordinal);
+
+        // The count is IN the label. It is the only thing bounding a destructive action the
+        // operator did not select the rows for.
+        Assert.Contains("Remove completed (@RemoveCompletedCount)", page, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// <paramref name="source"/> with line comments removed. The scans below look for words that
     /// also occur in prose - "await", "finally", the flag names themselves - so a comment

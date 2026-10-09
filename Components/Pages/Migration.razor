@@ -979,6 +979,36 @@
                                                 title="@(mailboxSortAsc ? "Ascending. Click for descending." : "Descending. Click for ascending.")">
                                             @((MarkupString)(mailboxSortAsc ? "&#x25B2;" : "&#x25BC;"))
                                         </button>
+
+                                        @* docs/MigrationRemoveCompleted-Plan.md. THE ONE MAILBOX
+                                           CONTROL THAT DOES NOT REQUIRE A SELECTION. Owner ruling
+                                           2026-10-09: with nothing ticked it acts on every
+                                           completed mailbox in view, and ticking NARROWS it to the
+                                           ticked ones rather than enabling it. It lives in this row
+                                           and not in the Actions bar above because that bar does
+                                           not render at all until something is ticked (871), which
+                                           is the whole reason a no-selection control needs its own
+                                           home.
+
+                                           Its two D6 answers are here rather than in the plan only.
+                                           It is NOT called "Clear" and it does not sit beside a
+                                           control sharing a word with it - the 2026-08-10 batch
+                                           sweep was removed partly for standing next to "Clear
+                                           selection" (docs/MigrationBatchSelection-Plan.md:208),
+                                           and "Untick all" in the bar above shares nothing. And the
+                                           count is the eligible count of the very plan the click
+                                           stages, so the label cannot promise one number and send
+                                           another. *@
+                                        @if (canManage)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger ms-auto flex-shrink-0"
+                                                    type="button"
+                                                    disabled="@(IsBusy || pendingActionLabel != null || RemoveCompletedCount == 0)"
+                                                    title="@RemoveCompletedTitle"
+                                                    @onclick="StageRemoveCompletedMailboxes">
+                                                Remove completed (@RemoveCompletedCount)
+                                            </button>
+                                        }
                                     </div>
                                 }
 
@@ -2665,6 +2695,86 @@
         });
 
         pendingUserAction = action;
+        pendingUserActionPlan = staged;
+    }
+
+    // ---- The no-selection "Remove completed" control --------------------------------------------
+    // docs/MigrationRemoveCompleted-Plan.md, owner ruling 2026-10-09.
+
+    // THE ONE CANDIDATE SET. Everything about this control reads it: the number in the label, the
+    // number on the confirm bar, the staged row preview and the addresses the executor acts on. A
+    // count derived BESIDE the set it describes rather than FROM it is how a destructive label
+    // comes to promise one number and send another.
+    //
+    // The rule itself is MigrationUserActionPlanner.NarrowToSelection, where it can be tested
+    // against real inputs; this is only the adapter that supplies the page's two. With nothing
+    // ticked the scope is the FILTERED rows, matching ToggleSelectAllMailboxes beside it - a
+    // filter narrows by the operator's own act exactly as a tick does. With something ticked the
+    // scope is the selection WHOLE and unfiltered, because a ticked mailbox is deliberately never
+    // hidden by the filter (R11; PinnedMailboxes exists for that), so narrowing it again by the
+    // filter would act on fewer mailboxes than the pinned block is showing.
+    private IReadOnlyList<string> RemoveCompletedCandidates() =>
+        MigrationUserActionPlanner.NarrowToSelection(FilteredSortedMailboxes(), selectedMailboxes);
+
+    // The label's N, and the gate's zero test. Taken from the plan, never counted separately.
+    //
+    // Three evaluations per render - the gate, the label and the title - each one a filter, a sort
+    // and a partition over the loaded mailboxes. That is the same order as the six this pane
+    // already does per render and is deliberately NOT cached between renders: a cached count is a
+    // count that can disagree with the set, which is the one thing this whole control must not do.
+    private int RemoveCompletedCount => MigrationUserActionPlanner
+        .Plan(batchUsers, RemoveCompletedCandidates(), MigrationUserAction.Clear).Eligible.Count;
+
+    // What the control is scoped to, because the label can only carry a number and the scope moves
+    // between three shapes. Facts, not instruction: an operator who cannot tell which shape is live
+    // has nothing to check the count against.
+    private string RemoveCompletedTitle
+    {
+        get
+        {
+            var count = RemoveCompletedCount;
+
+            if (count == 0)
+                return "No completed mailbox in scope";
+
+            if (selectedMailboxes.Count > 0)
+                return $"Removes the {count} ticked mailbox(es) that have completed";
+
+            return MailboxFilterIsSet
+                ? $"Removes the {count} completed mailbox(es) matching the filter"
+                : $"Removes all {count} completed mailbox(es) in this batch";
+        }
+    }
+
+    // THE ONLY MAILBOX ACTION THAT DOES NOT RE-READ ITS SCOPE LIVE, and that is deliberate rather
+    // than an inconsistency with the five above.
+    //
+    // StageMailboxAction re-plans from the LIVE selectedMailboxes inside the staged callback under
+    // owner ruling D2(a), and that is safe for those five: their set cannot grow unless the
+    // operator ticks a box, which is a direct act on the set itself. This control's set can also
+    // come from the mailbox FILTER - which is gated on IsBusy only, not on pendingActionLabel, so
+    // it stays typeable while the ticket field is open. A live recompute at Confirm could then
+    // remove mailboxes the operator never saw counted, and that is the 2026-08-10 objection
+    // returning intact: the count in the label is worth nothing without what follows.
+    //
+    // So the candidate ADDRESSES are snapshot here into a local the staged callback closes over.
+    // It is not a field, so no refresh, reload or dismiss path can null it and nothing can widen
+    // it. The callback still re-plans against the CURRENT batchUsers from that snapshot, which
+    // keeps the honest half of the live re-plan: a mailbox that has since completed is picked up,
+    // and one that has left the batch is dropped by the planner. The acted set can shrink between
+    // staging and Confirm. Nothing can make it grow.
+    private void StageRemoveCompletedMailboxes()
+    {
+        var scope = RemoveCompletedCandidates();
+        var staged = MigrationUserActionPlanner.Plan(batchUsers, scope, MigrationUserAction.Clear);
+
+        StageBatchAction("Remove completed", $"{staged.Eligible.Count} mailbox(es)", ticket =>
+            ExecuteBulkMailboxAction(
+                MigrationUserActionPlanner.Plan(batchUsers, scope, MigrationUserAction.Clear),
+                e => MigrationSvc.RemoveMigrationUserAsync(e),
+                "RemoveMigrationUser", "Migration_RemoveMailboxes", "Queued removal of", ticket));
+
+        pendingUserAction = MigrationUserAction.Clear;
         pendingUserActionPlan = staged;
     }
 
