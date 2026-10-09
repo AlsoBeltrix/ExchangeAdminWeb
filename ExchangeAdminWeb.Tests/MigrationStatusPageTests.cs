@@ -2377,6 +2377,49 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void RemoveCompleted_IsWithdrawnByASelectionChangeInsteadOfIgnoringIt()
+    {
+        // Review finding rc-5. Remove completed is the one action whose scope is snapshot at
+        // staging, so a tick made during the ticket step cannot reach it. Clearing only the row
+        // preview - which is what these three handlers did, correctly, for the five actions that
+        // re-plan live - leaves an operator who ticks one row, confirms, and watches three
+        // mailboxes go.
+        //
+        // The flag is what distinguishes the two, so all four of its sites are pinned: raised in
+        // exactly one Stage* handler, lowered by both staging entry points and by Cancel.
+        var page = StripLineComments(ReadPage());
+
+        Assert.Single(Regex.Matches(page, Regex.Escape("pendingActionScopeIsFixed = true;")));
+        Assert.Contains("pendingActionScopeIsFixed = true;",
+            StripLineComments(GetMethodBody("StageRemoveCompletedMailboxes")),
+            StringComparison.Ordinal);
+
+        foreach (var lowers in new[] { "StageBatchAction", "StageUserAction", "CancelPendingAction" })
+        {
+            Assert.Contains("pendingActionScopeIsFixed = false;",
+                StripLineComments(GetMethodBody(lowers)), StringComparison.Ordinal);
+        }
+
+        // The three mailbox selection handlers go through the helper, and NONE of them may call
+        // ClearStagedPreview directly - that is the defect, and asserting only the presence of
+        // the helper would pass a handler that called both.
+        foreach (var handler in
+                 new[] { "ToggleMailboxSelected", "ToggleSelectAllMailboxes", "ClearMailboxSelection" })
+        {
+            var body = StripLineComments(GetMethodBody(handler));
+
+            Assert.Contains("StagedActionFollowsTheSelection();", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("ClearStagedPreview();", body, StringComparison.Ordinal);
+        }
+
+        var helper = StripLineComments(GetMethodBody("StagedActionFollowsTheSelection"));
+
+        Assert.Contains("if (pendingActionScopeIsFixed)", helper, StringComparison.Ordinal);
+        Assert.Contains("CancelPendingAction();", helper, StringComparison.Ordinal);
+        Assert.Contains("ClearStagedPreview();", helper, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ASkippedRowNamesItsStatusRatherThanAPlaceholder()
     {
         // Review finding rc-6, and the defect predates this work stream - it is at the base of

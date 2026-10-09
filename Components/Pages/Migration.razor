@@ -1728,6 +1728,21 @@
     private string? pendingActionTarget;
     private Func<string, Task>? pendingActionCallback;
 
+    // True only while the STAGED action's scope is a snapshot that a later tick cannot change -
+    // which today is Remove completed and nothing else (review finding rc-5). Staged state, not
+    // busy state, for exactly the reason pendingActionLabel is excluded from IsBusy, and
+    // registered as an ExcludedField alongside it.
+    //
+    // D2(a) says a tick box is an INPUT to the confirm step. For the five menu actions it is:
+    // their callback re-plans from the live selection, so ticking during confirmation changes
+    // what Confirm does, on purpose. Remove completed snapshots its scope at staging (rc-1), so
+    // it CANNOT honour a tick made afterwards - and silently ignoring one is how an operator
+    // ticks a single row, confirms, and watches three mailboxes disappear. This flag is what
+    // lets a selection change WITHDRAW that action instead of being ignored by it, which applies
+    // D2(a) rather than overruling it: the tick box is still an input to the confirm step; this
+    // action simply no longer has a confirm step for it to be an input to.
+    private bool pendingActionScopeIsFixed;
+
     // S4. The outcome preview: which action is staged, and the eligible/skipped split it will act
     // on. Both are null unless a SELECTION action is staged - a per-mailbox action annotates no
     // batch row.
@@ -2613,7 +2628,7 @@
             selectedMailboxes.Remove(email);
 
         batchActionResult = null;
-        ClearStagedPreview();
+        StagedActionFollowsTheSelection();
 
         // The row moves between the pinned block and the list below it, so both pagers can now be
         // pointing past their end.
@@ -2634,7 +2649,7 @@
         }
 
         batchActionResult = null;
-        ClearStagedPreview();
+        StagedActionFollowsTheSelection();
         ClampMailboxPages();
     }
 
@@ -2654,8 +2669,33 @@
     {
         selectedMailboxes.Clear();
         batchActionResult = null;
-        ClearStagedPreview();
+        StagedActionFollowsTheSelection();
         ClampMailboxPages();
+    }
+
+    // What a mailbox selection change does to whatever is staged. Review finding rc-5.
+    //
+    // For the five menu actions it clears the row preview and nothing else, which is what these
+    // three handlers have always done: their staged callback re-plans from the LIVE selection, so
+    // the tick the operator just made is an input to the confirm step exactly as owner ruling
+    // D2(a) says, and the preview is simply recomputed when they stage again.
+    //
+    // Remove completed is the one action whose scope is snapshot at staging (rc-1), so a tick
+    // made afterwards cannot reach it. Clearing only the preview there leaves the worst of both:
+    // the rows lose their annotations, the button recomputes to the newly-ticked scope, and the
+    // confirm bar - still correct, still saying three - quietly governs. An operator ticks one
+    // row, confirms, and three mailboxes go. So it WITHDRAWS: the ticket field and the confirm
+    // bar disappear and the button is live again at the new scope, one click from re-staging.
+    //
+    // That applies D2(a) rather than overruling it. The tick boxes keep no disabled attribute and
+    // no handler guard - the thing D2(a) actually forbids - and the tick is still an input to the
+    // confirm step; this action just has no confirm step left for it to be an input to.
+    private void StagedActionFollowsTheSelection()
+    {
+        if (pendingActionScopeIsFixed)
+            CancelPendingAction();
+        else
+            ClearStagedPreview();
     }
 
     private void ClampMailboxPages()
@@ -2827,6 +2867,10 @@
         // that will not run is named on its own row with the status that disqualified it, which
         // is the operator's check before they type a ticket. Only the EXECUTION is bounded.
         pendingUserActionPlan = staged;
+
+        // After StageBatchAction, which lowers it. The one action on this page whose scope a
+        // later tick cannot reach, so the one action a tick withdraws rather than adjusts (rc-5).
+        pendingActionScopeIsFixed = true;
     }
 
     // R31. Export Reports: pull a report for every ticked mailbox and deliver a zip, one text
@@ -3156,6 +3200,11 @@
         pendingScheduleAtLocal = "";
         pendingActionCallback = callback;
         batchActionResult = null;
+
+        // Default for every action staged through here. StageRemoveCompletedMailboxes raises it
+        // again after this call, which is the one place it is ever true (rc-5).
+        pendingActionScopeIsFixed = false;
+
         ClearStagedPreview();
 
         // Last run's per-row outcomes go when a new action is staged: leaving them would let an
@@ -3170,6 +3219,7 @@
         pendingActionTicket = "";
         pendingActionCallback = callback;
         batchActionResult = null;
+        pendingActionScopeIsFixed = false;
 
         // A per-mailbox action annotates no batch row. Leaving a previous batch preview up would
         // mark rows "will run" for an action that is no longer the one staged.
@@ -3222,6 +3272,7 @@
         pendingActionTicket = "";
         pendingScheduleAtLocal = "";
         pendingActionCallback = null;
+        pendingActionScopeIsFixed = false;
 
         // The row annotations go with it. ConfirmPendingAction calls this BEFORE awaiting the
         // staged callback, so the preview is cleared the moment the action starts rather than

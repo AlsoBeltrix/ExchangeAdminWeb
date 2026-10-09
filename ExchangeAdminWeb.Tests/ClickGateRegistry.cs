@@ -121,7 +121,7 @@ public static class ClickGateRegistry
     private static PageGateEntry Migration => new()
     {
         Page = "Migration.razor",
-        ExpectedLineCount = 4331,
+        ExpectedLineCount = 4382,
 
         Predicates =
         [
@@ -154,6 +154,12 @@ public static class ClickGateRegistry
                 "which batch or user the staged action names"),
             new ExcludedField("pendingActionCallback", "the PendingActionConfirm fragment",
                 "the staged continuation; set while waiting, not while working"),
+            new ExcludedField("pendingActionScopeIsFixed", "the PendingActionConfirm fragment",
+                "says the staged action's scope is a snapshot a later tick cannot change, which "
+                + "is how a selection change knows to withdraw it rather than be ignored by it "
+                + "(review finding rc-5). Staged state like the four above: it is raised while "
+                + "waiting for a ticket, and folding it into IsBusy would disable Confirm at the "
+                + "only moment it renders"),
         ],
 
         ExemptControls =
