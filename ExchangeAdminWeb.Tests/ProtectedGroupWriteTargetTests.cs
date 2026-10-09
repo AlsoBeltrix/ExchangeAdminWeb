@@ -414,18 +414,29 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
         var page = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
             "Components", "Pages", "AdminSettings.razor"));
 
-        var sweepStart = page.IndexOf("private async Task SweepExistingEntriesAsync()", StringComparison.Ordinal);
-        Assert.True(sweepStart >= 0, "SweepExistingEntriesAsync not found - tripwire is stale.");
-        var sweepEnd = page.IndexOf("private async Task AddValidatedAsync(", sweepStart, StringComparison.Ordinal);
-        Assert.True(sweepEnd > sweepStart, "Could not bound the sweep - update the tripwire.");
-        Assert.DoesNotContain("ppTargets", page[sweepStart..sweepEnd], StringComparison.Ordinal);
+        // Every anchor, and every assertion whose needle is code, is taken over the CODE view
+        // rather than the raw page (review finding prog-8). What this test means is that the
+        // sweep must not READ the ppTargets collection; a comment or a string literal naming it
+        // is neither a read nor a sweep, but DoesNotContain over raw text cannot tell the
+        // difference. The sweep's own explanatory comment was spelled "Group TARGETS" instead of
+        // "ppTargets" to avoid tripping this, which is luck of wording, not a guard.
+        // ProgressScan.CodeView blanks comments AND string literals in one lexical pass and
+        // preserves every offset, so an index found in it still addresses the same character of
+        // the raw page - which is what lets the GroupTarget assertion below, whose needle IS a
+        // string literal, keep reading the raw text.
+        var code = ProgressScan.CodeView(page);
 
-        var addStart = page.IndexOf("private async Task AddValidatedAsync(", StringComparison.Ordinal);
-        var addEnd = page.IndexOf("private async Task SaveProtectedPrincipals()", addStart, StringComparison.Ordinal);
+        var sweepStart = code.IndexOf("private async Task SweepExistingEntriesAsync()", StringComparison.Ordinal);
+        Assert.True(sweepStart >= 0, "SweepExistingEntriesAsync not found - tripwire is stale.");
+        var sweepEnd = code.IndexOf("private async Task AddValidatedAsync(", sweepStart, StringComparison.Ordinal);
+        Assert.True(sweepEnd > sweepStart, "Could not bound the sweep - update the tripwire.");
+        Assert.DoesNotContain("ppTargets", code[sweepStart..sweepEnd], StringComparison.Ordinal);
+
+        var addStart = code.IndexOf("private async Task AddValidatedAsync(", StringComparison.Ordinal);
+        var addEnd = code.IndexOf("private async Task SaveProtectedPrincipals()", addStart, StringComparison.Ordinal);
         Assert.True(addStart >= 0 && addEnd > addStart, "Could not bound AddValidatedAsync - update the tripwire.");
-        var add = page[addStart..addEnd];
-        Assert.Contains("objectKind == \"GroupTarget\"", add, StringComparison.Ordinal);
-        Assert.Contains("RemoveAll", add, StringComparison.Ordinal);
+        Assert.Contains("objectKind == \"GroupTarget\"", page[addStart..addEnd], StringComparison.Ordinal);
+        Assert.Contains("RemoveAll", code[addStart..addEnd], StringComparison.Ordinal);
     }
 
     // ----- fsr-2: the self-service exception is a ruling, not an accident -----
