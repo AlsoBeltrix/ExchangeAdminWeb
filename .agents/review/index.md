@@ -45,3 +45,13 @@ repaired in `7e11c64`; the repair-delta round is `edl-3r.result.json`.
 All three `edl-*` findings are `[v]` and not `[x]`: each is verified on main. They move to
 `[x]` once the range carrying them has reached the remotes - check that live, it is not
 recorded here.
+
+`rc-1` to `rc-6` are the Migration **Remove completed** control, one work stream reviewed by
+codex in four rounds over `029d9d0..7042b91` (raw envelopes `rcimpl.result.json`,
+`rcimpl2.result.json`, `rcimpl3.result.json`, `rcimpl4.result.json`, prompts alongside).
+Round 1 raised `rc-1` and `rc-2`, round 2 `rc-3` and `rc-4`, round 3 `rc-5` and `rc-6`, and
+round 4 returned **clean**. Each was fixed in its own commit. `rc-6` is pre-existing - it is
+at the base of the range in four places - and is recorded here because it was found and fixed
+in this stream, not because this stream caused it. A FIFTH set of four findings preceded all
+of these and is not in this table: they were raised against the PLAN before any code existed
+(`rcplan.result.json`) and were resolved in `116d671`, which is where plan findings belong.

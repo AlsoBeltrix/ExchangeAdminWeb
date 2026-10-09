@@ -1,9 +1,18 @@
 # Migration - Remove Completed Mailboxes - Plan
 
-Status: **APPROVED 2026-10-09** - the owner approved the direction and settled the selection
-rule. Revision 2 resolves the four findings a codex review raised against revision 1
-(`.agents/review/rcplan.result.json`) plus two stale implementation instructions found while
-resolving them; what changed is marked in place.
+Status: **APPROVED 2026-10-09, IMPLEMENTED 2026-10-09, manual acceptance OUTSTANDING.**
+
+The owner approved the direction and settled the selection rule. Revision 2 resolved the four
+findings a codex review raised against revision 1 (`.agents/review/rcplan.result.json`) plus
+two stale implementation instructions found while resolving them. Revision 3 folds in the six
+findings three further codex rounds raised against the IMPLEMENTATION (`rc-1` to `rc-6`,
+`.agents/review/findings/`); a fourth round returned **clean**. Everything that changed is
+marked in place rather than rewritten, so a reader can see what was wrong and when.
+
+Landed in `116d671`, `c57b41e`, `edaea67`, `c08f9e8`, `e0a56b9`, `e1b73e7`, `236f0b8`,
+`7042b91`. Migration `1.22.8` -> `1.23.0`; base app version deliberately unmoved.
+**Nothing below is proven to render** - the Manual acceptance section is the only thing that
+converts this from consistent to correct, and it has not been run.
 
 ---
 

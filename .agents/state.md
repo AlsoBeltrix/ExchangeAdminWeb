@@ -38,6 +38,41 @@ findings raised, all eleven closed and each closure reviewed in turn.
 | ~~Remove-completed: filtered set or whole batch?~~ | **CLOSED.** The plan is APPROVED and revision 2 takes the FILTERED set, with its reasoning written down: the filter narrows by the operator's own act exactly as a tick does, and the count in the label carries whichever applies. Built and landed; `docs/MigrationRemoveCompleted-Plan.md` owns the design and the manual acceptance list, which has NOT been run |
 | **Manual acceptance** | Nothing here proves a progress bar renders. Every fix is source-verified only. Owner deprioritised it 2026-10-09 (Emergency Disable deferred to "next time there is an emergency"; bar-watching to "later") - a deliberate deferral, not an oversight |
 
+### Migration "Remove completed" - SHIPPED and REVIEWED CLEAN; only manual acceptance is left
+
+`docs/MigrationRemoveCompleted-Plan.md` is APPROVED and IMPLEMENTED, Migration `1.23.0`, base
+app unmoved. Eight commits from `116d671` to `7042b91`: the plan fix, the slice, and six
+one-per-commit review fixes. Suite 3707 -> 3725 passed / 0 failed / 3 skipped. The plan owns
+the design, the acceptance list and every citation; nothing is copied here.
+
+**Four codex rounds, ten findings, and the two that mattered most were against the PLAN before
+any code existed.** Round 0 reviewed revision 1 and returned four; rounds 1-3 reviewed the
+implementation and returned six (`rc-1` HIGH, `rc-2`, `rc-3`, `rc-5` MEDIUM, `rc-4`, `rc-6`
+LOW); round 4 returned **clean**. `.agents/review/index.md` owns their status and
+`.agents/review/findings/rc-*.md` the detail.
+
+Four things from it that outlive the slice:
+
+1. **"The count is in the label" is not a bound unless something makes it one.** Revision 1's
+   safety case said the control could never act on more than it said, over a design that
+   recomputed its scope at Confirm. Two HIGH findings in a row - one on the plan, one on the
+   code - were the same mistake at two depths: the first recomputed from the filter and the
+   selection, the second still recomputed from the live STATUSES. The bound is the ELIGIBLE
+   list snapshot at staging, and nothing less is one.
+2. **Three findings were one class: a control left live during the confirmation step making
+   the staged action's display lie.** The filter could hide the preview (`rc-3`); a tick
+   destroyed the preview and changed the button's number while the staged action quietly
+   governed (`rc-5`); the tooltip classified the scope from a different field than the action
+   did (`rc-4`). None of them removed the wrong mailboxes. All of them would have had an
+   operator believing something false while typing a ticket.
+3. **D2(a) was applied, not overruled, and the distinction is reusable.** The mailbox tick
+   boxes still carry no disabled attribute and no handler guard. An action that CANNOT honour
+   a tick withdraws instead of ignoring it, which keeps the ruling's own rationale - a tick is
+   an input to the confirm step - true.
+4. **`MigrationUserActionPlanner.PruneSelection`'s remarks said "Called after every reload" and
+   it was called from nowhere on the mailbox side.** A doc comment is not a call. The new
+   control prunes for itself; the wider condition is below, unfixed.
+
 ### What the progress-coverage stream settled - the narration is archived
 
 The per-slice record for S1 through S5 is verbatim in `docs/history/state-archive.md` (Archived
