@@ -689,16 +689,57 @@
         }
     }
 
+    /// <summary>
+    /// Exports the bulk run's per-row outcomes as a CSV.
+    /// </summary>
+    /// <remarks>
+    /// The eighth copy of the silent CSV-export shape, and one of the two the plan's survey and
+    /// every brief since have missed - it named four pages and the registry has now found five
+    /// more. It takes the settled two-pin form without argument: GenerateCsvReport( opens,
+    /// JS.InvokeVoidAsync( closes, the Complete sits below the transfer, ActivitySize.Unknown
+    /// with the row count in the LABEL, and an await Task.Yield() between the Begin and the work.
+    ///
+    /// The yield is load-bearing rather than tidy: the projection, the sanitiser and both encodes
+    /// are synchronous end to end and the only await this method had was the interop transfer
+    /// AFTER all of them, so without a flush point the first paint would not arrive until the
+    /// expensive part was over. And nothing between the Begin and the Complete can Report, which
+    /// is why the known row count goes in the label rather than into Items.
+    ///
+    /// THE SNAPSHOT IS FORCED BY THE YIELD, and on this page it is forced twice over. This
+    /// handler never raises isLoading, so IsBusy stays false for the whole export - and the
+    /// result banner's dismiss button at :211 is literally @onclick="() => bulkResult = null",
+    /// which carries no disabled attribute at all, while the Process button beside it is only
+    /// disabled="@IsBusy". Until this activity existed there was no suspension point between the
+    /// guard and the projection; the yield creates one, and a dismiss already queued when the
+    /// operator hits Download CSV would make the export throw on a null. BitLockerRecovery and
+    /// BlockedSenders capture for exactly this reason, and review finding prog-9 is what it costs
+    /// to skip it.
+    /// </remarks>
     private async Task DownloadCsvReport()
     {
         if (bulkResult is null) return;
 
-        var csvBytes = bulkResult.GenerateCsvReport();
+        var report = bulkResult;
+
+        using var activity = Progress.Begin(
+            "Calendar Permissions",
+            $"Exporting {report.Entries.Count:N0} result row(s) to CSV",
+            ActivitySize.Unknown);
+
+        await Task.Yield();
+
+        var csvBytes = report.GenerateCsvReport();
         var base64 = Convert.ToBase64String(csvBytes);
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         var filename = $"calendar_permissions_report_{timestamp}.csv";
 
         await JS.InvokeVoidAsync("downloadFile", filename, "text/csv", base64);
+
+        // Below the transfer, which is the settled order on every worked example: the base64 push
+        // over the SignalR circuit is the last thing the operator waits on. The transfer
+        // MECHANISM is deliberately untouched - docs/DownloadMemoryRetention-Plan.md proposes
+        // replacing it with streaming and is a DRAFT. Reads the captured local.
+        activity.Complete(true, $"{report.Entries.Count:N0} result row(s) exported.");
     }
 
     private async Task DownloadSampleCsv()

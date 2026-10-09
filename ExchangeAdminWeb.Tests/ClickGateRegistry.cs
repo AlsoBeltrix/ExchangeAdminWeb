@@ -1492,7 +1492,7 @@ public static class ClickGateRegistry
     private static PageGateEntry CalendarPermissions => new()
     {
         Page = "CalendarPermissions.razor",
-        ExpectedLineCount = 713,
+        ExpectedLineCount = 754,
 
         // One flag, one page-wide predicate, on the twin's reasoning re-checked against this file
         // rather than copied: the tab strip, the single-mailbox form, the bulk form, the on-prem

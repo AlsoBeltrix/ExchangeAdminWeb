@@ -838,10 +838,30 @@ public static class ProgressRegistry
                 + "read and make no remote hop"),
             new("ProcessBulk", "CalendarService.ProcessCalendarPermissionsCsvAsync"),
             new("ExecuteOnPrem", "CalendarService.SetCalendarPermissionOnPremAsync"),
-        ],
-        KnownGaps =
-        [
-            new("DownloadCsvReport", 692, SilentCsvExportUnsurveyed),
+            new("DownloadCsvReport",
+                [
+                    "GenerateCsvReport(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the EIGHTH copy of the silent CSV-export shape, and one of the two the plan's "
+                + "survey and every brief since have missed: the survey named four pages, "
+                + "430e929 declared the shape closed at nine, and this and its twin "
+                + "MailboxPermissions.DownloadCsvReport are the tenth and eleventh. The settled "
+                + "two-pin form, unargued: GenerateCsvReport( projects and sanitises every row "
+                + "of the bulk run - operation-scale LOCAL work under rule 1 as the S3 reviewer "
+                + "settled it, and the sanitiser runs per FIELD - and JS.InvokeVoidAsync( "
+                + "base64-pushes the file over the SignalR circuit, so the Complete sits BELOW "
+                + "it. Unknown rather than Items(report.Entries.Count) although the count IS "
+                + "known at the Begin: nothing between the Begin and the Complete can Report, so "
+                + "a determinate bar would sit at 0% and read as hung; the count is in the label "
+                + "instead. THE SNAPSHOT IS FORCED BY THE YIELD AND FORCED TWICE OVER HERE: this "
+                + "handler never raises isLoading, so IsBusy is false for the whole export, and "
+                + "the result banner's dismiss at CalendarPermissions.razor:211 is literally "
+                + "@onclick=\"() => bulkResult = null\" with NO disabled attribute at all. "
+                + "Before this activity there was no suspension point between the guard and the "
+                + "projection; the yield creates one, and a queued dismiss would make the export "
+                + "throw - which is review finding prog-9 exactly. The transfer MECHANISM is "
+                + "untouched: docs/DownloadMemoryRetention-Plan.md is a DRAFT"),
         ],
         Exempt =
         [
