@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.RegularExpressions;
 
 namespace ExchangeAdminWeb.Tests;
@@ -111,37 +110,32 @@ internal static class ProgressScan
             .ToList();
 
     /// <summary>
+    /// The DISCOVERY view: comment bodies blanked, string literals left intact, every index still
+    /// a real source position.
+    /// </summary>
+    /// <remarks>
+    /// <para>
     /// Comments go before anything else is matched. Three guards in this repo have already failed
     /// by matching the prose that explained the rule instead of the code
     /// (GlobalProgressWiringTests, .agents/state.md 2026-09-30), and this suite is especially
     /// exposed: a comment naming a service call would satisfy a Reports entry on its own.
-    /// Replaced with same-length blanks so every index stays a real source position.
-    /// </summary>
-    internal static string StripComments(string source)
-    {
-        var text = new StringBuilder(source);
-        Blank(text, new Regex(@"/\*.*?\*/", RegexOptions.Singleline));
-        Blank(text, new Regex(@"@\*.*?\*@", RegexOptions.Singleline));
-        Blank(text, new Regex(@"//[^\n]*"));
-        return text.ToString();
-
-        static void Blank(StringBuilder text, Regex pattern)
-        {
-            foreach (Match match in pattern.Matches(text.ToString()))
-            {
-                for (var i = match.Index; i < match.Index + match.Length; i++)
-                {
-                    if (text[i] != '\n')
-                        text[i] = ' ';
-                }
-            }
-        }
-    }
+    /// </para>
+    /// <para>
+    /// WHAT IS A COMMENT DEPENDS ON WHERE IT IS, which is review finding prog-4b. This stripped
+    /// comments with a raw <c>//[^\n]*</c> over the whole file, and <c>https://</c> matches that:
+    /// a URL in a markup attribute blanked the rest of its line and erased any handler attribute
+    /// after it on the same tag, so the handler was never discovered, never had to be registered,
+    /// and could ship slow work with no progress and no failing test. It is now
+    /// <see cref="RazorSyntax.CommentsBlanked"/>: C# comments are Roslyn trivia inside the
+    /// <c>@code</c> blocks, Razor's <c>@* *@</c> is blanked in the markup, and <c>//</c> in markup
+    /// is what it actually is - text.
+    /// </para>
+    /// </remarks>
+    internal static string StripComments(string source) => RazorSyntax.CommentsBlanked(source);
 
     /// <summary>
-    /// The CODE view: one left-to-right lexical pass over the raw file that blanks comment bodies
-    /// AND whole string and char literals, delimiters included, replacing each with same-length
-    /// blanks so every index stays a real source position. What survives this pass is code.
+    /// The CODE view: comment bodies, whole string and char literals, and markup all replaced by
+    /// same-length blanks, so every index stays a real source position and what survives is code.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -152,73 +146,27 @@ internal static class ProgressScan
     /// three conditions (review finding prog-1).
     /// </para>
     /// <para>
-    /// The two are blanked in ONE pass, not in two, and that is load-bearing. Blanking comments
-    /// first ends a line at any <c>//</c>, including a <c>//</c> that is inside a string
-    /// ("https://..."), which deletes that string's closing quote; every literal after it on the
-    /// page then pairs one quote out of step and real string content lands OUTSIDE a literal,
-    /// unblanked. A single pass asks at each position which construct starts here, so a
-    /// <c>//</c> inside a literal is text and a quote inside a comment is text.
+    /// THIS IS NOW ROSLYN, and review finding prog-4a is why. The predecessor was a hand-written
+    /// single-pass lexer, itself the third round on this file after a regex and a partial
+    /// blanker, and the reviewer found a hole one layer further down: its interpolation-hole
+    /// skipper counted braces without skipping comments, so
+    /// <c>$"{Fmt(/* } */ "Payload.Call(")} tail"</c> - which compiles - desynchronised the view
+    /// and left the payload readable as code, with conditions 2 and 3 then both true on text that
+    /// is a string. A comment is trivia to a parser and a literal is a token value, so neither is
+    /// something that has to be recognised and skipped correctly by hand. Three rounds of that
+    /// were not converging.
     /// </para>
     /// <para>
-    /// This is NOT the view handler discovery reads - see <see cref="PageScan.Source"/>. That
-    /// asymmetry is deliberate: handler names are quoted markup attribute values, so discovery
-    /// must keep literals. Every scan that asks what a method DOES reads the code view.
+    /// Markup is blanked whole, which strengthens what the character scanner did by accident when
+    /// it treated every quoted markup attribute value as a string literal. This is NOT the view
+    /// handler discovery reads - see <see cref="PageScan.Source"/>. That asymmetry is deliberate:
+    /// handler names are quoted markup attribute values, so discovery must keep literals and must
+    /// keep markup. Every scan that asks what a method DOES reads the code view.
     /// </para>
     /// </remarks>
-    internal static string CodeView(string source)
-    {
-        var text = new StringBuilder(source);
+    internal static string CodeView(string source) => RazorSyntax.CodeView(source);
 
-        for (var i = 0; i < source.Length; i++)
-        {
-            var c = source[i];
-            var next = i + 1 < source.Length ? source[i + 1] : '\0';
-
-            int end;
-            if (c == '/' && next == '*')
-                end = CloseOf(source, i + 2, "*/");
-            else if (c == '@' && next == '*')
-                end = CloseOf(source, i + 2, "*@");
-            else if (c == '/' && next == '/')
-                end = EndOfLine(source, i);
-            else if (c == '"' || c == '\'')
-                end = SkipLiteral(source, i);
-            else
-                continue;
-
-            // CloseOf answers -1 for a block comment that is never closed, which is not a
-            // construct and must not move the cursor backwards onto itself for ever. SkipLiteral
-            // and EndOfLine never answer below i, so this arm is CloseOf's alone.
-            if (end < i)
-                continue;
-
-            for (var j = i; j <= end && j < text.Length; j++)
-            {
-                if (text[j] != '\n')
-                    text[j] = ' ';
-            }
-
-            i = end;
-        }
-
-        return text.ToString();
-    }
-
-    /// <summary>Index of the last character of <paramref name="closer"/>, or -1 if unclosed.</summary>
-    private static int CloseOf(string source, int from, string closer)
-    {
-        var at = source.IndexOf(closer, Math.Min(from, source.Length), StringComparison.Ordinal);
-        return at < 0 ? -1 : at + closer.Length - 1;
-    }
-
-    private static int EndOfLine(string source, int from)
-    {
-        var at = source.IndexOf('\n', from);
-        return at < 0 ? source.Length - 1 : at - 1;
-    }
-
-    internal static int LineOf(string source, int index) =>
-        source[..Math.Clamp(index, 0, source.Length)].Count(c => c == '\n') + 1;
+    internal static int LineOf(string source, int index) => RazorSyntax.LineOf(source, index);
 
     private static readonly Dictionary<string, PageScan> Cache = new(StringComparer.Ordinal);
 
@@ -229,23 +177,43 @@ internal static class ProgressScan
             if (Cache.TryGetValue(path, out var cached))
                 return cached;
 
-            var raw = File.ReadAllText(path);
-            var source = StripComments(raw);
-            var code = CodeView(raw);
-            var methods = DeclaredMethods(source);
-            var (operations, unextracted) = Handlers(source, methods);
-
-            var scan = new PageScan(Path.GetFileName(path), source, code, methods, operations, unextracted);
+            var scan = ScanText(Path.GetFileName(path), File.ReadAllText(path));
             Cache[path] = scan;
             return scan;
         }
     }
 
+    /// <summary>
+    /// The scan over text rather than a file on disk, so discovery can be exercised against
+    /// fixtures. Review finding prog-4b was a markup shape - a URL erasing the handler after it -
+    /// and nothing could state it as a test while discovery could only be run over a real page.
+    /// </summary>
+    internal static PageScan ScanText(string page, string raw)
+    {
+        var source = StripComments(raw);
+        var code = CodeView(raw);
+        var methods = DeclaredMethods(source);
+        var (operations, unextracted) = Handlers(source, methods);
+
+        return new PageScan(page, source, code, methods, operations, unextracted);
+    }
+
     internal static IReadOnlyList<PageScan> ScanAll() => PageFiles().Select(Scan).ToList();
 
+    /// <summary>
+    /// The methods declared in a page's <c>@code</c> block, with the span of each body.
+    /// </summary>
+    /// <remarks>
+    /// The declaration is found in <paramref name="source"/> but the body is DELIMITED over the
+    /// code view, which is the same length and so addresses the same characters. A brace or a
+    /// parenthesis inside a string, a comment or an interpolation hole is already blank there, so
+    /// the delimiter walks below need no literal handling of their own - which is what let the
+    /// hand-written lexer, and review finding prog-4a with it, leave this file.
+    /// </remarks>
     internal static IReadOnlyDictionary<string, PageMethod> DeclaredMethods(string source)
     {
         var methods = new Dictionary<string, PageMethod>(StringComparer.Ordinal);
+        var code = CodeView(source);
 
         foreach (Match match in MethodDeclaration.Matches(source))
         {
@@ -254,25 +222,28 @@ internal static class ProgressScan
                 continue;
 
             var openParen = match.Index + match.Length - 1;
-            var closeParen = MatchDelimiter(source, openParen, '(', ')');
+            if (openParen >= code.Length || code[openParen] != '(')
+                continue;
+
+            var closeParen = MatchDelimiter(code, openParen, '(', ')');
             if (closeParen < 0)
                 continue;
 
             var cursor = closeParen + 1;
-            while (cursor < source.Length && char.IsWhiteSpace(source[cursor]))
+            while (cursor < code.Length && char.IsWhiteSpace(code[cursor]))
                 cursor++;
 
             int end;
-            if (cursor < source.Length && source[cursor] == '{')
+            if (cursor < code.Length && code[cursor] == '{')
             {
-                var close = MatchDelimiter(source, cursor, '{', '}');
+                var close = MatchDelimiter(code, cursor, '{', '}');
                 if (close < 0)
                     continue;
                 end = close + 1;
             }
-            else if (cursor + 1 < source.Length && source[cursor] == '=' && source[cursor + 1] == '>')
+            else if (cursor + 1 < code.Length && code[cursor] == '=' && code[cursor + 1] == '>')
             {
-                var close = StatementEnd(source, cursor);
+                var close = StatementEnd(code, cursor);
                 if (close < 0)
                     continue;
                 end = close + 1;
@@ -289,17 +260,17 @@ internal static class ProgressScan
         return methods;
     }
 
-    private static int MatchDelimiter(string source, int open, char opener, char closer)
+    /// <summary>
+    /// The matching <paramref name="closer"/> for the delimiter at <paramref name="open"/>.
+    /// <paramref name="code"/> must be the CODE view: literals and comments are blank there, so a
+    /// brace inside one is not a brace and this needs no lexing of its own.
+    /// </summary>
+    private static int MatchDelimiter(string code, int open, char opener, char closer)
     {
         var depth = 0;
-        for (var i = open; i < source.Length; i++)
+        for (var i = open; i < code.Length; i++)
         {
-            var c = source[i];
-            if (c == '"' || c == '\'')
-            {
-                i = SkipLiteral(source, i);
-                continue;
-            }
+            var c = code[i];
 
             if (c == opener)
                 depth++;
@@ -310,17 +281,16 @@ internal static class ProgressScan
         return -1;
     }
 
-    private static int StatementEnd(string source, int from)
+    /// <summary>
+    /// The semicolon ending the expression body starting at <paramref name="from"/>. Reads the
+    /// CODE view, for the reason on <see cref="MatchDelimiter"/>.
+    /// </summary>
+    private static int StatementEnd(string code, int from)
     {
         var depth = 0;
-        for (var i = from; i < source.Length; i++)
+        for (var i = from; i < code.Length; i++)
         {
-            var c = source[i];
-            if (c == '"' || c == '\'')
-            {
-                i = SkipLiteral(source, i);
-                continue;
-            }
+            var c = code[i];
 
             if (c is '(' or '{' or '[')
                 depth++;
@@ -331,146 +301,6 @@ internal static class ProgressScan
         }
 
         return -1;
-    }
-
-    /// <summary>
-    /// The index of the character that CLOSES the literal opening at <paramref name="start"/>;
-    /// for a single-line literal that runs off the end of its line, the last character on that
-    /// line. Never answers below <paramref name="start"/>, so every caller advances.
-    /// </summary>
-    /// <remarks>
-    /// The prefix decides the escape rules and reading one character back got it wrong, which is
-    /// review finding prog-3: <c>$</c> alone is an INTERPOLATED string and still honours
-    /// backslash escapes - only <c>@</c> makes a literal verbatim. Treating <c>$"..\".."</c> as
-    /// verbatim ended the literal on the escaped quote, and every literal after it on the page
-    /// then paired one quote out of step, leaving real string content outside every literal and
-    /// therefore unblanked. A verbatim literal escapes its quote by DOUBLING it and may span
-    /// lines; a raw literal (three or more quotes, no <c>@</c> prefix) closes on a quote run at
-    /// least as long as the one that opened it and escapes nothing at all.
-    /// </remarks>
-    private static int SkipLiteral(string source, int start)
-    {
-        var quote = source[start];
-
-        var verbatim = false;
-        var interpolated = false;
-        for (var p = start - 1; p >= 0 && (source[p] == '@' || source[p] == '$'); p--)
-        {
-            if (source[p] == '@')
-                verbatim = true;
-            else
-                interpolated = true;
-        }
-
-        if (quote == '"' && !verbatim)
-        {
-            var opener = 0;
-            while (start + opener < source.Length && source[start + opener] == '"')
-                opener++;
-
-            // Two quotes is the empty string, not a raw literal; three or more opens one.
-            if (opener >= 3)
-                return SkipRawLiteral(source, start, opener);
-        }
-
-        for (var i = start + 1; i < source.Length; i++)
-        {
-            if (interpolated && source[i] == '{')
-            {
-                if (i + 1 < source.Length && source[i + 1] == '{')
-                {
-                    i++;
-                    continue;
-                }
-
-                i = SkipInterpolationHole(source, i, verbatim);
-                continue;
-            }
-
-            if (verbatim)
-            {
-                if (source[i] != quote)
-                    continue;
-
-                if (i + 1 < source.Length && source[i + 1] == quote)
-                {
-                    i++;
-                    continue;
-                }
-
-                return i;
-            }
-
-            if (source[i] == '\n')
-                return i - 1;
-
-            if (source[i] == '\\')
-            {
-                // A backslash immediately before the newline escapes nothing in C#; treating it
-                // as an escape would carry the literal onto the next line and swallow code.
-                if (i + 1 < source.Length && source[i + 1] == '\n')
-                    return i - 1;
-
-                i++;
-                continue;
-            }
-
-            if (source[i] == quote)
-                return i;
-        }
-
-        return source.Length - 1;
-    }
-
-    /// <summary>
-    /// The closing brace of the interpolation hole opening at <paramref name="start"/>. A hole
-    /// holds CODE, and since C# 11 that code may carry its own string literals: without this, a
-    /// quote inside a hole closed the surrounding literal early, and the text between that hole
-    /// and the next quote - string content - was left readable as code.
-    /// </summary>
-    private static int SkipInterpolationHole(string source, int start, bool verbatim)
-    {
-        var depth = 0;
-        for (var i = start; i < source.Length; i++)
-        {
-            var c = source[i];
-
-            if (c == '"' || c == '\'')
-            {
-                i = SkipLiteral(source, i);
-                continue;
-            }
-
-            if (c == '\n' && !verbatim)
-                return i - 1;
-
-            if (c == '{')
-                depth++;
-            else if (c == '}' && --depth == 0)
-                return i;
-        }
-
-        return source.Length - 1;
-    }
-
-    private static int SkipRawLiteral(string source, int start, int opener)
-    {
-        for (var i = start + opener; i < source.Length; i++)
-        {
-            if (source[i] != '"')
-                continue;
-
-            var run = 0;
-            while (i + run < source.Length && source[i + run] == '"')
-                run++;
-
-            if (run >= opener)
-                return i + run - 1;
-
-            i += run - 1;
-        }
-
-        return source.Length - 1;
     }
 
     private static (IReadOnlyList<string> Operations, IReadOnlyList<string> Unextracted) Handlers(
@@ -590,15 +420,6 @@ internal static class ProgressScan
         for (var i = from; i < code.Length; i++)
         {
             var c = code[i];
-
-            // The code view has no literals left in it, so this arm should never fire. It stays
-            // because a brace inside a literal must never count, and leaving the guard here
-            // costs nothing if a caller ever hands this the raw body again.
-            if (c == '"' || c == '\'')
-            {
-                i = SkipLiteral(code, i);
-                continue;
-            }
 
             if (c == '{')
                 depth++;
@@ -1116,6 +937,18 @@ public class ProgressRegistryTests
                 // he said "hi
                 var s = "Payload.Call(";
                 """)]
+    // Review finding prog-4a, and it compiles. The predecessor's interpolation-hole skipper
+    // counted braces without skipping comments, so the '}' inside this block comment closed the
+    // hole early; the literal then ended in the wrong place and the payload - which is real
+    // string content - was left outside every literal and readable as code, with conditions 2
+    // and 3 both true on it. A parser does not have a brace-counting hole skipper to get wrong.
+    [InlineData(""" var s = $"{Fmt(/* } */ "Payload.Call(")} tail"; """)]
+    // The same trick with a line comment rather than a block one, which the hole skipper also
+    // never considered.
+    [InlineData("""
+                var s = $"{Fmt( // }
+                    "Payload.Call(")} tail";
+                """)]
     public void NoStringFormSmugglesTextPastTheBlanker(string line)
     {
         Assert.DoesNotContain("Payload.Call(", ProgressScan.CodeView(line), StringComparison.Ordinal);
@@ -1179,5 +1012,128 @@ public class ProgressRegistryTests
         Assert.Contains("ExecuteResetAsync", page.Operations);
 
         Assert.DoesNotContain("ExecuteResetAsync\"", page.Code, StringComparison.Ordinal);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Review finding prog-4. Two lexical blind spots, both reproduced by the reviewer against
+    // the compiled scanner: one inside the hand-written lexer's interpolation handling, one in
+    // the discovery view it deliberately left on a raw regex. The first is now structurally
+    // impossible - there is no hand-written lexer - and the second was never a C# question.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// prog-4(a), stated as the thing that actually matters: not just that the payload is
+    /// blanked, but that a Reported entry cannot be satisfied by it. The counterfeit call sits
+    /// inside a real activity, so before the fix conditions 2 and 3 both evaluated true on text
+    /// that is a string.
+    /// </summary>
+    [Fact]
+    public void ACommentInsideAnInterpolationHoleCannotCounterfeitACoveredCall()
+    {
+        const string method = """
+            private async Task Probe()
+            {
+                using var activity = Progress.Begin("Resetting");
+                var pretend = $"{Fmt(/* } */ "ResetService.DeriveDestination(")} tail";
+                await Svc.SomethingElseAsync();
+            }
+            """;
+
+        var code = ProgressScan.CodeView(method);
+
+        Assert.DoesNotContain("ResetService.DeriveDestination(", code, StringComparison.Ordinal);
+
+        // The real activity on the line above survives, so the assertion is about the quoting
+        // and not about the whole method having been erased.
+        Assert.Single(ProgressScan.ActivitiesIn(code));
+    }
+
+    /// <summary>
+    /// prog-4(b). <c>https://</c> matched the discovery view's raw <c>//[^\n]*</c>, so the URL
+    /// blanked the rest of its line and the handler after it on the same tag was discovered by
+    /// nothing: no registry entry was ever required for it, and slow work could ship behind it
+    /// with no progress and no failing test. That is prog-2's class of defect exactly.
+    /// </summary>
+    [Fact]
+    public void AUrlInAMarkupAttributeDoesNotEraseAHandlerAfterItOnTheSameTag()
+    {
+        var page = ProgressScan.ScanText("Fixture.razor", """
+            <a href="https://example.test/x" @onclick="SlowHandler">go</a>
+
+            @code {
+                private async Task SlowHandler()
+                {
+                    await Svc.SlowCallAsync();
+                }
+            }
+            """);
+
+        Assert.Contains("SlowHandler", page.Operations);
+    }
+
+    /// <summary>
+    /// The other direction, so the fix is not simply "discovery now finds everything": Razor's
+    /// own comment really is a comment, and a handler inside one is not an operation. Markup
+    /// loses <c>//</c> as a comment marker and keeps <c>@* *@</c>, which is what Razor says.
+    /// </summary>
+    [Fact]
+    public void AHandlerInsideARazorCommentIsStillNotDiscovered()
+    {
+        var page = ProgressScan.ScanText("Fixture.razor", """
+            @* <button @onclick="SlowHandler">go</button> *@
+
+            @code {
+                private async Task SlowHandler()
+                {
+                    await Svc.SlowCallAsync();
+                }
+            }
+            """);
+
+        Assert.DoesNotContain("SlowHandler", page.Operations);
+    }
+
+    /// <summary>
+    /// A C# comment inside the <c>@code</c> block is still a comment. The discovery view stopped
+    /// treating <c>//</c> as one in MARKUP; it must not have stopped treating it as one in code,
+    /// which is the prose-satisfies-the-rule failure three guards in this repo have already had.
+    /// </summary>
+    [Fact]
+    public void ACSharpCommentInsideTheCodeBlockIsStillBlankedInTheDiscoveryView()
+    {
+        var page = ProgressScan.ScanText("Fixture.razor", """
+            <div>markup</div>
+
+            @code {
+                // SlowHandlerCommentedOut is explained here and nowhere else.
+                private async Task Real() { await Svc.SlowCallAsync(); }
+            }
+            """);
+
+        Assert.DoesNotContain("SlowHandlerCommentedOut", page.Source, StringComparison.Ordinal);
+        Assert.Contains("private async Task Real()", page.Source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Anti-vacuity for the Razor extraction itself. Every scan in this suite reads a view
+    /// derived from a page's <c>@code</c> block, and an extraction bug that found none would
+    /// hand each of them an empty method table and leave the whole suite green. Operations are
+    /// not asserted here: a page may legitimately have none - Error.razor has exactly one method
+    /// and no operator control at all - and discovery's own liveness is pinned by
+    /// <see cref="HandlerDiscoveryStillReadsQuotedMarkupAttributes"/>.
+    /// </summary>
+    [Fact]
+    public void EveryCoveredPageStillYieldsItsDeclaredMethods()
+    {
+        var barren = ProgressScan.ScanAll()
+            .Where(p => p.Methods.Count == 0)
+            .Select(p => p.Page)
+            .ToList();
+
+        Assert.True(barren.Count == 0,
+            "These covered pages yielded no declared methods at all. Every condition in this "
+            + "suite reaches a page through its method table, so a page with an empty one passes "
+            + "all of them while proving nothing - which is what a broken @code extraction looks "
+            + "like from the inside:\n" + string.Join("\n", barren));
     }
 }

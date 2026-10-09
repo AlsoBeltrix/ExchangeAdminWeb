@@ -225,10 +225,18 @@ internal static class RazorSyntax
     /// handler names live inside quoted markup attribute values.
     /// </summary>
     /// <remarks>
-    /// Only C# comments inside a C# region are comments. <c>//</c> in markup is text: it is the
-    /// middle of <c>https://</c> far more often than it is anything else, and treating it as a
-    /// comment blanked the rest of the line and erased any handler attribute after it (review
-    /// finding prog-4b). Razor's own <c>@* *@</c> comment is markup and is the caller's business.
+    /// <para>
+    /// Only a C# comment inside a C# region is a C# comment. <c>//</c> in markup is text: it is
+    /// the middle of <c>https://</c> far more often than it is anything else, and treating it as
+    /// a comment blanked the rest of the line and erased any handler attribute that followed it
+    /// on the same tag (review finding prog-4b). The same goes for <c>/* */</c>, which in markup
+    /// is a CSS comment at best.
+    /// </para>
+    /// <para>
+    /// Razor's own <c>@* *@</c> IS a comment, and it is markup, so it is blanked outside the code
+    /// regions and only there: inside <c>@code</c> the same two characters can be the contents of
+    /// a string literal, and this view exists to keep literals intact.
+    /// </para>
     /// </remarks>
     internal static string CommentsBlanked(string raw)
     {
@@ -238,7 +246,34 @@ internal static class RazorSyntax
         foreach (var region in parsed.Regions)
             BlankComments(buffer, region);
 
+        if (parsed.IsRazor)
+            BlankRazorComments(buffer, raw, parsed.Regions);
+
         return new string(buffer);
+    }
+
+    private static void BlankRazorComments(char[] buffer, string raw, IReadOnlyList<CodeRegion> regions)
+    {
+        var at = 0;
+
+        while (at < raw.Length)
+        {
+            var open = raw.IndexOf("@*", at, StringComparison.Ordinal);
+            if (open < 0)
+                break;
+
+            var close = raw.IndexOf("*@", open + 2, StringComparison.Ordinal);
+            if (close < 0)
+                break;
+
+            var end = close + 2;
+            at = end;
+
+            if (regions.Any(r => r.Raw.OverlapsWith(TextSpan.FromBounds(open, end))))
+                continue;
+
+            BlankRange(buffer, open, end);
+        }
     }
 
     internal static int LineOf(string raw, int index) =>
