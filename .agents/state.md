@@ -2982,3 +2982,43 @@ reviewer: stripping the activity from `ConferenceRooms` and `ADAttributeEditor` 
 `GlobalProgressWiringTests` GREEN, because each page keeps other activities and the old
 guard is per-FILE. `MessageTraceReports` is absent from its hand-maintained list entirely,
 so nothing looked at it at all. The per-operation registry caught all three.
+
+### Code complete, 2026-10-09 - and what the last finding turned out to be
+
+`docs/ProgressCoverage-Plan.md` is finished and **all eleven review findings are closed**.
+Verified directly: build 0 errors, suite **3,707 passed / 0 failed / 3 skipped**, format and
+`git diff --check` clean, `ProgressRegistry` KnownGaps **0** (from 52),
+`.agents/review/index.md` open rows **0**.
+
+**`prog-11`'s own premise was false, and the agent closing it said so.** The finding claimed
+a `+=` written after Razor template markup in one of three unparseable `@code` blocks "may
+not be seen at all". It is seen: the subscription is found, gets a null enclosing method and
+is REFUSED with `NoEnclosingMethod`. Codex reproduced it on all three pages, and confirmed
+the same injection into a page that parses is attributed normally - so the difference is the
+parse, not the probe. **There is no invisible-subscription class. The guard already failed
+closed.**
+
+The fix shipped anyway and should have, for a different reason than the one recorded: both
+guards were resting on Roslyn's **error-recovery** output, which is not a contract and which
+nobody had checked. `RazorParseGateTests` now names that rather than leaving it silent.
+
+**What the three allowlisted pages actually lose, measured rather than assumed:** only
+`EventSubscriptionScan` reads structure. The progress registry's method table is a regex over
+text views and never touched the tree, so **none of the 72 registered operations on those
+pages rests on a structural claim** - Migration 61, ServiceHealth 6, AdminBulkJobs 5, all
+with zero unregistered and zero missing. Lexis survives where structure does not: all 1,098
+quote characters in Migration's block still blank correctly.
+
+**The allowlist is a ceiling, not a floor.** A page that parses cleanly is refused FROM the
+list, proven on a real page. Blank reasons and stale entries are refused too.
+
+**The honest shape of this whole stream:** eleven findings in seven days, every one found by
+review or by an agent tripping something while doing adjacent work, **never by the author of
+the guard reading their own code.** Each tool closed the previous tool's holes and brought
+its own - regex, then a hand lexer, then Roslyn. The last one disproved its own finding.
+That is the argument for per-slice review, not for a better tool.
+
+**Still owed and not ours:** the push, a deploy, and the manual acceptance pass. **Nothing in
+this work proves a progress bar renders** - every guard is a source or syntax-tree check,
+there is no bUnit harness, and the three Emergency Disable defects earlier in this work were
+all presentation-layer and invisible to a green suite.
