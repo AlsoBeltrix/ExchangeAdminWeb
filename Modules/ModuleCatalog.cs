@@ -1229,7 +1229,10 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.1.2",
+            // 1.1.3: the preview reports the Delinea fetch, the two-minute AD throttle wait and
+            // the per-row directory resolve instead of running with the frame idle
+            // (docs/ProgressCoverage-Plan.md S5).
+            Version = "1.1.3",
             MainPermission = new(
                 "Access",
                 "LicensingUpdates",

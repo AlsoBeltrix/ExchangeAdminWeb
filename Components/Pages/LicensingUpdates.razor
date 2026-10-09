@@ -267,12 +267,48 @@
         previewError = null;
     }
 
+    /// <summary>
+    /// Resolves every row of the uploaded CSV against the directory and builds the preview.
+    /// </summary>
+    /// <remarks>
+    /// The survey's entry for this one is accurate and worth keeping: it fetches Delinea
+    /// credentials, waits out a two-minute AD throttle and resolves every row against the
+    /// directory, and all of it ran with the bar idle. It is also the longest wait on the page -
+    /// RunApply, which already reports, cannot start until it has finished.
+    ///
+    /// ONE covered call, and it is the whole operation rather than a convenient first call.
+    /// Services/LicensingUpdatesService.cs PreviewCsvAsync does all four of those things inside
+    /// itself: GetCredentialsAsync over HTTP, ParseCsvAsync over the uploaded stream,
+    /// _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)), then ResolveUsers on a thread-pool thread.
+    /// selectedFile.OpenReadStream above it was read and deliberately NOT named - it hands back a
+    /// stream object and pulls nothing until PreviewCsvAsync reads it - and everything below is
+    /// one field assignment, so there is no tail for the window to miss.
+    ///
+    /// ActivitySize.Unknown is FORCED, not chosen: the row count does not exist until the call
+    /// the Begin has to dominate has returned. The file name is what the operator recognises, so
+    /// that is the label, and the count goes in the Complete message.
+    ///
+    /// TWO Completes, both BELOW the covered call, so the scanner's "first Complete after the
+    /// Begin" rule is satisfied on either path and the early return did not have to become an
+    /// if/else the way Migration.DownloadReportExportAsync's did. A preview that came back
+    /// unsuccessful is a refusal and completes FALSE with the service's own words; an exception
+    /// falls out of scope to the dispose fallback.
+    ///
+    /// No snapshot: the InputFile at :61 is disabled="@(isProcessing || previewResult != null)"
+    /// and isProcessing is raised above the yield, so selectedFile cannot be replaced under this.
+    /// </remarks>
     private async Task RunPreview()
     {
         if (selectedFile == null) return;
         isProcessing = true;
         previewError = null;
         previewResult = null;
+
+        using var activity = Progress.Begin(
+            "Licensing Updates",
+            $"Previewing {selectedFile.Name} against the directory",
+            ActivitySize.Unknown);
+
         await Task.Yield();
 
         try
@@ -283,10 +319,16 @@
             if (!result.Success)
             {
                 previewError = result.Error;
+                activity.Complete(false, result.Error);
                 return;
             }
 
             previewResult = result;
+
+            // Reads the LOCAL result, not previewResult: the field is what the pane renders and
+            // the Clear button is wired straight at it, so a read back down here would be the
+            // post-await live-read trap this work stream keeps meeting.
+            activity.Complete(true, $"{result.Rows.Count:N0} row(s) previewed.");
         }
         catch (Exception ex)
         {

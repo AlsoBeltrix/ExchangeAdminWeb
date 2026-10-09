@@ -1439,12 +1439,32 @@ public static class ProgressRegistry
     private static PageEntry LicensingUpdates => new()
     {
         Page = "LicensingUpdates.razor",
-        Reports = [new("RunApply", "LicenseService.ApplyCsvAsync")],
-        KnownGaps =
+        Reports =
         [
-            new("RunPreview", 270,
-                "SILENT, READ. Fetches Delinea credentials, waits out a two-minute AD throttle "
-                + "and resolves every row against the directory, all with the bar idle"),
+            new("RunApply", "LicenseService.ApplyCsvAsync"),
+            new("RunPreview", "LicenseService.PreviewCsvAsync(",
+                "the longest wait on this page - RunApply, which already reported, cannot start "
+                + "until it has finished - and it ran with the bar idle. ONE covered call, and "
+                + "it is the whole operation rather than a convenient first call: "
+                + "Services/LicensingUpdatesService.cs PreviewCsvAsync does all four slow things "
+                + "inside itself - GetCredentialsAsync over HTTP to Delinea, ParseCsvAsync over "
+                + "the uploaded stream, _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)), then "
+                + "ResolveUsers resolving every row on a thread-pool thread. "
+                + "selectedFile.OpenReadStream( above it was read and deliberately NOT named: it "
+                + "hands back a stream object and pulls nothing until PreviewCsvAsync reads it. "
+                + "Everything below the call is one field assignment, so there is no tail for "
+                + "the window to miss. Unknown is FORCED rather than chosen - the row count does "
+                + "not exist until the call the Begin has to dominate has returned - so the file "
+                + "name is the label and the count is in the Complete message. TWO Completes, "
+                + "both BELOW the covered call, which is why the early return did NOT have to "
+                + "become an if/else the way Migration.DownloadReportExportAsync's did: the "
+                + "scanner's first-Complete rule is satisfied on either path. An unsuccessful "
+                + "preview is a refusal and completes FALSE with the service's own words; an "
+                + "exception falls to the dispose fallback. The success Complete reads the LOCAL "
+                + "result rather than previewResult, which the Clear button is wired straight "
+                + "at. No snapshot: the InputFile at LicensingUpdates.razor:61 is "
+                + "disabled=\"@(isProcessing || previewResult != null)\" and isProcessing is "
+                + "raised above the yield, so selectedFile cannot be replaced under this"),
         ],
         Exempt =
         [
