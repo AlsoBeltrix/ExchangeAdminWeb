@@ -2,9 +2,9 @@
 
 **Severity**: HIGH (event guard) + MEDIUM (progress registry). **Latent, not live** - no
 current page carries either shape, verified by scan. These are guard holes, not page defects.
-**Status**: In progress - (a) closed, (b) open
+**Status**: Verified
 **Branch**: - (direct to main)
-**Commit**: -
+**Commit**: 84debc8 (a)
 
 ## How this was found, which is the point
 
@@ -109,12 +109,45 @@ needs the ordering fact the scanner does not have. No component under `Component
 any of these shapes today, so the refusal costs nothing now, and the message says what to do
 (subscribe from a method, where the call-site analysis applies).
 
+### (b) THE MINIMUM, and the Roslyn route was tried first and rejected on evidence
+
+The recommended route - build the method table from Roslyn declarations - was IMPLEMENTED and
+then backed out, because it does not work on this repo's pages. `Migration.razor`,
+`ServiceHealth.razor` and `AdminBulkJobs.razor` each declare a `RenderFragment<T>` whose value
+is inline Razor TEMPLATE MARKUP (`@<text> ... `) written inside the `@code` block. That is
+Razor, not C#. Roslyn stops understanding the block at it: measured against Migration.razor,
+`MethodDeclarationSyntax` yields TWO methods where the regex yields two hundred, and the
+suite's own `EveryRegisteredOperationNamesAMethodThatStillExists` failed with ~90 Migration
+entries and 5 ServiceHealth entries orphaned. A parse beats a regex only where what it is
+handed is the language it parses. Here it is not, and the honest answer was to keep the regex
+and fix what the finding is actually about.
+
+So: the minimum, done properly, and both halves of (b) close.
+
+- **The local function.** It is excluded structurally rather than by failing closed, because
+  "component level" has a cheap exact test that does not need a parser: a declaration must sit
+  at brace depth ZERO inside its `@code` block. A local function lives in the body of the
+  method holding it and is therefore at depth one or more, whatever modifiers it carries.
+  Depth is counted over the CODE view, where a brace inside a literal or a comment is already
+  blank and markup outside the blocks is blanked whole - so the count never leaves the blocks
+  and never sees a brace that is not code. This is strictly better than refusing the page: the
+  page method wins its own key back.
+- **The overload.** Both declarations are now found and the name is then REFUSED - kept out of
+  the table entirely and reported by `NoCoveredPageDeclaresTwoMethodsWithTheSameName`. The
+  registry is keyed by name; a name that means two bodies cannot be registered, because
+  whichever body an entry is proved against leaves the other unaccounted for. Keying by
+  signature or arity was not taken: it would make the registry able to describe an overloaded
+  operation, which is a design change to the registry, not a repair of a guard hole, and no
+  page needs it.
+
 ## Files changed
 
 - (a) `ExchangeAdminWeb.Tests/EventSubscriptionLifetimeTests.cs` - `EnclosingCallable`,
   `DeferredProblem`, the `DeferredBody` and `NoEnclosingMethod` messages, the refusal at the
   top of `ProblemAt`, the class remarks, and six fixtures.
-- (b) pending.
+- (b) `ExchangeAdminWeb.Tests/ProgressRegistryTests.cs` - `DeclaredMethods` returns
+  `(Methods, Ambiguous)` and keeps only depth-zero declarations, the new `BraceDepths`,
+  `PageScan.AmbiguousMethods`, and three tests.
 
 ## Guard proof
 
@@ -147,9 +180,52 @@ Full suite 3696 passed / 0 failed / 3 skipped (baseline 3690), Release build cle
 
 ### (b)
 
-Pending.
+Before, both reproductions run against the scanner as it stood at `84debc8`:
+
+- The overload. `page.Methods` held ONE key for `MutationProbeAsync` - the observed failure
+  reads `Collection: ["MutationProbeAsync"]` - and `CodeOf` returned the no-argument body
+  carrying `Progress.Begin` while the bound one-argument overload did the silent work.
+- The local function. `CodeOf("MutationProbeAsync")` returned
+  `"        async Task MutationProbeAsync()\n        {\n"...` - the LOCAL FUNCTION's body. The
+  page method of that name was invisible.
+
+After: the overload's name is absent from `Methods`, `CodeOf` returns empty, and the name is
+reported in `AmbiguousMethods`; the local function is gone from the table and `CodeOf` returns
+the page method's body with no `Progress.Begin` in it - while `CodeOf("OnInitializedAsync")`
+still contains the local function's `Progress.Begin`, because it is genuinely part of that
+method's body.
+
+The registry's real job still works: all 35 tests in the class pass over the live pages, which
+includes every registry entry still naming a method that exists, every discovered handler
+still classified, and every covered page still yielding its declared methods - so the depth
+rule dropped no registered method, on the three pages with template markup in their code block
+included. Mutations on a live page, each checked to COMPILE first: the prog-4b probe (a
+handler after a URL on `CloudPasswordReset.razor`) still fails classification at
+`CloudPasswordReset.razor:194`, and a second `ExecuteResetAsync` overload on that page fails
+the new ambiguity rule by name. The first attempt at the overload probe did NOT compile
+(`CS1503` on `DeriveDestination`); it was fixed and re-run rather than counted.
+
+Full suite 3699 passed / 0 failed / 3 skipped, Release build clean, `dotnet format
+--verify-no-changes` clean.
 
 ## Known gaps
+
+**RazorSyntax cannot parse a code block containing Razor template markup, and three pages have
+one.** Found while implementing (b), not part of the finding. `Migration.razor`,
+`ServiceHealth.razor` and `AdminBulkJobs.razor` declare a `RenderFragment<T>` whose value is
+`@<text>`/`@<div>` markup written inside `@code`. Roslyn stops understanding the block there:
+Migration.razor parses to two methods out of two hundred, and ServiceHealth.razor similarly.
+The consequences are not confined to (b):
+
+- The progress scanner's CODE and DISCOVERY views are built from those same regions, so
+  blanking on the tail of those three blocks rests on error-recovery output.
+- `EventSubscriptionScan` reads the same trees. A `+=` written after the template markup in
+  one of those three blocks may not be seen AT ALL - which is the invisible-subscription
+  class, not the unguarded one. None of the three carries such a subscription today
+  (AdminBulkJobs subscribes at :181, its template begins at :369), so this is latent. It is
+  also the first known way for a subscription to be invisible to the guard since leak-1(c) was
+  closed, and it deserves its own finding and an owner decision on the fix (a Razor-aware
+  parse, or refusing to judge a block the parse reported errors in).
 
 This is the ninth and tenth guard finding in this repo in seven days. Worth stating plainly:
 **every one has been found by review or by an agent tripping something, never by the guard's
@@ -168,4 +244,6 @@ Raw output: `.agents/review/roslyn2.result.json`; first session's stream in `ros
 
 ## Closeout
 
-Pending.
+Both halves closed, one commit each, direct to master. (a) 84debc8, (b) this commit.
+One new gap recorded above: RazorSyntax cannot parse a code block holding Razor template
+markup, which affects three pages and both guards, and needs its own finding.

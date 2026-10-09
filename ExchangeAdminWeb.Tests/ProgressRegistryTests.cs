@@ -63,13 +63,19 @@ internal static class ProgressScan
     /// reads this one. Blanking is same-length, so a method span found in <paramref name="Source"/>
     /// addresses the same text here.
     /// </param>
+    /// <param name="AmbiguousMethods">
+    /// Names declared more than once at component level. They are kept OUT of
+    /// <paramref name="Methods"/>: the registry is keyed by name, so it cannot say which of two
+    /// overloads it means, and picking one is review finding prog-10(b).
+    /// </param>
     internal sealed record PageScan(
         string Page,
         string Source,
         string Code,
         IReadOnlyDictionary<string, PageMethod> Methods,
         IReadOnlyList<string> Operations,
-        IReadOnlyList<string> UnextractedLambdas);
+        IReadOnlyList<string> UnextractedLambdas,
+        IReadOnlyList<string> AmbiguousMethods);
 
     private static readonly Regex MethodDeclaration = new(
         // The return type may itself contain parentheses - a tuple return like
@@ -192,33 +198,75 @@ internal static class ProgressScan
     {
         var source = StripComments(raw);
         var code = CodeView(raw);
-        var methods = DeclaredMethods(source);
+        var (methods, ambiguous) = DeclaredMethods(source);
         var (operations, unextracted) = Handlers(source, methods);
 
-        return new PageScan(page, source, code, methods, operations, unextracted);
+        return new PageScan(page, source, code, methods, operations, unextracted, ambiguous);
     }
 
     internal static IReadOnlyList<PageScan> ScanAll() => PageFiles().Select(Scan).ToList();
 
     /// <summary>
-    /// The methods declared in a page's <c>@code</c> block, with the span of each body.
+    /// The methods declared at COMPONENT LEVEL in a page's <c>@code</c> block, with the span of
+    /// each body, plus the names declared there more than once.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The declaration is found in <paramref name="source"/> but the body is DELIMITED over the
     /// code view, which is the same length and so addresses the same characters. A brace or a
     /// parenthesis inside a string, a comment or an interpolation hole is already blank there, so
     /// the delimiter walks below need no literal handling of their own - which is what let the
     /// hand-written lexer, and review finding prog-4a with it, leave this file.
+    /// </para>
+    /// <para>
+    /// WHY THIS IS STILL A REGEX, when everything else in the scanner moved to a parse. It was
+    /// tried: a method table built from <c>MethodDeclarationSyntax</c> nodes loses nearly every
+    /// method on Migration.razor and ServiceHealth.razor, because both declare a
+    /// <c>RenderFragment&lt;T&gt;</c> whose value is inline Razor template markup
+    /// (<c>@&lt;text&gt; ... </c>) written INSIDE the <c>@code</c> block. That is Razor, not C#,
+    /// and Roslyn stops understanding the block at it - Migration.razor yields two methods out
+    /// of two hundred. A parse is the better tool only where what it is handed is the language
+    /// it parses, and here it is not. AdminBulkJobs.razor carries the same shape near the end of
+    /// its block. Recorded as a known gap on review finding prog-10.
+    /// </para>
+    /// <para>
+    /// WHAT REVIEW FINDING prog-10(b) CHANGED. The predecessor kept the FIRST declaration under
+    /// each name and dropped the rest, and a name that means two bodies was then proved against
+    /// whichever came first. Two ways of arranging that were executed against it:
+    /// </para>
+    /// <para>
+    /// A local function needs no accessibility modifier but may carry <c>async</c>, which the
+    /// pattern accepted as one; written earlier in the file than the page method of the same
+    /// name, it took the key and <see cref="CodeOf"/> answered every "does this method DO x"
+    /// question with the local function's body. A declaration must now sit at brace depth ZERO
+    /// inside its <c>@code</c> block, which is what component level MEANS and what a local
+    /// function - nested in the body of the method holding it - can never be. Depth is counted
+    /// over the code view, where a brace inside a literal or a comment is already blank, and
+    /// markup outside the block is blanked whole, so no brace outside a block is counted.
+    /// </para>
+    /// <para>
+    /// And two overloads are two component-level declarations under one name. Both are FOUND
+    /// now, and then refused: the registry is keyed by name and has no way to say which one it
+    /// means, so the name is reported by <c>NoCoveredPageDeclaresTwoMethodsWithTheSameName</c>
+    /// and kept OUT of the table rather than resolved to a guess. No page carries either shape
+    /// today, so refusing costs nothing and cannot pass silently tomorrow.
+    /// </para>
     /// </remarks>
-    internal static IReadOnlyDictionary<string, PageMethod> DeclaredMethods(string source)
+    internal static (IReadOnlyDictionary<string, PageMethod> Methods, IReadOnlyList<string> Ambiguous)
+        DeclaredMethods(string source)
     {
-        var methods = new Dictionary<string, PageMethod>(StringComparer.Ordinal);
+        var byName = new Dictionary<string, List<PageMethod>>(StringComparer.Ordinal);
         var code = CodeView(source);
+        var depth = BraceDepths(code);
 
         foreach (Match match in MethodDeclaration.Matches(source))
         {
             var name = match.Groups["name"].Value;
-            if (methods.ContainsKey(name))
+
+            // Component level or nothing. Anything deeper is written inside another body - a
+            // local function, in the shape prog-10(b) executed - and is not a member the
+            // registry could name even if its name matches one.
+            if (match.Index >= depth.Length || depth[match.Index] != 0)
                 continue;
 
             var openParen = match.Index + match.Length - 1;
@@ -254,10 +302,48 @@ internal static class ProgressScan
                 continue;
             }
 
-            methods[name] = new PageMethod(name, LineOf(source, match.Index), match.Index, end);
+            if (!byName.TryGetValue(name, out var found))
+                byName[name] = found = [];
+
+            found.Add(new PageMethod(name, LineOf(source, match.Index), match.Index, end));
         }
 
-        return methods;
+        var methods = byName
+            .Where(pair => pair.Value.Count == 1)
+            .ToDictionary(pair => pair.Key, pair => pair.Value[0], StringComparer.Ordinal);
+
+        var ambiguous = byName
+            .Where(pair => pair.Value.Count > 1)
+            .Select(pair => pair.Key)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+
+        return (methods, ambiguous);
+    }
+
+    /// <summary>
+    /// Brace nesting depth BEFORE each character of <paramref name="code"/>, which must be the
+    /// CODE view: a brace inside a literal or a comment is blank there, and in a component the
+    /// markup outside every <c>@code</c> block is blank too, so the count never leaves the
+    /// blocks and depth zero is exactly component level.
+    /// </summary>
+    private static int[] BraceDepths(string code)
+    {
+        var depths = new int[code.Length + 1];
+        var depth = 0;
+
+        for (var i = 0; i < code.Length; i++)
+        {
+            depths[i] = depth;
+
+            if (code[i] == '{')
+                depth++;
+            else if (code[i] == '}')
+                depth--;
+        }
+
+        depths[code.Length] = depth;
+        return depths;
     }
 
     /// <summary>
@@ -1135,5 +1221,109 @@ public class ProgressRegistryTests
             + "suite reaches a page through its method table, so a page with an empty one passes "
             + "all of them while proving nothing - which is what a broken @code extraction looks "
             + "like from the inside:\n" + string.Join("\n", barren));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Review finding prog-10(b). The method table was a regex over text keyed by NAME, and text
+    // cannot tell a component member from a local function or one overload from another. Both
+    // ways of getting two bodies under one name were reproduced against the compiled scanner:
+    // the first body won the key and every condition was then proved against it while the
+    // SECOND one did the silent work.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The fail-closed half of prog-10(b), over the live pages. Every entry in this registry
+    /// names a method by NAME, and a name that means two bodies cannot be registered: whichever
+    /// one an entry is proved against, the other is unaccounted for. The scanner keeps such a
+    /// name out of the method table and reports it here rather than picking the first, which is
+    /// what let an overload lend its activity to the method doing the work.
+    /// </summary>
+    [Fact]
+    public void NoCoveredPageDeclaresTwoMethodsWithTheSameName()
+    {
+        var offenders = ProgressScan.ScanAll()
+            .SelectMany(p => p.AmbiguousMethods.Select(m => $"{p.Page}: {m}"))
+            .ToList();
+
+        Assert.True(offenders.Count == 0,
+            "These pages declare one name twice at component level. ProgressRegistry is keyed by "
+            + "method name, so an overloaded operation cannot be described by it - and proving "
+            + "an entry against one body leaves the other silent and unregistered. Give the "
+            + "overloads distinct names, or collapse them:\n" + string.Join("\n", offenders));
+    }
+
+    /// <summary>
+    /// prog-10(b), first reproduction. The bound handler is the one-argument overload and it
+    /// reports nothing; the no-argument one carries the registered activity and the covered
+    /// call. One name, one key, one body - and conditions 1 to 3 all passed against the wrong
+    /// one. Two declarations under one name is now refused outright, because a registry keyed by
+    /// name has no way to say which of them it means.
+    /// </summary>
+    [Fact]
+    public void AnOverloadCannotLendItsActivityToTheMethodDoingTheWork()
+    {
+        var page = ProgressScan.ScanText("Fixture.razor", """
+            <button @onclick="() => MutationProbeAsync(userId)">Reset</button>
+
+            @code {
+                private async Task MutationProbeAsync()
+                {
+                    using var activity = Progress.Begin("Resetting");
+                    await ResetService.DeriveDestination();
+                }
+
+                private async Task MutationProbeAsync(string userId)
+                {
+                    await ResetService.DeriveDestination(userId);
+                }
+            }
+            """);
+
+        Assert.DoesNotContain("MutationProbeAsync", page.Methods.Keys);
+        Assert.Equal("", ProgressScan.CodeOf(page, "MutationProbeAsync"));
+        Assert.Contains("MutationProbeAsync", page.AmbiguousMethods);
+    }
+
+    /// <summary>
+    /// prog-10(b), second reproduction. A local function needs no accessibility modifier but may
+    /// carry <c>async</c>, which the declaration regex accepted as one; declared earlier in the
+    /// file, it took the key and shadowed the page method entirely. A local function is not a
+    /// component member and the table is now built from declarations rather than from text, so
+    /// it is not in it at all - while remaining part of the body of the method that holds it.
+    /// </summary>
+    [Fact]
+    public void ALocalFunctionDoesNotShadowThePageMethodOfTheSameName()
+    {
+        var page = ProgressScan.ScanText("Fixture.razor", """
+            <button @onclick="MutationProbeAsync">Reset</button>
+
+            @code {
+                protected override async Task OnInitializedAsync()
+                {
+                    async Task MutationProbeAsync()
+                    {
+                        using var activity = Progress.Begin("Warming up");
+                        await ResetService.DeriveDestination();
+                    }
+
+                    await MutationProbeAsync();
+                }
+
+                private async Task MutationProbeAsync()
+                {
+                    await ResetService.DeriveDestination();
+                }
+            }
+            """);
+
+        var code = ProgressScan.CodeOf(page, "MutationProbeAsync");
+
+        Assert.Contains("private async Task MutationProbeAsync()", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("Progress.Begin(", code, StringComparison.Ordinal);
+
+        // The local function is still part of the body of the method it is written in, which is
+        // where a scan asking "what does OnInitializedAsync do" has to be able to see it.
+        Assert.Contains("Progress.Begin(", ProgressScan.CodeOf(page, "OnInitializedAsync"),
+            StringComparison.Ordinal);
     }
 }
