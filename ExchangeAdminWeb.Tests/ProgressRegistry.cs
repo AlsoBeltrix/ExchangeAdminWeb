@@ -1238,13 +1238,40 @@ public static class ProgressRegistry
     private static PageEntry EmergencyDisable => new()
     {
         Page = "EmergencyDisable.razor",
-        Reports = [new("ExecuteDisable", "DisableService.DisableAsync")],
-        KnownGaps =
+        Reports =
         [
-            new("PerformLookup", 293,
-                "SILENT, READ. The AD resolve plus the Exchange fallback - documented elsewhere "
-                + "in this codebase as a 10 to 15 second round trip - in the module that shipped "
-                + "two days before the survey"),
+            new("ExecuteDisable", "DisableService.DisableAsync"),
+            new("PerformLookup",
+                [
+                    "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(",
+                    "ProtectedPrincipalService.CheckAsync(",
+                ],
+                "the one gap in the module that shipped two days before the survey, and the "
+                + "operator's first action on the page. TWO calls because the window has two "
+                + "ends and neither call can hold both. "
+                + "ResolveWithExchangeFallbackAsync is the slow one and the same three waits "
+                + "MfaReset.ExecuteReset's entry describes - a Delinea fetch for the "
+                + "directory-read credential over HTTP, a 2-permit AD throttle that can hold 30 "
+                + "seconds, a DirectorySearcher, and on a cloud-only target the 10-15 second "
+                + "Exchange fallback on top. CheckAsync is the closing pin and is remote "
+                + "CONDITIONALLY: it answers from the config store unless protected GROUP rules "
+                + "are configured, in which case CheckGroupMembershipAsync queries the "
+                + "directory. GetAuthenticationStateAsync in the IsProtected branch was read and "
+                + "deliberately NOT named - it decides from the Windows token's group SIDs. "
+                + "ONE Complete, in the finally, from a LOCAL tuple, and the SCANNER forces that "
+                + "rather than taste: ActivitiesIn takes the first activity.Complete( after the "
+                + "Begin as the close, and this handler's earliest exit sits BETWEEN the two "
+                + "covered calls, so a Complete written there would unpin CheckAsync( on every "
+                + "path including the one that reaches it. ADAttributeEditor.PerformSearch is "
+                + "the shape, down to the tuple. The five outcomes split on the reviewer's "
+                + "2026-10-08 ruling: an unreachable directory and a fail-closed protection read "
+                + "are work that did not finish and an ambiguous identity is a refusal, all "
+                + "non-success; an identity that is simply absent is a lookup that RAN and found "
+                + "nothing, and a protected principal is a lookup that finished in a read-only "
+                + "state, both TRUE. No snapshot: the search box at EmergencyDisable.razor:51 is "
+                + "disabled=\"@(isLoading || isDisabling)\" and the raise is above the yield, so "
+                + "the field is shut; identity is hoisted for the LABEL and collapses three "
+                + "reads of it into one"),
         ],
         Exempt =
         [

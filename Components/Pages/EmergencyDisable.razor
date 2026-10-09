@@ -290,10 +290,54 @@
             await PerformLookup();
     }
 
+    /// <summary>
+    /// Resolves the typed identity and decides whether it may be disabled at all.
+    /// </summary>
+    /// <remarks>
+    /// The module shipped two days before docs/ProgressCoverage-Plan.md's survey and this is its
+    /// one gap: the operator's first action on the page, and the slowest thing they wait on here,
+    /// ran with the frame reading Idle.
+    ///
+    /// TWO covered calls, which is the shape rather than belt and braces.
+    /// ResolveWithExchangeFallbackAsync is three waits in a trench coat - a Delinea fetch for the
+    /// directory-read credential over HTTP, a 2-permit AD throttle that can hold for 30 seconds,
+    /// a DirectorySearcher, and on a cloud-only target the 10-15 second Exchange fallback - and
+    /// CheckAsync below it is remote CONDITIONALLY, answering from the config store unless
+    /// protected GROUP rules are configured, in which case it queries the directory. Naming only
+    /// the first would leave the second held by nothing; naming only the second would prove
+    /// nothing about the resolve, which is the one the operator actually waits on.
+    ///
+    /// ONE Complete, in the finally, reading a LOCAL set at whichever exit was reached - and the
+    /// scanner forces that rather than taste. ProgressScan.ActivitiesIn takes the FIRST
+    /// activity.Complete( after the Begin as the window's close, and this handler's earliest exit
+    /// sits BETWEEN the two covered calls, so a Complete written there would unpin CheckAsync on
+    /// every path including the one that reaches it. ADAttributeEditor.PerformSearch is the shape
+    /// this copies, down to the tuple.
+    ///
+    /// The five outcomes are not all failures, and the distinction is the reviewer's 2026-10-08
+    /// ruling - "did the work complete", not "did the operator get what they wanted". A directory
+    /// that could not be reached and a protection read that failed closed are work that did NOT
+    /// finish, so they are non-success. An ambiguous identity is a refusal, so it is too. But an
+    /// identity that simply is not there is a lookup that RAN and found nothing, and a protected
+    /// principal is a lookup that finished in a read-only state - AdminEventLog's empty date
+    /// range and ADAttributeEditor's IsReadOnly path, both TRUE. An unhandled throw leaves the
+    /// local null and falls to the dispose fallback, which is what that fallback is for.
+    ///
+    /// No snapshot: the search box at :51 is disabled="@(isLoading || isDisabling)" and the raise
+    /// is above the yield, so the field is shut for the whole window. identity is hoisted for the
+    /// LABEL, and the three reads below it become one.
+    /// </remarks>
     private async Task PerformLookup()
     {
         isLoading = true;
         BeginNewOperation();
+
+        var identity = searchIdentity.Trim();
+
+        (bool Success, string? Message)? completed = null;
+        using var activity = Progress.Begin(
+            "Emergency Disable", $"Looking up {identity}", ActivitySize.Unknown);
+
         await Task.Yield();
 
         try
@@ -303,20 +347,28 @@
             // and "the directory did not answer" both rendered as a typo message, so an AD outage
             // told the operator to check their spelling. It also missed cloud-only targets
             // entirely. docs/ProtectedPrincipalGapFix-Plan.md GAP B.
-            var (resolved, resolveStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(searchIdentity.Trim());
+            var (resolved, resolveStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(identity);
 
             if (resolveStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable
                               or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {
                 lookupError = resolveStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                    ? $"'{searchIdentity.Trim()}' is ambiguous - it matches multiple directory objects. Contact your administrator."
+                    ? $"'{identity}' is ambiguous - it matches multiple directory objects. Contact your administrator."
                     : "The directory could not be reached, so protection cannot be verified. Try again shortly or contact your administrator.";
+
+                // An ambiguous identity is a refusal and an unreachable directory is work that
+                // did not finish; neither is a success.
+                completed = (false, lookupError);
                 return;
             }
 
             if (resolved == null)
             {
-                lookupError = $"'{searchIdentity.Trim()}' was not found in Active Directory or Exchange Online. Verify the UPN or email.";
+                lookupError = $"'{identity}' was not found in Active Directory or Exchange Online. Verify the UPN or email.";
+
+                // TRUE: the resolve ran, reached both directories and answered. Nothing there is
+                // an answer, not a failure of the lookup.
+                completed = (true, $"'{identity}' was not found.");
                 return;
             }
 
@@ -324,6 +376,9 @@
             if (protectionCheck.CheckFailed)
             {
                 lookupError = protectionCheck.Reason;
+
+                // Fail-closed: the protection read did not finish, so neither did this.
+                completed = (false, protectionCheck.Reason);
                 return;
             }
             if (protectionCheck.IsProtected)
@@ -339,10 +394,17 @@
                     Servicers, authState.User, ServicerModuleId, protectionCheck.MatchedRules);
 
                 protectedBlocked = servicedNote is null;
+
+                // TRUE: the lookup finished, and "this account is protected" is its answer.
+                // ADAttributeEditor.PerformSearch's IsReadOnly path, same ruling.
+                completed = (true, protectedBlocked
+                    ? $"{resolved.DisplayName} is a protected principal."
+                    : $"{resolved.DisplayName} is protected; servicing applies.");
                 return;
             }
 
             resolvedPrincipal = resolved;
+            completed = (true, $"{resolved.DisplayName} resolved.");
         }
         catch (Exception ex)
         {
@@ -352,6 +414,13 @@
         finally
         {
             isLoading = false;
+
+            // Reads the LOCAL, never lookupError or resolvedPrincipal: isLoading drops on the
+            // line above with no await before this, but the fields are what the banner renders
+            // and a local cannot be edited by anything else. An unhandled throw leaves it null
+            // and the using ends the activity with the dispose fallback.
+            if (completed is { } outcome)
+                activity.Complete(outcome.Success, outcome.Message);
         }
     }
 

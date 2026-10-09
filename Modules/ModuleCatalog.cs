@@ -918,7 +918,9 @@ public sealed class ModuleCatalog
             // attribute (the ADUC Notes box) as a breadcrumb nothing in the app ever reads.
             // Unavailable until a lockdown OU is configured. Queue item 18;
             // docs/EmergencyDisableLockdownOU-Plan.md.
-            Version = "1.3.1",
+            // 1.3.2: the lookup reports the directory resolve and the protection check instead
+            // of running with the frame idle (docs/ProgressCoverage-Plan.md S5).
+            Version = "1.3.2",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
