@@ -1,12 +1,14 @@
 # Progress Coverage - Plan
 
-Status: **APPROVED 2026-10-07 ("go"), IN PROGRESS.** S1 (the registry) has landed, **S2 IS
-COMPLETE - all six silent writes report** - and **S3 IS COMPLETE: all nine partials report**,
-one commit each. S4 (the three pages that inject `IActivityProgress` nowhere, `AdminSettings`
-first) is next. **The live gap list is
+Status: **IMPLEMENTED 2026-10-09; manual acceptance OUTSTANDING, and the last three batches are
+unreviewed.** Approved by the owner 2026-10-07 ("go"). S1 through S5 have all landed and every
+review finding the stream raised is closed. **The live gap list is
 `ExchangeAdminWeb.Tests/ProgressRegistry.cs`, not this document** - the counts here were
-correct at drafting and have moved several times since. `.agents/state.md` carries the
-per-slice record and the commit for each fix.
+correct at drafting and have moved several times since; the registry holds zero `KnownGap`
+entries as of `390bba6`. The per-slice record is verbatim in `docs/history/state-archive.md`
+(Archived 2026-10-09); `.agents/state.md` carries what the stream settled and what is still
+owed. **Nothing in this plan proves a progress bar renders** - every guard it ships is a source
+or syntax-tree check.
 
 ---
 

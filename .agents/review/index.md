@@ -36,6 +36,6 @@ alongside it.
 `ed-s2.result.json`. Its first fix was reopened on the GUARD rather than the fix and
 repaired in `7e11c64`; the repair-delta round is `edl-3r.result.json`.
 
-All three `edl-*` findings are `[v]` and not `[x]`: each is verified on main, but the
-push is outstanding (`.agents/push-policy.md` is `ask`; the owner declined on
-2026-10-05). They close when it lands.
+All three `edl-*` findings are `[v]` and not `[x]`: each is verified on main. They move to
+`[x]` once the range carrying them has reached the remotes - check that live, it is not
+recorded here.
