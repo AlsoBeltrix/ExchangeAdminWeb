@@ -1095,7 +1095,7 @@ public static class ClickGateRegistry
     private static PageGateEntry MailboxPermissions => new()
     {
         Page = "MailboxPermissions.razor",
-        ExpectedLineCount = 767,
+        ExpectedLineCount = 800,
 
         // One flag, one page-wide predicate, and that was checked rather than assumed: Revision 1
         // found a single predicate provably wrong on two OTHER pages. This page has one view. The

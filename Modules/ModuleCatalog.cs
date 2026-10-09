@@ -155,7 +155,9 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.2.2: SubmitSingle's activity opens above the ticket validation and the
             // protected-target check instead of below them (docs/ProgressCoverage-Plan.md S3).
-            Version = "1.2.2",
+            // 1.2.3: the bulk result CSV export reports the file it builds and pushes, and
+            // snapshots it, instead of running with the frame idle (same plan, S5).
+            Version = "1.2.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

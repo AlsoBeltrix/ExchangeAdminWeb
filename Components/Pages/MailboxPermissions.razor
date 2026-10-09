@@ -746,16 +746,49 @@
         }
     }
 
+    /// <summary>
+    /// Exports the bulk run's per-row outcomes as a CSV.
+    /// </summary>
+    /// <remarks>
+    /// The NINTH copy of the silent CSV-export shape and the twin of
+    /// CalendarPermissions.DownloadCsvReport, which landed one commit ago. The two handlers are
+    /// the same method with a different filename, and so are the two fixes; everything the twin's
+    /// comment says applies here unchanged. With this one the shape really is closed.
+    ///
+    /// The settled two-pin form: GenerateCsvReport( opens, JS.InvokeVoidAsync( closes, the
+    /// Complete sits below the transfer, ActivitySize.Unknown with the row count in the LABEL,
+    /// and an await Task.Yield() because the projection, the per-field sanitiser and both encodes
+    /// are synchronous and the only await was the transfer AFTER all of them.
+    ///
+    /// THE SNAPSHOT IS FORCED BY THE YIELD and forced twice over, exactly as on the twin: this
+    /// handler never raises isLoading, so IsBusy is false for the whole export, and the result
+    /// banner's dismiss at :212 is @onclick="() => bulkResult = null" with no disabled attribute.
+    /// A dismiss queued while the bar paints would otherwise make the export throw on a null -
+    /// review finding prog-9.
+    /// </remarks>
     private async Task DownloadCsvReport()
     {
         if (bulkResult is null) return;
 
-        var csvBytes = bulkResult.GenerateCsvReport();
+        var report = bulkResult;
+
+        using var activity = Progress.Begin(
+            "Mailbox Permissions",
+            $"Exporting {report.Entries.Count:N0} result row(s) to CSV",
+            ActivitySize.Unknown);
+
+        await Task.Yield();
+
+        var csvBytes = report.GenerateCsvReport();
         var base64 = Convert.ToBase64String(csvBytes);
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         var filename = $"mailbox_permissions_report_{timestamp}.csv";
 
         await JS.InvokeVoidAsync("downloadFile", filename, "text/csv", base64);
+
+        // Below the transfer, the settled order. The transfer MECHANISM is deliberately
+        // untouched - docs/DownloadMemoryRetention-Plan.md is a DRAFT. Reads the captured local.
+        activity.Complete(true, $"{report.Entries.Count:N0} result row(s) exported.");
     }
 
     private async Task DownloadSampleCsv()

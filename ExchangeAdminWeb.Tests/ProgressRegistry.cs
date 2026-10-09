@@ -1570,10 +1570,25 @@ public static class ProgressRegistry
                 + "no remote hop"),
             new("ProcessBulk", "MailboxService.ProcessMailboxPermissionsCsvAsync"),
             new("ExecuteOnPrem", "MailboxService.AddMailboxPermissionsOnPremAsync"),
-        ],
-        KnownGaps =
-        [
-            new("DownloadCsvReport", 749, SilentCsvExportUnsurveyed),
+            new("DownloadCsvReport",
+                [
+                    "GenerateCsvReport(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the NINTH and last copy of the silent CSV-export shape, and the twin of "
+                + "CalendarPermissions.DownloadCsvReport: the same method with a different "
+                + "filename, and the same fix. With this one the shape is closed for real - "
+                + "430e929 said so at seven and was wrong, because the brief's page list omitted "
+                + "this pair. Everything the twin's entry says applies here unchanged: "
+                + "GenerateCsvReport( opens and is operation-scale LOCAL work under rule 1 "
+                + "(Models/BulkOperationResult.cs walks every entry and sanitises per FIELD), "
+                + "JS.InvokeVoidAsync( closes with the Complete below it, Unknown with the count "
+                + "in the label because nothing between the two can Report, and THE SNAPSHOT IS "
+                + "FORCED TWICE OVER - this handler never raises isLoading so IsBusy is false "
+                + "for the whole export, and the banner's dismiss at MailboxPermissions.razor:212 "
+                + "is @onclick=\"() => bulkResult = null\" with no disabled attribute at all. The "
+                + "transfer MECHANISM is untouched: docs/DownloadMemoryRetention-Plan.md is a "
+                + "DRAFT"),
         ],
         Exempt =
         [
