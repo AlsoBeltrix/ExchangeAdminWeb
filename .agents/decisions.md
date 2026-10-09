@@ -5,6 +5,44 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-06 - Emergency Disable: the lockdown checkbox defaults UNCHECKED
+
+Owner ruling, verbatim: *"change the checkbox for lockdown to default unchecked."*
+
+**Supersedes the 2026-10-05 ruling** that made it an opt-OUT (*"add this lockdown step as an
+optional checkbox, default checked. until the stakeholder clarifies what they actually want,
+we need this working with an escape hatch."*). The escape-hatch half of that reasoning still
+stands; the safe-by-default half was reversed.
+
+Operative consequence: an emergency disable does NOT move the account to the lockdown OU
+unless the operator ticks the box on that run. The protection now depends on the operator
+remembering, which the audit row and the security notification both record either way.
+
+Implementation note, because the default has already moved once: it lives in a single
+`LockdownDefaultArmed` constant on `Components/Pages/EmergencyDisable.razor`, ANDed with
+"is a lockdown OU configured" at all three sites (field initialiser, post-auth read,
+fresh-operation reset). A guard pins all three and forbids a stray literal.
+
+**A reader of the superseded 2026-10-05 ruling must not reinstate default-checked from its
+reasoning alone.**
+
+### 2026-10-05 - Emergency Disable: the previous OU is stamped into `info`, not `description`
+
+Owner ruling: asked which AD attribute should carry the previous OU, the answer was
+*"notes."*
+
+The queue text permitted it - "append to ad object.s description **or other applicable
+attribute that can be seen in ADUC**" - and `info` is the attribute ADUC labels **Notes**
+(the multi-line box on the Telephones tab). It is also what
+`Set-AccountSecurityHold.ps1:193-201` already writes, so the read-append-write shape was
+adopted rather than invented.
+
+Practical difference: Notes is multi-line, so repeat stamps append on their own line, and it
+is almost never already populated - where `description` routinely carries a job title and
+shows as a column in the ADUC list. The owner took the tidier field over the louder one.
+
+Nothing in the app may ever parse the stamp; it is a breadcrumb for a human.
+
 ### 2026-10-02 - The status frame is live only. It retains no finished work.
 
 Status: Active. Owner ruling, 2026-10-02, verbatim:
