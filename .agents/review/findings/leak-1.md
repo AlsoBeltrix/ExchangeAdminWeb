@@ -2,9 +2,9 @@
 
 **Severity**: HIGH - the two page fixes are sound; the test written to stop the bug
 recurring does not
-**Status**: Open
+**Status**: Verified
 **Branch**: - (direct to main)
-**Commit**: -
+**Commit**: see Closeout
 
 ## What is NOT wrong
 
@@ -54,18 +54,86 @@ this way has been breakable in exactly these two directions.
 
 ## Approach
 
-Pending an owner decision, recorded in the handoff: patch the regex again, or move this one
-guard to a Roslyn syntax-tree check that can answer "does every path from the last await to
-this `+=` pass through a returning disposed check". The second is the only shape that
-actually closes (b).
+Roslyn, which is the second option and the only one that closes (b). The scanner is no longer
+a regex over blanked text; it is a walk of a real syntax tree.
+
+**Razor extraction.** Roslyn does not parse Razor, so `ExchangeAdminWeb.Tests/RazorSyntax.cs`
+extracts each `@code { ... }` body by position - the closing brace found by LEXING with
+`SyntaxFactory.ParseTokens`, so a brace inside a string, a comment or an interpolation hole is
+not a brace - and parses each body wrapped in a synthetic `class` declaration so a member list
+parses as one. Every tree position maps back to the raw file by one constant offset, so line
+numbers and spans still address the file on disk. Markup is outside every region and no tree
+covers it: assertions about MARKUP stay text-based on purpose, which is the same asymmetry
+`prog-4` is about.
+
+**The rule, restated.** On every control-flow path reaching a `+=` from the last preceding
+`await`, a returning disposed-check must DOMINATE it. Dominance is structural: a guard is
+credited only when it is an earlier statement in a statement list that encloses the
+subscription. That is what rejects both (b) shapes - a guard nested in an unrelated `if`, and
+a guard in a `try` whose `finally` subscribes, both sit in a statement list that is not on the
+subscription's ancestor chain. Where the await is in a CALLER, the same check is applied at
+the call site, recursively, which is (a).
+
+## Files changed
+
+- `ExchangeAdminWeb.Tests/RazorSyntax.cs` - new. Razor `@code` extraction and Roslyn parsing,
+  shared with the progress scanner.
+- `ExchangeAdminWeb.Tests/EventSubscriptionLifetimeTests.cs` - `EventSubscriptionScan`
+  rewritten on the syntax tree; four bypass fixtures added, plus two "this must still pass"
+  theories and a scanner anti-vacuity test.
+- `ExchangeAdminWeb.Tests/ExchangeAdminWeb.Tests.csproj` - `Microsoft.CodeAnalysis.CSharp`
+  named explicitly. It already resolved transitively through the app's
+  `Microsoft.PowerShell.SDK`, so no package entered the graph and **nothing shipped gained a
+  dependency**; the reference exists so a guard does not rest on another package's dependency
+  list staying as it is.
+
+## Guard proof
+
+Each bypass was run against the OLD compiled scanner and then against the new one.
+
+| Bypass | Before | After |
+|---|---|---|
+| (a) helper-mediated | 1 subscription, problem EMPTY - accepted | rejected: "is reached from OnInitializedAsync() ... no disposed-guard" |
+| (b1) guard nested in an unrelated `if` | 1 subscription, problem EMPTY - accepted | rejected: "no disposed-guard dominating it" |
+| (b2) guard in `try`, `+=` in `finally` | 1 subscription, problem EMPTY - accepted | rejected: "no disposed-guard dominating it" |
+| (c) `delegate (string jobId) { }` | **0 subscriptions** - invisible | seen as a subscription, target `BulkJobs.JobChanged`, rejected |
+
+Not-broken, both directions:
+
+- The five live subscription sites (AdminBulkJobs, ConferenceRooms, GlobalProgress,
+  InFlightWorkGuard, UsageTracker) still pass, including UsageTracker's, where the `+=`
+  precedes every await in the method.
+- The helper shape guarded AT THE CALL, and guarded INSIDE the helper, both pass. A rule that
+  demanded the guard in one particular place would report every page that factors its
+  subscription out.
+- A guard and a subscription in the same branch passes; so does a guard in the block that
+  encloses the branch. The rule is dominance, not "nothing nested".
+- Mutation: deleting `if (_disposed) return;` from the live `AdminBulkJobs.razor` makes the
+  rule fail, naming `AdminBulkJobs.razor:179 OnInitializedAsync`. Restored, green again.
+- `TheLiveComponentsStillPresentSubscriptionsToJudge` is new: every rule here passes on an
+  empty set, so a Razor-extraction bug that found no `@code` would make the suite green while
+  proving nothing. It asserts the live components still hand the scanner work.
+
+Full suite observed after the change: **3683 passed, 0 failed, 3 skipped** (baseline before
+this slice was 3674/0/3). Build, `dotnet format --verify-no-changes` and `git diff --check`
+all clean.
 
 ## Known gaps
 
-**Codex could not reproduce the full suite** - `dotnet test ExchangeAdminWeb.slnx` stalled
-silently for several minutes and it stopped it rather than claim a result. This is the
-SECOND consecutive review with that outcome, so it is a property of the environment, not a
-coincidence. Targeted run `EventSubscriptionLifetimeTests`: 9 passed. The coder-side
-3660-passed figure stands unconfirmed by a reviewer for the second time running.
+- **Syntactic, not semantic.** There is no `Compilation` behind the trees, so a call is matched
+  to a method by NAME. An overload, or a same-named method on another type, is treated as the
+  page's own - over-inclusive, which is the safe direction for a guard.
+- **`goto` is refused, not analysed.** A method containing any `goto` or label gets no guard
+  credited at all. No component has one.
+- **A call-graph cycle stops the walk** at the repeated method rather than reasoning about it.
+  Whichever call site in the cycle really follows an unguarded await is still reached on its
+  own arm, so nothing is lost; it is recorded because it is an assumption, not a proof.
+- **Unremovability is still not an error.** An anonymous `delegate` or a lambda handler cannot
+  be unsubscribed, which the finding notes is worse than being unguarded. This slice makes both
+  forms VISIBLE and subject to the dominance rule - it does not add a new rule banning them.
+  That would be a scope change; no component uses either form today.
+- The reviewer could not reproduce the full suite on either of the last two reviews. This run
+  was observed end to end on the coder side: 3683 passed in 4m48s.
 
 ## Reviewer comments
 
