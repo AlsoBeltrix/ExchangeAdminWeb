@@ -31,10 +31,10 @@ can never act on more than it says, and it goes through the same ticket-and-prev
 confirmation every other bulk action here uses - which the old sweep predated and never had.
 If you would rather it stayed selection-only, say so and this plan is void.
 
-**One thing worth knowing.** It will act on what the list is currently filtered to, matching
-the behaviour of the select-all tick box directly beside it. Filter to one person and it
-removes that person if they are completed, not the whole batch. Saying so because "remove
-completed" sounds absolute and it is not.
+**How the selection works - owner ruling 2026-10-09.** The control does NOT require anything
+to be ticked. With nothing ticked it acts on every completed mailbox. With some ticked it
+acts on only those, and only the completed ones among them. So ticking boxes NARROWS it
+rather than enabling it.
 
 **What approving authorises:** the single slice below, on the Migration page only. It does
 NOT authorise changing the existing "Remove from batch" item in the Actions menu, which
@@ -177,6 +177,10 @@ filter.
 
 ## Owner gate
 
-Go or no-go. One question alongside it, because it changes the design rather than the
-wording: **filtered set or whole batch?** This plan says filtered, to match the select-all
-beside it. Say so if you want it absolute.
+**The selection question is ANSWERED** (owner, 2026-10-09): no selection acts on all
+completed, a selection narrows to the ticked ones. Go or no-go on building it.
+
+One residual the ruling does not settle, called out rather than assumed: with nothing ticked
+and a FILTER applied, does it act on the filtered set or the whole batch? This plan takes
+the filtered set, matching the select-all tick box beside it - the label carries the count
+either way, so the control can never act on more than it says.
