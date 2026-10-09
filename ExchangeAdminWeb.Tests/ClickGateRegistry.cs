@@ -1095,7 +1095,7 @@ public static class ClickGateRegistry
     private static PageGateEntry MailboxPermissions => new()
     {
         Page = "MailboxPermissions.razor",
-        ExpectedLineCount = 800,
+        ExpectedLineCount = 808,
 
         // One flag, one page-wide predicate, and that was checked rather than assumed: Revision 1
         // found a single predicate provably wrong on two OTHER pages. This page has one view. The
@@ -1157,9 +1157,13 @@ public static class ClickGateRegistry
                 + "reason Migration's dismiss at 442, DhcpAuthorization's at 40 and NamedLocations' "
                 + "at 45 are exempt",
                 ConditionThatKeepsItTrue:
-                "no handler may READ result back. Today none does: SubmitSingle and ExecuteOnPrem "
-                + "both hold their outcome in a local opResult and only ever assign to result, so "
-                + "this control cannot null the field out from under a dereference. That is why this "
+                "no handler may READ result back. Today none does: SubmitSingle holds its outcome in "
+                + "a local opResult, ExecuteOnPrem in a local outcome, and each only ever ASSIGNS to "
+                + "result - including the progress Complete in ExecuteOnPrem's finally, which reads "
+                + "the local. That last one is why this sentence is worded by handler rather than by "
+                + "local name: the finally read the FIELD until review finding prog-7, and the "
+                + "condition claimed otherwise for as long as it did. So this control cannot null "
+                + "the field out from under a dereference. That is why this "
                 + "exemption carries no PrerequisiteBeforeExemptionHolds and no PostAwaitLiveReads "
                 + "entry names result - there is no live read to close. The moment a handler reads "
                 + "result after an await, this exemption becomes the DhcpAuthorization 40 defect: a "
@@ -1492,7 +1496,7 @@ public static class ClickGateRegistry
     private static PageGateEntry CalendarPermissions => new()
     {
         Page = "CalendarPermissions.razor",
-        ExpectedLineCount = 754,
+        ExpectedLineCount = 762,
 
         // One flag, one page-wide predicate, on the twin's reasoning re-checked against this file
         // rather than copied: the tab strip, the single-mailbox form, the bulk form, the on-prem
@@ -1547,9 +1551,13 @@ public static class ClickGateRegistry
                 + "reason Migration's dismiss at 442, DhcpAuthorization's at 40, NamedLocations' at "
                 + "45 and MailboxPermissions' at 179 are exempt",
                 ConditionThatKeepsItTrue:
-                "no handler may READ result back. Today none does: SubmitSingle and ExecuteOnPrem "
-                + "both hold their outcome in a local opResult and only ever assign to result, so "
-                + "this control cannot null the field out from under a dereference. That is why this "
+                "no handler may READ result back. Today none does: SubmitSingle holds its outcome in "
+                + "a local opResult, ExecuteOnPrem in a local outcome, and each only ever ASSIGNS to "
+                + "result - including the progress Complete in ExecuteOnPrem's finally, which reads "
+                + "the local. That last one is why this sentence is worded by handler rather than by "
+                + "local name: the finally read the FIELD until review finding prog-7, and the "
+                + "condition claimed otherwise for as long as it did. So this control cannot null "
+                + "the field out from under a dereference. That is why this "
                 + "exemption carries no PrerequisiteBeforeExemptionHolds and no PostAwaitLiveReads "
                 + "entry names result - there is no live read to close. The moment a handler reads "
                 + "result after an await, this exemption becomes the DhcpAuthorization 40 defect: a "

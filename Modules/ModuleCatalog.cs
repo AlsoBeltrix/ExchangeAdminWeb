@@ -157,7 +157,9 @@ public sealed class ModuleCatalog
             // protected-target check instead of below them (docs/ProgressCoverage-Plan.md S3).
             // 1.2.3: the bulk result CSV export reports the file it builds and pushes, and
             // snapshots it, instead of running with the frame idle (same plan, S5).
-            Version = "1.2.3",
+            // 1.2.4: ExecuteOnPrem completes its progress activity from a local rather than from
+            // the dismissible result field (review finding prog-7).
+            Version = "1.2.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -188,7 +190,9 @@ public sealed class ModuleCatalog
             // protected-target check instead of below them (docs/ProgressCoverage-Plan.md S3).
             // 1.2.3: the bulk result CSV export reports the file it builds and pushes, and
             // snapshots it, instead of running with the frame idle (same plan, S5).
-            Version = "1.2.3",
+            // 1.2.4: ExecuteOnPrem completes its progress activity from a local rather than from
+            // the dismissible result field (review finding prog-7).
+            Version = "1.2.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

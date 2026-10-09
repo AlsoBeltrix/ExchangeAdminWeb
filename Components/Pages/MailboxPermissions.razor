@@ -667,13 +667,21 @@
         var action = $"OnPrem_{(isAdd ? "Add" : "Remove")}{permType}";
         await Task.Yield();
 
+        // The activity is completed from this local, never from the result field (review finding
+        // prog-7). The dismiss control at :179 stays clickable while the page is busy and nulls
+        // result; the exemption registered for it in ClickGateRegistry holds only while no handler
+        // reads the field back, and the finally below did. A local cannot be nulled from the UI, so
+        // the progress panel reports THIS operation's outcome by construction rather than because
+        // no await happens to sit between the last write and the read.
+        PermissionResult? outcome = null;
+
         try
         {
             var authCheck = await AuthorizationService.AuthorizeAsync(
                 (await AuthStateProvider.GetAuthenticationStateAsync()).User, "MailboxPermissionsOnPrem");
             if (!authCheck.Succeeded)
             {
-                result = PermissionResult.Fail("Authorization denied for on-prem operations.");
+                result = outcome = PermissionResult.Fail("Authorization denied for on-prem operations.");
                 return;
             }
 
@@ -687,7 +695,7 @@
                 target, onPremAuthState.User, ServicerModuleId);
             if (onPremValidation.Error is not null)
             {
-                result = PermissionResult.Fail(onPremValidation.Error);
+                result = outcome = PermissionResult.Fail(onPremValidation.Error);
                 Audit.LogMailboxPermission(
                     currentUser, clientIpAddress, action, target, user, permType,
                     false, ticket, errorDetail: onPremValidation.Error);
@@ -729,19 +737,19 @@
                 await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isGrant);
             }
 
-            result = opResult;
+            result = outcome = opResult;
         }
         catch (Exception ex)
         {
             Audit.LogMailboxPermission(
                 currentUser, clientIpAddress, action, target, user, permType,
                 false, ticket, errorDetail: ex.Message);
-            result = PermissionResult.Fail(ex.Message);
+            result = outcome = PermissionResult.Fail(ex.Message);
         }
         finally
         {
             isLoading = false;
-            onPremActivity.Complete(result?.Success ?? false, result?.Message);
+            onPremActivity.Complete(outcome?.Success ?? false, outcome?.Message);
             onPremTarget = null;
         }
     }
