@@ -28,15 +28,15 @@ of `390bba6` and **none of them re-run by this sweep**.
 enforces. **None of it is proven to RENDER.** There is no bUnit harness; every guard in this
 stream is a source or syntax-tree check. The three Emergency Disable defects earlier in this
 work were all presentation-layer and invisible to a green suite. **The manual acceptance pass is
-the only thing that converts this from consistent to correct, and it has not been run.** **This
-work stream has also had no review of its last three batches.**
+the only thing that converts this from consistent to correct, and it has not been run.** **Every batch in this stream was reviewed by codex, including the last three** - eleven
+findings raised, all eleven closed and each closure reviewed in turn.
 
 | Waiting on | What happens without it |
 |---|---|
-| **Deploy** | Both instances are still at FileVersion `2.27.0.0`, written 2026-10-02, so the circuit-lifetime fix, the config-deletion fix and queue item 18 are on neither of them. The circuit leak keeps pinning sessions in prod, and the recycled pool is the clean baseline for measuring whether the fix worked - that baseline ages |
-| **Roslyn decision** (`prog-4`, `leak-1`) | Two guards keep two known blind spots. Neither is reachable by any current page |
+| **PROD deploy** | **Dev runs `e9f9da8` as of 2026-10-09; PROD DOES NOT.** Prod is still on the pre-fix build, so the circuit leak is live there - it was consuming ~14 GB/day and starved the host on 2026-10-07. Baseline for measuring the fix is in `.agents/machines.md`; take prod.s private bytes at deploy and again 24h later |
+| ~~Roslyn decision~~ | **CLOSED.** Both guards were rebuilt on Roslyn syntax trees (`12e1d25`, `e039cd9`); `prog-10` then found two holes in the rewrite and `prog-11` a third, all closed. Known limits are recorded in those finding records, not here |
 | **Remove-completed: filtered set or whole batch?** | `docs/MigrationRemoveCompleted-Plan.md` stays DRAFT |
-| **Manual acceptance** | Nothing here proves a progress bar renders. Every fix in `docs/ProgressCoverage-Plan.md` is source-verified only |
+| **Manual acceptance** | Nothing here proves a progress bar renders. Every fix is source-verified only. Owner deprioritised it 2026-10-09 (Emergency Disable deferred to "next time there is an emergency"; bar-watching to "later") - a deliberate deferral, not an oversight |
 
 ### What the progress-coverage stream settled - the narration is archived
 
