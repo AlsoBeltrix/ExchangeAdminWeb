@@ -42,7 +42,7 @@ false-GREEN half is surveyed and NOT closed** - a positive `Assert.Contains` sat
 comment, roughly sixty more sites; it is a work stream, not a sweep. Details in
 `.agents/review/findings/prog-7.md` and `prog-8.md`.
 
-**25 commits ahead of both remotes and NOTHING IS DEPLOYED.** Corrected from 32, which was
+**29 commits ahead of both remotes and NOTHING IS DEPLOYED.** Corrected from 32, which was
 wrong: both `github` and `origin` answer `ee1c0f9` to `git ls-remote` (checked, not inferred
 from a possibly stale tracking ref), and `git rev-list --count master ^github/master` is 25
 with this commit. The production memory fix, the
