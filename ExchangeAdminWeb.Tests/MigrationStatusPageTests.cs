@@ -2377,6 +2377,31 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void ASkippedRowNamesItsStatusRatherThanAPlaceholder()
+    {
+        // Review finding rc-6, and the defect predates this work stream - it is at the base of
+        // this range in all four places. Each executor wrote
+        //     $"Skipped ("+"{x.Status}"+")"
+        // which is an interpolated segment holding no hole, concatenated with a PLAIN literal
+        // whose braces are only characters. The row therefore read "Skipped ({skip.Status})"
+        // while the banner told the operator the reason was on the row.
+        //
+        // It survived because the two PREVIEW sites, StagedOutcomeFor, were always correct: a
+        // reader checking "does the status travel with the word" finds right code two methods
+        // away from the wrong code. Both halves are asserted here for that reason.
+        foreach (var method in new[] { "ExecuteBulkMailboxAction", "ExecuteBulkBatchAction" })
+        {
+            var body = StripLineComments(GetMethodBody(method));
+
+            Assert.DoesNotContain("$\"Skipped (\"+", body, StringComparison.Ordinal);
+            Assert.Equal(2, Regex.Matches(body, Regex.Escape("$\"Skipped ({")).Count);
+        }
+
+        Assert.DoesNotContain("$\"Skipped (\"+", StripLineComments(ReadPage()),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RemoveCompleted_FreezesTheMailboxFilterWhileAnActionIsStaged()
     {
         // Review finding rc-3. The staged preview annotates rows BY ADDRESS, and this control is

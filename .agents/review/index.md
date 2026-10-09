@@ -28,6 +28,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [rc-2](findings/rc-2.md) | MEDIUM - a mailbox ticked in another batch silently narrowed Remove completed | Verified | - | codex / gpt-5.5-dzs / xhigh |
 | [v] | [rc-3](findings/rc-3.md) | MEDIUM - changing the mailbox filter mid-confirmation hid the rows Remove completed would remove | Verified | - | codex / gpt-5.5-dzs / xhigh |
 | [v] | [rc-4](findings/rc-4.md) | LOW - the tooltip described a narrowing the control was not doing | Verified | - | codex / gpt-5.5-dzs / xhigh |
+| [v] | [rc-6](findings/rc-6.md) | LOW - pre-existing; a skipped row printed the placeholder instead of the status | Verified | - | codex / gpt-5.5-dzs / xhigh |
 
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.
