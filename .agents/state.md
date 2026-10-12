@@ -8,6 +8,55 @@ the latest sweep is Archived 2026-10-12).
 
 ## Now
 
+### Session 2026-10-12 landed two code slices; Defender S6 is next and starts FRESH
+
+Owner widened every open scope on 2026-10-12 (`.agents/decisions.md`) and said *"I want all of
+everything done."* Scope is no longer a gate. **Do not put go-ahead questions about queued work
+to him** - that ruling exists because re-raising approved scope is what this session kept doing.
+
+**Landed, verified, not pushed:**
+
+1. `a01767c` - **Comms-10k rejected-address CSV.** Queue 26 point 3. Every address that does not
+   resolve is reported with its reason and the whole set downloads as a CSV. The lookup is NOT
+   widened - exact match only, per the ruling. Module `1.3.3` -> `1.4.0`.
+2. `43c0735` - **Defender device table paged.** Queue 8 defect 1. 50 rows with Previous/Next; the
+   page rendered every device in a 100,000-ceiling tenant and killed the circuit. Export still
+   carries the complete set and a test pins that it does. Module `1.1.2` -> `1.2.0`.
+
+Suite at `43c0735`: **3,736 passed / 0 failed / 3 skipped.** Build 0 errors, format clean,
+`git diff --check` clean, ASCII lint passed. Every new guard was mutation-proven.
+
+**Next: Defender S6**, which also closes queue 8 defect 2 (the Discovery Sources column shows
+which Microsoft product saw a device, not which local machine discovered it). The plan owns the
+design; four things a fresh session needs that are NOT in it:
+
+1. **The version bump in the plan is stale.** It says `1.1.0` -> `1.2.0`. The paging fix already
+   took `1.2.0`, so S6 is `1.2.0` -> `1.3.0`.
+2. **The current query is unbatched and unfiltered.** `Services/DefenderEndpointDeviceService.cs:82`
+   runs ONE `HuntingQuery` over the whole `DeviceInfo` table. S6 replaces it with one call per
+   batch of at most 1,000 device ids. That is a structural change to that seam, not an edit.
+3. **The "no interpolation into KQL, ever" rule at `:65-78` is about to be bent and must not be
+   broken quietly.** Its remarks say the query is a constant because `ThreatHunting.Read.All`
+   reaches the whole hunting schema and only the query text keeps this module inside `DeviceInfo`.
+   S6 interpolates a batch of device ids. Those ids come from the API rather than the operator,
+   which is a real distinction - but the comment, and the test that asserts the query names no
+   other table, both have to be revisited deliberately and the reasoning written down.
+4. **The plan's own named risk is Known Failure Class 2**, per-batch partial success. Thirteen
+   calls, twelve ways to be partly enriched. Its guard proof is specific: make batch 2 of 3 fail
+   and confirm the surviving-batches test fails when per-batch outcome tracking is removed.
+
+Also unstarted in the same module: S7 (AD site column), S8 (docs, version, and the
+`DeviceNetworkEvents` fallback only if R1(i) says so). R1 (a)-(e) and (h)-(n) are portal
+reconnaissance; the plan says they branch the slices rather than block them.
+
+**Then, in the owner's stated order:** click-gating tiers 2-4 (19 pages, approved
+2026-10-12), the verbosity sweep at full scope (all 39 files, `docs/VerbositySweep-Plan.md`),
+and a REWRITE of the Service Health public-status plan - the old one is rejected and not
+amendable, and the real ask is consolidating Microsoft's status posts across all of its official
+channels with the tenant feed already in the app.
+
+
+
 ### Read this first - what is waiting on the owner, 2026-10-09
 
 **DONE, do not re-raise:** the on-prem Delinea secret was re-entered by the owner on an
