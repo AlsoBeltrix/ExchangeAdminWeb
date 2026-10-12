@@ -5,6 +5,32 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-12 - Manual acceptance is production use; stop queueing it as owed work
+
+Owner ruling, verbatim: *"these will come from production use, do not keep asking for them.
+I'll report issues when they arise."* Said of the outstanding manual acceptance passes for
+Emergency Disable lockdown OU, Migration "Remove completed", the global progress bar
+(queue 24) and True Last Logon's live comparison.
+
+**Extends and homes the 2026-10-09 ruling** that was recorded only in `.agents/machines.md`
+("acceptance testing happens in production"), which is a host-facts file and the wrong home
+for a decision. That misfiling is why `.agents/state.md` kept re-raising the same four passes
+as blockers.
+
+Operative consequences:
+
+- A shipped stream whose only remaining item is a manual acceptance pass is **DONE**, not
+  "shipped, acceptance outstanding". Record it that way.
+- No session re-raises a manual acceptance pass to the owner, puts one in `## Blockers`, or
+  reports a stream as incomplete because one has not run. Issues arrive from production use,
+  reported by the owner.
+- **What does NOT change:** the underlying limit stays true and stays written down where it
+  informs a design choice - there is no bUnit harness, so no source-level guard in this repo
+  proves anything renders. That is a fact about the test suite, not a task.
+- Plans keep their acceptance checklists. They are reference for whoever investigates a
+  reported issue, not a queue of owed work.
+
+
 ### 2026-10-06 - Emergency Disable: the lockdown checkbox defaults UNCHECKED
 
 Owner ruling, verbatim: *"change the checkbox for lockdown to default unchecked."*

@@ -202,6 +202,54 @@ DLL, with CI unaffected. Windows-targeting builds require `-p:EnableWindowsTarge
 Pester required `pwsh` and `DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec` on that machine.
 No current macOS host or tool state was checked in this sweep.
 
+
+## 2026-10-12 - the 24-hour memory reading was attempted and is NOT takeable from an unelevated shell
+
+Owner asked for it now rather than at +24h (that window was a weekend). Taken on
+`ASHBIAMWEB1` at 2026-10-12 ~08:30 host local.
+
+**What blocked the definitive reading.** Hosting is `hostingModel="inprocess"`, so the app
+runs inside `w3wp.exe` and there is no `ExchangeAdminWeb.exe` process to read - the
+2026-10-09 entry's "`ExchangeAdminWeb`, PID 14212" names the APP POOL, not a process image.
+Mapping a worker PID to its pool needs elevation, and all three routes refused without it:
+`appcmd list wp` returns "WAS service is not available", `Import-Module WebAdministration`
+returns "Process should have elevated status", and the `W3SVC_W3WP` and `Process` performance
+counter sets both enumerate ZERO instances for this user while `Get-Process` lists four live
+`w3wp.exe`. Treat that empty counter enumeration as a rights artefact, not as evidence that no
+worker is running.
+
+**What was readable, and it is not nothing.** All four workers, with uptime and private bytes:
+
+| PID | Started | Uptime | Private | Working set |
+|---|---|---|---|---|
+| 7672 | 2026-10-06 13:14 | 139.2 h | 0.01 GB | 0.02 GB |
+| 16204 | 2026-10-11 18:07 | 14.3 h | 0.03 GB | 0.07 GB |
+| 5152 | 2026-10-12 04:48 | 3.7 h | 0.30 GB | 0.46 GB |
+| 10812 | 2026-10-12 08:27 | new | 0.01 GB | 0.01 GB |
+
+Every worker on the host totals under 0.35 GB private. Pre-fix prod was **15.0 GB private /
+13.8 GB working set at 1.0 days**. Even assigning prod the largest of these, it is three
+orders of magnitude below the pre-fix trajectory.
+
+**Two findings that outlive the reading:**
+
+1. **The "clock since the deploy" framing in the 2026-10-09 entry is wrong and should not be
+   used again.** No worker has been up since the 2026-10-09 14:38 deploy; the longest-lived
+   candidate is 14.3 hours. IIS recycles the pool on its own schedule, so a multi-day
+   accumulation window was never going to exist. What the measurement needs is simply **a
+   worker with ~24 hours of uptime under operator traffic**, which recurs on its own and does
+   not need a deploy to start it.
+2. **The reading is cheap to take correctly and needs one elevated shell.** `appcmd list wp`
+   gives the pool-to-PID map; the rest is `Get-Process`. The existing
+   `capture-exchangeadminweb-memory.ps1` under `%TEMP%` resolves the pool by performance
+   counter, which is the route that fails unelevated - its step 1 is still the right next
+   capture IF the growth is still there.
+
+**Reading of the evidence, stated as an inference and not as proof:** nothing on this host
+resembles the pre-fix leak. It is not proof, because the pool identity is unconfirmed and no
+worker has 24 hours of traffic behind it. It is enough that the leak should not be treated as
+live unless a later reading contradicts it.
+
 ## 2026-10-09 - prod deploy, and the memory clock restarts here
 
 *The dev-only baseline taken earlier that day is superseded by this section and was pruned by
@@ -228,7 +276,7 @@ was operator traffic. Take prod's private bytes after ~24 hours of normal use:
 
 A recycle or redeploy resets this clock. Take the reading before the next one.
 
-**Owner decision, 2026-10-09: acceptance testing happens in production.** The dev manual
-pass in `docs/ProgressCoverage-Plan.md` and `docs/MigrationRemoveCompleted-Plan.md` was
-deliberately skipped, not forgotten. Recorded so a later session reads a decision rather
-than a gap.
+**Owner decision, 2026-10-09: acceptance testing happens in production.** Extended and rehomed
+2026-10-12 - the decision now lives in `.agents/decisions.md`, which is its correct home; this
+file keeps only the pointer. The dev manual pass in `docs/ProgressCoverage-Plan.md` and
+`docs/MigrationRemoveCompleted-Plan.md` was deliberately skipped, not forgotten.

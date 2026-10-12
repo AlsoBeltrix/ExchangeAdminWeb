@@ -1,6 +1,6 @@
 # Emergency Disable - Lockdown OU Move - Plan
 
-Status: **IMPLEMENTED 2026-10-05, manual acceptance OUTSTANDING.** Queue item 18. Owner
+Status: **IMPLEMENTED 2026-10-05.** Manual acceptance is production use, not owed work (`.agents/decisions.md` 2026-10-12); the checklist below is reference for investigating a reported issue. Queue item 18. Owner
 approved 2026-10-05 ("go"); S1 and S2 both landed, reviewed per slice, three findings
 (`edl-1`, `edl-2`, `edl-3`) found and fixed. The six manual acceptance steps below are the
 remaining work and nothing in the repo can close them.

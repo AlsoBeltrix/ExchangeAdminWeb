@@ -25,18 +25,17 @@ drift sweep; `## Verification` owns the last reported figures and their commit.
 `Components/Pages` now reports to the status bar, or carries a written exemption a test
 enforces. **None of it is proven to RENDER.** There is no bUnit harness; every guard in this
 stream is a source or syntax-tree check. The three Emergency Disable defects earlier in this
-work were all presentation-layer and invisible to a green suite. **The manual acceptance pass is
-the only thing that converts this from consistent to correct, and it has not been run.** **Every batch in this stream was reviewed by codex, including the last three** - eleven
+work were all presentation-layer and invisible to a green suite. **Manual acceptance is production use and is NOT owed work** (`.agents/decisions.md` 2026-10-12); the limit is written here because it informs design, not because a pass is queued. **Every batch in this stream was reviewed by codex, including the last three** - eleven
 findings raised, all eleven closed and each closure reviewed in turn.
 
 | Waiting on | What happens without it |
 |---|---|
-| ~~PROD deploy~~ | **DONE 2026-10-09.** Both instances were redeployed that afternoon and prod now carries the circuit-lifetime fix. **What replaced it is the 24-hour reading**, which is owner work and has not been taken: `.agents/machines.md` ("prod deploy, and the memory clock restarts here") owns the pre-fix baseline, the measurement and what each outcome means. A recycle or redeploy resets the clock |
+| ~~PROD deploy~~ | **DONE 2026-10-09.** Both instances were redeployed that afternoon and prod now carries the circuit-lifetime fix. **The 24-hour reading was attempted 2026-10-12 and is NOT takeable from an unelevated shell** - `.agents/machines.md` ("the 24-hour memory reading was attempted") owns what was readable, why the pool-to-PID map needs elevation, and the finding that no worker survives long enough for a since-the-deploy clock to exist. Nothing on the host resembles the pre-fix leak; that is an inference, not proof |
 | ~~Roslyn decision~~ | **CLOSED.** Both guards were rebuilt on Roslyn syntax trees (`12e1d25`, `e039cd9`); `prog-10` then found two holes in the rewrite and `prog-11` a third, all closed. Known limits are recorded in those finding records, not here |
-| ~~Remove-completed: filtered set or whole batch?~~ | **CLOSED.** The plan is APPROVED and revision 2 takes the FILTERED set, with its reasoning written down: the filter narrows by the operator's own act exactly as a tick does, and the count in the label carries whichever applies. Built and landed; `docs/MigrationRemoveCompleted-Plan.md` owns the design and the manual acceptance list, which has NOT been run |
-| **Manual acceptance** | Nothing here proves a progress bar renders. Every fix is source-verified only. Owner deprioritised it 2026-10-09 (Emergency Disable deferred to "next time there is an emergency"; bar-watching to "later") - a deliberate deferral, not an oversight |
+| ~~Remove-completed: filtered set or whole batch?~~ | **CLOSED.** The plan is APPROVED and revision 2 takes the FILTERED set, with its reasoning written down: the filter narrows by the operator's own act exactly as a tick does, and the count in the label carries whichever applies. Built and landed; `docs/MigrationRemoveCompleted-Plan.md` owns the design and the acceptance list, which is reference for investigating a reported issue, not owed work |
+| ~~Manual acceptance~~ | **CLOSED as a waiting item, owner 2026-10-12** (`.agents/decisions.md`): *"these will come from production use, do not keep asking for them. I'll report issues when they arise."* Nothing here proves a progress bar renders and that stays true; it is a property of the suite, not a task. Do not re-raise |
 
-### Migration "Remove completed" - SHIPPED and REVIEWED CLEAN; only manual acceptance is left
+### Migration "Remove completed" - DONE, shipped and reviewed clean
 
 `docs/MigrationRemoveCompleted-Plan.md` is APPROVED and IMPLEMENTED, Migration `1.23.0`, base
 app unmoved. Eight commits from `116d671` to `7042b91`: the plan fix, the slice, and six
@@ -121,21 +120,22 @@ landed (`98b29d1`, `c6c73d2`, `9741f7c`, plus the S3 record commit). It is step 
 
 **Two things are owed and neither is ours.** Per the owner's standing instruction codex reviews
 each code change, and this work stream has had none. **Nothing here proves the leak is gone** -
-a source guard cannot. **Prod took the fix on 2026-10-09**, so the acceptance check is now
-takeable: the production worker's private bytes 24 hours after that deploy, against the pre-fix
-baseline. `.agents/machines.md` owns the baseline figures, the deploy receipt and what each
-outcome means; continued growth says this was not the dominant cause, which is information and
-points at step 2.
+a source guard cannot. **Prod took the fix on 2026-10-09 and the reading was attempted 2026-10-12**: not takeable
+from an unelevated shell, and no worker on the host survives long enough for a since-the-deploy
+clock to exist. What it needs is a worker with ~24 hours of uptime under traffic plus one
+elevated shell for the pool-to-PID map. `.agents/machines.md` owns the attempt, the figures and
+what each outcome means. Nothing on the host resembles the pre-fix leak, which is an inference
+and not proof; continued growth would say this was not the dominant cause and point at step 2.
 
 The recurrence guard is `ExchangeAdminWeb.Tests/EventSubscriptionLifetimeTests.cs`, written
 against the shape rather than against the two pages - it was probed with a brand-new eighth page
 named nowhere in the suite and fired on it, and it reaches `Components/Shared` as well as
 `Components/Pages`.
 
-### Queue item 18, Emergency Disable lockdown OU - shipped, acceptance outstanding
+### Queue item 18, Emergency Disable lockdown OU - DONE
 
-`docs/EmergencyDisableLockdownOU-Plan.md` reads `IMPLEMENTED 2026-10-05, manual acceptance
-OUTSTANDING` and owns the design, the slice record and the six-step acceptance list.
+`docs/EmergencyDisableLockdownOU-Plan.md` reads `IMPLEMENTED 2026-10-05` and owns the design, the slice record and the six-step acceptance
+list, which is reference for investigating a reported issue rather than owed work.
 `Modules/ModuleCatalog.cs` owns the module version. Codex reviewed both slices and found three
 real defects (`edl-1`, `edl-2`, `edl-3`), all fixed; `.agents/review/index.md` owns their status.
 
@@ -371,13 +371,13 @@ and 24 carry their 2026-10-09 reading and the rest their 2026-10-01 sweep readin
 | 15 | Risky Users complete results | **DONE.** Browser check outstanding, owner's. |
 | 16 | Sidebar scrollbar | **DONE.** `ExchangeAdminWeb.Tests/SidebarScrollCssTests.cs`. Browser check outstanding, owner's. |
 | 17 | True Last Logon module | **BUILT, and its first live run found a defect that is now fixed. S1-S3 landed, with the UPN fix in `fcc94a4` (`Modules/ModuleCatalog.cs` owns the version) after `Get-ADUser -Identity` proved unable to resolve a UPN - every DC answered "cannot find". NOT done: the re-run and the mandatory live comparison are outstanding owner work.** Detail block below. |
-| 18 | Security hold | **BUILT AND SHIPPED; manual acceptance outstanding.** The owner's rulings of 2026-10-05 dropped the CSV, dropped release entirely and made the lockdown-OU move one optional step inside Emergency Disable. `docs/EmergencyDisableLockdownOU-Plan.md` reads `IMPLEMENTED 2026-10-05, manual acceptance OUTSTANDING` and owns the design and the acceptance list; `.agents/decisions.md` owns the two owner rulings (2026-10-05 `info` stamp, 2026-10-06 default-unchecked). |
+| 18 | Security hold | **DONE.** Built, shipped and reviewed; manual acceptance is production use, not owed work (`.agents/decisions.md` 2026-10-12). The owner's rulings of 2026-10-05 dropped the CSV, dropped release entirely and made the lockdown-OU move one optional step inside Emergency Disable. `docs/EmergencyDisableLockdownOU-Plan.md` owns the design and the acceptance list; `.agents/decisions.md` owns the two owner rulings (2026-10-05 `info` stamp, 2026-10-06 default-unchecked). |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
 | 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN FULLY IMPLEMENTED 2026-09-30, all four slices. NOT ACCEPTED - it fails the stakeholder's test (owner, 2026-10-01) and the plan's Acceptance section is outstanding in full.** `Modules/ModuleCatalog.cs` owns the module version; the plan sets it once on S1. The stakeholder's three points, and the three things to know before touching any of it, are in `## Previously` above. |
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
 | 23 | Migration batch tick boxes drop ticks when clicked in rapid succession | **DONE. Fixed 2026-09-30 (`af4fb4c`), owner-verified on dev 2026-10-01.** Was an owner-declared P1 prod blocker. A handler guard on a DOM-synced control: the browser applied the tick, `if (IsBusy) return;` discarded it, and Blazor sent no correction because its last-rendered value still matched the model. Guard removed from `ToggleBatchSelected` and `ToggleSelectAllBatches`; D2(a) rules out the disabled-attribute repair. Migration `1.22.4` -> `1.22.5`. Acceptance is the owner's rapid-click case. |
-| 24 | Global progress-meter system; a click landing is not obvious in most modules | **FUNCTIONALLY COMPLETE.** S1-S4 landed, all 32 pages adopted, every page spinner gone, Migration included, and `docs/ProgressCoverage-Plan.md` has since closed the 52 operations that were adopted but silent. **Remaining: the owner's acceptance pass, the four `Components/Shared` typeahead spinners he has not ruled on, and cancellation tokens** - all three are in `## Previously` above. `docs/GlobalProgressSystem-Plan.md` revision 2. Owner-declared P1. Not a harmonisation of the existing spinners - one system that modules report into and that owns all display, built on the rule that work which writes many items or runs long moves to the background runner so its result lands. S1 and S2 touch no pages; S3 moves Comms-10k; S4+ adopt one module per slice. |
+| 24 | Global progress-meter system; a click landing is not obvious in most modules | **FUNCTIONALLY COMPLETE.** S1-S4 landed, all 32 pages adopted, every page spinner gone, Migration included, and `docs/ProgressCoverage-Plan.md` has since closed the 52 operations that were adopted but silent. **Remaining: the four `Components/Shared` typeahead spinners he has not ruled on, and cancellation tokens** - both are in `## Previously` above. The acceptance pass is production use, not owed work (`.agents/decisions.md` 2026-10-12). `docs/GlobalProgressSystem-Plan.md` revision 2. Owner-declared P1. Not a harmonisation of the existing spinners - one system that modules report into and that owns all display, built on the rule that work which writes many items or runs long moves to the background runner so its result lands. S1 and S2 touch no pages; S3 moves Comms-10k; S4+ adopt one module per slice. |
 | 25 | Verbosity sweep across the whole app; no editorializing anywhere | **NOT STARTED.** Owner: *"Too much chat context leaked into the app, too many words for a human to read instantly."* His example is True Last Logon's no-logon banner, but the item is an app-wide sweep, not that one module. Counts and coverage facts are not editorializing; instruction to the reader is. No test pins any of this copy. |
 
 ### Queue item 17 - True Last Logon, built and awaiting a live check
