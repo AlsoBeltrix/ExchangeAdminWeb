@@ -39,13 +39,56 @@ public static class Comms10kAddressResolver
     /// <summary>One directory row, reduced to the fields this module matches on.</summary>
     public sealed record Candidate(string? DistinguishedName, string? UserPrincipalName, string? Mail);
 
-    /// <summary>The assignment of every input address to resolved or skipped.</summary>
+    /// <summary>One rejected address, as the operator wrote it, and why it was rejected.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The address is kept EXACTLY as supplied</b> - not trimmed, not lowercased, not
+    /// normalised. The operator has to find this row in the file they uploaded, and a
+    /// "corrected" address they never typed is unfindable. A trailing space that broke the
+    /// match is itself the finding.
+    /// </para>
+    /// <para>
+    /// <b>Reason is a short constant, never a sentence.</b> It is written to a CSV column an
+    /// operator sorts and filters on, so it has to be stable text rather than prose; see the
+    /// <c>Reasons</c> constants.
+    /// </para>
+    /// </remarks>
+    public sealed record Rejection(string Address, string Reason);
+
+    /// <summary>
+    /// The rejection reasons, as written to the errors CSV. Owner ruling 2026-10-12: every
+    /// non-matching address is reported with the reason it was rejected.
+    /// </summary>
+    /// <remarks>
+    /// Stable, sortable, no editorializing. <see cref="Ambiguous"/> is a prefix - the match
+    /// count is appended, because which it is changes what the operator does about it.
+    /// </remarks>
+    public static class Reasons
+    {
+        /// <summary>The row carried no address at all.</summary>
+        public const string Blank = "Blank address";
+
+        /// <summary>Nothing in the directory matched on UPN or primary SMTP address.</summary>
+        public const string NoMatch = "No match in Active Directory";
+
+        /// <summary>More than one directory object matched. The count is appended.</summary>
+        public const string Ambiguous = "Ambiguous";
+
+        /// <summary>A directory object matched but carried no distinguished name to write.</summary>
+        public const string NoDistinguishedName = "Matched but has no distinguished name";
+    }
+
+    /// <summary>The assignment of every input address to resolved or rejected.</summary>
     /// <param name="ResolvedDns">
     /// Distinguished names to write, in the order their addresses first appeared, each appearing
     /// once however many times its address did.
     /// </param>
-    /// <param name="SkippedAddresses">Every address that produced no DN, with the reason where there is one.</param>
-    public sealed record Outcome(List<string> ResolvedDns, List<string> SkippedAddresses);
+    /// <param name="Rejections">
+    /// Every address that produced no DN, in input order, each with the reason it was rejected.
+    /// <b>This is the whole list, never a sample</b> - it is what the errors CSV is built from,
+    /// and the view's ten-address preview is a view concern that must not reach back into here.
+    /// </param>
+    public sealed record Outcome(List<string> ResolvedDns, List<Rejection> Rejections);
 
     /// <summary>
     /// Partitions the input into query-sized batches, in order, covering every element exactly
@@ -121,8 +164,8 @@ public static class Comms10kAddressResolver
     }
 
     /// <summary>
-    /// Assigns every input address to a resolved DN or to skipped, from the candidates the
-    /// directory returned.
+    /// Assigns every input address to a resolved DN or to a <see cref="Rejection"/>, from the
+    /// candidates the directory returned.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -131,12 +174,18 @@ public static class Comms10kAddressResolver
     /// </para>
     /// <list type="bullet">
     /// <item>One match resolves.</item>
-    /// <item>More than one is AMBIGUOUS and is skipped with the count, never resolved to an
+    /// <item>More than one is AMBIGUOUS and is rejected with the count, never resolved to an
     /// arbitrary one of them.</item>
-    /// <item>None is not found.</item>
+    /// <item>None is <see cref="Reasons.NoMatch"/>.</item>
     /// <item>A repeat of an already-resolved person is written once and is not reported as
-    /// skipped - the address did resolve, it just resolved to a DN already in the list.</item>
+    /// rejected - the address did resolve, it just resolved to a DN already in the list.</item>
     /// </list>
+    /// <para>
+    /// <b>An exact match is the only match</b> (owner ruling 2026-10-12, `.agents/decisions.md`).
+    /// An address that matches nothing is a rejection, not a near miss: the keys are not widened
+    /// to <c>proxyAddresses</c> or anything else to make an alias resolve. What the operator gets
+    /// instead is every rejection, with its reason, in a downloadable CSV.
+    /// </para>
     /// <para>
     /// <b>Input order is preserved across batch boundaries</b>, because the assignment walks the
     /// original address list and the candidates are a pooled lookup rather than a per-batch one.
@@ -151,13 +200,13 @@ public static class Comms10kAddressResolver
 
         var resolved = new List<string>();
         var resolvedSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var skipped = new List<string>();
+        var rejected = new List<Rejection>();
 
         foreach (var address in addresses)
         {
             if (string.IsNullOrWhiteSpace(address))
             {
-                skipped.Add(address ?? "");
+                rejected.Add(new Rejection(address ?? "", Reasons.Blank));
                 continue;
             }
 
@@ -167,23 +216,23 @@ public static class Comms10kAddressResolver
 
             if (matches.Count > 1)
             {
-                skipped.Add($"{address} (ambiguous: {matches.Count} matches)");
+                rejected.Add(new Rejection(address, $"{Reasons.Ambiguous}: {matches.Count} matches"));
                 continue;
             }
 
             if (matches.Count == 0)
             {
-                skipped.Add(address);
+                rejected.Add(new Rejection(address, Reasons.NoMatch));
                 continue;
             }
 
             var dn = matches[0].DistinguishedName;
             if (string.IsNullOrWhiteSpace(dn))
             {
-                // A row that matched but carries no DN cannot be written. Reported as skipped
+                // A row that matched but carries no DN cannot be written. Reported as rejected
                 // rather than dropped: the write removes everyone not in the resolved list, so a
                 // silent drop here unsubscribes a real person.
-                skipped.Add(address);
+                rejected.Add(new Rejection(address, Reasons.NoDistinguishedName));
                 continue;
             }
 
@@ -191,7 +240,7 @@ public static class Comms10kAddressResolver
                 resolved.Add(dn);
         }
 
-        return new Outcome(resolved, skipped);
+        return new Outcome(resolved, rejected);
     }
 
     /// <summary>

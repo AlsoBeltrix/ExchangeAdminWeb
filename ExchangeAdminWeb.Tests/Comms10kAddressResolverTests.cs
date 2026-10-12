@@ -154,7 +154,7 @@ public class Comms10kAddressResolverTests
             [User("CN=A,DC=x", upn: "a@example.com")]);
 
         Assert.Equal(["CN=A,DC=x"], outcome.ResolvedDns);
-        Assert.Empty(outcome.SkippedAddresses);
+        Assert.Empty(outcome.Rejections);
     }
 
     [Fact]
@@ -179,8 +179,9 @@ public class Comms10kAddressResolverTests
             [User("CN=A1,DC=x", upn: "a@example.com"), User("CN=A2,DC=x", mail: "a@example.com")]);
 
         Assert.Empty(outcome.ResolvedDns);
-        var skip = Assert.Single(outcome.SkippedAddresses);
-        Assert.Contains("ambiguous: 2 matches", skip, StringComparison.Ordinal);
+        var skip = Assert.Single(outcome.Rejections);
+        Assert.Equal("a@example.com", skip.Address);
+        Assert.Equal("Ambiguous: 2 matches", skip.Reason);
     }
 
     [Fact]
@@ -189,7 +190,9 @@ public class Comms10kAddressResolverTests
         var outcome = Comms10kAddressResolver.Resolve(["ghost@example.com"], []);
 
         Assert.Empty(outcome.ResolvedDns);
-        Assert.Equal(["ghost@example.com"], outcome.SkippedAddresses);
+        var rejection = Assert.Single(outcome.Rejections);
+        Assert.Equal("ghost@example.com", rejection.Address);
+        Assert.Equal(Comms10kAddressResolver.Reasons.NoMatch, rejection.Reason);
     }
 
     [Fact]
@@ -202,7 +205,9 @@ public class Comms10kAddressResolverTests
             [User(dn: "", upn: "a@example.com")]);
 
         Assert.Empty(outcome.ResolvedDns);
-        Assert.Equal(["a@example.com"], outcome.SkippedAddresses);
+        var rejection = Assert.Single(outcome.Rejections);
+        Assert.Equal("a@example.com", rejection.Address);
+        Assert.Equal(Comms10kAddressResolver.Reasons.NoDistinguishedName, rejection.Reason);
     }
 
     [Fact]
@@ -216,7 +221,7 @@ public class Comms10kAddressResolverTests
             [User("CN=A,DC=x", upn: "a@example.com", mail: "a.alias@example.com")]);
 
         Assert.Equal(["CN=A,DC=x"], outcome.ResolvedDns);
-        Assert.Empty(outcome.SkippedAddresses);
+        Assert.Empty(outcome.Rejections);
     }
 
     // ---- 6. Order preserved across a batch boundary, including a repeat spanning one. ----
@@ -248,7 +253,7 @@ public class Comms10kAddressResolverTests
         }
 
         Assert.Equal(expected, outcome.ResolvedDns);
-        Assert.Empty(outcome.SkippedAddresses);
+        Assert.Empty(outcome.Rejections);
     }
 
     // ---- 7. Screening, which is what keeps a blank line from aborting a real batch. ----
@@ -268,7 +273,10 @@ public class Comms10kAddressResolverTests
             [User("CN=A,DC=x", upn: "a@example.com"), User("CN=B,DC=x", upn: "b@example.com")]);
 
         Assert.Equal(["CN=A,DC=x", "CN=B,DC=x"], outcome.ResolvedDns);
-        Assert.Equal(2, outcome.SkippedAddresses.Count);   // the two blanks, and only those
+        // The two blanks, and only those - each carrying the blank reason and the line AS WRITTEN.
+        Assert.Equal(2, outcome.Rejections.Count);
+        Assert.All(outcome.Rejections, r => Assert.Equal(Comms10kAddressResolver.Reasons.Blank, r.Reason));
+        Assert.Equal(["", "   "], outcome.Rejections.Select(r => r.Address));
     }
 
     // ---- helpers ----

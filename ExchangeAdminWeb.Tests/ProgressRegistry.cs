@@ -989,6 +989,29 @@ public static class ProgressRegistry
                 + "The transfer MECHANISM is deliberately untouched: "
                 + "docs/DownloadMemoryRetention-Plan.md proposes replacing it with streaming and "
                 + "is a DRAFT, not approved. The Complete reads full, a local"),
+            new("DownloadRejections",
+                [
+                    "csvWriter.WriteRecords(",
+                    "JS.InvokeVoidAsync(",
+                ],
+                "the errors report the owner ruled for on 2026-10-12: every address that did "
+                + "not resolve, with the reason, as a CSV. TWO calls named rather than "
+                + "DownloadFull's three, and the missing one is the point - this handler makes "
+                + "NO directory call at all. The rejections were computed by the Validate that "
+                + "already ran and are sitting in resolveResult; re-querying AD to build the "
+                + "error report would be able to disagree with the banner the operator is "
+                + "looking at. What is left is still operation-scale on the same input: "
+                + "WriteRecords builds the whole file in memory and JS.InvokeVoidAsync "
+                + "base64-encodes it over the SignalR circuit, and on a ten-thousand-row upload "
+                + "where most rows failed, that file is most of the upload. The middle-call "
+                + "rule 1 reading the S3 reviewer settled on 2026-10-08 is what admits "
+                + "WriteRecords, exactly as it does for DownloadFull above. The Complete sits "
+                + "BELOW the transfer, matching DownloadFull and MessageTraceReports.Download. "
+                + "The Complete reads rejections, a LOCAL captured before the first await - "
+                + "which matters more here than on DownloadFull, because the field it came from "
+                + "is resolveResult and Validate replaces that wholesale. The early return for "
+                + "an empty or null list sits ABOVE the Begin on purpose: a bar that opens and "
+                + "closes with nothing between it is worse than no bar, and there is no work"),
             new("HandleFileUpload", "csv.ReadAsync(",
                 "reported because the cost is the FILE rather than a round trip: the "
                 + "malformed-upload guard admits roughly half a million rows and every one of "

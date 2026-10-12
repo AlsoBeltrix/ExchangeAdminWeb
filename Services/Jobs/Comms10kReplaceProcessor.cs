@@ -116,7 +116,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         // is getting a smaller one. The count difference IS the finding, and burying it in a
         // success would hide exactly the "missing email addresses" complaint this module
         // already has against it.
-        var skipped = resolve.SkippedEmails.Count;
+        var skipped = resolve.Rejections.Count;
 
         return new BulkJobRowOutcome
         {

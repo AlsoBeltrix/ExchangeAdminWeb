@@ -286,8 +286,8 @@ public class Comms10kService
             {
                 Success = true,
                 ResolvedDns = outcome.ResolvedDns,
-                SkippedEmails = outcome.SkippedAddresses,
-                Message = $"{outcome.ResolvedDns.Count} resolved, {outcome.SkippedAddresses.Count} not found."
+                Rejections = outcome.Rejections,
+                Message = $"{outcome.ResolvedDns.Count} resolved, {outcome.Rejections.Count} rejected."
             };
         });
     }
@@ -735,7 +735,17 @@ public class Comms10kResolveResult
     public bool Success { get; set; }
     public string Message { get; set; } = "";
     public List<string> ResolvedDns { get; set; } = new();
-    public List<string> SkippedEmails { get; set; } = new();
+
+    /// <summary>
+    /// Every address that did not resolve, in input order, each with the reason. Owner ruling
+    /// 2026-10-12: all of them are reported, and the operator can download them as a CSV.
+    /// </summary>
+    /// <remarks>
+    /// <b>Never truncate this.</b> The view shows a ten-address preview; the list itself is the
+    /// whole set, because it is what the errors CSV is written from and what the operator needs
+    /// in order to find the rows in the file they uploaded.
+    /// </remarks>
+    public List<Comms10kAddressResolver.Rejection> Rejections { get; set; } = new();
 }
 
 public class Comms10kUpdateResult

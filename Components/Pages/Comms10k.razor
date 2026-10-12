@@ -105,9 +105,10 @@
                             <strong>Validated &mdash; not applied yet.</strong>
                             <strong>@resolveResult.ResolvedDns.Count</strong> of @parsedEmails.Count email(s) matched in AD.
                             The distribution list has <strong>not</strong> changed.
-                            @if (resolveResult.SkippedEmails.Count > 0)
+                            @if (resolveResult.Rejections.Count > 0)
                             {
-                                <br /><span class="text-danger"><strong>@resolveResult.SkippedEmails.Count not found:</strong> @string.Join(", ", resolveResult.SkippedEmails.Take(10))@(resolveResult.SkippedEmails.Count > 10 ? "..." : "")</span>
+                                <br /><span class="text-danger"><strong>@resolveResult.Rejections.Count rejected:</strong> @string.Join(", ", resolveResult.Rejections.Take(10).Select(r => r.Address))@(resolveResult.Rejections.Count > 10 ? "..." : "")</span>
+                                <br /><button class="btn btn-outline-danger btn-sm mt-2" @onclick="DownloadRejections" disabled="@isLoading">Download errors CSV</button>
                             }
                         </div>
 
@@ -115,9 +116,9 @@
                         {
                             <div class="alert alert-danger">
                                 <p><strong>Confirm: Replace all members with @resolveResult.ResolvedDns.Count users?</strong>
-                                @if (resolveResult.SkippedEmails.Count > 0)
+                                @if (resolveResult.Rejections.Count > 0)
                                 {
-                                    <br /><small>@resolveResult.SkippedEmails.Count email(s) will be excluded (not found in AD).</small>
+                                    <br /><small>@resolveResult.Rejections.Count address(es) will be excluded.</small>
                                 }
                                 </p>
                                 <button class="btn btn-danger btn-sm me-2" @onclick="ExecuteReplace" disabled="@isLoading">
@@ -270,6 +271,62 @@
             activity.Complete(true, $"{full.Members.Count:N0} member(s) exported.");
         }
         catch (Exception ex) { result = new Comms10kUpdateResult { Success = false, Message = ex.Message }; }
+        finally { isLoading = false; }
+    }
+
+    /// <summary>
+    /// Exports EVERY rejected address with the reason it was rejected, as a CSV download.
+    /// </summary>
+    /// <remarks>
+    /// Owner ruling 2026-10-12 (`.agents/decisions.md`): an address with no exact match is not a
+    /// match, and all of the non-matching addresses are reported to the operator with the reason.
+    /// This is that report.
+    ///
+    /// <b>It writes the whole list, never the ten the banner previews.</b> The preview exists so
+    /// the operator can see the shape of the problem without leaving the page; this file exists
+    /// so they can find the rows in the workbook they uploaded. Truncating here would re-create
+    /// the exact complaint the control was built for - "requiring us to manually identify the
+    /// affected users".
+    ///
+    /// Reads <c>resolveResult</c> into a local BEFORE the first await, because the field is
+    /// replaced wholesale by Validate and the navigation guard's OK path does not stop the work.
+    /// Transfer mechanism copied from DownloadFull deliberately - same base64-over-the-circuit
+    /// path, same recorded limitation in docs/DownloadMemoryRetention-Plan.md, which is a DRAFT.
+    /// </remarks>
+    private async Task DownloadRejections()
+    {
+        // Captured before any await: nothing below may re-read the field.
+        var rejections = resolveResult?.Rejections;
+        if (rejections is null || rejections.Count == 0)
+            return;
+
+        using var activity = Progress.Begin(
+            "Comms-10k", "Exporting the rejected addresses", ActivitySize.Items(rejections.Count));
+
+        isLoading = true;
+        await Task.Yield();
+        try
+        {
+            using var writer = new System.IO.StringWriter();
+            using var csvWriter = new CsvWriter(writer, CultureInfo.InvariantCulture);
+            csvWriter.WriteRecords(rejections);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(writer.ToString());
+            var base64 = Convert.ToBase64String(bytes);
+            await JS.InvokeVoidAsync(
+                "downloadFile",
+                $"comms10k_rejected_{DateTime.Now:yyyyMMdd_HHmmss}.csv",
+                "text/csv",
+                base64);
+            Audit.LogLookupAction(
+                currentUser, clientIpAddress, "Comms10k_ExportRejected", $"{rejections.Count} address(es)", true);
+
+            activity.Complete(true, $"{rejections.Count:N0} rejected address(es) exported.");
+        }
+        catch (Exception ex)
+        {
+            result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
+            activity.Complete(false, ex.Message);
+        }
         finally { isLoading = false; }
     }
 
