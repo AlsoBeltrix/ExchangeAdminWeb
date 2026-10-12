@@ -1146,7 +1146,13 @@ public sealed class ModuleCatalog
             // at all (docs/DefenderEndpointDevices-Plan.md Revision 3, R1(g)); the two hardcoded
             // filters are replaced by the machine record's real fields, and the default ceiling
             // rises from 20000 to 100000.
-            Version = "1.1.2",
+            // 1.2.0: the device table is paged, 50 rows at a time, with Previous/Next. It
+            // rendered every device the tenant returned - and since 1.1.2 raised the ceiling to
+            // 100,000, that killed the circuit and nothing could be scrolled, so the module
+            // shipped unusable at tenant scale. Owner rejected virtualised scrolling; this is
+            // the portal-style shape he approved instead. Paging bounds the DOM only: the CSV
+            // export still carries the complete matching set, and a test pins that it does.
+            Version = "1.2.0",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",

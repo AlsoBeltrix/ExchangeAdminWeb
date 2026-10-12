@@ -259,6 +259,10 @@
             <div class="card-header d-flex justify-content-between align-items-center">
                 <div>
                     <strong>@result.Devices.Count device(s)</strong>
+                    @if (DevicePageCount > 1)
+                    {
+                        <span class="text-muted ms-2"><small>Showing @((devicePageIndex * DevicePageSize) + 1)-@Math.Min((devicePageIndex + 1) * DevicePageSize, result.Devices.Count).</small></span>
+                    }
                     <span class="text-muted ms-2">
                         <small>
                             @result.DistinctCount fetched in @result.PagesFetched request(s). Ceiling @result.Ceiling.
@@ -291,7 +295,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var device in result.Devices)
+                        @foreach (var device in PagedDevices)
                         {
                             <tr>
                                 <td>@Display(device.ComputerDnsName)</td>
@@ -343,6 +347,14 @@
                     </tbody>
                 </table>
             </div>
+            @if (DevicePageCount > 1)
+            {
+                <div class="card-footer d-flex justify-content-between align-items-center">
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => GoToDevicePage(devicePageIndex - 1)" disabled="@(IsBusy || devicePageIndex == 0)">Previous</button>
+                    <span class="small text-muted">Page @(devicePageIndex + 1) of @DevicePageCount</span>
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => GoToDevicePage(devicePageIndex + 1)" disabled="@(IsBusy || devicePageIndex >= DevicePageCount - 1)">Next</button>
+                </div>
+            }
         </div>
     }
 </div>
@@ -457,6 +469,73 @@
     /// </remarks>
     private IReadOnlyList<DefenderDevice> ExportableDevices =>
         result is { Outcome: DefenderDeviceListOutcome.Complete } complete ? complete.Devices : [];
+
+    /// <summary>Devices drawn into the table at once.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the table is paged at all.</b> The page rendered every device the tenant returned,
+    /// and this tenant exceeds the old 20,000 ceiling, so the browser died and nothing could be
+    /// scrolled - the module shipped unusable. The owner rejected virtualised scrolling outright
+    /// ("not a solution in ANY way") and the shape he approved instead is portal-style: browse a
+    /// filtered page at a time, and take the complete set as a CSV.
+    /// </para>
+    /// <para>
+    /// <b>This bounds the DOM only. It does not bound the fetch, and it must not.</b>
+    /// <see cref="ExportableDevices"/> still returns every device, because the export's promise
+    /// is the COMPLETE matching set and a paged export would quietly answer a different
+    /// question. Changing this constant changes how much is drawn and nothing else.
+    /// </para>
+    /// </remarks>
+    private const int DevicePageSize = 50;
+
+    /// <summary>
+    /// Zero-based index of the table page on screen.
+    /// </summary>
+    /// <remarks>
+    /// <b>Reset to zero on every load</b>, beside the result assignment. A new result is usually
+    /// a different size, so an index left over from a wider search can sit past the end of a
+    /// narrower one - which renders an empty table under a header saying there are devices, and
+    /// reads as "the filter matched nothing".
+    /// </remarks>
+    private int devicePageIndex;
+
+    /// <summary>Total table pages for the current result; at least one, so "1 of 1" is honest.</summary>
+    private int DevicePageCount =>
+        result is null || result.Devices.Count == 0
+            ? 1
+            : (result.Devices.Count + DevicePageSize - 1) / DevicePageSize;
+
+    /// <summary>
+    /// The devices on the current table page.
+    /// </summary>
+    /// <remarks>
+    /// Clamps the index rather than trusting it. The reset on load is the real guarantee; this is
+    /// the belt that keeps a future caller of <see cref="devicePageIndex"/> from rendering a blank
+    /// table, which is the failure mode that looks like a wrong answer rather than a bug.
+    /// </remarks>
+    private IReadOnlyList<DefenderDevice> PagedDevices
+    {
+        get
+        {
+            if (result is null || result.Devices.Count == 0)
+                return [];
+
+            var index = Math.Clamp(devicePageIndex, 0, DevicePageCount - 1);
+            return result.Devices.Skip(index * DevicePageSize).Take(DevicePageSize).ToList();
+        }
+    }
+
+    /// <summary>Moves the table one page and closes any open detail panels.</summary>
+    /// <remarks>
+    /// The detail panels are keyed by device id and the rows they belong to are leaving the DOM,
+    /// so leaving them open would carry an expanded panel onto a page whose rows do not include
+    /// it. Nothing here touches the fetched set.
+    /// </remarks>
+    private void GoToDevicePage(int index)
+    {
+        devicePageIndex = Math.Clamp(index, 0, DevicePageCount - 1);
+        expandedDevices.Clear();
+    }
 
     /// <summary>
     /// The filter controls as the service's filter record.
@@ -577,6 +656,9 @@
 
             var loaded = await DeviceService.ListDevicesAsync(filters);
             result = loaded;
+            // Beside the result, never after a branch: an index left from a wider search can sit
+            // past the end of a narrower one and render an empty table under a non-zero count.
+            devicePageIndex = 0;
             expandedDevices.Clear();
 
             // A refusal is audited as a FAILED lookup carrying its reason. It is not a successful
@@ -605,6 +687,7 @@
             // The previous run's table is retracted with the error, not left on screen beside it: a
             // stale list rendered next to a failure message reads as the answer to the new request.
             result = null;
+            devicePageIndex = 0;
             loadError = ex.Message;
             Logger.LogError(ex, "Failed to list Defender for Endpoint devices.");
 

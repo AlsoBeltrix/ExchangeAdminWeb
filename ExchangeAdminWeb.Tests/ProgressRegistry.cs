@@ -1259,6 +1259,11 @@ public static class ProgressRegistry
             new("OnAfterRenderAsync", "the initial load is LoadAsync", "LoadAsync"),
             new("ClearFilters", LocalUiState),
             new("ToggleDetail", LocalUiState + "; the device is already in the result set"),
+            new("GoToDevicePage", LocalUiState + "; it moves a window over the result set that is "
+                + "already in memory and fetches nothing. The table is paged because the page "
+                + "rendered every device in the tenant and killed the circuit; paging bounds the "
+                + "DOM, not the fetch, so there is no round trip here to report. A bar that "
+                + "opened and closed inside one synchronous assignment would be noise"),
         ],
     };
 
