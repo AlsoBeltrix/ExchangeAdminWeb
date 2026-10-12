@@ -295,8 +295,30 @@ guide all carry the scoped exception, contrasted against Self-Service Groups.
   diagnosis:
   - **Point 2 IS queue item 24**, which is functionally complete and awaiting the owner's
     acceptance pass. Fixing the P1 covers it; it is not separate work.
-  - **Point 3 says "ongoing" and "we continue to"**, so it reads as predating this plan rather
-    than as a regression from it. Establish that before treating it as one.
+  - **Point 3 IS DIAGNOSED, 2026-10-12, and it is NOT a regression.** The lookup has never
+    matched alias addresses. `Services/Comms10kAddressResolver.cs:117-118` builds
+    `(&(objectCategory=person)(objectClass=user)(|(userPrincipalName=V)(mail=V)))` per address -
+    UPN and the PRIMARY SMTP address only. `proxyAddresses` is matched nowhere in the module
+    (`grep -rn -i proxyaddress Services/Comms10k*.cs Components/Pages/Comms10k.razor` returns
+    nothing; the only hit in the whole app is `Services/ADDirectorySearchService.cs`). Any
+    secondary or alias SMTP address - another owned domain, a pre-rename address, a vanity
+    alias - resolves to nothing and the person is left off the list. **Checked for regression and
+    there is none:** the pre-S1 path at `1c6eaba^` `Services/Comms10kService.cs:137` filtered
+    `UserPrincipalName -eq ... -or EmailAddress -eq ...`, and the AD module's `EmailAddress` IS
+    `mail`, so S1 changed the transport and preserved the keys exactly. That is why the
+    stakeholder says "ongoing" and "we continue to" - it predates the plan by design.
+    The resolver's own remarks at `:76-81` say widening the keys is deliberate and names the
+    risk: matching `sAMAccountName` would let a bare login resolve and matching groups would put
+    a group DN into an individual-subscriber list. **`proxyAddresses` is not in that risk class**
+    - a proxy address identifies the same single person the primary does - but it is still a
+    widening of who receives the mail, so it needs an owner go, not a coder-side fix.
+  - **Point 3's second half is a reporting defect and is separate from the cause.**
+    `Components/Pages/Comms10k.razor:110` renders `SkippedEmails.Take(10)` then a literal `"..."`,
+    and `:120` gives only a count. There is no export and no full list anywhere in the UI, so on a
+    ten-thousand-row upload an operator who loses 200 people can see ten of their addresses and
+    has no way to obtain the rest. That is precisely the stakeholder's *"requiring us to manually
+    identify the affected users"*. The resolver already carries every skipped address and its
+    reason (`Comms10kAddressResolver.Outcome.SkippedAddresses`); nothing but the view truncates.
   - **Point 1 needs its baseline established first.** "The previous version of the Self-Service
     App" may not be this app, and "before the distribution list is fully updated" may be
     measuring AD-to-Exchange-Online directory sync rather than the module's write, which is
