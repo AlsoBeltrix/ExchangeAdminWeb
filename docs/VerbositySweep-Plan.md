@@ -1,6 +1,8 @@
 # App-Wide Verbosity Sweep - Plan
 
-Status: **Draft. Not approved, not started.** Queue item 25. Drafted 2026-10-12 against
+Status: **APPROVED at FULL scope, owner 2026-10-12 ("All 39"). Not started.** The section 10
+question is answered: all 39 files, S0 through S10, not the seven-worst subset this plan
+recommended. Queue item 25. Drafted 2026-10-12 against
 `9106c6c`.
 Owner: Michael
 Base app version: shared-layer change (see section 9) - **one base bump at the end**, no
@@ -32,15 +34,13 @@ notice. The rule below is written to protect counts, coverage facts and safety s
 explicitly - but a sweep is exactly the kind of change where a reviewer has to check what
 went missing, not just what reads better.
 
-**The cheaper alternative, if the cost is wrong for you.** Do the seven worst pages only -
-IntuneDevices, ModuleConfig, Migration, SelfServiceGroups, TrueLastLogon, MessageTrace,
-RiskyUsers. That is **47% of the problem for about 40% of the cost** (4-5 sessions) and
-covers every page you are likely to be looking at when it annoys you.
+**The cheaper alternative was OFFERED AND DECLINED.** The seven worst pages alone would have
+been 47% of the problem for about 40% of the cost; the owner chose all 39 files on 2026-10-12.
 
 **What approving it authorises.** The house style in section 3, and the slices you name in
 section 8 - not automatically all of them. Nothing here changes what the app *does*.
 
-**One decision is needed before any code:** full sweep or the seven worst pages. Section 10.
+**No decision is outstanding.** Full sweep, all 39 files.
 
 ## 1. The ask, verbatim
 

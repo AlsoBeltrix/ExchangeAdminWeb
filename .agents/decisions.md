@@ -5,6 +5,64 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-12 - Owner rulings: scope goes wide, and Comms-10k matches exactly
+
+Five rulings in one sitting. Recorded together because they were given together and because
+the last one changes how the others are read.
+
+**1. Comms-10k resolves on an EXACT match only, and every rejection is reported.** Owner,
+verbatim: *"if the address in the list as written has no exact match, that is not a match. all
+of the non-matching addresses need to be reported to the user in a downloadable errors report
+csv with the reason it was rejected."*
+
+Settles the question raised by the 2026-10-12 diagnosis of queue 26 point 3. The lookup
+matches `userPrincipalName` and `mail` and **must not** be widened to `proxyAddresses` or any
+other key. An alias that does not match is a rejection, not a near miss. The fix for the
+stakeholder's "missing email addresses" is therefore entirely on the REPORTING side: the
+resolver already distinguishes four rejection causes (blank, ambiguous with a count, no match,
+matched-but-no-DN) and flattens them into display strings; they must become structured rows in
+a downloadable CSV carrying the address as written and its reason. The current view shows the
+first ten and a literal `"..."`, which is the thing the stakeholder is complaining about.
+
+**2. Queue 25, the verbosity sweep: ALL 39 FILES.** Not the seven-worst subset the plan
+recommended. `docs/VerbositySweep-Plan.md` is approved at full scope, S0 through S10.
+
+**3. Queue 9, click-gating: tiers 2, 3 and 4 are APPROVED.** The remaining 19 pages.
+`docs/ClickGatingAudit-Plan.md`'s deferred re-decision is now made and made in full. This
+supersedes the 2026-09-18 "slice 0 + slice 1 + tier 1 only" scope limit, which that plan's
+Status header and section 6 still carry.
+
+**4. `docs/ServiceHealthPublicStatus-Plan.md` is REJECTED and must be rewritten.** The owner's
+actual ask is **consolidation of Microsoft's own status reporting across all of its official
+channels** - X/Twitter posts, the public status pages, Azure, and whatever else Microsoft
+splits it across - merged with the tenant feed the app already shows, so that a user of this
+app who has no privileged Azure/M365 access of their own can see the whole picture in one
+place. Owner, verbatim: *"microsoft reports status in multiple locations. we need a single
+location that non-admins can see status"* and *"I asked about consolidating what microsoft
+posts on twitter and in other random locations across all of their official channels with
+what's already in this app."*
+
+**"Non-admin" here means someone who can already use THIS app but holds no privileged
+Azure/M365 access directly.** It is NOT an authentication or authorization change; the owner
+said so explicitly when the question was put to him. Do not reopen that.
+
+The rejected plan is not amendable into this one. Its section 4 makes *"Not a second incident
+feed"* an explicit non-goal and its whole design - plus all four codex review rounds - is
+about an up/down reachability strip for Microsoft's admin plane. That is a different build
+from an aggregated feed. Rewrite from the ask, do not edit the old document into shape.
+
+**5. Scope is no longer the gate; everything queued is authorized.** Owner, verbatim: *"I want
+all of everything done. stop asking me questions that just reinforce that. you do everything."*
+
+Operative consequence, and it is the one that changes behaviour: **do not put a scope or
+go-ahead question to the owner for work that is already queued, planned or recorded as
+deferred.** A question is warranted only where two builds would satisfy the same ask
+differently and the records do not already say which - and even then, state the recommendation
+and proceed unless the choice is irreversible. Re-raising approved scope as a question is the
+failure mode this ruling exists to stop. The standing requirement that implementation not
+exceed an approved plan is unchanged; the owner has widened the plans, not removed the rule.
+
+
 ### 2026-10-12 - Manual acceptance is production use; stop queueing it as owed work
 
 Owner ruling, verbatim: *"these will come from production use, do not keep asking for them.

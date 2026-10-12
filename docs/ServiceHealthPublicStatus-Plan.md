@@ -1,9 +1,20 @@
 # Service Health Public Status Plan
 
-Status: Draft. Revision 4 (2026-10-12) adds the required Exec summary and records an unprimed
-codex openreview that returned ACCEPTABLE WITH CHANGES - the approach stands. Two of its four
-required changes are still open: open question 1 needs the owner, and three accepted round-3
-test gaps are unfolded. Not approved; not started.
+Status: **REJECTED BY THE OWNER, 2026-10-12. Do not implement any part of this document.**
+It answers the wrong question. The owner's ask is consolidation of what Microsoft posts about
+status across ALL of its official channels - X/Twitter, the public status pages, Azure, and
+wherever else it is split - merged with the tenant feed this app already shows, so that a user
+of this app who holds no privileged Azure/M365 access can see the whole picture in one place.
+This plan instead builds an up/down reachability strip for Microsoft's admin plane, and its
+section 4 makes "Not a second incident feed" an explicit non-goal - the exact opposite of the
+ask. **It is not amendable into the right plan; a replacement is to be written from the ask.**
+`.agents/decisions.md` 2026-10-12 owns the ruling and the verbatim quotes. Everything below,
+including all four codex review rounds, is history for the rejected approach and must not be
+carried into the replacement unexamined.
+
+Former status, for the record: Draft, revision 4 (2026-10-12), unprimed codex openreview
+returned ACCEPTABLE WITH CHANGES against the approach as stated in THIS document. Two of its
+four required changes were still open at rejection.
 
 Revision: 3 (2026-09-18). Three codex rounds, all returned **unsound**; ten findings
 total, all verified against the file and all accepted. Round 1 reshaped the source

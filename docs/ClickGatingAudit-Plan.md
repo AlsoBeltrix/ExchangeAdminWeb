@@ -1,13 +1,18 @@
 # App-wide click gating: audit and remediation plan
 
-Status: **Slice 0, slice 1, tier 1 and the shared harness are Implemented (2026-09-19). Tiers 2, 3 and 4 remain unapproved and not started; the manual acceptance checklist is outstanding and only the owner can run it.** Design is Revision 1 as corrected by Revision 2; the original design below is superseded.
+Status: **Slice 0, slice 1, tier 1 and the shared harness are Implemented (2026-09-19). TIERS 2, 3 AND 4 ARE NOW APPROVED - owner 2026-10-12, superseding the 2026-09-18 scope limit below - and are NOT STARTED. Manual acceptance is production use, not owed work (`.agents/decisions.md` 2026-10-12).** Design is Revision 1 as corrected by Revision 2; the original design below is superseded.
 Queue item 9. Drafted 2026-09-18 against `3e19aef`.
 
-**Approved scope, owner 2026-09-18: slice 0 + slice 1 + tier 1 only** - the scanner and shared
-test harness, the two prerequisite stuck-flag fixes, and the nine pages that can execute a
-destructive AD/Exchange/Graph write. Tiers 2, 3 and 4 are **not** approved; they are re-decided
-once the shared harness makes the per-page cost a measurement rather than the estimate below.
-Implementation must not exceed that scope.
+**SUPERSEDED BY THE 2026-10-12 RULING. Kept for the record.** Approved scope, owner
+2026-09-18: slice 0 + slice 1 + tier 1 only - the scanner and shared test harness, the two
+prerequisite stuck-flag fixes, and the nine pages that can execute a destructive
+AD/Exchange/Graph write. Tiers 2, 3 and 4 were **not** approved then; they were to be
+re-decided once the shared harness made the per-page cost a measurement rather than the
+estimate below.
+
+**That re-decision was made on 2026-10-12 and it approved all three remaining tiers** - the
+other 19 pages (`.agents/decisions.md`). The rule that implementation must not exceed
+approved scope is unchanged; the scope is now the whole app.
 
 > **Read Revision 1 (end of this document) before implementing anything.** An 11-page
 > reconnaissance run on 2026-09-18 falsified several load-bearing claims in the design below,
