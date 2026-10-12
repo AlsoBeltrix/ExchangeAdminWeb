@@ -4,7 +4,7 @@ Current work and blockers only. Rules live in `docs/ProjectConstitution.md` and
 `.agents/repo-guidance.md`, decisions in `.agents/decisions.md`, and machine observations in
 `.agents/machines.md`. Each plan owns its implementation and manual acceptance checklist.
 Superseded descriptions are verbatim in `docs/history/state-archive.md` (newest section first;
-the latest sweep is Archived 2026-10-09).
+the latest sweep is Archived 2026-10-12).
 
 ## Now
 
@@ -15,13 +15,11 @@ earlier deploy (confirmed 2026-10-09). It was listed as outstanding for several 
 because nobody checked - the fix at `d1ccd07` stops it being deleted again, and the value
 itself is back.
 
-**`docs/ProgressCoverage-Plan.md` IS COMPLETE AND SO IS ITS FINDINGS QUEUE.** Measured in this
-sweep as of `390bba6`: `ExchangeAdminWeb.Tests/ProgressRegistry.cs` holds **zero** `KnownGap`
-entries (down from 52; the grep is below under "The count a registry owns is not copied here"),
-and `.agents/review/index.md` has **no open rows** - every finding the stream raised is `[v]` or
-`[x]`. Release build 0 errors, suite **3,707 passed / 0 failed / 3 skipped**, format check,
-ASCII lint and `git diff --check` clean, PSScriptAnalyzer 0 errors, Pester 157: all reported as
-of `390bba6` and **none of them re-run by this sweep**.
+**`docs/ProgressCoverage-Plan.md` IS COMPLETE AND SO IS ITS FINDINGS QUEUE.** Re-measured
+2026-10-12 as of `96cdb89`: `ExchangeAdminWeb.Tests/ProgressRegistry.cs` holds **zero**
+`KnownGap` entries (down from 52), and `.agents/review/index.md` has **no open rows** - every
+finding the stream raised is `[v]` or `[x]`. The suite and the lint gates are NOT re-run by a
+drift sweep; `## Verification` owns the last reported figures and their commit.
 
 **What that does and does not mean.** Every operator-initiated operation on every page under
 `Components/Pages` now reports to the status bar, or carries a written exemption a test
@@ -33,7 +31,7 @@ findings raised, all eleven closed and each closure reviewed in turn.
 
 | Waiting on | What happens without it |
 |---|---|
-| **PROD deploy** | **Dev runs `e9f9da8` as of 2026-10-09; PROD DOES NOT.** Prod is still on the pre-fix build, so the circuit leak is live there - it was consuming ~14 GB/day and starved the host on 2026-10-07. Baseline for measuring the fix is in `.agents/machines.md`; take prod.s private bytes at deploy and again 24h later |
+| ~~PROD deploy~~ | **DONE 2026-10-09.** Both instances were redeployed that afternoon and prod now carries the circuit-lifetime fix. **What replaced it is the 24-hour reading**, which is owner work and has not been taken: `.agents/machines.md` ("prod deploy, and the memory clock restarts here") owns the pre-fix baseline, the measurement and what each outcome means. A recycle or redeploy resets the clock |
 | ~~Roslyn decision~~ | **CLOSED.** Both guards were rebuilt on Roslyn syntax trees (`12e1d25`, `e039cd9`); `prog-10` then found two holes in the rewrite and `prog-11` a third, all closed. Known limits are recorded in those finding records, not here |
 | ~~Remove-completed: filtered set or whole batch?~~ | **CLOSED.** The plan is APPROVED and revision 2 takes the FILTERED set, with its reasoning written down: the filter narrows by the operator's own act exactly as a tick does, and the count in the label carries whichever applies. Built and landed; `docs/MigrationRemoveCompleted-Plan.md` owns the design and the manual acceptance list, which has NOT been run |
 | **Manual acceptance** | Nothing here proves a progress bar renders. Every fix is source-verified only. Owner deprioritised it 2026-10-09 (Emergency Disable deferred to "next time there is an emergency"; bar-watching to "later") - a deliberate deferral, not an oversight |
@@ -115,21 +113,6 @@ The per-slice record for S1 through S5 is verbatim in `docs/history/state-archiv
 8. **Nothing in this work proves a progress bar renders.** Repeated deliberately: it is the one
    thing a green suite in this repo cannot tell anyone.
 
-### The count a registry owns is not copied here
-
-Three slices recorded a running `KnownGap` count in their commit messages and one of them was
-off by one; commit messages are immutable, so that one stays wrong forever. The plan document
-made the same mistake in the other direction - it said 41 defects while the registry held 52.
-**`ExchangeAdminWeb.Tests/ProgressRegistry.cs` owns the number**; get it with
-
-```
-grep -cE 'new\("[A-Za-z0-9_]+", *[0-9]+' ExchangeAdminWeb.Tests/ProgressRegistry.cs
-```
-
-The rule itself is canonical in `.agents/playbooks/drift.md` - a count another file owns is
-pointed to, not duplicated. It was broken twice in one work stream, which is why it is repeated
-here.
-
 ### Circuit lifetime leak - landed, UNREVIEWED, and unproven
 
 `docs/CircuitLifetimeLeak-Plan.md` reads `Implemented` and owns the design; all three slices
@@ -138,10 +121,11 @@ landed (`98b29d1`, `c6c73d2`, `9741f7c`, plus the S3 record commit). It is step 
 
 **Two things are owed and neither is ours.** Per the owner's standing instruction codex reviews
 each code change, and this work stream has had none. **Nothing here proves the leak is gone** -
-a source guard cannot. The acceptance check is the production worker's private bytes at deploy
-and 24 hours later, against the 2026-10-07 baseline (13.8 GB working set / 15.0 GB private at
-1.0 days uptime). Continued growth means this was not the dominant cause, which is information
-and points at step 2.
+a source guard cannot. **Prod took the fix on 2026-10-09**, so the acceptance check is now
+takeable: the production worker's private bytes 24 hours after that deploy, against the pre-fix
+baseline. `.agents/machines.md` owns the baseline figures, the deploy receipt and what each
+outcome means; continued growth says this was not the dominant cause, which is information and
+points at step 2.
 
 The recurrence guard is `ExchangeAdminWeb.Tests/EventSubscriptionLifetimeTests.cs`, written
 against the shape rather than against the two pages - it was probed with a brand-new eighth page
@@ -163,20 +147,10 @@ previous account's lockdown opt-out. The plan's manual acceptance needs a dev de
 disposable account; nothing in this repo reaches a live directory, so the move, the OU-exists
 check and the stamp write are all unproven in reality.
 
-**Two owner rulings on this module still have no `.agents/decisions.md` entry.** Both are
-operative in the plan and in the shipped code, and both are recorded here because nothing else
-states them as rulings:
-
-1. **2026-10-05: the stamp goes in `info` (the ADUC Notes box on the Telephones tab), NOT
-   `description`.** Asked which attribute, the owner answered "notes." Notes is multi-line, so
-   repeat stamps append on their own line, and it is almost never already populated, where
-   `description` routinely carries a job title. Cost: a reader has to open the object and go to
-   the Telephones tab, where `description` shows as a column in the ADUC list.
-2. **2026-10-06: the lockdown checkbox DEFAULTS UNCHECKED**, superseding his 2026-10-05 ruling
-   that it default checked. Shipped 1.3.0 default-checked and 1.3.1 default-unchecked; the step
-   is opt-IN. The escape-hatch half of the 2026-10-05 reasoning is unchanged - the stakeholder
-   still has not settled what they want - but the safe-by-default half was reversed. **A reader
-   of the superseded ruling must not reinstate default-checked from its reasoning alone.**
+**Both owner rulings on this module now have `.agents/decisions.md` entries** (`e9f9da8`): the
+2026-10-05 ruling that the previous OU is stamped into `info` rather than `description`, and the
+2026-10-06 ruling that the lockdown checkbox defaults UNCHECKED, superseding the 2026-10-05
+opt-OUT. Decisions owns both and their reasoning; this file does not restate them.
 
 **The escape hatch is explicitly temporary.** When the stakeholder says what they want, the
 checkbox either goes away or becomes the settled default; whoever closes that loop should come
@@ -189,9 +163,9 @@ constant on the page rather than as a literal at each of its three sites.
 ### Queue item 24, the global progress system
 
 **ITEM 24 IS FUNCTIONALLY COMPLETE AND PARTIALLY ACCEPTED.** 86 page spinners to ZERO across 32
-pages; every module reports to the bottom status bar instead. Re-measured 2026-10-05 as of
-`25bb108` and still true as of `390bba6`: `grep -rc "spinner-border" Components/Pages/*.razor`
-returns zero. `docs/GlobalProgressSystem-Plan.md` owns the design; the landed record is in
+pages; every module reports to the bottom status bar instead. Re-measured 2026-10-12 as of
+`96cdb89` and still true: `grep -rc "spinner-border" Components/Pages/*.razor` returns zero.
+`docs/GlobalProgressSystem-Plan.md` owns the design; the landed record is in
 `docs/history/state-archive.md` (Archived 2026-10-09). The owner deployed to dev 2026-10-02 and
 reported *"browser check looks fine for the modules I checked. reset worked."* - **a sample, not
 a sweep**; he did not say which modules, and 32 pages changed. Treat the status bar as working
@@ -232,10 +206,10 @@ for:**
 
 **STANDING CONSTRAINT, owner 2026-10-01: no deployments until item 24 is done**
 (`.agents/decisions.md`). **The "it is being read as prod-only in practice" reading once
-recorded here is FALSIFIED, measured on this host 2026-10-05 as of `25bb108`: BOTH instances
-are deployed at FileVersion `2.27.0.0`, written 2026-10-02 13:18.** Prod shipped during the
-freeze too, so the freeze is not being observed on either instance. The receipt is canonical in
-`.agents/machines.md`. Whether the ruling still stands is the owner's to say; nothing here
+recorded here is FALSIFIED: BOTH instances have been redeployed during the freeze, on
+2026-10-02 and again on 2026-10-09.** Prod shipped both times, so the freeze is not being
+observed on either instance. `.agents/machines.md` owns the receipt and the version numbers;
+they are not copied here. Whether the ruling still stands is the owner's to say; nothing here
 reinterprets it.
 
 **NOTHING HERE CAN VERIFY THE REST** (`.agents/decisions.md` 2026-10-01, "Rendered is not
@@ -375,15 +349,15 @@ reconstructed.
 **`queue.txt` is the owner's file. Never write to it, including status markers** - its own first
 line says so. Status lives here.
 
-**Rows 4, 14, 18, 20 and 24 were re-verified against repo evidence on 2026-10-09 as of
-`390bba6`; the rest carry their 2026-10-01 sweep reading.**
+**Row 4 was re-verified against repo evidence on 2026-10-12 as of `96cdb89`; rows 14, 18, 20
+and 24 carry their 2026-10-09 reading and the rest their 2026-10-01 sweep reading.**
 
 | # | Item | State |
 | --- | --- | --- |
 | 1 | Licensing under Identity | **DONE** (owner-marked). |
 | 2 | Add status.cloud.microsoft to the O365 status page | **PLAN IS DRAFT, needs owner approval before any code.** `docs/ServiceHealthPublicStatus-Plan.md`, `Status: Draft`. |
 | 3 | Migration report survives batch recreate | **DONE** (owner-marked). |
-| 4 | Split message trace vs header analysis permissions | **DONE** (owner-marked) **but the code disagrees and this needs the owner's word.** Re-measured 2026-10-09 as of `390bba6`: outside the tests, `MessageTraceSearch` appears only as a declaration at `Modules/ModuleCatalog.cs:479` and in a comment on `Modules/ModulePermission.cs:22`; no page, handler or policy consults it, so the alias is still inert exactly as slice 1 left it. `docs/MessageTracePermissionSplit-Plan.md` still reads `APPROVED ... and IN PROGRESS` and slices 2-4 are unstarted. Either the owner considers the declaration sufficient, or the DONE marker is premature. Flagged, not resolved. |
+| 4 | Split message trace vs header analysis permissions | **DONE** (owner-marked) **but the code disagrees and this needs the owner's word.** Re-measured 2026-10-12 as of `96cdb89`: outside the tests, `MessageTraceSearch` appears only as a declaration at `Modules/ModuleCatalog.cs:489` (with an explanatory comment at `:468`) and in a comment on `Modules/ModulePermission.cs:22`; no page, handler or policy consults it, so the alias is still inert exactly as slice 1 left it. `docs/MessageTracePermissionSplit-Plan.md` still reads `APPROVED ... and IN PROGRESS` and slices 2-4 are unstarted. Either the owner considers the declaration sufficient, or the DONE marker is premature. Flagged, not resolved. |
 | 5 | Other tenants/domains in message trace | **FEASIBILITY ONLY, no code proposed.** `docs/MessageTraceMultiTenant-Plan.md`, `Status: Draft. Scoping and feasibility only.` Needs an owner decision on whether to proceed at all. |
 | 6 | Containerize the app | **ON-HOLD** (owner-marked). `docs/Containerization-Feasibility.md`. |
 | 7 | O365 status module loading affordance | **DONE** (owner-marked). |
@@ -397,7 +371,7 @@ line says so. Status lives here.
 | 15 | Risky Users complete results | **DONE.** Browser check outstanding, owner's. |
 | 16 | Sidebar scrollbar | **DONE.** `ExchangeAdminWeb.Tests/SidebarScrollCssTests.cs`. Browser check outstanding, owner's. |
 | 17 | True Last Logon module | **BUILT, and its first live run found a defect that is now fixed. S1-S3 landed, with the UPN fix in `fcc94a4` (`Modules/ModuleCatalog.cs` owns the version) after `Get-ADUser -Identity` proved unable to resolve a UPN - every DC answered "cannot find". NOT done: the re-run and the mandatory live comparison are outstanding owner work.** Detail block below. |
-| 18 | Security hold | **BUILT AND SHIPPED; manual acceptance outstanding.** The owner's rulings of 2026-10-05 dropped the CSV, dropped release entirely and made the lockdown-OU move one optional step inside Emergency Disable. `docs/EmergencyDisableLockdownOU-Plan.md` reads `IMPLEMENTED 2026-10-05, manual acceptance OUTSTANDING` and owns the design and the acceptance list; `## Now` owns the two owner rulings that still have no decisions entry. |
+| 18 | Security hold | **BUILT AND SHIPPED; manual acceptance outstanding.** The owner's rulings of 2026-10-05 dropped the CSV, dropped release entirely and made the lockdown-OU move one optional step inside Emergency Disable. `docs/EmergencyDisableLockdownOU-Plan.md` reads `IMPLEMENTED 2026-10-05, manual acceptance OUTSTANDING` and owns the design and the acceptance list; `.agents/decisions.md` owns the two owner rulings (2026-10-05 `info` stamp, 2026-10-06 default-unchecked). |
 | 19 | Risky Users labels | **DONE.** `60c3ace`. |
 | 20 | Implement `docs/Comms10kBulkResolveScale-Plan.md` | **PLAN FULLY IMPLEMENTED 2026-09-30, all four slices. NOT ACCEPTED - it fails the stakeholder's test (owner, 2026-10-01) and the plan's Acceptance section is outstanding in full.** `Modules/ModuleCatalog.cs` owns the module version; the plan sets it once on S1. The stakeholder's three points, and the three things to know before touching any of it, are in `## Previously` above. |
 | 21 | Popup report has no scrollbar and ignores the mouse wheel | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** `docs/AppLayoutAndScrolling-Plan.md`. Cause was structural: a Bootstrap `.card-body` between `.mig-modal` and the `<pre>` made the scroll rule inert. |
@@ -589,19 +563,21 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   control's half is fixed.** `Components/Pages/Migration.razor` -
   `AdoptSelectionAsOpenBatch` nulls `batchUsers`, blanks `mailboxFilter` and resets the page,
   and does NOT touch `selectedMailboxes`; `ReplaceBatchUsers` does not either.
-  `MigrationUserActionPlanner.PruneSelection` exists for exactly this and its own remarks say
-  "Called after every reload" - **it is called from nowhere on the mailbox side**, so that
-  sentence is currently false. Observable: tick a mailbox in batch A, open batch B, and B shows
+  `MigrationUserActionPlanner.PruneSelection` exists for exactly this and its own remarks still
+  say "Called after every reload" - **and it is called from no reload path**. Re-verified
+  2026-10-12 as of `96cdb89`: its only mailbox-side caller is `TicksInThisBatch()`
+  (`Migration.razor:2789`), the read the rc-2 fix added for the new control, so the remark is
+  still false of every reload. Observable: tick a mailbox in batch A, open batch B, and B shows
   no ticked row while the mailbox Actions bar renders with `Actions (1)`; the five bulk actions
   then plan over an address the planner drops, so the banner reads "Nothing to do: none of 0
   selected mailboxes is eligible". Confusing, not destructive - the harmful direction is closed
   because the planner only ever acts on addresses it can find in `batchUsers`.
   **`RemoveCompletedCandidates()` prunes for itself** and is not affected. The general fix is
   one call, but it changes behaviour for five shipped actions and needs its own slice and its
-  own guard; the batch side already has a `PruneSelection()` wrapper at `:2299` to copy.
+  own guard; the batch side already has a `PruneSelection()` wrapper at `:2326` to copy.
 
 - **A live defect was found while scoping queue 4 and is NOT fixed. It needs its own commit.**
-  **Citations re-anchored 2026-10-09 as of `390bba6`; the defect itself is unchanged and still
+  **Citations re-verified 2026-10-12 as of `96cdb89`; the defect itself is unchanged and still
   live.** `Components/Pages/MessageTraceReports.razor` carries only the main `MessageTrace`
   policy (`:4`, and the handler re-check at `:124`), and the listing has since moved into
   `Services/MessageTraceExportListing.cs` - `GetExports()` (`:119`) calls
@@ -615,7 +591,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   operators to that page. Not caused by this run's work.
 
 - **A defect in committed TEST infrastructure, found in plan review and not yet fixed.**
-  `ExchangeAdminWeb.Tests/ClickGateSource.cs:364-384` (re-verified 2026-10-09 as of `390bba6`
+  `ExchangeAdminWeb.Tests/ClickGateSource.cs:364-384` (re-verified 2026-10-12 as of `96cdb89`
   - the citation is still exact and the method is still not quote-aware;
   the earlier `:213-228` citation was stale), `ExtractBlock`, counts `{` and `}`
   without being quote-aware, so a brace inside a string or interpolated string miscounts the
@@ -638,10 +614,12 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   no base app bump.
   The earlier batch-name-caching hypothesis was FALSIFIED by reading the page: the report was
   never keyed on batch name, and that fix would not have touched the reported repro, which
-  reuses the name. Actual cause: `userReport` is a one-time snapshot, the render guard at
-  `Migration.razor:771` keys on the email address alone, and seven paths reloaded or discarded
-  `batchUsers` without clearing it. One `CloseUserReport()` helper now owns the clear at all
-  seven, and a `reportGeneration` counter drops the result of a fetch a reload superseded.
+  reuses the name. Actual cause: `userReport` is a one-time snapshot, the modal's render guard
+  (`Migration.razor:1211`, re-anchored 2026-10-12 as of `96cdb89`; the old `:771` citation was
+  stale) keys on the report's own fields alone and not on the batch, and seven paths reloaded
+  or discarded `batchUsers` without clearing it. One `CloseUserReport()` helper now owns the
+  clear at all seven, and a `reportGeneration` counter drops the result of a fetch a reload
+  superseded.
   Ten source-level tripwires guard it, anchored per branch; all three guard-proof mutations
   bit. Nothing here reaches the rendered page - no bUnit harness exists - so the plan's manual
   checks are the only evidence that the operator sees the fix. **Owner 2026-09-17: those
@@ -820,8 +798,8 @@ Each of these sat inside a block that was archived whole. The record is verbatim
 - **Falsified deployment/configuration blockers:**
   the old dev/prod versions, incomplete shared cutover and missing initial ServiceHealth,
   RiskyUsers and IntuneDevices configuration disagree with the host. Evidence is canonical in
-  `.agents/machines.md`, whose receipt was re-measured 2026-10-05 as of `25bb108` - **dev and
-  prod are at the same base version and the same build, redeployed 2026-10-02.** Manual
+  `.agents/machines.md`, whose receipt was re-measured 2026-10-12 as of `96cdb89` - **dev and
+  prod are at the same base version and the same build, redeployed 2026-10-09.** Manual
   acceptance remains unverified.
 - **Queue 6, containerize: the SPN and gMSA work is not ours to do.** The owner's 2026-09-21
   ruling makes containerization a requirement, but a containerised app runs under Kestrel rather
@@ -831,7 +809,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   container outside line of sight of on-prem AD and Exchange cannot do the AD, on-prem Exchange or
   DHCP work at all. Evidence: `.agents/decisions.md` 2026-09-21, items 3 and the closing paragraph.
 - **SQLite upgrade is no longer blocked by package availability.** The 2026-06-26 decision's
-  "no patched package exists" basis is falsified, re-verified 2026-10-05 as of `25bb108`:
+  "no patched package exists" basis is falsified, re-verified 2026-10-12 as of `96cdb89`:
   `obj/project.assets.json` still resolves `SQLitePCLRaw.lib.e_sqlite3/2.1.11`, while
   [NuGet publishes newer builds](https://www.nuget.org/packages/SQLitePCLRaw.lib.e_sqlite3),
   including 3.53.3 (the package version identifies its SQLite engine).
@@ -854,7 +832,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   implementation uses the store's change token with a throttle. The additive-only rule has
   operative homes in the decision, guidance and test but is absent from the Constitution.
   Evidence: `docs/SharedConfigDb-Plan.md` section 9. No ruling inferred.
-- **Plan-status drift remains, re-verified 2026-10-09 as of `390bba6`:**
+- **Plan-status drift remains, re-verified 2026-10-12 as of `96cdb89`:**
   `docs/BlockedSendersLoadTiming-Plan.md` and
   `docs/Comms10kReplaceUx-Plan.md` still say Approved;
   `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` still says Approved / In progress.
@@ -864,7 +842,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   item 4 is owner-marked DONE and slices 2-4 are unstarted - see the queue table row.
 - **Unscheduled M365 protection gap:** group update/delete and owner adds were recorded as
   ungated, and protection configuration cannot identify a cloud-only group. Re-verified
-  2026-10-09 as of `390bba6` (gate called from `:255` and `:276` only, while `UpdateGroupAsync`
+  2026-10-12 as of `96cdb89` (gate called from `:255` and `:276` only, while `UpdateGroupAsync`
   is at `:125` and `DeleteGroupAsync` at `:143`): `Services/M365GroupManagementService.cs` calls its
   `CheckProtectedAsync` gate from the member/owner paths only - `UpdateGroupAsync` and
   `DeleteGroupAsync` still call neither.
@@ -882,21 +860,24 @@ Each of these sat inside a block that was archived whole. The record is verbatim
 
 Commands and mandatory guards are owned by `.agents/repo-guidance.md` and `AGENTS.md`.
 
-**Last full run, reported as of `390bba6` and NOT re-run by the 2026-10-09 drift sweep:**
-Release build 0 errors; full Release suite **3,707 passed / 0 failed / 3 skipped** with
-`-- xUnit.MaxParallelThreads=4`; `dotnet format --verify-no-changes` clean; ASCII lint clean;
-`git diff --check` clean; PSScriptAnalyzer 0 errors; Pester 157 passed / 0 failed. That
-supersedes the 3,579 recorded for `25bb108`, which was the figure for that commit and not for
-this head. Existing dependency and compiler warnings remain.
+**Last full run, reported as of `7042b91` - the last commit that touched code - and NOT re-run
+by the 2026-10-12 drift sweep:** Release build 0 errors; full Release suite **3,725 passed /
+0 failed / 3 skipped** with `-- xUnit.MaxParallelThreads=4`; `dotnet format
+--verify-no-changes` clean; `git diff --check` clean. That supersedes the 3,707 recorded for
+`390bba6`, which was the figure for that commit and not for this head. PSScriptAnalyzer 0
+errors and Pester 157 passed / 0 failed were last reported for `390bba6` and still stand for
+this head: **no `.ps1` or `.psm1` changed in `390bba6..96cdb89`**, verified by the sweep.
+Existing dependency and compiler warnings remain.
 
-**What this sweep DID measure, as of `390bba6`:** `ProgressRegistry` `KnownGap` entries 0;
+**What this sweep DID measure, as of `96cdb89`:** `ProgressRegistry` `KnownGap` entries 0;
 `.agents/review/index.md` open rows 0; zero `spinner-border` matches under `Components/Pages`;
-base app version `2.27.1`.
+base app version `2.27.1`; both deployed instances at FileVersion `2.27.1.0`;
+`tools/Test-AsciiOnly.ps1` passes.
 
 Browser acceptance, live writes and reviewer dispatches were not run. **Both instances were
-redeployed 2026-10-02 at FileVersion `2.27.0.0`**, re-measured on this host 2026-10-05 as of
-`25bb108` and recorded in `.agents/machines.md`, which owns the receipt - so the current head is
-ahead of what is deployed. Current CI status does not belong here.
+redeployed 2026-10-09 at FileVersion `2.27.1.0`**, re-measured on this host 2026-10-12 as of
+`96cdb89` and recorded in `.agents/machines.md`, which owns the receipt - so the deployed base
+version now matches this head. Current CI status does not belong here.
 Per-finding status is owned by `.agents/review/index.md`.
 
 ## Active sources

@@ -13,6 +13,89 @@ still ran it inline.
 > can be run from the dev instance. Read every "no dev tenant" below as "live validation
 > not yet performed."
 
+## Archived 2026-10-12 (drift sweep, as of `96cdb89`)
+
+Preserved verbatim. Rotated out of `.agents/state.md` because the rule each one carries now has
+an operative canonical home elsewhere.
+
+### The count a registry owns is not copied here
+
+*Rotated because its rule is canonical in `.agents/playbooks/drift.md` and the work stream that
+needed the reminder is finished - `ProgressRegistry` holds zero `KnownGap` entries as of
+`96cdb89`.*
+
+Three slices recorded a running `KnownGap` count in their commit messages and one of them was
+off by one; commit messages are immutable, so that one stays wrong forever. The plan document
+made the same mistake in the other direction - it said 41 defects while the registry held 52.
+**`ExchangeAdminWeb.Tests/ProgressRegistry.cs` owns the number**; get it with
+
+```
+grep -cE 'new\("[A-Za-z0-9_]+", *[0-9]+' ExchangeAdminWeb.Tests/ProgressRegistry.cs
+```
+
+The rule itself is canonical in `.agents/playbooks/drift.md` - a count another file owns is
+pointed to, not duplicated. It was broken twice in one work stream, which is why it is repeated
+here.
+
+### The two Emergency Disable owner rulings, as state.md carried them
+
+*Rotated because `e9f9da8` gave both an operative home in `.agents/decisions.md` (2026-10-05 and
+2026-10-06), which now owns them and their reasoning.*
+
+**Two owner rulings on this module still have no `.agents/decisions.md` entry.** Both are
+operative in the plan and in the shipped code, and both are recorded here because nothing else
+states them as rulings:
+
+1. **2026-10-05: the stamp goes in `info` (the ADUC Notes box on the Telephones tab), NOT
+   `description`.** Asked which attribute, the owner answered "notes." Notes is multi-line, so
+   repeat stamps append on their own line, and it is almost never already populated, where
+   `description` routinely carries a job title. Cost: a reader has to open the object and go to
+   the Telephones tab, where `description` shows as a column in the ADUC list.
+2. **2026-10-06: the lockdown checkbox DEFAULTS UNCHECKED**, superseding his 2026-10-05 ruling
+   that it default checked. Shipped 1.3.0 default-checked and 1.3.1 default-unchecked; the step
+   is opt-IN. The escape-hatch half of the 2026-10-05 reasoning is unchanged - the stakeholder
+   still has not settled what they want - but the safe-by-default half was reversed. **A reader
+   of the superseded ruling must not reinstate default-checked from its reasoning alone.**
+
+### The 2026-10-09 dev-only memory baseline, as `.agents/machines.md` carried it
+
+*Rotated out of `.agents/machines.md` because its own successor section ("prod deploy, and the
+memory clock restarts here") says it supersedes this reading, and carries the pre-fix baseline,
+the measurement and the recycle note forward.*
+
+## 2026-10-09 - memory baseline after the dev deploy
+
+Taken immediately after the dev deploy of `e9f9da8`, which is the first build carrying the
+circuit-lifetime leak fix (`98b29d1`, `c6c73d2`).
+
+| Pool | PID | Working set | Uptime at reading | Carries the fix |
+|---|---|---|---|---|
+| `ExchangeAdminWebDev` | 6008 | **0.34 GB** | 1.6 min | YES |
+| `ExchangeAdminWeb` (prod) | 19072 | 0.75 GB | 306 min | **NO - not redeployed** |
+
+Free RAM at reading: 18.19 GB of 32.
+
+**The comparison this exists for.** The pre-fix baseline is 2026-10-07: prod at **13.8 GB
+working set / 15.0 GB private after 1.0 days**, against dev on the same build and uptime at
+0.89 GB. The difference was operator traffic, which is what made it look like a leak rather
+than a large baseline.
+
+**Prod's 0.75 GB over 5.1 hours extrapolates to ~3.5 GB/day and proves nothing**: it is the
+OLD code, and today's traffic may simply be lighter. Do not read it as the fix working - the
+fix is not in it.
+
+**What to measure, and when.** Once prod carries this build, record its private bytes at
+deploy and again after 24 hours of normal traffic. Against ~14 GB/day:
+
+- Growth largely gone: the circuit leak was the dominant cause.
+- Growth continues at a similar rate: it was not, and the next step is step 0 of
+  `docs/ProductionMemory-Plan.md` - the managed-vs-native counter reading, which has still
+  never been taken. `capture-exchangeadminweb-memory.ps1` is on the owner's machine under
+  `%TEMP%`; it needs an elevated shell.
+
+Note the 2026-10-07 reading was lost to the pool recycle that freed the memory. A recycle or
+deploy resets this clock, so take the reading before the next one.
+
 ## Archived 2026-10-09 (drift sweep, as of `390bba6`)
 
 Preserved verbatim. Rotated out of `.agents/state.md` because the work completed, or because a
