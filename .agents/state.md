@@ -278,8 +278,9 @@ guide all carry the scoped exception, contrasted against Self-Service Groups.
 - **Migration `@key` fix:** proven at source level only; the owner's own screenshot case is
   still the acceptance check.
 - **Comms-10k: FAILS THE STAKEHOLDER'S TEST (owner, 2026-10-01). The plan is fully implemented
-  and it is NOT accepted.** The stakeholder's own three points, verbatim, are below. **NOT
-  diagnosed and NOT started.** Do not open it without an owner go.
+  and it is NOT accepted.** The stakeholder's own three points, verbatim, are below. **Point 3 is
+  DIAGNOSED as of 2026-10-12 - root cause and a separate reporting defect, both below. Points 1
+  and 2 are not.** No fix is started; do not open one without an owner go.
 
   1. *"Longer synchronization time. In the previous version of the Self-Service App, audience
      updates were completed much faster, typically within 15 to 20 minutes. With the current

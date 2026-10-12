@@ -110,3 +110,4 @@ TestResults-*.txt
 # S0 owner-coverage survey output - contains live account names, mail addresses and
 # object ids for every cloud-only account in the tenant. Never commit.
 CloudAccountOwnerCoverage-*.csv
+.agents/review/out/

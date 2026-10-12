@@ -1,6 +1,9 @@
 # Service Health Public Status Plan
 
-Status: Draft
+Status: Draft. Revision 4 (2026-10-12) adds the required Exec summary and records an unprimed
+codex openreview that returned ACCEPTABLE WITH CHANGES - the approach stands. Two of its four
+required changes are still open: open question 1 needs the owner, and three accepted round-3
+test gaps are unfolded. Not approved; not started.
 
 Revision: 3 (2026-09-18). Three codex rounds, all returned **unsound**; ten findings
 total, all verified against the file and all accepted. Round 1 reshaped the source
@@ -21,7 +24,7 @@ Owner: Michael
 Repository base: `337e07b`; Revision 0 at `16ebdf4`, Revision 1 at `f6530e3`,
 Revision 2 at `09699b9`
 Base app version: **leave it unchanged, whatever it currently is** (2.21.1 as of 2026-09-19; it was 2.21.0 when this was drafted and moved under `3c21270`). No base bump is proposed or permitted by this plan - bump ServiceHealth's module version only.
-ServiceHealth module version: 1.3.2 at drafting; 1.4.0 after slice 1, 1.4.1 after
+ServiceHealth module version: 1.3.3 as of 2026-10-12 (1.3.2 at drafting); 1.4.0 after slice 1, 1.4.1 after
 slice 2
 Research performed live against `status.cloud.microsoft` on 2026-09-18; every URL,
 payload shape and cadence claim below is from a request made that day, and the
@@ -31,6 +34,39 @@ Owner-reported issue 2 of the 2026-09-15 queue, recorded in `.agents/state.md`
 lines 318-322, where it is marked blocked on exactly the decision this plan exists
 to unblock: "Needs a decision on how that second source is obtained (no documented
 Graph equivalent is established) before any design."
+
+## Exec summary
+
+**What it does.** Puts a small strip at the top of the O365 status page showing whether
+Microsoft's own public status site is currently reporting trouble with the Microsoft 365
+admin plane and with Azure. It sits above what is already there; nothing is redesigned.
+
+**What it gets you.** Today that page believes one Microsoft source. If that source is
+down, slow, or wrong, the page shows all green and you have no way to tell the difference
+between "nothing is broken" and "we could not ask". The strip is an independent second
+opinion, and it is built so it can never show green merely because it failed to reach or
+understand the source - it says so instead.
+
+**What it costs.** Three working sessions. No new app registration, no credentials, no
+Delinea secret, no background service - the public feed is open and unauthenticated. The
+only running cost is that a hung Microsoft host can add up to five seconds to a cold page
+load, once per ten minutes.
+
+**The biggest risk, and it is the reason to read on.** The public status site is thin. It
+carries one sentence per surface, not a second list of incidents. It will never show you an
+Exchange outage that the current source missed. What it tells you is "Microsoft's own admin
+surfaces are up or down" - which is a real blind spot today, but it is not more incident
+detail. **If what you actually wanted was more incidents, this is the wrong build** and the
+right one is a plain link to Microsoft's page, which is about an hour's work instead of
+three sessions. That is the one question below that has to be answered before anything is
+built.
+
+**What approving it authorises.** The three slices as scoped, two version bumps on the
+Service Health module only, no change to the app's own version number, and no change to how
+the page looks beyond the new strip.
+
+**Reviewed.** Four codex rounds. The latest (2026-10-12, unprimed) returned *acceptable with
+changes* - the shape is right, four things need fixing before anyone implements it.
 
 ## 1. The ask, verbatim
 
@@ -1035,7 +1071,7 @@ trade here, only a mistake.
 `Services/ServiceHealthService.cs`: the two new model types, `FetchPublicStatusAsync`
 with its three gates and shared budget, the constants, the `PublicStatus` property on
 `ServiceHealthStatus`, the `Task.WhenAll` arity change. `Program.cs`: the named
-`PublicStatus` HttpClient. `Modules/ModuleCatalog.cs`: `Version` 1.3.2 -> 1.4.0 and
+`PublicStatus` HttpClient. `Modules/ModuleCatalog.cs`: `Version` 1.3.3 -> 1.4.0 and
 the `Description` line. `ExchangeAdminWeb.Tests/ServiceHealthServiceTests.cs`: the
 updated `TheGraphCollectionsAreFetchedConcurrently` (8.2) and service tests 1 to 11,
 including 3b, 4b and 6b, from section 12.3. `ExchangeAdminWeb.Tests/ServiceHealthPageTests.cs`:
@@ -1823,3 +1859,44 @@ real defects, but rounds 2, 3 and 4 found them in the verification apparatus rat
 design, and the apparatus is now roughly 1800 lines specifying two status tokens - one of which
 carries the value. The three findings above are cheap **once it is known the feature is wanted**,
 and wasted otherwise. **Answer open question 1 first.**
+
+## 21. Revision 4 - codex openreview, 2026-10-12
+
+Unprimed approach review (`openreview`), codex CLI 0.159.0,
+`@azure-openai-eus2-global/gpt-5.5-dzs`, effort `xhigh`, grade fallback (the owner-ruled
+strongest pair available at this gateway). Read-only, repository-only; the reviewer did not
+re-verify Microsoft's live endpoints. Pinned at HEAD `372c9ae`. Capability proof passed: the
+plan file read and `git rev-parse HEAD` both succeeded.
+
+**Verdict: acceptable with changes - the approach stands.** The reviewer independently
+derived the same goal and the same shape (a small always-visible strip, fetched server-side
+on the existing on-demand path, sharing the 10-minute cache, requiring a positive parsed
+status token before rendering green, RSS primary with JSON fallback for `mac`). It called the
+design "the right shape for the repo: narrow, fail-visible, no redesign, no new credentials,
+no background service, no Graph contract change", and confirmed no public-status failure can
+take the existing Graph board down.
+
+**Four required changes before implementation.** None of them is a defect in the approach.
+
+1. **The `## Exec summary` was missing.** Governance makes it the only owner-binding part of
+   a plan (`.agents/decisions.md` 2026-10-01). **DONE in this revision** - written and
+   inserted at the top.
+2. **Open question 1 must be answered explicitly first.** If the owner wanted "more
+   incidents", this plan is the wrong build and the answer is the link-out of section 16. If
+   he wants the independent admin-plane signal, it proceeds. **STILL OPEN - owner.**
+3. **Three round-3 test gaps were accepted and never folded into section 12:** fallback on a
+   thrown or cancelled primary request, `Reachable == true` when the fallback answered while
+   Azure failed, and an empty JSON status treated as `!Answered`. **STILL OPEN - coder-side,
+   do it in slice 1.**
+4. **Mechanical references are stale.** Base app version is now `2.27.1` and ServiceHealth
+   is at `1.3.3`, not the `1.3.2` the slices were written against. **PARTLY DONE** - the
+   slice bumps are corrected below; individual line and test literals elsewhere in the plan
+   were drafted against `337e07b` and must be re-anchored by the implementer rather than
+   trusted. The standing action is unchanged: leave the base app version alone, bump
+   ServiceHealth only.
+
+**One consequence of fixing item 1, recorded because the plan warns about it.** The header
+note says the `Status:` line is deliberately unwrapped because shifting lines invalidates the
+revisions' internal citations. Inserting the exec summary shifted everything below it by 33
+lines. Every self-citation in sections 18 to 20 predates that shift and is now off by 33;
+cite-check before trusting one.
