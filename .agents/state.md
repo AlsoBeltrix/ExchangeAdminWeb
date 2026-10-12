@@ -221,15 +221,23 @@ failing tests and a "0 failed" claim in its message, because the commit was chai
 test command with `&&` and the result was never read. `cc3e8c9` corrects it. Do not chain a
 commit onto an unread verification run.
 
-**Item 25, the verbosity sweep, is NOT STARTED and must not be folded into 24.** Owner,
+**Item 25, the verbosity sweep: PLANNED 2026-10-12, not approved and not started. It must not
+be folded into 24.** `docs/VerbositySweep-Plan.md` owns the measured scope, the house style,
+the slices and the one open owner question (full sweep vs the seven worst pages); nothing is
+copied here. Owner,
 verbatim: *"Do a verbosity sweep. Too much chat context leaked into the app, too many words for
 a human to read instantly."* His example is True Last Logon's no-logon banner, and his rule is
 **"No editorializing anywhere in the app."** It is an app-wide prose sweep. One line to hold
 while cutting: a COUNT or a coverage fact is not editorializing - in True Last Logon
 specifically, `lastLogon` does not replicate, so "none of 34 that answered" is a materially
 weaker claim than "none of 37", and "This is not evidence of dormancy." is a safety statement.
-What goes is instruction to the reader. Grep found NO test pinning any of that copy, so the
-wording is free; add one for whatever replaces it. **Do not read the "0 answered / 37 did not
+What goes is instruction to the reader. **The claim once recorded here that "grep found NO test
+pinning any of that copy, so the wording is free" was TRUE ONLY FOR TRUE LAST LOGON, which is
+what it measured, and is FALSE app-wide:** 20-plus test files assert exact operator-facing
+wording, several with whole-sentence equality, and `RiskyUsersPageTests.cs:413-423` pins three
+lines under a test named `ActionConsequence_MatchesTheOwnerApprovedConfirmationLine`. True Last
+Logon prose is still free; its LINE COUNT is not, because every page is line-keyed by
+`ClickGateRegistry` and `ProgressRegistry`. The plan owns both constraints. **Do not read the "0 answered / 37 did not
 answer" in the owner's example as a live defect** - that output is from the pre-`fcc94a4` build,
 where `Get-ADUser -Identity` could not resolve a UPN so every DC errored, and an errored DC
 correctly counts as "did not answer".
