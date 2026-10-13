@@ -1259,10 +1259,6 @@ public static class ProgressRegistry
             new("OnAfterRenderAsync", "the initial load is LoadAsync", "LoadAsync"),
             new("ClearFilters", LocalUiState),
             new("ToggleDetail", LocalUiState + "; the device is already in the result set"),
-            new("OnSeenByFilterChanged", LocalUiState + "; it narrows a result set already in "
-                + "memory and fetches nothing. The location filter is applied AFTER enrichment "
-                + "precisely because the column it reads does not exist until then, so there is "
-                + "no round trip here to report"),
             new("GoToDevicePage", LocalUiState + "; it moves a window over the result set that is "
                 + "already in memory and fetches nothing. The table is paged because the page "
                 + "rendered every device in the tenant and killed the circuit; paging bounds the "

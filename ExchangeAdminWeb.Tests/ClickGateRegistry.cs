@@ -4715,7 +4715,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DefenderEndpointDevices => new()
     {
         Page = "DefenderEndpointDevices.razor",
-        ExpectedLineCount = 1088,
+        ExpectedLineCount = 1112,
 
         Predicates =
         [
@@ -4728,35 +4728,38 @@ public static class ClickGateRegistry
 
         DomSyncedControls =
         [
-            // The first six are UNMOVED: the new filter was inserted below them, so only the
-            // controls after it shifted. Taken from the tag-start lines the scanner reports, not
-            // from where @bind happens to sit - those differ by two here, and anchoring on the
+            // Re-ordered as well as re-anchored: the form was regrouped by the question the
+            // operator is asking rather than by API field, so the controls now appear in a
+            // different order on the page and the entries follow it. Anchors are TAG-START
+            // lines, not the line @bind sits on - they differ by two here, and anchoring on the
             // wrong one fails with "no input or select starts at line N".
-            new DomSyncedControl(58, "@bind=\"form.DeviceNameStartsWith\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(70, "@bind=\"form.OnboardingStatus\"", "select", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(85, "@bind=\"form.Platform\"", "select", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(100, "@bind=\"form.HealthStatus\"", "select", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(113, "@bind=\"form.RiskScore\"", "select", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(126, "@bind=\"form.ExposureLevel\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(76, "@bind=\"form.OnboardingStatus\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(89, "@bind=\"form.Platform\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(103, "@bind=\"form.HealthStatus\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(116, "@bind=\"form.RiskScore\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(129, "@bind=\"form.ExposureLevel\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(148, "@bind=\"form.DeviceNameStartsWith\"", "input", "disabled=\"@IsBusy\""),
 
-            // Not a `form` field, unlike every other control here. It narrows what has already
-            // been fetched and enriched rather than the fetch, so it sits outside the object
-            // LoadAsync snapshots - see the page's own comment above the control.
-            new DomSyncedControl(145, "@bind=\"seenByFilter\"", "input", "disabled=\"@IsBusy\""),
+            // On `form` with every other control now. It cannot be SENT to Defender - the
+            // observer name does not exist until the second lookup - but it is snapshotted at
+            // Search beside the rest, so it behaves identically to them. It was briefly a
+            // live-typing filter, which gave the page two kinds of control with nothing on
+            // screen distinguishing them.
+            new DomSyncedControl(156, "@bind=\"form.SeenBy\"", "input", "disabled=\"@IsBusy\""),
 
-            new DomSyncedControl(155, "@bind=\"form.MachineGroup\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(163, "@bind=\"form.MachineTag\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(172, "@bind=\"form.LastSeenFrom\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(181, "@bind=\"form.LastSeenTo\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(190, "@bind=\"form.FirstSeenFrom\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(199, "@bind=\"form.FirstSeenTo\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(164, "@bind=\"form.MachineGroup\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(172, "@bind=\"form.MachineTag\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(186, "@bind=\"form.LastSeenFrom\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(194, "@bind=\"form.LastSeenTo\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(202, "@bind=\"form.FirstSeenFrom\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(210, "@bind=\"form.FirstSeenTo\"", "input", "disabled=\"@IsBusy\""),
         ],
 
         UngatedDomSyncedControls = [],
 
         AnnotatedControls =
         [
-            new AnnotatedControl(311, "@onclick=\"DownloadCsvAsync\"",
+            new AnnotatedControl(330, "@onclick=\"DownloadCsvAsync\"",
                 ["ExportableDevices.Count == 0"],
                 RendersOnlyWhen:
                 "only inside the complete branch - a refusal renders no table and offers no export "
@@ -4765,7 +4768,7 @@ public static class ClickGateRegistry
                 + "busy condition: a mechanical rewrite to the bare predicate would offer a "
                 + "header-only file, and a CSV leaves the app without the screen that explained it"),
 
-            new AnnotatedControl(387, "@onclick=\"() => GoToDevicePage(devicePageIndex - 1)\"",
+            new AnnotatedControl(406, "@onclick=\"() => GoToDevicePage(devicePageIndex - 1)\"",
                 ["devicePageIndex == 0"],
                 RendersOnlyWhen:
                 "only inside the complete branch, and only when DevicePageCount > 1 - a result "
@@ -4774,7 +4777,7 @@ public static class ClickGateRegistry
                 + "one. GoToDevicePage clamps as well, so the attribute and the handler agree "
                 + "rather than one trusting the other - the shape the D2(a) findings settled on"),
 
-            new AnnotatedControl(389, "@onclick=\"() => GoToDevicePage(devicePageIndex + 1)\"",
+            new AnnotatedControl(408, "@onclick=\"() => GoToDevicePage(devicePageIndex + 1)\"",
                 ["devicePageIndex >= DevicePageCount - 1"],
                 RendersOnlyWhen:
                 "same branch and same pager as Previous above. The clause is the upper bound and "

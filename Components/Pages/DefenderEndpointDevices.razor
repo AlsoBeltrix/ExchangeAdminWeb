@@ -49,18 +49,24 @@
         return;
     }
 
+    @* The form is grouped by the QUESTION the operator is asking, not by which API field each
+       control maps to. Three groups, in the order someone actually narrows a search: what kind
+       of machine, which machine, and when it was last around.
+
+       Every control behaves identically - nothing happens until Search is pressed. That is why
+       the "(after fetch)" labels and the paragraph explaining them are gone. The page used to
+       have three behaviours in one grid - sent to Defender, applied here on load, applied live
+       while typing - with prose at the bottom trying to explain the difference, so an empty
+       result could mean "nothing matched" or "you did not press the button again". *@
     <div class="card mb-3">
-        <div class="card-header py-2"><strong>Filters</strong></div>
+        <div class="card-header py-2">
+            <strong>Find devices</strong>
+            <span class="text-muted ms-2"><small>Set what you are looking for, then Search.</small></span>
+        </div>
         <div class="card-body">
+
+            <div class="fw-semibold small text-uppercase text-muted mb-2">What kind of device</div>
             <div class="row g-3">
-                <div class="col-md-4">
-                    <label class="form-label" for="deviceName">Device name starts with</label>
-                    <input id="deviceName"
-                           class="form-control"
-                           @bind="form.DeviceNameStartsWith"
-                           disabled="@IsBusy"
-                           placeholder="Start of the name" />
-                </div>
                 <div class="col-md-4">
                     <label class="form-label" for="onboardingStatus">Onboarding status</label>
                     @* The API literals, NOT the portal labels: the portal shows "Can be onboarded"
@@ -79,24 +85,21 @@
                     </select>
                 </div>
                 <div class="col-md-4">
-                    <label class="form-label" for="platform">Platform</label>
-                    @* One value is the client-side one and it is marked in its own option text, so
-                       the label above stays the same height as every other label in the row. *@
+                    <label class="form-label" for="platform">Operating system</label>
                     <select id="platform"
                             class="form-select"
                             @bind="form.Platform"
                             disabled="@IsBusy">
                         <option value="">Any</option>
-                        <option value="@AnyWindows">Any Windows (after fetch)</option>
+                        <option value="@AnyWindows">Any Windows</option>
                         @foreach (var platform in PlatformValues)
                         {
                             <option value="@platform">@platform</option>
                         }
                     </select>
                 </div>
-
                 <div class="col-md-4">
-                    <label class="form-label" for="healthStatus">Health status</label>
+                    <label class="form-label" for="healthStatus">Health</label>
                     <select id="healthStatus"
                             class="form-select"
                             @bind="form.HealthStatus"
@@ -109,7 +112,7 @@
                     </select>
                 </div>
                 <div class="col-md-4">
-                    <label class="form-label" for="riskScore">Risk score</label>
+                    <label class="form-label" for="riskScore">Risk level</label>
                     <select id="riskScore"
                             class="form-select"
                             @bind="form.RiskScore"
@@ -134,24 +137,30 @@
                         }
                     </select>
                 </div>
+            </div>
 
-                @* Not part of `form`, and not a DefenderDeviceFilters field, on purpose. Every
-                   control above narrows the FETCH; this one narrows what has already been
-                   fetched AND enriched, because Recently seen by does not exist until the
-                   hunting query has answered. Putting it in the same object would invite a
-                   later change to push it into the API call, where the field is unknown. *@
+            <hr class="my-4" />
+
+            <div class="fw-semibold small text-uppercase text-muted mb-2">Which device, or where it is</div>
+            <div class="row g-3">
                 <div class="col-md-4">
-                    <label class="form-label" for="seenBy">Recently seen by <span class="text-muted">(after enrichment)</span></label>
+                    <label class="form-label" for="deviceName">Device name starts with</label>
+                    <input id="deviceName"
+                           class="form-control"
+                           @bind="form.DeviceNameStartsWith"
+                           disabled="@IsBusy"
+                           placeholder="LONDON-" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="seenBy">Seen by this machine</label>
                     <input id="seenBy"
                            class="form-control"
-                           @bind="seenByFilter"
-                           @bind:after="OnSeenByFilterChanged"
+                           @bind="form.SeenBy"
                            disabled="@IsBusy"
-                           placeholder="Any part of the observing machine's name" />
+                           placeholder="Name of a machine that saw it" />
                 </div>
-
                 <div class="col-md-4">
-                    <label class="form-label" for="machineGroup">Machine group <span class="text-muted">(after fetch)</span></label>
+                    <label class="form-label" for="machineGroup">Machine group</label>
                     <input id="machineGroup"
                            class="form-control"
                            @bind="form.MachineGroup"
@@ -159,63 +168,62 @@
                            placeholder="Any part of the group name" />
                 </div>
                 <div class="col-md-4">
-                    <label class="form-label" for="machineTag">Machine tag <span class="text-muted">(after fetch)</span></label>
+                    <label class="form-label" for="machineTag">Machine tag</label>
                     <input id="machineTag"
                            class="form-control"
                            @bind="form.MachineTag"
                            disabled="@IsBusy"
                            placeholder="Any part of a tag" />
                 </div>
+            </div>
 
-                <div class="col-md-2">
-                    <label class="form-label" for="lastSeenFrom">Last seen from</label>
+            <hr class="my-4" />
+
+            <div class="fw-semibold small text-uppercase text-muted mb-2">When it was seen</div>
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label" for="lastSeenFrom">Last seen on or after</label>
                     <input id="lastSeenFrom"
                            type="date"
                            class="form-control"
                            @bind="form.LastSeenFrom"
-                           @bind:format="yyyy-MM-dd"
                            disabled="@IsBusy" />
                 </div>
-                <div class="col-md-2">
+                <div class="col-md-3">
                     <label class="form-label" for="lastSeenTo">Last seen before</label>
                     <input id="lastSeenTo"
                            type="date"
                            class="form-control"
                            @bind="form.LastSeenTo"
-                           @bind:format="yyyy-MM-dd"
                            disabled="@IsBusy" />
                 </div>
-                <div class="col-md-2">
-                    <label class="form-label" for="firstSeenFrom">First seen from <span class="text-muted">(after fetch)</span></label>
+                <div class="col-md-3">
+                    <label class="form-label" for="firstSeenFrom">First seen on or after</label>
                     <input id="firstSeenFrom"
                            type="date"
                            class="form-control"
                            @bind="form.FirstSeenFrom"
-                           @bind:format="yyyy-MM-dd"
                            disabled="@IsBusy" />
                 </div>
-                <div class="col-md-2">
-                    <label class="form-label" for="firstSeenTo">First seen before <span class="text-muted">(after fetch)</span></label>
+                <div class="col-md-3">
+                    <label class="form-label" for="firstSeenTo">First seen before</label>
                     <input id="firstSeenTo"
                            type="date"
                            class="form-control"
                            @bind="form.FirstSeenTo"
-                           @bind:format="yyyy-MM-dd"
                            disabled="@IsBusy" />
                 </div>
-                <div class="col-md-8 d-flex align-items-end justify-content-md-end gap-2">
-                    <button class="btn btn-outline-secondary" @onclick="ClearFilters" disabled="@IsBusy">Clear</button>
-                    <button class="btn btn-primary" @onclick="LoadAsync" disabled="@IsBusy">
-                        @* No spinner: the device list reports to the status frame. Two
-                           reporters on screen disagreed with each other, which is the defect
-                           this replaced rather than a tidy-up. *@
-
-                        Load devices
-                    </button>
-                </div>
             </div>
-            <div class="form-text mt-3">
-                Dates are local and every "before" bound is exclusive. A filter marked "(after fetch)" narrows what is shown, not what is retrieved.
+
+            <div class="d-flex justify-content-end gap-2 mt-4">
+                <button class="btn btn-outline-secondary" @onclick="ClearFilters" disabled="@IsBusy">Clear</button>
+                <button class="btn btn-primary" @onclick="LoadAsync" disabled="@IsBusy">
+                    @* No spinner: the device list reports to the status frame. Two
+                       reporters on screen disagreed with each other, which is the defect
+                       this replaced rather than a tidy-up. *@
+
+                    Search
+                </button>
             </div>
         </div>
     </div>
@@ -266,9 +274,9 @@
             <div class="alert alert-warning py-2">
                 <small>
                     <strong>
-                        @result.DiscoveryFailedBatches of @result.DiscoveryTotalBatches enrichment
-                        batches did not answer. Devices in them read
-                        "@DefenderEndpointDeviceService.EnrichmentUnavailable"; the rest are populated.
+                        Extra details are missing for some devices
+                        (@result.DiscoveryFailedBatches of @result.DiscoveryTotalBatches lookups failed).
+                        Those rows show "@DefenderEndpointDeviceService.EnrichmentUnavailable".
                     </strong>
                     @result.DiscoveryEnrichmentReason
                 </small>
@@ -279,8 +287,9 @@
             <div class="alert alert-warning py-2">
                 <small>
                     <strong>
-                        Discovery sources, device type, device category, vendor and model read
-                        "@DefenderEndpointDeviceService.EnrichmentUnavailable" for every device here.
+                        Extra details could not be loaded. Discovery sources, device type,
+                        category, vendor, model and seen-by read
+                        "@DefenderEndpointDeviceService.EnrichmentUnavailable" for every device.
                     </strong>
                     @result.DiscoveryEnrichmentReason
                 </small>
@@ -289,11 +298,21 @@
 
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
+                @* Counts the FILTERED set, which is what is on screen. Showing the unfiltered
+                   total beside a narrowed table was the page saying two things at once. *@
                 <div>
-                    <strong>@result.Devices.Count device(s)</strong>
-                    @if (DevicePageCount > 1)
+                    @if (FilteredDevices.Count == 0)
                     {
-                        <span class="text-muted ms-2"><small>Showing @((devicePageIndex * DevicePageSize) + 1)-@Math.Min((devicePageIndex + 1) * DevicePageSize, result.Devices.Count).</small></span>
+                        <strong>No devices matched.</strong>
+                        <span class="text-muted ms-2"><small>Change a filter above and Search again.</small></span>
+                    }
+                    else
+                    {
+                        <strong>@FilteredDevices.Count device(s)</strong>
+                        @if (DevicePageCount > 1)
+                        {
+                            <span class="text-muted ms-2"><small>Showing @((devicePageIndex * DevicePageSize) + 1)-@Math.Min((devicePageIndex + 1) * DevicePageSize, FilteredDevices.Count).</small></span>
+                        }
                     }
                     <span class="text-muted ms-2">
                         <small>
@@ -512,30 +531,27 @@
         result is { Outcome: DefenderDeviceListOutcome.Complete } ? FilteredDevices : [];
 
     /// <summary>
-    /// Narrows the loaded report to devices observed by a named machine. Applied AFTER
-    /// enrichment, never pushed into the fetch.
+    /// The "Seen by this machine" value that produced the report on screen.
     /// </summary>
     /// <remarks>
-    /// This module exists to locate machines physically, and before this the only way to use the
-    /// observer column was to export and filter in Excel - which is the workflow the module
-    /// replaces. Owner ruling 2026-10-12, `.agents/decisions.md`.
+    /// <para>
+    /// <b>Captured at Search, not read live from the form.</b> The observer name comes from the
+    /// second lookup, which runs after the device list is in hand, so this one cannot be sent to
+    /// Defender with the others - but it must still BEHAVE like the others, or the page is back
+    /// to two kinds of filter with nothing on screen saying which is which. Snapshotting it
+    /// beside the rest of the form is what makes "nothing happens until you press Search" true
+    /// of every control rather than of most of them.
+    /// </para>
+    /// <para>
+    /// Captured on the same line as the filter snapshot, above the first await, for the reason
+    /// ClickGateRegistry's PostAwaitLiveRead entry already gives: a value changed in the stale
+    /// attribute window would desync what the audit names from what the operator sees.
+    /// </para>
     /// </remarks>
-    private string seenByFilter = "";
-
-    /// <summary>Returns to page one when the filter changes, and closes open detail panels.</summary>
-    /// <remarks>
-    /// Without this the operator filters from page 40 of an unfiltered list to a four-page
-    /// result and sees an empty table - which reads as "nothing matched" rather than "you are
-    /// past the end". The same trap the load path resets for, reached a different way.
-    /// </remarks>
-    private void OnSeenByFilterChanged()
-    {
-        devicePageIndex = 0;
-        expandedDevices.Clear();
-    }
+    private string appliedSeenBy = "";
 
     /// <summary>
-    /// The loaded devices narrowed by <see cref="seenByFilter"/>.
+    /// The loaded devices narrowed by <see cref="appliedSeenBy"/>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -558,10 +574,10 @@
             if (result is null)
                 return [];
 
-            if (string.IsNullOrWhiteSpace(seenByFilter))
+            if (string.IsNullOrWhiteSpace(appliedSeenBy))
                 return result.Devices;
 
-            var needle = seenByFilter.Trim();
+            var needle = appliedSeenBy.Trim();
             return result.Devices
                 .Where(d =>
                     string.Equals(
@@ -663,6 +679,7 @@
         public string HealthStatus { get; set; } = "";
         public string RiskScore { get; set; } = "";
         public string ExposureLevel { get; set; } = "";
+        public string SeenBy { get; set; } = "";
         public string MachineGroup { get; set; } = "";
         public string MachineTag { get; set; } = "";
         public DateTime? LastSeenFrom { get; set; }
@@ -695,6 +712,7 @@
             HealthStatus = "";
             RiskScore = "";
             ExposureLevel = "";
+            SeenBy = "";
             MachineGroup = "";
             MachineTag = "";
             LastSeenFrom = null;
@@ -752,6 +770,12 @@
         // every await. Reading any control back afterwards would let the audit record name one
         // filter set while the service was asked for another.
         var filters = form.ToFilters();
+
+        // Snapshotted on the same breath and for the same reason. It is not part of the request -
+        // the observer name does not exist until the second lookup - but it IS part of the
+        // question the operator asked, so it is frozen when they asked it rather than read live
+        // out of a control they may have typed into since.
+        appliedSeenBy = form.SeenBy;
 
         isLoading = true;
         loadError = null;

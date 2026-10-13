@@ -68,17 +68,53 @@ public class DefenderDevicePagingTests
     }
 
     [Fact]
-    public void ChangingTheLocationFilterReturnsToPageOne()
+    public void EveryFilterIncludingTheLocationOneIsAppliedOnSearchAndNotWhileTyping()
     {
-        // Filtering from page 40 of an unfiltered list down to a four-page result would
-        // otherwise leave the operator past the end, reading an empty table as "nothing
-        // matched". Same trap the load path resets for, reached a different way.
+        // The page's whole usability argument is that nothing happens until Search is pressed.
+        // It briefly had a live-typing filter beside twelve that needed the button, with prose
+        // at the bottom explaining the difference - which is the thing that made the form
+        // opaque. The location filter cannot be SENT to Defender (the observer name does not
+        // exist until the second lookup), so the only way it can behave like the others is to
+        // be snapshotted when Search is pressed.
         var source = StripComments(ReadPage());
 
-        Assert.Contains("@bind:after=\"OnSeenByFilterChanged\"", source, StringComparison.Ordinal);
+        // On the form with the rest, so Clear clears it and nothing can read it live.
+        Assert.Contains("@bind=\"form.SeenBy\"", source, StringComparison.Ordinal);
 
-        var handler = Member(source, "void OnSeenByFilterChanged()");
-        Assert.Contains("devicePageIndex = 0;", handler, StringComparison.Ordinal);
+        // No live-apply hook on any control.
+        Assert.DoesNotContain("@bind:after", source, StringComparison.Ordinal);
+
+        // Snapshotted in LoadAsync above the first await, beside the filter snapshot.
+        var load = Member(source, "async Task LoadAsync()");
+        var snapshot = load.IndexOf("appliedSeenBy = form.SeenBy", StringComparison.Ordinal);
+        Assert.True(snapshot >= 0, "LoadAsync must snapshot the location filter when Search is pressed.");
+
+        var firstAwait = load.IndexOf("await", StringComparison.Ordinal);
+        Assert.True(firstAwait > snapshot,
+            "The location filter must be snapshotted before the first await, like the rest of "
+            + "the form - a value changed in the stale-attribute window would desync what the "
+            + "audit names from what the operator is looking at.");
+    }
+
+    [Fact]
+    public void TheResultHeaderCountsWhatIsOnScreenRatherThanWhatWasFetched()
+    {
+        // Showing the unfiltered total above a narrowed table is the page saying two things at
+        // once, and it is the shape that makes an operator distrust the filter.
+        var source = StripComments(ReadPage());
+
+        Assert.Contains("FilteredDevices.Count device(s)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("result.Devices.Count device(s)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEmptyResultSaysSoRatherThanRenderingAnEmptyTable()
+    {
+        // "0 device(s)" above a blank table does not tell an operator whether their filter was
+        // too narrow or they mistyped a machine name. It says which, and what to do next.
+        var source = StripComments(ReadPage());
+
+        Assert.Contains("No devices matched.", source, StringComparison.Ordinal);
     }
 
     [Fact]
