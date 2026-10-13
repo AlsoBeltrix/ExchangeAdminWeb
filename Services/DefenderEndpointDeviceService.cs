@@ -120,10 +120,35 @@ public sealed class DefenderEndpointDeviceService
             throw new ArgumentException("A hunting batch must name at least one device.", nameof(deviceIds));
 
         var ids = string.Join(",", deviceIds.Select(id => $"\"{id}\""));
+
+        // DeviceInfo plus SeenBy(), and the observer id joined back to DeviceInfo for its NAME.
+        //
+        // The join is LEFT OUTER on purpose: a device nothing has observed must still come back
+        // with its five posture columns, or asking for location data would silently shrink the
+        // report.
+        //
+        // The observer is projected as a NAME, never its id. The stakeholder's question is
+        // "where is this machine", and a GUID cannot answer it. An observer whose name does not
+        // resolve leaves the column blank rather than falling back to the raw id - a blank says
+        // "no answer", while an id looks like an answer and is not one.
+        //
+        // The DeviceNetworkInfo columns the plan also lists - subnet, default gateway, DHCP
+        // server, MAC vendor - are NOT here, and that is a deliberate hold rather than an
+        // omission. KQL fails the whole query on an unknown column, so one wrong name in that
+        // join would turn every batch into a failure and take down the five posture columns that
+        // work today. Those names have not been checked against a live tenant (plan R1(h)/(i),
+        // unrun). When they are, that join belongs in its OWN request for the same reason: a
+        // schema surprise in the location columns must not cost the posture columns.
         return "DeviceInfo"
             + $" | where DeviceId in ({ids})"
             + " | summarize arg_max(Timestamp, *) by DeviceId | where isempty(MergedToDeviceId)"
-            + " | project DeviceId, DiscoverySources, DeviceType, DeviceCategory, Vendor, Model";
+            + " | invoke SeenBy()"
+            + " | join kind=leftouter ("
+            + "DeviceInfo | summarize arg_max(Timestamp, *) by DeviceId"
+            + " | project SeenByDeviceId = DeviceId, SeenByName = DeviceName"
+            + ") on $left.SeenBy == $right.SeenByDeviceId"
+            + " | project DeviceId, DiscoverySources, DeviceType, DeviceCategory, Vendor, Model,"
+            + " RecentlySeenBy = SeenByName";
     }
 
     /// <summary>
@@ -980,6 +1005,7 @@ public sealed class DefenderEndpointDeviceService
                 device.DeviceCategory = EnrichmentUnavailable;
                 device.Vendor = EnrichmentUnavailable;
                 device.Model = EnrichmentUnavailable;
+                device.RecentlySeenBy = EnrichmentUnavailable;
                 continue;
             }
 
@@ -991,6 +1017,7 @@ public sealed class DefenderEndpointDeviceService
             device.DeviceCategory = row.DeviceCategory;
             device.Vendor = row.Vendor;
             device.Model = row.Model;
+            device.RecentlySeenBy = row.RecentlySeenBy;
         }
     }
 
@@ -1028,7 +1055,12 @@ public sealed class DefenderEndpointDeviceService
                 DeviceType = GetFlexibleString(entry, "DeviceType"),
                 DeviceCategory = GetFlexibleString(entry, "DeviceCategory"),
                 Vendor = GetFlexibleString(entry, "Vendor"),
-                Model = GetFlexibleString(entry, "Model")
+                Model = GetFlexibleString(entry, "Model"),
+
+                // Absent on an older response shape, and GetFlexibleString returns empty for a
+                // missing property rather than throwing - so a tenant whose SeenBy() projection
+                // differs loses this one column instead of failing the batch.
+                RecentlySeenBy = GetFlexibleString(entry, "RecentlySeenBy")
             };
         }
 

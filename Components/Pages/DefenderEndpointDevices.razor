@@ -135,6 +135,21 @@
                     </select>
                 </div>
 
+                @* Not part of `form`, and not a DefenderDeviceFilters field, on purpose. Every
+                   control above narrows the FETCH; this one narrows what has already been
+                   fetched AND enriched, because Recently seen by does not exist until the
+                   hunting query has answered. Putting it in the same object would invite a
+                   later change to push it into the API call, where the field is unknown. *@
+                <div class="col-md-4">
+                    <label class="form-label" for="seenBy">Recently seen by <span class="text-muted">(after enrichment)</span></label>
+                    <input id="seenBy"
+                           class="form-control"
+                           @bind="seenByFilter"
+                           @bind:after="OnSeenByFilterChanged"
+                           disabled="@IsBusy"
+                           placeholder="Any part of the observing machine's name" />
+                </div>
+
                 <div class="col-md-4">
                     <label class="form-label" for="machineGroup">Machine group <span class="text-muted">(after fetch)</span></label>
                     <input id="machineGroup"
@@ -308,6 +323,7 @@
                             <th>Machine group</th>
                             <th>Last seen</th>
                             <th>Discovery sources</th>
+                            <th>Recently seen by</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -324,6 +340,7 @@
                                 <td>@Display(device.MachineGroup)</td>
                                 <td class="text-nowrap">@FormatTime(device.LastSeen)</td>
                                 <td>@EnrichmentCell(device.DiscoverySources)</td>
+                                <td>@EnrichmentCell(device.RecentlySeenBy)</td>
                                 <td>
                                     @* Renders the row the LIST already returned. It never calls
                                        get-machine-by-id: Learn documents only Machine.ReadWrite.All
@@ -337,7 +354,7 @@
                             @if (expandedDevices.Contains(device.Id))
                             {
                                 <tr>
-                                    <td colspan="10" class="bg-light">
+                                    <td colspan="11" class="bg-light">
                                         <dl class="row mb-0 small">
                                             <dt class="col-sm-3">Device id</dt><dd class="col-sm-9">@Display(device.Id)</dd>
                                             <dt class="col-sm-3">Fully qualified name</dt><dd class="col-sm-9">@Display(device.ComputerDnsName)</dd>
@@ -484,8 +501,77 @@
     /// use, and it is what the button's own Count clause reads, so the control that is offered and
     /// the rows that are written cannot come apart.
     /// </remarks>
+    /// <remarks>
+    /// <b>Follows the FILTER and never the PAGE.</b> Once a location filter exists, "the
+    /// complete matching set" includes it - an export that ignored it would answer a different
+    /// question than the screen, in a file that leaves the app with no banner to explain the
+    /// difference. Paging is the opposite case and is deliberately NOT honoured here: it is a
+    /// property of the viewport, not of the question.
+    /// </remarks>
     private IReadOnlyList<DefenderDevice> ExportableDevices =>
-        result is { Outcome: DefenderDeviceListOutcome.Complete } complete ? complete.Devices : [];
+        result is { Outcome: DefenderDeviceListOutcome.Complete } ? FilteredDevices : [];
+
+    /// <summary>
+    /// Narrows the loaded report to devices observed by a named machine. Applied AFTER
+    /// enrichment, never pushed into the fetch.
+    /// </summary>
+    /// <remarks>
+    /// This module exists to locate machines physically, and before this the only way to use the
+    /// observer column was to export and filter in Excel - which is the workflow the module
+    /// replaces. Owner ruling 2026-10-12, `.agents/decisions.md`.
+    /// </remarks>
+    private string seenByFilter = "";
+
+    /// <summary>Returns to page one when the filter changes, and closes open detail panels.</summary>
+    /// <remarks>
+    /// Without this the operator filters from page 40 of an unfiltered list to a four-page
+    /// result and sees an empty table - which reads as "nothing matched" rather than "you are
+    /// past the end". The same trap the load path resets for, reached a different way.
+    /// </remarks>
+    private void OnSeenByFilterChanged()
+    {
+        devicePageIndex = 0;
+        expandedDevices.Clear();
+    }
+
+    /// <summary>
+    /// The loaded devices narrowed by <see cref="seenByFilter"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A device whose enrichment batch failed is KEPT, whatever the filter says.</b> It
+    /// carries "(unavailable)" rather than an observer name, so it cannot be judged against this
+    /// filter at all - and dropping it would hide exactly the machines someone is hunting, while
+    /// looking like a clean negative result. It stays, still marked, and the banner above says
+    /// how many batches did not answer.
+    /// </para>
+    /// <para>
+    /// Case-insensitive substring, matching the Machine group and Machine tag controls beside
+    /// it. An operator narrowing by site usually knows a fragment of a naming convention, not a
+    /// whole hostname.
+    /// </para>
+    /// </remarks>
+    private IReadOnlyList<DefenderDevice> FilteredDevices
+    {
+        get
+        {
+            if (result is null)
+                return [];
+
+            if (string.IsNullOrWhiteSpace(seenByFilter))
+                return result.Devices;
+
+            var needle = seenByFilter.Trim();
+            return result.Devices
+                .Where(d =>
+                    string.Equals(
+                        d.RecentlySeenBy,
+                        DefenderEndpointDeviceService.EnrichmentUnavailable,
+                        StringComparison.Ordinal)
+                    || d.RecentlySeenBy.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+    }
 
     /// <summary>Devices drawn into the table at once.</summary>
     /// <remarks>
@@ -517,10 +603,14 @@
     private int devicePageIndex;
 
     /// <summary>Total table pages for the current result; at least one, so "1 of 1" is honest.</summary>
-    private int DevicePageCount =>
-        result is null || result.Devices.Count == 0
-            ? 1
-            : (result.Devices.Count + DevicePageSize - 1) / DevicePageSize;
+    private int DevicePageCount
+    {
+        get
+        {
+            var count = FilteredDevices.Count;
+            return count == 0 ? 1 : (count + DevicePageSize - 1) / DevicePageSize;
+        }
+    }
 
     /// <summary>
     /// The devices on the current table page.
@@ -534,11 +624,12 @@
     {
         get
         {
-            if (result is null || result.Devices.Count == 0)
+            var filtered = FilteredDevices;
+            if (filtered.Count == 0)
                 return [];
 
             var index = Math.Clamp(devicePageIndex, 0, DevicePageCount - 1);
-            return result.Devices.Skip(index * DevicePageSize).Take(DevicePageSize).ToList();
+            return filtered.Skip(index * DevicePageSize).Take(DevicePageSize).ToList();
         }
     }
 
@@ -766,6 +857,7 @@
             "FirstSeenUtc", "LastSeenUtc", "RiskScore", "ExposureLevel", "DeviceValue",
             "MachineTags", "MachineGroup", "IsAadJoined", "AadDeviceId",
             "DiscoverySources", "DeviceType", "DeviceCategory", "Vendor", "Model",
+            "RecentlySeenBy",
         };
 
         var csvRows = rows.Select(device => (IReadOnlyList<string>)new List<string>
@@ -797,6 +889,7 @@
             ExportEnrichmentCell(enrichment, device.DeviceCategory),
             ExportEnrichmentCell(enrichment, device.Vendor),
             ExportEnrichmentCell(enrichment, device.Model),
+            ExportEnrichmentCell(enrichment, device.RecentlySeenBy),
         });
 
         return CsvExport.Write(header, csvRows);

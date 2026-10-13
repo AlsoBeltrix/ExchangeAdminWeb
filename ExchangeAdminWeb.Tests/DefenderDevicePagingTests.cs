@@ -36,18 +36,49 @@ public class DefenderDevicePagingTests
     }
 
     [Fact]
-    public void TheExportStillCarriesEveryDeviceAndNotThePagedWindow()
+    public void TheExportFollowsTheFilterAndNeverThePage()
     {
-        // This is the half that makes the paging honest. Browsing is bounded; the file is not.
-        // If ExportableDevices ever starts from PagedDevices, the CSV silently answers a
-        // different question than the one asked - and it leaves the app, where no banner
-        // explains that it was truncated.
+        // This is the half that makes the paging honest, and the two halves pull opposite ways.
+        //
+        // The PAGE must never reach the export: it is a property of the viewport, not of the
+        // question, and a CSV cut to 50 rows silently answers something nobody asked - in a file
+        // that leaves the app, where no banner travels with it to explain the truncation.
+        //
+        // The FILTER must reach it. Once a location filter exists, "the complete matching set"
+        // includes that filter, and an export ignoring it would disagree with the screen the
+        // operator is looking at. Owner ruling 2026-10-12, .agents/decisions.md.
         var source = StripComments(ReadPage());
 
         var exportable = Member(source, "IReadOnlyList<DefenderDevice> ExportableDevices");
-        Assert.Contains("complete.Devices", exportable, StringComparison.Ordinal);
+        Assert.Contains("FilteredDevices", exportable, StringComparison.Ordinal);
         Assert.DoesNotContain("PagedDevices", exportable, StringComparison.Ordinal);
         Assert.DoesNotContain("DevicePageSize", exportable, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ADeviceWhoseEnrichmentFailedSurvivesTheLocationFilter()
+    {
+        // The filter reads a column that a failed enrichment batch never populated. Judging such
+        // a device against it would drop it from the result - invisibly, and looking exactly
+        // like a clean negative - which hides precisely the machines someone is hunting for.
+        var filtered = Member(StripComments(ReadPage()), "IReadOnlyList<DefenderDevice> FilteredDevices");
+
+        Assert.Contains("EnrichmentUnavailable", filtered, StringComparison.Ordinal);
+        Assert.Contains("RecentlySeenBy", filtered, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ChangingTheLocationFilterReturnsToPageOne()
+    {
+        // Filtering from page 40 of an unfiltered list down to a four-page result would
+        // otherwise leave the operator past the end, reading an empty table as "nothing
+        // matched". Same trap the load path resets for, reached a different way.
+        var source = StripComments(ReadPage());
+
+        Assert.Contains("@bind:after=\"OnSeenByFilterChanged\"", source, StringComparison.Ordinal);
+
+        var handler = Member(source, "void OnSeenByFilterChanged()");
+        Assert.Contains("devicePageIndex = 0;", handler, StringComparison.Ordinal);
     }
 
     [Fact]

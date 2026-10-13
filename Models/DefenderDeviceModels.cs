@@ -88,6 +88,30 @@ public sealed class DefenderDevice
     /// <see cref="Vendor"/>.</summary>
     public string Model { get; set; } = "";
 
+    // ---- S6 location columns: what narrows WHERE a machine physically is --------------------
+    //
+    // The module's stated purpose is locating machines in a global company, so these are the
+    // column the report exists for - the rest describe a device's posture, not its place. It
+    // arrives from the same hunting enrichment as the five above and obeys the same rule: an
+    // empty value means either "no row for this device" or "(unavailable)", and only the
+    // RESULT's enrichment state can tell those apart.
+
+    /// <summary>
+    /// The name of a machine that recently observed this one, from the hunting SeenBy() function.
+    /// </summary>
+    /// <remarks>
+    /// <b>A machine NAME, never the observer's GUID.</b> The stakeholder's question is "where is
+    /// this device", and the answer is only useful if the observer is something a person can
+    /// locate. The id is resolved back through DeviceInfo before it reaches here; a run that
+    /// could not resolve it leaves this blank rather than showing the raw id.
+    /// </remarks>
+    public string RecentlySeenBy { get; set; } = "";
+
+    // Subnet, default gateway, DHCP server and MAC vendor are NOT declared yet. They come from
+    // a DeviceNetworkInfo join that is on hold until its column names are checked against a live
+    // tenant - see BuildHuntingQuery. A field nothing populates is worse than a missing one: it
+    // renders as a blank cell, and a blank here already means "no value for this device".
+
     /// <summary>
     /// The DNS suffix of <see cref="ComputerDnsName"/> - everything after the first dot, empty when
     /// there is no dot. Derived, never read from the API: the machine resource has no domain
@@ -152,6 +176,10 @@ public sealed class DefenderDeviceDiscovery
     public string DeviceCategory { get; set; } = "";
     public string Vendor { get; set; } = "";
     public string Model { get; set; } = "";
+
+    /// <summary>The observer machine's NAME, resolved from SeenBy()'s device id (S6).</summary>
+    public string RecentlySeenBy { get; set; } = "";
+
 }
 
 /// <summary>

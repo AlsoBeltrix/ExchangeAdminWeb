@@ -33,9 +33,10 @@ public class DefenderEndpointDevicesCsvTests
         + "LastIpAddress,LastExternalIpAddress,IpAddresses,MacAddresses,"
         + "FirstSeenUtc,LastSeenUtc,RiskScore,ExposureLevel,DeviceValue,"
         + "MachineTags,MachineGroup,IsAadJoined,AadDeviceId,"
-        + "DiscoverySources,DeviceType,DeviceCategory,Vendor,Model";
+        + "DiscoverySources,DeviceType,DeviceCategory,Vendor,Model,"
+        + "RecentlySeenBy";
 
-    private const int ExpectedColumnCount = 27;
+    private const int ExpectedColumnCount = 28;
 
     /// <summary>
     /// Parses the CSV the way a spreadsheet does, so an assertion about a cell is an assertion
@@ -101,6 +102,7 @@ public class DefenderEndpointDevicesCsvTests
         DeviceCategory = "Endpoint",
         Vendor = "Contoso Hardware",
         Model = "Model 9000",
+        RecentlySeenBy = "RECEPTION-PC.corp.example",
     };
 
     [Fact]
@@ -170,6 +172,8 @@ public class DefenderEndpointDevicesCsvTests
         Assert.Equal("Endpoint", row[24]);
         Assert.Equal("Contoso Hardware", row[25]);
         Assert.Equal("Model 9000", row[26]);
+        Assert.Equal("RECEPTION-PC.corp.example", row[27]);
+        Assert.Equal("RECEPTION-PC.corp.example", row[27]);
     }
 
     [Fact]

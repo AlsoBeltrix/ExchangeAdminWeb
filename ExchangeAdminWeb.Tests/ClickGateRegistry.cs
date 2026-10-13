@@ -4715,7 +4715,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DefenderEndpointDevices => new()
     {
         Page = "DefenderEndpointDevices.razor",
-        ExpectedLineCount = 995,
+        ExpectedLineCount = 1088,
 
         Predicates =
         [
@@ -4728,25 +4728,35 @@ public static class ClickGateRegistry
 
         DomSyncedControls =
         [
+            // The first six are UNMOVED: the new filter was inserted below them, so only the
+            // controls after it shifted. Taken from the tag-start lines the scanner reports, not
+            // from where @bind happens to sit - those differ by two here, and anchoring on the
+            // wrong one fails with "no input or select starts at line N".
             new DomSyncedControl(58, "@bind=\"form.DeviceNameStartsWith\"", "input", "disabled=\"@IsBusy\""),
             new DomSyncedControl(70, "@bind=\"form.OnboardingStatus\"", "select", "disabled=\"@IsBusy\""),
             new DomSyncedControl(85, "@bind=\"form.Platform\"", "select", "disabled=\"@IsBusy\""),
             new DomSyncedControl(100, "@bind=\"form.HealthStatus\"", "select", "disabled=\"@IsBusy\""),
             new DomSyncedControl(113, "@bind=\"form.RiskScore\"", "select", "disabled=\"@IsBusy\""),
             new DomSyncedControl(126, "@bind=\"form.ExposureLevel\"", "select", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(140, "@bind=\"form.MachineGroup\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(148, "@bind=\"form.MachineTag\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(157, "@bind=\"form.LastSeenFrom\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(166, "@bind=\"form.LastSeenTo\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(175, "@bind=\"form.FirstSeenFrom\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(184, "@bind=\"form.FirstSeenTo\"", "input", "disabled=\"@IsBusy\""),
+
+            // Not a `form` field, unlike every other control here. It narrows what has already
+            // been fetched and enriched rather than the fetch, so it sits outside the object
+            // LoadAsync snapshots - see the page's own comment above the control.
+            new DomSyncedControl(145, "@bind=\"seenByFilter\"", "input", "disabled=\"@IsBusy\""),
+
+            new DomSyncedControl(155, "@bind=\"form.MachineGroup\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(163, "@bind=\"form.MachineTag\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(172, "@bind=\"form.LastSeenFrom\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(181, "@bind=\"form.LastSeenTo\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(190, "@bind=\"form.FirstSeenFrom\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(199, "@bind=\"form.FirstSeenTo\"", "input", "disabled=\"@IsBusy\""),
         ],
 
         UngatedDomSyncedControls = [],
 
         AnnotatedControls =
         [
-            new AnnotatedControl(296, "@onclick=\"DownloadCsvAsync\"",
+            new AnnotatedControl(311, "@onclick=\"DownloadCsvAsync\"",
                 ["ExportableDevices.Count == 0"],
                 RendersOnlyWhen:
                 "only inside the complete branch - a refusal renders no table and offers no export "
@@ -4755,7 +4765,7 @@ public static class ClickGateRegistry
                 + "busy condition: a mechanical rewrite to the bare predicate would offer a "
                 + "header-only file, and a CSV leaves the app without the screen that explained it"),
 
-            new AnnotatedControl(370, "@onclick=\"() => GoToDevicePage(devicePageIndex - 1)\"",
+            new AnnotatedControl(387, "@onclick=\"() => GoToDevicePage(devicePageIndex - 1)\"",
                 ["devicePageIndex == 0"],
                 RendersOnlyWhen:
                 "only inside the complete branch, and only when DevicePageCount > 1 - a result "
@@ -4764,7 +4774,7 @@ public static class ClickGateRegistry
                 + "one. GoToDevicePage clamps as well, so the attribute and the handler agree "
                 + "rather than one trusting the other - the shape the D2(a) findings settled on"),
 
-            new AnnotatedControl(372, "@onclick=\"() => GoToDevicePage(devicePageIndex + 1)\"",
+            new AnnotatedControl(389, "@onclick=\"() => GoToDevicePage(devicePageIndex + 1)\"",
                 ["devicePageIndex >= DevicePageCount - 1"],
                 RendersOnlyWhen:
                 "same branch and same pager as Previous above. The clause is the upper bound and "

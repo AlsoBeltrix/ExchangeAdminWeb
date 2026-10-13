@@ -1594,8 +1594,22 @@ public class DefenderEndpointDeviceServiceTests
 
         Assert.StartsWith("DeviceInfo", query);
         Assert.DoesNotContain("union", query, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("join", query, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("externaldata", query, StringComparison.OrdinalIgnoreCase);
+
+        // S6 introduced a JOIN, so the blanket "no join" assertion that used to sit here had to
+        // go - and it is replaced rather than simply deleted, because it was carrying real
+        // weight. What it stopped was widening the query to another table; what the query now
+        // needs is a join of DeviceInfo to ITSELF, to turn SeenBy()'s observer id into a machine
+        // name. So: joins are allowed, and every joined source must still be DeviceInfo. The
+        // table sweep below is what enforces that, and it is now the only thing that does.
+        var joins = System.Text.RegularExpressions.Regex.Matches(
+            query, @"join\s+kind=(\w+)\s+\(\s*(\w+)");
+        Assert.NotEmpty(joins);
+        Assert.All(joins, m =>
+        {
+            Assert.Equal("leftouter", m.Groups[1].Value);
+            Assert.Equal("DeviceInfo", m.Groups[2].Value);
+        });
 
         foreach (var table in new[]
         {
