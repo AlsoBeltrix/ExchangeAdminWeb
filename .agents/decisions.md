@@ -5,6 +5,38 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-12 - Defender S6 adds FILTERS on the location fields, not only columns
+
+Owner, verbatim: *"and the ability to filter by what the stakeholder actually needs? this is to
+physically locate machines in a global company."*
+
+`docs/DefenderEndpointDevices-Plan.md` S6 approved a column set (Q8, 2026-09-25): Recently Seen
+By, subnet, default gateway, DHCP server, MAC vendor. **Columns alone do not serve the stated
+purpose and the plan is amended to add filters on them.**
+
+Why it is a gap rather than a preference: the device table is paged 50 at a time as of
+`43c0735`, and the tenant exceeds 100,000 devices. A column you cannot filter on means paging
+2,000 screens to find one machine. The export still works, so the operator would do the job in
+Excel - which is the workflow this module exists to replace. Every filter the page has today
+(platform, health, risk, exposure, onboarding status, machine group, machine tag, name, first
+and last seen) is Defender-centric; none narrows by WHERE a machine is.
+
+**Three design facts that follow, and they are not optional:**
+
+1. **These filters are CLIENT-SIDE, after enrichment.** The location fields come from the
+   hunting query, which runs after the machines API has returned the complete matching set.
+   They cannot be pushed into the API call the way `MatchesClientSideFilters` handles the
+   existing late filters - they are applied later still, after `ApplyEnrichment`.
+2. **A device whose enrichment batch FAILED cannot be judged against a location filter.** It
+   carries "(unavailable)", not a subnet. Silently dropping it from a filtered result would
+   hide exactly the machines someone is hunting, and would do it invisibly. Such devices are
+   kept and marked, or their count is reported - never discarded quietly. This is the
+   per-batch-failure rule from the same slice applied one layer up.
+3. **Filtering changes what the CSV means.** The export's promise is the complete matching set;
+   once a location filter exists, "matching" includes it. The export follows the filter or it
+   is answering a different question than the screen.
+
+
 ### 2026-10-12 - Owner rulings: scope goes wide, and Comms-10k matches exactly
 
 Five rulings in one sitting. Recorded together because they were given together and because
