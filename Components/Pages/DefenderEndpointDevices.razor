@@ -242,7 +242,24 @@
            is deliberately only one of these on the page. The Count guard is not cosmetic: with no
            rows the warning would name columns that are not on screen, so a run that matched nothing
            says so in the header and says nothing else. *@
-        @if (result.Devices.Count > 0 && result.DiscoveryEnrichment != DefenderDiscoveryEnrichmentState.Succeeded)
+        @* Two banners, not one with a conditional word in it. A whole-run failure and a partly
+           failed run need the operator to do different things - re-read the report, versus re-run
+           it and compare - and "every device" is simply false on a partial run, which is the
+           sentence that would quietly appear if the states shared a template. *@
+        @if (result.Devices.Count > 0 && result.DiscoveryEnrichment == DefenderDiscoveryEnrichmentState.PartiallySucceeded)
+        {
+            <div class="alert alert-warning py-2">
+                <small>
+                    <strong>
+                        @result.DiscoveryFailedBatches of @result.DiscoveryTotalBatches enrichment
+                        batches did not answer. Devices in them read
+                        "@DefenderEndpointDeviceService.EnrichmentUnavailable"; the rest are populated.
+                    </strong>
+                    @result.DiscoveryEnrichmentReason
+                </small>
+            </div>
+        }
+        else if (result.Devices.Count > 0 && result.DiscoveryEnrichment != DefenderDiscoveryEnrichmentState.Succeeded)
         {
             <div class="alert alert-warning py-2">
                 <small>
@@ -945,7 +962,8 @@
     /// blank standing in for a run that never executed.
     /// </remarks>
     private static string ExportEnrichmentCell(DefenderDiscoveryEnrichmentState state, string value) =>
-        state == DefenderDiscoveryEnrichmentState.Succeeded
+        state is DefenderDiscoveryEnrichmentState.Succeeded
+            or DefenderDiscoveryEnrichmentState.PartiallySucceeded
             ? value
             : DefenderEndpointDeviceService.EnrichmentUnavailable;
 

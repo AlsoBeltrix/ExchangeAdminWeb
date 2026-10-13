@@ -161,7 +161,7 @@ public class ModuleCatalogTests
         // not reachable, which is what makes landing it before the live reconnaissance safe.
         Assert.False(module.EnabledByDefault);
         Assert.False(module.IsSystemModule);
-        Assert.Equal("1.2.0", module.Version);
+        Assert.Equal("1.3.0", module.Version);
     }
 
     [Fact]

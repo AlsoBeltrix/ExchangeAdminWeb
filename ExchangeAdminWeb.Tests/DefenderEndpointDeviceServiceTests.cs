@@ -1354,7 +1354,8 @@ public class DefenderEndpointDeviceServiceTests
     /// </summary>
     private static (DefenderEndpointDeviceService Service, StubHandler Devices, StubHandler Hunting) CreateEnrichedService(
         string? maxDevices = "50",
-        string? includeDiscoverySources = null)
+        string? includeDiscoverySources = null,
+        int huntingBatchSize = 0)
     {
         var deviceHandler = new StubHandler();
         var huntingHandler = new StubHandler();
@@ -1375,7 +1376,12 @@ public class DefenderEndpointDeviceServiceTests
             () => Task.FromResult<DefenderApiClient?>(inventory),
             maxDevices,
             () => Task.FromResult<DefenderApiClient?>(hunting),
-            includeDiscoverySources);
+            includeDiscoverySources)
+        {
+            // Zero leaves production's 1,000. A test that needs several batches sets 1, which is
+            // how a per-batch failure becomes expressible without a 1,001-device fixture body.
+            HuntingBatchSizeOverride = huntingBatchSize,
+        };
 
         return (service, deviceHandler, huntingHandler);
     }
@@ -1546,7 +1552,17 @@ public class DefenderEndpointDeviceServiceTests
         var root = posted.RootElement;
 
         Assert.Equal(JsonValueKind.Object, root.ValueKind);
-        Assert.Equal(DefenderEndpointDeviceService.HuntingQuery, root.GetProperty("Query").GetString());
+
+        // S6 made the query BATCHED, so it is no longer the bare constant and this assertion had
+        // to be revisited rather than quietly relaxed. What it must still pin is the same
+        // boundary: the body carries exactly the query this module builds for exactly these
+        // device ids, and nothing else. Exact equality against BuildHuntingQuery keeps that - a
+        // widened query, an appended union or a different id set all still fail here, because the
+        // expected value is computed from the ids the listing returned rather than matched
+        // loosely against a fragment.
+        Assert.Equal(
+            DefenderEndpointDeviceService.BuildHuntingQuery(["m1", "m2", "m3"]),
+            root.GetProperty("Query").GetString());
 
         // No escape hatch. The named threat first, because its failure message says what happened:
         // a SECOND query-bearing property, with the safe constant parked in the one this test reads.
@@ -1569,7 +1585,12 @@ public class DefenderEndpointDeviceServiceTests
         // the only thing that does. Cheapest broken implementation that still passes an "it contains
         // DeviceInfo" assertion on its own: appending a union or a join over another table -
         // defeated by the operator checks and by the table sweep.
-        var query = DefenderEndpointDeviceService.HuntingQuery;
+        //
+        // Pointed at the BUILT query since S6, not at a constant. The unbatched constant was
+        // deleted precisely so this sweep cannot go on passing while aimed at a string the module
+        // no longer sends.
+        var query = DefenderEndpointDeviceService.BuildHuntingQuery(
+            ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]);
 
         Assert.StartsWith("DeviceInfo", query);
         Assert.DoesNotContain("union", query, StringComparison.OrdinalIgnoreCase);
@@ -2027,5 +2048,140 @@ public class DefenderEndpointDeviceServiceTests
 
         Assert.Equal("", succeeded.Reason);
         Assert.Equal("Contoso", succeeded.Rows["m1"].Vendor);
+    }
+
+    // ---- S6: per-batch partial failure, which is Known Failure Class 2 on this module ---------
+
+    /// <summary>A machines page carrying ids m1..mN, one device each.</summary>
+    private static string MachinesPage(int count) => Page(count);
+
+    [Fact]
+    public async Task AFailedHuntingBatch_DoesNotBlankTheBatchesThatAnswered()
+    {
+        // The plan's named guard proof: batch 2 of 3 fails, batches 1 and 3 must survive it.
+        // Cheapest broken implementation this defeats: one try/catch around the whole loop, which
+        // throws away every batch's rows the moment any batch fails.
+        var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
+        devices.Responses.Add(() => Ok(MachinesPage(3)));
+
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}"));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDiscoveryEnrichmentState.PartiallySucceeded, result.DiscoveryEnrichment);
+
+        var byId = result.Devices.ToDictionary(d => d.Id, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("MDE", byId["m1"].DiscoverySources);
+        Assert.Equal("MDE", byId["m3"].DiscoverySources);
+    }
+
+    [Fact]
+    public async Task ADeviceInAFailedHuntingBatch_ReadsUnavailableRatherThanBlank()
+    {
+        // A blank already means "this device genuinely has no value". Letting a failed batch
+        // produce one makes the report lie about that device, which no banner above the table
+        // can undo - the operator reads the row, not the header.
+        var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
+        devices.Responses.Add(() => Ok(MachinesPage(3)));
+
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}"));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));
+
+        var m2 = (await service.ListDevicesAsync()).Devices.Single(d => d.Id == "m2");
+
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, m2.DiscoverySources);
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, m2.DeviceType);
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, m2.DeviceCategory);
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, m2.Vendor);
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, m2.Model);
+    }
+
+    [Fact]
+    public async Task APartlyFailedHuntingRun_IsNotReportedAsCompleteAndSaysHowMuchFailed()
+    {
+        var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
+        devices.Responses.Add(() => Ok(MachinesPage(2)));
+
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}"));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.NotEqual(DefenderDiscoveryEnrichmentState.Succeeded, result.DiscoveryEnrichment);
+
+        // "Some enrichment failed" is not an outcome an operator can act on; the counts are the
+        // difference between re-running the report and quietly trusting a short one.
+        Assert.Equal(1, result.DiscoveryFailedBatches);
+        Assert.Equal(2, result.DiscoveryTotalBatches);
+    }
+
+    [Fact]
+    public async Task EveryHuntingBatchFailing_IsAWholeRunFailureAndNotAPartialOne()
+    {
+        var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
+        devices.Responses.Add(() => Ok(MachinesPage(2)));
+
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}"));
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}"));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Failed, result.DiscoveryEnrichment);
+    }
+
+    [Fact]
+    public async Task EveryHuntingBatchAnswering_IsASucceededRunWithNothingGreyed()
+    {
+        // The negative case. Without it the partial path could be reached by a run that had no
+        // failure at all, which would grey devices that enriched perfectly well.
+        var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
+        devices.Responses.Add(() => Ok(MachinesPage(2)));
+
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m2"))));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Succeeded, result.DiscoveryEnrichment);
+        Assert.Equal(0, result.DiscoveryFailedBatches);
+        Assert.All(result.Devices, d =>
+            Assert.NotEqual(DefenderEndpointDeviceService.EnrichmentUnavailable, d.DiscoverySources));
+    }
+
+    [Fact]
+    public async Task AnInputLargerThanOneBatch_IsSplitRatherThanTruncated()
+    {
+        // A truncated single call returns 200 with the first batch's rows, so every device past
+        // the cut reads blank - indistinguishable from "no value" - and nothing says the report
+        // is short. Three devices at a batch size of one must be three calls, not one.
+        var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
+        devices.Responses.Add(() => Ok(MachinesPage(3)));
+
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m2"))));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(3, hunting.RequestBodies.Count);
+        Assert.Equal(3, result.DiscoveryTotalBatches);
+
+        // Each call asked only about its own device: a partition, not three identical queries.
+        // Read out of the PARSED body - the serializer escapes the KQL string's quotes as
+        // ", so a substring match on the raw body silently never matches and the assertion
+        // would have to be weakened to something that proves nothing.
+        var first = QueryOf(hunting.RequestBodies[0]);
+        Assert.Equal(DefenderEndpointDeviceService.BuildHuntingQuery(["m1"]), first);
+        Assert.Equal(DefenderEndpointDeviceService.BuildHuntingQuery(["m2"]), QueryOf(hunting.RequestBodies[1]));
+    }
+
+    /// <summary>The Query value out of a posted runHuntingQuery body.</summary>
+    private static string QueryOf(string body)
+    {
+        using var document = JsonDocument.Parse(body);
+        return document.RootElement.GetProperty("Query").GetString() ?? "";
     }
 }

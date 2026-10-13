@@ -62,26 +62,97 @@ public sealed class DefenderEndpointDeviceService
     /// </summary>
     internal const string HuntingEndpoint = "/security/runHuntingQuery";
 
+    // The unbatched query constant that used to sit here is GONE rather than kept beside its
+    // successor. A dead query string carrying a safety comment is worse than none: the next
+    // reader cannot tell which one ships, and the sweep that proves the query names no other
+    // hunting table would have gone on passing while pointed at the string nobody sends.
+    // BuildHuntingQuery below is the only KQL this module issues.
+
+    /// <summary>Device ids per hunting call (S6).</summary>
+    /// <remarks>
+    /// Microsoft's own discovered-devices example batches at this size. The cost of raising it is
+    /// not latency, it is the blast radius of one failed call: every device in a batch that does
+    /// not answer renders "(unavailable)", so a bigger batch means a single 429 greys more of the
+    /// report.
+    /// </remarks>
+    internal const int HuntingBatchSize = 1000;
+
     /// <summary>
-    /// The advanced hunting query. A CONSTANT in source: no operator input is interpolated into KQL,
-    /// ever, and there is no code path that builds this string from anything.
+    /// Test seam: the effective batch size. Production never sets it.
+    /// </summary>
+    /// <remarks>
+    /// A seam rather than a 1,001-device fixture. The behaviour under test is what happens when
+    /// SOME batches fail, and expressing that needs several batches, not many devices - building
+    /// a thousand-row inventory body to get two batches would make every partial-failure test
+    /// slow and would test the fixture as much as the code.
+    /// </remarks>
+    internal int HuntingBatchSizeOverride { get; init; }
+
+    private int EffectiveHuntingBatchSize =>
+        HuntingBatchSizeOverride > 0 ? HuntingBatchSizeOverride : HuntingBatchSize;
+
+    /// <summary>
+    /// The hunting query for one batch, narrowed to a named set of device ids.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// ThreatHunting.Read.All is scoped to the WHOLE hunting schema - mail, identity, process events,
-    /// everything - and the only thing keeping this module inside DeviceInfo is this string. That is
-    /// why a test asserts it names DeviceInfo and no other table: the permission cannot enforce the
-    /// narrowing, so the query text has to.
+    /// <b>This is the one place KQL is assembled rather than declared.</b> ThreatHunting.Read.All reaches the entire hunting schema,
+    /// so the permission cannot narrow this module to DeviceInfo and only the query text does.
+    /// That is still true: the TABLE names, the
+    /// operators and the projection here are all literal. The only thing interpolated is a list
+    /// of device ids, and every one of them is rejected by
+    /// <see cref="IsSafeDeviceId"/> unless it is bare hexadecimal - no quotes, no commas, no
+    /// parentheses, no whitespace, nothing that can close the <c>in (...)</c> list or start
+    /// another operator. An id that fails that test is NOT escaped and smuggled through; it is
+    /// dropped from the batch and its device renders "(unavailable)", because an id this module
+    /// cannot vouch for is one it should not be asking about.
     /// </para>
     /// <para>
-    /// isempty(MergedToDeviceId) is not decoration. Without it, merged and invalidated duplicate
-    /// records come back and one physical device appears twice; arg_max(Timestamp, *) takes the
-    /// latest state row per device.
+    /// The ids come from the machines API rather than from an operator, which lowers the
+    /// likelihood but is explicitly NOT the argument - that reasoning would make the safety of
+    /// this query a fact about Microsoft's behaviour rather than about this code.
     /// </para>
     /// </remarks>
-    internal const string HuntingQuery =
-        "DeviceInfo | summarize arg_max(Timestamp, *) by DeviceId | where isempty(MergedToDeviceId)"
-        + " | project DeviceId, DiscoverySources, DeviceType, DeviceCategory, Vendor, Model";
+    internal static string BuildHuntingQuery(IReadOnlyList<string> deviceIds)
+    {
+        ArgumentNullException.ThrowIfNull(deviceIds);
+        if (deviceIds.Count == 0)
+            throw new ArgumentException("A hunting batch must name at least one device.", nameof(deviceIds));
+
+        var ids = string.Join(",", deviceIds.Select(id => $"\"{id}\""));
+        return "DeviceInfo"
+            + $" | where DeviceId in ({ids})"
+            + " | summarize arg_max(Timestamp, *) by DeviceId | where isempty(MergedToDeviceId)"
+            + " | project DeviceId, DiscoverySources, DeviceType, DeviceCategory, Vendor, Model";
+    }
+
+    /// <summary>
+    /// Whether a device id may be interpolated into KQL.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An allowlist, not a denylist of characters that look dangerous: a denylist has to be right
+    /// about every metacharacter KQL has now and will ever have, while this has to be right about
+    /// which characters an identifier may contain. Nothing admitted here can close the double
+    /// quote, escape it, close the <c>in (...)</c> list, or begin another operator.
+    /// </para>
+    /// <para>
+    /// <b>Deliberately wider than the format Defender issues today.</b> The ids observed are
+    /// 40-character hex, and an earlier version of this allowed only that - which would have been
+    /// a safety rule resting on a fact about Microsoft's current id format. When that format
+    /// widened, every device would have silently gone unavailable. Letters, digits, hyphen,
+    /// underscore and dot admit hex ids, GUID ids and anything else identifier-shaped, and the
+    /// safety argument does not depend on which of those is in use.
+    /// </para>
+    /// <para>
+    /// An id outside it is not escaped and smuggled through: it is dropped from the batch and its
+    /// device reads "(unavailable)", because an id this module cannot vouch for is one it should
+    /// not be asking about - and the operator is told, rather than shown a blank.
+    /// </para>
+    /// </remarks>
+    internal static bool IsSafeDeviceId(string? id) =>
+        !string.IsNullOrEmpty(id)
+        && id.All(c => char.IsAsciiLetterOrDigit(c) || c == '-' || c == '_' || c == '.');
 
     /// <summary>
     /// What an enrichment cell shows when the hunting query did not run or failed. Never a blank: an
@@ -415,7 +486,7 @@ public sealed class DefenderEndpointDeviceService
         // must never take the page down, and it must never leave those columns merely blank.
         var enrichment = devices.Count == 0
             ? DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.NoDevices)
-            : await GetDiscoveryEnrichmentAsync();
+            : await GetDiscoveryEnrichmentAsync(devices.Select(d => d.Id).ToList());
 
         ApplyEnrichment(devices, enrichment);
 
@@ -426,7 +497,9 @@ public sealed class DefenderEndpointDeviceService
             rangesCompleted,
             ceiling,
             enrichment.State,
-            enrichment.Reason);
+            enrichment.Reason,
+            enrichment.FailedBatches,
+            enrichment.TotalBatches);
     }
 
     /// <summary>
@@ -697,8 +770,10 @@ public sealed class DefenderEndpointDeviceService
     /// bite at one query per page load, all of which would bite at one per device.
     /// </para>
     /// </remarks>
-    internal async Task<DefenderDiscoveryEnrichment> GetDiscoveryEnrichmentAsync()
+    internal async Task<DefenderDiscoveryEnrichment> GetDiscoveryEnrichmentAsync(IReadOnlyList<string> deviceIds)
     {
+        ArgumentNullException.ThrowIfNull(deviceIds);
+
         if (!IncludeDiscoverySources)
             return DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.SwitchedOff);
 
@@ -720,34 +795,112 @@ public sealed class DefenderEndpointDeviceService
         if (client == null)
             return DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.CredentialsUnavailable);
 
+        // An id this module cannot vouch for is never interpolated into KQL. It is dropped here
+        // and lands in unavailable below, so the device says so rather than showing a blank.
+        var safeIds = deviceIds.Where(IsSafeDeviceId).ToList();
+        var unsafeIds = deviceIds.Where(id => !IsSafeDeviceId(id)).ToList();
+
+        var batches = Chunk(safeIds, EffectiveHuntingBatchSize).ToList();
+        if (batches.Count == 0)
+            return DefenderDiscoveryEnrichment.Failed(DefenderDiscoveryReasons.MalformedResponse);
+
+        var rows = new Dictionary<string, DefenderDeviceDiscovery>(StringComparer.OrdinalIgnoreCase);
+        var unavailable = new HashSet<string>(unsafeIds, StringComparer.OrdinalIgnoreCase);
+        var failedBatches = 0;
+        var lastFailureReason = "";
+
+        foreach (var batch in batches)
+        {
+            // Per batch, not per run. Known Failure Class 2: this loop is the aggregation point,
+            // and the rule is that one batch's failure must neither blank the batches that
+            // answered nor let the run claim the column is complete.
+            if (!await TryEnrichBatchAsync(client, batch, rows))
+            {
+                failedBatches++;
+                lastFailureReason = _lastBatchFailureReason;
+                foreach (var id in batch)
+                    unavailable.Add(id);
+            }
+        }
+
+        if (failedBatches == batches.Count)
+            return DefenderDiscoveryEnrichment.Failed(lastFailureReason, batches.Count);
+
+        if (failedBatches > 0 || unavailable.Count > 0)
+        {
+            return DefenderDiscoveryEnrichment.PartiallySucceeded(
+                rows,
+                unavailable,
+                // An unsafe id is a failure of this run even though no batch carried it, so the
+                // count is never zero here - PartiallySucceeded rejects a zero.
+                Math.Max(failedBatches, 1),
+                Math.Max(batches.Count, 2),
+                failedBatches > 0 ? lastFailureReason : DefenderDiscoveryReasons.MalformedResponse);
+        }
+
+        return DefenderDiscoveryEnrichment.Succeeded(rows, batches.Count);
+    }
+
+    /// <summary>Why the most recent batch failed. Read only immediately after a false return.</summary>
+    private string _lastBatchFailureReason = "";
+
+    /// <summary>
+    /// Runs one hunting batch and merges its rows, returning whether the batch answered.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Merges into the shared dictionary only on success.</b> A batch that failed contributes
+    /// nothing, which is what lets the caller mark exactly its devices unavailable while leaving
+    /// every other batch's data in place.
+    /// </para>
+    /// <para>
+    /// The exception filter and the out-of-try read of the body are unchanged from the one-shot
+    /// version and for the same reasons: only the call that leaves this process is wrapped, so a
+    /// parsing bug in this module stays an exception instead of becoming "the request failed".
+    /// </para>
+    /// </remarks>
+    private async Task<bool> TryEnrichBatchAsync(
+        DefenderApiClient client,
+        IReadOnlyList<string> batch,
+        Dictionary<string, DefenderDeviceDiscovery> into)
+    {
         DefenderApiResult response;
         try
         {
-            response = await client.PostWithStatusAsync(HuntingEndpoint, new { Query = HuntingQuery });
+            response = await client.PostWithStatusAsync(
+                HuntingEndpoint, new { Query = BuildHuntingQuery(batch) });
         }
         catch (Exception ex) when (IsHuntingSideFailure(ex))
         {
-            // PostWithStatusAsync turns a STATUS into a result, but a request that never received a
-            // status still throws: DefenderApiClient.cs throws on a token request that came back
-            // non-2xx, and its send catches only TaskCanceledException, so a transport failure or an
-            // unreadable token body escapes it. Fixed constant again - the token exception carries a
-            // status and a transport exception can carry a host name and a certificate subject.
-            return DefenderDiscoveryEnrichment.Failed(DefenderDiscoveryReasons.SendFailed);
+            _lastBatchFailureReason = DefenderDiscoveryReasons.SendFailed;
+            return false;
         }
 
         if (response.Document == null)
-            return DefenderDiscoveryEnrichment.Failed(DescribeEnrichmentFailure(response));
+        {
+            _lastBatchFailureReason = DescribeEnrichmentFailure(response);
+            return false;
+        }
 
         using var document = response.Document;
 
-        // Deliberately OUTSIDE both catches. Reading the response and building the row dictionary is
-        // this module's own code, not the hunting side: a NullReferenceException or a duplicate-key
-        // ArgumentException in there is a BUG, and a bug that greys five columns and says "the
-        // request failed" is a bug nobody ever finds. Only the two calls that leave this process are
-        // wrapped, and each is wrapped alone so the two reasons cannot borrow each other's sentence.
-        return TryReadHuntingResults(document, out var rows)
-            ? DefenderDiscoveryEnrichment.Succeeded(rows)
-            : DefenderDiscoveryEnrichment.Failed(DefenderDiscoveryReasons.MalformedResponse);
+        if (!TryReadHuntingResults(document, out var batchRows))
+        {
+            _lastBatchFailureReason = DefenderDiscoveryReasons.MalformedResponse;
+            return false;
+        }
+
+        foreach (var (id, row) in batchRows)
+            into[id] = row;
+
+        return true;
+    }
+
+    /// <summary>Partitions ids into batches, in order, covering every element exactly once.</summary>
+    private static IEnumerable<IReadOnlyList<string>> Chunk(IReadOnlyList<string> ids, int size)
+    {
+        for (var i = 0; i < ids.Count; i += size)
+            yield return ids.Skip(i).Take(Math.Min(size, ids.Count - i)).ToList();
     }
 
     /// <summary>
@@ -802,12 +955,35 @@ public sealed class DefenderEndpointDeviceService
     /// </remarks>
     private static void ApplyEnrichment(List<DefenderDevice> devices, DefenderDiscoveryEnrichment enrichment)
     {
-        if (enrichment.State != DefenderDiscoveryEnrichmentState.Succeeded)
+        var state = enrichment.State;
+        if (state != DefenderDiscoveryEnrichmentState.Succeeded
+            && state != DefenderDiscoveryEnrichmentState.PartiallySucceeded)
+        {
             return;
+        }
 
         foreach (var device in devices)
         {
-            if (string.IsNullOrWhiteSpace(device.Id) || !enrichment.Rows.TryGetValue(device.Id, out var row))
+            if (string.IsNullOrWhiteSpace(device.Id))
+                continue;
+
+            // A device whose batch did not answer gets the marker ON THE ROW, not a blank. This
+            // is the per-device half of Known Failure Class 2: the banner says how many batches
+            // failed, but only this makes the individual cell stop claiming the device has no
+            // value. Checked BEFORE the row lookup - a device in the unavailable set has no row
+            // by construction, and testing it first says why rather than falling through to the
+            // same `continue` a genuinely empty device takes.
+            if (enrichment.UnavailableDeviceIds.Contains(device.Id))
+            {
+                device.DiscoverySources = EnrichmentUnavailable;
+                device.DeviceType = EnrichmentUnavailable;
+                device.DeviceCategory = EnrichmentUnavailable;
+                device.Vendor = EnrichmentUnavailable;
+                device.Model = EnrichmentUnavailable;
+                continue;
+            }
+
+            if (!enrichment.Rows.TryGetValue(device.Id, out var row))
                 continue;
 
             device.DiscoverySources = row.DiscoverySources;
@@ -945,8 +1121,17 @@ public sealed class DefenderEndpointDeviceService
     /// means no device has one and half the report did not execute. Those two are indistinguishable
     /// at the cell, so the run state decides, not the value.
     /// </remarks>
+    /// <remarks>
+    /// <b>PartiallySucceeded reads the VALUE, and that is not an exception to the rule above - it
+    /// is the rule applied one level down.</b> On a partial run the decision has already been made
+    /// per device: ApplyEnrichment wrote the real value onto devices whose batch answered and
+    /// wrote <see cref="EnrichmentUnavailable"/> onto the devices whose batch did not. Overriding
+    /// every cell here would grey the devices that DID enrich, which is the mistake that makes a
+    /// partial run indistinguishable from a total failure and throws away most of the report.
+    /// </remarks>
     public static string DescribeEnrichmentCell(DefenderDiscoveryEnrichmentState state, string? value) =>
-        state != DefenderDiscoveryEnrichmentState.Succeeded
+        state is not (DefenderDiscoveryEnrichmentState.Succeeded
+            or DefenderDiscoveryEnrichmentState.PartiallySucceeded)
             ? EnrichmentUnavailable
             : string.IsNullOrWhiteSpace(value) ? "-" : value;
 

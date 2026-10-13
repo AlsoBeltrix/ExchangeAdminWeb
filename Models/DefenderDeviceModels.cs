@@ -173,6 +173,27 @@ public enum DefenderDiscoveryEnrichmentState
     /// <summary>The hunting query ran and its columns are populated.</summary>
     Succeeded,
 
+    /// <summary>
+    /// Some hunting batches answered and some did not (S6).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This state exists because the query is batched, and it is the whole of Known Failure
+    /// Class 2 on this module.</b> The enrichment is one call per 1,000 devices, so a tenant run
+    /// is a dozen or more calls and any of them can fail alone. Reporting that run as
+    /// <see cref="Succeeded"/> would blank the failed devices' cells - and a blank cell means
+    /// "this device genuinely has no value", which is the opposite of what happened. Reporting it
+    /// as <see cref="Failed"/> would throw away every batch that did answer.
+    /// </para>
+    /// <para>
+    /// A partial run therefore carries BOTH: the rows it did get, and
+    /// <see cref="DefenderDiscoveryEnrichment.UnavailableDeviceIds"/> naming every device whose
+    /// batch did not answer. A device in that set renders "(unavailable)"; a device in neither
+    /// renders blank, truthfully.
+    /// </para>
+    /// </remarks>
+    PartiallySucceeded,
+
     /// <summary>The hunting query was attempted and failed; the reason names which failure.</summary>
     Failed
 }
@@ -194,18 +215,85 @@ public sealed class DefenderDiscoveryEnrichment
     /// <summary>Why the columns read "(unavailable)". Empty when <see cref="State"/> is Succeeded.</summary>
     public string Reason { get; private init; } = "";
 
-    /// <summary>The hunting rows by device id. Always empty unless <see cref="State"/> is Succeeded.</summary>
+    /// <summary>
+    /// The hunting rows by device id. Empty unless <see cref="State"/> is Succeeded or
+    /// PartiallySucceeded.
+    /// </summary>
     public IReadOnlyDictionary<string, DefenderDeviceDiscovery> Rows { get; private init; }
         = new Dictionary<string, DefenderDeviceDiscovery>();
 
-    public static DefenderDiscoveryEnrichment Succeeded(IReadOnlyDictionary<string, DefenderDeviceDiscovery> rows) =>
-        new() { State = DefenderDiscoveryEnrichmentState.Succeeded, Reason = "", Rows = rows };
+    /// <summary>
+    /// Devices whose hunting batch did not answer, and which must therefore render
+    /// "(unavailable)" rather than a blank cell. Empty in every state but PartiallySucceeded.
+    /// </summary>
+    /// <remarks>
+    /// Carried as device ids rather than as a count, because the page has to decide this per
+    /// ROW. A count can only produce a banner, and a banner above a table of blank cells still
+    /// leaves every individual cell lying about that device.
+    /// </remarks>
+    public IReadOnlySet<string> UnavailableDeviceIds { get; private init; }
+        = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Hunting batches that did not answer. Zero unless <see cref="State"/> is PartiallySucceeded.</summary>
+    public int FailedBatches { get; private init; }
+
+    /// <summary>Hunting batches attempted. Zero when the query never ran.</summary>
+    public int TotalBatches { get; private init; }
+
+    public static DefenderDiscoveryEnrichment Succeeded(
+        IReadOnlyDictionary<string, DefenderDeviceDiscovery> rows,
+        int totalBatches = 1) =>
+        new()
+        {
+            State = DefenderDiscoveryEnrichmentState.Succeeded,
+            Reason = "",
+            Rows = rows,
+            TotalBatches = totalBatches,
+        };
+
+    /// <summary>
+    /// Some batches answered and some did not.
+    /// </summary>
+    /// <remarks>
+    /// <b>Rejects the degenerate cases rather than accepting them quietly.</b> A "partial" run
+    /// with no failed batches is a success and a "partial" run where every batch failed is a
+    /// failure; admitting either here would let a caller report one thing while the counts say
+    /// another. The caller picks the right factory - see GetDiscoveryEnrichmentAsync, which
+    /// branches on the failure count before it gets here.
+    /// </remarks>
+    public static DefenderDiscoveryEnrichment PartiallySucceeded(
+        IReadOnlyDictionary<string, DefenderDeviceDiscovery> rows,
+        IReadOnlySet<string> unavailableDeviceIds,
+        int failedBatches,
+        int totalBatches,
+        string reason)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(unavailableDeviceIds);
+
+        if (failedBatches <= 0)
+            throw new ArgumentOutOfRangeException(nameof(failedBatches), "A partial run has at least one failed batch; use Succeeded.");
+        if (failedBatches >= totalBatches)
+            throw new ArgumentOutOfRangeException(nameof(failedBatches), "A run with no surviving batch is a failure; use Failed.");
+        if (unavailableDeviceIds.Count == 0)
+            throw new ArgumentException("A failed batch has devices in it; an empty set would render blanks as if they were real.", nameof(unavailableDeviceIds));
+
+        return new()
+        {
+            State = DefenderDiscoveryEnrichmentState.PartiallySucceeded,
+            Reason = reason,
+            Rows = rows,
+            UnavailableDeviceIds = unavailableDeviceIds,
+            FailedBatches = failedBatches,
+            TotalBatches = totalBatches,
+        };
+    }
 
     public static DefenderDiscoveryEnrichment NotAttempted(string reason) =>
         new() { State = DefenderDiscoveryEnrichmentState.NotAttempted, Reason = reason };
 
-    public static DefenderDiscoveryEnrichment Failed(string reason) =>
-        new() { State = DefenderDiscoveryEnrichmentState.Failed, Reason = reason };
+    public static DefenderDiscoveryEnrichment Failed(string reason, int totalBatches = 0) =>
+        new() { State = DefenderDiscoveryEnrichmentState.Failed, Reason = reason, TotalBatches = totalBatches };
 }
 
 /// <summary>
@@ -354,6 +442,17 @@ public sealed class DefenderDeviceListResult
     /// <summary>Why the enrichment columns read "(unavailable)". Empty when they are populated.</summary>
     public string DiscoveryEnrichmentReason { get; private init; } = "";
 
+    /// <summary>Hunting batches that did not answer. Zero unless the enrichment partly succeeded.</summary>
+    /// <remarks>
+    /// Carried so the banner can say HOW MUCH did not answer. "Some enrichment failed" is not an
+    /// outcome an operator can act on; "2 of 13 batches" tells them whether to re-run or to read
+    /// the report as it stands.
+    /// </remarks>
+    public int DiscoveryFailedBatches { get; private init; }
+
+    /// <summary>Hunting batches attempted. Zero when the query never ran.</summary>
+    public int DiscoveryTotalBatches { get; private init; }
+
     public static DefenderDeviceListResult CompleteRun(
         IReadOnlyList<DefenderDevice> devices,
         int distinctCount,
@@ -361,7 +460,9 @@ public sealed class DefenderDeviceListResult
         int rangesCompleted,
         int ceiling,
         DefenderDiscoveryEnrichmentState enrichment,
-        string enrichmentReason) => new()
+        string enrichmentReason,
+        int failedBatches = 0,
+        int totalBatches = 0) => new()
         {
             Outcome = DefenderDeviceListOutcome.Complete,
             Devices = devices,
@@ -370,7 +471,9 @@ public sealed class DefenderDeviceListResult
             RangesCompleted = rangesCompleted,
             Ceiling = ceiling,
             DiscoveryEnrichment = enrichment,
-            DiscoveryEnrichmentReason = enrichmentReason
+            DiscoveryEnrichmentReason = enrichmentReason,
+            DiscoveryFailedBatches = failedBatches,
+            DiscoveryTotalBatches = totalBatches
         };
 
     /// <summary>

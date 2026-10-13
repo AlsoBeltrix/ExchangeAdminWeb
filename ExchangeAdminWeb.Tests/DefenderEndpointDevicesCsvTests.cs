@@ -445,9 +445,13 @@ public class DefenderEndpointDevicesCsvTests
         // The enrichment warning is the first thing rendered in the complete branch, and the device
         // table's closing tag is near its end. Both are read out of the file, so if either moves
         // the bracket has to be re-derived by hand rather than drifting.
+        //
+        // S6 split that warning in two - a partial run and a total failure say different things -
+        // so the bracket opens on the PARTIAL banner, which is now the first thing in the branch.
+        // Re-derived by hand against the file, as the failure message below demands.
         var completeBranchOpens = text.IndexOf(
-            "@if (result.Devices.Count > 0 && result.DiscoveryEnrichment != "
-            + "DefenderDiscoveryEnrichmentState.Succeeded)",
+            "@if (result.Devices.Count > 0 && result.DiscoveryEnrichment == "
+            + "DefenderDiscoveryEnrichmentState.PartiallySucceeded)",
             StringComparison.Ordinal);
         var completeBranchTable = text.IndexOf("</table>", StringComparison.Ordinal);
         Assert.True(completeBranchOpens > refusalBranch && completeBranchTable > completeBranchOpens,

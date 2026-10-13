@@ -1146,13 +1146,18 @@ public sealed class ModuleCatalog
             // at all (docs/DefenderEndpointDevices-Plan.md Revision 3, R1(g)); the two hardcoded
             // filters are replaced by the machine record's real fields, and the default ceiling
             // rises from 20000 to 100000.
+            // 1.3.0: the enrichment query is BATCHED - one hunting call per 1,000 devices, narrowed
+            // to those ids, instead of one unfiltered query over the whole DeviceInfo table. A
+            // batch that does not answer no longer blanks the batches that did: its devices read
+            // "(unavailable)" and the banner names how many batches failed. Device ids are
+            // interpolated into KQL and are allowlisted before they go anywhere near it.
             // 1.2.0: the device table is paged, 50 rows at a time, with Previous/Next. It
             // rendered every device the tenant returned - and since 1.1.2 raised the ceiling to
             // 100,000, that killed the circuit and nothing could be scrolled, so the module
             // shipped unusable at tenant scale. Owner rejected virtualised scrolling; this is
             // the portal-style shape he approved instead. Paging bounds the DOM only: the CSV
             // export still carries the complete matching set, and a test pins that it does.
-            Version = "1.2.0",
+            Version = "1.3.0",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",
