@@ -157,17 +157,49 @@ public class Comms10kRejectionReportTests
     [Fact]
     public void AFileWithNoUsableRowsStillOffersTheErrorsReport()
     {
-        // Round 2 finding. A file whose rows are ALL unusable parses to nothing, so there is
-        // no Validate step and never a resolveResult - and the download button lived inside
-        // the result. The one upload that most needs explaining could not produce a report.
+        // Round 2 finding (mde-5). A file whose rows are ALL unusable parses to nothing, so
+        // there is no Validate step and never a resolveResult - and the download button lived
+        // inside the result. The one upload that most needs explaining could not produce a
+        // report. Round 3 (mde-7) widened the condition past this one state, so the assertion
+        // moved with it: AllRejections carries rejectedBeforeLookup, so the all-invalid file
+        // still reaches the offer, and the branch naming it is still rendered.
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "Comms10k.razor")));
+
+        Assert.Contains("parsedEmails.Count == 0", source, StringComparison.Ordinal);
+        Assert.Contains("nothing to validate", source, StringComparison.Ordinal);
+
+        // Two download buttons - one inside the validated result, one on the rejections path.
+        Assert.Equal(2, Regex.Matches(source, Regex.Escape("@onclick=\"DownloadRejections\"")).Count);
+    }
+
+    [Fact]
+    public void TheErrorsReportIsReachableFromEveryStateThatHasRejections()
+    {
+        // Round 3 finding (mde-7). mde-5's fix was gated on parsedEmails.Count == 0, which left
+        // two states recorded-but-unreachable: a MIXED file before Validate is pressed, and a
+        // validation that FAILED. That is the third time in this stream a fix was written for
+        // the state in front of it and not the one beside it, so the guard pins the SHAPE of
+        // the condition rather than enumerating states - the offer must not be gated on how
+        // many rows parsed, only on whether rejections exist and whether the success panel is
+        // already carrying the download.
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "Comms10k.razor")));
 
         Assert.Contains(
-            "parsedEmails.Count == 0 && rejectedBeforeLookup.Count > 0",
+            "@if (AllRejections.Count > 0 && (resolveResult == null || !resolveResult.Success))",
             source, StringComparison.Ordinal);
 
-        // Two download buttons now - one inside the validated result, one on this path.
-        Assert.Equal(2, Regex.Matches(source, Regex.Escape("@onclick=\"DownloadRejections\"")).Count);
+        // The old, narrower gate must not come back as the thing that guards the offer.
+        Assert.DoesNotContain(
+            "@if (parsedEmails.Count == 0 && rejectedBeforeLookup.Count > 0",
+            source, StringComparison.Ordinal);
+
+        // And the offer has to be OUTSIDE the success panel, or "reachable" means nothing.
+        var offer = source.IndexOf(
+            "@if (AllRejections.Count > 0 && (resolveResult == null", StringComparison.Ordinal);
+        var successPanel = source.IndexOf(
+            "@if (resolveResult != null && resolveResult.Success)", StringComparison.Ordinal);
+        Assert.True(offer >= 0 && successPanel > offer,
+            "The rejections offer must render before, and outside, the validated-result panel.");
     }
 
     // ---- the page: the export is the whole set, and the ten-address cap is the banner's ----

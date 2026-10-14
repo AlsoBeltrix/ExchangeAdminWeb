@@ -99,16 +99,34 @@
                         </button>
                     }
 
-                    @* A file whose rows are ALL unusable parses to nothing, so there is no
-                       Validate step and never a result - and the errors report lived inside
-                       the result, which meant the one upload that most needs explaining could
-                       not produce one. Found at review round 2. The download is offered here
-                       on the rejections alone. *@
-                    @if (parsedEmails.Count == 0 && rejectedBeforeLookup.Count > 0 && resolveResult == null)
+                    @* THE ERRORS REPORT IS REACHABLE FROM EVERY STATE THAT HAS SOMETHING TO
+                       REPORT. Round 2 fixed the all-invalid file by adding a download here, and
+                       round 3 found two more states it did not cover: a MIXED file before
+                       Validate is pressed (one good row and one bad one, so the Validate path
+                       renders and this one did not), and a validation that FAILED (the other
+                       download lives inside resolveResult.Success). Both were "recorded but
+                       unreachable" again, which is the third time in this stream that a fix was
+                       written for the state in front of it and not the one beside it. So the
+                       condition is no longer a state at all - it is "are there rejections, and
+                       is the success panel not already offering them". *@
+                    @if (AllRejections.Count > 0 && (resolveResult == null || !resolveResult.Success))
                     {
                         <div class="alert alert-danger mt-2">
-                            <strong>No usable addresses in that file.</strong>
-                            @rejectedBeforeLookup.Count row(s) were rejected and there is nothing to validate.
+                            @if (resolveResult != null)
+                            {
+                                <strong>Validation did not complete.</strong>
+                                <text> @AllRejections.Count row(s) were already rejected while reading the file.</text>
+                            }
+                            else if (parsedEmails.Count == 0)
+                            {
+                                <strong>No usable addresses in that file.</strong>
+                                <text> @AllRejections.Count row(s) were rejected and there is nothing to validate.</text>
+                            }
+                            else
+                            {
+                                <strong>@AllRejections.Count row(s) rejected while reading the file.</strong>
+                                <text> The other @parsedEmails.Count can still be validated.</text>
+                            }
                             <br /><button class="btn btn-outline-danger btn-sm mt-2" @onclick="DownloadRejections" disabled="@isLoading">Download errors CSV</button>
                         </div>
                     }
