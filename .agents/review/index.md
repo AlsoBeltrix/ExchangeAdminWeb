@@ -36,7 +36,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [mde-4](findings/mde-4.md) | MEDIUM - the observer failure count is dropped on a mixed partial run | Verified | - | codex / gpt-5.5 / xhigh |
 | [v] | [mde-5](findings/mde-5.md) | MEDIUM - an all-invalid upload still cannot reach its errors CSV | Verified | - | codex / gpt-5.5 / xhigh |
 | [v] | [mde-6](findings/mde-6.md) | MEDIUM - a whole-run enrichment failure makes the seen-by filter empty the table | Verified | - | codex / gpt-5.5 / xhigh |
-| [~] | mde-7 | MEDIUM - mixed and failed Comms-10k upload states still cannot reach the errors CSV | In progress | - | codex / gpt-5.5 / xhigh |
+| [v] | [mde-7](findings/mde-7.md) | MEDIUM - mixed and failed Comms-10k upload states still cannot reach the errors CSV | Verified | - | codex / gpt-5.5 / xhigh |
 
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.
