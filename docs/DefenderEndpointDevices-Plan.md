@@ -1,6 +1,30 @@
 # Defender for Endpoint Devices Module - Plan
 
-Status: In progress (2026-09-24). S1-S5 landed and the module ships at `1.1.0`; the owner then ran it against the live service, which answered R1(g) (no continuation cursor) and R1(f) (the tenant exceeds the old 20000 ceiling) and forced the rebuild recorded in Revision 3 of the second series. **The owner has now REVISED queue item 8 - the quote below is the new text, and Revision 5 folds it in.** The app-registration blocker earlier revisions carried is gone: the registration exists, Revision 3 records both permissions as granted and consented, and the Delinea Secret ID is **657**. Owner rulings of 2026-09-24/25 closed Q7 and Q10, and R1(o) is measured (the AD subnet-to-site map is real: 531 subnets, 515 mapped, 167 sites, `location` empty everywhere). **All owner questions are now ruled or closed** (Q1-Q8 and Q10; Q8 approved the column set on 2026-09-25). Q9 was ruled coder-side (batch) on 2026-09-25 and **S6, S7 and S8 are now written**. Still open, none of it needing the owner: R1 (a)-(e) and (h)-(n), which run in the Defender portal and branch the slices rather than blocking them, and the manual acceptance checklist. Queue 8's park and the two defects open against the shipped module are recorded in `.agents/state.md`, which owns them - not here. Deliberately ONE line: wrapping it shifts every line below and invalidates the line citations in the revisions.
+Status: **S1-S7 IMPLEMENTED, not yet run against the live tenant.** Module ships at `1.6.2`.
+S6 (Recently seen by) and S7 (AD site) landed 2026-10-12/14 along with device-table paging and
+batched enrichment; `.agents/state.md` owns the commit list. **Three things below are now
+settled differently from how this document describes them and the body has NOT been rewritten -
+read these first:**
+
+1. **S6 and S7 both gained FILTERS, not just columns** (owner 2026-10-14, `.agents/decisions.md`).
+   A column that cannot be narrowed means paging 2,000 screens of a 100,000-device tenant, so
+   the operator goes back to Excel - the workflow this module replaces.
+2. **Q10 is deviated from.** An AD read failure marks every Site cell `(unavailable)` and
+   reports it; it does NOT fail the report. Q10's reasoning - that a BLANK site cannot be told
+   from "no site known" - is preserved by the marker. `.agents/decisions.md` 2026-10-14 records
+   the reasoning and the one-line revert.
+3. **S6's DeviceNetworkInfo half is NOT built.** Subnet, default gateway, DHCP server and MAC
+   vendor need a join whose column names are unverified, and KQL fails a whole query on an
+   unknown column. The `column_ifexists` technique now proven on the observer column is the safe
+   route in, in its own request.
+
+**R1(h) was answered the hard way.** `SeenBy()`'s output column is named inconsistently; the
+first shipped version picked one documented spelling and the column was empty for all 26,812
+devices, silently, because a left-outer join turns a wrong key into blanks. The query no longer
+names it. R1(i) is still unanswered - whether `SeenBy()` returns anything here at all - and the
+page now says so rather than showing an empty column.
+
+Former status, for the record: In progress (2026-09-24), S1-S5 landed at `1.1.0`.
 
 Owner request, verbatim from the queue as revised on 2026-09-24. **This supersedes the original
 queue text, which asked for "3. other important info" and said the app registration still had to be
