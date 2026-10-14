@@ -1,4 +1,7 @@
+using System.Net;
+using System.Text;
 using ExchangeAdminWeb.Authorization;
+using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Services;
 
 namespace ExchangeAdminWeb.Tests;
@@ -114,6 +117,62 @@ public class AdSiteDirectoryTests
         Assert.True(commands.Disposed);
     }
 
+    // ---- what the caller does with a failed read ----
+
+    [Fact]
+    public async Task ADirectoryFailure_MarksEverySiteUnavailableAndLeavesTheRestOfTheReport()
+    {
+        // Plan Q10 said an AD failure fails the whole report, and its reasoning was that a
+        // blank Site cannot be told apart from "no site known". The marker satisfies that
+        // reasoning; failing the run no longer does, because Site became the module's primary
+        // column after Q10 was ruled - killing the report means an operator hunting a machine
+        // gets nothing at all instead of a device list with one column degraded.
+        var inventory = OneDeviceAt("10.0.0.1");
+
+        // A directory whose RootDSE read yields nothing, which AdSiteDirectory turns into a throw.
+        var broken = new AdSiteDirectory(() => new FakeCommands()
+            .Returns("Get-ADRootDSE", new DirectoryCommandOutcome([], null)));
+
+        var service = new DefenderEndpointDeviceService(
+            () => Task.FromResult<DefenderApiClient?>(inventory),
+            "50",
+            siteDirectory: broken);
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.False(result.SiteMapRead);
+
+        var device = Assert.Single(result.Devices);
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, device.Site);
+
+        // The rest of the row is untouched: a directory outage is not a statement about the
+        // device inventory, which was read successfully.
+        Assert.Equal("host1.corp.example", device.ComputerDnsName);
+        Assert.Equal("10.0.0.1", device.LastIpAddress);
+    }
+
+    [Fact]
+    public async Task AReadThatSucceeds_ReportsTheMapAsRead()
+    {
+        // The negative case: without it, SiteMapRead could be hardcoded false and the banner
+        // would warn on every healthy run.
+        var inventory = OneDeviceAt("10.0.0.17");
+
+        var working = new AdSiteDirectory(() => Fake("CN=Configuration,DC=example,DC=test",
+            [Subnet("10.0.0.0/24", "CN=London,CN=Sites,CN=Configuration,DC=example,DC=test")]));
+
+        var service = new DefenderEndpointDeviceService(
+            () => Task.FromResult<DefenderApiClient?>(inventory),
+            "50",
+            siteDirectory: working);
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.True(result.SiteMapRead);
+        Assert.Equal("London", Assert.Single(result.Devices).Site);
+    }
+
     // ---- site name extraction ----
 
     [Theory]
@@ -141,6 +200,41 @@ public class AdSiteDirectoryTests
 
     private static DirectoryObject Subnet(string? cidr, string? siteObject) =>
         new(new Dictionary<string, object?> { ["cn"] = cidr, ["siteObject"] = siteObject });
+
+    /// <summary>A Defender client whose inventory answers with one device at the given IP.</summary>
+    private static DefenderApiClient OneDeviceAt(string ip) =>
+        new("tenant", "client", "secret",
+            DefenderApiClient.DefenderBaseUrl,
+            DefenderApiClient.DefenderTokenScope,
+            new HttpClient(new OneShotHandler(
+                "{\"value\":[{\"id\":\"m1\",\"computerDnsName\":\"host1.corp.example\","
+                + "\"osPlatform\":\"Windows10\",\"onboardingStatus\":\"CanBeOnboarded\","
+                + $"\"lastIpAddress\":\"{ip}\"}}]}}")));
+
+    /// <summary>
+    /// Answers the token request and then one inventory page.
+    /// </summary>
+    /// <remarks>
+    /// Local rather than the Defender fixture's richer stub, which is private to that class.
+    /// These tests need one page and no scripting, so a shared seam would be more coupling than
+    /// the duplication costs.
+    /// </remarks>
+    private sealed class OneShotHandler(string body) : HttpMessageHandler
+    {
+        private readonly string _body = body;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var isToken = request.RequestUri?.AbsoluteUri.Contains("/oauth2/", StringComparison.Ordinal) == true;
+            var payload = isToken ? "{\"access_token\":\"t\",\"expires_in\":3600}" : _body;
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            });
+        }
+    }
 
     private sealed record RecordedCall(string Command, IReadOnlyDictionary<string, object?> Parameters);
 

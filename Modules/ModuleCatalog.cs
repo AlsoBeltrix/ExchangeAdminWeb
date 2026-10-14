@@ -1146,6 +1146,10 @@ public sealed class ModuleCatalog
             // at all (docs/DefenderEndpointDevices-Plan.md Revision 3, R1(g)); the two hardcoded
             // filters are replaced by the machine record's real fields, and the default ceiling
             // rises from 20000 to 100000.
+            // 1.6.0: observer lookup is its own hunting request - SeenBy() may be unsupported per
+            //        tenant and must not take the posture columns down. An AD failure marks Site
+            //        "(unavailable)" instead of failing the run (deviates from plan Q10 -
+            //        .agents/decisions.md 2026-10-14).
             // 1.5.1: observer column resolved via column_ifexists - SeenBy() output is named
             //        inconsistently across tenants and a fixed name silently yields blanks.
             // 1.5.0: Site column, CSV field and filter, from last IP against the AD subnet map.
@@ -1155,7 +1159,7 @@ public sealed class ModuleCatalog
             //        devices "(unavailable)" and never blanks the batches that answered.
             // 1.2.0: device table paged at 50 rows. Rendering all of them killed the circuit.
             //        Paging bounds the DOM only - the CSV still carries the whole matching set.
-            Version = "1.5.1",
+            Version = "1.6.0",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",

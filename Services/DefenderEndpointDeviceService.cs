@@ -102,64 +102,56 @@ public sealed class DefenderEndpointDeviceService
         HuntingBatchSizeOverride > 0 ? HuntingBatchSizeOverride : HuntingBatchSize;
 
     /// <summary>
-    /// The hunting query for one batch, narrowed to a named set of device ids.
+    /// The posture query for one batch: the five DeviceInfo columns, narrowed to named ids.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>This is the one place KQL is assembled rather than declared.</b> ThreatHunting.Read.All reaches the entire hunting schema,
-    /// so the permission cannot narrow this module to DeviceInfo and only the query text does.
-    /// That is still true: the TABLE names, the
-    /// operators and the projection here are all literal. The only thing interpolated is a list
-    /// of device ids, and every one of them is rejected by
-    /// <see cref="IsSafeDeviceId"/> unless it is bare hexadecimal - no quotes, no commas, no
-    /// parentheses, no whitespace, nothing that can close the <c>in (...)</c> list or start
-    /// another operator. An id that fails that test is NOT escaped and smuggled through; it is
-    /// dropped from the batch and its device renders "(unavailable)", because an id this module
-    /// cannot vouch for is one it should not be asking about.
+    /// The only place KQL is assembled. ThreatHunting.Read.All reaches the whole hunting schema,
+    /// so the query text is the only thing keeping this module inside DeviceInfo - tables,
+    /// operators and projection are all literal, and the interpolated ids are allowlisted by
+    /// <see cref="IsSafeDeviceId"/> first. An id that fails is dropped, never escaped through.
     /// </para>
     /// <para>
-    /// The ids come from the machines API rather than from an operator, which lowers the
-    /// likelihood but is explicitly NOT the argument - that reasoning would make the safety of
-    /// this query a fact about Microsoft's behaviour rather than about this code.
+    /// <b>Deliberately does NOT invoke SeenBy().</b> This query is known to work against a real
+    /// tenant; the observer lookup is not. Keeping them in one request means an unsupported
+    /// SeenBy() takes these five columns down with it.
     /// </para>
     /// </remarks>
     internal static string BuildHuntingQuery(IReadOnlyList<string> deviceIds)
     {
-        ArgumentNullException.ThrowIfNull(deviceIds);
-        if (deviceIds.Count == 0)
-            throw new ArgumentException("A hunting batch must name at least one device.", nameof(deviceIds));
+        var ids = QuotedIdList(deviceIds);
 
-        var ids = string.Join(",", deviceIds.Select(id => $"\"{id}\""));
+        return "DeviceInfo"
+            + $" | where DeviceId in ({ids})"
+            + " | summarize arg_max(Timestamp, *) by DeviceId | where isempty(MergedToDeviceId)"
+            + " | project DeviceId, DiscoverySources, DeviceType, DeviceCategory, Vendor, Model";
+    }
 
-        // DeviceInfo plus SeenBy(), and the observer id joined back to DeviceInfo for its NAME.
-        //
-        // THE OBSERVER COLUMN IS NOT NAMED. This is the fix for a real defect: the first version
-        // referenced $left.SeenBy, one of two names Microsoft's own documentation pages give for
-        // SeenBy()'s output, and the owner's 26,812-device export came back with that column
-        // empty for every single row. The join matched nothing and said nothing, because a LEFT
-        // OUTER join turns a wrong key into empty cells rather than an error - so the report
-        // looked healthy while answering nothing.
-        //
-        // column_ifexists() is what removes the guess. Each candidate resolves to its column
-        // when the schema has it and to an empty string when it does not, so the query is
-        // correct under either documented shape and under the collision case: when SeenBy()
-        // emits a column called DeviceId it collides with the one already in the pipeline and
-        // KQL renames it DeviceId1. All three are tried, in that order.
-        //
-        // The join stays LEFT OUTER, which is right for its own reason - a device nothing has
-        // observed must still come back with its posture columns - and is no longer load-bearing
-        // for correctness of the key, because the key can no longer be wrong.
-        //
-        // The observer is projected as a NAME, never its id. "Where is this machine" cannot be
-        // answered by a GUID. An observer whose name does not resolve leaves the column blank
-        // rather than falling back to the raw id: a blank says "no answer", while an id looks
-        // like an answer and is not one.
-        //
-        // The DeviceNetworkInfo columns the plan also lists - subnet, default gateway, DHCP
-        // server, MAC vendor - are NOT here. KQL fails the whole query on an unknown column, so
-        // one wrong name in that join would take down the posture columns that work today, and
-        // those names have never been checked against a live tenant. The same column_ifexists
-        // technique would make that join safe too, which is the route in when it is wanted.
+    /// <summary>
+    /// The observer query for one batch: which machine recently saw each device, by name.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Its own request, so its failure costs only this column.</b> SeenBy() may be
+    /// unsupported, unlicensed or shaped differently per tenant; the posture query above must
+    /// survive that.
+    /// </para>
+    /// <para>
+    /// <b>The observer column is not named.</b> Microsoft's docs give two names for SeenBy()
+    /// output and a fixed choice yielded blanks for every device in this tenant - silently,
+    /// because a left-outer join turns a wrong key into empty cells. column_ifexists tries each
+    /// spelling, including DeviceId1, which is what KQL renames the collision with the DeviceId
+    /// already in the pipeline.
+    /// </para>
+    /// <para>
+    /// Projected as a NAME: a GUID cannot answer "where is this machine". An unresolved
+    /// observer leaves the column blank rather than falling back to the id.
+    /// </para>
+    /// </remarks>
+    internal static string BuildObserverQuery(IReadOnlyList<string> deviceIds)
+    {
+        var ids = QuotedIdList(deviceIds);
+
         return "DeviceInfo"
             + $" | where DeviceId in ({ids})"
             + " | summarize arg_max(Timestamp, *) by DeviceId | where isempty(MergedToDeviceId)"
@@ -173,8 +165,21 @@ public sealed class DefenderEndpointDeviceService
             + "DeviceInfo | summarize arg_max(Timestamp, *) by DeviceId"
             + " | project ObserverId = DeviceId, SeenByName = DeviceName"
             + ") on ObserverId"
-            + " | project DeviceId, DiscoverySources, DeviceType, DeviceCategory, Vendor, Model,"
-            + " RecentlySeenBy = SeenByName";
+            + " | project DeviceId, RecentlySeenBy = SeenByName";
+    }
+
+    /// <summary>The batch's ids as a quoted KQL list, rejecting an empty batch.</summary>
+    /// <remarks>
+    /// An empty batch would render <c>in ()</c>, which is not a narrowing - it would ask for the
+    /// whole DeviceInfo table, which is what batching exists to stop.
+    /// </remarks>
+    private static string QuotedIdList(IReadOnlyList<string> deviceIds)
+    {
+        ArgumentNullException.ThrowIfNull(deviceIds);
+        if (deviceIds.Count == 0)
+            throw new ArgumentException("A hunting batch must name at least one device.", nameof(deviceIds));
+
+        return string.Join(",", deviceIds.Select(id => $"\"{id}\""));
     }
 
     /// <summary>
@@ -546,7 +551,7 @@ public sealed class DefenderEndpointDeviceService
             : await GetDiscoveryEnrichmentAsync(devices.Select(d => d.Id).ToList());
 
         ApplyEnrichment(devices, enrichment);
-        ApplySites(devices);
+        var siteMapRead = ApplySites(devices);
 
         return DefenderDeviceListResult.CompleteRun(
             devices,
@@ -557,7 +562,8 @@ public sealed class DefenderEndpointDeviceService
             enrichment.State,
             enrichment.Reason,
             enrichment.FailedBatches,
-            enrichment.TotalBatches);
+            enrichment.TotalBatches,
+            siteMapRead);
     }
 
     /// <summary>
@@ -867,6 +873,11 @@ public sealed class DefenderEndpointDeviceService
         var failedBatches = 0;
         var lastFailureReason = "";
 
+        // Tracked apart from the posture failures above: the two can fail independently and a
+        // device may have real posture columns and an unavailable observer, or the reverse.
+        var observerUnavailable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var observerFailedBatches = 0;
+
         foreach (var batch in batches)
         {
             // Per batch, not per run. Known Failure Class 2: this loop is the aggregation point,
@@ -878,6 +889,21 @@ public sealed class DefenderEndpointDeviceService
                 lastFailureReason = _lastBatchFailureReason;
                 foreach (var id in batch)
                     unavailable.Add(id);
+
+                // The observer pass is skipped for a batch whose posture pass already failed:
+                // its devices are marked unavailable either way, and a second doomed request
+                // per failed batch doubles the cost of an outage for no information.
+                continue;
+            }
+
+            // Separate request, separate failure. SeenBy() may be unsupported or shaped
+            // differently per tenant, and the five columns above are known to work - so this
+            // one's failure marks only the observer column, never theirs.
+            if (!await TryReadObserversAsync(client, batch, rows))
+            {
+                observerFailedBatches++;
+                foreach (var id in batch)
+                    observerUnavailable.Add(id);
             }
         }
 
@@ -893,10 +919,11 @@ public sealed class DefenderEndpointDeviceService
                 // count is never zero here - PartiallySucceeded rejects a zero.
                 Math.Max(failedBatches, 1),
                 Math.Max(batches.Count, 2),
-                failedBatches > 0 ? lastFailureReason : DefenderDiscoveryReasons.MalformedResponse);
+                failedBatches > 0 ? lastFailureReason : DefenderDiscoveryReasons.MalformedResponse,
+                observerUnavailable);
         }
 
-        return DefenderDiscoveryEnrichment.Succeeded(rows, batches.Count);
+        return DefenderDiscoveryEnrichment.Succeeded(rows, batches.Count, observerUnavailable);
     }
 
     /// <summary>Why the most recent batch failed. Read only immediately after a false return.</summary>
@@ -950,6 +977,54 @@ public sealed class DefenderEndpointDeviceService
 
         foreach (var (id, row) in batchRows)
             into[id] = row;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Runs one observer batch and merges the names onto rows already read, returning whether
+    /// the batch answered.
+    /// </summary>
+    /// <remarks>
+    /// Merges ONTO the existing rows rather than replacing them: the posture pass has already
+    /// populated this dictionary and this one only adds a name. A device with an observer but
+    /// no DeviceInfo row gets an entry anyway - the hunting row and the device are separate
+    /// things, and ApplyEnrichment only ever looks rows up by device, never the reverse.
+    /// </remarks>
+    private async Task<bool> TryReadObserversAsync(
+        DefenderApiClient client,
+        IReadOnlyList<string> batch,
+        Dictionary<string, DefenderDeviceDiscovery> into)
+    {
+        DefenderApiResult response;
+        try
+        {
+            response = await client.PostWithStatusAsync(
+                HuntingEndpoint, new { Query = BuildObserverQuery(batch) });
+        }
+        catch (Exception ex) when (IsHuntingSideFailure(ex))
+        {
+            return false;
+        }
+
+        if (response.Document == null)
+            return false;
+
+        using var document = response.Document;
+
+        if (!TryReadHuntingResults(document, out var batchRows))
+            return false;
+
+        foreach (var (id, row) in batchRows)
+        {
+            if (string.IsNullOrEmpty(row.RecentlySeenBy))
+                continue;
+
+            if (into.TryGetValue(id, out var existing))
+                existing.RecentlySeenBy = row.RecentlySeenBy;
+            else
+                into[id] = row;
+        }
 
         return true;
     }
@@ -1021,21 +1096,42 @@ public sealed class DefenderEndpointDeviceService
     /// of thousands of round trips for the same answer.
     /// </para>
     /// <para>
-    /// <b>Deliberately NOT wrapped in a catch.</b> AdSiteDirectory throws when the forest cannot
-    /// be read, and that exception is meant to reach the page as a failed run (plan Q10).
-    /// Swallowing it here would render every row with a blank Site column, which reads as "no
-    /// site is known for any of these devices" - a statement about the fleet rather than about
-    /// the directory being down, and the one an operator cannot tell apart from the truth.
+    /// A directory failure marks every Site cell "(unavailable)" and is reported; it does NOT
+    /// blank the column and does NOT fail the run. Plan Q10 said fail the report, and its
+    /// reasoning was that a blank Site cannot be told apart from "no site known" - which is
+    /// true, and is why the marker exists. The marker satisfies that reasoning without the
+    /// consequence Q10 did not have to weigh: Site became the module's primary column after
+    /// Q10 was ruled, so failing the run now means an operator looking for a machine gets
+    /// nothing at all rather than a device list with one column degraded.
     /// </para>
+    /// <para>Returns whether the map was read, which the caller reports.</para>
     /// </remarks>
-    private void ApplySites(List<DefenderDevice> devices)
+    private bool ApplySites(List<DefenderDevice> devices)
     {
         if (_siteDirectory is null)
-            return;
+            return true;
 
-        var subnets = _siteDirectory.ReadSubnets();
+        IReadOnlyList<AdSiteSubnetMap.Subnet> subnets;
+        try
+        {
+            subnets = _siteDirectory.ReadSubnets();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException
+                                       or UnauthorizedAccessException
+                                       or TimeoutException)
+        {
+            // Narrow, like IsHuntingSideFailure: a bug in the matching code must still escape
+            // rather than be reported to the operator as "the directory is down".
+            foreach (var device in devices)
+                device.Site = EnrichmentUnavailable;
+
+            return false;
+        }
+
         foreach (var device in devices)
             device.Site = AdSiteSubnetMap.FindSite(device.LastIpAddress, subnets);
+
+        return true;
     }
 
     private static void ApplyEnrichment(List<DefenderDevice> devices, DefenderDiscoveryEnrichment enrichment)
@@ -1069,6 +1165,14 @@ public sealed class DefenderEndpointDeviceService
                 continue;
             }
 
+            // The observer lookup is its own request and fails on its own. A device can have
+            // real posture columns and an unavailable observer, so this is stamped before the
+            // row lookup below and independently of it - a device with no hunting row at all
+            // still needs the marker if its observer batch failed.
+            var observerFailed = enrichment.ObserverUnavailableDeviceIds.Contains(device.Id);
+            if (observerFailed)
+                device.RecentlySeenBy = EnrichmentUnavailable;
+
             if (!enrichment.Rows.TryGetValue(device.Id, out var row))
                 continue;
 
@@ -1077,7 +1181,9 @@ public sealed class DefenderEndpointDeviceService
             device.DeviceCategory = row.DeviceCategory;
             device.Vendor = row.Vendor;
             device.Model = row.Model;
-            device.RecentlySeenBy = row.RecentlySeenBy;
+
+            if (!observerFailed)
+                device.RecentlySeenBy = row.RecentlySeenBy;
         }
     }
 

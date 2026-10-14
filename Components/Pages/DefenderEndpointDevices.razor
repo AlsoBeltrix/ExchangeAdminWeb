@@ -304,6 +304,17 @@
             </div>
         }
 
+        @if (result.Devices.Count > 0 && !result.SiteMapRead)
+        {
+            <div class="alert alert-warning py-2">
+                <small>
+                    <strong>Site could not be read from the directory.</strong>
+                    Every device shows "@DefenderEndpointDeviceService.EnrichmentUnavailable"
+                    for Site. The rest of the report is unaffected.
+                </small>
+            </div>
+        }
+
         @* A whole column that is empty for every row, on a run that reported success, is the
            failure mode that shipped: the observer column was blank for all 26,812 devices and
            nothing on the page said so, because the query succeeded and the join simply matched

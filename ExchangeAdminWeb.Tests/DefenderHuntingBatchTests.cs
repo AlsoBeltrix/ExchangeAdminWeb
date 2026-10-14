@@ -55,7 +55,7 @@ public class DefenderHuntingBatchTests
         // names Microsoft's own docs give for SeenBy()'s output - and the owner's 26,812-device
         // export came back with that column empty for every row. A left-outer join turns a wrong
         // key into empty cells rather than an error, so nothing failed and nothing said so.
-        var query = DefenderEndpointDeviceService.BuildHuntingQuery(["aa11"]);
+        var query = DefenderEndpointDeviceService.BuildObserverQuery(["aa11"]);
 
         Assert.DoesNotContain("$left.SeenBy", query, StringComparison.Ordinal);
         Assert.Contains("column_ifexists", query, StringComparison.Ordinal);
@@ -69,7 +69,7 @@ public class DefenderHuntingBatchTests
     {
         // Named individually rather than counted, so dropping one is a failure with its name in
         // the message instead of an off-by-one in an arity assertion.
-        var query = DefenderEndpointDeviceService.BuildHuntingQuery(["aa11"]);
+        var query = DefenderEndpointDeviceService.BuildObserverQuery(["aa11"]);
 
         Assert.Contains($"column_ifexists(\"{candidate}\", \"\")", query, StringComparison.Ordinal);
     }
@@ -79,7 +79,7 @@ public class DefenderHuntingBatchTests
     {
         // "Where is this machine" cannot be answered by a GUID. A blank says "no answer"; an id
         // looks like an answer and is not one.
-        var query = DefenderEndpointDeviceService.BuildHuntingQuery(["aa11"]);
+        var query = DefenderEndpointDeviceService.BuildObserverQuery(["aa11"]);
 
         Assert.Contains("RecentlySeenBy = SeenByName", query, StringComparison.Ordinal);
         Assert.DoesNotContain("RecentlySeenBy = ObserverId", query, StringComparison.Ordinal);

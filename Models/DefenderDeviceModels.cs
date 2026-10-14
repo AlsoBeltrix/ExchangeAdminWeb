@@ -282,15 +282,29 @@ public sealed class DefenderDiscoveryEnrichment
     /// <summary>Hunting batches attempted. Zero when the query never ran.</summary>
     public int TotalBatches { get; private init; }
 
+    /// <summary>
+    /// Devices whose OBSERVER lookup failed, independent of the posture columns.
+    /// </summary>
+    /// <remarks>
+    /// The observer name comes from its own request, so it can fail while the five posture
+    /// columns succeed. A device here shows "(unavailable)" for Recently seen by and real
+    /// values everywhere else, which is the truth about that device.
+    /// </remarks>
+    public IReadOnlySet<string> ObserverUnavailableDeviceIds { get; private init; }
+        = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     public static DefenderDiscoveryEnrichment Succeeded(
         IReadOnlyDictionary<string, DefenderDeviceDiscovery> rows,
-        int totalBatches = 1) =>
+        int totalBatches = 1,
+        IReadOnlySet<string>? observerUnavailableDeviceIds = null) =>
         new()
         {
             State = DefenderDiscoveryEnrichmentState.Succeeded,
             Reason = "",
             Rows = rows,
             TotalBatches = totalBatches,
+            ObserverUnavailableDeviceIds =
+                observerUnavailableDeviceIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
         };
 
     /// <summary>
@@ -308,7 +322,8 @@ public sealed class DefenderDiscoveryEnrichment
         IReadOnlySet<string> unavailableDeviceIds,
         int failedBatches,
         int totalBatches,
-        string reason)
+        string reason,
+        IReadOnlySet<string>? observerUnavailableDeviceIds = null)
     {
         ArgumentNullException.ThrowIfNull(rows);
         ArgumentNullException.ThrowIfNull(unavailableDeviceIds);
@@ -328,6 +343,8 @@ public sealed class DefenderDiscoveryEnrichment
             UnavailableDeviceIds = unavailableDeviceIds,
             FailedBatches = failedBatches,
             TotalBatches = totalBatches,
+            ObserverUnavailableDeviceIds =
+                observerUnavailableDeviceIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
         };
     }
 
@@ -495,6 +512,12 @@ public sealed class DefenderDeviceListResult
     /// <summary>Hunting batches attempted. Zero when the query never ran.</summary>
     public int DiscoveryTotalBatches { get; private init; }
 
+    /// <summary>
+    /// False when the forest's subnet map could not be read, so every Site cell reads
+    /// "(unavailable)" rather than a place.
+    /// </summary>
+    public bool SiteMapRead { get; private init; } = true;
+
     public static DefenderDeviceListResult CompleteRun(
         IReadOnlyList<DefenderDevice> devices,
         int distinctCount,
@@ -504,7 +527,8 @@ public sealed class DefenderDeviceListResult
         DefenderDiscoveryEnrichmentState enrichment,
         string enrichmentReason,
         int failedBatches = 0,
-        int totalBatches = 0) => new()
+        int totalBatches = 0,
+        bool siteMapRead = true) => new()
         {
             Outcome = DefenderDeviceListOutcome.Complete,
             Devices = devices,
@@ -515,7 +539,8 @@ public sealed class DefenderDeviceListResult
             DiscoveryEnrichment = enrichment,
             DiscoveryEnrichmentReason = enrichmentReason,
             DiscoveryFailedBatches = failedBatches,
-            DiscoveryTotalBatches = totalBatches
+            DiscoveryTotalBatches = totalBatches,
+            SiteMapRead = siteMapRead
         };
 
     /// <summary>

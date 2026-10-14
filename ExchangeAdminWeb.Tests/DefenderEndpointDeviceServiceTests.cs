@@ -1541,13 +1541,24 @@ public class DefenderEndpointDeviceServiceTests
         var (service, devices, hunting) = CreateEnrichedService();
         devices.Responses.Add(() => Ok(Page(3)));
         hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"), HuntingRow("m2"), HuntingRow("m3"))));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"), HuntingRow("m2"), HuntingRow("m3"))));
 
         await service.ListDevicesAsync();
 
-        Assert.Equal("https://graph.microsoft.com/v1.0/security/runHuntingQuery", Assert.Single(hunting.RequestUrls));
-        Assert.Equal("POST", Assert.Single(hunting.RequestMethods));
+        // TWO posts per batch since the observer lookup was split into its own request - the
+        // posture query and the observer query. Both go to the same endpoint by the same
+        // method, and BOTH are checked: a sweep over only the first would stop seeing half the
+        // KQL this module sends.
+        Assert.Equal(2, hunting.RequestUrls.Count);
+        Assert.All(hunting.RequestUrls,
+            url => Assert.Equal("https://graph.microsoft.com/v1.0/security/runHuntingQuery", url));
+        Assert.All(hunting.RequestMethods, method => Assert.Equal("POST", method));
 
-        var body = Assert.Single(hunting.RequestBodies);
+        Assert.Equal(
+            DefenderEndpointDeviceService.BuildObserverQuery(["m1", "m2", "m3"]),
+            QueryOf(hunting.RequestBodies[1]));
+
+        var body = hunting.RequestBodies[0];
         using var posted = JsonDocument.Parse(body);
         var root = posted.RootElement;
 
@@ -1589,8 +1600,13 @@ public class DefenderEndpointDeviceServiceTests
         // Pointed at the BUILT query since S6, not at a constant. The unbatched constant was
         // deleted precisely so this sweep cannot go on passing while aimed at a string the module
         // no longer sends.
-        var query = DefenderEndpointDeviceService.BuildHuntingQuery(
-            ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]);
+        // Both queries, concatenated: the module issues two per batch since the observer
+        // lookup was split out, and a sweep over only one of them would stop seeing half the
+        // KQL this module sends.
+        string[] ids = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"];
+        var query = DefenderEndpointDeviceService.BuildHuntingQuery(ids)
+            + " "
+            + DefenderEndpointDeviceService.BuildObserverQuery(ids);
 
         Assert.StartsWith("DeviceInfo", query);
         Assert.DoesNotContain("union", query, StringComparison.OrdinalIgnoreCase);
@@ -2080,9 +2096,14 @@ public class DefenderEndpointDeviceServiceTests
         var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
         devices.Responses.Add(() => Ok(MachinesPage(3)));
 
-        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
-        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}"));
-        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));
+        // TWO requests per batch since the observer lookup was split out: posture, then
+        // observer. A batch whose posture request fails skips its observer request, so batch 2
+        // consumes one response and batches 1 and 3 consume two each.
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));          // b1 posture
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));          // b1 observer
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}")); // b2
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));          // b3 posture
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));          // b3 observer
 
         var result = await service.ListDevicesAsync();
 
@@ -2102,9 +2123,14 @@ public class DefenderEndpointDeviceServiceTests
         var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
         devices.Responses.Add(() => Ok(MachinesPage(3)));
 
-        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
-        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}"));
-        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));
+        // TWO requests per batch since the observer lookup was split out: posture, then
+        // observer. A batch whose posture request fails skips its observer request, so batch 2
+        // consumes one response and batches 1 and 3 consume two each.
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));          // b1 posture
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));          // b1 observer
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}")); // b2
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));          // b3 posture
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));          // b3 observer
 
         var m2 = (await service.ListDevicesAsync()).Devices.Single(d => d.Id == "m2");
 
@@ -2176,22 +2202,56 @@ public class DefenderEndpointDeviceServiceTests
         var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
         devices.Responses.Add(() => Ok(MachinesPage(3)));
 
-        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
-        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m2"))));
-        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));
+        // Six responses: posture then observer, for each of three batches.
+        for (var i = 1; i <= 3; i++)
+        {
+            var id = $"m{i}";
+            hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow(id))));
+            hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow(id))));
+        }
 
         var result = await service.ListDevicesAsync();
 
-        Assert.Equal(3, hunting.RequestBodies.Count);
+        Assert.Equal(6, hunting.RequestBodies.Count);
         Assert.Equal(3, result.DiscoveryTotalBatches);
 
-        // Each call asked only about its own device: a partition, not three identical queries.
-        // Read out of the PARSED body - the serializer escapes the KQL string's quotes as
-        // ", so a substring match on the raw body silently never matches and the assertion
-        // would have to be weakened to something that proves nothing.
-        var first = QueryOf(hunting.RequestBodies[0]);
-        Assert.Equal(DefenderEndpointDeviceService.BuildHuntingQuery(["m1"]), first);
-        Assert.Equal(DefenderEndpointDeviceService.BuildHuntingQuery(["m2"]), QueryOf(hunting.RequestBodies[1]));
+        // Each batch asked only about its own device: a partition, not identical queries.
+        // Read out of the PARSED body - the serializer escapes the KQL string's quotes, so a
+        // substring match on the raw body silently never matches and the assertion would have
+        // to be weakened to something that proves nothing.
+        //
+        // Interleaving is asserted too, because it is the thing that makes the observer lookup
+        // per-batch rather than a second pass over everything: body 0 and 1 are batch one's
+        // two queries, body 2 is batch two's posture.
+        Assert.Equal(DefenderEndpointDeviceService.BuildHuntingQuery(["m1"]), QueryOf(hunting.RequestBodies[0]));
+        Assert.Equal(DefenderEndpointDeviceService.BuildObserverQuery(["m1"]), QueryOf(hunting.RequestBodies[1]));
+        Assert.Equal(DefenderEndpointDeviceService.BuildHuntingQuery(["m2"]), QueryOf(hunting.RequestBodies[2]));
+    }
+
+    [Fact]
+    public async Task AFailedObserverLookup_CostsOnlyTheObserverColumn()
+    {
+        // The reason the observer query is a separate request at all. SeenBy() may be
+        // unsupported or shaped differently per tenant; the five posture columns are known to
+        // work against a real one. A shared request would mean an unsupported SeenBy() takes
+        // them down with it - which is the regression this forbids.
+        var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
+        devices.Responses.Add(() => Ok(MachinesPage(1)));
+
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.BadRequest, "{}"));
+
+        var result = await service.ListDevicesAsync();
+        var device = Assert.Single(result.Devices);
+
+        // Posture columns intact...
+        Assert.Equal("MDE", device.DiscoverySources);
+        Assert.Equal("Workstation", device.DeviceType);
+        Assert.Equal("Contoso", device.Vendor);
+
+        // ...and only the observer marked, rather than left blank. A blank would read as
+        // "nothing has seen this device", which is a different and false statement.
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, device.RecentlySeenBy);
     }
 
     /// <summary>The Query value out of a posted runHuntingQuery body.</summary>

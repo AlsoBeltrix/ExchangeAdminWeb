@@ -5,6 +5,43 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-14 - Defender Site: an AD failure marks the column, it does not fail the report
+
+**Deviates from plan Q10, deliberately, and the owner can reverse it.** Q10 ruled that an
+Active Directory read failure fails the whole Defender device report. It now marks every Site
+cell `(unavailable)`, reports that in a banner, and renders the rest of the report normally.
+
+**Q10's reasoning is preserved; its consequence is not.** The ruling existed because a blank
+Site cannot be told apart from "no site is known for this device" - a failure masquerading as
+data. The marker answers that completely: `(unavailable)` is not data and cannot be mistaken
+for it.
+
+**What changed since Q10 was ruled** is what the column is for. Q10 was decided when Site was
+one more enrichment column among several. It is now the module's primary output - the owner's
+26,812-device export carries an IP for 26,811 of them, against 35% for discovery sources and 8
+distinct values of machine group across the whole tenant, so Site is the only location answer
+present for essentially every device. Failing the run therefore means an operator trying to
+locate a machine gets NOTHING, rather than a device list with one column degraded. That trade
+was not on the table when Q10 was made.
+
+It also turns a Graph-only module into one that dies when the directory is unreachable, which
+is a new failure mode for every other column on the page.
+
+Reverting is one line in `DefenderEndpointDeviceService.ApplySites`: let the exception escape
+instead of catching it. `AdSiteDirectory` still throws; only the caller's handling changed.
+
+### 2026-10-14 - The observer lookup is its own request
+
+`SeenBy()` runs in a separate hunting request from the five posture columns, doubling the call
+count per batch. The posture query is proven against the live tenant by the owner's export
+(9,333 devices enriched); `SeenBy()` is not proven at all and may be unsupported, unlicensed or
+differently shaped there. Sharing one request means an unsupported `SeenBy()` takes down
+columns that work today. A failed observer request now marks only `RecentlySeenBy`.
+
+Same reasoning holds for the DeviceNetworkInfo columns (subnet, gateway, DHCP server, MAC
+vendor) when they are built: own request, own failure.
+
+
 ### 2026-10-12 - Defender S6 adds FILTERS on the location fields, not only columns
 
 Owner, verbatim: *"and the ability to filter by what the stakeholder actually needs? this is to
