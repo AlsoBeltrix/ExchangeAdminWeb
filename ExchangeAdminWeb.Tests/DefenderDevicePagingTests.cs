@@ -94,6 +94,38 @@ public class DefenderDevicePagingTests
     }
 
     [Fact]
+    public void AWholeRunEnrichmentFailureDoesNotEmptyTheSeenByFilter()
+    {
+        // Round 3, mde-6. The test above is satisfied by the "(unavailable)" escape alone, and
+        // that escape only helps when something STAMPED the marker. ApplyEnrichment returns
+        // before stamping anything when the whole run is Failed or NotAttempted - the hunting
+        // switch off, credentials unavailable, every batch refused - so RecentlySeenBy stays
+        // BLANK, the escape never fires, and a seen-by filter drops every device in the tenant
+        // under a banner saying the column is unavailable. The filter must not judge a column
+        // that was never evaluated.
+        var filtered = Member(StripComments(ReadPage()), "IReadOnlyList<DefenderDevice> FilteredDevices");
+
+        var start = filtered.IndexOf("&& (seenBy.Length == 0", StringComparison.Ordinal);
+        Assert.True(start >= 0, "FilteredDevices no longer has a seen-by clause.");
+
+        var seenByPredicate = filtered[start..];
+        Assert.Contains("!seenByWasEvaluated", seenByPredicate, StringComparison.Ordinal);
+
+        // And the flag has to MEAN that, not be a constant or a wider set. Exactly the two
+        // states ApplyEnrichment actually stamps on - the same pair ExportEnrichmentCell uses.
+        var binding = filtered[..start];
+        Assert.Contains("seenByWasEvaluated", binding, StringComparison.Ordinal);
+        Assert.Contains(
+            "result.DiscoveryEnrichment is DefenderDiscoveryEnrichmentState.Succeeded",
+            binding, StringComparison.Ordinal);
+        Assert.Contains(
+            "or DefenderDiscoveryEnrichmentState.PartiallySucceeded",
+            binding, StringComparison.Ordinal);
+        Assert.DoesNotContain("DefenderDiscoveryEnrichmentState.NotAttempted", binding, StringComparison.Ordinal);
+        Assert.DoesNotContain("DefenderDiscoveryEnrichmentState.Failed", binding, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EveryFilterIncludingTheLocationOneIsAppliedOnSearchAndNotWhileTyping()
     {
         // The page's whole usability argument is that nothing happens until Search is pressed.

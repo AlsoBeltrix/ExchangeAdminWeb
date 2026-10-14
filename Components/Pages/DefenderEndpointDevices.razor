@@ -652,6 +652,18 @@
             var site = appliedSite.Trim();
             var seenBy = appliedSeenBy.Trim();
 
+            // Round 3, mde-6. A whole-run enrichment failure returns from ApplyEnrichment BEFORE
+            // it stamps anything, so RecentlySeenBy is left BLANK rather than "(unavailable)" and
+            // the marker the clause below escapes on never arrives. The filter then judged a
+            // column that was never evaluated and excluded EVERY device - the same conflation
+            // 111bfa2 fixed for Site, reached through the state that skips the stamping instead
+            // of the one that performs it. Site does not need this: ApplySites stamps the marker
+            // on its own failure path, and a blank site really is "no subnet matched".
+            // ExportEnrichmentCell already draws exactly this line for the CSV.
+            var seenByWasEvaluated =
+                result.DiscoveryEnrichment is DefenderDiscoveryEnrichmentState.Succeeded
+                    or DefenderDiscoveryEnrichmentState.PartiallySucceeded;
+
             if (site.Length == 0 && seenBy.Length == 0)
                 return result.Devices;
 
@@ -664,6 +676,7 @@
                             StringComparison.Ordinal)
                         || d.Site.Contains(site, StringComparison.OrdinalIgnoreCase))
                     && (seenBy.Length == 0
+                        || !seenByWasEvaluated
                         || string.Equals(
                             d.RecentlySeenBy,
                             DefenderEndpointDeviceService.EnrichmentUnavailable,

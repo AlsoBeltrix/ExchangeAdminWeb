@@ -1150,6 +1150,8 @@ public sealed class ModuleCatalog
             // at all (docs/DefenderEndpointDevices-Plan.md Revision 3, R1(g)); the two hardcoded
             // filters are replaced by the machine record's real fields, and the default ceiling
             // rises from 20000 to 100000.
+            // 1.6.5: the seen-by filter no longer judges a column a whole-run enrichment failure
+            //        never populated - it was emptying the table under its own warning banner.
             // 1.6.4: the observer failure count is carried on the PARTIAL path too; it was only
             //        on the succeeded one, so a mixed run left that column unexplained.
             // 1.6.3: review fixes - any directory failure marks Site rather than removing the
@@ -1173,7 +1175,7 @@ public sealed class ModuleCatalog
             //        devices "(unavailable)" and never blanks the batches that answered.
             // 1.2.0: device table paged at 50 rows. Rendering all of them killed the circuit.
             //        Paging bounds the DOM only - the CSV still carries the whole matching set.
-            Version = "1.6.4",
+            Version = "1.6.5",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",
