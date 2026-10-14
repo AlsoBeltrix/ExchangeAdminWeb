@@ -1111,6 +1111,12 @@ public sealed class DefenderEndpointDeviceService
         if (_siteDirectory is null)
             return true;
 
+        // Nothing to place. Reading the forest here would spend a directory round trip on an
+        // empty answer, and could report a directory outage on a search that simply matched no
+        // devices - two different things the operator would have to tell apart.
+        if (devices.Count == 0)
+            return true;
+
         IReadOnlyList<AdSiteSubnetMap.Subnet> subnets;
         try
         {

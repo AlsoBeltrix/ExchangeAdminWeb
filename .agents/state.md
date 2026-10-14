@@ -8,6 +8,55 @@ the latest sweep is Archived 2026-10-12).
 
 ## Now
 
+### Defender for Endpoint is the live work; 2026-10-12/14 landed nine slices
+
+**Queue 8 is the module people are waiting on and it now does what it exists for.** Landed and
+verified, not pushed, not deployed since `963b85d`:
+
+| Commit | What |
+|---|---|
+| `43c0735` | Device table paged at 50. It rendered every device and killed the circuit |
+| `5cea983` | Hunting enrichment batched at 1,000 ids, per-batch failure reported honestly |
+| `156b890` | Recently seen by, column and filter |
+| `e8688ed` | Search form rebuilt - three groups, nothing happens until Search |
+| `c6b90b4` | Subnet-to-site matching and the forest read |
+| `581a9ab` | **Site column, CSV field and filter** - the location answer |
+| `963b85d` | Observer column resolved by name discovery, not a fixed guess |
+| `042834b` | Every new lookup isolated so it cannot break what already works |
+| `772112a` | A missing DI registration fails the suite instead of the app |
+
+Also landed: `a01767c` Comms-10k rejected-address CSV (queue 26 point 3).
+
+**What the owner's 26,812-row export settled, and it should not be re-derived:** LastIpAddress
+is present on 26,811 devices. DiscoverySources 35%, Vendor 25%, MachineGroup 100% but only
+EIGHT distinct values tenant-wide, MachineTags one row, LastExternalIpAddress zero,
+RecentlySeenBy zero. **Site is the only location signal that exists for essentially every
+device.** Anything proposed as a locator gets measured against that table first.
+
+**Three things are unproven against the live environment and all three fail visibly:**
+
+1. **The forest read has never run.** `AdSiteDirectory` discovers the configuration partition
+   from RootDSE and queries `CN=Subnets,CN=Sites,<configNc>`. If it fails, every Site cell
+   reads `(unavailable)` with a banner - it does NOT fail the report, which deviates from plan
+   Q10 (`.agents/decisions.md` 2026-10-14 records why and the one-line revert).
+2. **`SeenBy()` has never returned data here.** Its first shipped version named the wrong
+   output column and was empty for all 26,812 devices silently. It now tries every documented
+   spelling via `column_ifexists`, runs in its OWN request so it cannot take the posture
+   columns down, and a succeeded run whose observer column is empty for EVERY row says so on
+   the page.
+3. **Whether AD site names are a physical locator at all.** The owner's position: *"subnet
+   match will maybe get you AD site, but that's not a physical locator."* 167 sites exist and
+   their `location` attribute was empty everywhere when last measured. **Do not probe AD to
+   settle this** - owner instruction 2026-10-14, probing is explicitly forbidden without a
+   direct go.
+
+**Still not built, and the reason is the same each time:** subnet, default gateway, DHCP
+server and MAC vendor need a `DeviceNetworkInfo` join whose column names are unverified, and
+KQL fails a whole query on an unknown column. The `column_ifexists` technique now proven on
+the observer column is the safe route in, in its own request.
+
+
+
 ### Session 2026-10-12 landed two code slices; Defender S6 is next and starts FRESH
 
 Owner widened every open scope on 2026-10-12 (`.agents/decisions.md`) and said *"I want all of
@@ -940,13 +989,10 @@ Each of these sat inside a block that was archived whole. The record is verbatim
 
 Commands and mandatory guards are owned by `.agents/repo-guidance.md` and `AGENTS.md`.
 
-**Last full run, reported as of `7042b91` - the last commit that touched code - and NOT re-run
-by the 2026-10-12 drift sweep:** Release build 0 errors; full Release suite **3,725 passed /
-0 failed / 3 skipped** with `-- xUnit.MaxParallelThreads=4`; `dotnet format
---verify-no-changes` clean; `git diff --check` clean. That supersedes the 3,707 recorded for
-`390bba6`, which was the figure for that commit and not for this head. PSScriptAnalyzer 0
-errors and Pester 157 passed / 0 failed were last reported for `390bba6` and still stand for
-this head: **no `.ps1` or `.psm1` changed in `390bba6..96cdb89`**, verified by the sweep.
+**Last full run, as of `772112a` plus the empty-search guard:** Release build 0 errors; full
+Release suite **3,806 passed / 0 failed / 3 skipped** with `-- xUnit.MaxParallelThreads=4`; `dotnet format
+--verify-no-changes` clean; `git diff --check` clean. ASCII lint passed. PSScriptAnalyzer and Pester were last
+reported for `390bba6` and still stand: no `.ps1` or `.psm1` has changed since.
 Existing dependency and compiler warnings remain.
 
 **What this sweep DID measure, as of `96cdb89`:** `ProgressRegistry` `KnownGap` entries 0;

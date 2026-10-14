@@ -153,6 +153,31 @@ public class AdSiteDirectoryTests
     }
 
     [Fact]
+    public async Task ASearchThatMatchedNothing_DoesNotTouchTheDirectory()
+    {
+        // Two reasons. It spends a directory round trip on an empty answer, and - worse - a
+        // directory outage would surface on a search that simply matched no devices, which the
+        // operator would then have to tell apart from a real one.
+        var inventory = new DefenderApiClient(
+            "tenant", "client", "secret",
+            DefenderApiClient.DefenderBaseUrl,
+            DefenderApiClient.DefenderTokenScope,
+            new HttpClient(new OneShotHandler("{\"value\":[]}")));
+
+        var commands = new FakeCommands();  // scripted with nothing: any call throws
+        var service = new DefenderEndpointDeviceService(
+            () => Task.FromResult<DefenderApiClient?>(inventory),
+            "50",
+            siteDirectory: new AdSiteDirectory(() => commands));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Empty(result.Devices);
+        Assert.True(result.SiteMapRead);
+        Assert.Empty(commands.Calls);
+    }
+
+    [Fact]
     public async Task AReadThatSucceeds_ReportsTheMapAsRead()
     {
         // The negative case: without it, SiteMapRead could be hardcoded false and the banner
