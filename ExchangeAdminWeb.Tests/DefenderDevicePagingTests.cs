@@ -56,6 +56,32 @@ public class DefenderDevicePagingTests
     }
 
     [Fact]
+    public void ADeviceWhoseSiteIsUnavailableSurvivesTheSiteFilter()
+    {
+        // When the directory read fails, EVERY device reads "(unavailable)" for Site. Judging
+        // them against the filter then matches nothing, and the page says "No devices matched"
+        // directly under a banner saying the site is unknown - hiding exactly the machines
+        // someone is hunting, which is the failure this filter exists to prevent.
+        //
+        // A BLANK site is the opposite case and is correctly filtered out: it means no subnet
+        // in the forest contains that address, which is an answer rather than a gap.
+        var filtered = Member(StripComments(ReadPage()), "IReadOnlyList<DefenderDevice> FilteredDevices");
+
+        // Sliced between the Where and the seen-by clause. Anchored on ".Where(d =>" rather
+        // than on the first "seenBy.Length == 0", which appears EARLIER in the both-empty
+        // short circuit and made this slice stop before the predicate it is about.
+        var start = filtered.IndexOf(".Where(d =>", StringComparison.Ordinal);
+        Assert.True(start >= 0, "FilteredDevices no longer filters with a Where.");
+
+        var end = filtered.IndexOf("&& (seenBy.Length == 0", start, StringComparison.Ordinal);
+        Assert.True(end > start, "The site clause no longer precedes the seen-by clause.");
+
+        var sitePredicate = filtered[start..end];
+        Assert.Contains("d.Site", sitePredicate, StringComparison.Ordinal);
+        Assert.Contains("EnrichmentUnavailable", sitePredicate, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ADeviceWhoseEnrichmentFailedSurvivesTheLocationFilter()
     {
         // The filter reads a column that a failed enrichment batch never populated. Judging such

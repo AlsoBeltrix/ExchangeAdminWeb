@@ -611,12 +611,12 @@
     /// looking like a clean negative result.
     /// </para>
     /// <para>
-    /// <b>Site has no such case and deliberately does not get one.</b> A blank Site is a real
-    /// answer - no subnet in the forest contains that address - rather than a missing one,
-    /// because a directory read that failed throws and fails the whole run instead of blanking
-    /// the column. So a blank Site is filtered out like any other non-match, and that is only
-    /// true because of the fail-fast rule in AdSiteDirectory. If that rule is ever softened,
-    /// this filter starts hiding devices.
+    /// <b>Site has BOTH cases and they are different.</b> A BLANK site is a real answer - no
+    /// subnet in the forest contains that address - so it is filtered out like any other
+    /// non-match. An "(unavailable)" site is a device the filter cannot judge, because the
+    /// directory read failed, and it is kept. Those two were conflated when the fail-fast rule
+    /// changed: with every cell reading "(unavailable)", filtering by site matched nothing and
+    /// showed "No devices matched" over a banner saying the site was unknown.
     /// </para>
     /// <para>
     /// Both are case-insensitive substrings, matching the Machine group and Machine tag
@@ -639,7 +639,12 @@
 
             return result.Devices
                 .Where(d =>
-                    (site.Length == 0 || d.Site.Contains(site, StringComparison.OrdinalIgnoreCase))
+                    (site.Length == 0
+                        || string.Equals(
+                            d.Site,
+                            DefenderEndpointDeviceService.EnrichmentUnavailable,
+                            StringComparison.Ordinal)
+                        || d.Site.Contains(site, StringComparison.OrdinalIgnoreCase))
                     && (seenBy.Length == 0
                         || string.Equals(
                             d.RecentlySeenBy,
