@@ -133,30 +133,46 @@ public sealed class DefenderEndpointDeviceService
 
         // DeviceInfo plus SeenBy(), and the observer id joined back to DeviceInfo for its NAME.
         //
-        // The join is LEFT OUTER on purpose: a device nothing has observed must still come back
-        // with its five posture columns, or asking for location data would silently shrink the
-        // report.
+        // THE OBSERVER COLUMN IS NOT NAMED. This is the fix for a real defect: the first version
+        // referenced $left.SeenBy, one of two names Microsoft's own documentation pages give for
+        // SeenBy()'s output, and the owner's 26,812-device export came back with that column
+        // empty for every single row. The join matched nothing and said nothing, because a LEFT
+        // OUTER join turns a wrong key into empty cells rather than an error - so the report
+        // looked healthy while answering nothing.
         //
-        // The observer is projected as a NAME, never its id. The stakeholder's question is
-        // "where is this machine", and a GUID cannot answer it. An observer whose name does not
-        // resolve leaves the column blank rather than falling back to the raw id - a blank says
-        // "no answer", while an id looks like an answer and is not one.
+        // column_ifexists() is what removes the guess. Each candidate resolves to its column
+        // when the schema has it and to an empty string when it does not, so the query is
+        // correct under either documented shape and under the collision case: when SeenBy()
+        // emits a column called DeviceId it collides with the one already in the pipeline and
+        // KQL renames it DeviceId1. All three are tried, in that order.
+        //
+        // The join stays LEFT OUTER, which is right for its own reason - a device nothing has
+        // observed must still come back with its posture columns - and is no longer load-bearing
+        // for correctness of the key, because the key can no longer be wrong.
+        //
+        // The observer is projected as a NAME, never its id. "Where is this machine" cannot be
+        // answered by a GUID. An observer whose name does not resolve leaves the column blank
+        // rather than falling back to the raw id: a blank says "no answer", while an id looks
+        // like an answer and is not one.
         //
         // The DeviceNetworkInfo columns the plan also lists - subnet, default gateway, DHCP
-        // server, MAC vendor - are NOT here, and that is a deliberate hold rather than an
-        // omission. KQL fails the whole query on an unknown column, so one wrong name in that
-        // join would turn every batch into a failure and take down the five posture columns that
-        // work today. Those names have not been checked against a live tenant (plan R1(h)/(i),
-        // unrun). When they are, that join belongs in its OWN request for the same reason: a
-        // schema surprise in the location columns must not cost the posture columns.
+        // server, MAC vendor - are NOT here. KQL fails the whole query on an unknown column, so
+        // one wrong name in that join would take down the posture columns that work today, and
+        // those names have never been checked against a live tenant. The same column_ifexists
+        // technique would make that join safe too, which is the route in when it is wanted.
         return "DeviceInfo"
             + $" | where DeviceId in ({ids})"
             + " | summarize arg_max(Timestamp, *) by DeviceId | where isempty(MergedToDeviceId)"
             + " | invoke SeenBy()"
+            + " | extend ObserverId = iff(isnotempty(tostring(column_ifexists(\"SeenBy\", \"\")))"
+            + ", tostring(column_ifexists(\"SeenBy\", \"\"))"
+            + ", iff(isnotempty(tostring(column_ifexists(\"DeviceId1\", \"\")))"
+            + ", tostring(column_ifexists(\"DeviceId1\", \"\"))"
+            + ", tostring(column_ifexists(\"SeenByDeviceId\", \"\"))))"
             + " | join kind=leftouter ("
             + "DeviceInfo | summarize arg_max(Timestamp, *) by DeviceId"
-            + " | project SeenByDeviceId = DeviceId, SeenByName = DeviceName"
-            + ") on $left.SeenBy == $right.SeenByDeviceId"
+            + " | project ObserverId = DeviceId, SeenByName = DeviceName"
+            + ") on ObserverId"
             + " | project DeviceId, DiscoverySources, DeviceType, DeviceCategory, Vendor, Model,"
             + " RecentlySeenBy = SeenByName";
     }

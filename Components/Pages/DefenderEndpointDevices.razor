@@ -304,6 +304,26 @@
             </div>
         }
 
+        @* A whole column that is empty for every row, on a run that reported success, is the
+           failure mode that shipped: the observer column was blank for all 26,812 devices and
+           nothing on the page said so, because the query succeeded and the join simply matched
+           nothing. The page cannot tell "nothing observed these devices" from "we asked for the
+           wrong thing" - nothing can, without the schema - but it can refuse to stay quiet.
+           Shown only on a succeeded run: on a failed or partial one the banners above already
+           explain the blanks, and two explanations of one thing is worse than none. *@
+        @if (result.Devices.Count > 0
+             && result.DiscoveryEnrichment == DefenderDiscoveryEnrichmentState.Succeeded
+             && result.Devices.All(d => string.IsNullOrEmpty(d.RecentlySeenBy)))
+        {
+            <div class="alert alert-warning py-2">
+                <small>
+                    <strong>No observing machine was reported for any of these devices.</strong>
+                    Either nothing has seen them, or this tenant names that data differently than
+                    the report expects.
+                </small>
+            </div>
+        }
+
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
                 @* Counts the FILTERED set, which is what is on screen. Showing the unfiltered

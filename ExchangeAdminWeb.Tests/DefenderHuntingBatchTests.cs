@@ -46,6 +46,45 @@ public class DefenderHuntingBatchTests
         Assert.Contains("isempty(MergedToDeviceId)", query, StringComparison.Ordinal);
     }
 
+    // ---- the observer column is discovered, not guessed ----
+
+    [Fact]
+    public void TheObserverColumnIsNeverReferencedByASingleHardCodedName()
+    {
+        // The defect this exists for SHIPPED. The query referenced $left.SeenBy - one of the two
+        // names Microsoft's own docs give for SeenBy()'s output - and the owner's 26,812-device
+        // export came back with that column empty for every row. A left-outer join turns a wrong
+        // key into empty cells rather than an error, so nothing failed and nothing said so.
+        var query = DefenderEndpointDeviceService.BuildHuntingQuery(["aa11"]);
+
+        Assert.DoesNotContain("$left.SeenBy", query, StringComparison.Ordinal);
+        Assert.Contains("column_ifexists", query, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("SeenBy")]          // one documented name
+    [InlineData("DeviceId1")]       // the other, after KQL renames its collision with DeviceId
+    [InlineData("SeenByDeviceId")]  // the third spelling seen in the wild
+    public void EveryCandidateSpellingOfTheObserverColumnIsTried(string candidate)
+    {
+        // Named individually rather than counted, so dropping one is a failure with its name in
+        // the message instead of an off-by-one in an arity assertion.
+        var query = DefenderEndpointDeviceService.BuildHuntingQuery(["aa11"]);
+
+        Assert.Contains($"column_ifexists(\"{candidate}\", \"\")", query, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheObserverIsProjectedAsANameAndTheRawIdNeverReachesTheReport()
+    {
+        // "Where is this machine" cannot be answered by a GUID. A blank says "no answer"; an id
+        // looks like an answer and is not one.
+        var query = DefenderEndpointDeviceService.BuildHuntingQuery(["aa11"]);
+
+        Assert.Contains("RecentlySeenBy = SeenByName", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("RecentlySeenBy = ObserverId", query, StringComparison.Ordinal);
+    }
+
     // ---- the ids are interpolated into KQL, so they are vouched for ----
 
     [Theory]

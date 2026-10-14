@@ -1146,31 +1146,16 @@ public sealed class ModuleCatalog
             // at all (docs/DefenderEndpointDevices-Plan.md Revision 3, R1(g)); the two hardcoded
             // filters are replaced by the machine record's real fields, and the default ceiling
             // rises from 20000 to 100000.
-            // 1.5.0: SITE. Each device's last known IP is matched against the forest's own
-            // subnet-to-site map, so the report names a place rather than an address - as a
-            // column, in the CSV, and as a filter. This is the module's reason to exist: an
-            // export of 26,812 devices had an IP on 26,811 of them, against 35% for discovery
-            // sources and 8 distinct values for machine group across the whole tenant. A
-            // directory read failure FAILS the run rather than blanking the column (plan Q10).
-            // 1.4.0: "Recently seen by" - the machine that recently observed this one, by NAME -
-            // is a column AND a filter. The column answers the stakeholder's actual question
-            // (which local machine discovered this device, so where is it); the filter is what
-            // makes it usable, because a column you cannot narrow on means paging 2,000 screens
-            // of a 100,000-device tenant. Applied after enrichment, since the field does not
-            // exist until the hunting query answers. The export follows the filter; it never
-            // follows the page.
-            // 1.3.0: the enrichment query is BATCHED - one hunting call per 1,000 devices, narrowed
-            // to those ids, instead of one unfiltered query over the whole DeviceInfo table. A
-            // batch that does not answer no longer blanks the batches that did: its devices read
-            // "(unavailable)" and the banner names how many batches failed. Device ids are
-            // interpolated into KQL and are allowlisted before they go anywhere near it.
-            // 1.2.0: the device table is paged, 50 rows at a time, with Previous/Next. It
-            // rendered every device the tenant returned - and since 1.1.2 raised the ceiling to
-            // 100,000, that killed the circuit and nothing could be scrolled, so the module
-            // shipped unusable at tenant scale. Owner rejected virtualised scrolling; this is
-            // the portal-style shape he approved instead. Paging bounds the DOM only: the CSV
-            // export still carries the complete matching set, and a test pins that it does.
-            Version = "1.5.0",
+            // 1.5.1: observer column resolved via column_ifexists - SeenBy() output is named
+            //        inconsistently across tenants and a fixed name silently yields blanks.
+            // 1.5.0: Site column, CSV field and filter, from last IP against the AD subnet map.
+            //        An AD read failure fails the run; it must not blank the column (plan Q10).
+            // 1.4.0: Recently seen by, as a column and a filter.
+            // 1.3.0: hunting enrichment batched at 1,000 ids; a failed batch marks only its own
+            //        devices "(unavailable)" and never blanks the batches that answered.
+            // 1.2.0: device table paged at 50 rows. Rendering all of them killed the circuit.
+            //        Paging bounds the DOM only - the CSV still carries the whole matching set.
+            Version = "1.5.1",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",
