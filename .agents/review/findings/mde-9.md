@@ -128,5 +128,5 @@ Below CRITICAL, so closed on the coder-side guard proof per `.agents/decisions.m
 
 ## Closeout
 
-Fixed directly on `master`. Round 4 was not clean, so round 5 is owed. Not yet pushed - push
+Fixed directly on `master`. Round 5 came back CLEAN, which closes the stream. Not yet pushed - push
 policy is ask.

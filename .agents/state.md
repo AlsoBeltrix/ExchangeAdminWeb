@@ -39,12 +39,17 @@ not against the one beside it. **Rounds 3 and 4 asked for that shape by name and
 four of their findings were found.** Writing the records is what made it visible - the index's
 "zero open rows" had been true only by omission until the drift sweep flagged it.
 
-**Round 5 is dispatched** - codex / `@azure-openai-eus2-global/gpt-5.5-dzs` / xhigh / standard,
-over `96cdb89..f5febd5`. No T1 sensitive path has matched in any round. Prompts are
-machine-local (`.gitignore:66`); outputs are `.agents/review/out/session-review.txt`,
-`round2.txt`, `mde-r3.txt`, `mde-r4.txt`, and `mde-r5.txt` when it lands.
-
-**Next action:** read round 5's verdict. Clean closes the stream and the nine rows move from
+**Round 5 came back CLEAN over `96cdb89..f5febd5`, which CLOSES the stream** - codex /
+`@azure-openai-eus2-global/gpt-5.5-dzs` / xhigh / standard. It was dispatched to attack round
+4's two fixes specifically and cleared both, and it found no other block-bodied caller of the
+repaired `Member()` helper that had been falsely green. No T1 sensitive path matched in any
+round. Prompts are machine-local (`.gitignore:66`); outputs are
+`.agents/review/out/session-review.txt`, `round2.txt`, `mde-r3.txt`, `mde-r4.txt`, `mde-r5.txt`.
+**Next action: ASK THE OWNER TO PUSH.** The review stream is closed and there is no further
+coding work owed on it. `.agents/push-policy.md` is `ask`, and nothing in this range has
+reached either remote - `github` and `origin` were both still at `96cdb89` when last checked
+live. On push, the nine rows in `.agents/review/index.md` move from `[v]` to `[x]`. After that
+the stream needs a deploy and the three live checks below; neither is owed work in this repo.
 `[v]` to `[x]` once pushed. Findings go through intake, one commit each, then round 6.
 
 **Two things the owner has not been asked about and should see.**

@@ -88,6 +88,21 @@ attack, which is what makes the pattern a finding rather than a worry: round 4 c
 `mde-6`'s Site asymmetry argument holds and that `mde-7`'s condition covers all nine page
 states.
 
+**Round 5 came back CLEAN over `96cdb89..f5febd5` (raw envelope `out/mde-r5.txt`), which
+closes the stream.** It was dispatched specifically to attack round 4's two fixes and it
+cleared both: every inventory path reaches the page through `ApplyEnrichment`, the blank-id
+branch and the unavailable-set branch both call `StampUnavailable`, and an observer-only
+failure stamps the column before the row lookup, so a device with no hunting row still carries
+the marker. For `mde-9` it confirmed the resolver reports the address it was given verbatim,
+that three identical unresolved rows produce three rejections, that parse-time rejections and
+duplicate rows are disjoint, and that the CSV writer does not de-duplicate. It also checked the
+`Member()` helper question and found no other block-bodied caller that had been falsely green,
+and no fix undoing another.
+
+Five rounds, nine findings, one clean. The pattern that ran through rounds 1-4 did not recur
+in round 4's own fixes - which is the first time in this stream that a round's work survived
+the next round intact.
+
 None of these is `[x]`: each is verified on `master` and none has reached the remotes. They
 move to `[x]` when the range carrying them is pushed - check that live, it is not recorded here.
 
