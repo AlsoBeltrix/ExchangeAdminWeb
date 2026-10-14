@@ -35,6 +35,8 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [mde-3](findings/mde-3.md) | MEDIUM - the upload parse drops rows before the resolver, so they can never be reported | Verified | - | codex / gpt-5.5 / xhigh |
 | [v] | [mde-4](findings/mde-4.md) | MEDIUM - the observer failure count is dropped on a mixed partial run | Verified | - | codex / gpt-5.5 / xhigh |
 | [v] | [mde-5](findings/mde-5.md) | MEDIUM - an all-invalid upload still cannot reach its errors CSV | Verified | - | codex / gpt-5.5 / xhigh |
+| [v] | [mde-6](findings/mde-6.md) | MEDIUM - a whole-run enrichment failure makes the seen-by filter empty the table | Verified | - | codex / gpt-5.5 / xhigh |
+| [~] | mde-7 | MEDIUM - mixed and failed Comms-10k upload states still cannot reach the errors CSV | In progress | - | codex / gpt-5.5 / xhigh |
 
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.
@@ -61,26 +63,28 @@ in this stream, not because this stream caused it. A FIFTH set of four findings 
 of these and is not in this table: they were raised against the PLAN before any code existed
 (`rcplan.result.json`) and were resolved in `116d671`, which is where plan findings belong.
 
-`mde-1` to `mde-5` are the Defender for Endpoint **device location** stream, reviewed by codex
-over `96cdb89..HEAD` in rounds (raw envelopes `out/session-review.txt` for round 1,
-`out/round2.txt` for round 2). Round 1 raised `mde-1`, `mde-2` and `mde-3`; round 2 raised
-`mde-4` and `mde-5`. **No round has come back clean, so round 3 is owed** - this repo's
-protocol is rounds until clean, and the comparable Migration stream took four. Each finding was
-fixed in its own commit: `27beb85`, `7ba8ed0`, `835a195`, `c7e64b1`, `ac71855`.
+`mde-1` onward are the Defender for Endpoint **device location** stream, reviewed by codex over
+`96cdb89..HEAD` in rounds (raw envelopes `out/session-review.txt` for round 1, `out/round2.txt`
+for round 2, `out/mde-r3.txt` for round 3). Round 1 raised `mde-1`, `mde-2` and `mde-3`; round 2
+raised `mde-4` and `mde-5`; round 3 raised `mde-6` and `mde-7`. **No round has come back clean,
+so the next one is always owed** - this repo's protocol is rounds until clean, and the
+comparable Migration stream took four. Each finding is fixed in its own commit.
 
-Two of the five are **not** Defender findings. `mde-3` and `mde-5` are Comms-10k: the reviewer
-was given the session's whole diff, which carried the rejected-address CSV landed the same day,
-and pulled it back in. They are filed under this prefix because that is the stream that found
-them, not because the module is related.
+Three of them are **not** Defender findings. `mde-3`, `mde-5` and `mde-7` are Comms-10k: the
+reviewer was given the session's whole diff, which carried the rejected-address CSV landed the
+same day, and has pulled it back in every round since. They are filed under this prefix because
+that is the stream that found them, not because the module is related.
 
-`mde-4` re-opened `mde-2` and `mde-5` re-opened `mde-3`, each at the neighbouring code path the
-first fix did not cover. **Both original fixes were verified against the state they were written
-for and not against the one beside it** - the pattern is worth more than either finding.
+**Every round so far has found the previous round's fix incomplete at a neighbouring path.**
+`mde-4` re-opened `mde-2`, `mde-5` re-opened `mde-3`, `mde-6` re-opened the conflation
+`111bfa2` fixed for Site, and `mde-7` re-opened `mde-5`. Each original was verified against the
+state it was written for and not against the one beside it. That pattern is worth more than any
+individual finding here, and round 3's prompt asked for it by name, which is how two of them
+were found.
 
-All five are `[v]` rather than `[x]`: each is verified on `master` and none has reached the
-remotes. They move to `[x]` when the range carrying them is pushed - check that live, it is not
-recorded here.
+None of these is `[x]`: each is verified on `master` and none has reached the remotes. They
+move to `[x]` when the range carrying them is pushed - check that live, it is not recorded here.
 
-These five were found and fixed on 2026-10-14 and were **not filed here at the time**; the row
-and record were written on 2026-10-14 after a drift sweep flagged that this index's "zero open
-rows" was true only by omission.
+`mde-1` to `mde-5` were found and fixed on 2026-10-14 and were **not filed here at the time**;
+their rows and records were written later the same day, after a drift sweep flagged that this
+index's "zero open rows" was true only by omission.
