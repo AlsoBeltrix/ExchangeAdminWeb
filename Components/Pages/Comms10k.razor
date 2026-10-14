@@ -105,9 +105,9 @@
                             <strong>Validated &mdash; not applied yet.</strong>
                             <strong>@resolveResult.ResolvedDns.Count</strong> of @parsedEmails.Count email(s) matched in AD.
                             The distribution list has <strong>not</strong> changed.
-                            @if (resolveResult.Rejections.Count > 0)
+                            @if (AllRejections.Count > 0)
                             {
-                                <br /><span class="text-danger"><strong>@resolveResult.Rejections.Count rejected:</strong> @string.Join(", ", resolveResult.Rejections.Take(10).Select(r => r.Address))@(resolveResult.Rejections.Count > 10 ? "..." : "")</span>
+                                <br /><span class="text-danger"><strong>@AllRejections.Count rejected:</strong> @string.Join(", ", AllRejections.Take(10).Select(r => r.Address))@(AllRejections.Count > 10 ? "..." : "")</span>
                                 <br /><button class="btn btn-outline-danger btn-sm mt-2" @onclick="DownloadRejections" disabled="@isLoading">Download errors CSV</button>
                             }
                         </div>
@@ -116,9 +116,9 @@
                         {
                             <div class="alert alert-danger">
                                 <p><strong>Confirm: Replace all members with @resolveResult.ResolvedDns.Count users?</strong>
-                                @if (resolveResult.Rejections.Count > 0)
+                                @if (AllRejections.Count > 0)
                                 {
-                                    <br /><small>@resolveResult.Rejections.Count address(es) will be excluded.</small>
+                                    <br /><small>@AllRejections.Count address(es) will be excluded.</small>
                                 }
                                 </p>
                                 <button class="btn btn-danger btn-sm me-2" @onclick="ExecuteReplace" disabled="@isLoading">
@@ -178,6 +178,19 @@
 
     private Comms10kMemberList? preview;
     private List<string> parsedEmails = new();
+
+    /// <summary>
+    /// Rows rejected by the upload parse, before any directory lookup.
+    /// </summary>
+    /// <remarks>
+    /// The owner's ruling is that EVERY non-matching address is reported with its reason.
+    /// These rows never reach the resolver, so without carrying them separately they could
+    /// never reach the errors CSV - the page silently decided they did not count.
+    /// </remarks>
+    private List<Comms10kAddressResolver.Rejection> rejectedBeforeLookup = new();
+
+    /// <summary>Why a row that is not an address at all was rejected.</summary>
+    private const string NotAnAddressReason = "Not an email address";
     private Comms10kResolveResult? resolveResult;
     private Comms10kUpdateResult? result;
 
@@ -293,10 +306,22 @@
     /// Transfer mechanism copied from DownloadFull deliberately - same base64-over-the-circuit
     /// path, same recorded limitation in docs/DownloadMemoryRetention-Plan.md, which is a DRAFT.
     /// </remarks>
+    /// <summary>Every rejected row, from the upload parse and from the directory lookup.</summary>
+    /// <remarks>
+    /// The owner's ruling is that EVERY non-matching address is reported. The parse rejects
+    /// blanks and non-addresses before the resolver ever sees them, so a report built only
+    /// from the resolver silently omitted them - found at review.
+    /// </remarks>
+    private List<Comms10kAddressResolver.Rejection> AllRejections =>
+        [.. rejectedBeforeLookup, .. resolveResult?.Rejections ?? []];
+
     private async Task DownloadRejections()
     {
         // Captured before any await: nothing below may re-read the field.
-        var rejections = resolveResult?.Rejections;
+        // Both sources: rows the parse rejected before any lookup, then rows the directory
+        // rejected. The parse ones come FIRST so they sit together at the top of the file -
+        // they are the ones the operator fixes in the workbook rather than chases in AD.
+        var rejections = AllRejections;
         if (rejections is null || rejections.Count == 0)
             return;
 
@@ -358,6 +383,7 @@
     {
         uploadedFileName = e.File?.Name;
         parsedEmails = new();
+        rejectedBeforeLookup = new();
         resolveResult = null;
         confirmPending = false;
         result = null;
@@ -395,9 +421,41 @@
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             while (await csv.ReadAsync())
             {
-                var val = csv.GetField(fieldName)?.Trim();
-                if (!string.IsNullOrWhiteSpace(val) && val.Contains('@') && seen.Add(val))
-                    parsedEmails.Add(val);
+                // The RAW field, untrimmed. What the operator typed is what has to appear in
+                // the errors report, because they have to find that row in the workbook they
+                // uploaded - and a trailing space may be the whole reason it failed.
+                var raw = csv.GetField(fieldName);
+                var val = raw?.Trim();
+
+                if (string.IsNullOrWhiteSpace(val))
+                {
+                    // Dropped rows used to vanish here, which quietly contradicted the ruling
+                    // that EVERY non-matching address is reported: a blank row, a row with no
+                    // "@", and a duplicate of an already-rejected address never reached the
+                    // resolver, so they could never reach the errors CSV either. Found at
+                    // review. They are now rejections with a reason, exactly like a lookup
+                    // miss, and only the lookup itself is skipped.
+                    rejectedBeforeLookup.Add(new Comms10kAddressResolver.Rejection(
+                        raw ?? "", Comms10kAddressResolver.Reasons.Blank));
+                    continue;
+                }
+
+                if (!val.Contains('@'))
+                {
+                    rejectedBeforeLookup.Add(new Comms10kAddressResolver.Rejection(
+                        raw ?? "", NotAnAddressReason));
+                    continue;
+                }
+
+                if (!seen.Add(val))
+                {
+                    // Not an error, and deliberately NOT reported: the address resolves on its
+                    // first appearance, so the person is on the list. Reporting it would put a
+                    // row in the errors CSV for somebody who was included.
+                    continue;
+                }
+
+                parsedEmails.Add(val);
             }
 
             // Reads parsedEmails, a field, and that IS safe here rather than assumed to be: the
@@ -553,6 +611,7 @@
             };
 
             parsedEmails = new();
+            rejectedBeforeLookup = new();
             resolveResult = null;
             preview = null;
         }

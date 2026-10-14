@@ -688,13 +688,15 @@ public sealed class ModuleCatalog
             // ticket check (docs/ProgressCoverage-Plan.md S3).
             // 1.3.3: the three silent reads report - the member preview, the full export, and
             // the CSV upload parse (docs/ProgressCoverage-Plan.md S5).
+            // 1.4.1: rows the upload parse rejects - blanks and non-addresses - reach the errors
+            // CSV too. They never saw the resolver, so a report built only from it omitted them.
             // 1.4.0: every rejected address is reported with the reason it was rejected, and the
             // whole set is downloadable as a CSV. The banner previewed ten and then a literal
             // "...", so on a ten-thousand-row upload an operator who lost people could see ten
             // addresses and had no way to obtain the rest - the stakeholder's "requiring us to
             // manually identify the affected users". Owner ruling 2026-10-12: an address with no
             // exact match is not a match, so the fix is reporting, NOT widening the lookup keys.
-            Version = "1.4.0",
+            Version = "1.4.1",
             MainPermission = new(
                 "Access",
                 "Comms10k",

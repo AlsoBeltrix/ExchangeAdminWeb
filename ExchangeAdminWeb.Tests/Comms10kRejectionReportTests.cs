@@ -100,6 +100,60 @@ public class Comms10kRejectionReportTests
         Assert.Equal(Comms10kAddressResolver.Reasons.NoMatch, rejection.Reason);
     }
 
+    // ---- rows the UPLOAD PARSE rejects reach the report too ----
+
+    [Fact]
+    public void RowsRejectedBeforeTheLookupAreCarriedIntoTheReport()
+    {
+        // Found at review. The parse dropped blank rows, rows with no "@", and duplicates
+        // before the resolver ever saw them, so they could never appear in the errors CSV -
+        // the page quietly decided they did not count, against the ruling that EVERY
+        // non-matching address is reported with its reason.
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "Comms10k.razor")));
+
+        // Asserted inside the PARSE HANDLER, not anywhere in the file: a probe that deleted
+        // the no-address branch still passed a whole-file Contains, because the reason
+        // constant's DECLARATION kept matching it.
+        var parse = HandlerBody(source, "HandleFileUpload");
+
+        Assert.Contains("Reasons.Blank", parse, StringComparison.Ordinal);
+        Assert.Contains("NotAnAddressReason", parse, StringComparison.Ordinal);
+        Assert.Equal(2, Regex.Matches(parse, Regex.Escape("rejectedBeforeLookup.Add(")).Count);
+
+        // Both sources reach the file and the banner, not just the resolver's.
+        var all = Member(source, "List<Comms10kAddressResolver.Rejection> AllRejections");
+        Assert.Contains("rejectedBeforeLookup", all, StringComparison.Ordinal);
+        Assert.Contains("resolveResult?.Rejections", all, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ADuplicateOfAnAddressAlreadyAcceptedIsNotReportedAsRejected()
+    {
+        // The one case that must NOT be reported: the address resolves on its first
+        // appearance, so that person IS on the list. A row in the errors CSV for somebody who
+        // was included sends the operator chasing a non-problem.
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "Comms10k.razor")));
+
+        var parse = source[source.IndexOf("if (!seen.Add(val))", StringComparison.Ordinal)..];
+        var nextAdd = parse.IndexOf("rejectedBeforeLookup.Add(", StringComparison.Ordinal);
+        var continues = parse.IndexOf("continue;", StringComparison.Ordinal);
+
+        Assert.True(continues >= 0 && (nextAdd < 0 || continues < nextAdd),
+            "A duplicate must fall through to continue without being recorded as a rejection.");
+    }
+
+    /// <summary>The text of one expression-bodied or block-bodied member, by declaration.</summary>
+    private static string Member(string source, string declaration)
+    {
+        var start = source.IndexOf(declaration, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"{declaration} was not found on the page.");
+
+        var semicolon = source.IndexOf(';', start);
+        Assert.True(semicolon > start, $"{declaration} is unterminated.");
+
+        return source[start..(semicolon + 1)];
+    }
+
     // ---- the page: the export is the whole set, and the ten-address cap is the banner's ----
 
     [Fact]
@@ -130,8 +184,12 @@ public class Comms10kRejectionReportTests
             StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "Comms10k.razor"))),
             "DownloadRejections");
 
-        var capture = handler.IndexOf("var rejections = resolveResult", StringComparison.Ordinal);
-        Assert.True(capture >= 0, "The handler must capture resolveResult's rejections into a local.");
+        // AllRejections materialises a NEW list from both sources, so taking it into a local
+        // is the snapshot. The property name changed when the parse-time rejections were
+        // added; the property under test - snapshot before the await, no field read after -
+        // did not.
+        var capture = handler.IndexOf("var rejections = AllRejections", StringComparison.Ordinal);
+        Assert.True(capture >= 0, "The handler must capture the rejection list into a local.");
 
         var firstAwait = handler.IndexOf("await", StringComparison.Ordinal);
         Assert.True(firstAwait > capture,
