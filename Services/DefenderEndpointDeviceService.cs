@@ -1012,18 +1012,69 @@ public sealed class DefenderEndpointDeviceService
 
         using var document = response.Document;
 
-        if (!TryReadHuntingResults(document, out var batchRows))
+        if (!TryReadObserverNames(document, out var observers))
             return false;
 
-        foreach (var (id, row) in batchRows)
+        foreach (var (id, names) in observers)
         {
-            if (string.IsNullOrEmpty(row.RecentlySeenBy))
-                continue;
+            var joined = string.Join("; ", names);
 
             if (into.TryGetValue(id, out var existing))
-                existing.RecentlySeenBy = row.RecentlySeenBy;
+                existing.RecentlySeenBy = joined;
             else
-                into[id] = row;
+                into[id] = new DefenderDeviceDiscovery { RecentlySeenBy = joined };
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Reads the observer response into every observing machine's name per device.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Not <see cref="TryReadHuntingResults"/>, which is keyed one row per device and would
+    /// silently keep whichever observer happened to come last.</b> SeenBy() answers with one
+    /// row per OBSERVER, so a device seen by four machines arrives as four rows - and for
+    /// locating hardware, four names are four times the evidence. Dropping three of them
+    /// arbitrarily would also make the column unstable between runs.
+    /// </para>
+    /// <para>
+    /// Sorted, so the same sighting set renders the same string every time: an operator
+    /// comparing two exports should not see spurious differences. Separator matches the
+    /// multi-value convention DiscoverySources already uses on this page.
+    /// </para>
+    /// </remarks>
+    internal static bool TryReadObserverNames(
+        JsonDocument document,
+        out Dictionary<string, SortedSet<string>> observers)
+    {
+        observers = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+            return false;
+
+        if (!TryGetProperty(root, "results", out var results) || results.ValueKind != JsonValueKind.Array)
+            return false;
+
+        foreach (var entry in results.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.Object)
+                continue;
+
+            var deviceId = GetString(entry, "DeviceId");
+            if (string.IsNullOrWhiteSpace(deviceId))
+                continue;
+
+            var name = GetFlexibleString(entry, "RecentlySeenBy");
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            if (!observers.TryGetValue(deviceId, out var set))
+                observers[deviceId] = set = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            set.Add(name);
         }
 
         return true;

@@ -1146,6 +1146,8 @@ public sealed class ModuleCatalog
             // at all (docs/DefenderEndpointDevices-Plan.md Revision 3, R1(g)); the two hardcoded
             // filters are replaced by the machine record's real fields, and the default ceiling
             // rises from 20000 to 100000.
+            // 1.6.2: a device seen by several machines lists all of them, sorted. SeenBy() answers
+            //        one row per observer and the shared reader kept whichever came last.
             // 1.6.1: a device whose Site reads "(unavailable)" survives the Site filter. With the
             //        directory unreadable every cell reads that, so filtering matched nothing and
             //        said "No devices matched" under a banner saying the site was unknown.
@@ -1162,7 +1164,7 @@ public sealed class ModuleCatalog
             //        devices "(unavailable)" and never blanks the batches that answered.
             // 1.2.0: device table paged at 50 rows. Rendering all of them killed the circuit.
             //        Paging bounds the DOM only - the CSV still carries the whole matching set.
-            Version = "1.6.1",
+            Version = "1.6.2",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Services;
 
@@ -83,6 +84,67 @@ public class DefenderHuntingBatchTests
 
         Assert.Contains("RecentlySeenBy = SeenByName", query, StringComparison.Ordinal);
         Assert.DoesNotContain("RecentlySeenBy = ObserverId", query, StringComparison.Ordinal);
+    }
+
+    // ---- every observing machine is kept, not whichever row came last ----
+
+    [Fact]
+    public void ADeviceSeenBySeveralMachinesKeepsAllOfThem()
+    {
+        // SeenBy() answers one row per OBSERVER, so a device seen by three machines arrives as
+        // three rows. For locating hardware three names are three times the evidence, and the
+        // shared row reader would have kept whichever came last - arbitrarily, and differently
+        // between runs.
+        using var document = JsonDocument.Parse(
+            "{\"results\":["
+            + "{\"DeviceId\":\"d1\",\"RecentlySeenBy\":\"SWITCH-B\"},"
+            + "{\"DeviceId\":\"d1\",\"RecentlySeenBy\":\"SWITCH-A\"},"
+            + "{\"DeviceId\":\"d1\",\"RecentlySeenBy\":\"RECEPTION-PC\"}]}");
+
+        Assert.True(DefenderEndpointDeviceService.TryReadObserverNames(document, out var observers));
+
+        // Sorted, so two exports of the same sighting set compare equal.
+        Assert.Equal(["RECEPTION-PC", "SWITCH-A", "SWITCH-B"], observers["d1"]);
+    }
+
+    [Fact]
+    public void TheSameObserverReportedTwiceIsNotListedTwice()
+    {
+        using var document = JsonDocument.Parse(
+            "{\"results\":["
+            + "{\"DeviceId\":\"d1\",\"RecentlySeenBy\":\"SWITCH-A\"},"
+            + "{\"DeviceId\":\"d1\",\"RecentlySeenBy\":\"switch-a\"}]}");
+
+        Assert.True(DefenderEndpointDeviceService.TryReadObserverNames(document, out var observers));
+
+        Assert.Single(observers["d1"]);
+    }
+
+    [Fact]
+    public void ARowWithNoObserverNameContributesNothing()
+    {
+        // The join is left outer, so a device nothing observed comes back with a null name.
+        // That must not become an empty entry, which would render as a stray separator.
+        using var document = JsonDocument.Parse(
+            "{\"results\":["
+            + "{\"DeviceId\":\"d1\",\"RecentlySeenBy\":\"\"},"
+            + "{\"DeviceId\":\"d2\",\"RecentlySeenBy\":\"SWITCH-A\"}]}");
+
+        Assert.True(DefenderEndpointDeviceService.TryReadObserverNames(document, out var observers));
+
+        Assert.False(observers.ContainsKey("d1"));
+        Assert.Equal(["SWITCH-A"], observers["d2"]);
+    }
+
+    [Fact]
+    public void ABodyThatIsNotAHuntingResultIsAFailureAndNotAnEmptyAnswer()
+    {
+        // An empty answer would mark nothing unavailable and leave the column blank, which
+        // reads as "nothing has seen these devices" - the silent-failure shape this whole
+        // column has already been bitten by once.
+        using var notAResult = JsonDocument.Parse("{\"error\":{\"code\":\"BadRequest\"}}");
+
+        Assert.False(DefenderEndpointDeviceService.TryReadObserverNames(notAResult, out _));
     }
 
     // ---- the ids are interpolated into KQL, so they are vouched for ----

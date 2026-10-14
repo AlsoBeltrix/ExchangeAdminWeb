@@ -178,6 +178,40 @@ public class DefenderDevicePagingTests
         Assert.Contains("? 1", count, StringComparison.Ordinal);
     }
 
+    // ---- the banners that make a silent failure impossible ----
+
+    [Fact]
+    public void AnUnreadableDirectoryIsAnnouncedRatherThanLeftToTheColumn()
+    {
+        // Without this the operator sees "(unavailable)" in 27,000 Site cells and has to infer
+        // why. The banner names the cause and says the rest of the report still stands.
+        var source = StripComments(ReadPage());
+
+        Assert.Contains("!result.SiteMapRead", source, StringComparison.Ordinal);
+        Assert.Contains("Site could not be read from the directory.", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnObserverColumnEmptyForEveryDeviceIsAnnouncedOnASucceededRun()
+    {
+        // The exact failure that shipped: the column was blank for all 26,812 devices on a run
+        // that reported success, and nothing said so. The page cannot tell "nothing saw them"
+        // from "named differently here" - but it must not stay quiet.
+        var source = StripComments(ReadPage());
+
+        Assert.Contains("No observing machine was reported for any of these devices.",
+            source, StringComparison.Ordinal);
+
+        // Gated on a SUCCEEDED run: on a failed or partial one the enrichment banners already
+        // explain the blanks, and two explanations of one thing is worse than none.
+        var banner = source.IndexOf("No observing machine was reported", StringComparison.Ordinal);
+        var guard = source.LastIndexOf(
+            "DefenderDiscoveryEnrichmentState.Succeeded", banner, StringComparison.Ordinal);
+        Assert.True(guard > 0 && banner - guard < 400,
+            "The empty-observer banner must be gated on a succeeded run, or it fires on top of "
+            + "the enrichment-failure banners that already explain the blanks.");
+    }
+
     // ---- helpers ----
 
     /// <summary>The text of one expression-bodied or block-bodied member, by DECLARATION.</summary>
