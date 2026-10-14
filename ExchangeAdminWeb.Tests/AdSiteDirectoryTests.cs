@@ -152,6 +152,45 @@ public class AdSiteDirectoryTests
         Assert.Equal("10.0.0.1", device.LastIpAddress);
     }
 
+    [Theory]
+    [InlineData(typeof(InvalidOperationException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    [InlineData(typeof(TimeoutException))]
+    [InlineData(typeof(System.Management.Automation.CommandNotFoundException))]
+    [InlineData(typeof(System.Management.Automation.PSInvalidOperationException))]
+    [InlineData(typeof(NotSupportedException))]
+    [InlineData(typeof(IOException))]
+    public async Task ANY_DirectoryFailure_MarksSiteRatherThanRemovingTheReport(Type thrown)
+    {
+        // The catch used to list THREE exception types, which was a defect found at review.
+        // The production path builds a PowerShell runspace and imports the AD module, and
+        // ISectionAccessDirectoryCommands says a failure to RUN at all still throws - a
+        // missing module, no domain controller answering, a runspace that will not open. Those
+        // escaped the list, reached the page's catch, and removed the entire working device
+        // inventory to report a Site problem.
+        //
+        // Parameterised over types the runspace path can actually raise rather than asserting
+        // "catch (Exception)" at source level, so the test states the BEHAVIOUR: whatever the
+        // directory throws, the inventory survives and only Site is marked.
+        var inventory = OneDeviceAt("10.0.0.1");
+        var exploding = new AdSiteDirectory(
+            () => throw (Exception)Activator.CreateInstance(thrown)!);
+
+        var service = new DefenderEndpointDeviceService(
+            () => Task.FromResult<DefenderApiClient?>(inventory),
+            "50",
+            siteDirectory: exploding);
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.False(result.SiteMapRead);
+
+        var device = Assert.Single(result.Devices);
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, device.Site);
+        Assert.Equal("host1.corp.example", device.ComputerDnsName);
+    }
+
     [Fact]
     public async Task ASearchThatMatchedNothing_DoesNotTouchTheDirectory()
     {

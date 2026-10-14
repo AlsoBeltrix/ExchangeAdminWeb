@@ -1173,12 +1173,21 @@ public sealed class DefenderEndpointDeviceService
         {
             subnets = _siteDirectory.ReadSubnets();
         }
-        catch (Exception ex) when (ex is InvalidOperationException
-                                       or UnauthorizedAccessException
-                                       or TimeoutException)
+        catch (Exception)
         {
-            // Narrow, like IsHuntingSideFailure: a bug in the matching code must still escape
-            // rather than be reported to the operator as "the directory is down".
+            // Catches EVERYTHING, which is the opposite of the hunting side's narrow filter and
+            // is correct here for a reason the narrow version got wrong: the try wraps ONE call
+            // that is entirely directory work, with no code of this module's between its braces.
+            // There is no bug for a broad catch to hide, and the matching that follows is
+            // outside it.
+            //
+            // The narrow version was a real defect. It listed three exception types; the
+            // production path builds a PowerShell runspace and imports the AD module
+            // (PowerShellDirectoryCommands), and ISectionAccessDirectoryCommands states that a
+            // failure to RUN at all still throws - a missing module, no domain controller
+            // answering, a runspace that will not open. None of those are on a three-type list,
+            // so they escaped to the page's catch and removed the whole working device
+            // inventory, which is precisely what marking the column exists to prevent.
             foreach (var device in devices)
                 device.Site = EnrichmentUnavailable;
 
