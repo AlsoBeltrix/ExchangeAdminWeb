@@ -99,6 +99,20 @@
                         </button>
                     }
 
+                    @* A file whose rows are ALL unusable parses to nothing, so there is no
+                       Validate step and never a result - and the errors report lived inside
+                       the result, which meant the one upload that most needs explaining could
+                       not produce one. Found at review round 2. The download is offered here
+                       on the rejections alone. *@
+                    @if (parsedEmails.Count == 0 && rejectedBeforeLookup.Count > 0 && resolveResult == null)
+                    {
+                        <div class="alert alert-danger mt-2">
+                            <strong>No usable addresses in that file.</strong>
+                            @rejectedBeforeLookup.Count row(s) were rejected and there is nothing to validate.
+                            <br /><button class="btn btn-outline-danger btn-sm mt-2" @onclick="DownloadRejections" disabled="@isLoading">Download errors CSV</button>
+                        </div>
+                    }
+
                     @if (resolveResult != null && resolveResult.Success)
                     {
                         <div class="alert alert-info mt-2">

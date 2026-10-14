@@ -154,6 +154,22 @@ public class Comms10kRejectionReportTests
         return source[start..(semicolon + 1)];
     }
 
+    [Fact]
+    public void AFileWithNoUsableRowsStillOffersTheErrorsReport()
+    {
+        // Round 2 finding. A file whose rows are ALL unusable parses to nothing, so there is
+        // no Validate step and never a resolveResult - and the download button lived inside
+        // the result. The one upload that most needs explaining could not produce a report.
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "Comms10k.razor")));
+
+        Assert.Contains(
+            "parsedEmails.Count == 0 && rejectedBeforeLookup.Count > 0",
+            source, StringComparison.Ordinal);
+
+        // Two download buttons now - one inside the validated result, one on this path.
+        Assert.Equal(2, Regex.Matches(source, Regex.Escape("@onclick=\"DownloadRejections\"")).Count);
+    }
+
     // ---- the page: the export is the whole set, and the ten-address cap is the banner's ----
 
     [Fact]
