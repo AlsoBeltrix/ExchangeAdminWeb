@@ -1,6 +1,6 @@
 # Defender for Endpoint Devices Module - Plan
 
-Status: **S1-S7 IMPLEMENTED, not yet run against the live tenant.** Module ships at `1.6.2`.
+Status: **S1-S7 IMPLEMENTED, not yet run against the live tenant.** `Modules/ModuleCatalog.cs` owns the shipped module version; do not copy it here.
 S6 (Recently seen by) and S7 (AD site) landed 2026-10-12/14 along with device-table paging and
 batched enrichment; `.agents/state.md` owns the commit list. **Three things below are now
 settled differently from how this document describes them and the body has NOT been rewritten -
