@@ -330,7 +330,8 @@ public sealed class DefenderDiscoveryEnrichment
         int failedBatches,
         int totalBatches,
         string reason,
-        IReadOnlySet<string>? observerUnavailableDeviceIds = null)
+        IReadOnlySet<string>? observerUnavailableDeviceIds = null,
+        int observerFailedBatches = 0)
     {
         ArgumentNullException.ThrowIfNull(rows);
         ArgumentNullException.ThrowIfNull(unavailableDeviceIds);
@@ -350,6 +351,7 @@ public sealed class DefenderDiscoveryEnrichment
             UnavailableDeviceIds = unavailableDeviceIds,
             FailedBatches = failedBatches,
             TotalBatches = totalBatches,
+            ObserverFailedBatches = observerFailedBatches,
             ObserverUnavailableDeviceIds =
                 observerUnavailableDeviceIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
         };

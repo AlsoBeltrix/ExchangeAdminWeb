@@ -921,7 +921,11 @@ public sealed class DefenderEndpointDeviceService
                 Math.Max(failedBatches, 1),
                 Math.Max(batches.Count, 2),
                 failedBatches > 0 ? lastFailureReason : DefenderDiscoveryReasons.MalformedResponse,
-                observerUnavailable);
+                observerUnavailable,
+                // Carried on this path too. Dropping it here meant a run where one posture
+                // batch AND a different observer lookup failed showed "(unavailable)" in the
+                // observer column with no banner - the count was zero, so nothing rendered.
+                observerFailedBatches);
         }
 
         return DefenderDiscoveryEnrichment.Succeeded(

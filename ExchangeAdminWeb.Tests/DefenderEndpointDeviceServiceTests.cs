@@ -2253,6 +2253,29 @@ public class DefenderEndpointDeviceServiceTests
     }
 
     [Fact]
+    public async Task AMixedRun_CountsTheObserverFailuresAsWellAsThePostureOnes()
+    {
+        // Round 2 finding. The count was carried on the SUCCEEDED path and dropped on the
+        // partial one, so a run where one posture batch failed AND a different observer
+        // lookup failed showed "(unavailable)" in the observer column with no banner - the
+        // count arrived as zero, so nothing rendered and that state went unexplained.
+        var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
+        devices.Responses.Add(() => Ok(MachinesPage(2)));
+
+        // Batch 1: posture fails, so its observer request is skipped entirely.
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}"));
+        // Batch 2: posture answers, observer fails.
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m2"))));
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.BadRequest, "{}"));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDiscoveryEnrichmentState.PartiallySucceeded, result.DiscoveryEnrichment);
+        Assert.Equal(1, result.DiscoveryFailedBatches);
+        Assert.Equal(1, result.ObserverFailedBatches);
+    }
+
+    [Fact]
     public async Task AFailedObserverLookup_CostsOnlyTheObserverColumn()
     {
         // The reason the observer query is a separate request at all. SeenBy() may be
