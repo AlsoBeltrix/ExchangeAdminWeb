@@ -4,13 +4,13 @@ Current work and blockers only. Rules live in `docs/ProjectConstitution.md` and
 `.agents/repo-guidance.md`, decisions in `.agents/decisions.md`, and machine observations in
 `.agents/machines.md`. Each plan owns its implementation and manual acceptance checklist.
 Superseded descriptions are verbatim in `docs/history/state-archive.md` (newest section first;
-the latest sweep is Archived 2026-10-12).
+the latest sweep is Archived 2026-10-14).
 
 ## Now
 
 ### HANDOFF 2026-10-14 - Defender location work, review round 2 fixes UNCOMMITTED
 
-**Branch `master`, verified head `835a195`, 28 commits unpushed.** The working tree is NOT
+**Branch `master`, head `6bfb8a6`.** The working tree is NOT
 clean and the uncommitted change is NOT verified - the full suite was interrupted before it
 ran against it. **Run the gates before trusting or committing anything below.**
 
@@ -66,7 +66,7 @@ fails visibly. A post-deploy checker that answers all three from an exported CSV
 ### Defender for Endpoint is the live work; 2026-10-12/14 landed nine slices
 
 **Queue 8 is the module people are waiting on and it now does what it exists for.** Landed and
-verified, not pushed, not deployed since `963b85d`:
+verified, not deployed since `963b85d`:
 
 | Commit | What |
 |---|---|
@@ -112,116 +112,25 @@ the observer column is the safe route in, in its own request.
 
 
 
-### Session 2026-10-12 landed two code slices; Defender S6 is next and starts FRESH
+### What comes after Defender, in the owner's stated order
 
-Owner widened every open scope on 2026-10-12 (`.agents/decisions.md`) and said *"I want all of
-everything done."* Scope is no longer a gate. **Do not put go-ahead questions about queued work
-to him** - that ruling exists because re-raising approved scope is what this session kept doing.
+**Scope is no longer a gate** (owner 2026-10-12, `.agents/decisions.md`: *"I want all of
+everything done. stop asking me questions that just reinforce that. you do everything."*).
+**Do not put go-ahead questions about queued work to him** - re-raising approved scope is the
+failure mode that ruling exists to stop.
 
-**Landed, verified, not pushed:**
+The order he stated, all three already approved:
 
-1. `a01767c` - **Comms-10k rejected-address CSV.** Queue 26 point 3. Every address that does not
-   resolve is reported with its reason and the whole set downloads as a CSV. The lookup is NOT
-   widened - exact match only, per the ruling. Module `1.3.3` -> `1.4.0`.
-2. `43c0735` - **Defender device table paged.** Queue 8 defect 1. 50 rows with Previous/Next; the
-   page rendered every device in a 100,000-ceiling tenant and killed the circuit. Export still
-   carries the complete set and a test pins that it does. Module `1.1.2` -> `1.2.0`.
-
-Suite at `43c0735`: **3,736 passed / 0 failed / 3 skipped.** Build 0 errors, format clean,
-`git diff --check` clean, ASCII lint passed. Every new guard was mutation-proven.
-
-**Next: Defender S6**, which also closes queue 8 defect 2 (the Discovery Sources column shows
-which Microsoft product saw a device, not which local machine discovered it). The plan owns the
-design; four things a fresh session needs that are NOT in it:
-
-1. **The version bump in the plan is stale.** It says `1.1.0` -> `1.2.0`. The paging fix already
-   took `1.2.0`, so S6 is `1.2.0` -> `1.3.0`.
-2. **The current query is unbatched and unfiltered.** `Services/DefenderEndpointDeviceService.cs:82`
-   runs ONE `HuntingQuery` over the whole `DeviceInfo` table. S6 replaces it with one call per
-   batch of at most 1,000 device ids. That is a structural change to that seam, not an edit.
-3. **The "no interpolation into KQL, ever" rule at `:65-78` is about to be bent and must not be
-   broken quietly.** Its remarks say the query is a constant because `ThreatHunting.Read.All`
-   reaches the whole hunting schema and only the query text keeps this module inside `DeviceInfo`.
-   S6 interpolates a batch of device ids. Those ids come from the API rather than the operator,
-   which is a real distinction - but the comment, and the test that asserts the query names no
-   other table, both have to be revisited deliberately and the reasoning written down.
-4. **The plan's own named risk is Known Failure Class 2**, per-batch partial success. Thirteen
-   calls, twelve ways to be partly enriched. Its guard proof is specific: make batch 2 of 3 fail
-   and confirm the surviving-batches test fails when per-batch outcome tracking is removed.
-
-Also unstarted in the same module: S7 (AD site column), S8 (docs, version, and the
-`DeviceNetworkEvents` fallback only if R1(i) says so). R1 (a)-(e) and (h)-(n) are portal
-reconnaissance; the plan says they branch the slices rather than block them.
-
-**Then, in the owner's stated order:** click-gating tiers 2-4 (19 pages, approved
-2026-10-12), the verbosity sweep at full scope (all 39 files, `docs/VerbositySweep-Plan.md`),
-and a REWRITE of the Service Health public-status plan - the old one is rejected and not
-amendable, and the real ask is consolidating Microsoft's status posts across all of its official
-channels with the tenant feed already in the app.
-
-
-
-### Read this first - what is waiting on the owner, 2026-10-09
-
-**DONE, do not re-raise:** the on-prem Delinea secret was re-entered by the owner on an
-earlier deploy (confirmed 2026-10-09). It was listed as outstanding for several turns
-because nobody checked - the fix at `d1ccd07` stops it being deleted again, and the value
-itself is back.
-
-**`docs/ProgressCoverage-Plan.md` IS COMPLETE AND SO IS ITS FINDINGS QUEUE.** Re-measured
-2026-10-12 as of `96cdb89`: `ExchangeAdminWeb.Tests/ProgressRegistry.cs` holds **zero**
-`KnownGap` entries (down from 52), and `.agents/review/index.md` has **no open rows** - every
-finding the stream raised is `[v]` or `[x]`. The suite and the lint gates are NOT re-run by a
-drift sweep; `## Verification` owns the last reported figures and their commit.
-
-**What that does and does not mean.** Every operator-initiated operation on every page under
-`Components/Pages` now reports to the status bar, or carries a written exemption a test
-enforces. **None of it is proven to RENDER.** There is no bUnit harness; every guard in this
-stream is a source or syntax-tree check. The three Emergency Disable defects earlier in this
-work were all presentation-layer and invisible to a green suite. **Manual acceptance is production use and is NOT owed work** (`.agents/decisions.md` 2026-10-12); the limit is written here because it informs design, not because a pass is queued. **Every batch in this stream was reviewed by codex, including the last three** - eleven
-findings raised, all eleven closed and each closure reviewed in turn.
-
-| Waiting on | What happens without it |
-|---|---|
-| ~~PROD deploy~~ | **DONE 2026-10-09.** Both instances were redeployed that afternoon and prod now carries the circuit-lifetime fix. **The 24-hour reading was attempted 2026-10-12 and is NOT takeable from an unelevated shell** - `.agents/machines.md` ("the 24-hour memory reading was attempted") owns what was readable, why the pool-to-PID map needs elevation, and the finding that no worker survives long enough for a since-the-deploy clock to exist. Nothing on the host resembles the pre-fix leak; that is an inference, not proof |
-| ~~Roslyn decision~~ | **CLOSED.** Both guards were rebuilt on Roslyn syntax trees (`12e1d25`, `e039cd9`); `prog-10` then found two holes in the rewrite and `prog-11` a third, all closed. Known limits are recorded in those finding records, not here |
-| ~~Remove-completed: filtered set or whole batch?~~ | **CLOSED.** The plan is APPROVED and revision 2 takes the FILTERED set, with its reasoning written down: the filter narrows by the operator's own act exactly as a tick does, and the count in the label carries whichever applies. Built and landed; `docs/MigrationRemoveCompleted-Plan.md` owns the design and the acceptance list, which is reference for investigating a reported issue, not owed work |
-| ~~Manual acceptance~~ | **CLOSED as a waiting item, owner 2026-10-12** (`.agents/decisions.md`): *"these will come from production use, do not keep asking for them. I'll report issues when they arise."* Nothing here proves a progress bar renders and that stays true; it is a property of the suite, not a task. Do not re-raise |
-
-### Migration "Remove completed" - DONE, shipped and reviewed clean
-
-`docs/MigrationRemoveCompleted-Plan.md` is APPROVED and IMPLEMENTED, Migration `1.23.0`, base
-app unmoved. Eight commits from `116d671` to `7042b91`: the plan fix, the slice, and six
-one-per-commit review fixes. Suite 3707 -> 3725 passed / 0 failed / 3 skipped. The plan owns
-the design, the acceptance list and every citation; nothing is copied here.
-
-**Four codex rounds, ten findings, and the two that mattered most were against the PLAN before
-any code existed.** Round 0 reviewed revision 1 and returned four; rounds 1-3 reviewed the
-implementation and returned six (`rc-1` HIGH, `rc-2`, `rc-3`, `rc-5` MEDIUM, `rc-4`, `rc-6`
-LOW); round 4 returned **clean**. `.agents/review/index.md` owns their status and
-`.agents/review/findings/rc-*.md` the detail.
-
-Four things from it that outlive the slice:
-
-1. **"The count is in the label" is not a bound unless something makes it one.** Revision 1's
-   safety case said the control could never act on more than it said, over a design that
-   recomputed its scope at Confirm. Two HIGH findings in a row - one on the plan, one on the
-   code - were the same mistake at two depths: the first recomputed from the filter and the
-   selection, the second still recomputed from the live STATUSES. The bound is the ELIGIBLE
-   list snapshot at staging, and nothing less is one.
-2. **Three findings were one class: a control left live during the confirmation step making
-   the staged action's display lie.** The filter could hide the preview (`rc-3`); a tick
-   destroyed the preview and changed the button's number while the staged action quietly
-   governed (`rc-5`); the tooltip classified the scope from a different field than the action
-   did (`rc-4`). None of them removed the wrong mailboxes. All of them would have had an
-   operator believing something false while typing a ticket.
-3. **D2(a) was applied, not overruled, and the distinction is reusable.** The mailbox tick
-   boxes still carry no disabled attribute and no handler guard. An action that CANNOT honour
-   a tick withdraws instead of ignoring it, which keeps the ruling's own rationale - a tick is
-   an input to the confirm step - true.
-4. **`MigrationUserActionPlanner.PruneSelection`'s remarks said "Called after every reload" and
-   it was called from nowhere on the mailbox side.** A doc comment is not a call. The new
-   control prunes for itself; the wider condition is below, unfixed.
+1. **Click-gating tiers 2-4** - the remaining 19 pages. Approved 2026-10-12, not started;
+   `docs/ClickGatingAudit-Plan.md` owns the design (Revision 1 as corrected by Revision 2) and
+   its Status header carries the approval.
+2. **The verbosity sweep at FULL scope** - all 39 files, S0 through S10, not the seven-worst
+   subset the plan recommended. Approved 2026-10-12; `docs/VerbositySweep-Plan.md` owns it.
+3. **A REWRITE of the Service Health public-status plan.** The old document is REJECTED and is
+   explicitly not amendable; the real ask is consolidating Microsoft's status posts across all
+   of its official channels with the tenant feed already in the app, for a user of this app who
+   holds no privileged Azure/M365 access of their own. It is NOT an auth change. Rewrite from
+   the ask. `.agents/decisions.md` 2026-10-12 owns the ruling and the owner's verbatim words.
 
 ### What the progress-coverage stream settled - the narration is archived
 
@@ -284,32 +193,6 @@ The recurrence guard is `ExchangeAdminWeb.Tests/EventSubscriptionLifetimeTests.c
 against the shape rather than against the two pages - it was probed with a brand-new eighth page
 named nowhere in the suite and fired on it, and it reaches `Components/Shared` as well as
 `Components/Pages`.
-
-### Queue item 18, Emergency Disable lockdown OU - DONE
-
-`docs/EmergencyDisableLockdownOU-Plan.md` reads `IMPLEMENTED 2026-10-05` and owns the design, the slice record and the six-step acceptance
-list, which is reference for investigating a reported issue rather than owed work.
-`Modules/ModuleCatalog.cs` owns the module version. Codex reviewed both slices and found three
-real defects (`edl-1`, `edl-2`, `edl-3`), all fixed; `.agents/review/index.md` owns their status.
-
-**Every one of the three lived in presentation or reporting** - the surface this repo's suite
-structurally cannot see, because there is no bUnit harness. That is the argument for the manual
-acceptance list, not a formality: a declined lockdown rendered as a red failure, a failed Notes
-stamp rode inside a green row and reached no durable field, and a fresh lookup inherited the
-previous account's lockdown opt-out. The plan's manual acceptance needs a dev deploy and a
-disposable account; nothing in this repo reaches a live directory, so the move, the OU-exists
-check and the stamp write are all unproven in reality.
-
-**Both owner rulings on this module now have `.agents/decisions.md` entries** (`e9f9da8`): the
-2026-10-05 ruling that the previous OU is stamped into `info` rather than `description`, and the
-2026-10-06 ruling that the lockdown checkbox defaults UNCHECKED, superseding the 2026-10-05
-opt-OUT. Decisions owns both and their reasoning; this file does not restate them.
-
-**The escape hatch is explicitly temporary.** When the stakeholder says what they want, the
-checkbox either goes away or becomes the settled default; whoever closes that loop should come
-back to this entry rather than leaving an unexplained option on a security screen forever. **The
-default has moved once already**, which is why it lives in a single `LockdownDefaultArmed`
-constant on the page rather than as a literal at each of its three sites.
 
 ## Previously
 
@@ -374,10 +257,10 @@ failing tests and a "0 failed" claim in its message, because the commit was chai
 test command with `&&` and the result was never read. `cc3e8c9` corrects it. Do not chain a
 commit onto an unread verification run.
 
-**Item 25, the verbosity sweep: PLANNED 2026-10-12, not approved and not started. It must not
-be folded into 24.** `docs/VerbositySweep-Plan.md` owns the measured scope, the house style,
-the slices and the one open owner question (full sweep vs the seven worst pages); nothing is
-copied here. Owner,
+**Item 25, the verbosity sweep: APPROVED AT FULL SCOPE 2026-10-12 - all 39 files, S0
+through S10, not the seven-worst subset the plan recommended - and NOT STARTED. It must not
+be folded into 24.** `docs/VerbositySweep-Plan.md` owns the measured scope, the house style
+and the slices; its one open owner question is ANSWERED. Nothing is copied here. Owner,
 verbatim: *"Do a verbosity sweep. Too much chat context leaked into the app, too many words for
 a human to read instantly."* His example is True Last Logon's no-logon banner, and his rule is
 **"No editorializing anywhere in the app."** It is an app-wide prose sweep. One line to hold
@@ -533,20 +416,21 @@ reconstructed.
 **`queue.txt` is the owner's file. Never write to it, including status markers** - its own first
 line says so. Status lives here.
 
-**Row 4 was re-verified against repo evidence on 2026-10-12 as of `96cdb89`; rows 14, 18, 20
-and 24 carry their 2026-10-09 reading and the rest their 2026-10-01 sweep reading.**
+**Rows 2, 4, 8, 9 and 25 were re-verified against repo evidence on 2026-10-14 as of
+`6bfb8a6`; rows 14, 18, 20 and 24 carry their 2026-10-09 reading and the rest their
+2026-10-01 sweep reading.**
 
 | # | Item | State |
 | --- | --- | --- |
 | 1 | Licensing under Identity | **DONE** (owner-marked). |
-| 2 | Add status.cloud.microsoft to the O365 status page | **PLAN IS DRAFT, needs owner approval before any code.** `docs/ServiceHealthPublicStatus-Plan.md`, `Status: Draft`. |
+| 2 | Add status.cloud.microsoft to the O365 status page | **THE PLAN IS REJECTED and must be REWRITTEN, owner 2026-10-12.** `docs/ServiceHealthPublicStatus-Plan.md` carries `Status: REJECTED BY THE OWNER, 2026-10-12. Do not implement any part of this document.` It is explicitly not amendable into the real ask; `## Now` ("What comes after Defender") and `.agents/decisions.md` 2026-10-12 own what the rewrite has to be. |
 | 3 | Migration report survives batch recreate | **DONE** (owner-marked). |
-| 4 | Split message trace vs header analysis permissions | **DONE** (owner-marked) **but the code disagrees and this needs the owner's word.** Re-measured 2026-10-12 as of `96cdb89`: outside the tests, `MessageTraceSearch` appears only as a declaration at `Modules/ModuleCatalog.cs:489` (with an explanatory comment at `:468`) and in a comment on `Modules/ModulePermission.cs:22`; no page, handler or policy consults it, so the alias is still inert exactly as slice 1 left it. `docs/MessageTracePermissionSplit-Plan.md` still reads `APPROVED ... and IN PROGRESS` and slices 2-4 are unstarted. Either the owner considers the declaration sufficient, or the DONE marker is premature. Flagged, not resolved. |
+| 4 | Split message trace vs header analysis permissions | **DONE** (owner-marked) **but the code disagrees and this needs the owner's word.** Re-measured 2026-10-14 as of `6bfb8a6`: outside the tests, `MessageTraceSearch` appears only as a declaration at `Modules/ModuleCatalog.cs:489` (with an explanatory comment at `:468`) and in a comment on `Modules/ModulePermission.cs:22`; no page, handler or policy consults it, so the alias is still inert exactly as slice 1 left it. `docs/MessageTracePermissionSplit-Plan.md` still reads `APPROVED ... and IN PROGRESS` and slices 2-4 are unstarted. Either the owner considers the declaration sufficient, or the DONE marker is premature. Flagged, not resolved. |
 | 5 | Other tenants/domains in message trace | **FEASIBILITY ONLY, no code proposed.** `docs/MessageTraceMultiTenant-Plan.md`, `Status: Draft. Scoping and feasibility only.` Needs an owner decision on whether to proceed at all. |
 | 6 | Containerize the app | **ON-HOLD** (owner-marked). `docs/Containerization-Feasibility.md`. |
 | 7 | O365 status module loading affordance | **DONE** (owner-marked). |
-| 8 | Defender for Endpoint devices | **PARTLY BUILT. S1-S5 landed, module registered and shipping (`Modules/ModuleCatalog.cs` owns the version); S6, S7 and S8 are WRITTEN and NOT IMPLEMENTED.** `docs/DefenderEndpointDevices-Plan.md`. Secret ID 657, both permissions consented. |
-| 9 | App-wide click-gating audit | **TIER 1 COMPLETE. Tiers 2, 3 and 4 are UNAPPROVED and not started.** `docs/ClickGatingAudit-Plan.md`. Largest single block of remaining effort in the queue. |
+| 8 | Defender for Endpoint devices | **S1-S7 IMPLEMENTED, never run against the live tenant; S8 (docs, version, and the `DeviceNetworkEvents` fallback) is not started.** `docs/DefenderEndpointDevices-Plan.md` carries `Status: S1-S7 IMPLEMENTED` and the three things now settled differently from its body; `Modules/ModuleCatalog.cs` owns the version. The live work and its three environmental unknowns are in `## Now`. Secret ID 657, both permissions consented. |
+| 9 | App-wide click-gating audit | **TIER 1 COMPLETE. Tiers 2, 3 and 4 were APPROVED by the owner 2026-10-12 (the remaining 19 pages) and are NOT STARTED.** `docs/ClickGatingAudit-Plan.md`; `.agents/decisions.md` 2026-10-12 owns the approval, superseding the 2026-09-18 scope limit. Largest single block of remaining effort in the queue. |
 | 10 | O365 password change matches on EmployeeID | **BUILT, REVIEWED, NEVER RUN AGAINST A REAL TENANT.** `docs/CloudPasswordReset-Plan.md`. Needs a deploy and owner validation, not code. |
 | 11 | Force-change-at-next-login option at runtime | **Same build as 10.** Same pending deploy and validation. |
 | 12 | CompleteAfter in migration | **DONE** (owner-marked). |
@@ -562,7 +446,7 @@ and 24 carry their 2026-10-09 reading and the rest their 2026-10-01 sweep readin
 | 22 | Module bottom always cut off; audit the whole app for layout, alignment and scrolling | **DONE. Fixed 2026-09-30, browser-verified by the owner 2026-09-30.** The layout now has a real height chain, so all 9 chrome-arithmetic guesses are gone. Alignment had no open defect. App `2.24.0` -> `2.25.0`. |
 | 23 | Migration batch tick boxes drop ticks when clicked in rapid succession | **DONE. Fixed 2026-09-30 (`af4fb4c`), owner-verified on dev 2026-10-01.** Was an owner-declared P1 prod blocker. A handler guard on a DOM-synced control: the browser applied the tick, `if (IsBusy) return;` discarded it, and Blazor sent no correction because its last-rendered value still matched the model. Guard removed from `ToggleBatchSelected` and `ToggleSelectAllBatches`; D2(a) rules out the disabled-attribute repair. Migration `1.22.4` -> `1.22.5`. Acceptance is the owner's rapid-click case. |
 | 24 | Global progress-meter system; a click landing is not obvious in most modules | **FUNCTIONALLY COMPLETE.** S1-S4 landed, all 32 pages adopted, every page spinner gone, Migration included, and `docs/ProgressCoverage-Plan.md` has since closed the 52 operations that were adopted but silent. **Remaining: the four `Components/Shared` typeahead spinners he has not ruled on, and cancellation tokens** - both are in `## Previously` above. The acceptance pass is production use, not owed work (`.agents/decisions.md` 2026-10-12). `docs/GlobalProgressSystem-Plan.md` revision 2. Owner-declared P1. Not a harmonisation of the existing spinners - one system that modules report into and that owns all display, built on the rule that work which writes many items or runs long moves to the background runner so its result lands. S1 and S2 touch no pages; S3 moves Comms-10k; S4+ adopt one module per slice. |
-| 25 | Verbosity sweep across the whole app; no editorializing anywhere | **NOT STARTED.** Owner: *"Too much chat context leaked into the app, too many words for a human to read instantly."* His example is True Last Logon's no-logon banner, but the item is an app-wide sweep, not that one module. Counts and coverage facts are not editorializing; instruction to the reader is. No test pins any of this copy. |
+| 25 | Verbosity sweep across the whole app; no editorializing anywhere | **APPROVED AT FULL SCOPE 2026-10-12 (all 39 files, S0-S10), NOT STARTED.** Owner: *"Too much chat context leaked into the app, too many words for a human to read instantly."* His example is True Last Logon's no-logon banner, but the item is an app-wide sweep, not that one module. Counts and coverage facts are not editorializing; instruction to the reader is. **The copy is NOT free app-wide** - 20-plus test files assert exact operator-facing wording, and every page is line-keyed by `ClickGateRegistry` and `ProgressRegistry`; see `## Previously`. |
 
 ### Queue item 17 - True Last Logon, built and awaiting a live check
 
@@ -684,23 +568,20 @@ commit whose message says nothing about it; (3) `.agents/state.md` was repeatedl
 reconstructed from git. **The version history in `Modules/ModuleCatalog.cs` carries the first
 incident inline; none of it was rewritten, because history rewrites need explicit authority.**
 
-### Carried forward from the 2026-10-09 rotation
+### Carried forward from earlier rotations
 
-Each of these sat inside a block that was archived whole. The record is verbatim in
-`docs/history/state-archive.md` (Archived 2026-10-09); what is still live is here.
+Each of these sat inside a block that was archived whole. The records are verbatim in
+`docs/history/state-archive.md` (Archived 2026-10-09 and 2026-10-14); what is still live is here.
 
-- **Queue 8, Defender for Endpoint: two defects are open against the shipped module and neither
-  is fixed.** (1) *The page is unusable at tenant scale* - it renders every device row, so the
-  Blazor circuit dies and nothing can be scrolled. The owner rejected virtualised scrolling
-  outright ("not a solution in ANY way"). **The unanswered fork, put to him and not resolved:
-  make browsing filter-first and paged (portal-style, 50 at a time) and leave the complete
-  partitioned fetch for CSV export only. Do not implement either shape without a go.** (2)
-  *Discovery sources is the wrong data and mostly blank* - the stakeholder needs which local
-  machine discovered a new device; the column shows which Microsoft product saw it. The answer
-  is the hunting function `SeenBy()`, the plan carries it, and the page shows the wrong column
-  until a slice lands. **Still the owner's and nothing in code substitutes:** the live
-  reconnaissance pass R1 (a)-(e) and the manual acceptance checklist have never run, and no
-  device row has ever been rendered.
+- **Queue 8, Defender for Endpoint: both defects carried here are now FIXED; what remains is
+  live verification.** Corrected 2026-10-14 as of `6bfb8a6`. (1) *The page was unusable at
+  tenant scale* - closed by `43c0735`, which pages the device table at 50 rows while the CSV
+  still carries the whole matching set. The fork recorded here as unanswered was answered by
+  that shape: filter-first and paged, complete set on export. (2) *Discovery sources was the
+  wrong data* - closed by `963b85d`, which resolves the observer column through `SeenBy()` by
+  name discovery rather than a fixed guess. **What is still outstanding is not code:** the live
+  reconnaissance pass R1 (a)-(e), and the fact that no device row has ever been rendered here.
+  `## Now` owns the three environmental unknowns and how each fails visibly.
 - **Queue 4: the aliases `MessageTrace` and `MessageTraceSearch` must NOT be renamed.** Kept
   live because no other file states it. Each is the section-access storage key and the store is
   fail-closed, so a rename orphans the groups granted against it and denies them rather than
@@ -739,6 +620,14 @@ Each of these sat inside a block that was archived whole. The record is verbatim
 - **A red gate early in a CI job hides every gate behind it.** The ASCII lint failure of
   2026-09-23 aborted the `powershell` job before PSScriptAnalyzer and Pester ran, so neither had
   executed in CI for two days and nobody noticed.
+- **Emergency Disable's lockdown checkbox is an explicitly TEMPORARY escape hatch, and nothing
+  else records that.** Carried out of the queue-18 block archived 2026-10-14. When the
+  stakeholder says what they want, the checkbox either goes away or becomes the settled default;
+  whoever closes that loop comes back to this bullet rather than leaving an unexplained option on
+  a security screen forever. **The default has moved once already** (owner 2026-10-05 opt-OUT,
+  superseded by 2026-10-06 default-UNCHECKED, both in `.agents/decisions.md`), which is why it
+  lives in a single `LockdownDefaultArmed` constant on the page rather than as a literal at each
+  of its three sites. `docs/EmergencyDisableLockdownOU-Plan.md` owns the design.
 
 ### Live defects found and deliberately not fixed
 
@@ -749,7 +638,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   and does NOT touch `selectedMailboxes`; `ReplaceBatchUsers` does not either.
   `MigrationUserActionPlanner.PruneSelection` exists for exactly this and its own remarks still
   say "Called after every reload" - **and it is called from no reload path**. Re-verified
-  2026-10-12 as of `96cdb89`: its only mailbox-side caller is `TicksInThisBatch()`
+  2026-10-14 as of `6bfb8a6`: its only mailbox-side caller is `TicksInThisBatch()`
   (`Migration.razor:2789`), the read the rc-2 fix added for the new control, so the remark is
   still false of every reload. Observable: tick a mailbox in batch A, open batch B, and B shows
   no ticked row while the mailbox Actions bar renders with `Actions (1)`; the five bulk actions
@@ -761,7 +650,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   own guard; the batch side already has a `PruneSelection()` wrapper at `:2326` to copy.
 
 - **A live defect was found while scoping queue 4 and is NOT fixed. It needs its own commit.**
-  **Citations re-verified 2026-10-12 as of `96cdb89`; the defect itself is unchanged and still
+  **Citations re-verified 2026-10-14 as of `6bfb8a6`; the defect itself is unchanged and still
   live.** `Components/Pages/MessageTraceReports.razor` carries only the main `MessageTrace`
   policy (`:4`, and the handler re-check at `:124`), and the listing has since moved into
   `Services/MessageTraceExportListing.cs` - `GetExports()` (`:119`) calls
@@ -775,7 +664,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   operators to that page. Not caused by this run's work.
 
 - **A defect in committed TEST infrastructure, found in plan review and not yet fixed.**
-  `ExchangeAdminWeb.Tests/ClickGateSource.cs:364-384` (re-verified 2026-10-12 as of `96cdb89`
+  `ExchangeAdminWeb.Tests/ClickGateSource.cs:364-384` (re-verified 2026-10-14 as of `6bfb8a6`
   - the citation is still exact and the method is still not quote-aware;
   the earlier `:213-228` citation was stale), `ExtractBlock`, counts `{` and `}`
   without being quote-aware, so a brace inside a string or interpolated string miscounts the
@@ -790,7 +679,16 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   with its own guard proof** (an interpolated string containing a brace, placed inside an
   extracted block); deliberately not folded into another agent's work.
 
-### Landed streams whose only outstanding work is manual acceptance
+### Landed streams whose only remaining item is a manual acceptance pass
+
+**Every stream below is DONE** (`.agents/decisions.md` 2026-10-12: *"these will come from
+production use, do not keep asking for them. I'll report issues when they arise."*). A shipped
+stream whose only remaining item is a manual acceptance pass is not "shipped, acceptance
+outstanding" - it is finished. The checklists each plan carries are reference for whoever
+investigates a reported issue, never a queue of owed work; the individual wordings below
+predate that ruling and are kept for their technical detail, not their framing. What does NOT
+change: there is no bUnit harness, so no source-level guard here proves anything renders. That
+is a fact about the suite, not a task.
 
 - **Mailbox Migrations no longer shows a stale open report; only the manual checks remain.**
   `docs/MigrationStaleReport-Plan.md` is Implemented and owns the acceptance checklist. Landed
@@ -799,7 +697,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   The earlier batch-name-caching hypothesis was FALSIFIED by reading the page: the report was
   never keyed on batch name, and that fix would not have touched the reported repro, which
   reuses the name. Actual cause: `userReport` is a one-time snapshot, the modal's render guard
-  (`Migration.razor:1211`, re-anchored 2026-10-12 as of `96cdb89`; the old `:771` citation was
+  (`Migration.razor:1211`, re-anchored 2026-10-14 as of `6bfb8a6`; the old `:771` citation was
   stale) keys on the report's own fields alone and not on the batch, and seven paths reloaded
   or discarded `batchUsers` without clearing it. One `CloseUserReport()` helper now owns the
   clear at all seven, and a `reportGeneration` counter drops the result of a fetch a reload
@@ -889,10 +787,13 @@ Each of these sat inside a block that was archived whole. The record is verbatim
 ## Next
 
 - **QUEUE 9 CLICK-GATING: TIER 1 IS COMPLETE. All nine approved pages converted, plus the
-  harness, plus five defects fixed in already-shipped code. Tiers 2, 3 and 4 remain UNAPPROVED.**
+  harness, plus five defects fixed in already-shipped code. Tiers 2, 3 and 4 were APPROVED by
+  the owner 2026-10-12 - the remaining 19 pages - and are NOT STARTED.**
   `docs/ClickGatingAudit-Plan.md` owns the findings and Revision 1 owns the design; read Revision 1
-  before touching any page. **The plan's own acceptance checklist is the outstanding work and only
-  the owner can run it** - nothing in this repo reaches the rendered page, there is no bUnit
+  before touching any page. **Manual acceptance is production use, not owed work**
+  (`.agents/decisions.md` 2026-10-12); the plan keeps its checklist as reference for whoever
+  investigates a reported issue. What stays true is the limit, not a task:
+  nothing in this repo reaches the rendered page, there is no bUnit
   harness, and every assertion is a source-level scan that proves a shape, never a behaviour.
   Pages, in the order converted: DhcpAuthorization, NamedLocations, MailboxPermissions,
   CalendarPermissions, IntuneDevices, GroupManagement, M365GroupManagement, ConferenceRooms,
@@ -942,7 +843,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
     banner into a different group's view. Misleading rather than wrong; closing it changes what
     those fields *are*.
   - **`RiskyUsers.razor` has `IntuneDevices`' old partial shape** (`ActionsDisabled` missing
-    `historyLoading`, 4 of 7 buttons outside the gate). Tier 3, unapproved, untouched.
+    `historyLoading`, 4 of 7 buttons outside the gate). Tier 3, approved 2026-10-12, untouched.
   - **`BlockedSenderService.UnblockSenderAsync` still takes no `CancellationToken`** and the file
     has no timeout - the one confirmed live instance of the page-deadening hazard the whole sweep
     was about.
@@ -957,11 +858,12 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   started" header was false for four of its six items, and the entries for 5 and 6 had been
   overtaken by owner rulings of 2026-09-21.
 
-- **Manual validation is outstanding operational work.** Start with
-  `docs/DevValidation-2.3.34.md`: Admin Settings access, protected-user alias refusal and the
-  reported MailboxPermissions friction are high-consequence unverified behavior. It owns older
-  streams' checks; newer plans above own their own. Both instances address live production
-  AD/Exchange, so manual writes still need authority for their named scope.
+- **`docs/DevValidation-2.3.34.md` is reference, not a queue.** It owns older streams' checks -
+  Admin Settings access, protected-user alias refusal and the reported MailboxPermissions
+  friction; newer plans own their own. Per `.agents/decisions.md` 2026-10-12 these are not owed
+  work and are not re-raised; read the file when investigating a reported issue. Both instances
+  address live production AD/Exchange, so any manual write still needs authority for its named
+  scope.
 - **Coverage follow-up:** the 2026-08-14 ruling supersedes the standalone "one of three files
   done" task. `ProtectedPrincipalService` work was folded into the now-landed queued plans;
   re-measure on green CI and ratchet per `.agents/review/coverage-floor.txt`.
@@ -983,8 +885,9 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   the old dev/prod versions, incomplete shared cutover and missing initial ServiceHealth,
   RiskyUsers and IntuneDevices configuration disagree with the host. Evidence is canonical in
   `.agents/machines.md`, whose receipt was re-measured 2026-10-12 as of `96cdb89` - **dev and
-  prod are at the same base version and the same build, redeployed 2026-10-09.** Manual
-  acceptance remains unverified.
+  prod are at the same base version and the same build, redeployed 2026-10-09.** This entry
+  records a blocker that is GONE; it is kept only so the old claim is not re-derived. Manual
+  acceptance is production use, not an open blocker (`.agents/decisions.md` 2026-10-12).
 - **Queue 6, containerize: the SPN and gMSA work is not ours to do.** The owner's 2026-09-21
   ruling makes containerization a requirement, but a containerised app runs under Kestrel rather
   than IIS, so Windows Authentication needs a gMSA, a credential spec and SPNs registered in the
@@ -993,7 +896,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   container outside line of sight of on-prem AD and Exchange cannot do the AD, on-prem Exchange or
   DHCP work at all. Evidence: `.agents/decisions.md` 2026-09-21, items 3 and the closing paragraph.
 - **SQLite upgrade is no longer blocked by package availability.** The 2026-06-26 decision's
-  "no patched package exists" basis is falsified, re-verified 2026-10-12 as of `96cdb89`:
+  "no patched package exists" basis is falsified, re-verified 2026-10-14 as of `6bfb8a6`:
   `obj/project.assets.json` still resolves `SQLitePCLRaw.lib.e_sqlite3/2.1.11`, while
   [NuGet publishes newer builds](https://www.nuget.org/packages/SQLitePCLRaw.lib.e_sqlite3),
   including 3.53.3 (the package version identifies its SQLite engine).
@@ -1016,7 +919,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   implementation uses the store's change token with a throttle. The additive-only rule has
   operative homes in the decision, guidance and test but is absent from the Constitution.
   Evidence: `docs/SharedConfigDb-Plan.md` section 9. No ruling inferred.
-- **Plan-status drift remains, re-verified 2026-10-12 as of `96cdb89`:**
+- **Plan-status drift remains, re-verified 2026-10-14 as of `6bfb8a6`:**
   `docs/BlockedSendersLoadTiming-Plan.md` and
   `docs/Comms10kReplaceUx-Plan.md` still say Approved;
   `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` still says Approved / In progress.
@@ -1026,7 +929,7 @@ Each of these sat inside a block that was archived whole. The record is verbatim
   item 4 is owner-marked DONE and slices 2-4 are unstarted - see the queue table row.
 - **Unscheduled M365 protection gap:** group update/delete and owner adds were recorded as
   ungated, and protection configuration cannot identify a cloud-only group. Re-verified
-  2026-10-12 as of `96cdb89` (gate called from `:255` and `:276` only, while `UpdateGroupAsync`
+  2026-10-14 as of `6bfb8a6` (gate called from `:255` and `:276` only, while `UpdateGroupAsync`
   is at `:125` and `DeleteGroupAsync` at `:143`): `Services/M365GroupManagementService.cs` calls its
   `CheckProtectedAsync` gate from the member/owner paths only - `UpdateGroupAsync` and
   `DeleteGroupAsync` still call neither.
@@ -1050,10 +953,15 @@ Release suite **3,806 passed / 0 failed / 3 skipped** with `-- xUnit.MaxParallel
 reported for `390bba6` and still stand: no `.ps1` or `.psm1` has changed since.
 Existing dependency and compiler warnings remain.
 
-**What this sweep DID measure, as of `96cdb89`:** `ProgressRegistry` `KnownGap` entries 0;
-`.agents/review/index.md` open rows 0; zero `spinner-border` matches under `Components/Pages`;
-base app version `2.27.1`; both deployed instances at FileVersion `2.27.1.0`;
-`tools/Test-AsciiOnly.ps1` passes.
+**What THIS sweep (2026-10-14, as of `6bfb8a6`) re-verified, by reading the files:**
+`ProgressRegistry` holds zero `KnownGap` entries; `.agents/review/index.md` has zero open
+rows; zero `spinner-border` matches under `Components/Pages`; the citations in `## Previously`
+and `## Blockers` for queue 4, the M365 protection gap, `ClickGateSource.ExtractBlock`,
+`Migration.razor`, `MessageTraceExportListing` and the SQLite package version all still land
+exactly. `ExchangeAdminWeb.csproj` owns the base app version and `.agents/machines.md` owns the
+deployed FileVersions; neither is copied here. **Not run by this sweep:** the build, the suite,
+`dotnet format`, `git diff --check` and `tools/Test-AsciiOnly.ps1` - the 2026-10-12 figures above
+and the ASCII-lint pass are the last reported readings, as of `96cdb89`.
 
 Browser acceptance, live writes and reviewer dispatches were not run. **Both instances were
 redeployed 2026-10-09 at FileVersion `2.27.1.0`**, re-measured on this host 2026-10-12 as of

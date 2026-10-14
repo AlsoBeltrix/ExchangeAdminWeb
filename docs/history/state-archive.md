@@ -13,6 +13,161 @@ still ran it inline.
 > can be run from the dev instance. Read every "no dev tenant" below as "live validation
 > not yet performed."
 
+## Archived 2026-10-14 (drift sweep, as of `6bfb8a6`)
+
+Preserved verbatim. Rotated out of `.agents/state.md` because the work each one records is
+finished or explicitly superseded, and what is still live was carried forward there.
+
+*What was carried forward, and where:* the 2026-10-12 scope ruling and the owner's stated work
+order now sit in the `## Now` entry "What comes after Defender"; the Emergency Disable escape
+hatch is a bullet under "Carried forward from the 2026-10-09 rotation". The four closed rows in
+"Read this first" are closed in `.agents/decisions.md` (2026-10-09 Delinea re-entry, 2026-10-12
+manual acceptance) and in the queue table; "Rendered is not visible" is canonical in
+`.agents/decisions.md` 2026-10-01 and restated in the progress-coverage entry that stays live.
+
+*Superseded by repo evidence at rotation time, recorded here so the verbatim text below is not
+misread:* "Defender S6 is next" is false - S6 and S7 landed 2026-10-12/14 and
+`docs/DefenderEndpointDevices-Plan.md` reads `S1-S7 IMPLEMENTED`; its "S6 is `1.2.0` -> `1.3.0`"
+bump advice is five module versions out of date (`Modules/ModuleCatalog.cs` owns the number).
+
+### Session 2026-10-12 landed two code slices; Defender S6 is next and starts FRESH
+
+Owner widened every open scope on 2026-10-12 (`.agents/decisions.md`) and said *"I want all of
+everything done."* Scope is no longer a gate. **Do not put go-ahead questions about queued work
+to him** - that ruling exists because re-raising approved scope is what this session kept doing.
+
+**Landed and verified:**
+
+1. `a01767c` - **Comms-10k rejected-address CSV.** Queue 26 point 3. Every address that does not
+   resolve is reported with its reason and the whole set downloads as a CSV. The lookup is NOT
+   widened - exact match only, per the ruling. Module `1.3.3` -> `1.4.0`.
+2. `43c0735` - **Defender device table paged.** Queue 8 defect 1. 50 rows with Previous/Next; the
+   page rendered every device in a 100,000-ceiling tenant and killed the circuit. Export still
+   carries the complete set and a test pins that it does. Module `1.1.2` -> `1.2.0`.
+
+Suite at `43c0735`: **3,736 passed / 0 failed / 3 skipped.** Build 0 errors, format clean,
+`git diff --check` clean, ASCII lint passed. Every new guard was mutation-proven.
+
+**Next: Defender S6**, which also closes queue 8 defect 2 (the Discovery Sources column shows
+which Microsoft product saw a device, not which local machine discovered it). The plan owns the
+design; four things a fresh session needs that are NOT in it:
+
+1. **The version bump in the plan is stale.** It says `1.1.0` -> `1.2.0`. The paging fix already
+   took `1.2.0`, so S6 is `1.2.0` -> `1.3.0`.
+2. **The current query is unbatched and unfiltered.** `Services/DefenderEndpointDeviceService.cs:82`
+   runs ONE `HuntingQuery` over the whole `DeviceInfo` table. S6 replaces it with one call per
+   batch of at most 1,000 device ids. That is a structural change to that seam, not an edit.
+3. **The "no interpolation into KQL, ever" rule at `:65-78` is about to be bent and must not be
+   broken quietly.** Its remarks say the query is a constant because `ThreatHunting.Read.All`
+   reaches the whole hunting schema and only the query text keeps this module inside `DeviceInfo`.
+   S6 interpolates a batch of device ids. Those ids come from the API rather than the operator,
+   which is a real distinction - but the comment, and the test that asserts the query names no
+   other table, both have to be revisited deliberately and the reasoning written down.
+4. **The plan's own named risk is Known Failure Class 2**, per-batch partial success. Thirteen
+   calls, twelve ways to be partly enriched. Its guard proof is specific: make batch 2 of 3 fail
+   and confirm the surviving-batches test fails when per-batch outcome tracking is removed.
+
+Also unstarted in the same module: S7 (AD site column), S8 (docs, version, and the
+`DeviceNetworkEvents` fallback only if R1(i) says so). R1 (a)-(e) and (h)-(n) are portal
+reconnaissance; the plan says they branch the slices rather than block them.
+
+**Then, in the owner's stated order:** click-gating tiers 2-4 (19 pages, approved
+2026-10-12), the verbosity sweep at full scope (all 39 files, `docs/VerbositySweep-Plan.md`),
+and a REWRITE of the Service Health public-status plan - the old one is rejected and not
+amendable, and the real ask is consolidating Microsoft's status posts across all of its official
+channels with the tenant feed already in the app.
+
+
+
+### Read this first - what is waiting on the owner, 2026-10-09
+
+**DONE, do not re-raise:** the on-prem Delinea secret was re-entered by the owner on an
+earlier deploy (confirmed 2026-10-09). It was listed as outstanding for several turns
+because nobody checked - the fix at `d1ccd07` stops it being deleted again, and the value
+itself is back.
+
+**`docs/ProgressCoverage-Plan.md` IS COMPLETE AND SO IS ITS FINDINGS QUEUE.** Re-measured
+2026-10-12 as of `96cdb89`: `ExchangeAdminWeb.Tests/ProgressRegistry.cs` holds **zero**
+`KnownGap` entries (down from 52), and `.agents/review/index.md` has **no open rows** - every
+finding the stream raised is `[v]` or `[x]`. The suite and the lint gates are NOT re-run by a
+drift sweep; `## Verification` owns the last reported figures and their commit.
+
+**What that does and does not mean.** Every operator-initiated operation on every page under
+`Components/Pages` now reports to the status bar, or carries a written exemption a test
+enforces. **None of it is proven to RENDER.** There is no bUnit harness; every guard in this
+stream is a source or syntax-tree check. The three Emergency Disable defects earlier in this
+work were all presentation-layer and invisible to a green suite. **Manual acceptance is production use and is NOT owed work** (`.agents/decisions.md` 2026-10-12); the limit is written here because it informs design, not because a pass is queued. **Every batch in this stream was reviewed by codex, including the last three** - eleven
+findings raised, all eleven closed and each closure reviewed in turn.
+
+| Waiting on | What happens without it |
+|---|---|
+| ~~PROD deploy~~ | **DONE 2026-10-09.** Both instances were redeployed that afternoon and prod now carries the circuit-lifetime fix. **The 24-hour reading was attempted 2026-10-12 and is NOT takeable from an unelevated shell** - `.agents/machines.md` ("the 24-hour memory reading was attempted") owns what was readable, why the pool-to-PID map needs elevation, and the finding that no worker survives long enough for a since-the-deploy clock to exist. Nothing on the host resembles the pre-fix leak; that is an inference, not proof |
+| ~~Roslyn decision~~ | **CLOSED.** Both guards were rebuilt on Roslyn syntax trees (`12e1d25`, `e039cd9`); `prog-10` then found two holes in the rewrite and `prog-11` a third, all closed. Known limits are recorded in those finding records, not here |
+| ~~Remove-completed: filtered set or whole batch?~~ | **CLOSED.** The plan is APPROVED and revision 2 takes the FILTERED set, with its reasoning written down: the filter narrows by the operator's own act exactly as a tick does, and the count in the label carries whichever applies. Built and landed; `docs/MigrationRemoveCompleted-Plan.md` owns the design and the acceptance list, which is reference for investigating a reported issue, not owed work |
+| ~~Manual acceptance~~ | **CLOSED as a waiting item, owner 2026-10-12** (`.agents/decisions.md`): *"these will come from production use, do not keep asking for them. I'll report issues when they arise."* Nothing here proves a progress bar renders and that stays true; it is a property of the suite, not a task. Do not re-raise |
+
+### Migration "Remove completed" - DONE, shipped and reviewed clean
+
+`docs/MigrationRemoveCompleted-Plan.md` is APPROVED and IMPLEMENTED, Migration `1.23.0`, base
+app unmoved. Eight commits from `116d671` to `7042b91`: the plan fix, the slice, and six
+one-per-commit review fixes. Suite 3707 -> 3725 passed / 0 failed / 3 skipped. The plan owns
+the design, the acceptance list and every citation; nothing is copied here.
+
+**Four codex rounds, ten findings, and the two that mattered most were against the PLAN before
+any code existed.** Round 0 reviewed revision 1 and returned four; rounds 1-3 reviewed the
+implementation and returned six (`rc-1` HIGH, `rc-2`, `rc-3`, `rc-5` MEDIUM, `rc-4`, `rc-6`
+LOW); round 4 returned **clean**. `.agents/review/index.md` owns their status and
+`.agents/review/findings/rc-*.md` the detail.
+
+Four things from it that outlive the slice:
+
+1. **"The count is in the label" is not a bound unless something makes it one.** Revision 1's
+   safety case said the control could never act on more than it said, over a design that
+   recomputed its scope at Confirm. Two HIGH findings in a row - one on the plan, one on the
+   code - were the same mistake at two depths: the first recomputed from the filter and the
+   selection, the second still recomputed from the live STATUSES. The bound is the ELIGIBLE
+   list snapshot at staging, and nothing less is one.
+2. **Three findings were one class: a control left live during the confirmation step making
+   the staged action's display lie.** The filter could hide the preview (`rc-3`); a tick
+   destroyed the preview and changed the button's number while the staged action quietly
+   governed (`rc-5`); the tooltip classified the scope from a different field than the action
+   did (`rc-4`). None of them removed the wrong mailboxes. All of them would have had an
+   operator believing something false while typing a ticket.
+3. **D2(a) was applied, not overruled, and the distinction is reusable.** The mailbox tick
+   boxes still carry no disabled attribute and no handler guard. An action that CANNOT honour
+   a tick withdraws instead of ignoring it, which keeps the ruling's own rationale - a tick is
+   an input to the confirm step - true.
+4. **`MigrationUserActionPlanner.PruneSelection`'s remarks said "Called after every reload" and
+   it was called from nowhere on the mailbox side.** A doc comment is not a call. The new
+   control prunes for itself; the wider condition is below, unfixed.
+
+### Queue item 18, Emergency Disable lockdown OU - DONE
+
+`docs/EmergencyDisableLockdownOU-Plan.md` reads `IMPLEMENTED 2026-10-05` and owns the design, the slice record and the six-step acceptance
+list, which is reference for investigating a reported issue rather than owed work.
+`Modules/ModuleCatalog.cs` owns the module version. Codex reviewed both slices and found three
+real defects (`edl-1`, `edl-2`, `edl-3`), all fixed; `.agents/review/index.md` owns their status.
+
+**Every one of the three lived in presentation or reporting** - the surface this repo's suite
+structurally cannot see, because there is no bUnit harness. That is the argument for the manual
+acceptance list, not a formality: a declined lockdown rendered as a red failure, a failed Notes
+stamp rode inside a green row and reached no durable field, and a fresh lookup inherited the
+previous account's lockdown opt-out. The plan's manual acceptance needs a dev deploy and a
+disposable account; nothing in this repo reaches a live directory, so the move, the OU-exists
+check and the stamp write are all unproven in reality.
+
+**Both owner rulings on this module now have `.agents/decisions.md` entries** (`e9f9da8`): the
+2026-10-05 ruling that the previous OU is stamped into `info` rather than `description`, and the
+2026-10-06 ruling that the lockdown checkbox defaults UNCHECKED, superseding the 2026-10-05
+opt-OUT. Decisions owns both and their reasoning; this file does not restate them.
+
+**The escape hatch is explicitly temporary.** When the stakeholder says what they want, the
+checkbox either goes away or becomes the settled default; whoever closes that loop should come
+back to this entry rather than leaving an unexplained option on a security screen forever. **The
+default has moved once already**, which is why it lives in a single `LockdownDefaultArmed`
+constant on the page rather than as a literal at each of its three sites.
+
+
 ## Archived 2026-10-12 (drift sweep, as of `96cdb89`)
 
 Preserved verbatim. Rotated out of `.agents/state.md` because the rule each one carries now has
