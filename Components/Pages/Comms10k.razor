@@ -221,6 +221,12 @@
     /// </remarks>
     private List<Comms10kAddressResolver.Rejection> rejectedBeforeLookup = new();
 
+    /// <summary>
+    /// Rows the parse dropped as duplicates, kept with the RAW text so they can be reported if
+    /// the address they duplicate turns out not to resolve (mde-9).
+    /// </summary>
+    private List<(string Raw, string Address)> duplicateRows = new();
+
     /// <summary>Why a row that is not an address at all was rejected.</summary>
     private const string NotAnAddressReason = "Not an email address";
     private Comms10kResolveResult? resolveResult;
@@ -340,12 +346,43 @@
     /// </remarks>
     /// <summary>Every rejected row, from the upload parse and from the directory lookup.</summary>
     /// <remarks>
+    /// <para>
     /// The owner's ruling is that EVERY non-matching address is reported. The parse rejects
     /// blanks and non-addresses before the resolver ever sees them, so a report built only
     /// from the resolver silently omitted them - found at review.
+    /// </para>
+    /// <para>
+    /// <b>Duplicates are reported only when the address they duplicate did NOT resolve</b>
+    /// (mde-9, review round 4). The recorded decision - a duplicate is not an error - rests on
+    /// a condition the parse was applying unconditionally: "the address resolves on its first
+    /// appearance, so the person is on the list." When it does NOT resolve, nobody was
+    /// included, and two non-matching rows were being reported as one. That undercounts against
+    /// the same ruling this property exists to satisfy. So the decision is kept exactly where
+    /// its reasoning holds and dropped where it does not: a duplicate of a RESOLVED address is
+    /// still silent, and a test pins that.
+    /// </para>
     /// </remarks>
-    private List<Comms10kAddressResolver.Rejection> AllRejections =>
-        [.. rejectedBeforeLookup, .. resolveResult?.Rejections ?? []];
+    private List<Comms10kAddressResolver.Rejection> AllRejections
+    {
+        get
+        {
+            var fromResolver = resolveResult?.Rejections ?? [];
+            List<Comms10kAddressResolver.Rejection> all = [.. rejectedBeforeLookup, .. fromResolver];
+
+            foreach (var (raw, address) in duplicateRows)
+            {
+                var match = fromResolver.FirstOrDefault(
+                    r => string.Equals(r.Address, address, StringComparison.OrdinalIgnoreCase));
+
+                // The RAW text, like every other rejection here, because the operator has to
+                // find that row in the file they uploaded. Same reason as the first occurrence.
+                if (match != null)
+                    all.Add(new Comms10kAddressResolver.Rejection(raw, match.Reason));
+            }
+
+            return all;
+        }
+    }
 
     private async Task DownloadRejections()
     {
@@ -416,6 +453,7 @@
         uploadedFileName = e.File?.Name;
         parsedEmails = new();
         rejectedBeforeLookup = new();
+        duplicateRows = new();
         resolveResult = null;
         confirmPending = false;
         result = null;
@@ -481,9 +519,14 @@
 
                 if (!seen.Add(val))
                 {
-                    // Not an error, and deliberately NOT reported: the address resolves on its
-                    // first appearance, so the person is on the list. Reporting it would put a
-                    // row in the errors CSV for somebody who was included.
+                    // Not an error WHEN THE ADDRESS RESOLVES: the person is on the list from its
+                    // first appearance, and a row in the errors CSV for somebody who was included
+                    // sends the operator chasing a non-problem. That is the recorded decision and
+                    // it still holds - but only under its own condition. Round 4 (mde-9) found the
+                    // parse applying it unconditionally, so two rows of the same NON-matching
+                    // address were reported as one. Kept here with the raw text; AllRejections
+                    // emits it only if the resolver rejects the address it duplicates.
+                    duplicateRows.Add((raw ?? "", val));
                     continue;
                 }
 
@@ -645,6 +688,7 @@
             parsedEmails = new();
             rejectedBeforeLookup = new();
             resolveResult = null;
+            duplicateRows = new();
             preview = null;
         }
         catch (Exception ex)

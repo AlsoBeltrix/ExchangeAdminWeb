@@ -132,6 +132,11 @@ public class Comms10kRejectionReportTests
         // The one case that must NOT be reported: the address resolves on its first
         // appearance, so that person IS on the list. A row in the errors CSV for somebody who
         // was included sends the operator chasing a non-problem.
+        //
+        // Round 4 (mde-9) narrowed this to its own condition rather than removing it: the parse
+        // still records NO rejection for a duplicate, which is what this test pins. Whether one
+        // is reported is decided later, in AllRejections, and only when the address it
+        // duplicates failed to resolve. See the test below.
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "Comms10k.razor")));
 
         var parse = source[source.IndexOf("if (!seen.Add(val))", StringComparison.Ordinal)..];
@@ -142,16 +147,69 @@ public class Comms10kRejectionReportTests
             "A duplicate must fall through to continue without being recorded as a rejection.");
     }
 
+    [Fact]
+    public void ADuplicateOfAnAddressThatDidNotResolveIsReported()
+    {
+        // Round 4 finding (mde-9). The recorded decision above rests on a condition the parse
+        // was applying unconditionally - "the address resolves on its first appearance". When
+        // it does NOT resolve, nobody was included, and two non-matching rows were reported as
+        // one. That undercounts against the owner's ruling that EVERY non-matching address is
+        // reported with its reason.
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "Comms10k.razor")));
+
+        // The parse must KEEP the duplicate, with its raw text, or there is nothing to report.
+        Assert.Contains("duplicateRows.Add((raw ?? \"\", val));", source, StringComparison.Ordinal);
+
+        var all = Member(source, "private List<Comms10kAddressResolver.Rejection> AllRejections");
+
+        // It walks the kept duplicates and matches them against the RESOLVER's rejections.
+        Assert.Contains("foreach (var (raw, address) in duplicateRows)", all, StringComparison.Ordinal);
+        Assert.Contains("fromResolver.FirstOrDefault(", all, StringComparison.Ordinal);
+
+        // And emits one ONLY on a match - dropping this guard would report every duplicate,
+        // which is the defect the decision above exists to prevent.
+        Assert.Contains("if (match != null)", all, StringComparison.Ordinal);
+
+        // Stale rows from a previous file must not survive. Both reset sites that clear
+        // rejectedBeforeLookup clear this too; the reviewer asked about exactly that.
+        Assert.Equal(
+            Regex.Matches(source, Regex.Escape("rejectedBeforeLookup = new();")).Count,
+            Regex.Matches(source, Regex.Escape("duplicateRows = new();")).Count);
+    }
+
     /// <summary>The text of one expression-bodied or block-bodied member, by declaration.</summary>
+    /// <remarks>
+    /// It stopped at the first semicolon, which is right for an expression body and wrong for a
+    /// block one - it returned the first statement and called it the member. That was invisible
+    /// while every member read here was expression-bodied; AllRejections became a block at mde-9
+    /// and two assertions started failing against correct code. Now it brace-matches when a
+    /// brace opens before the first semicolon.
+    /// </remarks>
     private static string Member(string source, string declaration)
     {
         var start = source.IndexOf(declaration, StringComparison.Ordinal);
         Assert.True(start >= 0, $"{declaration} was not found on the page.");
 
         var semicolon = source.IndexOf(';', start);
-        Assert.True(semicolon > start, $"{declaration} is unterminated.");
+        var brace = source.IndexOf('{', start);
 
-        return source[start..(semicolon + 1)];
+        if (brace < 0 || (semicolon >= 0 && semicolon < brace))
+        {
+            Assert.True(semicolon > start, $"{declaration} is unterminated.");
+            return source[start..(semicolon + 1)];
+        }
+
+        var depth = 0;
+        for (var i = brace; i < source.Length; i++)
+        {
+            if (source[i] == '{')
+                depth++;
+            else if (source[i] == '}' && --depth == 0)
+                return source[start..(i + 1)];
+        }
+
+        Assert.Fail($"{declaration} has an unbalanced block body.");
+        return "";
     }
 
     [Fact]
