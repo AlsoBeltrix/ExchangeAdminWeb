@@ -1740,8 +1740,10 @@ public class DefenderEndpointDeviceServiceTests
         {
             Assert.True(parser.Read(), "the CSV carried fewer data rows than the run had devices");
 
-            // Columns 22-26 are the five enrichment columns of the plan's "CSV export" table.
-            for (var column = 22; column <= 26; column++)
+            // Columns 23-28 are the enrichment columns. They shifted by one when Site was
+            // inserted after AadDeviceId - Site is 22 and is NOT one of them: it comes from the
+            // directory, not the hunting query, and a hunting failure leaves it populated.
+            for (var column = 23; column <= 28; column++)
                 Assert.Equal(unavailable, parser.GetField(column));
         }
     }

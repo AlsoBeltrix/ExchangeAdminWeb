@@ -204,6 +204,9 @@ try
     // Singleton like the other API-backed read services: no per-request state, and the API client is
     // constructed per operation from the named client above. Nothing is user-reachable yet - the
     // module descriptor and page arrive in S2.
+    // The forest's subnet-to-site map, which turns a device IP into a place. Its own runspace
+    // per read, the same shape SectionAccessGroupDirectory uses.
+    builder.Services.AddSingleton(new AdSiteDirectory(() => new PowerShellDirectoryCommands()));
     builder.Services.AddSingleton<DefenderEndpointDeviceService>();
     // True Last Logon (docs/TrueLastLogon-Plan.md). Two halves, registered together because
     // neither is useful alone: the on-prem sweep is the only source that sees on-prem-only

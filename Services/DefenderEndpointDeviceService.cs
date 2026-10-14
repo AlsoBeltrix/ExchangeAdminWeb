@@ -31,6 +31,16 @@ public sealed class DefenderEndpointDeviceService
     private readonly IHttpClientFactory? _httpClientFactory;
     private readonly Func<Task<DefenderApiClient?>> _apiClientFactory;
     private readonly Func<Task<DefenderApiClient?>> _huntingClientFactory;
+
+    /// <summary>
+    /// The forest's subnet-to-site map. Null only in tests that are not about location.
+    /// </summary>
+    /// <remarks>
+    /// When present, a read failure FAILS THE RUN (plan Q10) - the opposite of the hunting
+    /// enrichment beside it. A blank Site column across 27,000 rows is not a degraded report,
+    /// it is the report failing to answer the question the page exists for.
+    /// </remarks>
+    private readonly AdSiteDirectory? _siteDirectory;
     private readonly string? _maxDevicesOverride;
     private readonly string? _includeDiscoverySourcesOverride;
     private readonly int? _pageSizeOverride;
@@ -221,13 +231,15 @@ public sealed class DefenderEndpointDeviceService
     public DefenderEndpointDeviceService(
         ModuleConfigService moduleConfig,
         DelineaService delineaService,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        AdSiteDirectory siteDirectory)
     {
         _moduleConfig = moduleConfig;
         _delineaService = delineaService;
         _httpClientFactory = httpClientFactory;
         _apiClientFactory = GetApiClientAsync;
         _huntingClientFactory = GetHuntingClientAsync;
+        _siteDirectory = siteDirectory;
     }
 
     /// <summary>
@@ -250,9 +262,13 @@ public sealed class DefenderEndpointDeviceService
         string? maxDevicesOverride = null,
         Func<Task<DefenderApiClient?>>? huntingClientFactory = null,
         string? includeDiscoverySourcesOverride = null,
-        int? pageSizeOverride = null)
+        int? pageSizeOverride = null,
+        AdSiteDirectory? siteDirectory = null)
     {
         _apiClientFactory = apiClientFactory;
+        // Null leaves the Site column blank rather than failing: a test about paging or
+        // enrichment should not have to stand up a directory to run.
+        _siteDirectory = siteDirectory;
         _maxDevicesOverride = maxDevicesOverride;
         _huntingClientFactory = huntingClientFactory ?? (() => Task.FromResult<DefenderApiClient?>(null));
         _includeDiscoverySourcesOverride = includeDiscoverySourcesOverride;
@@ -514,6 +530,7 @@ public sealed class DefenderEndpointDeviceService
             : await GetDiscoveryEnrichmentAsync(devices.Select(d => d.Id).ToList());
 
         ApplyEnrichment(devices, enrichment);
+        ApplySites(devices);
 
         return DefenderDeviceListResult.CompleteRun(
             devices,
@@ -978,6 +995,33 @@ public sealed class DefenderEndpointDeviceService
     /// way round, so a row with no device cannot become one. Inventing a device row out of hunting
     /// data would put a machine on an inventory report that the inventory API never returned.
     /// </remarks>
+    /// <summary>
+    /// Stamps each device with the site whose subnet contains its last known IP.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One directory read for the whole run, then pure matching per device. The map is a few
+    /// hundred rows and the device list tens of thousands, so reading per device would be tens
+    /// of thousands of round trips for the same answer.
+    /// </para>
+    /// <para>
+    /// <b>Deliberately NOT wrapped in a catch.</b> AdSiteDirectory throws when the forest cannot
+    /// be read, and that exception is meant to reach the page as a failed run (plan Q10).
+    /// Swallowing it here would render every row with a blank Site column, which reads as "no
+    /// site is known for any of these devices" - a statement about the fleet rather than about
+    /// the directory being down, and the one an operator cannot tell apart from the truth.
+    /// </para>
+    /// </remarks>
+    private void ApplySites(List<DefenderDevice> devices)
+    {
+        if (_siteDirectory is null)
+            return;
+
+        var subnets = _siteDirectory.ReadSubnets();
+        foreach (var device in devices)
+            device.Site = AdSiteSubnetMap.FindSite(device.LastIpAddress, subnets);
+    }
+
     private static void ApplyEnrichment(List<DefenderDevice> devices, DefenderDiscoveryEnrichment enrichment)
     {
         var state = enrichment.State;

@@ -107,6 +107,20 @@ public sealed class DefenderDevice
     /// </remarks>
     public string RecentlySeenBy { get; set; } = "";
 
+    /// <summary>
+    /// The Active Directory site whose subnet contains this device's last known IP address.
+    /// </summary>
+    /// <remarks>
+    /// <b>The module's answer to the question it exists for.</b> Derived here rather than read
+    /// from Defender, which does not know it: the IP comes from the machines API and the
+    /// subnet-to-site map from the forest. Read it together with LastSeenUtc - it is the site
+    /// the device was in when it was last seen, not where it is now.
+    ///
+    /// Empty means no subnet in the forest contains that address, or the subnet that does has
+    /// no site linked. It is NEVER a nearest match: see AdSiteSubnetMap.FindSite.
+    /// </remarks>
+    public string Site { get; set; } = "";
+
     // Subnet, default gateway, DHCP server and MAC vendor are NOT declared yet. They come from
     // a DeviceNetworkInfo join that is on hold until its column names are checked against a live
     // tenant - see BuildHuntingQuery. A field nothing populates is worse than a missing one: it

@@ -160,6 +160,14 @@
                            placeholder="Name of a machine that saw it" />
                 </div>
                 <div class="col-md-4">
+                    <label class="form-label" for="site">Site</label>
+                    <input id="site"
+                           class="form-control"
+                           @bind="form.Site"
+                           disabled="@IsBusy"
+                           placeholder="Any part of the site name" />
+                </div>
+                <div class="col-md-4">
                     <label class="form-label" for="machineGroup">Machine group</label>
                     <input id="machineGroup"
                            class="form-control"
@@ -339,6 +347,7 @@
                             <th>Health</th>
                             <th>Risk</th>
                             <th>Exposure</th>
+                            <th>Site</th>
                             <th>Machine group</th>
                             <th>Last seen</th>
                             <th>Discovery sources</th>
@@ -356,6 +365,7 @@
                                 <td>@Display(device.HealthStatus)</td>
                                 <td>@Display(device.RiskScore)</td>
                                 <td>@Display(device.ExposureLevel)</td>
+                                <td>@Display(device.Site)</td>
                                 <td>@Display(device.MachineGroup)</td>
                                 <td class="text-nowrap">@FormatTime(device.LastSeen)</td>
                                 <td>@EnrichmentCell(device.DiscoverySources)</td>
@@ -373,7 +383,7 @@
                             @if (expandedDevices.Contains(device.Id))
                             {
                                 <tr>
-                                    <td colspan="11" class="bg-light">
+                                    <td colspan="12" class="bg-light">
                                         <dl class="row mb-0 small">
                                             <dt class="col-sm-3">Device id</dt><dd class="col-sm-9">@Display(device.Id)</dd>
                                             <dt class="col-sm-3">Fully qualified name</dt><dd class="col-sm-9">@Display(device.ComputerDnsName)</dd>
@@ -550,21 +560,37 @@
     /// </remarks>
     private string appliedSeenBy = "";
 
+    /// <summary>The Site value that produced the report on screen. Captured at Search, as above.</summary>
+    private string appliedSite = "";
+
     /// <summary>
-    /// The loaded devices narrowed by <see cref="appliedSeenBy"/>.
+    /// The loaded devices narrowed by the two filters that can only be applied after the
+    /// device list is in hand - <see cref="appliedSite"/> and <see cref="appliedSeenBy"/>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>A device whose enrichment batch failed is KEPT, whatever the filter says.</b> It
-    /// carries "(unavailable)" rather than an observer name, so it cannot be judged against this
-    /// filter at all - and dropping it would hide exactly the machines someone is hunting, while
-    /// looking like a clean negative result. It stays, still marked, and the banner above says
-    /// how many batches did not answer.
+    /// <b>Site is the one an operator will actually reach for</b>, because it is the only
+    /// location signal present for essentially every device: the owner's 26,812-row export had
+    /// an IP address on 26,811 of them. Seen-by is partial by nature and sits beside it.
     /// </para>
     /// <para>
-    /// Case-insensitive substring, matching the Machine group and Machine tag controls beside
-    /// it. An operator narrowing by site usually knows a fragment of a naming convention, not a
-    /// whole hostname.
+    /// <b>A device the filter cannot JUDGE is kept, whatever the filter says.</b> For seen-by
+    /// that is a device whose enrichment batch failed - it carries "(unavailable)", not an
+    /// observer name. Dropping it would hide exactly the machines someone is hunting while
+    /// looking like a clean negative result.
+    /// </para>
+    /// <para>
+    /// <b>Site has no such case and deliberately does not get one.</b> A blank Site is a real
+    /// answer - no subnet in the forest contains that address - rather than a missing one,
+    /// because a directory read that failed throws and fails the whole run instead of blanking
+    /// the column. So a blank Site is filtered out like any other non-match, and that is only
+    /// true because of the fail-fast rule in AdSiteDirectory. If that rule is ever softened,
+    /// this filter starts hiding devices.
+    /// </para>
+    /// <para>
+    /// Both are case-insensitive substrings, matching the Machine group and Machine tag
+    /// controls beside them: an operator narrowing by location knows a fragment of a naming
+    /// convention, not an exact string.
     /// </para>
     /// </remarks>
     private IReadOnlyList<DefenderDevice> FilteredDevices
@@ -574,17 +600,21 @@
             if (result is null)
                 return [];
 
-            if (string.IsNullOrWhiteSpace(appliedSeenBy))
+            var site = appliedSite.Trim();
+            var seenBy = appliedSeenBy.Trim();
+
+            if (site.Length == 0 && seenBy.Length == 0)
                 return result.Devices;
 
-            var needle = appliedSeenBy.Trim();
             return result.Devices
                 .Where(d =>
-                    string.Equals(
-                        d.RecentlySeenBy,
-                        DefenderEndpointDeviceService.EnrichmentUnavailable,
-                        StringComparison.Ordinal)
-                    || d.RecentlySeenBy.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                    (site.Length == 0 || d.Site.Contains(site, StringComparison.OrdinalIgnoreCase))
+                    && (seenBy.Length == 0
+                        || string.Equals(
+                            d.RecentlySeenBy,
+                            DefenderEndpointDeviceService.EnrichmentUnavailable,
+                            StringComparison.Ordinal)
+                        || d.RecentlySeenBy.Contains(seenBy, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
         }
     }
@@ -680,6 +710,7 @@
         public string RiskScore { get; set; } = "";
         public string ExposureLevel { get; set; } = "";
         public string SeenBy { get; set; } = "";
+        public string Site { get; set; } = "";
         public string MachineGroup { get; set; } = "";
         public string MachineTag { get; set; } = "";
         public DateTime? LastSeenFrom { get; set; }
@@ -713,6 +744,7 @@
             RiskScore = "";
             ExposureLevel = "";
             SeenBy = "";
+            Site = "";
             MachineGroup = "";
             MachineTag = "";
             LastSeenFrom = null;
@@ -776,6 +808,7 @@
         // question the operator asked, so it is frozen when they asked it rather than read live
         // out of a control they may have typed into since.
         appliedSeenBy = form.SeenBy;
+        appliedSite = form.Site;
 
         isLoading = true;
         loadError = null;
@@ -879,7 +912,7 @@
             "OsPlatform", "OsVersion", "OsBuild", "OsArchitecture", "HealthStatus",
             "LastIpAddress", "LastExternalIpAddress", "IpAddresses", "MacAddresses",
             "FirstSeenUtc", "LastSeenUtc", "RiskScore", "ExposureLevel", "DeviceValue",
-            "MachineTags", "MachineGroup", "IsAadJoined", "AadDeviceId",
+            "MachineTags", "MachineGroup", "IsAadJoined", "AadDeviceId", "Site",
             "DiscoverySources", "DeviceType", "DeviceCategory", "Vendor", "Model",
             "RecentlySeenBy",
         };
@@ -908,6 +941,7 @@
             device.MachineGroup,
             device.IsAadJoined ? "true" : "false",
             device.AadDeviceId,
+            device.Site,
             ExportEnrichmentCell(enrichment, device.DiscoverySources),
             ExportEnrichmentCell(enrichment, device.DeviceType),
             ExportEnrichmentCell(enrichment, device.DeviceCategory),

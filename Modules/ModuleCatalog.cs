@@ -1146,6 +1146,12 @@ public sealed class ModuleCatalog
             // at all (docs/DefenderEndpointDevices-Plan.md Revision 3, R1(g)); the two hardcoded
             // filters are replaced by the machine record's real fields, and the default ceiling
             // rises from 20000 to 100000.
+            // 1.5.0: SITE. Each device's last known IP is matched against the forest's own
+            // subnet-to-site map, so the report names a place rather than an address - as a
+            // column, in the CSV, and as a filter. This is the module's reason to exist: an
+            // export of 26,812 devices had an IP on 26,811 of them, against 35% for discovery
+            // sources and 8 distinct values for machine group across the whole tenant. A
+            // directory read failure FAILS the run rather than blanking the column (plan Q10).
             // 1.4.0: "Recently seen by" - the machine that recently observed this one, by NAME -
             // is a column AND a filter. The column answers the stakeholder's actual question
             // (which local machine discovered this device, so where is it); the filter is what
@@ -1164,7 +1170,7 @@ public sealed class ModuleCatalog
             // shipped unusable at tenant scale. Owner rejected virtualised scrolling; this is
             // the portal-style shape he approved instead. Paging bounds the DOM only: the CSV
             // export still carries the complete matching set, and a test pins that it does.
-            Version = "1.4.0",
+            Version = "1.5.0",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",

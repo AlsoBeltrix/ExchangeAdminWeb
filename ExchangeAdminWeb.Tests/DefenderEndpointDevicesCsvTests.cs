@@ -32,11 +32,11 @@ public class DefenderEndpointDevicesCsvTests
         + "OsPlatform,OsVersion,OsBuild,OsArchitecture,HealthStatus,"
         + "LastIpAddress,LastExternalIpAddress,IpAddresses,MacAddresses,"
         + "FirstSeenUtc,LastSeenUtc,RiskScore,ExposureLevel,DeviceValue,"
-        + "MachineTags,MachineGroup,IsAadJoined,AadDeviceId,"
+        + "MachineTags,MachineGroup,IsAadJoined,AadDeviceId,Site,"
         + "DiscoverySources,DeviceType,DeviceCategory,Vendor,Model,"
         + "RecentlySeenBy";
 
-    private const int ExpectedColumnCount = 28;
+    private const int ExpectedColumnCount = 29;
 
     /// <summary>
     /// Parses the CSV the way a spreadsheet does, so an assertion about a cell is an assertion
@@ -97,6 +97,7 @@ public class DefenderEndpointDevicesCsvTests
         MachineGroup = "Corp workstations",
         IsAadJoined = true,
         AadDeviceId = "11111111-2222-3333-4444-555555555555",
+        Site = "London-Floor-3",
         DiscoverySources = "MDE; Microsoft Defender for IoT",
         DeviceType = "Workstation",
         DeviceCategory = "Endpoint",
@@ -167,13 +168,13 @@ public class DefenderEndpointDevicesCsvTests
         Assert.Equal("Corp workstations", row[19]);
         Assert.Equal("true", row[20]);
         Assert.Equal("11111111-2222-3333-4444-555555555555", row[21]);
-        Assert.Equal("MDE; Microsoft Defender for IoT", row[22]);
-        Assert.Equal("Workstation", row[23]);
-        Assert.Equal("Endpoint", row[24]);
-        Assert.Equal("Contoso Hardware", row[25]);
-        Assert.Equal("Model 9000", row[26]);
-        Assert.Equal("RECEPTION-PC.corp.example", row[27]);
-        Assert.Equal("RECEPTION-PC.corp.example", row[27]);
+        Assert.Equal("London-Floor-3", row[22]);
+        Assert.Equal("MDE; Microsoft Defender for IoT", row[23]);
+        Assert.Equal("Workstation", row[24]);
+        Assert.Equal("Endpoint", row[25]);
+        Assert.Equal("Contoso Hardware", row[26]);
+        Assert.Equal("Model 9000", row[27]);
+        Assert.Equal("RECEPTION-PC.corp.example", row[28]);
     }
 
     [Fact]
@@ -330,12 +331,13 @@ public class DefenderEndpointDevicesCsvTests
         var csv = DefenderEndpointDevices.BuildCsv([device], state);
         var row = Parse(csv)[1];
 
+        // 23-28, not 22-27: Site is column 22 and is NOT an enrichment column. It comes from
+        // the directory, so a hunting failure must leave it populated - asserted below.
         var unavailable = DefenderEndpointDeviceService.EnrichmentUnavailable;
-        Assert.Equal(unavailable, row[22]);
-        Assert.Equal(unavailable, row[23]);
-        Assert.Equal(unavailable, row[24]);
-        Assert.Equal(unavailable, row[25]);
-        Assert.Equal(unavailable, row[26]);
+        for (var column = 23; column <= 28; column++)
+            Assert.Equal(unavailable, row[column]);
+
+        Assert.Equal("London-Floor-3", row[22]);
 
         // And nothing else moves. The listing succeeded; only the enrichment did not, and a
         // projector that blanked or annotated the machines-API columns too would be over-reporting
@@ -348,7 +350,7 @@ public class DefenderEndpointDevicesCsvTests
         // describe the same run differently.
         Assert.Equal(
             DefenderEndpointDeviceService.DescribeEnrichmentCell(state, device.DiscoverySources),
-            row[22]);
+            row[23]);
     }
 
     [Fact]
@@ -371,9 +373,9 @@ public class DefenderEndpointDevicesCsvTests
             [device], DefenderDiscoveryEnrichmentState.Succeeded);
         var row = Parse(csv)[1];
 
-        Assert.Equal("", row[25]);
-        Assert.Equal("   ", row[26]);
-        Assert.Equal("MDE; Microsoft Defender for IoT", row[22]);
+        Assert.Equal("", row[26]);
+        Assert.Equal("   ", row[27]);
+        Assert.Equal("MDE; Microsoft Defender for IoT", row[23]);
     }
 
     [Fact]
