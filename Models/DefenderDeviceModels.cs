@@ -283,6 +283,11 @@ public sealed class DefenderDiscoveryEnrichment
     public int TotalBatches { get; private init; }
 
     /// <summary>
+    /// Observer lookups that did not answer. Separate from FailedBatches: separate request.
+    /// </summary>
+    public int ObserverFailedBatches { get; private init; }
+
+    /// <summary>
     /// Devices whose OBSERVER lookup failed, independent of the posture columns.
     /// </summary>
     /// <remarks>
@@ -296,10 +301,12 @@ public sealed class DefenderDiscoveryEnrichment
     public static DefenderDiscoveryEnrichment Succeeded(
         IReadOnlyDictionary<string, DefenderDeviceDiscovery> rows,
         int totalBatches = 1,
-        IReadOnlySet<string>? observerUnavailableDeviceIds = null) =>
+        IReadOnlySet<string>? observerUnavailableDeviceIds = null,
+        int observerFailedBatches = 0) =>
         new()
         {
             State = DefenderDiscoveryEnrichmentState.Succeeded,
+            ObserverFailedBatches = observerFailedBatches,
             Reason = "",
             Rows = rows,
             TotalBatches = totalBatches,
@@ -513,6 +520,17 @@ public sealed class DefenderDeviceListResult
     public int DiscoveryTotalBatches { get; private init; }
 
     /// <summary>
+    /// Observer lookups that did not answer, counted apart from the posture batches because
+    /// they are a separate request and fail separately.
+    /// </summary>
+    /// <remarks>
+    /// Without this the page could not tell a run where the observer query failed from one
+    /// where nothing had observed the devices - both render blank or marked cells on an
+    /// otherwise SUCCEEDED run, and only this number distinguishes them.
+    /// </remarks>
+    public int ObserverFailedBatches { get; private init; }
+
+    /// <summary>
     /// False when the forest's subnet map could not be read, so every Site cell reads
     /// "(unavailable)" rather than a place.
     /// </summary>
@@ -528,7 +546,8 @@ public sealed class DefenderDeviceListResult
         string enrichmentReason,
         int failedBatches = 0,
         int totalBatches = 0,
-        bool siteMapRead = true) => new()
+        bool siteMapRead = true,
+        int observerFailedBatches = 0) => new()
         {
             Outcome = DefenderDeviceListOutcome.Complete,
             Devices = devices,
@@ -540,6 +559,7 @@ public sealed class DefenderDeviceListResult
             DiscoveryEnrichmentReason = enrichmentReason,
             DiscoveryFailedBatches = failedBatches,
             DiscoveryTotalBatches = totalBatches,
+            ObserverFailedBatches = observerFailedBatches,
             SiteMapRead = siteMapRead
         };
 

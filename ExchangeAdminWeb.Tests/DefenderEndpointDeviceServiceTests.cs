@@ -2229,6 +2229,30 @@ public class DefenderEndpointDeviceServiceTests
     }
 
     [Fact]
+    public async Task AFailedObserverLookup_IsCountedSoThePageCanSaySoOnASucceededRun()
+    {
+        // Found at review: the failure count was tracked and never used. Every posture batch
+        // succeeding makes the run SUCCEEDED, so none of the enrichment banners fire - and the
+        // observer cells read "(unavailable)" with nothing on the page saying why. The count is
+        // what lets the page distinguish "the lookup failed" from "nothing observed these".
+        var (service, devices, hunting) = CreateEnrichedService(huntingBatchSize: 1);
+        devices.Responses.Add(() => Ok(MachinesPage(2)));
+
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));                      // b1 posture
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.BadRequest, "{}"));         // b1 observer
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m2"))));                      // b2 posture
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.BadRequest, "{}"));         // b2 observer
+
+        var result = await service.ListDevicesAsync();
+
+        // The run IS a success - every posture batch answered - which is exactly why the
+        // observer failure needs its own number.
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Succeeded, result.DiscoveryEnrichment);
+        Assert.Equal(0, result.DiscoveryFailedBatches);
+        Assert.Equal(2, result.ObserverFailedBatches);
+    }
+
+    [Fact]
     public async Task AFailedObserverLookup_CostsOnlyTheObserverColumn()
     {
         // The reason the observer query is a separate request at all. SeenBy() may be

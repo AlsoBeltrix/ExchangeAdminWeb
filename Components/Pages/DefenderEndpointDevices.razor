@@ -315,6 +315,24 @@
             </div>
         }
 
+        @* An observer lookup can fail while every posture batch succeeded - it is a separate
+           request. The run is then SUCCEEDED, so none of the banners above fire, and the cells
+           read "(unavailable)" with nothing saying why. Found at review: the failure count was
+           being tracked and then never used. *@
+        @if (result.Devices.Count > 0 && result.ObserverFailedBatches > 0)
+        {
+            <div class="alert alert-warning py-2">
+                <small>
+                    <strong>
+                        The observing machine could not be looked up for some devices
+                        (@result.ObserverFailedBatches of @result.DiscoveryTotalBatches lookups failed).
+                    </strong>
+                    Those rows show "@DefenderEndpointDeviceService.EnrichmentUnavailable" for
+                    Recently seen by. Every other column is unaffected.
+                </small>
+            </div>
+        }
+
         @* A whole column that is empty for every row, on a run that reported success, is the
            failure mode that shipped: the observer column was blank for all 26,812 devices and
            nothing on the page said so, because the query succeeded and the join simply matched

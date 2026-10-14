@@ -563,7 +563,8 @@ public sealed class DefenderEndpointDeviceService
             enrichment.Reason,
             enrichment.FailedBatches,
             enrichment.TotalBatches,
-            siteMapRead);
+            siteMapRead,
+            enrichment.ObserverFailedBatches);
     }
 
     /// <summary>
@@ -923,7 +924,8 @@ public sealed class DefenderEndpointDeviceService
                 observerUnavailable);
         }
 
-        return DefenderDiscoveryEnrichment.Succeeded(rows, batches.Count, observerUnavailable);
+        return DefenderDiscoveryEnrichment.Succeeded(
+            rows, batches.Count, observerUnavailable, observerFailedBatches);
     }
 
     /// <summary>Why the most recent batch failed. Read only immediately after a false return.</summary>

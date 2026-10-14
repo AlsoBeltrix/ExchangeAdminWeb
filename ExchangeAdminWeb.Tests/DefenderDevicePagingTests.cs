@@ -192,6 +192,19 @@ public class DefenderDevicePagingTests
     }
 
     [Fact]
+    public void AFailedObserverLookupIsAnnouncedEvenThoughTheRunSucceeded()
+    {
+        // The observer query is a separate request, so it can fail while every posture batch
+        // answers - which makes the run SUCCEEDED and silences every other banner. Found at
+        // review: the count existed and nothing rendered it.
+        var source = StripComments(ReadPage());
+
+        Assert.Contains("result.ObserverFailedBatches > 0", source, StringComparison.Ordinal);
+        Assert.Contains("The observing machine could not be looked up for some devices",
+            source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AnObserverColumnEmptyForEveryDeviceIsAnnouncedOnASucceededRun()
     {
         // The exact failure that shipped: the column was blank for all 26,812 devices on a run
