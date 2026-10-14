@@ -1152,6 +1152,8 @@ public sealed class ModuleCatalog
             // at all (docs/DefenderEndpointDevices-Plan.md Revision 3, R1(g)); the two hardcoded
             // filters are replaced by the machine record's real fields, and the default ceiling
             // rises from 20000 to 100000.
+            // 1.6.6: a device whose id is blank reads "(unavailable)" in every enrichment cell
+            //        instead of blank, so the seen-by filter can recognise it and keep it.
             // 1.6.5: the seen-by filter no longer judges a column a whole-run enrichment failure
             //        never populated - it was emptying the table under its own warning banner.
             // 1.6.4: the observer failure count is carried on the PARTIAL path too; it was only
@@ -1177,7 +1179,7 @@ public sealed class ModuleCatalog
             //        devices "(unavailable)" and never blanks the batches that answered.
             // 1.2.0: device table paged at 50 rows. Rendering all of them killed the circuit.
             //        Paging bounds the DOM only - the CSV still carries the whole matching set.
-            Version = "1.6.5",
+            Version = "1.6.6",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",

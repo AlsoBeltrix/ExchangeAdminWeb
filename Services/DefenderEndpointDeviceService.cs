@@ -1217,8 +1217,19 @@ public sealed class DefenderEndpointDeviceService
 
         foreach (var device in devices)
         {
+            // Round 4, mde-8. A blank id is one this module can never vouch for - IsSafeDeviceId
+            // rejects it, so it is dropped from the KQL batches and added to the unavailable set
+            // at the top of EnrichAsync. This loop then skipped it BEFORE consulting that set, so
+            // every enrichment cell stayed BLANK rather than reading "(unavailable)". On a run
+            // that is PartiallySucceeded - which an unsafe id alone makes it - mde-6's
+            // seenByWasEvaluated is TRUE, so the seen-by filter judged that blank and removed a
+            // device the unfiltered inventory retains. Same class as mde-6, reached per row
+            // instead of per run. Stamped rather than skipped: the marker is the whole point.
             if (string.IsNullOrWhiteSpace(device.Id))
+            {
+                StampUnavailable(device);
                 continue;
+            }
 
             // A device whose batch did not answer gets the marker ON THE ROW, not a blank. This
             // is the per-device half of Known Failure Class 2: the banner says how many batches
@@ -1228,12 +1239,7 @@ public sealed class DefenderEndpointDeviceService
             // same `continue` a genuinely empty device takes.
             if (enrichment.UnavailableDeviceIds.Contains(device.Id))
             {
-                device.DiscoverySources = EnrichmentUnavailable;
-                device.DeviceType = EnrichmentUnavailable;
-                device.DeviceCategory = EnrichmentUnavailable;
-                device.Vendor = EnrichmentUnavailable;
-                device.Model = EnrichmentUnavailable;
-                device.RecentlySeenBy = EnrichmentUnavailable;
+                StampUnavailable(device);
                 continue;
             }
 
@@ -1257,6 +1263,23 @@ public sealed class DefenderEndpointDeviceService
             if (!observerFailed)
                 device.RecentlySeenBy = row.RecentlySeenBy;
         }
+    }
+
+    /// <summary>
+    /// Every enrichment cell reads "(unavailable)" rather than blank. Factored out of
+    /// ApplyEnrichment at round 4 (mde-8) because it had two callers that must agree: a device
+    /// in the unavailable set, and a device whose id is blank - which is the same condition
+    /// reached earlier, since IsSafeDeviceId rejects a blank id and that is what puts it in the
+    /// set. A blank cell is the thing mde-6's filter cannot judge, so the two must not drift.
+    /// </summary>
+    private static void StampUnavailable(DefenderDevice device)
+    {
+        device.DiscoverySources = EnrichmentUnavailable;
+        device.DeviceType = EnrichmentUnavailable;
+        device.DeviceCategory = EnrichmentUnavailable;
+        device.Vendor = EnrichmentUnavailable;
+        device.Model = EnrichmentUnavailable;
+        device.RecentlySeenBy = EnrichmentUnavailable;
     }
 
     /// <summary>

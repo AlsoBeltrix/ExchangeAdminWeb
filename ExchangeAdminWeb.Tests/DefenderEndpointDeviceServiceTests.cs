@@ -2276,6 +2276,40 @@ public class DefenderEndpointDeviceServiceTests
     }
 
     [Fact]
+    public async Task ADeviceWhoseIdIsBlankReadsUnavailableRatherThanBlank()
+    {
+        // Round 4 finding (mde-8). A blank id is one this module can never vouch for, so it is
+        // dropped from the KQL batches and lands in the unavailable set. ApplyEnrichment then
+        // skipped it BEFORE consulting that set and left every cell blank. That matters beyond
+        // the cell: mde-6's seen-by filter treats a PartiallySucceeded run as evaluated, so it
+        // judged the blank and removed this device from a filtered view that retains it in the
+        // unfiltered one. Same class as mde-6, per row instead of per run.
+        var (service, devices, hunting) = CreateEnrichedService();
+        devices.Responses.Add(() => Ok(
+            "{\"value\":["
+            + "{\"id\":\"  \",\"computerDnsName\":\"ghost.corp.example\",\"osPlatform\":\"Windows10\","
+            + "\"onboardingStatus\":\"CanBeOnboarded\"},"
+            + "{\"id\":\"m1\",\"computerDnsName\":\"host1.corp.example\",\"osPlatform\":\"Windows10\","
+            + "\"onboardingStatus\":\"CanBeOnboarded\"}"
+            + "]}"));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+        hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
+
+        var result = await service.ListDevicesAsync();
+
+        var ghost = Assert.Single(result.Devices, d => string.IsNullOrWhiteSpace(d.Id));
+
+        // The marker, not a blank - this is what the filter can recognise and keep.
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, ghost.RecentlySeenBy);
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, ghost.DiscoverySources);
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, ghost.Vendor);
+
+        // And the device that COULD be vouched for is untouched by the fix.
+        var real = Assert.Single(result.Devices, d => d.Id == "m1");
+        Assert.NotEqual(DefenderEndpointDeviceService.EnrichmentUnavailable, real.DiscoverySources);
+    }
+
+    [Fact]
     public async Task AFailedObserverLookup_CostsOnlyTheObserverColumn()
     {
         // The reason the observer query is a separate request at all. SeenBy() may be
