@@ -8,55 +8,66 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Defender location work - round 2 fixes LANDED and gate-verified; round 3 dispatched
+### Defender review stream - NINE findings over four rounds, all fixed; round 5 is out
 
-**Branch `master`, head `b3099fe`.** The working tree is clean. The two review-round-2 fixes
-that the previous handoff left uncommitted and unverified are now both committed, each in its
-own commit, after the full gate ran green against them:
+**Branch `master`, working tree clean.** The 2026-10-14 session took the two uncommitted
+round-2 fixes through the gate, filed the five findings that had never been recorded, and ran
+review rounds 3 and 4, each of which found two more.
 
 | Commit | Finding | What |
 |---|---|---|
-| `c7e64b1` | `mde-4` | the observer failure count survives a mixed partial run; Defender `1.6.3` -> `1.6.4` |
-| `ac71855` | `mde-5` | a file with no usable rows still produces its errors CSV; Comms-10k `1.4.1` -> `1.4.2` |
+| `c7e64b1` | `mde-4` | the observer failure count survives a mixed partial run |
+| `ac71855` | `mde-5` | a file with no usable rows produces its errors CSV |
+| `4e0c586` | `mde-6` | the seen-by filter stops judging a column nothing populated |
+| `acf99e9` | `mde-7` | the errors report is reachable from every state that has one |
+| `107cfe4` | `mde-8` | a blank device id says "(unavailable)" instead of nothing |
+| `3f16528` | `mde-9` | two rows of the same non-matching address are reported as two |
 
-**Gates run against the tree before committing, all green:** Release build 0 errors; full
-Release suite **3,826 passed / 0 failed / 3 skipped**; `dotnet format --verify-no-changes`
-exit 0; `git diff --check` clean; `tools/Test-AsciiOnly.ps1` passed. **Both new tests were
-mutation-proven in THIS session**, not taken from the record: reverting each fix fails its test
-(`AMixedRun_...` on the observer count, expected 1 actual 0; `AFileWithNoUsableRows...` on the
-deleted block), and both pass restored. PSScriptAnalyzer and Pester were not re-run and did not
-need to be - no `.ps1` or `.psm1` changed.
+Defender `1.6.3` -> `1.6.6`; Comms-10k `1.4.1` -> `1.4.4`; base app unmoved (module-scoped
+changes only). **Every fix passed the full gate before its commit** - Release build 0 errors,
+full suite green (3,826 rising to 3,830 passed / 0 failed / 3 skipped), `dotnet format`
+exit 0, `git diff --check` clean, ASCII lint passed - **and every new test was mutation-proven
+in that session**, several of them twice. `.agents/review/findings/mde-*.md` carries each
+finding's evidence, guard proof and reviewer envelope; `.agents/review/index.md` is the index.
 
-**The five findings are now FILED** (`d868192`). They were fixed in five commits and never
-recorded, so `.agents/review/index.md` read "zero open rows" only by omission - the drift sweep
-caught it. `mde-1` to `mde-5` each have a full record in `.agents/review/findings/`. All five
-are `[v]`, not `[x]`: verified on `master`, none pushed.
+**THE PATTERN IS THE FINDING, and it has held four rounds running: every round has found the
+previous round's fix incomplete at a NEIGHBOURING path.** `mde-4` re-opened `mde-2`; `mde-5`
+re-opened `mde-3`; `mde-6` re-opened the Site conflation `111bfa2` fixed; `mde-7` re-opened
+`mde-5`; `mde-8` re-opened `mde-6` per row instead of per run; `mde-9` re-opened the duplicate
+decision `mde-3` recorded. Each original was verified against the state it was written for and
+not against the one beside it. **Rounds 3 and 4 asked for that shape by name and it is how all
+four of their findings were found.** Writing the records is what made it visible - the index's
+"zero open rows" had been true only by omission until the drift sweep flagged it.
 
-**Two things those records make explicit that the commits did not.** `mde-3` and `mde-5` are
-NOT Defender findings - they are Comms-10k, pulled in because the reviewer was handed the
-session's whole diff. And `mde-4` re-opened `mde-2` while `mde-5` re-opened `mde-3`, each at
-the neighbouring code path the first fix did not cover: **both originals were verified against
-the state they were written for and not against the one beside it.** That pattern is worth more
-than either finding and round 3 was asked to look for a third instance of it.
+**Round 5 is dispatched** - codex / `@azure-openai-eus2-global/gpt-5.5-dzs` / xhigh / standard,
+over `96cdb89..f5febd5`. No T1 sensitive path has matched in any round. Prompts are
+machine-local (`.gitignore:66`); outputs are `.agents/review/out/session-review.txt`,
+`round2.txt`, `mde-r3.txt`, `mde-r4.txt`, and `mde-r5.txt` when it lands.
 
-**Review round 3 is dispatched** - codex / `@azure-openai-eus2-global/gpt-5.5-dzs` / xhigh /
-standard, over `96cdb89..b3099fe`. No T1 sensitive path matched, so standard tier. Prompt:
-`.agents/review/mde-r3.prompt.txt`, machine-local - `.gitignore:66` excludes
-`.agents/review/*.prompt.txt`, so NO round's prompt is in the repo, this one included.
-Output lands at `.agents/review/out/mde-r3.txt`; the stream log sits
-alongside. Rounds 1 and 2 are at `.agents/review/out/session-review.txt` and
-`.agents/review/out/round2.txt`. **Neither round came back clean**, which is why round 3 exists
-- the protocol is rounds until clean and the comparable Migration stream took four.
+**Next action:** read round 5's verdict. Clean closes the stream and the nine rows move from
+`[v]` to `[x]` once pushed. Findings go through intake, one commit each, then round 6.
 
-**Next action:** read round 3's verdict when it returns. Clean closes the stream; findings go
-through intake and one commit each, then round 4.
+**Two things the owner has not been asked about and should see.**
 
-**Nothing in this session has run against the live tenant or the live forest.** The three
-environmental unknowns and how each fails visibly are owned by the entry below. A post-deploy
-checker that answers all three from an exported CSV is at
+1. **`mde-9` changed behaviour that `mde-3` recorded as a deliberate decision** - a duplicate
+   row is no longer unconditionally silent. The fix was shaped to preserve that decision
+   exactly where its stated premise holds (the first occurrence RESOLVED) and to drop it where
+   the premise is false. The ruling it serves is the owner's own: every non-matching address
+   reported with its reason. **Flagged, not assumed settled.**
+2. **`ExchangeAdminWeb.Tests/ClickGateRegistry.cs` still says tiers 2-4 are "not approved"** -
+   seventeen entries plus a header comment reading "audited, NOT approved for conversion. Do
+   not convert without an owner go." The owner approved tiers 2-4 on 2026-10-12. The drift
+   sweep corrected that claim in `.agents/state.md` but its checklist does not reach test
+   source. **Left alone deliberately: it is a code file, so changing it is a code change.** It
+   is the file a future agent reads immediately before deciding whether to convert a page.
+
+**Nothing in this session has run against the live tenant or the live forest**, and the whole
+stream is unpushed and undeployed. The three environmental unknowns are owned by the entry
+below. A post-deploy checker that answers all three from an exported CSV is at
 `%TEMP%\Test-DefenderLocationExport.ps1`, validated against the owner's 2026-10-13 export.
 
 **Owner instruction, standing: do NOT probe Active Directory without a direct go.**
+
 ### Defender for Endpoint is the live work; 2026-10-12/14 landed nine slices
 
 **Queue 8 is the module people are waiting on and it now does what it exists for.** Landed and
@@ -941,36 +952,45 @@ is a fact about the suite, not a task.
 
 Commands and mandatory guards are owned by `.agents/repo-guidance.md` and `AGENTS.md`.
 
-**Last full run, as of `b3099fe` - run 2026-10-14 against the working tree that became
-`c7e64b1` and `ac71855`:** Release build 0 errors; full Release suite **3,826 passed / 0 failed
-/ 3 skipped** with `-- xUnit.MaxParallelThreads=4`; `dotnet format ExchangeAdminWeb.slnx
---verify-no-changes --no-restore` exit 0; `git diff --check` clean; `tools/Test-AsciiOnly.ps1`
-passed. The two commits after it (`d868192`, `b3099fe`) are docs-only.
+**Last full run, as of `3f16528` (the two commits after it are docs-only):** Release build
+0 errors; full Release suite **3,830 passed / 0 failed / 3 skipped** with
+`-- xUnit.MaxParallelThreads=4`; `dotnet format ExchangeAdminWeb.slnx --verify-no-changes
+--no-restore` exit 0; `git diff --check` clean; `tools/Test-AsciiOnly.ps1` passed. **The full
+gate ran before EACH of the six fix commits**, not once at the end.
 
-**Mutation proof run the same session, not inherited:** both new tests fail with their fix
-reverted and pass restored. The revert was done with `git apply -R` of the per-file patch and
-restored forward, so the mutated and restored files are byte-identical to the originals and the
-mtime moves on every write - the stale-timestamp trap that makes MSBuild skip the rebuild does
-not apply.
+**Mutation proof ran this session for every new test, nine probes across six fixes**, all bit.
+Two are worth repeating. For `mde-6` the obvious probe - delete the escape disjunct - proves
+almost nothing, because a guard satisfied by the disjunct's presence passes against a flag
+defined as `true`; the second probe widened the state binding and failed, which is what pins
+the flag to meaning something. For `mde-9`, one probe flipped the emit condition to `false`
+and one deleted a reset site; both bit.
+
+**Restores were done with `git apply -R` / `git apply` or `cp` followed by `touch`, and every
+file was md5-checked against its original.** The trap this avoids is in `.agents/token-log.md`:
+a restore that keeps the old mtime lets MSBuild skip the rebuild, so the test runs against the
+mutated binary and reports a pass.
+
+**A second trap was NOT avoided and cost a confusing round:** a Razor parse error produced a
+build with 35 errors, the build output was tailed for warnings rather than grepped for
+`error CS`, and the next `dotnet test --no-build` reported a confident FAIL from the previous
+binary. **Grep builds for `error CS`; do not tail them.**
 
 **PSScriptAnalyzer and Pester were last reported for `390bba6` and still stand:** no `.ps1` or
 `.psm1` has changed since. Existing dependency and compiler warnings remain (39 at this head,
-all pre-existing: four NU1903 advisories and nullable/unused-field warnings).
+all pre-existing).
 
-**What the 2026-10-14 drift sweep re-verified, by reading the files** (`b357770`, before the
-two fixes landed): `ProgressRegistry` holds zero `KnownGap` entries; zero `spinner-border`
-matches under `Components/Pages`; the citations in `## Previously` and `## Blockers` for queue
-4, the M365 protection gap, `ClickGateSource.ExtractBlock`, `Migration.razor`,
-`MessageTraceExportListing` and the SQLite package version all still land exactly.
-`ExchangeAdminWeb.csproj` owns the base app version and `.agents/machines.md` owns the deployed
-FileVersions; neither is copied here. **The sweep's claim that `.agents/review/index.md` had
-zero open rows was true only by omission** and is now corrected - see `d868192`.
+**What the 2026-10-14 drift sweep re-verified by reading the files** (`b357770`):
+`ProgressRegistry` holds zero `KnownGap` entries; zero `spinner-border` matches under
+`Components/Pages`; the citations in `## Previously` and `## Blockers` for queue 4, the M365
+protection gap, `ClickGateSource.ExtractBlock`, `Migration.razor`, `MessageTraceExportListing`
+and the SQLite package version all still land. **Its claim that `.agents/review/index.md` had
+zero open rows was true only by omission** and is corrected - nine rows now stand there.
 
 Browser acceptance, live writes and the live forest were not exercised. **Both instances were
-redeployed 2026-10-09 at FileVersion `2.27.1.0`**, re-measured on this host 2026-10-12 and
-recorded in `.agents/machines.md`, which owns the receipt. **This head is ahead of what is
-deployed** - the nine Defender slices plus the five review fixes are not on either instance.
-Current CI status does not belong here. Per-finding status is owned by
+redeployed 2026-10-09 at FileVersion `2.27.1.0`**, re-measured 2026-10-12 and recorded in
+`.agents/machines.md`, which owns the receipt. **This head is well ahead of what is deployed**
+- the nine Defender slices and all nine review fixes are on neither instance, and the whole
+range is unpushed. Current CI status does not belong here. Per-finding status is owned by
 `.agents/review/index.md`.
 
 ## Active sources
