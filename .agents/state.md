@@ -8,6 +8,61 @@ the latest sweep is Archived 2026-10-12).
 
 ## Now
 
+### HANDOFF 2026-10-14 - Defender location work, review round 2 fixes UNCOMMITTED
+
+**Branch `master`, verified head `835a195`, 28 commits unpushed.** The working tree is NOT
+clean and the uncommitted change is NOT verified - the full suite was interrupted before it
+ran against it. **Run the gates before trusting or committing anything below.**
+
+**Uncommitted, 68 lines across 7 files - review round 2's two findings, both fixed, neither
+gate-verified:**
+
+1. `Models/DefenderDeviceModels.cs`, `Services/DefenderEndpointDeviceService.cs` - the observer
+   failure count is carried on the `PartiallySucceeded` path, not only `Succeeded`. Without it
+   a run where one posture batch AND a different observer lookup failed showed "(unavailable)"
+   in that column with no banner, because the count arrived as zero. Test
+   `AMixedRun_CountsTheObserverFailuresAsWellAsThePostureOnes`, mutation-proven.
+2. `Components/Pages/Comms10k.razor` - a file whose rows are ALL unusable parses to nothing, so
+   there is no Validate step and no result, and the errors CSV button lived inside the result.
+   The upload most needing an explanation could not produce one. Test
+   `AFileWithNoUsableRowsStillOffersTheErrorsReport`, mutation-proven.
+
+Plus `Modules/ModuleCatalog.cs` + `ModuleCatalogTests.cs`: Comms-10k `1.4.1` -> `1.4.2`,
+Defender `1.6.3` -> `1.6.4`. **Verified by diff that no other module's version moved** -
+M365GroupManagement and DhcpAuthorization already read `1.4.2` and were not touched.
+
+**The owner questioned the Comms-10k scope and the answer is recorded here rather than
+re-litigated:** the session's whole diff went to codex, which pulled Comms-10k back in and
+returned two findings against the rejected-address CSV built earlier the same day on the
+owner's ruling. The coder judged they stay, because dropping them leaves that ruling unmet.
+**That judgement was not confirmed by the owner.**
+
+**Review state: round 2 is NOT clean.** Round 1 returned three findings (all fixed:
+`27beb85`, `7ba8ed0`, `835a195`), round 2 returned two (the uncommitted pair above). **No
+round has come back clean, so round 3 is owed** - the repo's protocol is rounds until clean
+and the comparable Migration stream took four. Prompts used are at
+`.agents/review/out/`; the harness incantation is cached in
+`.agents/review/harnesses.local.json`.
+
+**Round 1's HIGH is the finding worth carrying:** the catch around the AD subnet read listed
+three exception types and a missing AD module throws `CommandNotFoundException`, which escaped
+and removed the entire device inventory to report a Site problem - a defect sitting inside the
+mechanism built to prevent exactly that, written and self-verified by the coder without
+noticing. Every round so far has found something.
+
+**Next action:** run `dotnet build`, the full suite, `dotnet format --verify-no-changes`,
+`git diff --check` and `tools/Test-AsciiOnly.ps1` against the working tree; commit the two
+fixes separately (MDE and Comms-10k) if green; then dispatch review round 3.
+
+**Nothing in this session has run against the live tenant or the live forest.** `.agents/state.md`
+"Defender for Endpoint is the live work" owns the three environmental unknowns and how each
+fails visibly. A post-deploy checker that answers all three from an exported CSV is at
+`%TEMP%\Test-DefenderLocationExport.ps1`, validated against the owner's 2026-10-13 export.
+
+**Owner instruction, standing: do NOT probe Active Directory without a direct go.**
+
+
+
 ### Defender for Endpoint is the live work; 2026-10-12/14 landed nine slices
 
 **Queue 8 is the module people are waiting on and it now does what it exists for.** Landed and
