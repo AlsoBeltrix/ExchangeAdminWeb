@@ -507,7 +507,7 @@ part of this implementation approval.
 | C10 | Implemented / independently reviewed (`0fb9f78`) | [cdr-c10](../.agents/review/findings/cdr-c10.md) |
 | C3 | Implemented / independently reviewed (`f0d79b0`) | [cdr-c3](../.agents/review/findings/cdr-c3.md) |
 | C4 | Implemented / independent review P2 corrected (coder proof) | [cdr-c4](../.agents/review/findings/cdr-c4.md) |
-| C11 | Pending | |
+| C11 | Implemented / independent workflow review pending | [cdr-c11](../.agents/review/findings/cdr-c11.md) |
 | C5 | Pending | |
 | C2 | Pending | |
 | C7 | Pending | |

@@ -180,7 +180,8 @@ public class Comms10kReplaceWriterTests
         // 37, from the read-back - never 100 from the input, and never a number derived from
         // which batches were believed to have run.
         Assert.Equal(37, result.FinalCount);
-        Assert.Equal(100, result.MembersWritten);
+        Assert.Equal(100, result.MembersRequested);
+        Assert.Null(result.MembersWritten);
         Assert.Contains("INCOMPLETE", result.Message, StringComparison.Ordinal);
         Assert.Contains("Re-run the same CSV", result.Message, StringComparison.OrdinalIgnoreCase);
     }

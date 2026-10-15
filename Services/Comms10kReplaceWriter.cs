@@ -230,12 +230,16 @@ public static class Comms10kReplaceWriter
         ArgumentNullException.ThrowIfNull(addBatch);
         ArgumentNullException.ThrowIfNull(readBack);
 
+        int? membersWritten = null;
         string? writeError = null;
         try
         {
             clear();
             foreach (var batch in Batch(target))
                 addBatch(batch);
+            // Only acknowledged adds establish this total. A throwing call may have applied
+            // all, some or none of its batch; read-back cannot recover that provenance.
+            membersWritten = target.Count;
         }
         catch (Exception ex)
         {
@@ -254,7 +258,7 @@ public static class Comms10kReplaceWriter
             readBackError = ex.Message;
         }
 
-        return Derive(groupName, target, refusalBeforeClear: null, observed, readBackError, writeError);
+        return Derive(groupName, target, refusalBeforeClear: null, observed, readBackError, writeError, membersWritten);
     }
 
     /// <summary>
@@ -273,13 +277,18 @@ public static class Comms10kReplaceWriter
     /// outcome: a failed batch whose read-back matches the target is a success, because the batch
     /// may have applied before the error surfaced and the membership is what decides.
     /// </param>
+    /// <param name="membersWritten">
+    /// The total established by acknowledged add calls, or null when that evidence is absent.
+    /// Observed membership alone cannot establish how many members this operation wrote.
+    /// </param>
     public static Comms10kUpdateResult Derive(
         string groupName,
         IReadOnlyList<Guid> target,
         string? refusalBeforeClear,
         ReadBack? observed,
         string? readBackError,
-        string? writeError)
+        string? writeError,
+        int? membersWritten = null)
     {
         ArgumentNullException.ThrowIfNull(target);
 
@@ -289,6 +298,7 @@ public static class Comms10kReplaceWriter
             {
                 Outcome = Comms10kOutcome.RefusedBeforeAnyChange,
                 Success = false,
+                MembersRequested = target.Count,
                 MembersWritten = 0,
                 FinalCount = null,
                 Message = $"Refused before any change - {groupName} was not modified. {refusalBeforeClear}"
@@ -303,7 +313,8 @@ public static class Comms10kReplaceWriter
             {
                 Outcome = Comms10kOutcome.CouldNotConfirm,
                 Success = false,
-                MembersWritten = target.Count,
+                MembersRequested = target.Count,
+                MembersWritten = membersWritten,
                 FinalCount = null,
                 Message =
                     $"COULD NOT CONFIRM. The replace of {groupName} was started and its result could not be read "
@@ -319,22 +330,23 @@ public static class Comms10kReplaceWriter
         var actual = new HashSet<Guid>(observed.MemberAttribute);
         actual.UnionWith(observed.PrimaryGroup);
 
+        var writeNote = string.IsNullOrWhiteSpace(writeError) ? "" : $" The write reported: {writeError}";
         if (actual.SetEquals(expected))
         {
             return new Comms10kUpdateResult
             {
                 Outcome = Comms10kOutcome.Succeeded,
                 Success = true,
-                MembersWritten = target.Count,
+                MembersRequested = target.Count,
+                MembersWritten = membersWritten,
                 FinalCount = actual.Count,
-                Message = $"Successfully updated {groupName}: {actual.Count} members."
+                Message = $"Successfully updated {groupName}: {actual.Count} members.{writeNote}"
             };
         }
 
         // Reported from the OBSERVED membership, never from which batches were believed to have
         // run. This is the one outcome that demands operator action, so it says what state the
         // list is in and what repairs it.
-        var writeNote = string.IsNullOrWhiteSpace(writeError) ? "" : $" The write reported: {writeError}";
         var hasUnapprovedPrimary = observed.PrimaryGroup.Any(guid => !expected.Contains(guid));
         var recovery = hasUnapprovedPrimary
             ? "The primary-group memberships outside the approved set cannot be removed by this operation. "
@@ -344,7 +356,8 @@ public static class Comms10kReplaceWriter
         {
             Outcome = Comms10kOutcome.PartlyApplied,
             Success = false,
-            MembersWritten = target.Count,
+            MembersRequested = target.Count,
+            MembersWritten = membersWritten,
             FinalCount = actual.Count,
             Message =
                 $"PARTLY APPLIED. {groupName} now holds {actual.Count} members and the uploaded file asked for "

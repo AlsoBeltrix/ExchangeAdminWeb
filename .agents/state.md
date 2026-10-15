@@ -8,39 +8,38 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - psl-1 reviewed; resume C11
+### Comms-10k / Defender remediation - C11 implemented; independent review next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
 `.agents/decisions.md` owns sequential fresh Sol 6.1 implementation at max and independent
-Astra workflow review at max. C9, C1, C10, C3 and C4 have independent review receipts.
-C4's noncritical recovery-advice correction closes on coder-side proof at
-`6d061fdc66837d5be9f674a36b0f44b8441c723e`; `.agents/review/findings/cdr-c4.md` owns its
-verdict and correction. Comms-10k remains `1.4.10`.
+Astra workflow review at max. C9, C1, C10, C3 and C4 have independent review receipts;
+`.agents/review/findings/cdr-c4.md` owns its P2 correction closed on coder-side proof.
+The separately approved shared Exchange psl-1 is independently reviewed; its record at
+`.agents/review/findings/psl-1.md` owns the evidence and verdict.
 
-The owner separately approved `docs/PowerShellCommandLifecycle-Plan.md` at this committed
-boundary. psl-1 now repairs InvokeOptional's terminating-failure cleanup while preserving
-optional error consumption, exception identity/diagnostic recovery and existing retry rules.
-Tracker evidence is classified before cleanup. The actual Conference Rooms sequence reproduced a duplicate
-effect before repair. Sixteen new SDK cases and seven compiled mutation groups prove the
-contracts (29 assertion failures, exact-byte/hash/mtime restoration); the restored focused
-run passed 34/34. The full restored gate passed: Release build 0 errors; 3,956 tests passed /
-3 skipped / 0 failed; format, diff and staged ASCII passed.
-The base app is `2.27.2`; no Conference Rooms production code or module version changed.
-psl-1 is committed at `22afbf912cb06c775f2679203b7463ff9ce4fcac`. Independent Astra review
-returned PASS with no in-scope findings and a fresh 34/34 focused pass.
-`.agents/review/findings/psl-1.md` owns the evidence, review packet and verdict.
+C11 separates requested membership, acknowledged adds and observed final membership. Lost
+write evidence stays unknown, including a fresh processor after restart and a failed add
+whose read-back is empty or complete. Restart completion names Interrupted, preserves its
+persisted reason and warns that the group may be empty or partial. Refusals before dispatch
+retain a proven zero. No page or shared runner behavior changed. Comms-10k is `1.4.11`;
+the base app remains `2.27.2`. `.agents/review/findings/cdr-c11.md` owns scope, causes,
+implementation, the Constitution review packet and detailed evidence.
 
-Next: resume C11 with a fresh Sol 6.1 implementer and independent Astra review. The original plan's
-fifteen remaining findings are still pending. C11 owns interrupted-write count labels;
-C5 job visibility, C2 authorization snapshots, C7 broad reentry/atomic parsing and rejected-row
-original-text consistency remain pending. D2 precedes D7 to supply per-call diagnostics.
-The audit inventory is `.agents/review/powershell-replay-audit.md`; psl-2/psl-3 remain separately
-deferred Licensing/DHCP diagnostic follow-ups.
-The psl-1 review also recorded pre-existing pooled-query classification loss as psl-4;
-its record in `.agents/review/findings/` owns the evidence and proposed guard. It is not approved.
+All 16 new cases plus the adapted writer case failed intended assertions in eight compiled
+mutation groups (34 failures); exact-byte MD5/SHA256 restoration and advanced mtimes verified.
+The restored focused Comms run passed 218/218. The single restored final gate passed: Release
+build 40 existing warnings / 0 errors; format; full suite 3,972 passed / 3 skipped / 0 failed;
+diff and staged ASCII checks. Independent review remains pending.
 
-This implementation began on clean master `76ba54599fdfbb3810b488fdc88478f4f79c268a`.
+Next gate: fresh independent Astra max workflow review of C11. C5 follows that gate; the
+fourteen original findings after C11 remain pending. C5 job visibility/Submitted wording,
+C2 fresh authorization/write boundaries, C7 handler reentry/atomic CSV/original rejection
+text, C8 export safety/audit and C6 ticket display remain separate. D2 precedes D7.
+The shared PowerShell audit inventory is `.agents/review/powershell-replay-audit.md`;
+psl-2/3/4 remain separately recorded, unapproved follow-ups.
+
+C11 began on clean master `958cce71a973f45afa9cb3c892ce286e287aa930`.
 Both origin and github master were checked live at
 `885397981d7550afebf6518ef21b4fc54b062859` on 2026-10-15. The intervening work remains local.
 Historical "unpushed since 96cdb89" assertions below are superseded. No work branch is in

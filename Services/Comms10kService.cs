@@ -371,23 +371,24 @@ public class Comms10kService
     {
         var memberGuids = resolvedMembers.Select(member => member.ObjectGuid).Distinct().ToArray();
         if (memberGuids.Length == 0 || memberGuids.Contains(Guid.Empty))
-            return new Comms10kUpdateResult { Success = false, Message = "Cannot replace with an empty member list." };
+            return new Comms10kUpdateResult { Success = false, MembersRequested = memberGuids.Length, MembersWritten = 0, Message = "Cannot replace with an empty member list." };
 
         var group = TargetGroupDisplayName;
         if (!IsConfigured)
-            return new Comms10kUpdateResult { Success = false, Message = "Module not configured." };
+            return new Comms10kUpdateResult { Success = false, MembersRequested = memberGuids.Length, MembersWritten = 0, Message = "Module not configured." };
 
         var creds = await _moduleCredentials.GetCredentialsAsync("Comms10k", "Comms-10k AD membership replacement");
         if (creds is null)
-            return new Comms10kUpdateResult { Success = false, Message = "AD credentials unavailable." };
+            return new Comms10kUpdateResult { Success = false, MembersRequested = memberGuids.Length, MembersWritten = 0, Message = "AD credentials unavailable." };
 
         return await Task.Run(() =>
         {
             var outcome = RunReplace(group, memberGuids, creds.Value);
 
             _logger.LogInformation(
-                "Comms10k replace by {User} on {Group}: {Outcome}, {Written} written, final {Final}",
-                performedBy, group, outcome.Outcome, outcome.MembersWritten,
+                "Comms10k replace by {User} on {Group}: {Outcome}, {Requested} requested, {Written} written (acknowledged adds), final {Final}",
+                performedBy, group, outcome.Outcome, outcome.MembersRequested?.ToString() ?? "unknown",
+                outcome.MembersWritten?.ToString() ?? "unknown",
                 outcome.FinalCount?.ToString() ?? "unknown");
 
             return outcome;
@@ -854,8 +855,15 @@ public class Comms10kUpdateResult
     /// <summary>What actually happened. See <see cref="Comms10kOutcome"/>.</summary>
     public Comms10kOutcome Outcome { get; set; } = Comms10kOutcome.RefusedBeforeAnyChange;
 
-    /// <summary>How many members the write was asked to produce - the size of the uploaded, resolved list.</summary>
-    public int MembersWritten { get; set; }
+    /// <summary>The resolved set size requested for this replace, or null when it is unavailable.</summary>
+    public int? MembersRequested { get; set; }
+
+    /// <summary>
+    /// Members covered by a complete sequence of acknowledged adds; zero for a refusal before
+    /// dispatch. Null when the write threw or its result was lost. This is never inferred from
+    /// final membership, which may include pre-existing or concurrently written members.
+    /// </summary>
+    public int? MembersWritten { get; set; }
 
     /// <summary>
     /// The membership observed by the read-back. <b>Null, never a guess</b>, when the read-back

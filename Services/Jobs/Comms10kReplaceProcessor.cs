@@ -210,6 +210,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
             {
                 Success = false,
                 Outcome = Comms10kOutcome.RefusedBeforeAnyChange,
+                MembersWritten = 0,
                 Message = string.IsNullOrWhiteSpace(reason) ? "Address resolution failed before any change." : reason,
             });
         }
@@ -224,6 +225,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
 
     private void RecordResult(BulkJob job, Comms10kReplaceJobPayload payload, Comms10kUpdateResult result)
     {
+        result.MembersRequested ??= _resolvedMembers?.Count;
         _result = result;
         if (_mutationAudited)
             return;
@@ -236,9 +238,10 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
             extra: new Dictionary<string, object?>
             {
                 ["Outcome"] = result.Outcome.ToString(),
-                ["MemberCount"] = _resolvedMembers?.Count ?? 0,
-                ["MembersWritten"] = result.MembersWritten,
-                ["FinalCount"] = result.FinalCount?.ToString() ?? "UNKNOWN - read-back failed",
+                ["MembersRequested"] = (object?)result.MembersRequested ?? "UNKNOWN - resolved set unavailable",
+                ["MembersWritten"] = (object?)result.MembersWritten ?? "UNKNOWN - write completion not confirmed",
+                ["WrittenCountBasis"] = "Acknowledged adds; final membership is a separate observation",
+                ["FinalCount"] = result.FinalCount?.ToString() ?? "UNKNOWN - no confirmed read-back",
                 ["SourceFile"] = payload.SourceFileName,
             }));
     }
@@ -251,8 +254,11 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
     {
         ArgumentNullException.ThrowIfNull(job);
 
-        var outcome = _result?.Outcome.ToString() ?? "did not complete";
+        var outcome = _result?.Outcome.ToString()
+            ?? (job.Status == BulkJobStatus.Interrupted ? "Interrupted" : $"No replace result recorded ({job.Status})");
         var detail = _result?.Message ?? job.Message ?? "No detail was recorded.";
+        if (_result is null && job.Status == BulkJobStatus.Interrupted)
+            detail += " The replace was interrupted without a recorded result. The group may be empty or partial. Check the group directly before deciding how to recover.";
 
         try
         {
@@ -268,11 +274,12 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
                     // applied" and "could not confirm" are the two that need acting on.
                     ["Outcome"] = outcome,
                     ["Detail"] = detail,
-                    ["Members written"] = _result?.MembersWritten.ToString() ?? "0",
+                    ["Members requested"] = _result?.MembersRequested?.ToString() ?? "UNKNOWN - resolved set unavailable",
+                    ["Members written (acknowledged adds)"] = _result?.MembersWritten?.ToString() ?? "UNKNOWN - write completion not confirmed",
                     // Never a removal count: clear-then-fill does not read the prior
-                    // membership, so it knows what it wrote and what the group now holds,
-                    // and nothing about what left.
-                    ["Final membership"] = _result?.FinalCount?.ToString() ?? "UNKNOWN - read-back failed",
+                    // membership. Write acknowledgement and observed final membership are
+                    // separate evidence, and neither establishes what left.
+                    ["Final membership"] = _result?.FinalCount?.ToString() ?? "UNKNOWN - no confirmed read-back",
                 },
                 _result?.Success == true ? null : detail);
         }
