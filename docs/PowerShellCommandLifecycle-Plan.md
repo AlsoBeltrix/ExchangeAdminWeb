@@ -1,6 +1,6 @@
 # Optional Exchange command replay - Plan
 
-Status: **APPROVED - owner 2026-10-15: "Approve the additional slice (Recommended)".**
+Status: **In progress - owner 2026-10-15: "Approve the additional slice (Recommended)".**
 
 ## Exec summary
 
@@ -75,5 +75,13 @@ Sol/Astra arrangement in the executive summary. C4's review correction is commit
 `6d061fdc66837d5be9f674a36b0f44b8441c723e`; implement and review psl-1 next, then resume C11.
 The original twenty findings retain their separate approval and ordering.
 The Licensing and DHCP diagnostic issues, psl-2/psl-3, are recorded separately and excluded.
-Implementation is next. Branch policy remains direct master; push requires separate
-authority, and any work-branch closeout must follow the git playbook if that policy changes.
+The local helper repair and sixteen real-SDK regression cases are implemented. The actual
+Conference Rooms sequence reproduced the duplicate effect before repair. Seven compiled mutation
+groups produced 29 assertion failures with exact-byte/hash/mtime restoration; the restored
+focused run passed 34/34. The base app is 2.27.2; no module production code changed.
+The final restored gate passed: build, 3,956 tests passed / 3 skipped / 0 failed, format,
+diff and staged ASCII. Independent Astra workflow review is next;
+`.agents/review/findings/psl-1.md` owns its exact proof and review packet. Then resume C11,
+with the original fifteen remaining findings still pending under their separate plan.
+Branch policy remains direct master; push requires separate authority, and any work-branch
+closeout must follow the git playbook if that policy changes.

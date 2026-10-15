@@ -150,8 +150,8 @@ public abstract class ExchangeServiceBase
     // Invoke helpers
     // -------------------------------------------------------------------------
 
-    // Key under which Invoke stashes the captured PowerShell error messages on a thrown
-    // InvalidOperationException, so callers (e.g. RunAsync) can recover primary + secondary
+    // Key under which invoke helpers stash captured PowerShell error messages on a thrown
+    // exception, so callers (e.g. RunAsync) can recover primary + secondary
     // detail AFTER the error stream itself has been cleared. See ResolvePsErrors.
     internal const string PsErrorsDataKey = "PsErrors";
 
@@ -173,7 +173,7 @@ public abstract class ExchangeServiceBase
 
     /// <summary>
     /// Recover the captured PowerShell error messages from an exception thrown by
-    /// <see cref="Invoke(PowerShell, ConnectionErrorTracker)"/> - the structured detail in
+    /// an invoke helper - the structured detail in
     /// <see cref="PsErrorsDataKey"/> if present, else the exception message.
     /// </summary>
     internal static (string primary, string? detail) ResolvePsErrors(Exception ex)
@@ -267,11 +267,27 @@ public abstract class ExchangeServiceBase
 
     protected static Collection<PSObject> InvokeOptional(PowerShell ps, ConnectionErrorTracker tracker)
     {
-        var result = ps.Invoke();
-        ClassifyConnectionError(tracker, null, ps);
-        ps.Streams.Error.Clear();
-        ps.Commands.Clear();
-        return result;
+        try
+        {
+            var result = ps.Invoke();
+            ClassifyConnectionError(tracker, null, ps);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            // Optional non-terminating errors are consumed, but a terminating failure must
+            // retain its diagnostics for RunAsync after this shared pipeline is cleaned.
+            var psErrors = SnapshotErrorMessages(ps);
+            ClassifyConnectionError(tracker, ex, ps);
+            if (psErrors.Count > 0)
+                ex.Data[PsErrorsDataKey] = psErrors.ToArray();
+            throw;
+        }
+        finally
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+        }
     }
 
     protected static Collection<PSObject> InvokeOptional(PowerShell ps)

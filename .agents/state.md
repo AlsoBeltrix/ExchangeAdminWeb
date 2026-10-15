@@ -8,49 +8,43 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C4 review correction verified; psl-1 next
+### Comms-10k / Defender remediation - psl-1 verified locally; independent review next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
 `.agents/decisions.md` owns sequential fresh Sol 6.1 implementation at max and independent
-Astra workflow review at max. C9, C1, C10 and C3 are independently reviewed.
+Astra workflow review at max. C9, C1, C10, C3 and C4 have independent review receipts.
+C4's noncritical recovery-advice correction closes on coder-side proof at
+`6d061fdc66837d5be9f674a36b0f44b8441c723e`; `.agents/review/findings/cdr-c4.md` owns its
+verdict and correction. Comms-10k remains `1.4.10`.
 
-C4 binds approval, runtime resolution, actual member adds and strict batched read-back to
-GUID identities. Its independent Astra review confirmed those boundaries but raised one P2:
-a concurrent unapproved primary member was correctly reported as PartlyApplied while the
-message promised that the same CSV would repair it. The next attempt instead refuses.
-The correction now requires those primary memberships to be corrected before validation
-and resubmission; row, audit and notification preserve the advice and write diagnostics.
-The compiled guard proof, restored focused test and full restored gate passed (3,940 passed /
-3 skipped / 0 failed; build, format, diff and staged ASCII passed).
-`.agents/review/findings/cdr-c4.md` owns the original verdict, evidence and correction.
-This noncritical correction closes on coder-side proof; no second review round is required.
-Comms-10k is `1.4.10`; the base app remains `2.27.1`.
+The owner separately approved `docs/PowerShellCommandLifecycle-Plan.md` at this committed
+boundary. psl-1 now repairs InvokeOptional's terminating-failure cleanup while preserving
+optional error consumption, exception identity/diagnostic recovery and existing retry rules.
+Tracker evidence is classified before cleanup. The actual Conference Rooms sequence reproduced a duplicate
+effect before repair. Sixteen new SDK cases and seven compiled mutation groups prove the
+contracts (29 assertion failures, exact-byte/hash/mtime restoration); the restored focused
+run passed 34/34. The full restored gate passed: Release build 0 errors; 3,956 tests passed /
+3 skipped / 0 failed; format, diff and staged ASCII passed.
+The base app is `2.27.2`; no Conference Rooms production code or module version changed.
+`.agents/review/findings/psl-1.md` owns the evidence and Constitution review packet.
 
-The correction began on clean master `823b72b0fcf5662a1e09c21cd6925dfa729c14ac`. Origin master
-was rechecked at `885397981d7550afebf6518ef21b4fc54b062859` on 2026-10-15; github's last
-recorded receipt is also `8853979`. The intervening work remains local. Historical "unpushed
-since 96cdb89" assertions below are superseded. No work branch is in use; push policy is ask.
+Next: independent Astra max workflow review of psl-1, then resume C11. The original plan's
+fifteen remaining findings are still pending. C11 owns interrupted-write count labels;
+C5 job visibility, C2 authorization snapshots, C7 broad reentry/atomic parsing and rejected-row
+original-text consistency remain pending. D2 precedes D7 to supply per-call diagnostics.
+The audit inventory is `.agents/review/powershell-replay-audit.md`; psl-2/psl-3 remain separately
+deferred Licensing/DHCP diagnostic follow-ups.
 
-Next: implement and independently review the separately approved psl-1 slice below, then
-resume C11. C4's review correction is committed at `6d061fdc66837d5be9f674a36b0f44b8441c723e`.
-C11 owns interrupted-write count labels; C5 job visibility, C2 authorization snapshots,
-C7 broad reentry/atomic parsing and rejected-row original-text consistency remain pending.
-D2 precedes D7 to supply per-call diagnostics. No PowerShell implementation is part of C4.
+This implementation began on clean master `76ba54599fdfbb3810b488fdc88478f4f79c268a`.
+Both origin and github master were checked live at
+`885397981d7550afebf6518ef21b4fc54b062859` on 2026-10-15. The intervening work remains local.
+Historical "unpushed since 96cdb89" assertions below are superseded. No work branch is in
+use; push policy is ask.
 
 Standing boundaries: no live AD probe, tenant write, deployment, push, protection check,
 locking or self-review. Installed-cmdlet interoperability and browser rendering remain
-unverified. The known module-spec 2.0 / June 25 versus app 2.27.1 drift remains flagged.
-
-### Additional PowerShell replay finding - approved; implementation next
-
-The owner's 2026-10-15 interim Claude review prompted a read-only Astra audit. It confirmed
-one shared InvokeOptional replay root used by Conference Rooms; disposal and existing cleanup
-explain many other lexical matches. The inventory is in `.agents/review/powershell-replay-audit.md`.
-The owner separately approved `docs/PowerShellCommandLifecycle-Plan.md` at the next committed
-boundary using the same Sol/Astra workflow; `.agents/decisions.md` records the scope. Implement
-and review psl-1 now, then resume the original twenty-finding plan at C11. psl-1 owns the replay
-finding; psl-2/psl-3 are separate Licensing/DHCP diagnostic follow-ups that remain deferred.
+unverified. The known module-spec 2.0 / June 25 versus app 2.27.2 drift remains flagged.
 
 ### Defender review stream - NINE findings over four rounds, all fixed; round 5 is out
 

@@ -44,7 +44,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [cdr-c10](findings/cdr-c10.md) | MEDIUM - repeated batch rows reject one person as ambiguous | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [v] | [cdr-c3](findings/cdr-c3.md) | HIGH - partial resolution writes a shortened list and refusals lose their audit/reason | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [v] | [cdr-c4](findings/cdr-c4.md) | HIGH - replacement can write a member set the operator did not approve | Independent review P2 resolved by coder proof; push pending | master | native / gpt-6-astra / max |
-| [ ] | [psl-1](findings/psl-1.md) | HIGH - failed optional Exchange command can replay in the next calendar-permission operation | Approved; implementation next | master | native / gpt-6-astra / max audit |
+| [~] | [psl-1](findings/psl-1.md) | HIGH - failed optional Exchange command can replay in the next calendar-permission operation | Verified locally on master; independent review pending | master | native / gpt-6-astra / max audit; implementation review pending |
 | [ ] | [psl-2](findings/psl-2.md) | MEDIUM - licensing failure can select an earlier row's error | Recorded follow-up; not approved | - | native / gpt-6-astra / max audit |
 | [ ] | [psl-3](findings/psl-3.md) | MEDIUM - DHCP mutation report can include stale discovery errors | Recorded follow-up; not approved | - | native / gpt-6-astra / max audit |
 
