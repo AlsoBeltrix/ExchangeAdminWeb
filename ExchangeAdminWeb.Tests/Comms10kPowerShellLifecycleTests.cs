@@ -87,7 +87,7 @@ public class Comms10kPowerShellLifecycleTests
     {
         public const string NewMember = "CN=New member,DC=example,DC=test";
         public static readonly Comms10kTarget Target = new(
-            "CN=Local broadcast,DC=example,DC=test", new Guid("7c831a99-40aa-4817-8d25-49aca3494bbb"));
+            "CN=Local broadcast,DC=example,DC=test", Comms10kService.TargetGroupGuid);
 
         private readonly Runspace _runspace;
         public PowerShell PowerShell { get; }
@@ -127,6 +127,7 @@ public class Comms10kPowerShellLifecycleTests
                 }
                 [pscustomobject]@{
                     DistinguishedName = 'CN=Local broadcast,DC=example,DC=test'
+                    ObjectGUID = $global:C9TargetGuid
                     SID = 'S-1-5-21-100-200-300-4242'
                     member = $global:C9Members.ToArray()
                 }
@@ -140,6 +141,7 @@ public class Comms10kPowerShellLifecycleTests
             _runspace = RunspaceFactory.CreateRunspace(state);
             _runspace.Open();
             _runspace.SessionStateProxy.SetVariable("C9Calls", Calls);
+            _runspace.SessionStateProxy.SetVariable("C9TargetGuid", Target.ObjectGuid);
             _runspace.SessionStateProxy.SetVariable("C9FailOperation", failingOperation);
             _runspace.SessionStateProxy.SetVariable("C9Members", new List<string>
             {

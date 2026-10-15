@@ -157,7 +157,7 @@ public class Comms10kReplaceSequenceTests
     public void TheWriteBindsToTheReReadIdentity_NotTheConfiguredName()
     {
         // A rename or a move between the resolve and the write retargets nothing: the GUID is what
-        // the module is bound to, and the DN it writes is the one the directory returns now.
+        // the module is bound to for every command; the returned DN is descriptive only.
         var body = MemberBody(ServiceSource(), "private Comms10kUpdateResult PerformReplace(");
 
         Assert.Contains("ClearMembers(ps, credential, confirmed)", body, StringComparison.Ordinal);

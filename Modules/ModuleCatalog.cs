@@ -688,6 +688,7 @@ public sealed class ModuleCatalog
             // ticket check (docs/ProgressCoverage-Plan.md S3).
             // 1.3.3: the three silent reads report - the member preview, the full export, and
             // the CSV upload parse (docs/ProgressCoverage-Plan.md S5).
+            // 1.4.6: the target and all group operations bind to the fixed ObjectGUID (C1).
             // 1.4.5: failed PowerShell commands are discarded before retry or read-back (C9).
             // 1.4.4: a duplicate row is reported when the address it duplicates did NOT resolve.
             // The "a duplicate is not an error" rule held only when the first one resolved.
@@ -703,14 +704,13 @@ public sealed class ModuleCatalog
             // addresses and had no way to obtain the rest - the stakeholder's "requiring us to
             // manually identify the affected users". Owner ruling 2026-10-12: an address with no
             // exact match is not a match, so the fix is reporting, NOT widening the lookup keys.
-            Version = "1.4.5",
+            Version = "1.4.6",
             MainPermission = new(
                 "Access",
                 "Comms10k",
                 "Open the module and replace the entire membership of the company-wide broadcast distribution list from an uploaded CSV; anyone absent from the file is removed.",
                 FailClosed: true),
             ConfigFields = [
-                new("TargetGroupName", "Target Group", "AD group name to manage", FieldType: ConfigFieldType.AdGroup),
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used by Comms-10k operations")
             ]
         },

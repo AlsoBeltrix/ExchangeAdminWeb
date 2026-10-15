@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C9 verified; C1 next
+### Comms-10k / Defender remediation - C1 implemented; independent review pending
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved. That plan owns the slice order and
@@ -16,22 +16,26 @@ implementation table; `.agents/decisions.md` owns the Sol 6.1 / Astra dispatch e
 One fresh Sol 6.1 agent at max implements each finding, sequentially; Astra at max independently
 reviews the affected workflow. C9 landed in `f530c62` and independent Astra review endorsed it;
 implementation, guard proof and review are recorded in `.agents/review/findings/cdr-c9.md`.
+C1 now pins every target lookup, clear, add and read-back to the approved ObjectGUID, removes
+the target setting and validates exactly one matching directory result. Its implementation,
+guard proof and review packet are in `.agents/review/findings/cdr-c1.md`; independent Astra
+workflow review is pending. Comms-10k is `1.4.6`; no shared/app version change.
 
-Implementation baseline: clean `master` at `8581484`; both `origin` and `github` remained at
-`8853979` when verified on 2026-10-15. The intervening approval bookkeeping is local.
+Current slice baseline: clean `master` at `75b2d98`; both `origin` and `github` remained at
+`8853979` when verified on 2026-10-15. The intervening bookkeeping and implementation are local.
 The old "unpushed since 96cdb89" assertions below are historical and superseded by this receipt.
 New implementation commits will be local until separately authorized under push policy `ask`.
 No work branch is in use. The previous handoff is preserved in `docs/history/state-archive.md`
 under Archived 2026-10-15 - remediation approval.
 
-C9's baseline Release build and full per-slice gate passed. Its actual-PowerShell-SDK guards
-were mutation-proven against compiled pre-fix behavior, followed by byte-identical restore
-and mtime update. Counts, hashes, the LF normalization receipt and the review packet live in
-the finding record; `.agents/review/index.md` tracks the slice.
+C1's Release build, full Release solution tests (3,875 passed / 3 skipped / 0 failed), format,
+diff and ASCII checks passed. All 31 new cases were mutation-proven after successful compile,
+with byte-identical restoration/hash and mtime updates. The prior C9 lifecycle guards also
+passed. Counts, hashes and limitations live in the finding record; `.agents/review/index.md`
+tracks both slices. Page line positions were preserved, so no registry anchors moved.
 
-Next: C1, pinning the target and every group operation to the approved ObjectGUID.
-The C9 trial established a passing baseline, regression proof and independent review. Continue
-the approved slice order. C11 also owns the ordinary interrupted-write count-label case found
+Next: independent Astra workflow review of C1 before C10. Continue the approved slice order
+after that review. C11 also owns the ordinary interrupted-write count-label case found
 by C9's reviewer; the plan carries its reproduction and required coverage.
 
 Standing boundaries: no live AD probe, tenant write or deployment. The approval does not widen

@@ -473,7 +473,7 @@ part of this implementation approval.
 | Finding | Implementation | Evidence |
 |---|---|---|
 | C9 | Implemented / independently reviewed (`f530c62`) | [cdr-c9](../.agents/review/findings/cdr-c9.md) |
-| C1 | Pending | |
+| C1 | Implemented; independent workflow review pending | [cdr-c1](../.agents/review/findings/cdr-c1.md) |
 | C10 | Pending | |
 | C3 | Pending | |
 | C4 | Pending | |

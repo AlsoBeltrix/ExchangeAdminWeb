@@ -5,6 +5,10 @@ namespace ExchangeAdminWeb.Services;
 
 public class Comms10kService
 {
+    // Owner-approved single-target/environment-neutrality exception, 2026-10-15.
+    internal static readonly Guid TargetGroupGuid = new("87663f48-10a7-44b3-8da3-0a7e4cc3de0b");
+    private const string TargetGroupDisplayName = "Comms-10k";
+
     private readonly ILogger<Comms10kService> _logger;
     private readonly ModuleConfigService _moduleConfig;
     private readonly ModuleCredentialService _moduleCredentials;
@@ -21,19 +25,9 @@ public class Comms10kService
         _config = config;
     }
 
-    private string? TargetGroup
-    {
-        get
-        {
-            var val = _moduleConfig.GetValue("Comms10k", "TargetGroupName");
-            if (_moduleConfig.IsModuleCorrupt("Comms10k")) return null;
-            return val;
-        }
-    }
-
     private bool HasCredentialSecret => int.TryParse(_moduleConfig.GetValue("Comms10k", "DelineaSecretId"), out var id) && id > 0;
 
-    public bool IsConfigured => !string.IsNullOrEmpty(TargetGroup) && HasCredentialSecret;
+    public bool IsConfigured => !_moduleConfig.IsModuleCorrupt("Comms10k") && HasCredentialSecret;
 
     /// <summary>
     /// Lists the target group's membership: <paramref name="limit"/> rows for the page's preview,
@@ -64,9 +58,8 @@ public class Comms10kService
     /// </remarks>
     public async Task<Comms10kMemberList> GetMembersAsync(int? limit = null)
     {
-        var group = TargetGroup;
-        if (string.IsNullOrEmpty(group))
-            throw new InvalidOperationException("Comms10k module is not configured. Set TargetGroupName in Module Config.");
+        if (!IsConfigured)
+            throw new InvalidOperationException("Comms-10k AD credentials are not configured in Admin Settings.");
 
         var creds = await _moduleCredentials.GetCredentialsAsync("Comms10k", "Comms-10k AD membership lookup");
         if (creds is null)
@@ -74,9 +67,9 @@ public class Comms10kService
 
         return await Task.Run(() =>
         {
-            var dns = QueryMemberDns(creds.Value, group);
+            var dns = QueryMemberDns(creds.Value);
 
-            var result = new Comms10kMemberList { GroupName = group, TotalCount = dns.Count };
+            var result = new Comms10kMemberList { GroupName = TargetGroupDisplayName, TotalCount = dns.Count };
 
             // The limit is applied to the DN LIST, before any detail is fetched - that is the
             // point of doing it here. Applying it after resolution would resolve ten thousand
@@ -95,7 +88,7 @@ public class Comms10kService
     /// who hold it as their primary group. Internal virtual TEST SEAM.
     /// </summary>
     internal virtual IReadOnlyList<string> QueryMemberDns(
-        (string username, string password, string domain) creds, string group)
+        (string username, string password, string domain) creds)
     {
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -109,23 +102,25 @@ public class Comms10kService
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
 
+        return ReadMemberDns(ps, credential);
+    }
+
+    // Kept separate from runspace creation so the actual command wiring can run locally in tests.
+    internal static IReadOnlyList<string> ReadMemberDns(PowerShell ps, PSCredential credential)
+    {
         // Get-ADGroup -Properties member, NOT Get-ADGroupMember: the linked attribute comes back
         // by range retrieval and is not subject to the ADWS MaxGroupOrMemberEntries cap, which is
         // what made this page throw on the real group.
         ps.Streams.Error.Clear();
         ps.AddCommand("Get-ADGroup")
-          .AddParameter("Identity", group)
+          .AddParameter("Identity", TargetGroupGuid.ToString())
           .AddParameter("Properties", new[] { "member", "SID" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         var groupResult = InvokeAndClear(ps);
 
-        if (ps.HadErrors || groupResult.Count == 0)
-        {
-            var first = ps.Streams.Error.FirstOrDefault()?.ToString() ?? "the group was not returned";
-            ps.Streams.Error.Clear();
-            throw new InvalidOperationException($"The group's membership could not be read: {first}");
-        }
+        ThrowIfErrors(ps, "the group's membership could not be read");
+        RequirePinnedTarget(groupResult);
 
         var dns = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -250,8 +245,7 @@ public class Comms10kService
     /// </remarks>
     public async Task<Comms10kResolveResult> ResolveEmailsAsync(List<string> emails)
     {
-        var group = TargetGroup;
-        if (string.IsNullOrEmpty(group))
+        if (!IsConfigured)
             return new Comms10kResolveResult { Success = false, Message = "Module not configured." };
 
         var creds = await _moduleCredentials.GetCredentialsAsync("Comms10k", "Comms-10k AD user resolution");
@@ -367,8 +361,8 @@ public class Comms10kService
         if (resolvedDns.Count == 0)
             return new Comms10kUpdateResult { Success = false, Message = "Cannot replace with an empty member list." };
 
-        var group = TargetGroup;
-        if (string.IsNullOrEmpty(group))
+        var group = TargetGroupDisplayName;
+        if (!IsConfigured)
             return new Comms10kUpdateResult { Success = false, Message = "Module not configured." };
 
         var creds = await _moduleCredentials.GetCredentialsAsync("Comms10k", "Comms-10k AD membership replacement");
@@ -414,7 +408,7 @@ public class Comms10kService
         Comms10kTarget target;
         try
         {
-            target = QueryTargetGroup(creds, group);
+            target = QueryTargetGroup(creds);
         }
         catch (Exception ex)
         {
@@ -456,8 +450,8 @@ public class Comms10kService
 
         // Re-read by objectGUID. The Constitution requires a re-read before write where
         // practical, and here it is one cheap query that also proves the object still exists. It
-        // adopts the DN the directory returns NOW, so a rename or a move between the resolve and
-        // the write retargets nothing - the GUID is what we are bound to.
+        // verifies the pinned GUID again. Every subsequent operation keeps using that GUID,
+        // so a rename, move or replacement at the old DN cannot retarget the write.
         Comms10kTarget confirmed;
         try
         {
@@ -523,9 +517,10 @@ public class Comms10kService
     /// <summary>Empties the group's <c>member</c> attribute. One operation, whatever the size.</summary>
     internal static void ClearMembers(PowerShell ps, PSCredential credential, Comms10kTarget target)
     {
+        var identity = PinnedIdentity(target.ObjectGuid);
         ps.Streams.Error.Clear();
         ps.AddCommand("Set-ADGroup")
-          .AddParameter("Identity", target.DistinguishedName)
+          .AddParameter("Identity", identity)
           .AddParameter("Clear", "member")
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
@@ -537,9 +532,10 @@ public class Comms10kService
     internal static void AddMemberBatch(
         PowerShell ps, PSCredential credential, Comms10kTarget target, IReadOnlyList<string> batch)
     {
+        var identity = PinnedIdentity(target.ObjectGuid);
         ps.Streams.Error.Clear();
         ps.AddCommand("Set-ADGroup")
-          .AddParameter("Identity", target.DistinguishedName)
+          .AddParameter("Identity", identity)
           .AddParameter("Add", new System.Collections.Hashtable { { "member", batch.ToArray() } })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
@@ -560,17 +556,17 @@ public class Comms10kService
     internal static Comms10kReplaceWriter.ReadBack ReadBackMembers(
         PowerShell ps, PSCredential credential, Comms10kTarget target)
     {
+        var identity = PinnedIdentity(target.ObjectGuid);
         ps.Streams.Error.Clear();
         ps.AddCommand("Get-ADGroup")
-          .AddParameter("Identity", target.DistinguishedName)
+          .AddParameter("Identity", identity)
           .AddParameter("Properties", new[] { "member", "SID" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         var groupResult = InvokeAndClear(ps);
         ThrowIfErrors(ps, "the membership could not be read back");
 
-        if (groupResult.Count == 0)
-            throw new InvalidOperationException("the group was not returned by the read-back");
+        RequirePinnedTarget(groupResult);
 
         var members = new List<string>();
         if (groupResult[0].Properties["member"]?.Value is System.Collections.IEnumerable raw)
@@ -609,22 +605,39 @@ public class Comms10kService
     /// <summary>Re-reads the target by its objectGUID and returns the identity as it stands now.</summary>
     internal static Comms10kTarget ReadTargetByGuid(PowerShell ps, PSCredential credential, Guid objectGuid)
     {
+        var identity = PinnedIdentity(objectGuid);
         ps.Streams.Error.Clear();
         ps.AddCommand("Get-ADGroup")
-          .AddParameter("Identity", objectGuid.ToString())
+          .AddParameter("Identity", identity)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         var found = InvokeAndClear(ps);
         ThrowIfErrors(ps, "the group could not be re-read");
 
-        if (found.Count == 0)
-            throw new InvalidOperationException("the group no longer exists");
+        return RequirePinnedTarget(found);
+    }
+
+    private static string PinnedIdentity(Guid objectGuid)
+    {
+        if (objectGuid != TargetGroupGuid)
+            throw new InvalidOperationException("The target is not the fixed Comms-10k group.");
+
+        return TargetGroupGuid.ToString();
+    }
+
+    private static Comms10kTarget RequirePinnedTarget(System.Collections.ObjectModel.Collection<PSObject> found)
+    {
+        if (found.Count != 1)
+            throw new InvalidOperationException($"The fixed Comms-10k group lookup returned {found.Count} groups; exactly one is required.");
 
         var dn = found[0].Properties["DistinguishedName"]?.Value?.ToString();
+        var guidValue = found[0].Properties["ObjectGUID"]?.Value;
+        if (guidValue is not Guid guid || guid != TargetGroupGuid)
+            throw new InvalidOperationException("The lookup did not return the fixed Comms-10k group.");
         if (string.IsNullOrWhiteSpace(dn))
-            throw new InvalidOperationException("the re-read returned no distinguished name");
+            throw new InvalidOperationException("The fixed Comms-10k group lookup returned no distinguished name.");
 
-        return new Comms10kTarget(dn, objectGuid);
+        return new Comms10kTarget(dn, guid);
     }
 
     /// <summary>
@@ -657,18 +670,16 @@ public class Comms10kService
     }
 
     /// <summary>
-    /// Resolves the configured group NAME to its distinguished name and objectGUID, once, before
+    /// Resolves the fixed group GUID to its current distinguished name, once, before
     /// anything is written. Throws if the group cannot be resolved unambiguously. Internal virtual
     /// TEST SEAM.
     /// </summary>
     /// <remarks>
-    /// The Constitution requires a directory mutation to bind to an immutable identifier and
-    /// re-read before write where practical. Every call in this service used to pass the
-    /// configured NAME, so a rename, or a same-named object in another container, between one
-    /// operation and the next would retarget the write mid-sequence.
+    /// The fixed GUID is the owner-approved target, independent of any obsolete config row.
+    /// A failed or mismatched lookup refuses before the write sequence is entered.
     /// </remarks>
     internal virtual Comms10kTarget QueryTargetGroup(
-        (string username, string password, string domain) creds, string group)
+        (string username, string password, string domain) creds)
     {
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -682,33 +693,7 @@ public class Comms10kService
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
 
-        ps.Streams.Error.Clear();
-        ps.AddCommand("Get-ADGroup")
-          .AddParameter("Identity", group)
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
-        var found = InvokeAndClear(ps);
-
-        if (ps.HadErrors || found.Count == 0)
-        {
-            var first = ps.Streams.Error.FirstOrDefault()?.ToString() ?? "the group was not returned";
-            ps.Streams.Error.Clear();
-            throw new InvalidOperationException(first);
-        }
-
-        // More than one match is ambiguous, and fails closed rather than picking one.
-        if (found.Count > 1)
-            throw new InvalidOperationException($"'{group}' matched {found.Count} groups.");
-
-        var dn = found[0].Properties["DistinguishedName"]?.Value?.ToString();
-        var guidValue = found[0].Properties["ObjectGUID"]?.Value;
-
-        if (string.IsNullOrWhiteSpace(dn))
-            throw new InvalidOperationException($"'{group}' returned no distinguished name.");
-        if (guidValue is not Guid guid || guid == Guid.Empty)
-            throw new InvalidOperationException($"'{group}' returned no objectGUID.");
-
-        return new Comms10kTarget(dn, guid);
+        return ReadTargetByGuid(ps, credential, TargetGroupGuid);
     }
 
     private static PSCredential CreateCredential(string username, string password, string domain)
@@ -723,7 +708,7 @@ public class Comms10kService
 
 /// <summary>
 /// The resolved immutable identity of the target group. Every directory operation in a replace
-/// binds to this, never to the configured name.
+/// binds to its pinned ObjectGuid; the distinguished name is descriptive only.
 /// </summary>
 internal readonly record struct Comms10kTarget(string DistinguishedName, Guid ObjectGuid);
 
