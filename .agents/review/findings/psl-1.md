@@ -252,5 +252,5 @@ the full suite and mutations were not repeated. Live cmdlets, remote failures an
 behavior remain unverified.
 
 A separate pre-existing pooled-query tracker-loss finding was confirmed outside this scope;
-its dedicated follow-up record owns the details. It does not block psl-1 or authorize more code.
+`psl-4.md` owns the details. It does not block psl-1 or authorize more code.
 Next: resume the original approved remediation at C11. This commit remains local pending push.

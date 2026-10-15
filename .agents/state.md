@@ -37,6 +37,8 @@ C5 job visibility, C2 authorization snapshots, C7 broad reentry/atomic parsing a
 original-text consistency remain pending. D2 precedes D7 to supply per-call diagnostics.
 The audit inventory is `.agents/review/powershell-replay-audit.md`; psl-2/psl-3 remain separately
 deferred Licensing/DHCP diagnostic follow-ups.
+The psl-1 review also recorded pre-existing pooled-query classification loss as psl-4;
+its record in `.agents/review/findings/` owns the evidence and proposed guard. It is not approved.
 
 This implementation began on clean master `76ba54599fdfbb3810b488fdc88478f4f79c268a`.
 Both origin and github master were checked live at

@@ -47,6 +47,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [psl-1](findings/psl-1.md) | HIGH - failed optional Exchange command can replay in the next calendar-permission operation | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [ ] | [psl-2](findings/psl-2.md) | MEDIUM - licensing failure can select an earlier row's error | Recorded follow-up; not approved | - | native / gpt-6-astra / max audit |
 | [ ] | [psl-3](findings/psl-3.md) | MEDIUM - DHCP mutation report can include stale discovery errors | Recorded follow-up; not approved | - | native / gpt-6-astra / max audit |
+| [ ] | [psl-4](findings/psl-4.md) | MEDIUM - exceptional pooled queries lose connection/precheck classification | Recorded follow-up; not approved | - | native / gpt-6-astra / max |
 
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.
