@@ -307,6 +307,8 @@
 
     private Comms10kMemberList? preview;
     private List<string> parsedEmails = new();
+    // Query addresses stay trimmed; rejected rows retain the first occurrence's original text.
+    private Dictionary<string, string> originalEmailRows = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Rows rejected by the upload parse, before any directory lookup.
@@ -373,6 +375,8 @@
     /// </remarks>
     private async Task LoadPreview()
     {
+        if (isLoading) return;
+
         using var activity = Progress.Begin(
             "Comms-10k", "Loading the current member list", ActivitySize.Unknown);
 
@@ -408,6 +412,8 @@
     /// </remarks>
     private async Task DownloadFull()
     {
+        if (isLoading) return;
+
         using var activity = Progress.Begin(
             "Comms-10k", "Exporting the full member list", ActivitySize.Unknown);
 
@@ -473,7 +479,9 @@
         get
         {
             var fromResolver = resolveResult?.Rejections ?? [];
-            List<Comms10kAddressResolver.Rejection> all = [.. rejectedBeforeLookup, .. fromResolver];
+            List<Comms10kAddressResolver.Rejection> all = [.. rejectedBeforeLookup,
+                .. fromResolver.Select(rejection => originalEmailRows.TryGetValue(rejection.Address, out var raw)
+                    ? rejection with { Address = raw } : rejection)];
 
             foreach (var (raw, address) in duplicateRows)
             {
@@ -492,6 +500,8 @@
 
     private async Task DownloadRejections()
     {
+        if (isLoading) return;
+
         // Captured before any await: nothing below may re-read the field.
         // Both sources: rows the parse rejected before any lookup, then rows the directory
         // rejected. The parse ones come FIRST so they sit together at the top of the file -
@@ -556,8 +566,12 @@
     /// </remarks>
     private async Task HandleFileUpload(InputFileChangeEventArgs e)
     {
-        uploadedFileName = e.File?.Name;
+        if (isLoading) return;
+
+        isLoading = true;
+        uploadedFileName = null;
         parsedEmails = new();
+        originalEmailRows = new(StringComparer.OrdinalIgnoreCase);
         rejectedBeforeLookup = new();
         duplicateRows = new();
         resolveResult = null;
@@ -570,11 +584,17 @@
 
         try
         {
+            var file = e.File;
+            var emails = new List<string>();
+            var parseRejections = new List<Comms10kAddressResolver.Rejection>();
+            var duplicates = new List<(string Raw, string Address)>();
+            var originals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
             // A MALFORMED-UPLOAD guard, not a membership cap. At the measured average address
             // length this is roughly half a million rows, fifty times the size this module is
             // built for; nothing downstream imposes an upper bound on how many people are
             // handled.
-            await using var stream = e.File.OpenReadStream(maxAllowedSize: UploadSizeLimitBytes);
+            await using var stream = file.OpenReadStream(maxAllowedSize: UploadSizeLimitBytes);
             using var reader = new System.IO.StreamReader(stream);
             var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
@@ -612,14 +632,14 @@
                     // resolver, so they could never reach the errors CSV either. Found at
                     // review. They are now rejections with a reason, exactly like a lookup
                     // miss, and only the lookup itself is skipped.
-                    rejectedBeforeLookup.Add(new Comms10kAddressResolver.Rejection(
+                    parseRejections.Add(new Comms10kAddressResolver.Rejection(
                         raw ?? "", Comms10kAddressResolver.Reasons.Blank));
                     continue;
                 }
 
                 if (!val.Contains('@'))
                 {
-                    rejectedBeforeLookup.Add(new Comms10kAddressResolver.Rejection(
+                    parseRejections.Add(new Comms10kAddressResolver.Rejection(
                         raw ?? "", NotAnAddressReason));
                     continue;
                 }
@@ -633,20 +653,19 @@
                     // parse applying it unconditionally, so two rows of the same NON-matching
                     // address were reported as one. Kept here with the raw text; AllRejections
                     // emits it only if the resolver rejects the address it duplicates.
-                    duplicateRows.Add((raw ?? "", val));
+                    duplicates.Add((raw ?? "", val));
                     continue;
                 }
 
-                parsedEmails.Add(val);
+                emails.Add(val);
+                originals.Add(val, raw ?? "");
             }
 
-            // Reads parsedEmails, a field, and that IS safe here rather than assumed to be: the
-            // resets at the top of this handler run before the first await and they un-render
-            // both controls that could touch it - Validate needs parsedEmails.Count > 0 and
-            // Replace needs confirmPending - so no other handler can reach it while this one is
-            // suspended on the stream. A missing header column and both catches are refusals
-            // and fall out of scope to the dispose fallback.
-            activity.Complete(true, $"{parsedEmails.Count:N0} address(es) parsed.");
+            // Publish only a complete parse, with no await between the assignments. A stream or
+            // CSV failure cannot leave a usable prefix, even for a direct Validate invocation.
+            (parsedEmails, rejectedBeforeLookup, duplicateRows, originalEmailRows, uploadedFileName)
+                = (emails, parseRejections, duplicates, originals, file.Name);
+            activity.Complete(true, $"{emails.Count:N0} address(es) parsed.");
         }
         catch (IOException ex) when (ex.Message.Contains("exceeds the maximum", StringComparison.OrdinalIgnoreCase))
         {
@@ -665,10 +684,13 @@
         {
             result = new Comms10kUpdateResult { Success = false, Message = $"Failed to parse CSV: {ex.Message}" };
         }
+        finally { isLoading = false; }
     }
 
     private async Task ValidateEmails()
     {
+        if (isLoading) return;
+
         confirmation = null;
         var sourceEmails = parsedEmails;
         var emails = sourceEmails.ToArray();
@@ -730,6 +752,8 @@
 
     private async Task ExecuteReplace()
     {
+        if (isLoading) return;
+
         // Capture approval and its completeness before the first await. Later field changes
         // cannot pair an old fingerprint with another upload, filename or validated ticket.
         var approved = confirmation;
@@ -832,6 +856,7 @@
             submittedNotice = $"Job {jobId} keeps running if you close this tab. Read its durable outcome in Your jobs on this page.";
 
             parsedEmails = new();
+            originalEmailRows = new(StringComparer.OrdinalIgnoreCase);
             confirmation = null;
             rejectedBeforeLookup = new();
             resolveResult = null;

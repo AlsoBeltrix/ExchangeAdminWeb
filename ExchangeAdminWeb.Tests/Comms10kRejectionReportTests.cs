@@ -118,7 +118,7 @@ public class Comms10kRejectionReportTests
 
         Assert.Contains("Reasons.Blank", parse, StringComparison.Ordinal);
         Assert.Contains("NotAnAddressReason", parse, StringComparison.Ordinal);
-        Assert.Equal(2, Regex.Matches(parse, Regex.Escape("rejectedBeforeLookup.Add(")).Count);
+        Assert.Equal(2, Regex.Matches(parse, Regex.Escape("parseRejections.Add(")).Count);
 
         // Both sources reach the file and the banner, not just the resolver's.
         var all = Member(source, "List<Comms10kAddressResolver.Rejection> AllRejections");
@@ -140,7 +140,7 @@ public class Comms10kRejectionReportTests
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "Comms10k.razor")));
 
         var parse = source[source.IndexOf("if (!seen.Add(val))", StringComparison.Ordinal)..];
-        var nextAdd = parse.IndexOf("rejectedBeforeLookup.Add(", StringComparison.Ordinal);
+        var nextAdd = parse.IndexOf("parseRejections.Add(", StringComparison.Ordinal);
         var continues = parse.IndexOf("continue;", StringComparison.Ordinal);
 
         Assert.True(continues >= 0 && (nextAdd < 0 || continues < nextAdd),
@@ -158,7 +158,7 @@ public class Comms10kRejectionReportTests
         var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", "Comms10k.razor")));
 
         // The parse must KEEP the duplicate, with its raw text, or there is nothing to report.
-        Assert.Contains("duplicateRows.Add((raw ?? \"\", val));", source, StringComparison.Ordinal);
+        Assert.Contains("duplicates.Add((raw ?? \"\", val));", source, StringComparison.Ordinal);
 
         var all = Member(source, "private List<Comms10kAddressResolver.Rejection> AllRejections");
 

@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C2 review P2 corrected; C7 next
+### Comms-10k / Defender remediation - C7 implemented; independent review pending
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -17,6 +17,27 @@ Astra workflow review at max. C9, C1, C10, C3, C4 and C11 have independent revie
 `.agents/review/findings/cdr-c4.md` owns its P2 correction closed on coder-side proof.
 The separately approved shared Exchange psl-1 is independently reviewed; its record at
 `.agents/review/findings/psl-1.md` owns the evidence and verdict.
+
+C7 began on clean master `097cfd1e74d4622c016d65308d1d71f7c8722fff`. All six shared
+isLoading owners now refuse busy entry first. Upload owns the flag, invalidates the
+previous approval, parses into local collections and publishes the complete file together;
+parse failures expose no usable prefix. First and duplicate rejections retain raw CSV
+text while lookup/duplicate matching remains trimmed and case-insensitive. C4 frozen
+validation/submission inputs, C2 current-actor/dispatch authorization and C5 jobsBusy/cache
+generations remain. Comms is 1.4.16; the base stays 2.27.3.
+
+All 27 new compiled cases passed and failed intended Assert.* assertions across ten
+accepted compiled regression groups (48 failures), with an exact per-case union and no
+missing names. Exact-byte MD5/SHA256 restoration and advanced mtimes verified after each.
+Two earlier probes were excluded for custom-message assertion accounting; standard
+assertions, an explicit Rebuild, current PDB/source checksum agreement and a fresh passing
+baseline resolved that. The restored Comms/ClickGate/Progress run passed 784/784.
+Final Release build passed (40 existing NuGet warnings / 0 errors), then full format
+verification passed before the single restored full suite: 4,121 passed / 3 skipped /
+0 failed. Diff and staged ASCII passed. The page still matches its exact mutation-restore
+hashes; the current test source matches its portable PDB document checksum. Independent
+Astra max workflow review is the pending step; no self-review or second review ran.
+`.agents/review/findings/cdr-c7.md` owns scope, proof, warning comparison and review packet.
 
 C5 adds the submitter's Your jobs panel to Comms-10k with actual lifecycle status, job
 messages, ticket/times and recorded Resolve/Replace outcomes, including partial, unknown,
@@ -79,10 +100,9 @@ correction gate passed: Release build 57 warnings / 0 errors (same diagnostic se
 original C2); full format verification before tests; 4,094 passed / 3 skipped / 0 failed;
 staged ASCII/diff passed. The page retains its exact correction hashes; worker/service/
 writer retain the independently reviewed originals. This P2 is closed on coder-side
-proof under repo policy; no second review or self-review ran. Next: C7.
-Twelve original implementation findings remain after C2;
-C7 handler reentry/atomic CSV/original rejection text, C8 export safety/audit and C6 ticket
-display remain separate. D2 precedes D7.
+proof under repo policy; no second review or self-review ran. C7 follows in the record above.
+After C7's independent review, C8 export safety/audit and then C6 ticket display remain
+in Part 1. D2 precedes D7 in the Defender work.
 The shared PowerShell audit inventory is `.agents/review/powershell-replay-audit.md`;
 psl-2/3/4 remain separately recorded, unapproved follow-ups.
 C11's adjacent address-versus-member stage-label issue is `cdr-followup-1`, also unapproved.

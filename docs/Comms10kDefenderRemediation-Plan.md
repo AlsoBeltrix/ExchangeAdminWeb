@@ -510,7 +510,7 @@ part of this implementation approval.
 | C11 | Implemented / independently reviewed (`b0c535e`) | [cdr-c11](../.agents/review/findings/cdr-c11.md) |
 | C5 | Implemented / independent review P1 corrected (coder proof) | [cdr-c5](../.agents/review/findings/cdr-c5.md) |
 | C2 | Implemented / independent review P2 corrected (coder proof) | [cdr-c2](../.agents/review/findings/cdr-c2.md) |
-| C7 | Pending | |
+| C7 | Implemented / independent review pending | [cdr-c7](../.agents/review/findings/cdr-c7.md) |
 | C8 | Pending | |
 | C6 | Pending | |
 | D8 | Pending | |

@@ -1032,12 +1032,10 @@ public static class ProgressRegistry
                 + "renderer is free the moment the first csv.ReadAsync is awaited and the bar "
                 + "paints without help. The Begin sits below the field resets, which are instant "
                 + "local assignments, so the first painted frame shows the cleared panel the new "
-                + "file deserves. The Complete reads parsedEmails, a FIELD, and that was checked "
-                + "rather than assumed: those same resets run before the first await and "
-                + "un-render both controls that could touch it - Validate needs "
-                + "parsedEmails.Count > 0 and Replace needs confirmPending - so nothing can "
-                + "interleave. A missing header column is a refusal and falls to the dispose "
-                + "fallback, as do both catches"),
+                + "file deserves. The handler refuses busy entry before any reset and owns "
+                + "isLoading throughout the parse. It collects rows locally and publishes only "
+                + "after the entire parse succeeds; Complete reads the local count. A missing "
+                + "header column is a refusal and falls to the dispose fallback, as do both catches"),
         ],
         Exempt =
         [

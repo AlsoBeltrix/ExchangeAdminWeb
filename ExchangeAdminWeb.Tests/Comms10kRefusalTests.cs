@@ -506,6 +506,8 @@ public sealed partial class Comms10kRefusalTests
         public Action? BeforeRunspaceCreation { get; set; }
         public Comms10kUpdateResult? LastResult { get; private set; }
         public List<string> Writes { get; } = [];
+        public List<IReadOnlyList<string>> AddressQueries { get; } = [];
+        public int MemberReads { get; private set; }
 
         public override async Task<Comms10kUpdateResult> ExecuteReplaceAsync(
             IReadOnlyList<Comms10kAddressResolver.ResolvedMember> resolvedMembers, string performedBy,
@@ -513,7 +515,21 @@ public sealed partial class Comms10kRefusalTests
             LastResult = await base.ExecuteReplaceAsync(resolvedMembers, performedBy, authorizationDenial);
 
         internal override IReadOnlyList<Comms10kAddressResolver.Candidate> QueryBatchCandidates(
-            (string username, string password, string domain) creds, IReadOnlyList<string> addresses) => Candidates;
+            (string username, string password, string domain) creds, IReadOnlyList<string> addresses)
+        {
+            AddressQueries.Add(addresses.ToArray());
+            return Candidates;
+        }
+
+        internal override IReadOnlyList<string> QueryMemberDns((string username, string password, string domain) creds)
+        {
+            MemberReads++;
+            return [PersonDn];
+        }
+
+        internal override IReadOnlyList<Comms10kMemberResolver.Detail> QueryMemberDetails(
+            (string username, string password, string domain) creds, IReadOnlyList<string> distinguishedNames) =>
+            [new(PersonDn, "person", Address, "Person")];
 
         internal override Comms10kTarget QueryTargetGroup((string username, string password, string domain) creds)
         {
