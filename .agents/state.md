@@ -8,14 +8,14 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C9 implemented, independent review pending
+### Comms-10k / Defender remediation - C9 verified; C1 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved. That plan owns the slice order and
 implementation table; `.agents/decisions.md` owns the Sol 6.1 / Astra dispatch exception.
 One fresh Sol 6.1 agent at max implements each finding, sequentially; Astra at max independently
-reviews the affected workflow. C9 is the first slice; its implementation and guard proof are
-recorded in `.agents/review/findings/cdr-c9.md`. Independent Astra review is next.
+reviews the affected workflow. C9 landed in `f530c62` and independent Astra review endorsed it;
+implementation, guard proof and review are recorded in `.agents/review/findings/cdr-c9.md`.
 
 Implementation baseline: clean `master` at `8581484`; both `origin` and `github` remained at
 `8853979` when verified on 2026-10-15. The intervening approval bookkeeping is local.
@@ -29,8 +29,10 @@ were mutation-proven against compiled pre-fix behavior, followed by byte-identic
 and mtime update. Counts, hashes, the LF normalization receipt and the review packet live in
 the finding record; `.agents/review/index.md` tracks the slice.
 
-Next: independent Astra review of C9's complete workflow.
-Do not start C1 until C9 has been assessed under the approved dispatch arrangement.
+Next: C1, pinning the target and every group operation to the approved ObjectGUID.
+The C9 trial established a passing baseline, regression proof and independent review. Continue
+the approved slice order. C11 also owns the ordinary interrupted-write count-label case found
+by C9's reviewer; the plan carries its reproduction and required coverage.
 
 Standing boundaries: no live AD probe, tenant write or deployment. The approval does not widen
 Comms-10k's protection exemption or authorize a push. No self-review. The module specification

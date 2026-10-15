@@ -1,6 +1,6 @@
 # cdr-c9 - a terminating PowerShell invocation retains the failed command
 
-Status: Implemented; approved Revision 6 C9, independent Astra review pending.
+Status: Verified on master in `f530c62`; independent Astra review endorsed C9. Push awaits authority.
 
 ## Evidence and triggering condition
 
@@ -135,5 +135,36 @@ review must include callers and lifecycle, not just the diff. No coder self-revi
 
 ### Verification run
 
-All required gates passed; see the guard proof and verification sections above. Independent
-Astra review is the remaining step before this slice is accepted and C1 begins.
+All required gates passed; see the guard proof and verification sections above.
+
+## Independent review - 2026-10-15
+
+Reviewer: native collaboration / `gpt-6-astra` / `max`, explicitly approved for this stream.
+Dispatch: `/root/review_c9`, reviewed 2026-10-15, outcome received before 14:51:56 UTC.
+Base `8581484f67be651fb4515299a298f156c66f1867`; head
+`f530c6291231412f533afcde2d72be95e408ccb2`. Model and effort are the dispatch parameters;
+there is no separate provider-resolution envelope. Read/command capability was established
+by reading guidance/code and running Git inspection. The boundary was task-enforced read-only,
+not a technical sandbox.
+
+**Verdict: endorse C9.** No defect or regression identified in this slice. The reviewer traced
+upload, validation, enqueue, processor scope, resolution, PowerShell lifetime, retries,
+read-back, audit, notification and restart reconciliation. All 15 invocations use the cleanup
+helper; commands clear in `finally`, thrown invocations clear errors, and exception identity
+is preserved for classification.
+
+Independent command: `dotnet test ExchangeAdminWeb.slnx -c Release --no-build --no-restore
+--filter FullyQualifiedName~Comms10k -- xUnit.MaxParallelThreads=4`: 106 passed, 0 failed/skipped.
+The reviewer inspected the build/full-suite/mutation receipts before using those binaries;
+range and working-tree diff checks passed, and the final service hash matched the record.
+The full suite and mutation proof were not independently repeated. No source edits, live
+directory/tenant access, browser check, push or deployment occurred.
+
+The reviewer also identified a pre-existing MEDIUM reporting case for C11: an ordinary failed
+write stores the requested count in `MembersWritten`, which audit/log/email label as written.
+It does not block C9; the C11 plan section now records the case and its required regression.
+
+## Closeout
+
+Implemented and independently reviewed on master. No work branch exists. C1 may proceed.
+The commit remains local pending separately authorized push.

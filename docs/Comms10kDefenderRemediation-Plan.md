@@ -204,6 +204,14 @@ Report an interrupted replace as interrupted with an unknown written count, neve
 
 **Test:** a job reconciled after restart reports unknown, not zero.
 
+**Additional reproduction from C9's independent Astra review (2026-10-15):** the same written-count
+reporting problem occurs without a restart. `Comms10kReplaceWriter.Derive` sets `MembersWritten`
+to the requested set's count even when clear succeeds and the first add fails. For a request
+of 10,000 and a confirmed empty read-back, the notification, audit and service log can therefore
+claim 10,000 written. Cover this ordinary interrupted-write case in C11 too: distinguish the
+requested count from actual/unknown results throughout those outputs. Preserve the existing
+honest outcome and final-count reporting. Evidence is recorded in `cdr-c9`'s independent review.
+
 ## C5 - the submitter can see and manage their own job
 
 **No longer deferred.** C11 is why: the list can be left broken and the person responsible cannot
@@ -464,7 +472,7 @@ part of this implementation approval.
 
 | Finding | Implementation | Evidence |
 |---|---|---|
-| C9 | Implemented / pending independent review | [cdr-c9](../.agents/review/findings/cdr-c9.md) |
+| C9 | Implemented / independently reviewed (`f530c62`) | [cdr-c9](../.agents/review/findings/cdr-c9.md) |
 | C1 | Pending | |
 | C10 | Pending | |
 | C3 | Pending | |
