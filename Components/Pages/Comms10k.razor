@@ -745,10 +745,12 @@
             var submitter = authState.User.Identity?.Name;
             if (!authCheck.Succeeded || authState.User.Identity?.IsAuthenticated != true || string.IsNullOrWhiteSpace(submitter))
             {
+                DenyOwnedJobs();
                 await RefuseReplaceAsync("Authorization denied.", ticket);
                 return;
             }
 
+            BindJobsActor(submitter);
             if (!canReplace || approved is null)
             {
                 await RefuseReplaceAsync(
@@ -881,6 +883,7 @@
     private bool _disposed;
     private bool jobsBusy;
     private bool jobsAllowed;
+    private string? jobsActor;
     private int jobsGeneration;
     private int historyPage;
     private bool hasMoreHistory;
@@ -891,7 +894,7 @@
     private IReadOnlyList<BulkJob> finishedOwnedJobs = [];
     private BulkJob? detailsJob;
     private IReadOnlyList<BulkJobRow> detailsRows = [];
-    private sealed record JobsAccess(string Actor, bool Allowed);
+    private sealed record JobsAccess(string Actor, bool Allowed, int Generation);
 
     // The policy includes live enablement and section access. Identity.Name is the ownership
     // identity; display names, stripped SAMs and an Unknown fallback cannot identify an owner.
@@ -901,21 +904,48 @@
         try
         {
             var state = await AuthStateProvider.GetAuthenticationStateAsync();
-            if (!CurrentJobsLoad(generation)) return new(actor, false);
+            if (!CurrentJobsLoad(generation)) return new(actor, false, generation);
             actor = state.User.Identity?.Name ?? "";
             var authorization = await AuthorizationService.AuthorizeAsync(state.User, "Comms10k");
-            if (!CurrentJobsLoad(generation)) return new(actor, false);
+            if (!CurrentJobsLoad(generation)) return new(actor, false, generation);
             if (authorization.Succeeded && state.User.Identity?.IsAuthenticated == true && !string.IsNullOrWhiteSpace(actor))
-                return new(actor, true);
+            {
+                BindJobsActor(actor);
+                return new(actor, true, jobsGeneration);
+            }
         }
         catch (Exception ex) { Logger.LogWarning(ex, "Comms-10k jobs authorization failed"); }
 
-        if (!CurrentJobsLoad(generation)) return new(actor, false);
+        if (!CurrentJobsLoad(generation)) return new(actor, false, generation);
+        DenyOwnedJobs();
+        return new(actor, false, jobsGeneration);
+    }
+
+    private void BindJobsActor(string actor)
+    {
+        if (string.Equals(jobsActor, actor, StringComparison.OrdinalIgnoreCase)) return;
+        ClearOwnedJobScope();
+        jobsActor = actor;
+    }
+
+    private void DenyOwnedJobs()
+    {
+        ClearOwnedJobScope();
+        jobsLoadError = "Access to your Comms-10k jobs was denied.";
+    }
+
+    private void ClearOwnedJobScope()
+    {
+        // An authorized actor can still differ from the owner of rendered data. Invalidate
+        // pending continuations as well as every cached surface before accepting that actor.
         ClearOwnedJobs();
+        jobsActor = null;
         jobsAllowed = false;
         submittedNotice = null;
-        jobsLoadError = "Access to your Comms-10k jobs was denied.";
-        return new(actor, false);
+        historyPage = 0;
+        jobsActionMessage = null;
+        jobsActionSucceeded = false;
+        jobsLoadError = null;
     }
 
     private void ClearOwnedJobs()
@@ -936,7 +966,7 @@
     {
         var generation = ++jobsGeneration;
         var access = await AuthorizeJobsAsync(generation);
-        if (!access.Allowed || !CurrentJobsLoad(generation)) return false;
+        if (!access.Allowed || !CurrentJobsLoad(access.Generation)) return false;
         try
         {
             var active = BulkJobs.GetActiveOwnedJobs(Comms10kReplaceProcessor.ModuleName,
@@ -1007,7 +1037,7 @@
             await Task.Yield();
             if (_disposed) return;
             var access = await AuthorizeJobsAsync(generation);
-            if (!access.Allowed || !CurrentJobsLoad(generation)) return;
+            if (!access.Allowed || !CurrentJobsLoad(access.Generation)) return;
             var hiding = detailsJob?.Id == jobId;
             var selected = hiding ? null : BulkJobs.GetOwnedJob(Comms10kReplaceProcessor.ModuleName, Comms10kReplaceJobPayload.JobType, access.Actor, jobId);
             var rows = selected is null ? [] : BulkJobs.GetOwnedRows(Comms10kReplaceProcessor.ModuleName,
@@ -1047,7 +1077,7 @@
             if (_disposed) return;
             var access = await AuthorizeJobsAsync(generation);
             actor = access.Actor;
-            if (!CurrentJobsLoad(generation) && access.Allowed) return;
+            if (!CurrentJobsLoad(access.Generation) && access.Allowed) return;
             if (_disposed) return;
             // No await between the live policy/identity check and the persisted scope/CAS.
             if (access.Allowed)

@@ -1,6 +1,6 @@
 # C5 - Submitter-owned Comms-10k durable jobs
 
-Status: Implemented on master with the restored local gate passed; independent Astra workflow review pending.
+Status: Implemented; initial independent review CHANGES REQUIRED/P1 corrected on coder-side proof. Push awaits authority.
 
 ## Cause and final scope
 
@@ -167,7 +167,7 @@ choices in `.agents/review/cdr-c5-design.md`.
 
 ## Commit Range
 
-`5d5db6f9c35f223598947f64287bfef1e44cee18..HEAD`
+`5d5db6f9c35f223598947f64287bfef1e44cee18..5d999713e0d1d1525ee55a0413cb869d79c5ea43`
 
 ## Claimed Changes
 
@@ -195,7 +195,8 @@ not a new owner exemption. Completed is never treated as the directory success r
 
 ## Deferred Work
 
-Independent Astra max workflow review is the next gate. C2 then implements fresh enqueue
+At the initial handoff, independent Astra max review was the next gate; its CHANGES REQUIRED
+verdict and P1 correction are recorded below. C2 then implements fresh enqueue
 snapshots/write-boundary authorization; C7, C8, C6 and Defender remain in approved plan
 order. psl-2/3/4 and cdr-followup-1 are recorded but unapproved. Browser rendering and
 installed AD-cmdlet interoperability remain unverified.
@@ -229,5 +230,126 @@ so no slice usage is attributed. No self-review was performed.
 The normal configured git commit uses the existing global pre-commit wrapper, which
 chains an executable local hook when present (none is present). No hook trust,
 configuration or bypass was changed. Direct master work requires no branch closeout.
-The implementation remains local under push policy ask; independent Astra max workflow
-review is pending, and C2 follows its gate.
+The initial implementation remained local under push policy ask; the independent review
+and its required correction follow below.
+
+## Independent workflow review - CHANGES REQUIRED, 2026-10-15
+
+Astra at max independently reviewed
+`5d5db6f9c35f223598947f64287bfef1e44cee18..5d999713e0d1d1525ee55a0413cb869d79c5ea43`.
+Verdict: **CHANGES REQUIRED**, one **P1/HIGH** cache-invalidation root with two compiled
+reproductions. This was not a clean approval.
+
+1. Load actor A's retained jobs, switch AuthStateProvider to authenticated/authorized B,
+   then invoke ToggleJobDetails(A-id), including Details and Hide branches. The scoped
+   GetOwnedJob correctly refuses and details clear, but activeOwnedJobs/finishedOwnedJobs
+   remain A's and jobsAllowed stays true. Compiled render frames still include A's ID and
+   private recorded reason. AuthorizeJobsAsync never binds cached state to the actor;
+   ToggleJobDetails changes only details.
+2. With cached list/detail, deny live policy then invoke ExecuteReplace. Submission
+   correctly refuses, but jobsAllowed remains true and cached metadata still renders.
+
+Persisted scope checks remained correct; the reviewer demonstrated no unauthorized
+persisted read or mutation. All other approved scope boundaries remain preserved.
+Both probes used compiled handlers/render frames and temporary SQLite with controlled
+authentication fixtures. No source edits, browser, hosted circuit or live systems were used.
+
+The reviewer independently ran the 59/59 focused cases and verified five compiled
+mutation groups / 62 assertions covering all 59, exact hashes/mtimes, the full 4,031-pass /
+3-skip receipt and the 686-pass focused receipt.
+
+## P1 correction scope declared before code edits
+
+Baseline: clean master `5d999713e0d1d1525ee55a0413cb869d79c5ea43`. Both remotes' master
+remain `885397981d7550afebf6518ef21b4fc54b062859`, checked live again on 2026-10-15.
+Original C5 approval authorizes this correction. Bind jobs caches to the authenticated
+full actor using OrdinalIgnoreCase; a changed actor invalidates lists, details, submission
+notice, paging and older generations. Share the jobs-denial cleanup with ExecuteReplace
+for authorization or identity denial. Preserve current submission approval capture and
+all persisted scope/control behavior. Add compiled reproductions plus positive ownership,
+casing, paging and stale-publication guards. No C2 snapshot/write mechanics or C7 upload
+reentry work. Comms-10k 1.4.12 -> 1.4.13; base remains 2.27.3 (page-only behavior).
+
+The finding is P1/HIGH, not CRITICAL, so the correction closes on coder-side guard proof
+under the existing repo policy. No second review round is requested or launched. Run
+focused checks, compiled mutation proof with exact-byte/hash/mtime restoration and one
+restored final gate before the normal correction commit. Next is C2 after that gate.
+
+## P1 correction implementation and compiled proof
+
+The earlier implementation packet and hashes describe `5d99971`; these correction
+receipts supersede the page hash and Comms version, while shared service/repository
+behavior and the base version remain unchanged.
+
+Jobs caches now have an actor binding compared with OrdinalIgnoreCase. Accepting a
+different authenticated full identity clears lists, details, submission notice,
+paging/next-page state, job action feedback and jobs authorization state, and advances
+the generation. The current authorized operation receives the new generation; older
+continuations retain their obsolete one and cannot publish or clear the new actor's
+data. Case-only changes, including Unicode casing, retain the same owner's state.
+
+ExecuteReplace uses the same denial cleanup for policy or identity denial. It binds
+an allowed actor before either the incomplete-file refusal or the enqueue/Submitted
+notice, so both paths discard the previous actor's panel, and a legitimate new notice
+survives the following load. The frozen C4 confirmation and submission inputs are
+unchanged. No C2/C7 or shared storage/service behavior was added. Comms is 1.4.13;
+the base stays 2.27.3. No new UI handler was introduced; ProgressRegistry remains
+accurate, and the clickgate re-anchor procedure found no Comms line-keyed entries.
+
+Fourteen new compiled cases cover the two review reproductions, Details and Hide,
+same-SAM owners in different domains, refused foreign controls, the new owner's
+subsequent load, older actor successes/denials, ASCII and Unicode case preservation,
+section SID revocation, module disablement, unauthenticated/blank/whitespace/display-only
+identity denial, pending older publication after submission denial, and actor switching
+on both incomplete-file refusal and successful submission.
+
+All 14 passed, then failed intended Assert.* assertions in three sequential Release
+solution probes. Each rebuilt production and tests (never --no-build), checked for no
+error CS and inspected its TRX for actual assertion failures and exit 1.
+
+| Probe | Compiled regression | Assertion failures / executed |
+|---|---|---|
+| original-reviewed-page | restore the entire reviewed Comms10k.razor from HEAD | 11 / 14 |
+| casing-and-submission-binding | use case-sensitive cache ownership; omit enqueue-side actor binding | 4 / 14 |
+| denial-without-generation-invalidation | clear denial state without invalidating older loads | 6 / 14 |
+
+The union covers all 14 new case names (21 assertion failures). The first probe
+reproduces both independently reported paths against the actual original page.
+The last probe shows that clearing visible metadata alone does not suppress a
+previously authorized delayed load after a submission refusal.
+
+Every probe restored saved fixed bytes in finally, verified MD5 and SHA256, and
+advanced the page mtime beyond its mutated version. Restored Comms10k.razor:
+MD5 `B6C6DF1ABEEC28C1E2053153A07AFDA0`;
+SHA256 `9507559ABFFFCB12167BDB74B3A6914832FCD307F086E68D94EB5751F592E9B9`.
+The corrected focused run passed 425/425; after all restores the broader affected
+workflow passed 700/700, including existing Comms, bulk jobs, ProgressRegistry,
+ClickGate and C4 submission-capture coverage.
+
+Supplemental ignored evidence: `.agents/review/out/cdr-c5-correction/` holds baseline,
+three mutation and restored-focused logs/TRX plus receipts.json; the script is
+`.agents/review/out/cdr-c5-correction-mutations.ps1`. Final-gate logs use the
+`cdr-c5-correction-` prefix. No browser, hosted component circuit, live AD/tenant
+operation or second review was used.
+
+## P1 correction final gate and closure
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: exit 0, 40 existing warnings / 0 errors.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0,
+  existing workspace-loading warning only; completed before the full suite.
+- `dotnet test ExchangeAdminWeb.slnx -c Release -- xUnit.MaxParallelThreads=4`:
+  exit 0, 4,045 passed / 3 skipped / 0 failed, 5 m 11 s. A TRX logger captured the receipt.
+  This was the correction's only full-suite run; no baseline full suite was run.
+- `tools/Test-AsciiOnly.ps1`: exit 0 with the new cache-test source staged.
+- `git diff --check HEAD`: exit 0, repeated after final bookkeeping.
+
+The restored production page still matches its exact MD5/SHA256 receipts. No shipped
+PowerShell changed; Pester/PSScriptAnalyzer were not required or run. Browser rendering,
+hosted circuit and live AD/tenant integration were not run. The token meter ran against
+the committed baseline; its Claude-only scope excludes this native Sol correction.
+No self-review was run. The normal configured correction commit changes no hooks,
+configuration or trust settings; no branches, deployment or push were performed.
+
+The independent review was CHANGES REQUIRED, not a clean approval. Its P1/HIGH finding
+is now resolved on coder-side guard proof under the noncritical correction policy, with
+no second review round. C5 is closed locally; C2 is the next approved slice.

@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C5 implemented; independent review next
+### Comms-10k / Defender remediation - C5 review P1 corrected; C2 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -26,17 +26,32 @@ paged retained history. Live module policy including enablement gates every jobs
 denial clears cached results. Cancel/delete use existing runner tokens/CAS and terminal
 SQL guards, safely audit attempts and preserve the single completion notification.
 Submission now shows a separate Submitted notice. Missing credentials do not hide retained
-results. Comms-10k is `1.4.12`; shared repository/service changes bump the base app to
+results. The P1 page correction advances Comms-10k to `1.4.13`; the base app stays
 `2.27.3`. `.agents/review/findings/cdr-c5.md` owns scope, choices, evidence and review packet.
 
 All 59 new C5 cases failed intended Assert.* assertions across five compiled mutation groups
 (62 failures); exact-byte MD5/SHA256 restoration and advanced mtimes verified. The restored
 focused run passed 686/686. The single restored final gate passed: Release build with 40
 existing warnings / 0 errors; full solution format before tests; 4,031 passed / 3 skipped /
-0 failed; diff and staged ASCII checks. Independent Astra max workflow review is pending.
+0 failed; diff and staged ASCII checks. Independent Astra max review returned CHANGES
+REQUIRED: one P1 cache-invalidation root, reproduced through actor-switched Details/Hide
+and submission denial retaining already-rendered job metadata. Persisted scope guards
+remained correct; no unauthorized persisted read or mutation was demonstrated.
 
-Next: independent Astra max workflow review of C5. C2 follows
-that gate. Thirteen original findings remain after C5; C2 fresh authorization/write boundaries,
+The correction binds all cached jobs state to the full actor with OrdinalIgnoreCase,
+invalidates notice/paging/older continuations when the actor changes, and reuses denial
+cleanup from ExecuteReplace. Fourteen new compiled guards passed in a 425-case focused
+run. All 14 failed intended assertions across three compiled mutation groups (21 failures),
+including restoring the entire reviewed original page. Exact MD5/SHA256/mtime restoration
+was verified; the restored affected-workflow run passed 700/700. The correction Release
+build passed with 40 existing warnings / 0 errors; full format verification passed
+before the single restored full suite: 4,045 passed / 3 skipped / 0 failed. Staged
+ASCII/diff passed and the page still matches exact restoration hashes. This P1/HIGH
+correction is closed on coder-side proof under repo policy; no second review was run.
+
+Next: fresh Sol 6.1 implementation of C2, followed by independent Astra max review.
+Thirteen original findings remain
+after C5; C2 fresh authorization/write boundaries,
 C7 handler reentry/atomic CSV/original rejection text, C8 export safety/audit and C6 ticket
 display remain separate. D2 precedes D7.
 The shared PowerShell audit inventory is `.agents/review/powershell-replay-audit.md`;
@@ -44,6 +59,7 @@ psl-2/3/4 remain separately recorded, unapproved follow-ups.
 C11's adjacent address-versus-member stage-label issue is `cdr-followup-1`, also unapproved.
 
 C5 began on clean master `5d5db6f9c35f223598947f64287bfef1e44cee18`.
+Its review correction began on clean `5d999713e0d1d1525ee55a0413cb869d79c5ea43`.
 Both origin and github master were checked live at
 `885397981d7550afebf6518ef21b4fc54b062859` on 2026-10-15. The intervening work remains local.
 Historical "unpushed since 96cdb89" assertions below are superseded. No work branch is in
