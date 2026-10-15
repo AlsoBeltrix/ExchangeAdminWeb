@@ -237,6 +237,10 @@ but not see it or manage it is a failure."*
 
 ## C2 - re-check authorization at the point of write
 
+Concrete capture and command-dispatch boundaries are in `.agents/review/cdr-c2-design.md`
+(Astra design pass, 2026-10-15). A processor check before service preparation is not the final
+write gate; distinguish denial before dispatch from a partly executed replace.
+
 `ConferenceRoomBulkProcessor:78` re-evaluates `JobAuthorizationSnapshot` per row;
 `Comms10kReplaceProcessor` has none, though `BulkJob.AuthSnapshotJson` already exists.
 
