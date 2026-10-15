@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C10 implemented; independent review pending
+### Comms-10k / Defender remediation - C9, C1 and C10 independently reviewed; C3 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved. That plan owns the slice order and
@@ -20,7 +20,7 @@ C1 pins every group operation to the approved ObjectGUID; its implementation, gu
 and independent Astra approval are in `.agents/review/findings/cdr-c1.md`. C10 now indexes
 addresses by distinct ObjectGUID, so a person returned by two 500-address batches resolves
 once. Candidate identities are validated and GUID/DN member values stay paired for C4.
-Evidence and the complete-workflow review packet are in `.agents/review/findings/cdr-c10.md`.
+Evidence, the workflow packet and independent Astra approval are in `.agents/review/findings/cdr-c10.md`.
 Comms-10k is `1.4.7`; no shared/app version change.
 
 Current slice baseline: clean `master` at `f6f87a5`; both `origin` and `github` remained at
@@ -35,12 +35,14 @@ C10's restored Release build, full Release solution tests (3,884 passed / 3 skip
 (six resolver failures, three identity-parser failures), with two additional distinct-person
 ambiguity failures; restores matched SHA256/MD5 and advanced mtimes. Counts, hashes and
 limitations belong to the finding record; `.agents/review/index.md` tracks the slices.
-No page or registry changed. C10 is independently unreviewed.
+No page or registry changed. Independent C10 review also passed 146 focused Comms tests.
 
-Next: independent Astra workflow review of C10 before implementing C3.
+Next: implement C3, partial-resolution refusal plus audit and completion reasons, then review.
 C3 also owns the thrown service-preparation failure audit/reason case found by C1's reviewer;
 C11 owns the ordinary interrupted-write count-label case found by C9's reviewer. The plan
-carries both reproductions and required coverage.
+carries both reproductions and required coverage. C7 additionally owns the original rejected-row
+text inconsistency found by C10's reviewer. Defender D2 now precedes D7 as its per-call-result
+prerequisite; the plan and `.agents/review/cdr-d7-design.md` own the sequencing rationale.
 
 Standing boundaries: no live AD probe, tenant write or deployment. The approval does not widen
 Comms-10k's protection exemption or authorize a push. No self-review. The module specification

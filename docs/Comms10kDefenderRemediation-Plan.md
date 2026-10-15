@@ -287,6 +287,12 @@ and the fix must cover the handlers that merely *lower* the shared flag too.
 failure after valid rows leaves the prefix available to validate); an overlapping download does
 not lower the flag under a running submit.
 
+**Additional parser case from C10 review (2026-10-15):** the first occurrence is trimmed before
+being stored in parsedEmails, so its rejected CSV text loses original whitespace while duplicate
+rejections retain it. Preserve raw/query values during the local-collection parser work, with
+unchanged matching semantics and consistent original-text reporting. `cdr-c10` records the
+static reproduction; include a behavioral regression with a whitespace-bearing unmatched row.
+
 ## C8 - downloads: audit safely, and do not export executable cells
 
 Two defects in the same two methods.
@@ -498,7 +504,7 @@ part of this implementation approval.
 |---|---|---|
 | C9 | Implemented / independently reviewed (`f530c62`) | [cdr-c9](../.agents/review/findings/cdr-c9.md) |
 | C1 | Implemented / independently reviewed (`00f453e`) | [cdr-c1](../.agents/review/findings/cdr-c1.md) |
-| C10 | Implemented / locally verified; independent review pending | [cdr-c10](../.agents/review/findings/cdr-c10.md) |
+| C10 | Implemented / independently reviewed (`0fb9f78`) | [cdr-c10](../.agents/review/findings/cdr-c10.md) |
 | C3 | Pending | |
 | C4 | Pending | |
 | C11 | Pending | |

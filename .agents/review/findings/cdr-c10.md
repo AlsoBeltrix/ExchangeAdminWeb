@@ -1,6 +1,6 @@
 # cdr-c10 - repeated directory rows manufacture address ambiguity
 
-Status: Implemented and locally verified on master; independently unreviewed.
+Status: Implemented, locally verified and independently reviewed on master.
 Push awaits separate authority.
 
 ## Evidence and approved scope
@@ -174,3 +174,29 @@ Do not infer correctness from earlier slices' review outcomes or just the diff.
 See regression/mutation proof and final gate above. No page render, real directory
 query or live membership replace was run. No PowerShell source changed, so
 PSScriptAnalyzer/Pester are not required for this slice.
+
+## Independent workflow review - 2026-10-15
+
+Native `/root/review_c10`, `gpt-6-astra` at `max`, approved C10 as scoped with no blocker
+or regression. Range `f6f87a5edf3d76e3740ffe424d28dc5d6fa1d5a0..`
+`0fb9f7813e3cc5d99957ed6d5c109edcb8c777e2`, frozen head
+`bebdd984dca95e8d587619dadeb0d3efc6726c57` (later change: Defender design docs).
+The reviewer traced query parsing, address assignment, page validation and background
+re-resolution. Invalid identities fail before candidate return; every returned key is
+indexed by distinct GUID, genuine ambiguity survives coincident DNs, original input order
+and individual rejections survive, and successful GUID/DN values stay paired.
+
+Independent compiled Release Comms tests passed 146/146. Range diff checking passed;
+the checkout stayed clean. Mutation logs showed the recorded 6 resolver, 3 parser and
+2 distinct-person assertion failures without compiler errors. Source SHA256 values matched
+restored fixed copies; full-gate logs confirmed 3,884 passed / 3 skipped and zero build errors.
+No full-suite rerun, source mutation, browser check, live AD/tenant call, push or deploy.
+
+One MEDIUM pre-existing adjacent reporting issue is assigned to C7's parser work. At reviewed
+head Comms10k.razor line 498 trims raw before adding the first address to parsedEmails
+(line 533); AllRejections (line 370) forwards resolver text unchanged. A first unmatched
+CSV field `"  Ghost@Example.COM "` is therefore exported as `"Ghost@Example.COM"`, while
+duplicate rejected rows retain their original text. This was established by static control
+flow, not a browser test. C7 must preserve raw/query values while keeping matching semantics.
+The C3 partial-write/refusal-reporting and C4 fingerprint/member-identity risks remain
+explicitly pending, not C10 regressions. The plan owns those remaining changes.
