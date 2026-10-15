@@ -1,13 +1,17 @@
 # Comms-10k and Defender Remediation - Plan
 
-Status: **DRAFT Revision 2 - awaiting owner approval.** Revision 1 was reviewed by codex on
-2026-10-15 and returned "do not approve as written"; this revision takes every correction. Raised
-by two whole-module reviews the same day. Twelve findings, eleven owner-ruled; a thirteenth
-(codebase-wide comment audit) is excluded and gets its own plan.
+Status: **DRAFT Revision 3 - awaiting owner approval.** Revisions 1 and 2 were reviewed by codex
+on 2026-10-15; both returned "do not approve as written" and this revision takes every correction
+from each. Raised by two whole-module reviews the same day.
+
+**Thirteen findings. This plan closes eleven of them.** C5 is owner-ruled and deliberately NOT
+closed here - it needs a design note first and is carried as deferred work, not as a fix.
+D6-local fixes stale comments inside the files these slices touch; the codebase-wide comment
+audit is a separate plan.
 
 ## Exec summary
 
-**What this does.** Closes twelve defects in two modules. The big one: Comms-10k can be pointed at
+**What this does.** Closes eleven defects in two modules, and defers a twelfth. The big one: Comms-10k can be pointed at
 any AD group by a config field, and it skips the app's protection checks because it is assumed to
 target one harmless list. This pins it to that one group permanently. The rest are a job that can
 quietly drop people and still record success, a job that can write a different list from the one
@@ -19,8 +23,13 @@ redundant parses per load.
 and writes nothing on a guess - if what it is about to write is not what you approved, it writes
 nothing and says so. Defender opens instantly, and gets faster when it does read.
 
-**What it costs.** Twelve slices plus tests, in a fresh session. Two manual checks on dev, because
+**What it costs.** Eleven slices plus tests, in a fresh session. Two manual checks on dev, because
 no automated test can prove the group GUID resolves in the real forest or that a page renders.
+
+**What it does NOT do.** C5 - making sure the person who starts a background job can see and
+manage it - is ruled and not fixed here. It has no design yet, and the plan review was right that
+calling it a slice while deferring it was an overclaim. It needs its own short design note, then
+its own approval.
 
 **The biggest risk, and it is a behaviour change you are authorising.** Today Comms-10k lets you
 proceed with a partially-matching file - "10,000 of 10,500 matched, 500 will be excluded, Replace".
@@ -39,8 +48,8 @@ Comms-10k to parity with ConferenceRooms, but you ruled on a wider claim than th
 your own environment-neutrality rule forbids. You exempted yourself from that rule. Comms-10k will
 not work in another forest after this.
 
-**What approving authorises.** The twelve numbered slices below, nothing else. Not the
-codebase-wide comment audit, not a bulk-jobs redesign beyond what C5 names.
+**What approving authorises.** The eleven numbered slices below, nothing else. Not C5, not the
+codebase-wide comment audit, not a bulk-jobs redesign.
 
 ---
 
@@ -128,17 +137,27 @@ audit is keyed to `result.Success`. The row says Partial; the audit says success
 - The page stops offering the partial path. Replace is offered only when there are no rejections
   at all; otherwise the page says fix the file and re-upload, with the errors CSV that is already
   reachable from every state.
+- **The refusal has to actually report, and today it would not.** `OnJobCompletedAsync` builds
+  the admin notification from `_result`: `_result?.Outcome.ToString() ?? "did not complete"` and
+  `_result?.Message ?? job.Message ?? "No detail was recorded."`. A resolve-stage refusal never
+  sets `_result`, so the one notification the operator gets would say "did not complete" rather
+  than naming the unmatched addresses. **Carry the refusal reason into the completion path.**
+  Found by plan review round 2; without it the owner's ruling is implemented in the row status
+  and nowhere the operator looks.
 
-**Tests:** one rejection blocks the write. **Assert `ExecuteReplaceAsync` was never called** -
-that is the assertion that matters, not the status string.
+**Tests:** one rejection blocks the write; **and the completion notification names the refusal
+reason rather than "did not complete"**. **Assert `ExecuteReplaceAsync` was never called** - that
+is the assertion that matters, not the status string.
 
 ## Slice C4 - the job writes the approved set or nothing
 
 **Revision 1 proposed comparing the confirmed COUNT. That is too weak and was rejected at review:
 the same count with different people passes.**
 
-Carry a fingerprint of the approved resolved set in `Comms10kReplaceJobPayload` - an ordered,
-normalised hash of the resolved DNs the operator confirmed. The job still re-resolves (keep that;
+Carry a fingerprint of the approved resolved set in `Comms10kReplaceJobPayload` - a hash of the
+resolved DNs the operator confirmed. **It must be a SET identity: normalise and sort before
+hashing so it is order-independent.** The resolver guarantees no input ordering, so an
+order-sensitive hash would refuse correct runs at random. The job still re-resolves (keep that;
 the payload's own remarks give the reason and it remains true), then compares its own resolved set
 against the fingerprint. Any difference is a refusal, not a write.
 
@@ -197,7 +216,7 @@ Two acceptable shapes; the implementing agent picks and records why:
 
 **Test:** a ticket edited after Validate cannot reach the payload unvalidated.
 
-## Slice C5 - the submitter can see and manage their own job
+## C5 (DEFERRED, not a slice of this plan) - the submitter can see and manage their own job
 
 **Owner ruling: "any case where a user can start a job that ends up here but not see it or manage
 it is a failure."** Redesign in scope.
@@ -231,8 +250,17 @@ change and is not approved.
 **No filter is required to press Search** (owner ruling). A blank Search pulling everything is the
 supported way to get everything.
 
-The `result == null` branch already renders the no-result state; its comment explains the deferred
-first load and will be false - rewrite it.
+**Revision 2 said the `result == null` branch "already renders the no-result state". That is
+false and was caught at review:** the branch is two comment blocks and blank output - it renders
+nothing. The search form sits above it, so the page is not blank, but there is no empty state.
+This slice must ADD one: a line saying nothing has been searched for yet. That is what makes the
+page read as "a working search form" rather than as a page that failed to load. Both comments in
+that branch describe the deferred first load and become false - rewrite or delete them.
+
+**Test fallout the plan previously missed:** `ExchangeAdminWeb.Tests/ProgressRegistry.cs` carries
+an exemption `new("OnAfterRenderAsync", "the initial load is LoadAsync", "LoadAsync")` for this
+page. Removing the auto-load makes that reason false; update the registry entry in the same
+commit.
 
 **Test:** the page does not call the service on first render. **Honest limit:** a lifecycle
 assertion, not a rendered-page one; there is no bUnit harness.
@@ -272,6 +300,12 @@ therefore describe a wider question than the operator asked.
 **Added at review: the CSV export audit has the same gap and is worse.** The export audits the
 action and a row count only, while the rows it writes are the filtered set. Include the applied
 filters there too.
+
+**And it must audit the APPLIED snapshot, not the live form.** `LoadAsync` keeps `filters` as a
+local, so there is no server-side record of what the current result was fetched with; reading
+`form` during export would describe controls the operator may have typed into since, which is
+the exact stale-form class the page's own comments exist to prevent. Store the applied filter
+description alongside `result` when a load completes, and have the export audit read that.
 
 Mark Site and Seen-by as client-side in the record so it does not imply Defender was asked for
 them.
@@ -315,6 +349,12 @@ these slices edit and are fixed with the slice that touches them:
   posture and an observer request per batch.
 - `Components/Pages/DefenderEndpointDevices.razor` - the CSV projection comment says twenty-seven
   columns; the header has twenty-nine.
+- **Added at review round 2:** `Services/Comms10kService` and `Modules/ModuleCatalog` both still
+  say replaces "are not serialised" and "two concurrent replaces can interleave". The only caller
+  today is the bulk job runner, which is a singleton running one job at a time, so the
+  interleaving they describe cannot happen by that route. Correct them in whichever slice touches
+  those files - and if the claim turns out to be true by some other route, that is a finding, not
+  a comment fix.
 
 Fix each in the slice that touches its file. Do not start a wider sweep here.
 
@@ -323,7 +363,8 @@ Fix each in the slice that touches its file. Do not start a wider sweep here.
 ## Sequencing
 
 C1 first - it is what stops the module touching the wrong thing. Then C3, C4, C7 (C4 and C7 are
-two halves of one guarantee and should land adjacent), C2, C6. C5 only after its design note.
+two halves of one guarantee and should land adjacent), C2, C6. C5 is NOT in this sequence - it
+is deferred until it has a design note and its own approval.
 D1-D5 are independent of the Comms work and of each other; do D2 before D5 so the concurrency fix
 is not written on top of a caching change. D6-local rides its slice.
 
