@@ -1,6 +1,8 @@
 # Comms-10k and Defender Remediation - Plan
 
-Status: **DRAFT Revision 6 - awaiting owner approval.** Five review rounds on the Portkey codex
+Status: **APPROVED Revision 6; implementation in progress, owner 2026-10-15: "approved. go."**
+Approval covers all twenty findings and the Sol 6.1 implementation / independent Astra review
+arrangement recorded in `.agents/decisions.md`. Five review rounds on the Portkey codex
 harness (rounds 1-3 "do not approve", 4-5 "keep, amend"), then one round on codex-commercial /
 `gpt-6-astra` / max, which found ten further defects - several more serious than anything in
 Revisions 1-5 - and judged the sequencing wrong. **This revision is reordered around the write
@@ -58,7 +60,7 @@ not the carried-forward items in the last section, which are recorded and not fi
 | C2, C6, D1-D5 | Fix | 2026-10-15 |
 | D1 | No fetch on open; **no filter requirement** - a blank Search still pulls everything | 2026-10-15 |
 | D6 | Separate plan; local instances fixed by the slice that touches them | 2026-10-15 |
-| C7-C11, D7-D10 | **Not yet ruled** - found by plan review after the ruling session | 2026-10-15 |
+| C7-C11, D7-D10 | Approved with Revision 6 | 2026-10-15 |
 
 Durable rulings: `.agents/decisions.md`, 2026-10-15.
 
@@ -447,8 +449,38 @@ and the Defender open-without-fetch need manual checks on dev.
   unsettled. **Probing AD is forbidden without a direct owner go.**
 - **The codebase-wide comment audit (D6)** - separate plan, agent fan-out.
 
-## Pending decisions
+## Approval and implementation
 
-1. **The partial-file path is removed.** Confirm or veto.
-2. **C7-C11 and D7-D10 were found after the ruling session and are unruled.** The plan assumes the
-   same answers. Say if any should be dropped or deferred.
+The owner approved Revision 6 and the proposed dispatch arrangement on 2026-10-15:
+"approved. go." The partial-file refusal was already accepted in the decision log and is
+included in this approval. C7-C11 and D7-D10 are approved. No scope decision remains open.
+
+Use one fresh `gpt-6.1-sol` implementer at `max` per slice, sequentially, with independent
+`gpt-6-astra` review at `max`. Review the affected workflow, including its callers and lifecycle;
+do not restrict the reviewer to the diff or prime it with earlier clean conclusions. Keep one
+writer in this checkout and commit each verified finding before the next. Work directly on
+`master`, matching the existing stream. Push, deployment and live-directory access are not
+part of this implementation approval.
+
+| Finding | Implementation | Evidence |
+|---|---|---|
+| C9 | Pending | |
+| C1 | Pending | |
+| C10 | Pending | |
+| C3 | Pending | |
+| C4 | Pending | |
+| C11 | Pending | |
+| C5 | Pending | |
+| C2 | Pending | |
+| C7 | Pending | |
+| C8 | Pending | |
+| C6 | Pending | |
+| D8 | Pending | |
+| D10 | Pending | |
+| D9 | Pending | |
+| D4 | Pending | |
+| D7 | Pending | |
+| D1 | Pending | |
+| D2 | Pending | |
+| D3 | Pending | |
+| D5 | Pending | |

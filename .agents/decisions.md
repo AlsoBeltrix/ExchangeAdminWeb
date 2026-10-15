@@ -4,6 +4,25 @@ Durable repo decisions. Not a chat log. Each entry should make sense without
 conversation history and should name superseded guidance when relevant.
 
 ## Decisions
+### 2026-10-15 - Revision 6 approved; Sol 6.1 implements and Astra reviews
+
+Owner response: "approved. go." to the proposed implementation arrangement and the pending
+approval of `docs/Comms10kDefenderRemediation-Plan.md`, Revision 6. All twenty findings are
+approved, including C7-C11 and D7-D10; the earlier partial-file-refusal decision stands.
+
+For this remediation stream, use fresh `gpt-6.1-sol` implementation agents at `max`, one finding
+at a time, and independent `gpt-6-astra` review at `max`. Start with C9; judge its implementation
+and guard evidence before proceeding. Part 1 is sequential and only one agent writes to this
+checkout at a time. Review the complete affected workflow without priming the reviewer with
+previous clean conclusions. The parent coordinates records and dispatch; it does not duplicate
+the implementation or review its own code.
+
+This is a scoped exception to the 2026-08-27 Fable implementation assignment and the prohibition
+on supervising implementation subagents. It also resolves the implementation-route question
+in the previous handoff. No CLI launch workaround, push, deployment, live AD probe or live
+tenant write is authorized by this decision. Existing commit, verification and mutation-proof
+requirements remain in force.
+
 ### 2026-10-15 - Comms-10k is pinned to one group by ObjectGUID, and may name it in source
 
 Status: Active. Supersedes nothing; narrows the 2026-09-30 exemption's basis.
