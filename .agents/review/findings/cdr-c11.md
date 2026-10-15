@@ -261,4 +261,4 @@ Range diff check passed. Full-suite and mutation reruns, browser, installed-cmdl
 checks were not performed.
 
 A separate pre-existing P3 resolve-stage label conflates address and distinct-member counts.
-Its follow-up record owns the evidence; it does not block C11 or expand C5. Proceed to C5.
+`cdr-followup-1.md` owns the evidence; it does not block C11 or expand C5. Proceed to C5.

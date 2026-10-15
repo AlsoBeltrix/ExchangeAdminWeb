@@ -39,6 +39,7 @@ C2 fresh authorization/write boundaries, C7 handler reentry/atomic CSV/original 
 text, C8 export safety/audit and C6 ticket display remain separate. D2 precedes D7.
 The shared PowerShell audit inventory is `.agents/review/powershell-replay-audit.md`;
 psl-2/3/4 remain separately recorded, unapproved follow-ups.
+C11's adjacent address-versus-member stage-label issue is `cdr-followup-1`, also unapproved.
 
 C11 began on clean master `958cce71a973f45afa9cb3c892ce286e287aa930`.
 Both origin and github master were checked live at
