@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C1 implemented; independent review pending
+### Comms-10k / Defender remediation - C9 and C1 independently reviewed; C10 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved. That plan owns the slice order and
@@ -18,8 +18,8 @@ reviews the affected workflow. C9 landed in `f530c62` and independent Astra revi
 implementation, guard proof and review are recorded in `.agents/review/findings/cdr-c9.md`.
 C1 now pins every target lookup, clear, add and read-back to the approved ObjectGUID, removes
 the target setting and validates exactly one matching directory result. Its implementation,
-guard proof and review packet are in `.agents/review/findings/cdr-c1.md`; independent Astra
-workflow review is pending. Comms-10k is `1.4.6`; no shared/app version change.
+guard proof and independent Astra approval are in `.agents/review/findings/cdr-c1.md`.
+Comms-10k is `1.4.6`; no shared/app version change.
 
 Current slice baseline: clean `master` at `75b2d98`; both `origin` and `github` remained at
 `8853979` when verified on 2026-10-15. The intervening bookkeeping and implementation are local.
@@ -34,9 +34,10 @@ with byte-identical restoration/hash and mtime updates. The prior C9 lifecycle g
 passed. Counts, hashes and limitations live in the finding record; `.agents/review/index.md`
 tracks both slices. Page line positions were preserved, so no registry anchors moved.
 
-Next: independent Astra workflow review of C1 before C10. Continue the approved slice order
-after that review. C11 also owns the ordinary interrupted-write count-label case found
-by C9's reviewer; the plan carries its reproduction and required coverage.
+Next: implement C10, resolver identity deduplication, then independent Astra workflow review.
+C3 also owns the thrown service-preparation failure audit/reason case found by C1's reviewer;
+C11 owns the ordinary interrupted-write count-label case found by C9's reviewer. The plan
+carries both reproductions and required coverage.
 
 Standing boundaries: no live AD probe, tenant write or deployment. The approval does not widen
 Comms-10k's protection exemption or authorize a push. No self-review. The module specification

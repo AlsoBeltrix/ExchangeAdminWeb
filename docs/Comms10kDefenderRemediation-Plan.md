@@ -172,6 +172,12 @@ with rejections present.
 **Tests:** one rejection blocks the write; a failed mutation audit exists; the notification names
 the reason. **Assert `ExecuteReplaceAsync` was never called.**
 
+**Additional C1 review case (2026-10-15):** if the initial lookup succeeds but the second
+runspace's Open or Import-Module throws, the exception escapes ExecuteReplaceAsync, skips
+the processor's result assignment and mutation audit, and yields a generic completion reason.
+Cover thrown service-preparation failures as well as returned refusals: one failed audit and
+the concrete failure reason in completion. Evidence and the control-flow limit are in `cdr-c1`.
+
 ## C4 - the job writes the approved set or nothing
 
 The concrete identity, confirmation, primary-member refusal and older-payload choices are in
@@ -485,7 +491,7 @@ part of this implementation approval.
 | Finding | Implementation | Evidence |
 |---|---|---|
 | C9 | Implemented / independently reviewed (`f530c62`) | [cdr-c9](../.agents/review/findings/cdr-c9.md) |
-| C1 | Implemented; independent workflow review pending | [cdr-c1](../.agents/review/findings/cdr-c1.md) |
+| C1 | Implemented / independently reviewed (`00f453e`) | [cdr-c1](../.agents/review/findings/cdr-c1.md) |
 | C10 | Pending | |
 | C3 | Pending | |
 | C4 | Pending | |

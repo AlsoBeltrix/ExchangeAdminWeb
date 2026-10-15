@@ -1,6 +1,6 @@
 # cdr-c1 - the broadcast target can be reconfigured or retargeted by its DN
 
-Status: Implemented and locally verified on master; independent Astra workflow review pending.
+Status: Implemented, locally verified and independently reviewed on master.
 Push awaits separate authority.
 
 ## Evidence and approved scope
@@ -166,3 +166,27 @@ self-review was performed.
 ### Verification run
 
 All required local gates and 31 new cases' mutation proofs passed as recorded above.
+
+## Independent workflow review - 2026-10-15
+
+Native agent `/root/review_c1`, `gpt-6-astra` at `max`, approved C1 with no blocking defect.
+Reviewed base `75b2d9848de28f30eb3a74124ffbb99846a497f1`, implementation
+`00f453ee6abb73b245d0e70b2932dba4c3a9b5c1`, and frozen head
+`13e47f715090322a7694f054bedd4f2d7a1d3055`; later changes were design documents only.
+The reviewer traced preview/export, lookup, re-read, clear/add retries, read-back and callers.
+Every target operation uses the pinned GUID; invalid pre-write reads refuse, failed post-write
+reads become CouldNotConfirm, and obsolete config rows survive complete-dictionary saves.
+The protection exemption, accepted concurrency and C9 command cleanup remain intact.
+
+Independent focused Release Comms tests passed 137/137. The reviewer inspected the full-gate
+and compiled mutation logs, checked the restored service MD5, and ran reviewed-range diff
+checking. No edits, new mutations, live directory calls or browser checks were performed.
+The real-forest target and dev rendering/member-list acceptance remain unverified.
+
+One MEDIUM pre-existing adjacent path is now assigned to C3: after the initial lookup succeeds,
+the second runspace Open or Import-Module can throw outside the service's re-read catch
+(`Comms10kService` line 439 at reviewed head). That escapes the processor await (line 147),
+skips result assignment and SafeAudit, and leaves the runner's failed row without a mutation
+audit. Completion reports "did not complete" / "No detail was recorded." This was established
+by control flow, not fault injection. C3 must cover the thrown preparation path as well as
+returned refusals; it does not block C1. The plan owns that pending work.
