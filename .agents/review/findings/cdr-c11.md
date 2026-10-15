@@ -1,6 +1,6 @@
 # cdr-c11 - report interrupted membership writes without invented counts
 
-Status: Implemented on master; restored full gate passed; independent Astra workflow review pending.
+Status: Implemented and independently reviewed on master; push awaits authority.
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, Revision 6, C11.
 Baseline: clean master `958cce71a973f45afa9cb3c892ce286e287aa930`.
 Both origin and github master were checked live at
@@ -237,5 +237,28 @@ which is absent. This slice uses a normal configured git commit; no hook/trust/c
 change or bypass. Direct master work has no branch closeout. No live directory/tenant action,
 browser render, installed-cmdlet check, deployment or push was run. Self-review was not run.
 
-Independent Astra workflow review at max is the pending next gate. C5 follows that review;
-the implementation commit remains local under push policy ask.
+The implementation commit remains local under push policy ask.
+
+## Independent workflow review - 2026-10-15
+
+Native `/root/review_c11`, `gpt-6-astra` at `max`, approved C11 with no blocking findings for
+`958cce71a973f45afa9cb3c892ce286e287aa930..b0c535ee8d09f06405236200fda2e5dd177183d8`.
+The checkout remained frozen and clean; the reviewer made no edits.
+
+The complete lifecycle trace confirmed separate requested, acknowledged-add and observed
+counts in service logging, audit and completion. Lost acknowledgement stays unknown even when
+read-back matches; predispatch refusals retain zero. Restart uses the persisted reason and
+Interrupted outcome, without converting stage prose into count evidence. C1 identity binding,
+C3 refusal reason/single audit, C4 approval/primary handling and C9 cleanup remain intact.
+No new retry, locking, protection or directory behavior was introduced. The declared pending
+neighboring slices remain outside the verdict.
+
+The independent rebuilt focused run passed 17/17 (16 new cases and the adapted guard). All
+eight mutation TRXs contained the stated 34 assertion failures without compiler errors. Saved
+bytes, MD5/SHA256 and restoration timestamps matched the frozen production sources. The
+reviewer inspected the restored 218/218 evidence and the 3,972 passed / 3 skipped full gate.
+Range diff check passed. Full-suite and mutation reruns, browser, installed-cmdlet and live
+checks were not performed.
+
+A separate pre-existing P3 resolve-stage label conflates address and distinct-member counts.
+Its follow-up record owns the evidence; it does not block C11 or expand C5. Proceed to C5.
