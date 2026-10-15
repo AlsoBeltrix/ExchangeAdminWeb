@@ -50,6 +50,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [cdr-c7](findings/cdr-c7.md) | HIGH - overlapping handlers release shared busy state and failed CSV uploads publish a usable prefix | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [v] | [cdr-c8](findings/cdr-c8.md) | MEDIUM - downloads export executable cells and post-delivery audit faults report failure | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [v] | [cdr-c6](findings/cdr-c6.md) | MEDIUM - editable ticket display diverges from immutable approved job/audit metadata | Verified on master; push pending | master | native / gpt-6-astra / max |
+| [v] | [cdr-d8](findings/cdr-d8.md) | MEDIUM - numeric OS builds disappear and escaped site names are truncated | Implemented on master; independent review pending | master | native / gpt-6-astra / max pending |
 | [ ] | [cdr-followup-1](findings/cdr-followup-1.md) | LOW - resolve-stage prose compares member count with address count | Recorded follow-up; not approved | - | native / gpt-6-astra / max |
 | [v] | [psl-1](findings/psl-1.md) | HIGH - failed optional Exchange command can replay in the next calendar-permission operation | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [ ] | [psl-2](findings/psl-2.md) | MEDIUM - licensing failure can select an earlier row's error | Recorded follow-up; not approved | - | native / gpt-6-astra / max audit |

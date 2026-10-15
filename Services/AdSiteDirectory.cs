@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using ExchangeAdminWeb.Authorization;
 
 namespace ExchangeAdminWeb.Services;
@@ -18,11 +20,9 @@ namespace ExchangeAdminWeb.Services;
 /// forest returns is the map.
 /// </para>
 /// <para>
-/// <b>Failure is FATAL to the report, which is the opposite of the hunting enrichment's rule
-/// and is deliberate</b> (plan Q10). A hunting failure greys five columns the operator can work
-/// without; a site failure means every row's location is unknown, and the whole reason someone
-/// opened this page was to find a machine. Rendering 27,000 rows with a silently blank Site
-/// column would send them hunting through a report that cannot answer. It throws instead.
+/// A failed directory read throws rather than returning a map that could be mistaken for
+/// complete. The Defender caller catches that failure, marks Site unavailable and preserves
+/// the rest of the device report (owner decision 2026-10-14).
 /// </para>
 /// </remarks>
 public sealed class AdSiteDirectory
@@ -38,8 +38,7 @@ public sealed class AdSiteDirectory
     /// Every subnet object in the forest, with the name of the site it is linked to.
     /// </summary>
     /// <exception cref="InvalidOperationException">
-    /// The configuration partition could not be read, or the subnet query failed. Both are
-    /// fatal: see the type remarks.
+    /// The configuration partition could not be read, or the subnet query failed.
     /// </exception>
     public IReadOnlyList<AdSiteSubnetMap.Subnet> ReadSubnets()
     {
@@ -101,11 +100,46 @@ public sealed class AdSiteDirectory
         if (string.IsNullOrWhiteSpace(siteObjectDn))
             return "";
 
-        var first = siteObjectDn.Split(',', 2)[0];
-        var equals = first.IndexOf('=');
-        if (equals < 0 || equals == first.Length - 1)
+        var equals = siteObjectDn.IndexOf('=');
+        if (equals < 0 || siteObjectDn.AsSpan(0, equals).Contains(','))
             return "";
 
-        return first[(equals + 1)..].Trim();
+        var name = new StringBuilder();
+        for (var i = equals + 1; i < siteObjectDn.Length && siteObjectDn[i] != ','; i++)
+        {
+            if (siteObjectDn[i] != '\\')
+            {
+                name.Append(siteObjectDn[i]);
+                continue;
+            }
+
+            // Consume the escape with its value, so an escaped comma is data and a comma
+            // after an escaped backslash still ends the RDN. Hex escapes encode UTF-8 bytes.
+            if (++i == siteObjectDn.Length)
+                return "";
+
+            if (i + 1 < siteObjectDn.Length && byte.TryParse(siteObjectDn.AsSpan(i, 2),
+                    NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var octet))
+            {
+                var bytes = new List<byte> { octet };
+                i += 2;
+                while (i + 2 < siteObjectDn.Length && siteObjectDn[i] == '\\'
+                    && byte.TryParse(siteObjectDn.AsSpan(i + 1, 2),
+                        NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out octet))
+                {
+                    bytes.Add(octet);
+                    i += 3;
+                }
+
+                name.Append(Encoding.UTF8.GetString(bytes.ToArray()));
+                i--;
+            }
+            else
+            {
+                name.Append(siteObjectDn[i]);
+            }
+        }
+
+        return name.ToString().Trim();
     }
 }

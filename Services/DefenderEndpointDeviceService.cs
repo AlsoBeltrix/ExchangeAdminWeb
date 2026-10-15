@@ -36,9 +36,8 @@ public sealed class DefenderEndpointDeviceService
     /// The forest's subnet-to-site map. Null only in tests that are not about location.
     /// </summary>
     /// <remarks>
-    /// When present, a read failure FAILS THE RUN (plan Q10) - the opposite of the hunting
-    /// enrichment beside it. A blank Site column across 27,000 rows is not a degraded report,
-    /// it is the report failing to answer the question the page exists for.
+    /// A read failure marks every Site cell unavailable and is reported independently, leaving
+    /// the device inventory usable. See ApplySites and the 2026-10-14 owner decision.
     /// </remarks>
     private readonly AdSiteDirectory? _siteDirectory;
     private readonly string? _maxDevicesOverride;
@@ -830,9 +829,8 @@ public sealed class DefenderEndpointDeviceService
     /// its own (T1).
     /// </para>
     /// <para>
-    /// One query per refresh, never one per device. Graph's hunting quotas - 30 days of data,
-    /// 100,000 rows, at least 45 calls per minute per tenant, a 50 MB result cap - none of which
-    /// bite at one query per page load, all of which would bite at one per device.
+    /// The caller batches device ids; this method issues one posture query per batch, never one
+    /// per device. Observer enrichment uses its own separately isolated request per batch.
     /// </para>
     /// </remarks>
     internal async Task<DefenderDiscoveryEnrichment> GetDiscoveryEnrichmentAsync(IReadOnlyList<string> deviceIds)
@@ -1629,7 +1627,7 @@ public sealed class DefenderEndpointDeviceService
         OnboardingStatus = GetString(item, "onboardingStatus"),
         OsPlatform = GetString(item, "osPlatform"),
         OsVersion = GetString(item, "version"),
-        OsBuild = GetString(item, "osBuild"),
+        OsBuild = GetStringOrNumber(item, "osBuild"),
         OsArchitecture = GetString(item, "osArchitecture"),
         HealthStatus = GetString(item, "healthStatus"),
         LastIpAddress = GetString(item, "lastIpAddress"),
@@ -1718,6 +1716,16 @@ public sealed class DefenderEndpointDeviceService
     private static string GetString(JsonElement item, string name) =>
         TryGetProperty(item, name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? ""
+            : "";
+
+    private static string GetStringOrNumber(JsonElement item, string name) =>
+        TryGetProperty(item, name, out var value)
+            ? value.ValueKind switch
+            {
+                JsonValueKind.String => value.GetString() ?? "",
+                JsonValueKind.Number => value.GetRawText(),
+                _ => ""
+            }
             : "";
 
     private static bool GetBool(JsonElement item, string name) =>

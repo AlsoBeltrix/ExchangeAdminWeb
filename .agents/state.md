@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - all Comms slices closed; Defender D8 next
+### Comms-10k / Defender remediation - Defender D8 implemented; independent review pending
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -17,6 +17,23 @@ Astra workflow review at max. C9, C1, C10, C3, C4 and C11 have independent revie
 `.agents/review/findings/cdr-c4.md` owns its P2 correction closed on coder-side proof.
 The separately approved shared Exchange psl-1 is independently reviewed; its record at
 `.agents/review/findings/psl-1.md` owns the evidence and verdict.
+
+D8 began on clean master `d9c71f6` and now preserves numeric osBuild through the
+returned row/CSV and escaped first-RDN site names through directory mapping and
+the actual compiled Site filter/export. Defender is 1.6.7; the shared directory
+change independently requires base 2.27.4. Comms stays 1.4.18. Seven new compiled
+cases passed, then five compiled production probes produced 14 standard assertion
+failures with an exact union of all seven cases. Exact-byte/MD5/SHA256 restoration,
+newer mtimes and runtime assembly provenance passed. The restored affected run
+passed 234/234 after aligning an existing stale catalog-version expectation.
+The final sequential gate passed: Release build with 40 existing warnings / 0
+errors, full solution format before the single full suite, 4,155 passed / 3 skipped /
+0 failed, then diff and staged ASCII checks including the new test file. No shipped
+page, PowerShell, live integration, self-review or adjacent-finding work is included.
+`.agents/review/findings/cdr-d8.md` owns scope, evidence, limits and the complete
+Constitution packet. Independent Astra max workflow review is pending; D10 is the
+next implementation after that review boundary. Known module-spec Version 2.0 /
+June 25 drift remains flagged against base 2.27.4.
 
 C6 began on clean master `0413e3b81cabda8b9c70e9feed6e4d8beab8f5b5`. The compiled
 ticket input now shows the captured trimmed ticket and locks while busy or approved,
@@ -38,8 +55,8 @@ Constitution review packet and independent clean Astra max verdict for `66691b6`
 Astra independently passed 8/8 plus an actual-renderer probe with 11 assertions,
 reconciled proof/gate receipts and found no actionable defects. All eleven original
 Comms findings and the additional shared psl-1 fix are closed locally. Nine original
-Defender findings remain. Next: fresh Sol 6.1 implementation of D8, followed by
-independent Astra max review and the remaining approved sequence.
+Defender findings remain. D8 implementation and its independent Astra max review
+are the current slice; the remaining approved sequence follows that boundary.
 
 C8 is independently APPROVED (`4be636b`) with no actionable findings; its evidence,
 80/80 independent focused run and reviewed mutation/gate receipts are owned by
