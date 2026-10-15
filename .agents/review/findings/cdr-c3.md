@@ -1,6 +1,6 @@
 # cdr-c3 - refuse incomplete member resolution and record why
 
-Status: Implemented on `master`; restored full gate passed; independent workflow review pending.
+Status: Implemented on `master`; restored full gate and independent workflow review passed.
 Push remains pending under policy `ask`.
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, Revision 6, C3.
 Baseline: clean `master` at `2b87f0e27fc0ed0af0d23fa0bc308c2e70626808`.
@@ -206,3 +206,28 @@ C2 and C11 still pending; do not infer their planned guards already exist.
 See the compiled proof and Verification sections above. No browser render, live
 directory/tenant query, mutation or deployment. No shipped PowerShell source changed;
 PSScriptAnalyzer/Pester were not required or run.
+
+## Independent workflow review - 2026-10-15
+
+Native `/root/review_c3`, `gpt-6-astra` at `max`, returned PASS for
+`2b87f0e27fc0ed0af0d23fa0bc308c2e70626808..f0d79b03cf9ad3c427712719f9814d2157348f99`.
+No new C3 blocker or untracked adjacent defect was found. The checkout stayed frozen/clean.
+
+The reviewer traced service resolution, processor executable-state publication, failed-row
+continuation, actual replace dispatch, audit and completion. Any rejection blocks the writer;
+the first refusal reason survives and is audited once. Create/Open/import failures refuse
+before changes, while a fault after write-sequence entry remains CouldNotConfirm. The page
+offer/direct guard includes parse errors; authorization/completeness refusals audit and notify.
+Audit/notification exceptions are isolated and the successful path remains intact.
+
+The reviewer inspected raw TRX and receipts for all eleven mutation groups: 31 assertion
+failures, 23 distinct cases, restored SHA256 hashes matching frozen source. Saved evidence
+confirmed the zero-error Release build, 3,907 passed / 3 skipped full suite and 520 focused
+passes. A fresh range diff check passed. No tests were rerun and no source was changed.
+Browser rendering, live AD/tenant behavior and deployment remain unverified.
+
+A HIGH pre-existing issue already assigned to C7 was reconfirmed: a parsing exception after
+valid CSV rows leaves their prefix in parsedEmails (Comms10k.razor lines 532/556 at reviewed
+head), which can subsequently validate and replace the group. C7's existing atomic publication
+requirement and behavioral guard own this case; it is not a C3 regression or a new finding.
+C4, C2, C11 and the other declared slices remain pending in the plan.

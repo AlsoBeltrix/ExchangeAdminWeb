@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C3 implemented and verified; independent review pending
+### Comms-10k / Defender remediation - first four slices independently reviewed; C4 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved. That plan owns the slice order and
@@ -26,7 +26,7 @@ resolution, keeps paired member state executable only after full success, and ga
 page offer and direct submission. Refusals audit once and keep their reason for completion;
 known pre-write preparation faults refuse while an arbitrary later throw remains unconfirmed.
 Implementation, compiled mutation proof and the workflow packet are in
-`.agents/review/findings/cdr-c3.md`; independent Astra review is still owed.
+`.agents/review/findings/cdr-c3.md`; independent Astra review passed at `f0d79b0`.
 
 Current slice began on clean `master` at `2b87f0e`. `origin` HEAD was verified at `8853979`
 on 2026-10-15; `github`'s last recorded receipt is also `8853979` (the C10 closeout).
@@ -43,7 +43,7 @@ restores and advanced mtimes. Focused Comms/ClickGate/ProgressRegistry tests pas
 Counts, hashes and limits belong to the finding record; `.agents/review/index.md` tracks
 the slices. The Comms page moved; no registry line entry required a change.
 
-Next: independently review C3's committed workflow, then implement C4.
+Next: implement C4's exact approved member set, then independent Astra workflow review.
 C3 includes the thrown service-preparation failure audit/reason case found by C1's reviewer;
 C11 owns the ordinary interrupted-write count-label case found by C9's reviewer. The plan
 carries both reproductions and required coverage. C7 additionally owns the original rejected-row
