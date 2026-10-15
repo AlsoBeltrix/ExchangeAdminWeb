@@ -1,7 +1,7 @@
 # cdr-c4 - bind replacement to the exact approved identities
 
-Status: Implemented on master; compiled guard proof and restored final gate passed.
-Independent Astra workflow review is owed; push remains pending under policy ask.
+Status: Independent Astra review raised one P2 recovery-advice correction, now resolved
+on coder-side guard proof and a passing restored full gate. Push remains pending.
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, Revision 6, C4.
 Baseline: clean master `b936c604482447c36f93010b6fae135dd71d6df9`.
 Origin master verified at `885397981d7550afebf6518ef21b4fc54b062859` on 2026-10-15.
@@ -97,8 +97,8 @@ corrected harness before the final restored gate. No analyzer suppression was ad
 
 ### Mode
 
-IMPLEMENTATION_REVIEW / REVIEW_ONLY. Independent Astra review is pending;
-no self-review was performed.
+IMPLEMENTATION_REVIEW / REVIEW_ONLY. The original packet was used for the independent
+review recorded below; it raised one P2 correction. No self-review was performed.
 
 ### Original Request
 
@@ -112,7 +112,8 @@ at max followed by independent Astra review at max. This slice implements C4 onl
 
 ### Commit Range
 
-`b936c604482447c36f93010b6fae135dd71d6df9..HEAD` for this finding's implementation commit.
+`b936c604482447c36f93010b6fae135dd71d6df9..`
+`eb6c285b40d0b1408391450358c1c0e1c2e3e24f` for the original implementation review.
 
 ### Claimed Changes
 
@@ -167,7 +168,7 @@ Compiled mutation and final gate receipts are recorded below. No browser render,
 query, tenant call, installed AD cmdlet test or deployment. PSScriptAnalyzer/Pester are not
 required because no PowerShell source changed.
 
-## Compiled guard proof
+## Compiled guard proof - initial C4 implementation
 
 All 33 new C4 cases failed an intended assertion against compiled production mutations.
 Fourteen groups produced 43 assertion failures, covering those 33 distinct cases and the
@@ -209,7 +210,7 @@ its TRX, `cdr-c4-M*.log` and per-probe TRX directories, fixed-byte backups, the 
 script and `cdr-c4-mutation-receipts.json` with every assertion and mtime receipt. This
 finding owns the durable results; ignored logs are supplemental.
 
-## Restored final gate
+## Restored final gate - initial C4 implementation
 
 - `dotnet build ExchangeAdminWeb.slnx -c Release`: exit 0, 41 warnings / 0 errors.
   Two warnings are the local PowerShell fixture's dynamically assigned counters; its
@@ -228,3 +229,83 @@ The existing global pre-commit wrapper only chains an executable local pre-commi
 which is absent. No hook/trust/configuration change or bypass was performed. The finding
 uses a normal configured git commit. No PowerShell source changed; PSScriptAnalyzer and
 Pester were not required or run.
+
+## Independent workflow review - 2026-10-15
+
+Native independent Astra review at max examined `b936c604482447c36f93010b6fae135dd71d6df9..`
+`eb6c285b40d0b1408391450358c1c0e1c2e3e24f`, frozen checkout
+`823b72b0fcf5662a1e09c21cd6925dfa729c14ac` (later commits were separate draft proposal docs).
+Verdict: one P2 correction required; the original review was not a clean approval.
+
+The GUID approval and actual mutation boundaries otherwise satisfy C4. The reviewer
+independently ran all 202 Comms tests successfully and verified the 14 TRX groups / 43
+assertion failures covering 33 new cases plus one adapted existing case, fixed hashes/mtime,
+and the recorded 3,940 passed / 3 skipped final gate. No reviewer writes were made. Browser
+rendering and installed-cmdlet integration remain unverified.
+
+P2: Derive's mismatch message always promises that rerunning the same CSV repairs the group
+and converges. If an unexpected primary member appeared after preflight, the next attempt
+refuses before clear because that primary membership remains outside approval. The advice
+cannot work. This message propagates into the persisted Replace row, failed audit and
+completion notification; the fix must preserve the write diagnostics and PartlyApplied state.
+
+### Correction scope declared before edits
+
+- `Services/Comms10kReplaceWriter.cs`: choose primary-membership correction advice when
+  observed primary GUIDs are outside approval; preserve ordinary mismatch recovery/counts.
+- `ExchangeAdminWeb.Tests/Comms10kApprovedSetTests.cs`: extend concurrent-primary coverage
+  through row/audit/notification, original write diagnostics and the next refused attempt.
+- `Modules/ModuleCatalog.cs`: Comms-10k patch bump to 1.4.10; no base bump.
+- This record, `.agents/review/index.md`, `.agents/state.md`, `.agents/token-log.md`,
+  `docs/Comms10kDefenderRemediation-Plan.md`: correction/review evidence and current status.
+
+This is a noncritical correction, closed on coder-side guard proof under repo policy; no
+second review pass is required or requested. The separate PowerShell plan was DRAFT when
+this correction began. The owner subsequently approved psl-1; the parent owns recording and
+dispatching that slice after this C4 commit. No PowerShell implementation is part of C4.
+C11 reporting/count semantics remain pending.
+
+### Coder-side P2 resolution
+
+The correction began on clean master `823b72b0fcf5662a1e09c21cd6925dfa729c14ac`;
+origin master was rechecked at `885397981d7550afebf6518ef21b4fc54b062859`.
+Its correction range is that baseline through HEAD at the commit carrying this record.
+Derive now checks observed primary GUIDs against the approved set when reporting a
+mismatch. Unexpected primary memberships retain PartlyApplied and the original write
+diagnostics, while explaining that this operation cannot remove them and that they must
+be corrected before validating/resubmitting. Ordinary mismatch advice is preserved.
+No write-count, dispatch, approval or primary-preflight behavior changed.
+
+The existing concurrent-primary regression now injects a write-acknowledgement failure,
+requires its original diagnostic and the corrected advice, and rejects guaranteed CSV
+convergence advice. Exact-message assertions verify the row, audit and notification.
+A second processor over the same directory fixture then refuses before another clear.
+The reused-DN theory case retains the ordinary recovery-advice control.
+
+Compiled mutation: force the new primary-membership detection false, restoring universal
+CSV recovery advice. Release solution tests ran both theory cases: concurrent-primary failed
+an intended Assert.Contains assertion and reused-DN passed; exit 1, no compiler/build errors.
+The source was restored in finally and both fixed hashes matched, with mtime advanced from
+`17:03:40.4005189Z` to `17:04:11.9687276Z`:
+
+- `Services/Comms10kReplaceWriter.cs` MD5: `CDADC0C82A167D1C26C857ECFFA74ABE`
+- SHA256: `B744CFC6317EBBA9EB79BB465DF852262E5C98D632AA0D05883F3D56D1081195`
+
+The restored focused test passed both cases. Machine-local evidence uses
+`cdr-c4-correction-*` and `cdr-c4-P2.log`/TRX under `.agents/review/out/`.
+Comms-10k is now 1.4.10; the base app remains 2.27.1. The correction's final restored gate:
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: exit 0, 41 warnings / 0 errors.
+- `dotnet test ExchangeAdminWeb.slnx -c Release -- xUnit.MaxParallelThreads=4`:
+  exit 0, 3,940 passed / 3 skipped / 0 failed (4 m 58 s).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0,
+  workspace-loading warning only.
+- `git diff --check HEAD` and staged `tools/Test-AsciiOnly.ps1`: exit 0.
+
+Only one final full-suite run was needed for this correction. The focused proof/positive
+check and all gate logs use the `cdr-c4-correction-` prefix. No additional review was
+launched: the original P2 is closed under the noncritical coder-side proof policy, rather
+than describing the original independent verdict as a clean approval. Browser and
+installed-cmdlet integration remain unverified; no live calls, push, deployment, hook change
+or branch operation was performed. No PowerShell source changed, so PSScriptAnalyzer/Pester
+were not required or run.

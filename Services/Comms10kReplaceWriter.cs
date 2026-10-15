@@ -335,6 +335,11 @@ public static class Comms10kReplaceWriter
         // run. This is the one outcome that demands operator action, so it says what state the
         // list is in and what repairs it.
         var writeNote = string.IsNullOrWhiteSpace(writeError) ? "" : $" The write reported: {writeError}";
+        var hasUnapprovedPrimary = observed.PrimaryGroup.Any(guid => !expected.Contains(guid));
+        var recovery = hasUnapprovedPrimary
+            ? "The primary-group memberships outside the approved set cannot be removed by this operation. "
+                + "Correct those primary memberships before validating the file and resubmitting."
+            : "Re-run the same CSV to repair it - the write does not depend on prior state, so a repeat run converges.";
         return new Comms10kUpdateResult
         {
             Outcome = Comms10kOutcome.PartlyApplied,
@@ -343,8 +348,7 @@ public static class Comms10kReplaceWriter
             FinalCount = actual.Count,
             Message =
                 $"PARTLY APPLIED. {groupName} now holds {actual.Count} members and the uploaded file asked for "
-                + $"{target.Count}, so the list is INCOMPLETE.{writeNote} Re-run the same CSV to repair it - "
-                + "the write does not depend on prior state, so a repeat run converges."
+                + $"{target.Count}, so the list is INCOMPLETE.{writeNote} {recovery}"
         };
     }
 }

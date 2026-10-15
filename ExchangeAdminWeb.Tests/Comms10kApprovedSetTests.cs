@@ -229,8 +229,31 @@ public sealed partial class Comms10kRefusalTests
 
         Assert.Equal(BulkJobRowStatus.Partial, row.Status);
         Assert.Contains("PARTLY APPLIED", row.Message, StringComparison.Ordinal);
+        if (mode == "concurrent-primary")
+        {
+            Assert.Contains("primary-group memberships outside the approved set cannot be removed by this operation", row.Message, StringComparison.Ordinal);
+            Assert.Contains("before validating the file and resubmitting", row.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("Re-run the same CSV", row.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("converges", row.Message, StringComparison.Ordinal);
+            Assert.Contains("The write reported: Write acknowledgement unavailable.", row.Message, StringComparison.Ordinal);
+        }
+        else
+            Assert.Contains("Re-run the same CSV", row.Message, StringComparison.Ordinal);
         fixture.AssertAudit(row.Message, Comms10kOutcome.PartlyApplied);
         fixture.AssertNotification(row.Message!, Comms10kOutcome.PartlyApplied);
+
+        if (mode == "concurrent-primary")
+        {
+            var clears = directory.Calls.Count(call => call == "clear");
+            var nextAttempt = fixture.Processor(fixture.Service);
+            var nextJob = Job();
+            Assert.Equal(BulkJobRowStatus.Success, (await nextAttempt.ProcessRowAsync(nextJob, 0, CancellationToken.None)).Status);
+            var refused = await nextAttempt.ProcessRowAsync(nextJob, 1, CancellationToken.None);
+            Assert.Equal(BulkJobRowStatus.Failed, refused.Status);
+            Assert.Contains("primary-group members outside the approved set", refused.Message, StringComparison.Ordinal);
+            Assert.Contains("cannot be removed by this operation", refused.Message, StringComparison.Ordinal);
+            Assert.Equal(clears, directory.Calls.Count(call => call == "clear"));
+        }
     }
 
     [Fact]
@@ -401,6 +424,7 @@ public sealed partial class Comms10kRefusalTests
                     $global:C4Directory.Calls.Add('add')
                     $global:C4Directory.BatchSizes.Add($Add['member'].Count)
                     foreach ($value in $Add['member']) { $global:C4Directory.Added.Add([string] $value) }
+                    if ($global:C4Mode -eq 'concurrent-primary') { throw 'Write acknowledgement unavailable.' }
                 }
                 """));
             State.Commands.Add(new SessionStateFunctionEntry("Get-ADObject", """

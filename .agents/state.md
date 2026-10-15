@@ -8,38 +8,40 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C4 implemented; independent review owed
+### Comms-10k / Defender remediation - C4 review correction verified; psl-1 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
-`docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and
-implementation status. `.agents/decisions.md` owns sequential fresh Sol 6.1 implementation
-at max and independent Astra workflow review at max. C9, C1, C10 and C3 are independently
-reviewed; their evidence is linked by `.agents/review/index.md`.
+`docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
+`.agents/decisions.md` owns sequential fresh Sol 6.1 implementation at max and independent
+Astra workflow review at max. C9, C1, C10 and C3 are independently reviewed.
 
-C4 now binds validation, captured submission, persisted payload, runtime resolution and actual
-member adds to the same approved GUID set. Primary members outside that set or unreadable
-primary identities refuse before clear. Strict batched GUID read-back cannot approve observed
-extras. Comms-10k is `1.4.9`; the base app remains `2.27.1`. Implementation details, compiled
-guard proof, gate results and the workflow review packet belong to
-`.agents/review/findings/cdr-c4.md`. Independent Astra C4 review is still owed.
+C4 binds approval, runtime resolution, actual member adds and strict batched read-back to
+GUID identities. Its independent Astra review confirmed those boundaries but raised one P2:
+a concurrent unapproved primary member was correctly reported as PartlyApplied while the
+message promised that the same CSV would repair it. The next attempt instead refuses.
+The correction now requires those primary memberships to be corrected before validation
+and resubmission; row, audit and notification preserve the advice and write diagnostics.
+The compiled guard proof, restored focused test and full restored gate passed (3,940 passed /
+3 skipped / 0 failed; build, format, diff and staged ASCII passed).
+`.agents/review/findings/cdr-c4.md` owns the original verdict, evidence and correction.
+This noncritical correction closes on coder-side proof; no second review round is required.
+Comms-10k is `1.4.10`; the base app remains `2.27.1`.
 
-C4 began on clean master `b936c604482447c36f93010b6fae135dd71d6df9`. Origin master was checked
-at `885397981d7550afebf6518ef21b4fc54b062859` on 2026-10-15; github's last recorded receipt is
-also `8853979`. The intervening work is local. Historical "unpushed since 96cdb89" assertions
-below are superseded by this receipt. No work branch is in use; push policy remains `ask`.
+The correction began on clean master `823b72b0fcf5662a1e09c21cd6925dfa729c14ac`. Origin master
+was rechecked at `885397981d7550afebf6518ef21b4fc54b062859` on 2026-10-15; github's last
+recorded receipt is also `8853979`. The intervening work remains local. Historical "unpushed
+since 96cdb89" assertions below are superseded. No work branch is in use; push policy is ask.
 
-C4's 33 new cases are compiled mutation-proven. The restored Release build, full solution
-suite (3,940 passed / 3 skipped / 0 failed), format, diff and staged ASCII gates passed.
-Next: independent Astra workflow review of C4, then C11 implementation after that gate. C11 owns interrupted-write count labels;
-C5 job visibility, C2 authorization snapshots, and C7 broad reentry/atomic parsing remain
-pending. C7 also owns rejected-row original-text consistency. D2 precedes D7 to supply per-call
-failure diagnostics. The plan owns all remaining slice work.
+Next: the parent records the newly approved additional psl-1 slice and dispatches its
+implementation/review before resuming C11.
+The separate proposal subsection below awaits that parent-owned approval update.
+C11 owns interrupted-write count labels; C5 job visibility, C2 authorization snapshots,
+C7 broad reentry/atomic parsing and rejected-row original-text consistency remain pending.
+D2 precedes D7 to supply per-call diagnostics. No PowerShell implementation is part of C4.
 
-Standing boundaries: no live AD probe, tenant write, deployment, push, protection check or
-locking. GUID-only alternative DN values follow official protocol/cmdlet documentation;
-installed-cmdlet interoperability and browser rendering remain unverified. No self-review.
-The module specification still identifies 2.0 / June 25 versus app 2.27.1; that known drift
-remains flagged and relevant contracts were checked against the Constitution and code.
+Standing boundaries: no live AD probe, tenant write, deployment, push, protection check,
+locking or self-review. Installed-cmdlet interoperability and browser rendering remain
+unverified. The known module-spec 2.0 / June 25 versus app 2.27.1 drift remains flagged.
 
 ### Additional PowerShell replay finding - separate proposal pending
 
