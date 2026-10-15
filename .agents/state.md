@@ -8,6 +8,87 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
+### HANDOFF 2026-10-15 - remediation plan at Revision 6, UNAPPROVED, nothing implemented
+
+**Branch `master`, verified head `8c2f8af`, working tree clean, Release build 0 errors.**
+Nothing from the remediation work has been implemented. The whole session was review and
+planning; every commit is docs.
+
+**The plan is `docs/Comms10kDefenderRemediation-Plan.md`, Revision 6, status DRAFT.** Twenty
+findings across Comms-10k and Defender, ordered: Part 1 the Comms-10k write path (C9, C1, C10,
+C3, C4, C11, C5, C2, C7, C8, C6), Part 2 Defender correctness (D8, D10, D9, D4, D7, D1, D2,
+D3), Part 3 performance (D5). **The plan is the record** - the review envelopes it cites are in
+`.agents/review/out/`, which is gitignored.
+
+**How this stream started, and the lesson that matters most.** The 2026-10-14 session ran five
+codereview rounds over the Defender diff and closed them "clean". The owner then found a defect
+in one minute that none of the five could have found: the page fetches the device inventory on
+open, before anyone searches. **Every one of those five prompts carried an OUT OF SCOPE block
+and opened by telling the reviewer what the previous round had concluded**, so the module's
+lifecycle, its DI registration and anything predating the diff were unreachable from all of
+them. Owner's words: *"do not structure the review prompt such that mistakes can stay hidden.
+Do not ask the reader if you used the correct font, tell it to read the words."*
+
+Unprimed was not enough either - a diff-pinned unprimed review also missed it. **What worked was
+dropping the diff entirely: "here is a module, does it do its job".** That found twelve, including
+three bigger than anything the five rounds produced. Use that shape.
+
+**Then the plan itself went through six rounds.** Five on the Portkey codex harness (1-3 "do not
+approve", 4-5 "keep, amend"), then one on **codex-commercial / `gpt-6-astra` / max**, which
+found ten more and judged the sequencing wrong. Every round found something that would have
+shipped. The newer model's round was not marginally better, it was categorically better.
+
+**The three worst findings, all from that last round, none from the five code-review rounds:**
+
+1. **C9 - a failed write can run twice.** `Comms10kService.ClearMembers` does `AddCommand`,
+   `Invoke`, `Commands.Clear`. `ErrorAction Stop` makes failures terminating, so a throw skips
+   the clear and leaves the command queued on a REUSED `PowerShell` object. The retry appends a
+   second clear; after retries are exhausted `ReadBackMembers` appends its read to the same
+   pipeline and executes the pending mutation. **The step that exists to verify without writing
+   can write.** Independently verified by the plan author.
+2. **C1 was incomplete as ruled.** Pinning the group by ObjectGUID was going to cover the lookup
+   while the clear, the add and the read-back all address the group by `DistinguishedName`.
+   Verified. Every write must carry the GUID.
+3. **C11/C5 - the replace clears then refills**, so an interruption leaves the group empty or
+   partial, and restart reconciliation reports "Members written: 0" when the real number is
+   unknown. The submitter cannot see job outcomes at all, so nobody learns. **That is why C5 is
+   no longer deferred.**
+
+**Owner rulings are in `.agents/decisions.md`, 2026-10-15** - three entries: the GUID pin with
+environment neutrality waived (*"I am exempt from my own rules"*), refuse-rather-than-guess
+(*"we do not guess"*), and job visibility.
+
+**Two decisions are still open and the plan names them:**
+
+1. **The partial-file path is removed by the refuse ruling** - a file with any unmatched address
+   can no longer be applied at all. Confirm or veto.
+2. **C7-C11 and D7-D10 were found after the ruling session and are unruled.** The plan assumes
+   the same answers.
+
+**Next action: get those two answered, then implement Part 1.** Implementation has not started.
+
+**Implementation route is unresolved and it is an owner decision.** The owner directed
+codex-commercial to implement so this agent could review it. That dispatch was launched once
+and **made no changes** - it stopped at the Release build gate, which fails inside its sandbox
+during NuGet restore (the same build is clean outside it), and it correctly refused to edit
+anything without a green gate. The owner has since ruled **this agent does not launch codex**.
+So the choice is: the owner launches it, or this agent implements and the review separation is
+lost. `.agents/review/out/impl-part1.txt` holds that run's report; its prompt and launcher were
+deleted.
+
+**Do not self-review the implementation if this agent writes it** - AGENTS.md forbids it absent
+an explicit owner request.
+
+**Still true and unchanged:** nothing in this stream has run against the live tenant or live
+forest; **probing Active Directory is forbidden without a direct go**; the range is unpushed
+(`github` and `origin` both at `96cdb89`) and push policy is `ask`.
+
+**One correction this session, recorded because the owner acted on the wrong version.** C2 was
+described to him as catching a job that writes after the submitter's access is revoked. It does
+not - `JobAuthorizationSnapshot` says in its own summary that it "does NOT detect mid-job
+group-membership revocation". It catches the authorizing group leaving the section's allowed
+set. He ruled on the wider claim.
+
 ### Defender review stream - NINE findings over four rounds, all fixed; round 5 is out
 
 **Branch `master`, working tree clean.** The 2026-10-14 session took the two uncommitted
