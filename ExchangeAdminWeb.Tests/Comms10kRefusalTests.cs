@@ -327,7 +327,7 @@ public sealed partial class Comms10kRefusalTests
         private readonly AuditService _audit;
         private readonly EmailService _email;
         private readonly HttpClient _http;
-        private readonly List<(bool Success, IReadOnlyDictionary<string, string> Details, string? Error)> _notifications = [];
+        private readonly List<(string Actor, bool Success, IReadOnlyDictionary<string, string> Details, string? Error)> _notifications = [];
         public IConfiguration Config { get; }
         public TestService Service { get; }
         public SectionAccessService Sections { get; }
@@ -382,7 +382,7 @@ public sealed partial class Comms10kRefusalTests
             _email.SendAdminNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<string>(),
                 Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<string?>()).Returns(call =>
                 {
-                    _notifications.Add((call.ArgAt<bool>(3), call.ArgAt<IReadOnlyDictionary<string, string>>(5), call.ArgAt<string?>(6)));
+                    _notifications.Add((call.ArgAt<string>(0), call.ArgAt<bool>(3), call.ArgAt<IReadOnlyDictionary<string, string>>(5), call.ArgAt<string?>(6)));
                     return Task.CompletedTask;
                 });
             _http = new HttpClient(new CredentialHandler(async request =>
@@ -450,7 +450,7 @@ public sealed partial class Comms10kRefusalTests
             return page;
         }
 
-        public void AssertAudit(string? reason, Comms10kOutcome outcome, bool success = false)
+        public void AssertAudit(string? reason, Comms10kOutcome outcome, bool success = false, string actor = "operator")
         {
             var events = _log.GetAuditLogPaths(DateTime.Now).Where(File.Exists).SelectMany(File.ReadAllLines)
                 .Select(line => JsonDocument.Parse(line)).ToList();
@@ -460,7 +460,7 @@ public sealed partial class Comms10kRefusalTests
                 Assert.Equal(success ? "Success" : "Failed", evt.GetProperty("result").GetString());
                 Assert.Equal(outcome.ToString(), evt.GetProperty("Outcome").GetString());
                 if (!success) Assert.Equal(reason, evt.GetProperty("error").GetString());
-                Assert.Equal("operator", evt.GetProperty("user").GetString());
+                Assert.Equal(actor, evt.GetProperty("user").GetString());
                 Assert.Equal("192.0.2.7", evt.GetProperty("ip").GetString());
                 Assert.Equal("INC123", evt.GetProperty("ticket").GetString());
                 Assert.Equal("members.csv", evt.GetProperty("target").GetString());
@@ -468,9 +468,10 @@ public sealed partial class Comms10kRefusalTests
             finally { foreach (var evt in events) evt.Dispose(); }
         }
 
-        public void AssertNotification(string reason, Comms10kOutcome outcome, bool success = false)
+        public void AssertNotification(string reason, Comms10kOutcome outcome, bool success = false, string? actor = null)
         {
             var notification = Assert.Single(_notifications);
+            if (actor is not null) Assert.Equal(actor, notification.Actor);
             Assert.Equal(success, notification.Success);
             Assert.Equal(outcome.ToString(), notification.Details["Outcome"]);
             Assert.Equal(reason, notification.Details["Detail"]);

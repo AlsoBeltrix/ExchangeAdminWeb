@@ -688,6 +688,7 @@ public sealed class ModuleCatalog
             // ticket check (docs/ProgressCoverage-Plan.md S3).
             // 1.3.3: the three silent reads report - the member preview, the full export, and
             // the CSV upload parse (docs/ProgressCoverage-Plan.md S5).
+            // 1.4.15: refused submissions report the captured current actor in both channels (C2 P2).
             // 1.4.14: capture current submission authorization and re-check at each write dispatch (C2).
             // 1.4.7: repeated directory rows are indexed by address and distinct ObjectGUID (C10).
             // 1.4.6: the target and all group operations bind to the fixed ObjectGUID (C1).
@@ -706,7 +707,7 @@ public sealed class ModuleCatalog
             // addresses and had no way to obtain the rest - the stakeholder's "requiring us to
             // manually identify the affected users". Owner ruling 2026-10-12: an address with no
             // exact match is not a match, so the fix is reporting, NOT widening the lookup keys.
-            Version = "1.4.14",
+            Version = "1.4.15",
             MainPermission = new(
                 "Access",
                 "Comms10k",

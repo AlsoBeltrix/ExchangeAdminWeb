@@ -1,6 +1,7 @@
 # cdr-c2 - current submission authorization and command-dispatch gates
 
-Status: Implemented on master; restored full gate passed; independent Astra max review pending.
+Status: Independent Astra max review returned CHANGES REQUIRED / P2; P2 resolved on coder-side proof.
+The restored correction gate passed; no second review was requested or run. C7 is next.
 Push remains pending under policy ask.
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, Revision 6, C2, with
 `.agents/review/cdr-c2-design.md` defining the capture/dispatch boundaries.
@@ -224,11 +225,12 @@ change, branch/history action or push occurred. The configured normal commit is 
 The committed-baseline token meter ran; its Claude-only transcript scope excludes
 this native Sol slice, so no slice usage or cost is attributed.
 
-## Review packet
+## Original implementation review packet (b79914c)
 
 ### Mode
 
-IMPLEMENTATION_REVIEW; independent Astra max review is pending. No self-review ran.
+IMPLEMENTATION_REVIEW packet prepared for b79914c. The actual independent verdict and
+P2 correction receipts below supersede its initial pending-review state. No self-review ran.
 
 ### Original Request
 
@@ -308,3 +310,130 @@ No live AD/tenant/vault call, browser/hosted circuit,
 deployment or self-review. No shipped PowerShell changed, so PSScriptAnalyzer/Pester
 were not required or run. The token meter ran against the committed baseline, but its
 Claude-only scope excludes this native Sol slice and supplies no attributed usage.
+
+## Independent workflow review - 2026-10-15
+
+Fresh native gpt-6-astra at max reviewed
+`ec824c03fcef2cb6abf357378d8950b17f976df2..b79914cfe0dc5a0b5c2d568349eebd50e0e21722`
+and returned CHANGES REQUIRED, with one P2 integration defect. This was not a clean
+approval. The reviewer validated all 46 compiled cases, all 19 mutation groups
+(75 intended assertion failures / exactly 46 names), all four SHA256 values, eight
+saved byte backups/restoration mtimes, the 4,091-pass / 3-skip gate, clean checkout,
+capability proof and diff check. No browser or live calls were used.
+
+The added capture-refusal callers at reviewed page lines 792/800 omit the freshly
+obtained submitter. RefuseReplaceAsync uses initialization-time currentUser for the
+audit (line 855) and administrator email (line 862); BindJobsActor does not update it.
+Compiled probes using the real GroupAuthorizationHandler authorized
+OTHER\\fresh-operator, then disabled the module, removed the allowed group, or let
+claims satisfy live policy while IsInRole threw during snapshot capture. Every path
+correctly enqueued zero jobs, but the audit actor was page-initialization and the email
+actor was OLD\\page-initialization. This is an attribution defect, not an authorization
+bypass. Supplemental probe source/log are `.agents/review/out/cdr-c2-probe/Program.cs`
+and `.agents/review/out/cdr-c2-probe.log`; the reviewer verdict above is the durable record.
+
+## P2 correction scope declared before code
+
+Correction baseline: clean master `b79914cfe0dc5a0b5c2d568349eebd50e0e21722`;
+both remotes re-verified at `885397981d7550afebf6518ef21b4fc54b062859`.
+Pass the captured submission actor explicitly into refusal reporting. Keep existing
+audit SAM formatting, full notification actor, one audit/notification, no enqueue,
+C4 frozen approval and C5 full-actor/cache behavior. Routine callers of that helper
+may pass the same captured actor; no broader identity cleanup is authorized.
+
+Declared correction files: `Components/Pages/Comms10k.razor` (helper/callers only),
+`Modules/ModuleCatalog.cs` (Comms patch),
+`ExchangeAdminWeb.Tests/Comms10kAuthorizationActorTests.cs` (three real-policy
+switched-actor regressions), `ExchangeAdminWeb.Tests/Comms10kRefusalTests.cs`
+(capture and assert actor in existing audit/email fixtures), this finding, index,
+plan, current state and token log. Re-anchor ClickGate/ProgressRegistry only if the
+playbook requires it. No worker/service/shared/base behavior changes are intended.
+
+Each new case must fail intended assertions against compiled reviewed production
+behavior, restore exact bytes/MD5/SHA256 and advance source mtimes, then pass one
+restored build/full-format-before-full-tests/diff/staged-ASCII gate. The P2 correction
+closes on coder-side proof under repo policy; no second review is requested or run.
+C7/C8/C6, broader identity cleanup, live calls, push, deploy, branch/history or hook/
+trust changes, self-review and additional agents remain excluded. C7 is next after
+this correction's normal separate commit.
+
+## P2 correction implementation and proof
+
+RefuseReplaceAsync now requires an explicit actor. ExecuteReplace keeps a handler-local
+submission actor, updates it from the freshly obtained nonblank Identity.Name before
+live policy authorization, and passes it through every routine refusal caller. The
+initial page identity remains the fallback only when no current usable name has been
+obtained. No shared page identity is rewritten. The two reviewed capture refusals now
+report the same current principal that would own a successful submission. Existing audit
+SAM formatting is preserved; administrator email receives the full identity.
+
+Comms advances from 1.4.14 to 1.4.15; base remains 2.27.3. Worker, service and writer
+still match their independently reviewed SHA256 hashes above. The page re-anchor
+procedure maps 1,178 equal lines from the 1,187-line reviewed page to the 1,189-line
+correction. Comms has no line-keyed ClickGate entries; ProgressRegistry still names
+the same handlers and calls. No registry edit or new handler was needed.
+
+Three compiled regressions use the real policy and GroupAuthorizationHandler against
+temporary SQLite config, then disable Comms, remove its allowed grant, or throw from
+IsInRole only during capture after group claims passed live policy. Each switches
+from OLD\\page-initialization to OTHER\\fresh-operator and asserts both channels with
+Assert.Multiple: audit user fresh-operator under the existing SAM convention and full
+notification actor OTHER\\fresh-operator. Each also proves one refusal audit and one
+notification, specific reason, no new persisted job, unchanged initialized page identity
+and cleared actor-bound cached jobs. The focused Release run passed 506/506, including
+existing C2/C3/C4/C5 cases, ClickGate and ProgressRegistry.
+
+All three new cases failed intended Assert.* assertions in each of three sequential
+compiled production probes (nine failed test results). The reviewed-original probe
+restores the entire page from b79914c and reproduces both reported actor mismatches
+in each case; its Assert.Multiple messages contain both underlying Assert.Equal
+failures. The two isolated probes prove that an independent regression in either
+channel is caught even while the other channel remains corrected.
+
+| Probe | Compiled production regression | Failed / executed |
+|---|---|---|
+| reviewed-original-page | restore reviewed Comms10k.razor from HEAD b79914c | 3 / 3 |
+| audit-reuses-initialization-actor | only the audit uses currentUser | 3 / 3 |
+| email-reuses-initialization-actor | only the administrator email uses currentUser | 3 / 3 |
+
+Every probe runs Release solution tests without --no-build, scans for error CS,
+requires exit 1 and intended assertion failures in fresh TRX, then restores exact
+saved bytes in finally, verifies MD5/SHA256 and advances mtime beyond the mutated
+version. The per-case union is exactly disabled, removed-grant and capture-unreadable;
+no new case is unproven. Corrected page hashes supersede the original page receipt:
+
+- MD5: `95BF17160AAB53BB3B38590986FD7862`.
+- SHA256: `75CBA86D2D860855754697F8E2EBAF4FEFA3993F5080949A95CA8FCF92B61143`.
+
+Ignored supplemental evidence: `.agents/review/out/cdr-c2-correction-mutations.py`,
+`cdr-c2-correction-mutations/receipts.json`, its three logs/TRX and page.fixed.bin;
+focused receipts are in `cdr-c2-correction-focused/`. These establish compiled page
+behavior with real policy/local stores, not a browser or live directory.
+
+## P2 correction final gate and closure
+
+- Release solution build: exit 0, 57 warnings / 0 errors. The normalized warning set
+  is identical to the original C2 gate (40 existing dependency advisories and 17
+  existing C# nullable/unused diagnostics); none is introduced by this correction.
+- Full solution format verification: exit 0, existing workspace-loading warning only;
+  completed before the single restored full suite.
+- `dotnet test ExchangeAdminWeb.slnx -c Release -- xUnit.MaxParallelThreads=4`:
+  exit 0, 4,094 passed / 3 skipped / 0 failed (4,097 total), 5 m 6 s. All three new
+  case names passed in the restored full TRX. This was the correction's only full
+  suite; no redundant full baseline was run.
+- `git diff --check HEAD`: exit 0, repeated after final bookkeeping.
+- `tools/Test-AsciiOnly.ps1`: exit 0 with the new actor-test source staged; repeated
+  after final staging. No new shipped PowerShell required Pester/PSScriptAnalyzer.
+
+Correction gate logs use the `cdr-c2-correction-` prefix under `.agents/review/out/`;
+the final TRX is `cdr-c2-correction-final/cdr-c2-correction-final.trx`. The corrected
+page still matches its exact MD5/SHA256 restoration hashes after the final build,
+format verification and full suite. The worker/service/writer hashes remain the
+independently reviewed originals. Correction commit range is `b79914c..HEAD`.
+
+The original independent verdict remains CHANGES REQUIRED/P2. The P2 is now resolved
+and closed on coder-side proof under repo policy after the restored gate; no second
+review was requested or run. No self-review, live AD/tenant/vault call, browser/hosted
+circuit, shipped PowerShell change, branch/history/hook/trust action, push or deployment.
+The token meter ran against the committed baseline; its Claude-only scope excludes
+this native Sol correction. C7 is the next approved slice after the normal commit.

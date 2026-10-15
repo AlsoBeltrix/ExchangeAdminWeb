@@ -737,18 +737,20 @@
         isLoading = true;
         confirmPending = false;
         var ticket = approved?.Ticket ?? validatedTicket;
+        var submissionActor = currentUser;
         await Task.Yield();
 
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var submitter = authState.User.Identity?.Name;
+            if (!string.IsNullOrWhiteSpace(submitter)) submissionActor = submitter;
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "Comms10k");
             if (_disposed) return;
-            var submitter = authState.User.Identity?.Name;
             if (!authCheck.Succeeded || authState.User.Identity?.IsAuthenticated != true || string.IsNullOrWhiteSpace(submitter))
             {
                 DenyOwnedJobs();
-                await RefuseReplaceAsync("Authorization denied.", ticket);
+                await RefuseReplaceAsync("Authorization denied.", ticket, submissionActor);
                 return;
             }
 
@@ -756,7 +758,7 @@
             if (!canReplace || approved is null)
             {
                 await RefuseReplaceAsync(
-                    "The file must resolve completely with no rejected rows before Replace. Fix the file and re-upload.", ticket);
+                    "The file must resolve completely with no rejected rows before Replace. Fix the file and re-upload.", ticket, submissionActor);
                 return;
             }
 
@@ -789,7 +791,7 @@
                 if (!Enablement.IsModuleEnabled(Comms10kReplaceProcessor.ModuleName) || !snapshot.IsStillAuthorized(groups))
                 {
                     DenyOwnedJobs();
-                    await RefuseReplaceAsync("Authorization denied.", ticket);
+                    await RefuseReplaceAsync("Authorization denied.", ticket, submissionActor);
                     return;
                 }
             }
@@ -797,7 +799,7 @@
             {
                 Logger.LogError(ex, "Comms-10k submission authorization could not be captured");
                 DenyOwnedJobs();
-                await RefuseReplaceAsync("Authorization could not be verified.", ticket);
+                await RefuseReplaceAsync("Authorization could not be verified.", ticket, submissionActor);
                 return;
             }
 
@@ -842,24 +844,24 @@
         {
             // SUBMISSION failure, not a write failure - no job exists, so nothing downstream will
             // ever audit this. The processor owns both channels for a replace that actually ran.
-            await RefuseReplaceAsync(ex.Message, ticket);
+            await RefuseReplaceAsync(ex.Message, ticket, submissionActor);
         }
         finally { isLoading = false; }
     }
 
-    private async Task RefuseReplaceAsync(string reason, string ticket)
+    private async Task RefuseReplaceAsync(string reason, string ticket, string actor)
     {
         result = new Comms10kUpdateResult { Success = false, Message = reason };
         try
         {
-            Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k",
+            Audit.LogModuleAction(actor, clientIpAddress, "Comms10k_Replace", "Comms10k",
                 uploadedFileName ?? "uploaded list", false, ticket, reason,
                 extra: new Dictionary<string, object?> { ["Outcome"] = Comms10kOutcome.RefusedBeforeAnyChange.ToString() });
         }
         catch (Exception ex) { Logger.LogError(ex, "Comms-10k refused-submission audit failed"); }
         try
         {
-            await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace", false, ticket,
+            await Email.SendAdminNotificationAsync(actor, clientIpAddress, "Comms10k_Replace", false, ticket,
                 new Dictionary<string, string>
                 {
                     ["Target Group"] = "Comms-10k",

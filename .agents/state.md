@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C2 implemented; independent review pending
+### Comms-10k / Defender remediation - C2 review P2 corrected; C7 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -56,10 +56,11 @@ SIDs and effective enablement gate both stages and every actual clear/add attemp
 after all credential/runspace/GUID/primary preparation. Explicit clear-dispatch tracking
 keeps pre-dispatch denials at known zero and reports actual/unknown read-back after any
 attempt. C4 approved GUIDs, C5 actor caches, C3 first reason/one audit and C11 counts remain.
-Comms is 1.4.14; base stays 2.27.3. The finding packet owns evidence and limits:
+The original C2 was Comms 1.4.14; the page correction advances it to 1.4.15 while the
+base stays 2.27.3. The finding packet owns evidence and limits:
 `.agents/review/findings/cdr-c2.md`.
 
-All 46 new cases passed, then failed intended Assert.* assertions across 19 compiled
+Original C2: all 46 new cases passed, then failed intended Assert.* assertions across 19 compiled
 production probes (75 failures), with exact bytes/MD5/SHA256 restoration and advanced
 mtimes. The single restored final gate passed: Release build 57 warnings / 0 errors;
 full format verification before tests; 4,091 passed / 3 skipped / 0 failed; staged
@@ -67,7 +68,18 @@ ASCII/diff passed. Warnings are the same 40 NuGet advisories as C5 plus 17 exist
 C# diagnostics emitted by recompilation, on unchanged lines/files; none is in new C2
 logic/tests. All production hashes still match mutation receipts after the final gate.
 
-Next: independent Astra max workflow review of C2; no self-review ran.
+Independent Astra max review returned CHANGES REQUIRED/P2: three new capture-refusal
+paths correctly denied enqueue but attributed their audit/email to initialization-time
+currentUser. The corrected helper requires a handler-local captured actor; three real-
+policy regressions assert both channels, one refusal, no enqueue and cleared caches.
+The 506-case focused run passed. All three new cases failed intended assertions in
+the compiled reviewed original page and isolated audit/email regressions (three probes,
+nine failed test results), with exact MD5/SHA256/mtime restoration. The single restored
+correction gate passed: Release build 57 warnings / 0 errors (same diagnostic set as
+original C2); full format verification before tests; 4,094 passed / 3 skipped / 0 failed;
+staged ASCII/diff passed. The page retains its exact correction hashes; worker/service/
+writer retain the independently reviewed originals. This P2 is closed on coder-side
+proof under repo policy; no second review or self-review ran. Next: C7.
 Twelve original implementation findings remain after C2;
 C7 handler reentry/atomic CSV/original rejection text, C8 export safety/audit and C6 ticket
 display remain separate. D2 precedes D7.

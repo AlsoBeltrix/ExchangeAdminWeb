@@ -46,7 +46,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [cdr-c4](findings/cdr-c4.md) | HIGH - replacement can write a member set the operator did not approve | Independent review P2 resolved by coder proof; push pending | master | native / gpt-6-astra / max |
 | [v] | [cdr-c11](findings/cdr-c11.md) | MEDIUM - interrupted replaces report requested or zero counts as written | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [v] | [cdr-c5](findings/cdr-c5.md) | HIGH - background replace submitters cannot see or manage durable outcomes | Independent review P1 resolved by coder proof; push pending | master | native / gpt-6-astra / max |
-| [v] | [cdr-c2](findings/cdr-c2.md) | HIGH - queued replace omits current authorization and module enablement at write dispatch | Verified on master; independent review pending; push pending | master | pending native / gpt-6-astra / max |
+| [v] | [cdr-c2](findings/cdr-c2.md) | HIGH - queued replace omits current authorization and module enablement at write dispatch | Independent review P2 resolved by coder proof; push pending | master | native / gpt-6-astra / max |
 | [ ] | [cdr-followup-1](findings/cdr-followup-1.md) | LOW - resolve-stage prose compares member count with address count | Recorded follow-up; not approved | - | native / gpt-6-astra / max |
 | [v] | [psl-1](findings/psl-1.md) | HIGH - failed optional Exchange command can replay in the next calendar-permission operation | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [ ] | [psl-2](findings/psl-2.md) | MEDIUM - licensing failure can select an earlier row's error | Recorded follow-up; not approved | - | native / gpt-6-astra / max audit |
