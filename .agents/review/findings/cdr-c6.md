@@ -1,6 +1,6 @@
 # cdr-c6 - keep the displayed Comms-10k ticket bound to approval
 
-Status: Implemented and verified on master; independent Astra max workflow review pending. Push pending.
+Status: Implemented and independently reviewed on master; Astra max clean verdict. Push pending.
 
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, APPROVED Revision 6, C6.
 Owner 2026-10-15: "approved. go." Implementation begins on clean master
@@ -220,3 +220,30 @@ for this independent affected-workflow review.
   page/test source hashes, 811 restored affected passes and the full-suite results.
   `final-gate.json` records build -> format -> full-test timestamps and exit 0.
   `closeout-gate.json` records the following diff/staged-ASCII checks, both exit 0.
+
+## Independent workflow review - clean, 2026-10-15
+
+Fresh native `gpt-6-astra` at `max` reviewed immutable range
+`0413e3b81cabda8b9c70e9feed6e4d8beab8f5b5..66691b6e5ca7a4ac6667d79d7dde6fb2fd22ae00`.
+Completed `2026-10-15T21:33:36Z`; verdict: **clean**, no actionable C6 findings or
+regressions. Repository-read/command capability proof passed. The reviewer traced the
+compiled binder, normalization before yielding, approval lifetime, failure/reset editing
+and captured ticket through queue, audit and notification, including prior contracts.
+
+Independent focused compiled verification passed 8/8. An ignored input-only renderer
+probe passed 11 behavioral assertions against the actual compiled binder and handlers:
+rejected delayed input emitted corrective value render updates during validation and
+after approval. The immutable queued ticket survived while a later draft could be edited.
+
+Raw receipts reconciled four mutation probes, 18 standard assertion failures covering
+exactly all eight cases, restore hashes/newer mtimes and compiled/runtime assembly equality.
+Existing receipts confirmed 811 restored affected passes, build 40 warnings / 0 errors,
+format before tests and 4,148 passed / 3 skipped / 0 failed. HEAD and tracked checkout
+remained unchanged and clean; range diff checking passed.
+
+Verified SHA256: page `0E6213967A701ACEF42FE255F2AE954D6E0A13C44B0269055CFCAE5F4B726D4E`;
+new tests `A1BD9EED7DF2A8139AE708E74E4FF7BABB37D71DA9097099EE411A2F7A4BFA7D`;
+compiled/runtime app `AF8A8F3B49193F7CBB45EB6A20793B0B90D38CAFC320B2598DE7DCCA4301580B`.
+Supplemental ignored probe and receipts: `.agents/review/out/cdr-c6-review/`.
+No browser acceptance, live integration, deployment, source mutation, full-suite or
+mutation repeat occurred. C6 is closed locally; approved Defender D8 is next.

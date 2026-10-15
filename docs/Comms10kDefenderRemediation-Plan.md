@@ -512,7 +512,7 @@ part of this implementation approval.
 | C2 | Implemented / independent review P2 corrected (coder proof) | [cdr-c2](../.agents/review/findings/cdr-c2.md) |
 | C7 | Implemented / independently reviewed (`d8f5924`) | [cdr-c7](../.agents/review/findings/cdr-c7.md) |
 | C8 | Implemented / independently reviewed (`4be636b`) | [cdr-c8](../.agents/review/findings/cdr-c8.md) |
-| C6 | Implemented / independent review pending | [cdr-c6](../.agents/review/findings/cdr-c6.md) |
+| C6 | Implemented / independently reviewed (`66691b6`) | [cdr-c6](../.agents/review/findings/cdr-c6.md) |
 | D8 | Pending | |
 | D10 | Pending | |
 | D9 | Pending | |

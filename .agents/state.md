@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C6 implemented; independent review next
+### Comms-10k / Defender remediation - all Comms slices closed; Defender D8 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -34,8 +34,12 @@ Restored Comms/ClickGate/Progress passed 811/811. The final Release build passed
 single final full suite: 4,148 passed / 3 skipped / 0 failed. Final diff and staged
 ASCII checks passed, including the new test file. No self-review ran.
 `.agents/review/findings/cdr-c6.md` owns scope, proof, limits and the complete
-Constitution review packet. Next: independent Astra max C6 workflow review, then
-fresh Sol 6.1 implementation of Defender D8 and the remaining approved sequence.
+Constitution review packet and independent clean Astra max verdict for `66691b6`.
+Astra independently passed 8/8 plus an actual-renderer probe with 11 assertions,
+reconciled proof/gate receipts and found no actionable defects. All eleven original
+Comms findings and the additional shared psl-1 fix are closed locally. Nine original
+Defender findings remain. Next: fresh Sol 6.1 implementation of D8, followed by
+independent Astra max review and the remaining approved sequence.
 
 C8 is independently APPROVED (`4be636b`) with no actionable findings; its evidence,
 80/80 independent focused run and reviewed mutation/gate receipts are owned by
