@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - psl-1 verified locally; independent review next
+### Comms-10k / Defender remediation - psl-1 reviewed; resume C11
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -27,9 +27,11 @@ contracts (29 assertion failures, exact-byte/hash/mtime restoration); the restor
 run passed 34/34. The full restored gate passed: Release build 0 errors; 3,956 tests passed /
 3 skipped / 0 failed; format, diff and staged ASCII passed.
 The base app is `2.27.2`; no Conference Rooms production code or module version changed.
-`.agents/review/findings/psl-1.md` owns the evidence and Constitution review packet.
+psl-1 is committed at `22afbf912cb06c775f2679203b7463ff9ce4fcac`. Independent Astra review
+returned PASS with no in-scope findings and a fresh 34/34 focused pass.
+`.agents/review/findings/psl-1.md` owns the evidence, review packet and verdict.
 
-Next: independent Astra max workflow review of psl-1, then resume C11. The original plan's
+Next: resume C11 with a fresh Sol 6.1 implementer and independent Astra review. The original plan's
 fifteen remaining findings are still pending. C11 owns interrupted-write count labels;
 C5 job visibility, C2 authorization snapshots, C7 broad reentry/atomic parsing and rejected-row
 original-text consistency remain pending. D2 precedes D7 to supply per-call diagnostics.

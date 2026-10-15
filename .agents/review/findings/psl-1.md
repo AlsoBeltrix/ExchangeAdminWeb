@@ -1,6 +1,6 @@
 # psl-1 - an optional Exchange command survives failure and replays
 
-Status: Verified locally on master; independent Astra workflow review pending. Push awaits authority.
+Status: Implemented and independently reviewed on master. Push awaits authority.
 Severity: HIGH. Native Astra read-only audit, 2026-10-15, at
 `b936c604482447c36f93010b6fae135dd71d6df9`.
 
@@ -12,7 +12,7 @@ uses it for Add-MailboxFolderPermission (line 1208), catches failure (1223), and
 SetCalendarPermissionsForType's next permission (1149 onward), reusing the same object.
 The next invocation can execute the failed mutation again, including when its first call
 changed permissions before throwing. The last permission can leak into timezone commands
-(line 832). This is a demonstrated control-flow path, not an executed fault-injection test.
+(line 832). This was the read-only audit evidence; the executed reproduction is recorded below.
 
 The same root also affects SetRoomTypeAsync's Get-Recipient (705): catch at 709 swallows
 failure, then permission removal (724) or calendar processing (768) reuses the instance.
@@ -228,3 +228,29 @@ The Restored repository gate section above owns the exact commands and receipts:
 Seven compiled mutation groups produced 29 intended assertion failures with verified
 byte/hash/mtime restoration; the restored focused run passed 34/34. No self-review verdict
 or live-environment acceptance is claimed.
+
+## Independent workflow review - 2026-10-15
+
+Native `/root/review_psl1`, `gpt-6-astra` at `max`, returned PASS with no in-scope findings for
+`76ba54599fdfbb3810b488fdc88478f4f79c268a..22afbf912cb06c775f2679203b7463ff9ce4fcac`.
+The checkout remained frozen and clean. No files were edited.
+
+The reviewer traced helper callers, caught-failure continuations, RunAsync diagnostic recovery,
+tracker classification and pool/retry lifecycle. Cleanup covers success and terminating failure;
+optional nonterminating errors retain their intended handling. Output, original exception and
+diagnostics are preserved, with classification before cleanup and unchanged retry eligibility.
+The actual Conference Rooms sequence establishes one first effect, correct later commands and
+preservation of the initial failure. The terminating stand-in and nonterminating tests cover
+distinct SDK paths; no installed-cmdlet integration claim follows from them.
+
+Independent verification freshly compiled the Release solution and passed all 34 focused cases.
+The range diff check passed. Current helper hashes matched receipts; reconstructing the old
+helper from the base in memory also matched its mutation hashes. All seven mutation logs had
+the recorded 29 assertion failures, expected controls and compiled outputs, without compiler
+errors. The reviewer inspected the recorded 3,956 passed / 3 skipped full gate and other checks;
+the full suite and mutations were not repeated. Live cmdlets, remote failures and browser
+behavior remain unverified.
+
+A separate pre-existing pooled-query tracker-loss finding was confirmed outside this scope;
+its dedicated follow-up record owns the details. It does not block psl-1 or authorize more code.
+Next: resume the original approved remediation at C11. This commit remains local pending push.
