@@ -450,7 +450,7 @@ public sealed partial class Comms10kRefusalTests
             return page;
         }
 
-        public void AssertAudit(string? reason, Comms10kOutcome outcome, bool success = false, string actor = "operator")
+        public void AssertAudit(string? reason, Comms10kOutcome outcome, bool success = false, string actor = "operator", string ticket = "INC123")
         {
             var events = _log.GetAuditLogPaths(DateTime.Now).Where(File.Exists).SelectMany(File.ReadAllLines)
                 .Select(line => JsonDocument.Parse(line)).ToList();
@@ -462,7 +462,7 @@ public sealed partial class Comms10kRefusalTests
                 if (!success) Assert.Equal(reason, evt.GetProperty("error").GetString());
                 Assert.Equal(actor, evt.GetProperty("user").GetString());
                 Assert.Equal("192.0.2.7", evt.GetProperty("ip").GetString());
-                Assert.Equal("INC123", evt.GetProperty("ticket").GetString());
+                Assert.Equal(ticket, evt.TryGetProperty("ticket", out var recordedTicket) ? recordedTicket.GetString() : "");
                 Assert.Equal("members.csv", evt.GetProperty("target").GetString());
             }
             finally { foreach (var evt in events) evt.Dispose(); }

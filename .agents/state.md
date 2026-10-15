@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C8 independently approved; C6 next
+### Comms-10k / Defender remediation - C6 implemented; independent review next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -18,28 +18,29 @@ Astra workflow review at max. C9, C1, C10, C3, C4 and C11 have independent revie
 The separately approved shared Exchange psl-1 is independently reviewed; its record at
 `.agents/review/findings/psl-1.md` owns the evidence and verdict.
 
-C8 began on clean master `2013553fb531837ebf890f99ff354ad92e58640b`. Both downloads
-reuse unchanged CsvExport.Write with existing headers/column/row order and the established
-local SafeAudit pattern. An audit fault after successful browser delivery logs separately,
-preserves the prior result and completes successfully; genuine read or interop failures
-retain their existing failure result. C7 first-statement busy guards, captured inputs and
-raw rejection mapping, C2 current actor/authorization and C5 jobs caches are preserved.
-Comms is 1.4.17; the base stays 2.27.3. No shared production helper changed.
+C6 began on clean master `0413e3b81cabda8b9c70e9feed6e4d8beab8f5b5`. The compiled
+ticket input now shows the captured trimmed ticket and locks while busy or approved,
+including delayed oninput callbacks. Failed validation remains editable; new upload and
+successful enqueue use the existing approval resets. Optional blanks and all prior
+approval/authorization/jobs/busy/export contracts remain. Comms is 1.4.18; base stays
+2.27.3. No shared production behavior changed. The known module-spec Version 2.0 /
+June 25 versus base-app version drift remains flagged.
 
-All 19 new compiled cases passed and failed standard Assert.* assertions in three
-compiled production probes: raw CSV (14), unguarded post-delivery audit (2) and genuine
-failure misreported as success (3). The exact failure-name union covers all new cases;
-exact bytes/MD5/SHA256 and advanced mtimes were restored after every probe. Restored
-Comms/ClickGate/Progress passed 803/803. Final Release build passed (40 existing NuGet
-warnings / 0 errors), full format verification passed before the single restored full
-suite: 4,140 passed / 3 skipped / 0 failed. Final diff and staged ASCII passed.
-The final receipt confirms all new cases, exact restore hashes and gate ordering.
-No self-review ran.
-`.agents/review/findings/cdr-c8.md` owns scope, evidence, limits and the full Constitution
-review packet and independent APPROVED verdict for `4be636b`. Astra found no actionable
-defect, independently passed 80/80 and reconciled all 19 mutation cases and final receipts.
-Next: fresh Sol 6.1 implementation of C6, then independent Astra max review and the
-approved Defender sequence. Ten original findings are closed locally, plus psl-1.
+All eight new compiled cases passed; four compiled production probes produced 18
+standard Assert failures with an exact per-case union of all eight. Exact bytes,
+MD5/SHA256, newer restored mtimes and fresh runtime assembly provenance were verified.
+Restored Comms/ClickGate/Progress passed 811/811. The final Release build passed
+(40 existing warnings / 0 errors), and full format verification passed before the
+single final full suite: 4,148 passed / 3 skipped / 0 failed. Final diff and staged
+ASCII checks passed, including the new test file. No self-review ran.
+`.agents/review/findings/cdr-c6.md` owns scope, proof, limits and the complete
+Constitution review packet. Next: independent Astra max C6 workflow review, then
+fresh Sol 6.1 implementation of Defender D8 and the remaining approved sequence.
+
+C8 is independently APPROVED (`4be636b`) with no actionable findings; its evidence,
+80/80 independent focused run and reviewed mutation/gate receipts are owned by
+`.agents/review/findings/cdr-c8.md`. The additional shared psl-1 fix is already
+independently reviewed. Deferred psl-2/3/4 and cdr-followup-1 remain outside scope.
 
 C7 is independently APPROVED (`d8f5924`), with no actionable findings. Its shared busy
 ownership, atomic upload publication and original-row reporting remain in place;

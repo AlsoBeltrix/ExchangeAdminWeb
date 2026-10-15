@@ -499,7 +499,7 @@ public sealed partial class Comms10kRefusalTests
         }
     }
 
-    private sealed class C7TicketHandler(C7Gate gate, List<Uri> requests) : HttpMessageHandler
+    private sealed class C7TicketHandler(C7Gate gate, List<Uri> requests, bool valid = true) : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -508,7 +508,7 @@ public sealed partial class Comms10kRefusalTests
             await gate.WaitAsync();
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("""{"result":[{"number":"INC123","state":"1","short_description":"Local ticket","sys_id":"test"}]}"""),
+                Content = new StringContent(valid ? """{"result":[{"number":"INC123","state":"1","short_description":"Local ticket","sys_id":"test"}]}""" : """{"result":[]}"""),
             };
         }
     }

@@ -185,7 +185,7 @@
                 <div class="card-body">
                     <div class="mb-3">
                         <label class="form-label">Ticket Number <span class="text-muted">(optional)</span></label>
-                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number, if you have one" disabled="@isLoading" />
+                        <input type="text" class="form-control" @bind="TicketInput" @bind:event="oninput" placeholder="INC/REQ number, if you have one" disabled="@TicketLocked" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label">CSV File (Email column required)</label>
@@ -332,6 +332,14 @@
     private Comms10kUpdateResult? result;
     private Comms10kConfirmation? confirmation;
     private string? submittedNotice;
+
+    // Keep the visible ticket tied to approval; delayed input events cannot edit a locked field.
+    private bool TicketLocked => isLoading || confirmation is not null;
+    private string TicketInput
+    {
+        get => confirmation?.Ticket ?? ticketNumber;
+        set { if (!TicketLocked) ticketNumber = value; }
+    }
 
     private bool CanReplace => confirmation is not null && resolveResult is { Success: true }
         && resolveResult.ResolvedMembers.Count > 0 && AllRejections.Count == 0;
@@ -706,6 +714,7 @@
         var emails = sourceEmails.ToArray();
         var sourceFileName = uploadedFileName;
         var trimmedTicket = ticketNumber.Trim();
+        ticketNumber = trimmedTicket;
         var parseRejected = rejectedBeforeLookup.Count > 0;
         isLoading = true;
         await Task.Yield();
