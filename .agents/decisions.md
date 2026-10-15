@@ -4,6 +4,19 @@ Durable repo decisions. Not a chat log. Each entry should make sense without
 conversation history and should name superseded guidance when relevant.
 
 ## Decisions
+### 2026-10-15 - Add the confirmed shared Exchange replay fix before resuming C11
+
+Owner selected "Approve the additional slice (Recommended)" for
+`docs/PowerShellCommandLifecycle-Plan.md`. This approves psl-1 at the next committed boundary
+after C4, followed by the remaining original Comms-10k/Defender findings. The plan owns the
+repair scope and preserved contracts; the read-only inventory is evidence, not authority to
+rewrite every matching invocation.
+
+Use one fresh Sol 6.1 implementation agent at max and independent Astra review at max,
+extending the scoped orchestration exception below to this one additional slice. Keep one
+writer, one finding per commit, mutation proof and the full local gate. Licensing and DHCP
+diagnostic findings psl-2/psl-3 remain deferred. No push, deployment or live probe is authorized.
+
 ### 2026-10-15 - Revision 6 approved; Sol 6.1 implements and Astra reviews
 
 Owner response: "approved. go." to the proposed implementation arrangement and the pending

@@ -208,7 +208,8 @@ prints is an estimate at first-party list rates, scoped to this machine's transc
 
 - **Model per phase (D1 2026-08-14, amended 2026-08-27 - `.agents/decisions.md`):**
   **Scoped exception, owner 2026-10-15:** the approved Comms-10k/Defender Revision 6 remediation
-  uses sequential Sol 6.1 implementation subagents at max and independent Astra review at max,
+  and the approved psl-1 extension in `docs/PowerShellCommandLifecycle-Plan.md`
+  use sequential Sol 6.1 implementation subagents at max and independent Astra review at max,
   coordinated by the parent. `.agents/decisions.md` owns this exception. The following default
   continues to apply outside that stream.
   Fable 5 implements end to end, one fresh session per slice; codex/GPT-5.5 reviews at

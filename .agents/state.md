@@ -32,9 +32,8 @@ was rechecked at `885397981d7550afebf6518ef21b4fc54b062859` on 2026-10-15; githu
 recorded receipt is also `8853979`. The intervening work remains local. Historical "unpushed
 since 96cdb89" assertions below are superseded. No work branch is in use; push policy is ask.
 
-Next: the parent records the newly approved additional psl-1 slice and dispatches its
-implementation/review before resuming C11.
-The separate proposal subsection below awaits that parent-owned approval update.
+Next: implement and independently review the separately approved psl-1 slice below, then
+resume C11. C4's review correction is committed at `6d061fdc66837d5be9f674a36b0f44b8441c723e`.
 C11 owns interrupted-write count labels; C5 job visibility, C2 authorization snapshots,
 C7 broad reentry/atomic parsing and rejected-row original-text consistency remain pending.
 D2 precedes D7 to supply per-call diagnostics. No PowerShell implementation is part of C4.
@@ -43,15 +42,15 @@ Standing boundaries: no live AD probe, tenant write, deployment, push, protectio
 locking or self-review. Installed-cmdlet interoperability and browser rendering remain
 unverified. The known module-spec 2.0 / June 25 versus app 2.27.1 drift remains flagged.
 
-### Additional PowerShell replay finding - separate proposal pending
+### Additional PowerShell replay finding - approved; implementation next
 
 The owner's 2026-10-15 interim Claude review prompted a read-only Astra audit. It confirmed
 one shared InvokeOptional replay root used by Conference Rooms; disposal and existing cleanup
 explain many other lexical matches. The inventory is in `.agents/review/powershell-replay-audit.md`.
-`docs/PowerShellCommandLifecycle-Plan.md` proposes one additional slice at the next committed
-boundary, using the same Sol/Astra workflow, and awaits owner approval. The original twenty
-findings continue independently. psl-1 owns the replay finding; psl-2/psl-3 are separate
-Licensing/DHCP diagnostic follow-ups excluded from that proposal. No additional code is approved.
+The owner separately approved `docs/PowerShellCommandLifecycle-Plan.md` at the next committed
+boundary using the same Sol/Astra workflow; `.agents/decisions.md` records the scope. Implement
+and review psl-1 now, then resume the original twenty-finding plan at C11. psl-1 owns the replay
+finding; psl-2/psl-3 are separate Licensing/DHCP diagnostic follow-ups that remain deferred.
 
 ### Defender review stream - NINE findings over four rounds, all fixed; round 5 is out
 

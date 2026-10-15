@@ -1,6 +1,6 @@
 # psl-1 - an optional Exchange command survives failure and replays
 
-Status: Open; implementation proposal awaiting owner approval.
+Status: Approved for implementation; owner 2026-10-15.
 Severity: HIGH. Native Astra read-only audit, 2026-10-15, at
 `b936c604482447c36f93010b6fae135dd71d6df9`.
 
@@ -19,8 +19,8 @@ failure, then permission removal (724) or calendar processing (768) reuses the i
 That replays a failed read inside later work; it is not a second queued-mutation finding.
 
 The complete ownership inventory and limits are in `../powershell-replay-audit.md`.
-The twenty existing remediation findings remain independently authorized; this extension
-is not authorized by their approval.
+The twenty existing remediation findings remain independently authorized. The owner separately
+approved this extension on 2026-10-15; `.agents/decisions.md` records the authority.
 
 ## Proposed repair and proof
 
@@ -30,6 +30,5 @@ convert disposal-safe sites. Exercise the actual Conference Rooms sequence, incl
 simulated mutation effect followed by a throw, and prove the old helper produces duplicate
 calls. Preserve the original exception and RunAsync diagnostic context while cleaning up.
 
-No code changed, no reproduction executed, no independent implementation review owed yet.
-Next: owner approval of the concrete separate plan, then one Sol implementation slice and
-independent Astra workflow review at the next safe committed boundary.
+No code changed and no reproduction executed yet. Next: one Sol implementation slice and
+independent Astra workflow review, after C4's committed correction and before resuming C11.

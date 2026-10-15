@@ -1,6 +1,6 @@
 # Optional Exchange command replay - Plan
 
-Status: **DRAFT - awaiting owner approval.**
+Status: **APPROVED - owner 2026-10-15: "Approve the additional slice (Recommended)".**
 
 ## Exec summary
 
@@ -68,10 +68,12 @@ unrelated module changes or script edits are planned.
 Use the existing Microsoft.PowerShell.SDK 7.6.1 and local stand-ins only; no AD/EXO module
 import, credentials, backend traffic or live acceptance is part of this plan.
 
-## Pending decision and status
+## Approval and implementation status
 
-The only owner decision is whether to approve this additional slice at the next safe
-committed boundary. The existing twenty-slice implementation continues while this is pending.
+The owner approved this additional slice at the next safe committed boundary, using the
+Sol/Astra arrangement in the executive summary. C4's review correction is committed at
+`6d061fdc66837d5be9f674a36b0f44b8441c723e`; implement and review psl-1 next, then resume C11.
+The original twenty findings retain their separate approval and ordering.
 The Licensing and DHCP diagnostic issues, psl-2/psl-3, are recorded separately and excluded.
-Implementation has not started. Branch policy remains direct master; push requires separate
+Implementation is next. Branch policy remains direct master; push requires separate
 authority, and any work-branch closeout must follow the git playbook if that policy changes.
