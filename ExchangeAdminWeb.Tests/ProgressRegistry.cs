@@ -929,6 +929,12 @@ public static class ProgressRegistry
         Page = "Comms10k.razor",
         Reports =
         [
+            new("RefreshOwnedJobs", "LoadOwnedJobsAsync(",
+                "Manual refresh and initial load report through this helper, with a yield before synchronous scoped SQLite reads. Automatic job events use the silent loader."),
+            new("ToggleJobDetails", ["BulkJobs.GetOwnedJob(", "BulkJobs.GetOwnedRows("],
+                "Authorize live access and load the persisted scoped job and stage rows; a yield lets the activity paint before SQLite work."),
+            new("ChangeOwnedJob", ["BulkJobs.DeleteOwnedJob(", "BulkJobs.CancelOwnedJob("],
+                "One guarded dispatcher owns both job controls and their activity. Scoped CAS/delete results drive feedback; the following list reload is silent."),
             new("ValidateEmails",
                 [
                     "ServiceNow.ValidateTicketAsync(",
@@ -1035,9 +1041,13 @@ public static class ProgressRegistry
         ],
         Exempt =
         [
-            new("OnInitializedAsync", AuthPreambleOnly),
+            new("OnInitializedAsync", AuthPreambleOnly + ", followed by the scoped job list", "RefreshOwnedJobs"),
             new("ExecuteReplace", JobEnqueue),
             new("DownloadSampleCsv", SampleCsv),
+            new("PreviousJobsPage", "History paging delegates to the reported manual refresh.", "RefreshOwnedJobs"),
+            new("NextJobsPage", "History paging delegates to the reported manual refresh.", "RefreshOwnedJobs"),
+            new("CancelOwnedJob", "The guarded control dispatcher owns the work and reporting.", "ChangeOwnedJob"),
+            new("RemoveOwnedJob", "The guarded control dispatcher owns the work and reporting.", "ChangeOwnedJob"),
         ],
     };
 

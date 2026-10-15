@@ -15,7 +15,8 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// for several seconds the list is EMPTY and then partial. Run from a page, the operator could
 /// navigate away mid-write and the result would land nowhere - and the frame reporting progress
 /// on work whose answer gets discarded is, in the owner's words, "just protracted doom". As a
-/// job the result is durable, leaving is safe, and there is nothing to cancel.
+/// job the result is durable and leaving is safe. Cancellation stops before a later stage;
+/// it cannot undo or abort an in-flight clear/refill.
 /// </remarks>
 public sealed class Comms10kReplaceJobPayload
 {

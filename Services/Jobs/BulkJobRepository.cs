@@ -97,6 +97,17 @@ public sealed class BulkJobRepository
         command.ExecuteNonQuery();
     }
 
+    /// <summary>Reports whether cancellation reached a still-running job, including a terminal race.</summary>
+    internal bool TryRequestCancelRunning(string id)
+    {
+        using var connection = _factory.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE bulk_job SET cancel_requested = 1 WHERE id = $id AND status = $running;";
+        command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$running", BulkJobStatus.Running.ToString());
+        return command.ExecuteNonQuery() == 1;
+    }
+
     /// <summary>Reads just the cancel flag (cheap; the runner checks it before each row).</summary>
     public bool IsCancelRequested(string id)
     {
@@ -335,6 +346,81 @@ public sealed class BulkJobRepository
         command.Parameters.AddWithValue("$id", id);
         using var reader = command.ExecuteReader();
         return reader.Read() ? ReadJob(reader) : null;
+    }
+
+    // These reads form the submitting module's ownership boundary. The owner collation uses
+    // OrdinalIgnoreCase (including non-ASCII names); SQLite's built-in NOCASE covers ASCII only.
+    // Filtering belongs in SQL BEFORE ordering/paging so foreign jobs cannot consume the window.
+    private const string OwnerScope =
+        " module_id = $module AND job_type = $type AND submitted_by = $owner COLLATE JOB_OWNER";
+
+    private static bool HasOwnerScope(string moduleId, string jobType, string submittedBy) =>
+        !string.IsNullOrWhiteSpace(moduleId) && !string.IsNullOrWhiteSpace(jobType)
+        && !string.IsNullOrWhiteSpace(submittedBy);
+
+    private SqliteConnection OpenOwnedConnection()
+    {
+        var connection = _factory.Open();
+        connection.CreateCollation("JOB_OWNER", (left, right) =>
+            string.Compare(left, right, StringComparison.OrdinalIgnoreCase));
+        return connection;
+    }
+
+    private static void BindOwnerScope(SqliteCommand command, string moduleId, string jobType, string submittedBy)
+    {
+        command.Parameters.AddWithValue("$module", moduleId);
+        command.Parameters.AddWithValue("$type", jobType);
+        command.Parameters.AddWithValue("$owner", submittedBy);
+    }
+
+    public BulkJob? GetOwned(string moduleId, string jobType, string submittedBy, string jobId)
+    {
+        if (!HasOwnerScope(moduleId, jobType, submittedBy))
+            return null;
+
+        using var connection = OpenOwnedConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = SelectColumns + " WHERE id = $id AND" + OwnerScope + ";";
+        command.Parameters.AddWithValue("$id", jobId);
+        BindOwnerScope(command, moduleId, jobType, submittedBy);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadJob(reader) : null;
+    }
+
+    /// <summary>All active jobs in the persisted module/type/owner scope, without a history cap.</summary>
+    public IReadOnlyList<BulkJob> GetActiveOwned(string moduleId, string jobType, string submittedBy)
+    {
+        if (!HasOwnerScope(moduleId, jobType, submittedBy))
+            return [];
+
+        using var connection = OpenOwnedConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = SelectColumns + " WHERE" + OwnerScope +
+            " AND status IN ($queued, $running) ORDER BY submitted_at ASC, id ASC;";
+        BindOwnerScope(command, moduleId, jobType, submittedBy);
+        command.Parameters.AddWithValue("$queued", BulkJobStatus.Queued.ToString());
+        command.Parameters.AddWithValue("$running", BulkJobStatus.Running.ToString());
+        return ReadAll(command);
+    }
+
+    /// <summary>A bounded page through retained terminal history in the same ownership scope.</summary>
+    public IReadOnlyList<BulkJob> GetFinishedOwned(string moduleId, string jobType, string submittedBy, int limit, int offset)
+    {
+        if (!HasOwnerScope(moduleId, jobType, submittedBy))
+            return [];
+
+        using var connection = OpenOwnedConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = SelectColumns + " WHERE" + OwnerScope +
+            " AND status IN ($completed, $cancelled, $interrupted)" +
+            " ORDER BY finished_at DESC, submitted_at DESC, id ASC LIMIT $limit OFFSET $offset;";
+        BindOwnerScope(command, moduleId, jobType, submittedBy);
+        command.Parameters.AddWithValue("$completed", BulkJobStatus.Completed.ToString());
+        command.Parameters.AddWithValue("$cancelled", BulkJobStatus.Cancelled.ToString());
+        command.Parameters.AddWithValue("$interrupted", BulkJobStatus.Interrupted.ToString());
+        command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 100));
+        command.Parameters.AddWithValue("$offset", Math.Max(offset, 0));
+        return ReadAll(command);
     }
 
     /// <summary>All non-terminal jobs (Queued + Running), oldest submission first (FIFO order).</summary>

@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C11 reviewed; C5 next
+### Comms-10k / Defender remediation - C5 implemented; independent review next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -18,30 +18,32 @@ Astra workflow review at max. C9, C1, C10, C3, C4 and C11 have independent revie
 The separately approved shared Exchange psl-1 is independently reviewed; its record at
 `.agents/review/findings/psl-1.md` owns the evidence and verdict.
 
-C11 separates requested membership, acknowledged adds and observed final membership. Lost
-write evidence stays unknown, including a fresh processor after restart and a failed add
-whose read-back is empty or complete. Restart completion names Interrupted, preserves its
-persisted reason and warns that the group may be empty or partial. Refusals before dispatch
-retain a proven zero. No page or shared runner behavior changed. Comms-10k is `1.4.11`;
-the base app remains `2.27.2`. `.agents/review/findings/cdr-c11.md` owns scope, causes,
-implementation, the Constitution review packet and detailed evidence.
+C5 adds the submitter's Your jobs panel to Comms-10k with actual lifecycle status, job
+messages, ticket/times and recorded Resolve/Replace outcomes, including partial, unknown,
+interrupted and zero-row failures. Persisted module/type/full-owner scope constrains each
+read and control, with case-insensitive ownership retaining domains, all active jobs and
+paged retained history. Live module policy including enablement gates every jobs action;
+denial clears cached results. Cancel/delete use existing runner tokens/CAS and terminal
+SQL guards, safely audit attempts and preserve the single completion notification.
+Submission now shows a separate Submitted notice. Missing credentials do not hide retained
+results. Comms-10k is `1.4.12`; shared repository/service changes bump the base app to
+`2.27.3`. `.agents/review/findings/cdr-c5.md` owns scope, choices, evidence and review packet.
 
-All 16 new cases plus the adapted writer case failed intended assertions in eight compiled
-mutation groups (34 failures); exact-byte MD5/SHA256 restoration and advanced mtimes verified.
-The restored focused Comms run passed 218/218. The single restored final gate passed: Release
-build 40 existing warnings / 0 errors; format; full suite 3,972 passed / 3 skipped / 0 failed;
-diff and staged ASCII checks. Independent Astra approved C11 at
-`b0c535ee8d09f06405236200fda2e5dd177183d8`, with a rebuilt 17/17 focused pass.
+All 59 new C5 cases failed intended Assert.* assertions across five compiled mutation groups
+(62 failures); exact-byte MD5/SHA256 restoration and advanced mtimes verified. The restored
+focused run passed 686/686. The single restored final gate passed: Release build with 40
+existing warnings / 0 errors; full solution format before tests; 4,031 passed / 3 skipped /
+0 failed; diff and staged ASCII checks. Independent Astra max workflow review is pending.
 
-Next: fresh Sol 6.1 implementation of C5, then independent Astra workflow review. The
-fourteen original findings after C11 remain pending. C5 job visibility/Submitted wording,
-C2 fresh authorization/write boundaries, C7 handler reentry/atomic CSV/original rejection
-text, C8 export safety/audit and C6 ticket display remain separate. D2 precedes D7.
+Next: independent Astra max workflow review of C5. C2 follows
+that gate. Thirteen original findings remain after C5; C2 fresh authorization/write boundaries,
+C7 handler reentry/atomic CSV/original rejection text, C8 export safety/audit and C6 ticket
+display remain separate. D2 precedes D7.
 The shared PowerShell audit inventory is `.agents/review/powershell-replay-audit.md`;
 psl-2/3/4 remain separately recorded, unapproved follow-ups.
 C11's adjacent address-versus-member stage-label issue is `cdr-followup-1`, also unapproved.
 
-C11 began on clean master `958cce71a973f45afa9cb3c892ce286e287aa930`.
+C5 began on clean master `5d5db6f9c35f223598947f64287bfef1e44cee18`.
 Both origin and github master were checked live at
 `885397981d7550afebf6518ef21b4fc54b062859` on 2026-10-15. The intervening work remains local.
 Historical "unpushed since 96cdb89" assertions below are superseded. No work branch is in
@@ -49,7 +51,7 @@ use; push policy is ask.
 
 Standing boundaries: no live AD probe, tenant write, deployment, push, protection check,
 locking or self-review. Installed-cmdlet interoperability and browser rendering remain
-unverified. The known module-spec 2.0 / June 25 versus app 2.27.2 drift remains flagged.
+unverified. The known module-spec 2.0 / June 25 versus app 2.27.3 drift remains flagged.
 
 ### Defender review stream - NINE findings over four rounds, all fixed; round 5 is out
 

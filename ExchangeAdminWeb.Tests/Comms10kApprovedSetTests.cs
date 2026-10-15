@@ -296,7 +296,7 @@ public sealed partial class Comms10kRefusalTests
         var auth = Substitute.For<AuthenticationStateProvider>();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<AuthenticationState>(TaskCreationOptions.RunContinuationsAsynchronously);
-        auth.GetAuthenticationStateAsync().Returns(_ => { entered.SetResult(); return release.Task; });
+        auth.GetAuthenticationStateAsync().Returns(_ => { entered.TrySetResult(); return release.Task; });
         SetPageProperty(page, "AuthStateProvider", auth);
         var pending = InvokeReplace(page);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
@@ -304,7 +304,8 @@ public sealed partial class Comms10kRefusalTests
         SetField(page, "uploadedFileName", "other.csv");
         SetField(page, "validatedTicket", "INC999");
         SetField(page, "confirmation", new Comms10kConfirmation(["other@example.test"], "other.csv", "INC999", [new(OtherGuid, PersonDn)]));
-        release.SetResult(new AuthenticationState(new System.Security.Claims.ClaimsPrincipal()));
+        release.SetResult(new AuthenticationState(new System.Security.Claims.ClaimsPrincipal(
+            new System.Security.Claims.ClaimsIdentity([new(System.Security.Claims.ClaimTypes.Name, "EXAMPLE\\operator")], "test"))));
         await pending;
 
         var job = Assert.Single(repository.GetActive());

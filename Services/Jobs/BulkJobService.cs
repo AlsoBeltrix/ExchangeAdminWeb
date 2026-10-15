@@ -139,6 +139,9 @@ public sealed class BulkJobService
     /// stops before its next row (an in-flight Exchange cmdlet cannot be aborted mid-call - see plan).
     /// </summary>
     public void CancelJob(string id)
+        => TryCancelJob(id);
+
+    private bool TryCancelJob(string id)
     {
         // Queued -> terminal immediately (compare-and-swap from Queued; no-op if already started).
         // This job never enters the runner, so its completion notification is fired here (a queued
@@ -149,18 +152,20 @@ public sealed class BulkJobService
             var cancelledJob = _repository.Get(id);
             if (cancelledJob is not null)
                 NotifyCompleted(cancelledJob);
-            return;
+            return true;
         }
 
-        // Otherwise running (or already terminal): set the persisted flag and signal the token. The
+        // Otherwise running: set the persisted flag and signal the token. The
         // runner observes it, stops before its next row, and fires the completion notification from
         // its own terminal tail - so do NOT notify here (would duplicate).
-        _repository.RequestCancel(id);
+        if (!_repository.TryRequestCancelRunning(id))
+            return false;
         if (_running.TryGetValue(id, out var cts))
         {
             try { cts.Cancel(); } catch (ObjectDisposedException) { /* finished concurrently */ }
         }
         RaiseChanged(id);
+        return true;
     }
 
     // -------------------------------------------------------------------------
@@ -179,6 +184,37 @@ public sealed class BulkJobService
     public IReadOnlyList<BulkJob> GetActiveJobs() => _repository.GetActive();
     public IReadOnlyList<BulkJob> GetRecentJobs() => _repository.GetRecentFinished(_recentJobLimit);
     public IReadOnlyList<BulkJobRow> GetRows(string id) => _repository.GetRows(id);
+
+    // The module/type/submitter fields are immutable in every repository update. Checking the
+    // persisted triple before rows or controls therefore also guards the subsequent id operation.
+    // Callers must use trusted identity and live module authorization, and audit control attempts.
+    public BulkJob? GetOwnedJob(string moduleId, string jobType, string submittedBy, string jobId) =>
+        _repository.GetOwned(moduleId, jobType, submittedBy, jobId);
+
+    public IReadOnlyList<BulkJob> GetActiveOwnedJobs(string moduleId, string jobType, string submittedBy) =>
+        _repository.GetActiveOwned(moduleId, jobType, submittedBy);
+
+    public IReadOnlyList<BulkJob> GetFinishedOwnedJobs(string moduleId, string jobType, string submittedBy, int limit, int offset) =>
+        _repository.GetFinishedOwned(moduleId, jobType, submittedBy, limit, offset);
+
+    public IReadOnlyList<BulkJobRow> GetOwnedRows(string moduleId, string jobType, string submittedBy, string jobId) =>
+        GetOwnedJob(moduleId, jobType, submittedBy, jobId) is null ? [] : _repository.GetRows(jobId);
+
+    public bool CancelOwnedJob(string moduleId, string jobType, string submittedBy, string jobId, out BulkJob? job)
+    {
+        job = GetOwnedJob(moduleId, jobType, submittedBy, jobId);
+        return job is not null && !job.IsTerminal && TryCancelJob(jobId);
+    }
+
+    public bool DeleteOwnedJob(string moduleId, string jobType, string submittedBy, string jobId, out BulkJob? job)
+    {
+        job = GetOwnedJob(moduleId, jobType, submittedBy, jobId);
+        if (job is null || !_repository.Delete(jobId))
+            return false;
+
+        RaiseChanged(jobId);
+        return true;
+    }
 
     /// <summary>
     /// Terminal jobs for one module and job type, newest first. Takes its own limit rather than

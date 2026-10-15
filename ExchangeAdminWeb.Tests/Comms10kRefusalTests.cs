@@ -329,6 +329,13 @@ public sealed partial class Comms10kRefusalTests
         private readonly List<(bool Success, IReadOnlyDictionary<string, string> Details, string? Error)> _notifications = [];
         public IConfiguration Config { get; }
         public TestService Service { get; }
+        public int C5NotificationCount => _notifications.Count;
+        public IReadOnlyList<JsonElement> C5ControlAudits() => _log.GetAuditLogPaths(DateTime.Now)
+            .Where(File.Exists).SelectMany(File.ReadAllLines).Select(line =>
+            {
+                using var document = JsonDocument.Parse(line);
+                return document.RootElement.Clone();
+            }).Where(e => e.GetProperty("action").GetString() is "Comms10k_CancelJob" or "Comms10k_DeleteJob").ToArray();
 
         public (BulkJobService Queue, BulkJobRepository Repository) JobQueue()
         {
@@ -397,7 +404,8 @@ public sealed partial class Comms10kRefusalTests
             authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
                 .Returns(authorized ? AuthorizationResult.Success() : AuthorizationResult.Failed());
             var authState = Substitute.For<AuthenticationStateProvider>();
-            authState.GetAuthenticationStateAsync().Returns(new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity("test"))));
+            authState.GetAuthenticationStateAsync().Returns(new AuthenticationState(new ClaimsPrincipal(
+                new ClaimsIdentity([new Claim(ClaimTypes.Name, "EXAMPLE\\operator")], "test"))));
             foreach (var (name, value) in new (string, object)[]
             {
                 ("Audit", _audit), ("Email", _email), ("AuthorizationService", authorization),

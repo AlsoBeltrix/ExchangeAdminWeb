@@ -2,6 +2,8 @@
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Policy = "Comms10k")]
 @rendermode InteractiveServer
+@implements IDisposable
+@using ExchangeAdminWeb.Services.Jobs
 @inject Comms10kService Comms10kService
 @inject ExchangeAdminWeb.Services.Jobs.BulkJobService BulkJobs
 @inject IActivityProgress Progress
@@ -37,6 +39,103 @@
         <small><strong>Caution:</strong> Uploading a CSV will replace ALL members of the fixed Comms-10k broadcast list. The target cannot be changed in Admin Settings. This action is logged and admin-notified.</small>
     </div>
     <h1 class="mb-4">Comms-10k Broadcast List<ModuleVersion /></h1>
+
+    @if (submittedNotice is not null)
+    {
+        <div class="alert alert-info py-2"><strong>Submitted.</strong> @submittedNotice</div>
+    }
+    <section class="card mb-3" aria-label="Your jobs">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Your jobs</strong>
+            <button class="btn btn-outline-secondary btn-sm" @onclick="RefreshOwnedJobs" disabled="@jobsBusy">Refresh</button>
+        </div>
+        <div class="card-body">
+            <p class="text-muted"><small>Your Comms-10k replacements. Finished jobs are retained for @BulkJobs.RetentionDays days.
+                Completed is a job state; read the recorded stages for the directory outcome.</small></p>
+            @if (jobsActionMessage is not null)
+            {
+                <div class="alert @(jobsActionSucceeded ? "alert-info" : "alert-danger") py-2">@jobsActionMessage</div>
+            }
+            @if (jobsLoadError is not null)
+            {
+                <div class="alert alert-danger py-2">@jobsLoadError</div>
+            }
+            @if (jobsAllowed)
+            {
+                <div style="overflow-x:auto">
+                    <table class="table table-sm align-middle">
+                        <thead><tr><th>Job</th><th>Ticket</th><th>Status</th><th>Submitted</th><th>Started</th><th>Finished</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var job in activeOwnedJobs.Concat(finishedOwnedJobs))
+                            {
+                                <tr>
+                                    <td><small>@job.Id</small></td>
+                                    <td>@job.Ticket</td>
+                                    <td>@BulkJobs.DisplayStatus(job, DateTime.UtcNow)</td>
+                                    <td class="text-nowrap"><small>@JobTime(job.SubmittedAtUtc)</small></td>
+                                    <td class="text-nowrap"><small>@JobTime(job.StartedAtUtc)</small></td>
+                                    <td class="text-nowrap"><small>@JobTime(job.FinishedAtUtc)</small></td>
+                                    <td class="text-nowrap">
+                                        <button class="btn btn-outline-secondary btn-sm me-1" @onclick="() => ToggleJobDetails(job.Id)" disabled="@jobsBusy">@(detailsJob?.Id == job.Id ? "Hide" : "Details")</button>
+                                        @if (!job.IsTerminal)
+                                        {
+                                            <button class="btn btn-outline-danger btn-sm" @onclick="() => CancelOwnedJob(job.Id)" disabled="@jobsBusy">Request cancellation</button>
+                                        }
+                                        else
+                                        {
+                                            <button class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveOwnedJob(job.Id)" disabled="@jobsBusy" title="Delete this retained job and its stage rows. The audit record is kept.">Delete record</button>
+                                        }
+                                    </td>
+                                </tr>
+                                <tr><td colspan="7">
+                                    <small>@JobOutcomeSummary(job)</small>
+                                    @if (!string.IsNullOrWhiteSpace(job.Message)) { <div><small>@job.Message</small></div> }
+                                </td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                @if (activeOwnedJobs.Count == 0 && finishedOwnedJobs.Count == 0)
+                {
+                    <p class="text-muted">No jobs on this page.</p>
+                }
+                <div class="d-flex gap-2 align-items-center">
+                    <span><small>Finished history, page @(historyPage + 1). All active jobs are shown above.</small></span>
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="PreviousJobsPage" disabled="@(jobsBusy || historyPage == 0)">Newer</button>
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="NextJobsPage" disabled="@(jobsBusy || !hasMoreHistory)">Older</button>
+                </div>
+                <p class="text-muted mt-2 mb-0"><small>Cancellation stops before a later stage. It cannot undo or abort an in-flight membership clear/refill.</small></p>
+                @if (detailsJob is not null)
+                {
+                    <div class="border-top mt-3 pt-2">
+                        <strong>Job @detailsJob.Id: @BulkJobs.DisplayStatus(detailsJob, DateTime.UtcNow)</strong>
+                        <p class="mb-1">@JobOutcomeSummary(detailsJob)</p>
+                        <p class="mb-1">@detailsJob.Message</p>
+                        <p class="text-muted"><small>Ticket @detailsJob.Ticket; submitted @JobTime(detailsJob.SubmittedAtUtc);
+                            started @JobTime(detailsJob.StartedAtUtc); finished @JobTime(detailsJob.FinishedAtUtc).</small></p>
+                        @if (detailsRows.Count == 0)
+                        {
+                            <p>No stages recorded. This does not establish that the replace succeeded.</p>
+                        }
+                        else
+                        {
+                            <table class="table table-sm">
+                                <thead><tr><th>Stage</th><th>Source</th><th>Status</th><th>Message</th><th>Recorded</th></tr></thead>
+                                <tbody>
+                                    @foreach (var row in detailsRows)
+                                    {
+                                        <tr class="@(row.Status == BulkJobRowStatus.Success ? "" : row.Status == BulkJobRowStatus.Partial ? "table-warning" : "table-danger")">
+                                            <td>@JobStageName(row.RowIndex)</td><td>@row.Target</td><td>@row.Status</td><td>@row.Message</td><td>@JobTime(row.RecordedAtUtc)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    </section>
 
     @if (!Comms10kService.IsConfigured)
     {
@@ -228,6 +327,7 @@
     private Comms10kResolveResult? resolveResult;
     private Comms10kUpdateResult? result;
     private Comms10kConfirmation? confirmation;
+    private string? submittedNotice;
 
     private bool CanReplace => confirmation is not null && resolveResult is { Success: true }
         && resolveResult.ResolvedMembers.Count > 0 && AllRejections.Count == 0;
@@ -235,11 +335,13 @@
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (_disposed) return;
         var user = authState.User;
-        currentUser = user.Identity?.Name ?? "Unknown";
+        currentUser = user.Identity?.Name ?? "";
 
         var authResult = await AuthorizationService.AuthorizeAsync(user, "Comms10k");
-        if (!authResult.Succeeded)
+        if (_disposed) return;
+        if (!authResult.Succeeded || user.Identity?.IsAuthenticated != true || string.IsNullOrWhiteSpace(currentUser))
         {
             Navigation.NavigateTo("access-denied", forceLoad: true);
             return;
@@ -249,6 +351,8 @@
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
         authChecked = true;
+        BulkJobs.JobChanged += OnOwnedJobChanged;
+        await RefreshOwnedJobs();
     }
 
     /// <summary>
@@ -637,7 +741,9 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "Comms10k");
-            if (!authCheck.Succeeded)
+            if (_disposed) return;
+            var submitter = authState.User.Identity?.Name;
+            if (!authCheck.Succeeded || authState.User.Identity?.IsAuthenticated != true || string.IsNullOrWhiteSpace(submitter))
             {
                 await RefuseReplaceAsync("Authorization denied.", ticket);
                 return;
@@ -677,8 +783,8 @@
                 ModuleId = ExchangeAdminWeb.Services.Jobs.Comms10kReplaceProcessor.ModuleName,
                 JobType = ExchangeAdminWeb.Services.Jobs.Comms10kReplaceJobPayload.JobType,
                 Status = ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued,
-                SubmittedBy = currentUser,
-                SubmittedByDisplay = currentUser,
+                SubmittedBy = submitter,
+                SubmittedByDisplay = submitter,
                 SubmittedIp = clientIpAddress,
                 Ticket = ticket,
                 PayloadJson = System.Text.Json.JsonSerializer.Serialize(
@@ -694,18 +800,9 @@
                 SubmittedAtUtc = DateTime.UtcNow
             });
 
-            Logger.LogInformation("Comms-10k replace submitted as job {JobId} by {User}", jobId, currentUser);
-
-            // Submitted, not finished - and the message says so rather than implying the list
-            // has changed. RefusedBeforeAnyChange is the honest outcome for a submission:
-            // nothing has been written yet, and the five real outcomes belong to the job.
-            result = new Comms10kUpdateResult
-            {
-                Success = true,
-                Outcome = Comms10kOutcome.RefusedBeforeAnyChange,
-                Message = $"Submitted as a background job. It keeps running if you close this tab - "
-                    + $"watch the status bar, and collect the result from Bulk Jobs."
-            };
+            Logger.LogInformation("Comms-10k replace submitted as job {JobId} by {User}", jobId, submitter);
+            result = null;
+            submittedNotice = $"Job {jobId} keeps running if you close this tab. Read its durable outcome in Your jobs on this page.";
 
             parsedEmails = new();
             confirmation = null;
@@ -713,6 +810,8 @@
             resolveResult = null;
             duplicateRows = new();
             preview = null;
+            historyPage = 0;
+            await LoadOwnedJobsAsync();
         }
         catch (Exception ex)
         {
@@ -776,4 +875,260 @@
         var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
         await JS.InvokeVoidAsync("downloadFile", "comms10k_sample.csv", "text/csv", base64);
     }
+
+    private const int HistoryPageSize = 10;
+    private const string JobRefusal = "Job unavailable or this action is no longer allowed.";
+    private bool _disposed;
+    private bool jobsBusy;
+    private bool jobsAllowed;
+    private int jobsGeneration;
+    private int historyPage;
+    private bool hasMoreHistory;
+    private string? jobsLoadError;
+    private string? jobsActionMessage;
+    private bool jobsActionSucceeded;
+    private IReadOnlyList<BulkJob> activeOwnedJobs = [];
+    private IReadOnlyList<BulkJob> finishedOwnedJobs = [];
+    private BulkJob? detailsJob;
+    private IReadOnlyList<BulkJobRow> detailsRows = [];
+    private sealed record JobsAccess(string Actor, bool Allowed);
+
+    // The policy includes live enablement and section access. Identity.Name is the ownership
+    // identity; display names, stripped SAMs and an Unknown fallback cannot identify an owner.
+    private async Task<JobsAccess> AuthorizeJobsAsync(int generation)
+    {
+        var actor = "";
+        try
+        {
+            var state = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (!CurrentJobsLoad(generation)) return new(actor, false);
+            actor = state.User.Identity?.Name ?? "";
+            var authorization = await AuthorizationService.AuthorizeAsync(state.User, "Comms10k");
+            if (!CurrentJobsLoad(generation)) return new(actor, false);
+            if (authorization.Succeeded && state.User.Identity?.IsAuthenticated == true && !string.IsNullOrWhiteSpace(actor))
+                return new(actor, true);
+        }
+        catch (Exception ex) { Logger.LogWarning(ex, "Comms-10k jobs authorization failed"); }
+
+        if (!CurrentJobsLoad(generation)) return new(actor, false);
+        ClearOwnedJobs();
+        jobsAllowed = false;
+        submittedNotice = null;
+        jobsLoadError = "Access to your Comms-10k jobs was denied.";
+        return new(actor, false);
+    }
+
+    private void ClearOwnedJobs()
+    {
+        ++jobsGeneration;
+        activeOwnedJobs = [];
+        finishedOwnedJobs = [];
+        detailsJob = null;
+        detailsRows = [];
+        hasMoreHistory = false;
+    }
+
+    private bool CurrentJobsLoad(int generation) => !_disposed && generation == jobsGeneration;
+
+    // Automatic events call this silent path. Each continuation must still own its generation;
+    // a later detail/load/denial or Dispose invalidates it before it can publish cached data.
+    private async Task<bool> LoadOwnedJobsAsync()
+    {
+        var generation = ++jobsGeneration;
+        var access = await AuthorizeJobsAsync(generation);
+        if (!access.Allowed || !CurrentJobsLoad(generation)) return false;
+        try
+        {
+            var active = BulkJobs.GetActiveOwnedJobs(Comms10kReplaceProcessor.ModuleName,
+                Comms10kReplaceJobPayload.JobType, access.Actor);
+            var finished = BulkJobs.GetFinishedOwnedJobs(Comms10kReplaceProcessor.ModuleName,
+                Comms10kReplaceJobPayload.JobType, access.Actor, HistoryPageSize + 1, historyPage * HistoryPageSize);
+            var selected = detailsJob is null ? null : BulkJobs.GetOwnedJob(Comms10kReplaceProcessor.ModuleName,
+                Comms10kReplaceJobPayload.JobType, access.Actor, detailsJob.Id);
+            var rows = selected is null ? [] : BulkJobs.GetOwnedRows(Comms10kReplaceProcessor.ModuleName,
+                Comms10kReplaceJobPayload.JobType, access.Actor, selected.Id);
+            activeOwnedJobs = active;
+            finishedOwnedJobs = finished.Take(HistoryPageSize).ToArray();
+            hasMoreHistory = finished.Count > HistoryPageSize;
+            detailsJob = selected;
+            detailsRows = rows;
+            jobsAllowed = true;
+            jobsLoadError = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ClearOwnedJobs();
+            jobsLoadError = "Could not load your jobs. Refresh to try again.";
+            Logger.LogWarning(ex, "Comms-10k jobs load failed");
+            return false;
+        }
+    }
+
+    private async Task RefreshOwnedJobs()
+    {
+        if (_disposed || jobsBusy) return;
+        jobsBusy = true;
+        ++jobsGeneration;
+        using var activity = Progress.Begin("Comms-10k", "Loading your jobs", ActivitySize.Unknown);
+        try
+        {
+            await Task.Yield();
+            if (_disposed) return;
+            var loaded = await LoadOwnedJobsAsync();
+            if (_disposed) return;
+            activity.Complete(loaded, loaded ? "Your job list is up to date." : jobsLoadError);
+        }
+        finally { jobsBusy = false; }
+    }
+
+    private async Task PreviousJobsPage()
+    {
+        if (_disposed || jobsBusy || historyPage == 0) return;
+        --historyPage;
+        await RefreshOwnedJobs();
+    }
+
+    private async Task NextJobsPage()
+    {
+        if (_disposed || jobsBusy || !hasMoreHistory) return;
+        ++historyPage;
+        await RefreshOwnedJobs();
+    }
+
+    private async Task ToggleJobDetails(string jobId)
+    {
+        if (_disposed || jobsBusy) return;
+        jobsBusy = true;
+        var generation = ++jobsGeneration;
+        using var activity = Progress.Begin("Comms-10k", "Loading this job's stages", ActivitySize.Unknown);
+        try
+        {
+            await Task.Yield();
+            if (_disposed) return;
+            var access = await AuthorizeJobsAsync(generation);
+            if (!access.Allowed || !CurrentJobsLoad(generation)) return;
+            var hiding = detailsJob?.Id == jobId;
+            var selected = hiding ? null : BulkJobs.GetOwnedJob(Comms10kReplaceProcessor.ModuleName, Comms10kReplaceJobPayload.JobType, access.Actor, jobId);
+            var rows = selected is null ? [] : BulkJobs.GetOwnedRows(Comms10kReplaceProcessor.ModuleName,
+                Comms10kReplaceJobPayload.JobType, access.Actor, jobId);
+            detailsJob = selected;
+            detailsRows = rows;
+            jobsActionSucceeded = hiding || selected is not null;
+            jobsActionMessage = jobsActionSucceeded ? null : JobRefusal;
+            activity.Complete(jobsActionSucceeded, jobsActionSucceeded ? "The job's recorded stages are up to date." : JobRefusal);
+        }
+        catch (Exception ex)
+        {
+            detailsJob = null;
+            detailsRows = [];
+            jobsLoadError = "Could not load this job's stages. Refresh to try again.";
+            Logger.LogWarning(ex, "Comms-10k job details load failed");
+            activity.Complete(false, jobsLoadError);
+        }
+        finally { jobsBusy = false; }
+    }
+
+    private Task CancelOwnedJob(string jobId) => ChangeOwnedJob(jobId, delete: false);
+    private Task RemoveOwnedJob(string jobId) => ChangeOwnedJob(jobId, delete: true);
+
+    private async Task ChangeOwnedJob(string jobId, bool delete)
+    {
+        if (_disposed || jobsBusy) return;
+        jobsBusy = true;
+        var generation = ++jobsGeneration;
+        var actor = "";
+        BulkJob? job = null;
+        var succeeded = false;
+        using var activity = Progress.Begin("Comms-10k", delete ? "Deleting the job record" : "Requesting job cancellation", ActivitySize.Unknown);
+        try
+        {
+            await Task.Yield();
+            if (_disposed) return;
+            var access = await AuthorizeJobsAsync(generation);
+            actor = access.Actor;
+            if (!CurrentJobsLoad(generation) && access.Allowed) return;
+            if (_disposed) return;
+            // No await between the live policy/identity check and the persisted scope/CAS.
+            if (access.Allowed)
+                succeeded = delete
+                    ? BulkJobs.DeleteOwnedJob(Comms10kReplaceProcessor.ModuleName, Comms10kReplaceJobPayload.JobType, actor, jobId, out job)
+                    : BulkJobs.CancelOwnedJob(Comms10kReplaceProcessor.ModuleName, Comms10kReplaceJobPayload.JobType, actor, jobId, out job);
+            jobsActionSucceeded = succeeded;
+            jobsActionMessage = !succeeded ? JobRefusal : delete ? "Job record deleted. The audit record is kept."
+                : "Cancellation requested. It cannot undo or abort an in-flight membership clear/refill.";
+            if (succeeded && delete && detailsJob?.Id == jobId)
+            {
+                detailsJob = null;
+                detailsRows = [];
+            }
+            activity.Complete(succeeded, jobsActionMessage);
+        }
+        catch (Exception ex)
+        {
+            jobsActionSucceeded = false;
+            jobsActionMessage = "The job action failed. Refresh to check its current state.";
+            Logger.LogWarning(ex, "Comms-10k job control failed");
+            activity.Complete(false, jobsActionMessage);
+        }
+        finally
+        {
+            if (!_disposed)
+                WriteJobControlAudit(delete, jobId, actor, job, succeeded);
+            jobsBusy = false;
+        }
+        if (!_disposed) await LoadOwnedJobsAsync();
+    }
+
+    private void WriteJobControlAudit(bool delete, string jobId, string actor, BulkJob? job, bool success)
+    {
+        try
+        {
+            Audit.LogModuleAction(actor, clientIpAddress, delete ? "Comms10k_DeleteJob" : "Comms10k_CancelJob",
+                "Comms10k", jobId, success, job?.Ticket ?? "", success ? null : JobRefusal,
+                extra: new Dictionary<string, object?>
+                {
+                    ["Actor"] = actor, ["RequestedJobId"] = jobId, ["ControlResult"] = success ? "Accepted" : "RefusedOrFailed",
+                    ["ModuleId"] = job?.ModuleId, ["JobType"] = job?.JobType,
+                    ["JobStatus"] = job?.Status.ToString(), ["SubmittedBy"] = job?.SubmittedBy,
+                    ["SubmittedAtUtc"] = job?.SubmittedAtUtc, ["JobMessage"] = job?.Message,
+                });
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Comms-10k job control audit failed"); }
+    }
+
+    // The id is only a refresh hint: every reload reauthorizes and queries persisted scope.
+    private async void OnOwnedJobChanged(string jobId)
+    {
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (_disposed || jobsBusy) return;
+                await LoadOwnedJobsAsync();
+                if (!_disposed) StateHasChanged();
+            });
+        }
+        catch (Exception ex) { Logger.LogWarning(ex, "Comms-10k jobs callback failed"); }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        ++jobsGeneration;
+        BulkJobs.JobChanged -= OnOwnedJobChanged;
+    }
+
+    private static string JobTime(DateTime? utc) => utc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "";
+    private static string JobStageName(int rowIndex) => rowIndex switch { 0 => "Resolve", 1 => "Replace", _ => $"Stage {rowIndex}" };
+    private static string JobOutcomeSummary(BulkJob job) => job.Status switch
+    {
+        BulkJobStatus.Interrupted => "Interrupted. The group may be empty or partial; check the group and the recorded stages before recovery.",
+        BulkJobStatus.Cancelled => "Cancelled. Cancellation cannot undo an in-flight clear/refill. Read the recorded stages before recovery.",
+        BulkJobStatus.Completed when job.ProcessedRows == 0 => "Completed without recorded stages. No successful replace is established; read the job message.",
+        BulkJobStatus.Completed when job.PartialCount > 0 => "Completed with a partial or unconfirmed result. Read the Replace stage for the directory outcome and counts.",
+        BulkJobStatus.Completed when job.FailedCount > 0 => "Completed with failed stages. Read the recorded refusal or failure before resubmitting.",
+        BulkJobStatus.Completed => "Completed. Read the Replace stage for the directory outcome and counts.",
+        _ => "In progress. Resolve and Replace are stages, not individual members.",
+    };
 }

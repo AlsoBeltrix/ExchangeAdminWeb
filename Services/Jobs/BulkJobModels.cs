@@ -60,10 +60,10 @@ public sealed class BulkJob
     // gone once the job runs, so who/ip/ticket and the authorization snapshot are captured at
     // submit time and re-used per row. ---
 
-    /// <summary>Submitter SAM account (authoritative actor for per-row audit).</summary>
+    /// <summary>Captured submitter identity (authoritative actor for per-row audit). Comms-10k retains the full Identity.Name.</summary>
     public required string SubmittedBy { get; init; }
 
-    /// <summary>Friendly display name for the UI job list (falls back to SAM).</summary>
+    /// <summary>Friendly display name for the UI job list (falls back to the captured identity).</summary>
     public string? SubmittedByDisplay { get; init; }
 
     /// <summary>Submitter IP captured on the circuit (per-row audit fidelity off-connection).</summary>

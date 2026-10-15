@@ -705,7 +705,7 @@ public sealed class ModuleCatalog
             // addresses and had no way to obtain the rest - the stakeholder's "requiring us to
             // manually identify the affected users". Owner ruling 2026-10-12: an address with no
             // exact match is not a match, so the fix is reporting, NOT widening the lookup keys.
-            Version = "1.4.11",
+            Version = "1.4.12",
             MainPermission = new(
                 "Access",
                 "Comms10k",

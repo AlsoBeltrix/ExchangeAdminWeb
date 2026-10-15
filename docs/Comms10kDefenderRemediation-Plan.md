@@ -508,7 +508,7 @@ part of this implementation approval.
 | C3 | Implemented / independently reviewed (`f0d79b0`) | [cdr-c3](../.agents/review/findings/cdr-c3.md) |
 | C4 | Implemented / independent review P2 corrected (coder proof) | [cdr-c4](../.agents/review/findings/cdr-c4.md) |
 | C11 | Implemented / independently reviewed (`b0c535e`) | [cdr-c11](../.agents/review/findings/cdr-c11.md) |
-| C5 | Pending | |
+| C5 | Implemented / local gate passed; independent review pending | [cdr-c5](../.agents/review/findings/cdr-c5.md) |
 | C2 | Pending | |
 | C7 | Pending | |
 | C8 | Pending | |

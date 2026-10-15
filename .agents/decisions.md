@@ -81,7 +81,8 @@ visible refusal beats a quiet partial write regardless of how good the reporting
 
 ### 2026-10-15 - A user who can start a background job must be able to see and manage it
 
-Status: Active. Design not yet settled; see `docs/Comms10kDefenderRemediation-Plan.md` C5.
+Status: Active. Scope: `docs/Comms10kDefenderRemediation-Plan.md` C5. Concrete implementation
+choices: `.agents/review/cdr-c5-design.md`; implementation/evidence: `.agents/review/findings/cdr-c5.md`.
 
 Owner, verbatim: *"any case where a user can start a job that ends up here but not see it or
 manage it is a failure. Figure that out, or redesign the whole bulk jobs thing, or reevaluate

@@ -227,6 +227,14 @@ Dedicated bulk member replacement for broadcast distribution lists.
 - Runs **no protected-principal check** of either kind -- see the Protected Principals
   section of `docs/ProjectConstitution.md`, which carries it as a named scoped exception
 - Uses Delinea credentials for Active Directory operations
+- Replacements run as durable background jobs. A separate Submitted notice confirms enqueue;
+  **Your jobs** on this page shows all your active replacements and paged retained history,
+  including job messages, ticket/times and recorded Resolve/Replace stage outcomes. A Completed
+  job may contain failures or no recorded stages. Missing AD credentials do not hide history;
+  current Comms-10k permission and enablement still gate access.
+- Request cancellation of your queued/running jobs or delete your finished job records.
+  Cancellation cannot undo or abort an in-flight clear/refill. Deleting a record retains its
+  audit history; job controls are scoped to your full signed-in identity and are audited.
 - Section access key: `Comms10k`
 
 ### AD Attribute Editor (`/ad-attribute-editor`)
