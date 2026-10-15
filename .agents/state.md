@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - Defender D8 implemented; independent review pending
+### Comms-10k / Defender remediation - Defender D8 independently approved; D10 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -31,8 +31,11 @@ errors, full solution format before the single full suite, 4,155 passed / 3 skip
 0 failed, then diff and staged ASCII checks including the new test file. No shipped
 page, PowerShell, live integration, self-review or adjacent-finding work is included.
 `.agents/review/findings/cdr-d8.md` owns scope, evidence, limits and the complete
-Constitution packet. Independent Astra max workflow review is pending; D10 is the
-next implementation after that review boundary. Known module-spec Version 2.0 /
+Constitution packet and independent APPROVED verdict for `a5f17de`. Astra passed 41/41
+focused tests, 26 extra workflow inputs and 23 direct assertions, and reconciled all
+proof/gate receipts without actionable findings. Twelve original findings and psl-1
+are closed locally; eight original Defender findings remain. Next: fresh Sol 6.1 D10
+implementation, then independent Astra max review. Known module-spec Version 2.0 /
 June 25 drift remains flagged against base 2.27.4.
 
 C6 began on clean master `0413e3b81cabda8b9c70e9feed6e4d8beab8f5b5`. The compiled

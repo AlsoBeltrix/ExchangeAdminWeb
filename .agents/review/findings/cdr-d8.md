@@ -1,6 +1,6 @@
 # cdr-d8 - preserve ordinary OS build and escaped AD site values
 
-Status: Implemented and verified on master; independent Astra max review pending. Push pending.
+Status: Implemented and independently reviewed on master; Astra max APPROVED. Push pending.
 
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, APPROVED Revision 6, D8.
 Owner 2026-10-15: "approved. go." Implementation begins on clean master
@@ -228,3 +228,27 @@ the changed lines. No earlier clean verdict is a premise for this review.
   Final source hashes still equal all fixed proof snapshots; the new test source also
   remains exact. No shipped PowerShell changed, so no PSScriptAnalyzer/Pester run.
 - No browser, live integration, physical-location, deployment or push verification ran.
+
+## Independent workflow review - APPROVED, 2026-10-15
+
+Fresh native `gpt-6-astra` at `max` reviewed immutable range
+`d9c71f655963d99e309fe6ed004f58009ee01d7c..a5f17de4fa042352410184b3a420f6b0770ebbc2`.
+Completed at `2026-10-15 22:01:03 UTC`; verdict: **APPROVED**, no actionable in-scope
+findings. Capability proof passed; HEAD and the clean tracked checkout remained unchanged.
+Intent, numeric/string/blank build preservation, directory mapping/filter/export, version
+bumps and local comment corrections matched the approved scope.
+
+Independent compiled verification passed 41/41. An additional ignored probe passed 26
+workflow inputs and 23 direct assertions covering combined escapes, UTF-8, delimiters,
+missing/non-scalar builds, large numbers and French culture. Five mutation receipts
+reconciled to 14 assertion failures covering exactly seven cases; source bytes, hashes,
+restoration timestamps and assembly provenance agreed. Recorded 234/234 affected passes
+and 4,155 passed / 3 skipped / 0 failed full-suite results reconciled, with the required
+build/format/test order verified. Those full-suite and mutation runs were not repeated.
+
+Compiled/runtime app SHA256:
+`FFAB897ED1318180916E0CBD3A38290E785B1620137466295104A2EB3EBB1844`.
+Supplemental ignored evidence under `.agents/review/out/cdr-d8/`:
+`astra-focused/astra-focused.trx`, `astra-probe.log` and `astra-reconciliation.json`.
+No tracked edits, production mutations, browser or live-integration checks occurred.
+D8 is closed locally; approved D10 is next.
