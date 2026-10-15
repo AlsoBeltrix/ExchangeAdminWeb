@@ -41,6 +41,16 @@ installed-cmdlet interoperability and browser rendering remain unverified. No se
 The module specification still identifies 2.0 / June 25 versus app 2.27.1; that known drift
 remains flagged and relevant contracts were checked against the Constitution and code.
 
+### Additional PowerShell replay finding - separate proposal pending
+
+The owner's 2026-10-15 interim Claude review prompted a read-only Astra audit. It confirmed
+one shared InvokeOptional replay root used by Conference Rooms; disposal and existing cleanup
+explain many other lexical matches. The inventory is in `.agents/review/powershell-replay-audit.md`.
+`docs/PowerShellCommandLifecycle-Plan.md` proposes one additional slice at the next committed
+boundary, using the same Sol/Astra workflow, and awaits owner approval. The original twenty
+findings continue independently. psl-1 owns the replay finding; psl-2/psl-3 are separate
+Licensing/DHCP diagnostic follow-ups excluded from that proposal. No additional code is approved.
+
 ### Defender review stream - NINE findings over four rounds, all fixed; round 5 is out
 
 **Branch `master`, working tree clean.** The 2026-10-14 session took the two uncommitted
