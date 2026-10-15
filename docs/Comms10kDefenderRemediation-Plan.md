@@ -361,6 +361,10 @@ final displayed/exported count.
 
 ## D7 - bound the enrichment work
 
+Implementation guidance, including actual cancellation propagation, site-worker ownership
+and its native-cancellation limit, is in `.agents/review/cdr-d7-design.md`. D2 now precedes
+D7 so per-call diagnostics exist before stop/deadline results are added.
+
 `ListDevicesAsync:549` waits for enrichment before returning anything. The batch loop continues
 after failures and each hunting request has a four-minute timeout (`Program.cs:154`). At the
 100,000-device ceiling, 100 consecutive timeouts is roughly **400 minutes** before the
@@ -448,8 +452,10 @@ The codebase-wide audit is a separate plan. These are in code these slices edit:
 twice. C10 before C3 because C3 turns its quiet bug into a loud one. C11 and C5 adjacent - a
 truthful report is worth little if nobody can see it.
 
-**Then Part 2: D8, D10, D9, D4, D7, D1, D2, D3.** Correctness before the open-on-load change, so
-the page is right when it starts being used deliberately.
+**Then Part 2: D8, D10, D9, D4, D2, D7, D1, D3.** Correctness before the open-on-load change, so
+the page is right when it starts being used deliberately. Agent sequencing adjustment,
+2026-10-15: D2 supplies the per-call result needed by D7's systemic-stop/deadline reporting;
+keep their fixes and proofs in separate commits. Scope and executive summary are unchanged.
 
 **Then Part 3: D5.** Last, and only once everything above is green.
 
