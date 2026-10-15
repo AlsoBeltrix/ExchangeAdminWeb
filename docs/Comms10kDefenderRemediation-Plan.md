@@ -1,7 +1,7 @@
 # Comms-10k and Defender Remediation - Plan
 
-Status: **DRAFT Revision 3 - awaiting owner approval.** Revisions 1 and 2 were reviewed by codex
-on 2026-10-15; both returned "do not approve as written" and this revision takes every correction
+Status: **DRAFT Revision 4 - awaiting owner approval.** Revisions 1, 2 and 3 were reviewed by codex
+on 2026-10-15; all three returned "do not approve as written" and this revision takes every correction
 from each. Raised by two whole-module reviews the same day.
 
 **Thirteen findings. This plan closes eleven of them.** C5 is owner-ruled and deliberately NOT
@@ -108,6 +108,13 @@ Groups,OU=Recipients,OU=Analog,OU=Exchange,DC=ad,DC=analog,DC=com`, Universal Se
 
 GUID over name, DN or SamAccountName because it survives rename and move.
 
+**What this proves and what it does not, corrected at review round 3:** pinning the GUID proves
+the module has exactly ONE target and that the target cannot be re-pointed by configuration. It
+does NOT prove the Constitution's premise that the target's "membership grants access to
+nothing" - the group is a Universal Security group and no code can establish what it grants.
+That premise now rests on the owner's ruling in `.agents/decisions.md`, which is the honest
+place for it. Do not write a comment claiming the code proves it.
+
 - `Services/Comms10kService.cs` - the `TargetGroupName` config read becomes the constant; the
   "not configured" throw becomes a fail-closed throw when the GUID does not resolve.
 - `QueryTargetGroup` looks the group up by name today and reads DN/GUID back. Invert: look up by
@@ -138,12 +145,15 @@ audit is keyed to `result.Success`. The row says Partial; the audit says success
   at all; otherwise the page says fix the file and re-upload, with the errors CSV that is already
   reachable from every state.
 - **The refusal has to actually report, and today it would not.** `OnJobCompletedAsync` builds
-  the admin notification from `_result`: `_result?.Outcome.ToString() ?? "did not complete"` and
+  its notification from `_result`: `_result?.Outcome.ToString() ?? "did not complete"` and
   `_result?.Message ?? job.Message ?? "No detail was recorded."`. A resolve-stage refusal never
-  sets `_result`, so the one notification the operator gets would say "did not complete" rather
-  than naming the unmatched addresses. **Carry the refusal reason into the completion path.**
-  Found by plan review round 2; without it the owner's ruling is implemented in the row status
-  and nowhere the operator looks.
+  sets `_result`, so the notification would say "did not complete" rather than naming the
+  unmatched addresses. **Carry the refusal reason into the completion path.**
+  **Audience, corrected at review round 3:** this is the ADMIN notification, not an
+  operator-facing one. Fixing it makes the refusal legible to whoever reads admin mail; it does
+  NOT put the reason in front of the operator who uploaded the file. That is C5's job, and C5 is
+  deferred - so after this plan a refusal is correct, audited and admin-notified, and the
+  uploader still may not see why. Say so rather than implying the loop is closed.
 
 **Tests:** one rejection blocks the write; **and the completion notification names the refusal
 reason rather than "did not complete"**. **Assert `ExecuteReplaceAsync` was never called** - that
@@ -165,21 +175,48 @@ A fingerprint rather than the DN list itself for the reason the payload already 
 thousand distinguished names is a large durable record of something derivable in seconds. A hash
 is small and answers the only question being asked.
 
+**Fingerprint the immutable object identifier, not the DN - corrected at review round 3.** A DN
+changes when a user is renamed or moved between validation and execution, so a DN-set hash would
+refuse a run in which exactly the same people resolved. The invariant the owner ruled on is
+"the same people", so hash objectGUIDs (the same reasoning that chose a GUID in C1) and carry
+DNs only for the write itself. If the resolver does not currently surface an immutable id, that
+is part of this slice.
+
 **Tests:** a job whose re-resolve yields a different set of the same size refuses; an identical
 set writes. Assert `ExecuteReplaceAsync` was never called on the refusal path.
 
-## Slice C7 - capture the payload above the first await
+## Slice C7 - the page's stale-state and re-entry class
 
-**Found by the plan review, not yet owner-ruled.** `Comms10k.razor.ExecuteReplace` captures
-`validatedTicket` into a local above its `await Task.Yield()`, then reads the fields
-`parsedEmails` and `uploadedFileName` several awaits later when building the payload. A queued
-upload event landing in that window enqueues a different list than the one approved - and because
-it can be the same size, C4's fingerprint is what catches it, which is why both are needed.
+**Found by plan review, not yet owner-ruled. Round 3 widened it from one capture to a class -
+this is now the largest Comms-10k slice and the scope growth is deliberate, not drift.**
 
-The page applies this discipline to the ticket and not to the payload. Capture both fields into
-locals beside the ticket.
+Three handlers on `Comms10k.razor` share one shape: they mutate page fields across awaits while
+nothing reliably stops a second entry.
 
-**Test:** fields mutated after the yield do not reach the payload.
+1. **`HandleFileUpload` never raises `isLoading` at all**, and the `InputFile` control is
+   disabled only by `isLoading`. It then mutates `uploadedFileName`, `parsedEmails`,
+   `rejectedBeforeLookup` and `duplicateRows` across awaits while reading the browser stream.
+   **Two uploads can interleave and mix one file's rows into another's.** This is the root of
+   the class and the worst of the three.
+2. **`ValidateEmails`** raises `isLoading`, yields, then reads `ticketNumber` and `parsedEmails`
+   afterwards - so it can validate a list that changed under it.
+3. **`ExecuteReplace`** trusts the disabled button, raises `isLoading`, yields, then enqueues
+   from mutable fields. It needs a server-side re-entry refusal, and it should re-check
+   `resolveResult.Success` and zero-rejections in the handler rather than relying on the markup
+   that renders the button.
+
+Fixes, in the page's own established idiom: capture every field a handler will use into locals
+above its first await, and add a server-side re-entry guard rather than trusting a `disabled`
+attribute - the browser's copy is one round trip stale, which is the reason Defender snapshots
+its filters server-side.
+
+**C7 and C4 are two halves of one guarantee.** C7 narrows the window; C4's fingerprint catches
+anything that still slips through, including a same-sized different list. Neither alone is
+enough.
+
+**Tests:** a second upload entered while the first is mid-parse is refused; fields mutated after
+a yield do not reach the payload or the validation; a second `ExecuteReplace` does not enqueue a
+second job.
 
 ## Slice C2 - re-check the section's allowed groups at the point of write
 
@@ -257,10 +294,16 @@ This slice must ADD one: a line saying nothing has been searched for yet. That i
 page read as "a working search form" rather than as a page that failed to load. Both comments in
 that branch describe the deferred first load and become false - rewrite or delete them.
 
-**Test fallout the plan previously missed:** `ExchangeAdminWeb.Tests/ProgressRegistry.cs` carries
-an exemption `new("OnAfterRenderAsync", "the initial load is LoadAsync", "LoadAsync")` for this
-page. Removing the auto-load makes that reason false; update the registry entry in the same
-commit.
+**Test fallout the plan previously missed - BOTH registries:**
+
+- `ExchangeAdminWeb.Tests/ProgressRegistry.cs` carries an exemption
+  `new("OnAfterRenderAsync", "the initial load is LoadAsync", "LoadAsync")` for this page.
+  Removing the auto-load makes that reason false.
+- `ExchangeAdminWeb.Tests/ClickGateRegistry.cs` records the deferred `OnAfterRenderAsync` load in
+  its prose and carries `ExpectedLineCount = 1213`. Adding an empty state changes the line count;
+  re-anchor per `.agents/playbooks/clickgate-reanchor.md` and correct the prose.
+
+Both in the same commit as the behaviour change.
 
 **Test:** the page does not call the service on first render. **Honest limit:** a lifecycle
 assertion, not a rendered-page one; there is no bUnit harness.
@@ -349,12 +392,15 @@ these slices edit and are fixed with the slice that touches them:
   posture and an observer request per batch.
 - `Components/Pages/DefenderEndpointDevices.razor` - the CSV projection comment says twenty-seven
   columns; the header has twenty-nine.
-- **Added at review round 2:** `Services/Comms10kService` and `Modules/ModuleCatalog` both still
-  say replaces "are not serialised" and "two concurrent replaces can interleave". The only caller
-  today is the bulk job runner, which is a singleton running one job at a time, so the
-  interleaving they describe cannot happen by that route. Correct them in whichever slice touches
-  those files - and if the claim turns out to be true by some other route, that is a finding, not
-  a comment fix.
+- **Added at review round 2, narrowed at round 3:** `Services/Comms10kService` and
+  `Modules/ModuleCatalog` say replaces "are not serialised" and "two concurrent replaces can
+  interleave". The only caller today is the bulk job runner, which runs one job at a time, so
+  that cannot happen **by that route**. But `ExecuteReplaceAsync` is public and holds no lock, so
+  the comment is not simply false. **Narrow it to the truth - serialised by the runner, not by
+  the method - and do not write a comment claiming a lock that does not exist.**
+- **Also round 3:** `ExchangeAdminWeb.Tests/Comms10kReplaceSequenceTests` asserts and explains
+  "Replaces are NOT serialised". Correcting only the service and catalog comments would leave a
+  false guard standing in the suite. Fix it with them.
 
 Fix each in the slice that touches its file. Do not start a wider sweep here.
 
