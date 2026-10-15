@@ -1,6 +1,6 @@
 # cdr-c8 - safe Comms-10k CSV delivery and audit
 
-Status: Implemented and verified on master; independent Astra max workflow review and push pending.
+Status: Implemented and independently reviewed on master; Astra max APPROVED. Push pending.
 
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, APPROVED Revision 6, C8.
 Owner 2026-10-15: "approved. go." Implementation begins on clean master
@@ -231,3 +231,25 @@ warnings / 0 errors), full format verification completed before the single full
 suite (4,140 passed / 3 skipped / 0 failed); staged ASCII and diff checks passed.
 No browser/live integration, push, deployment or self-review was run. Independent
 Astra max workflow review is pending.
+
+## Independent workflow review - APPROVED, 2026-10-15
+
+Fresh native `gpt-6-astra` at `max` reviewed immutable range
+`2013553fb531837ebf890f99ff354ad92e58640b..4be636bc5f3ff8c9a66100db514faba7b0518640`.
+Verdict: **APPROVED**, no actionable C8 findings or out-of-scope production changes.
+Capability proof succeeded with repository reads and Git inspection. The reviewer traced
+every exported cell, headers/order/filenames, transfer, post-delivery audit isolation,
+genuine failures and the C2/C4/C5/C7 workflow interactions.
+
+Independent compiled checks passed 80/80, including all 19 C8 cases. Original mutation
+TRXs showed 14 Assert.Equal, two Assert.Same and three Assert.False failures covering
+exactly all 19 names; distinct compiled assemblies and ordered mutation/compile/restore
+timestamps were verified. Current exact page/test hashes matched. Existing final receipts
+confirmed build 40 warnings / 0 errors, format before tests and 4,140 passed / 3 skipped /
+0 failed. The frozen checkout remained clean and diff checks passed.
+
+Verified SHA256: page `BFCB07A9245F4D4BEF3BE53A3819B58FF254D565619AC2552F533FF6A8E59A7C`;
+new tests `F5D35D850CB8F6EFBEE8FCEB84837253ADF17C09CC8B8DA5AFFCED0883F2B563`.
+Supplemental ignored artifacts: `.agents/review/out/cdr-c8-review-focused.log` and
+`cdr-c8-review-focused/cdr-c8-review-focused.trx`. No source mutations, full-suite rerun,
+browser or live-integration checks occurred. C8 is closed locally; C6 is next.

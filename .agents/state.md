@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C8 verified; independent review next
+### Comms-10k / Defender remediation - C8 independently approved; C6 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -36,8 +36,10 @@ suite: 4,140 passed / 3 skipped / 0 failed. Final diff and staged ASCII passed.
 The final receipt confirms all new cases, exact restore hashes and gate ordering.
 No self-review ran.
 `.agents/review/findings/cdr-c8.md` owns scope, evidence, limits and the full Constitution
-review packet. Independent Astra max workflow review is next, then C6 and the
-approved Defender sequence.
+review packet and independent APPROVED verdict for `4be636b`. Astra found no actionable
+defect, independently passed 80/80 and reconciled all 19 mutation cases and final receipts.
+Next: fresh Sol 6.1 implementation of C6, then independent Astra max review and the
+approved Defender sequence. Ten original findings are closed locally, plus psl-1.
 
 C7 is independently APPROVED (`d8f5924`), with no actionable findings. Its shared busy
 ownership, atomic upload publication and original-row reporting remain in place;
