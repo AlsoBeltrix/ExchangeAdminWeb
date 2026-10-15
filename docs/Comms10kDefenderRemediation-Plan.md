@@ -1,13 +1,14 @@
 # Comms-10k and Defender Remediation - Plan
 
-Status: **DRAFT Revision 4 - awaiting owner approval.** Revisions 1, 2 and 3 were reviewed by codex
-on 2026-10-15; all three returned "do not approve as written" and this revision takes every correction
-from each. Raised by two whole-module reviews the same day.
+Status: **DRAFT Revision 5 - awaiting owner approval.** Revisions 1-4 were reviewed by codex
+on 2026-10-15. Rounds 1-3 returned "do not approve"; round 4 returned "keep the plan, but amend".
+This revision takes every correction from each round. Raised by two whole-module reviews the
+same day.
 
-**Thirteen findings. This plan closes eleven of them.** C5 is owner-ruled and deliberately NOT
-closed here - it needs a design note first and is carried as deferred work, not as a fix.
-D6-local fixes stale comments inside the files these slices touch; the codebase-wide comment
-audit is a separate plan.
+**Fourteen findings. Twelve are fixed here** - C1, C2, C3, C4, C6, C7, C8, D1, D2, D3, D4, D5.
+**C5 is deferred**: owner-ruled, no design yet, carried as work not as a fix. **D6 is a separate
+plan**; only its instances inside files these slices touch are fixed, by the slice that touches
+them. That is the whole count - no item is in two places.
 
 ## Exec summary
 
@@ -182,8 +183,15 @@ refuse a run in which exactly the same people resolved. The invariant the owner 
 DNs only for the write itself. If the resolver does not currently surface an immutable id, that
 is part of this slice.
 
+**Use a deterministic cryptographic hash over the normalised, sorted GUID strings - added at
+review round 4. Not `string.GetHashCode` or any `.NET` hash API**: those are randomised per
+process, so a fingerprint written on the circuit and compared in the job runner would never
+match and every run would refuse.
+
 **Tests:** a job whose re-resolve yields a different set of the same size refuses; an identical
-set writes. Assert `ExecuteReplaceAsync` was never called on the refusal path.
+set writes; **and a set with the same objectGUIDs but a changed DN still WRITES** - that is the
+assertion proving the invariant moved from DN to identity rather than just being renamed. Assert
+`ExecuteReplaceAsync` was never called on the refusal path.
 
 ## Slice C7 - the page's stale-state and re-entry class
 
@@ -205,10 +213,22 @@ nothing reliably stops a second entry.
    `resolveResult.Success` and zero-rejections in the handler rather than relying on the markup
    that renders the button.
 
-Fixes, in the page's own established idiom: capture every field a handler will use into locals
-above its first await, and add a server-side re-entry guard rather than trusting a `disabled`
-attribute - the browser's copy is one round trip stale, which is the reason Defender snapshots
-its filters server-side.
+Fixes. **Capturing into locals is NOT sufficient for the upload and the plan said otherwise -
+corrected at review round 4.** `HandleFileUpload` RESETS the shared fields at its start and then
+WRITES them across its awaits, so a second entry wipes the first run's state mid-parse before
+any capture could help. It must:
+
+- refuse re-entry **before it resets anything** - the guard is the first statement, not a
+  capture;
+- parse into LOCAL collections and publish them to the fields in one assignment at the end,
+  so a partially-parsed file is never visible;
+- raise `isLoading` so the control that is already gated on it actually closes.
+
+`ValidateEmails` and `ExecuteReplace` take the simpler form: capture into locals above the
+first await, plus a server-side re-entry refusal rather than trusting a `disabled` attribute -
+the browser's copy is one round trip stale, which is why Defender snapshots its filters
+server-side. `ExecuteReplace` should also re-check `resolveResult.Success` and zero-rejections
+in the handler rather than relying on the markup that renders its button.
 
 **C7 and C4 are two halves of one guarantee.** C7 narrows the window; C4's fingerprint catches
 anything that still slips through, including a same-sized different list. Neither alone is
@@ -232,7 +252,11 @@ while `BulkJob.AuthSnapshotJson` already exists and is already persisted.
 - Populate `AuthSnapshotJson` when Comms-10k enqueues.
 - Evaluate it before `ExecuteReplaceAsync`, failing closed on an absent or unreadable snapshot.
 
-Follow ConferenceRooms' shape exactly; do not invent a second pattern.
+**Revision 4 said "follow ConferenceRooms exactly". Corrected at review round 4:** ConferenceRooms
+captures its snapshot at PAGE INITIALIZATION. Copying that would capture at page load and let the
+snapshot go stale across a long session before the operator ever presses Confirm. Comms-10k
+should capture **at enqueue time**, from the current principal and the section's current groups.
+Reuse ConferenceRooms' snapshot TYPE and its re-evaluation shape; do not copy its capture point.
 
 **Tests:** a job whose authorizing group is no longer in the section's allowed set refuses and
 writes nothing; an absent snapshot refuses.
@@ -272,6 +296,20 @@ facts the review surfaced:
 
 Options: (a) a Comms-10k-only view filtered to `SubmittedBy == current user` and that job type;
 (b) a shared "my jobs" component for any submitting module. Recommend (a), extracting later.
+
+## Slice C8 - an audit failure must not report a completed download as failed
+
+**Found by plan review round 4, not yet owner-ruled.** `Comms10k.razor.DownloadFull` invokes the
+browser download and THEN calls `Audit.LogLookupAction` - both inside one `try` whose `catch`
+sets `result = { Success = false }`. The file is already on the operator's machine at that
+point, so an audit throw tells them the export failed when it did not.
+`DownloadRejections` has the same shape.
+
+This breaks the repo's own rule that an audit failure must not make completed work appear
+failed. The remedy already exists in the codebase: `SafeAudit`, which Defender uses for exactly
+this. Wrap both.
+
+**Test:** an audit that throws leaves the download reported as successful.
 
 ## Slice D1 - do not read the inventory on open
 
@@ -332,7 +370,13 @@ Add a server-side re-entry guard that refuses the second call outright. The brow
 `disabled` attribute is one round trip stale - the stated reason the filters are snapshotted
 server-side, and it applies here.
 
-**Test:** a second `LoadAsync` while the first is in flight does not reach the service.
+**Wider than "two loads" - corrected at review round 4.** The page's own remarks already say a
+load overlapping an export can replace the rows under an audit record. So `LoadAsync` must
+refuse while the page is busy **including during a CSV export**, and `DownloadCsvAsync` must
+refuse an overlapping entry too. Guard on the page's busy state, not on a load-only flag.
+
+**Tests:** a second `LoadAsync` while the first is in flight does not reach the service; a
+`LoadAsync` during an export is refused; a second export is refused.
 
 ## Slice D4 - audit what actually narrowed the result, on both paths
 
@@ -401,6 +445,9 @@ these slices edit and are fixed with the slice that touches them:
 - **Also round 3:** `ExchangeAdminWeb.Tests/Comms10kReplaceSequenceTests` asserts and explains
   "Replaces are NOT serialised". Correcting only the service and catalog comments would leave a
   false guard standing in the suite. Fix it with them.
+- **Also round 4:** `README.md` carries the same claim - that two Comms replaces can run at the
+  same time - and the README is this repo's full behaviour reference. Same narrowing: serialised
+  by the runner, not by the method.
 
 Fix each in the slice that touches its file. Do not start a wider sweep here.
 
@@ -409,7 +456,7 @@ Fix each in the slice that touches its file. Do not start a wider sweep here.
 ## Sequencing
 
 C1 first - it is what stops the module touching the wrong thing. Then C3, C4, C7 (C4 and C7 are
-two halves of one guarantee and should land adjacent), C2, C6. C5 is NOT in this sequence - it
+two halves of one guarantee and should land adjacent), C2, C6, C8. C5 is NOT in this sequence - it
 is deferred until it has a design note and its own approval.
 D1-D5 are independent of the Comms work and of each other; do D2 before D5 so the concurrency fix
 is not written on top of a caching change. D6-local rides its slice.
