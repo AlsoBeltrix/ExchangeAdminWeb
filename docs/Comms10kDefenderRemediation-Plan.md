@@ -1,478 +1,454 @@
 # Comms-10k and Defender Remediation - Plan
 
-Status: **DRAFT Revision 5 - awaiting owner approval.** Revisions 1-4 were reviewed by codex
-on 2026-10-15. Rounds 1-3 returned "do not approve"; round 4 returned "keep the plan, but amend".
-This revision takes every correction from each round. Raised by two whole-module reviews the
-same day.
+Status: **DRAFT Revision 6 - awaiting owner approval.** Five review rounds on the Portkey codex
+harness (rounds 1-3 "do not approve", 4-5 "keep, amend"), then one round on codex-commercial /
+`gpt-6-astra` / max, which found ten further defects - several more serious than anything in
+Revisions 1-5 - and judged the sequencing wrong. **This revision is reordered around the write
+path.** Performance work moved last.
 
-**Fourteen findings. Twelve are fixed here** - C1, C2, C3, C4, C6, C7, C8, D1, D2, D3, D4, D5.
-**C5 is deferred**: owner-ruled, no design yet, carried as work not as a fix. **D6 is a separate
-plan**; only its instances inside files these slices touch are fixed, by the slice that touches
-them. That is the whole count - no item is in two places.
+Review outputs are machine-local and gitignored (`.agents/review/out/`), so **the findings below
+are the record** - do not expect to read the envelopes.
 
 ## Exec summary
 
-**What this does.** Closes eleven defects in two modules, and defers a twelfth. The big one: Comms-10k can be pointed at
-any AD group by a config field, and it skips the app's protection checks because it is assumed to
-target one harmless list. This pins it to that one group permanently. The rest are a job that can
-quietly drop people and still record success, a job that can write a different list from the one
-you approved, Defender reading the device inventory before you have asked for anything, a shared
-variable that lets two operators see each other's errors, and a subnet lookup doing millions of
-redundant parses per load.
+**What this does.** Fixes the module that replaces the membership of a company-wide group, then
+the device inventory module. Twenty findings.
 
-**What it gets you.** Comms-10k stops being able to touch anything except the group it exists for,
-and writes nothing on a guess - if what it is about to write is not what you approved, it writes
-nothing and says so. Defender opens instantly, and gets faster when it does read.
+**Why it was reordered.** The last review found the write path itself unsafe in ways the earlier
+plan never touched. The worst: **a failed write can be executed twice, and the step that exists
+to verify the result can be what executes it.** Next to that, caching a filter to make a page
+faster is not a priority.
 
-**What it costs.** Eleven slices plus tests, in a fresh session. Two manual checks on dev, because
-no automated test can prove the group GUID resolves in the real forest or that a page renders.
+**The three that matter most, none of them in Revisions 1-5:**
 
-**What it does NOT do.** C5 - making sure the person who starts a background job can see and
-manage it - is ruled and not fixed here. It has no design yet, and the plan review was right that
-calling it a slice while deferring it was an overclaim. It needs its own short design note, then
-its own approval.
+1. A retry after a failed membership clear can issue a **second** clear, because the failed call
+   leaves its command queued on a reused object. The verification read then runs on that same
+   queue and performs the pending write.
+2. Pinning the group by GUID - the fix already ruled on - **does not finish the job**: every
+   actual write still addresses the group by its name-path, so a moved or replaced group is
+   still reachable.
+3. The replace **empties the group and then refills it**. If it dies in between, the list is
+   empty or partial, and the restart report says "Members written: 0" when the true number is
+   unknown. Nobody is told, because the person who submitted it cannot see job outcomes - which
+   is why **C5 is no longer deferred.**
 
-**The biggest risk, and it is a behaviour change you are authorising.** Today Comms-10k lets you
-proceed with a partially-matching file - "10,000 of 10,500 matched, 500 will be excluded, Replace".
-Your ruling that the app must refuse rather than guess removes that path. After this, a file with
-any unmatched address cannot be applied at all; you fix the file and re-upload. **Say so now if you
-want that path kept.**
+**What it costs.** Twenty slices in a fresh session. Manual dev checks for the group pin and the
+Defender open-without-fetch.
 
-**A correction to what you were told when you ruled on C2.** You were told the risk was a job
-writing after your access is revoked. That is wrong, and the code says so in its own words: the
-job authorization snapshot "does NOT detect mid-job group-membership revocation". What it actually
-catches is an admin removing the authorizing group from Comms-10k's allowed-group configuration
-between submit and write. Narrower than described. Still worth the small cost, and it brings
-Comms-10k to parity with ConferenceRooms, but you ruled on a wider claim than the facts support.
+**The behaviour change being authorised**, unchanged from Revision 1: a file with any unmatched
+address can no longer be applied; fix the file and re-upload. **Say now if that path should be
+kept.** One wrinkle found late - the resolver currently manufactures false "ambiguous" results
+for a single person (C10). Fixing that is a prerequisite, or good files get rejected.
 
-**Also deliberate:** pinning the group by GUID hardcodes an ADI-specific value in source, which
-your own environment-neutrality rule forbids. You exempted yourself from that rule. Comms-10k will
-not work in another forest after this.
+**Also deliberate:** the GUID is hardcoded, which the environment-neutrality rule forbids. The
+owner waived it. Comms-10k will not work in another forest.
 
-**What approving authorises.** The eleven numbered slices below, nothing else. Not C5, not the
-codebase-wide comment audit, not a bulk-jobs redesign.
+**What approving authorises.** The twenty slices below. Not the codebase-wide comment audit, and
+not the carried-forward items in the last section, which are recorded and not fixed.
 
 ---
 
-## Owner rulings, 2026-10-15
+## Owner rulings
 
-| Id | Finding | Ruling |
+| Id | Ruling | Date |
 |---|---|---|
-| C1 | Target group is a free config field; no type or identity check | Pin by ObjectGUID; delete the config field |
-| C2 | Background replace never re-checks authorization | Fix; low priority, cheap. **Scope corrected - see exec summary** |
-| C3 | Partial resolve writes a smaller set and audits success | **Refuse, write nothing, report** |
-| C4 | Job may write a set the operator never approved | **Refuse, write nothing, report** |
-| C5 | Submitter may be unable to see or manage their own job | Must be fixed; redesign in scope if needed |
-| C6 | Ticket edited after Validate is ignored | Fix |
-| C7 | Enqueue reads the address list after awaits | **Not yet ruled** - found by plan review, same class as C4 |
-| D1 | Page fetches the inventory on open | No fetch on open. **No filter requirement** - a blank Search still pulls everything |
-| D2 | Singleton service holds a per-run failure reason in a field | Fix |
-| D3 | No guard against two concurrent loads | Fix |
-| D4 | Audit omits Site and Seen-by | Fix |
-| D5 | Subnet re-parsing per device; filter recomputed per render | Fix |
-| D6 | Comments across the codebase are unreliable | **Separate plan.** Exception: stale comments inside code a slice touches are fixed by that slice |
+| C1 | Pin the target by ObjectGUID; delete the config field. Neutrality waived | 2026-10-15 |
+| C3/C4 | **Refuse, write nothing, report.** *"The onus is on the user to provide accurate data... We do not guess."* | 2026-10-15 |
+| C5 | A user who starts a job must be able to see and manage it | 2026-10-15 |
+| C2, C6, D1-D5 | Fix | 2026-10-15 |
+| D1 | No fetch on open; **no filter requirement** - a blank Search still pulls everything | 2026-10-15 |
+| D6 | Separate plan; local instances fixed by the slice that touches them | 2026-10-15 |
+| C7-C11, D7-D10 | **Not yet ruled** - found by plan review after the ruling session | 2026-10-15 |
 
-C3/C4 ruling verbatim: *"the onus is on the user to provide accurate data. If they do not, they
-need to know that and resolve it themselves. We do not guess."* Durable rulings are in
-`.agents/decisions.md`, 2026-10-15.
-
----
+Durable rulings: `.agents/decisions.md`, 2026-10-15.
 
 ## Constraints
 
-- **The Comms-10k exemption is narrower than its justification.** `docs/ProjectConstitution.md`
-  exempts this module from protected-principal member AND write-target checks because it targets
-  "one broadcast list whose membership grants access to nothing". The real group is a Universal
-  **Security** group. C1 is what makes that premise true in code rather than in configuration.
-  **Do not widen the exemption and do not remove it; it is an owner ruling, 2026-09-30.**
-- Environment neutrality (`.agents/repo-guidance.md` invariant 7) is waived for C1's GUID only.
-- Module-scoped version bumps only; no base app bump unless a slice touches shared code.
-- One finding per commit. Full gate before each: Release build, `dotnet test
+- **The Comms-10k exemption.** `docs/ProjectConstitution.md` exempts this module from BOTH
+  protected-principal checks because its target is "one broadcast list whose membership grants
+  access to nothing". The real group is a Universal **Security** group. C1 makes "one target"
+  true in code; **no code can prove the access claim** - it rests on the owner ruling. **Do not
+  widen or remove the exemption** (owner, 2026-09-30), and **do not reintroduce locking or
+  protected-principal checks contrary to recorded decisions.**
+- Environment neutrality waived for C1's GUID only.
+- Module-scoped version bumps; no base app bump unless a slice touches shared code.
+- **One finding per commit.** Full gate before each: Release build, `dotnet test
   ExchangeAdminWeb.slnx`, `dotnet format --verify-no-changes`, `git diff --check`,
   `tools/Test-AsciiOnly.ps1`.
-- Every new test mutation-proven. Restore with `git apply -R` / `cp` plus `touch`, md5-verify.
-  **Grep builds for `error CS`; do not tail them** - a tailed build hid 35 errors on 2026-10-14
+- Every new test mutation-proven: revert the fix, watch it fail, restore, md5-verify, `touch`.
+  **Grep builds for `error CS`; never tail them** - a tailed build hid 35 errors on 2026-10-14
   and `--no-build` then reported a stale pass.
-- `Components/Pages/DefenderEndpointDevices.razor` is ClickGate-registered. Registered controls
-  are all above line 474 (`@code` start). An edit below moves only `ExpectedLineCount`; an edit
-  above needs `.agents/playbooks/clickgate-reanchor.md`. `Comms10k.razor` has no line-keyed
-  entries.
-- **Line numbers in this plan are as of `8f61ae3` and will drift as slices land.** Re-locate by
-  symbol, not by line.
+- `DefenderEndpointDevices.razor` is ClickGate-registered; registered controls sit above line
+  474. An edit below moves only `ExpectedLineCount`; above needs
+  `.agents/playbooks/clickgate-reanchor.md`. `Comms10k.razor` has no line-keyed entries.
+- **Every file:line below is as of `5f79340` and drifts as slices land. Re-locate by symbol.**
+- **Verify each finding against the code before fixing it.** Only C9 and C1's DN gap were
+  independently confirmed by the plan author; the rest are review-sourced with citations. A
+  finding that does not reproduce is one to record as such, not to fix.
 
 ---
 
-## Slice C1 - pin the target group by ObjectGUID
+# Part 1 - the Comms-10k write path
+
+## C9 - a failed write stays queued and can run twice
+
+**The most serious defect found. Do this first.**
+
+`Services/Comms10kService.cs:506` - `ClearMembers` does `ps.AddCommand(...)`, `ps.Invoke()`,
+then `ps.Commands.Clear()`. `ErrorAction Stop` makes failures terminating, so a throw skips the
+`Clear()` and leaves the command on the pipeline. The same `PowerShell` object is reused, so:
+
+- the retry calls `AddCommand` again and **invokes two clears**;
+- after retries are exhausted, `ReadBackMembers` appends its read to the same retained pipeline
+  and **executes the pending mutation** - the step whose whole purpose is to verify without
+  writing.
+
+Fix: clear command state in a `finally`, or use a fresh `PowerShell` per operation while keeping
+the runspace. Apply to every operation on that object, not only `ClearMembers`.
+
+**Test:** the existing pure-writer tests cannot see this. Exercise the real SDK wiring with
+harmless commands that throw, and assert the next operation's pipeline holds only its own
+command.
+
+## C1 - pin the target by ObjectGUID, and bind every write to it
 
 **Target:** `87663f48-10a7-44b3-8da3-0a7e4cc3de0b` - `CN=Comms-10k,OU=Automated
 Groups,OU=Recipients,OU=Analog,OU=Exchange,DC=ad,DC=analog,DC=com`, Universal Security.
 
-GUID over name, DN or SamAccountName because it survives rename and move.
-
-**What this proves and what it does not, corrected at review round 3:** pinning the GUID proves
-the module has exactly ONE target and that the target cannot be re-pointed by configuration. It
-does NOT prove the Constitution's premise that the target's "membership grants access to
-nothing" - the group is a Universal Security group and no code can establish what it grants.
-That premise now rests on the owner's ruling in `.agents/decisions.md`, which is the honest
-place for it. Do not write a comment claiming the code proves it.
-
-- `Services/Comms10kService.cs` - the `TargetGroupName` config read becomes the constant; the
-  "not configured" throw becomes a fail-closed throw when the GUID does not resolve.
-- `QueryTargetGroup` looks the group up by name today and reads DN/GUID back. Invert: look up by
-  GUID, fail closed when the lookup returns nothing or more than one.
-- `Modules/ModuleCatalog.cs` - delete the `TargetGroupName` config field.
-- `Components/Pages/Comms10k.razor` - "Set TargetGroupName in Admin Settings" is no longer
+- Replace the `TargetGroupName` config read at `Services/Comms10kService.cs:28` with the
+  constant; make the "not configured" throw a fail-closed throw when the GUID does not resolve.
+- `QueryTargetGroup` looks up by name today - invert to GUID, failing closed on zero or multiple.
+- Delete the `TargetGroupName` field from `Modules/ModuleCatalog.cs:712`.
+- `Components/Pages/Comms10k.razor:43` - "Set TargetGroupName in Admin Settings" is no longer
   actionable; name the fixed target and say it is not configurable.
-- Existing `Comms10k/TargetGroupName` config rows become dead. Leave them; the schema rule is
-  additive-only (`.agents/repo-guidance.md` invariant 2).
-
-**Tests:** the service refuses when the GUID does not resolve; the catalog no longer exposes the
-field; no code path reads a group name from config.
-
-**Manual, on dev:** confirm the module resolves its group and lists members. **No automated test
-can prove the GUID resolves in the real forest** - say so in the commit rather than implying
-coverage.
-
-## Slice C3 - a partial resolve writes nothing
-
-`Services/Jobs/Comms10kReplaceProcessor.ResolveAsync` returns `Partial` when addresses are dropped
-**and still sets `_resolvedDns`**, so `ReplaceAsync` writes the smaller set while its mutation
-audit is keyed to `result.Success`. The row says Partial; the audit says success.
-
-- Set `_resolvedDns` **only when every uploaded address resolved**. Any rejection is `Failed`, not
-  `Partial`, naming the count and reason. `ReplaceAsync`'s existing `_resolvedDns is null` branch
-  then refuses - it already exists and already says "nothing was written".
-- The page stops offering the partial path. Replace is offered only when there are no rejections
-  at all; otherwise the page says fix the file and re-upload, with the errors CSV that is already
-  reachable from every state.
-- **The refusal has to actually report, and today it would not.** `OnJobCompletedAsync` builds
-  its notification from `_result`: `_result?.Outcome.ToString() ?? "did not complete"` and
-  `_result?.Message ?? job.Message ?? "No detail was recorded."`. A resolve-stage refusal never
-  sets `_result`, so the notification would say "did not complete" rather than naming the
-  unmatched addresses. **Carry the refusal reason into the completion path.**
-  **Audience, corrected at review round 3:** this is the ADMIN notification, not an
-  operator-facing one. Fixing it makes the refusal legible to whoever reads admin mail; it does
-  NOT put the reason in front of the operator who uploaded the file. That is C5's job, and C5 is
-  deferred - so after this plan a refusal is correct, audited and admin-notified, and the
-  uploader still may not see why. Say so rather than implying the loop is closed.
-
-**Tests:** one rejection blocks the write; **and the completion notification names the refusal
-reason rather than "did not complete"**. **Assert `ExecuteReplaceAsync` was never called** - that
-is the assertion that matters, not the status string.
-
-## Slice C4 - the job writes the approved set or nothing
-
-**Revision 1 proposed comparing the confirmed COUNT. That is too weak and was rejected at review:
-the same count with different people passes.**
-
-Carry a fingerprint of the approved resolved set in `Comms10kReplaceJobPayload` - a hash of the
-resolved DNs the operator confirmed. **It must be a SET identity: normalise and sort before
-hashing so it is order-independent.** The resolver guarantees no input ordering, so an
-order-sensitive hash would refuse correct runs at random. The job still re-resolves (keep that;
-the payload's own remarks give the reason and it remains true), then compares its own resolved set
-against the fingerprint. Any difference is a refusal, not a write.
-
-A fingerprint rather than the DN list itself for the reason the payload already states: ten
-thousand distinguished names is a large durable record of something derivable in seconds. A hash
-is small and answers the only question being asked.
-
-**Fingerprint the immutable object identifier, not the DN - corrected at review round 3.** A DN
-changes when a user is renamed or moved between validation and execution, so a DN-set hash would
-refuse a run in which exactly the same people resolved. The invariant the owner ruled on is
-"the same people", so hash objectGUIDs (the same reasoning that chose a GUID in C1) and carry
-DNs only for the write itself. If the resolver does not currently surface an immutable id, that
-is part of this slice.
-
-**Use a deterministic cryptographic hash over the normalised, sorted GUID strings - added at
-review round 4. Not `string.GetHashCode` or any `.NET` hash API**: those are randomised per
-process, so a fingerprint written on the circuit and compared in the job runner would never
-match and every run would refuse.
-
-**Tests:** a job whose re-resolve yields a different set of the same size refuses; an identical
-set writes; **and a set with the same objectGUIDs but a changed DN still WRITES** - that is the
-assertion proving the invariant moved from DN to identity rather than just being renamed. Assert
-`ExecuteReplaceAsync` was never called on the refusal path.
-
-## Slice C7 - the page's stale-state and re-entry class
-
-**Found by plan review, not yet owner-ruled. Round 3 widened it from one capture to a class -
-this is now the largest Comms-10k slice and the scope growth is deliberate, not drift.**
-
-Three handlers on `Comms10k.razor` share one shape: they mutate page fields across awaits while
-nothing reliably stops a second entry.
-
-1. **`HandleFileUpload` never raises `isLoading` at all**, and the `InputFile` control is
-   disabled only by `isLoading`. It then mutates `uploadedFileName`, `parsedEmails`,
-   `rejectedBeforeLookup` and `duplicateRows` across awaits while reading the browser stream.
-   **Two uploads can interleave and mix one file's rows into another's.** This is the root of
-   the class and the worst of the three.
-2. **`ValidateEmails`** raises `isLoading`, yields, then reads `ticketNumber` and `parsedEmails`
-   afterwards - so it can validate a list that changed under it.
-3. **`ExecuteReplace`** trusts the disabled button, raises `isLoading`, yields, then enqueues
-   from mutable fields. It needs a server-side re-entry refusal, and it should re-check
-   `resolveResult.Success` and zero-rejections in the handler rather than relying on the markup
-   that renders the button.
-
-Fixes. **Capturing into locals is NOT sufficient for the upload and the plan said otherwise -
-corrected at review round 4.** `HandleFileUpload` RESETS the shared fields at its start and then
-WRITES them across its awaits, so a second entry wipes the first run's state mid-parse before
-any capture could help. It must:
-
-- refuse re-entry **before it resets anything** - the guard is the first statement, not a
-  capture;
-- parse into LOCAL collections and publish them to the fields in one assignment at the end,
-  so a partially-parsed file is never visible;
-- raise `isLoading` so the control that is already gated on it actually closes.
-
-`ValidateEmails` and `ExecuteReplace` take the simpler form: capture into locals above the
-first await, plus a server-side re-entry refusal rather than trusting a `disabled` attribute -
-the browser's copy is one round trip stale, which is why Defender snapshots its filters
-server-side. `ExecuteReplace` should also re-check `resolveResult.Success` and zero-rejections
-in the handler rather than relying on the markup that renders its button.
+- **The lookup is not the hole. `Comms10kService.cs:509`, the add and the read-back all address
+  the group by `target.DistinguishedName`.** A GUID lookup followed by DN-addressed writes still
+  hits whatever occupies that DN. **Pass the GUID to every group operation.**
+- Dead `Comms10k/TargetGroupName` config rows stay; the schema rule is additive-only.
+
+**Tests:** refusal when the GUID does not resolve; no code path reads a group name from config;
+**every write command carries the GUID**. **Manual, on dev:** the module resolves its group and
+lists members. No automated test can prove the GUID resolves in the real forest - say so.
+
+## C10 - the resolver manufactures ambiguity from one person
+
+**Prerequisite for C3.** `Comms10kService.QueryBatchCandidates:340` pools candidates without
+de-duplicating directory objects, and `Comms10kAddressResolver.Resolve:213` treats multiple rows
+as multiple matches. One person whose UPN sits in one 500-address batch and whose `mail` sits in
+another returns the same object twice: both addresses become "Ambiguous: 2 matches".
+
+Today that silently excludes a valid person. **After C3 it rejects the entire file.** Fixing C3
+without this turns a quiet bug into a loud one.
+
+Fix: de-duplicate by object identity before deciding ambiguity. An address-to-distinct-identity
+index also removes the current full candidate scan per address.
+
+**Test:** the same person reached by two different addresses in two different batches resolves
+once and is not ambiguous. The existing duplicate-person test supplies one candidate and cannot
+see this.
+
+## C3 - a partial resolve writes nothing, and says so in the audit
+
+`Comms10kReplaceProcessor.ResolveAsync:113` sets `_resolvedDns` even when rejecting, returns
+`Partial`, and `ReplaceAsync:147` writes the smaller set while auditing on `result.Success`.
+Root cause one level down: `Comms10kService.ResolveEmailsAsync:285` returns `Success = true`
+with rejections present.
+
+- **Change the meaning at the service**, or guard every caller. Patching only the processor and
+  the page leaves the next caller free to reintroduce partial writes.
+- Set `_resolvedDns` only when every address resolved. Any rejection is `Failed`.
+- The page stops offering the partial path: Replace only with zero rejections; otherwise fix the
+  file and re-upload, using the errors CSV already reachable from every state.
+- **The refusal must be audited.** The null-`_resolvedDns` return at
+  `Comms10kReplaceProcessor.cs:135` sits **before** the only mutation audit, so implementing the
+  refusal literally replaces a misleading success record with **no record**. Write one failed
+  mutation audit for every authorization, resolution or fingerprint refusal.
+- **The completion notification must carry the reason.** `OnJobCompletedAsync:193` builds from
+  `_result`, which a refusal never sets, so it would say "did not complete". Note this is the
+  ADMIN notification - the uploader learns the reason via C5, not here.
+
+**Tests:** one rejection blocks the write; a failed mutation audit exists; the notification names
+the reason. **Assert `ExecuteReplaceAsync` was never called.**
+
+## C4 - the job writes the approved set or nothing
+
+Carry a fingerprint of the approved set in `Comms10kReplaceJobPayload`. The job re-resolves (keep
+that - the payload's remarks give the reason) and compares.
+
+- **Hash object GUIDs, not DNs.** A rename or move between validate and run changes the DN; the
+  invariant ruled on is "the same people".
+- **Normalise and sort before hashing** - membership is a set. (Revision 5 justified this by
+  claiming the resolver guarantees no ordering. **That was false** - it preserves input order.
+  The conclusion stands; the reason does not.)
+- **Use `SHA256.HashData` or equivalent.** Revision 5 said "no .NET hash API", which was wrong -
+  cryptographic APIs are fine. What is banned is process-randomised object/string hashing, which
+  would never match across the circuit and the runner.
+- **Primary-group exception:** `Comms10kReplaceWriter.Derive:316` adds existing primary-group
+  members to the expected set and can report success with people absent from the upload. State
+  the exception explicitly or refuse before writing.
+
+**Tests:** a different same-size set refuses; **the same GUIDs with a changed DN still writes**;
+an identical set writes.
+
+## C11 - truthful reporting when a replace is interrupted
+
+`Comms10kReplaceWriter.ExecuteSequence:233` **clears the membership and then adds in batches**,
+so a failure or process death leaves the group empty or partial. That was accepted for speed and
+is not being revisited. The reporting is what is unacceptable: restart reconciliation uses a
+fresh processor whose notification reports **"Members written: 0"** when `_result` is absent
+(`Comms10kReplaceProcessor.cs:214`). The real number is unknown.
+
+Report an interrupted replace as interrupted with an unknown written count, never as zero.
+
+**Test:** a job reconciled after restart reports unknown, not zero.
+
+## C5 - the submitter can see and manage their own job
+
+**No longer deferred.** C11 is why: the list can be left broken and the person responsible cannot
+currently discover it. Owner ruling: *"any case where a user can start a job that ends up here
+but not see it or manage it is a failure."*
+
+- `Services/Jobs/BulkJobService` already has module- and submitter-scoped reads. **But
+  `CancelJob` and `GetRows` are id-only and `DeleteJob` is module-scoped** - decide the scoping
+  rule for each rather than inheriting the admin panel's cross-module reach.
+- **Do not widen `AdminBulkJobs`' permission**; its fail-closed gate exists for aggregation.
+- Build a Comms-10k view filtered to `SubmittedBy == current user` and that job type, showing
+  outcome and rows. Extract a shared component only when a second module needs it.
+- A successful enqueue currently renders as `RefusedBeforeAnyChange` with the headline "Nothing
+  was changed" (`Comms10k.razor:680`, `:719`). Fix that wording while here.
+
+## C2 - re-check authorization at the point of write
+
+`ConferenceRoomBulkProcessor:78` re-evaluates `JobAuthorizationSnapshot` per row;
+`Comms10kReplaceProcessor` has none, though `BulkJob.AuthSnapshotJson` already exists.
+
+- **Honest scope:** the snapshot "does NOT detect mid-job group-membership revocation" (its own
+  summary). It catches the authorizing group being removed from the section's allowed set. Do
+  not describe it as catching a revoked user.
+- **Capture at enqueue**, from the current principal and current section groups - not at page
+  initialization as ConferenceRooms does, or the snapshot goes stale across a long session.
+  Reuse the type and the re-evaluation, not the capture point.
+- **Add the module-enablement check.** `JobAuthorizationSnapshot.IsStillAuthorized:87` tests
+  groups only, while live authorization also rejects disabled modules
+  (`Authorization/GroupAuthorizationHandler.cs:55`). Queue a job, disable Comms-10k, leave the
+  groups alone: the write currently proceeds.
 
-**C7 and C4 are two halves of one guarantee.** C7 narrows the window; C4's fingerprint catches
-anything that still slips through, including a same-sized different list. Neither alone is
-enough.
+**Tests:** a job whose authorizing group left the allowed set refuses; a job whose module was
+disabled refuses; an absent snapshot refuses. Each writes a failed audit (C3).
 
-**Tests:** a second upload entered while the first is mid-parse is refused; fields mutated after
-a yield do not reach the payload or the validation; a second `ExecuteReplace` does not enqueue a
-second job.
+## C7 - stale state and re-entry across every handler sharing the busy flag
 
-## Slice C2 - re-check the section's allowed groups at the point of write
+Three handlers mutate page fields across awaits with nothing reliably stopping a second entry,
+and the fix must cover the handlers that merely *lower* the shared flag too.
 
-**Scope, corrected at review:** `Services/Jobs/JobAuthorizationSnapshot` re-checks the submitter's
-captured group claims against the section's CURRENT allowed-group set. Its own summary says it
-"does NOT detect mid-job group-membership revocation", and neither does the live model, so this is
-parity rather than a new guarantee. **Do not describe this slice as catching a revoked user.**
+1. **`HandleFileUpload` never raises `isLoading`**, while the `InputFile` is gated only on it.
+   It RESETS the shared fields at its start and writes them across awaits, so a second entry
+   wipes the first run's state mid-parse. **Capturing into locals cannot fix this.** It must
+   refuse re-entry as its **first statement, before any reset**; parse into local collections and
+   publish in one assignment at the end; and raise `isLoading`.
+2. **`ValidateEmails`** raises the flag, yields, then reads `ticketNumber` and `parsedEmails`.
+3. **`ExecuteReplace`** trusts the disabled button, then enqueues from mutable fields. Add a
+   server-side re-entry refusal and re-check `resolveResult.Success`, zero rejections **and a
+   non-empty resolved set** in the handler, not in the markup.
+4. **`LoadPreview`, `DownloadFull`, `DownloadRejections`** also own `isLoading` without refusing
+   entry while busy - an overlapping read can finish and **lower the flag while a validation or
+   submission is still running**, reopening the guarded handlers. Apply the entry guard to every
+   operation that owns the flag.
+
+**Tests:** a second upload mid-parse is refused; a partial parse never publishes (today a CSV
+failure after valid rows leaves the prefix available to validate); an overlapping download does
+not lower the flag under a running submit.
+
+## C8 - downloads: audit safely, and do not export executable cells
 
-`ConferenceRoomBulkProcessor` reads `JobAuthorizationSnapshot.FromJson(job.AuthSnapshotJson)` and
-re-evaluates per row before writing. `Comms10kReplaceProcessor` has no authorization code at all,
-while `BulkJob.AuthSnapshotJson` already exists and is already persisted.
+Two defects in the same two methods.
+
+- **Audit after delivery.** `DownloadFull:318` and `DownloadRejections:409` invoke the browser
+  download and THEN audit, inside one `try` whose `catch` reports failure. The file is already
+  delivered; an audit throw reports a successful export as failed. Repo rule violation; the
+  remedy `SafeAudit` already exists and Defender uses it.
+- **Formula injection.** Both use raw `CsvWriter.WriteRecords` (`Comms10k.razor:313`, `:405`);
+  CsvHelper does not enable injection protection by default, so a rejected address of `=1+1`
+  exports as spreadsheet-executable content. **The repo already has `Services/CsvExport.cs:17`
+  `CsvExport.Write` with the protection, and Defender uses it.** Reuse it. This matters most on
+  the rejections export, whose entire content is attacker-supplied.
 
-- Populate `AuthSnapshotJson` when Comms-10k enqueues.
-- Evaluate it before `ExecuteReplaceAsync`, failing closed on an absent or unreadable snapshot.
+**Tests:** an audit that throws leaves the download reported successful; a formula-leading field
+is neutralised.
 
-**Revision 4 said "follow ConferenceRooms exactly". Corrected at review round 4:** ConferenceRooms
-captures its snapshot at PAGE INITIALIZATION. Copying that would capture at page load and let the
-snapshot go stale across a long session before the operator ever presses Confirm. Comms-10k
-should capture **at enqueue time**, from the current principal and the section's current groups.
-Reuse ConferenceRooms' snapshot TYPE and its re-evaluation shape; do not copy its capture point.
+## C6 - the ticket is stale, not unvalidated
 
-**Tests:** a job whose authorizing group is no longer in the section's allowed set refuses and
-writes nothing; an absent snapshot refuses.
+**Revision 5 said an edited ticket could reach the job unvalidated. That is wrong** - the handler
+submits `validatedTicket` (`Comms10k.razor:619`). The real defect is quieter: the operator edits
+the field after Validate, the screen shows the new ticket, and the job, audit and notification
+carry the old one.
 
-## Slice C6 - the ticket at submit must be a validated ticket
+Either lock the field after Validate, or re-read and re-validate at Confirm, refusing on failure.
+Locking is smaller and matches the module's refuse-rather-than-guess posture.
 
-**Revision 1 said "re-read the ticket at Confirm". That is wrong and was rejected at review:** the
-ticket is ServiceNow-validated at Validate, so re-reading an edited value at Confirm would carry an
-unvalidated ticket into the job, audit and notification.
+**Test:** the displayed ticket and the submitted ticket cannot disagree.
 
-Two acceptable shapes; the implementing agent picks and records why:
+---
 
-- **(a)** Lock the ticket field once Validate has run, so the validated value is the only one that
-  can be submitted. Changing it requires re-validating.
-- **(b)** Re-read at Confirm and re-validate before enqueue, refusing on a failed validation.
+# Part 2 - Defender correctness
 
-(a) is smaller and matches the module's "refuse rather than guess" posture.
+## D8 - two parsers silently corrupt ordinary data
 
-**Test:** a ticket edited after Validate cannot reach the payload unvalidated.
+- `DefenderEndpointDeviceService.ParseDevice:1632` reads `osBuild` with a string-only parser
+  while the Defender API returns a number - so normal build values vanish from the detail panel
+  and the CSV.
+- `AdSiteDirectory.SiteNameFromDn:104` splits at the first comma without honouring DN escaping,
+  so `CN=New York\, Building A,...` becomes `New York\` - corrupting the displayed site and the
+  Site filter that matches on it.
 
-## C5 (DEFERRED, not a slice of this plan) - the submitter can see and manage their own job
+**Tests:** a numeric `osBuild` survives to the CSV; a site name containing an escaped comma reads
+whole and filters correctly.
 
-**Owner ruling: "any case where a user can start a job that ends up here but not see it or manage
-it is a failure."** Redesign in scope.
+## D10 - a malformed row can make a capped page look complete
 
-**This slice is not approved for implementation by this plan.** It needs a design note first -
-that was Revision 1's weakest point and the review named it. What the note must settle, with the
-facts the review surfaced:
+`TryReadPage:1616` silently skips non-object entries, and pagination then compares the reduced
+count against `$top`. A full capped page containing one malformed entry looks like a short final
+page, so the run reports Complete having stopped early.
 
-- `Services/Jobs/BulkJobService` already has module-scoped and submitter-scoped read APIs, so the
-  read side is largely there.
-- **But `CancelJob` and `GetRows` are id-only and `DeleteJob` is module-scoped.** "Manage" cannot
-  be bolted on without deciding the scoping rule for each, or a Comms-10k view inherits the admin
-  panel's cross-module reach.
-- **Do not widen `AdminBulkJobs`' permission** - its fail-closed gate exists for cross-module
-  aggregation and that reasoning stands.
+**Test:** a capped page with a malformed entry does not terminate pagination.
 
-Options: (a) a Comms-10k-only view filtered to `SubmittedBy == current user` and that job type;
-(b) a shared "my jobs" component for any submitting module. Recommend (a), extracting later.
+## D9 - an export failure escapes with no result and no audit
 
-## Slice C8 - an audit failure must not report a completed download as failed
+`DownloadCsvAsync:1064` has a `finally` but no `catch`, so a throw leaves no handled result and no
+failed-export audit. Same class as C8 on the other module.
 
-**Found by plan review round 4, not yet owner-ruled.** `Comms10k.razor.DownloadFull` invokes the
-browser download and THEN calls `Audit.LogLookupAction` - both inside one `try` whose `catch`
-sets `result = { Success = false }`. The file is already on the operator's machine at that
-point, so an audit throw tells them the export failed when it did not.
-`DownloadRejections` has the same shape.
+## D4 - audit what was evaluated, not just what was asked
 
-This breaks the repo's own rule that an audit failure must not make completed work appear
-failed. The remedy already exists in the codebase: `SafeAudit`, which Defender uses for exactly
-this. Wrap both.
+- `DescribeFilters:1117` takes `DefenderDeviceFilters`, which has no Site or Seen-by - those are
+  page fields applied after the fetch and they decide what the CSV contains.
+- **The lookup audit records `loaded.Devices.Count` before that filtering**, so a five-row
+  displayed result can audit 100 devices.
+- `FilteredDevices` deliberately keeps rows whose enrichment is unavailable, so "applied Site=X"
+  alone conceals that some rows could not be evaluated.
+- The **export** audit must read a stored applied snapshot, not the live `form` - reading `form`
+  at export reintroduces the stale-form class the page's comments exist to prevent.
 
-**Test:** an audit that throws leaves the download reported as successful.
+Record: the requested filter snapshot, which filters were evaluated versus degraded, and the
+final displayed/exported count.
 
-## Slice D1 - do not read the inventory on open
+## D7 - bound the enrichment work
 
-`Components/Pages/DefenderEndpointDevices.razor.OnAfterRenderAsync` calls `LoadAsync()` on first
-render, while the form text says "Set what you are looking for, then Search". Remove the
-auto-load; the page opens on the form with no result.
+`ListDevicesAsync:549` waits for enrichment before returning anything. The batch loop continues
+after failures and each hunting request has a four-minute timeout (`Program.cs:154`). At the
+100,000-device ceiling, 100 consecutive timeouts is roughly **400 minutes** before the
+already-fetched inventory is returned. There is no overall deadline, no cancellation and no early
+stop on systemic authorization failure.
 
-**Precision, corrected at review:** the default form is not blank - `OnboardingStatus` defaults to
-`CanBeOnboarded`. The auto-load is therefore a large default search, not literally every device.
-**Do not change the default filter semantics in this slice**; that would be a separate behaviour
-change and is not approved.
+Bound it: an overall deadline plus an early stop when failures are systemic, then return the
+inventory with enrichment marked unavailable. **Preserve the existing `(unavailable)` row
+behaviour** - that is the mechanism this protects, not one to replace.
 
-**No filter is required to press Search** (owner ruling). A blank Search pulling everything is the
-supported way to get everything.
+## D1 - do not read the inventory on open
 
-**Revision 2 said the `result == null` branch "already renders the no-result state". That is
-false and was caught at review:** the branch is two comment blocks and blank output - it renders
-nothing. The search form sits above it, so the page is not blank, but there is no empty state.
-This slice must ADD one: a line saying nothing has been searched for yet. That is what makes the
-page read as "a working search form" rather than as a page that failed to load. Both comments in
-that branch describe the deferred first load and become false - rewrite or delete them.
+`OnAfterRenderAsync:852` calls `LoadAsync()` on first render while the form says "Set what you are
+looking for, then Search". Remove it.
 
-**Test fallout the plan previously missed - BOTH registries:**
+- **The `result == null` branch renders nothing** - two comment blocks and blank output. **Add a
+  real empty state** saying nothing has been searched for yet; that is what makes the page read as
+  a working form rather than one that failed. Both comments there become false.
+- **Do not change the default filter semantics.** The default is `OnboardingStatus =
+  CanBeOnboarded`, not blank. Changing it is a separate, unapproved behaviour change.
+- No filter is required to press Search (owner ruling).
+- **Both registries:** `ProgressRegistry.cs:1258` exempts `OnAfterRenderAsync` because "the
+  initial load is LoadAsync" - false after this. `ClickGateRegistry.cs` records the deferred load
+  and carries `ExpectedLineCount = 1213`; adding an empty state moves it.
 
-- `ExchangeAdminWeb.Tests/ProgressRegistry.cs` carries an exemption
-  `new("OnAfterRenderAsync", "the initial load is LoadAsync", "LoadAsync")` for this page.
-  Removing the auto-load makes that reason false.
-- `ExchangeAdminWeb.Tests/ClickGateRegistry.cs` records the deferred `OnAfterRenderAsync` load in
-  its prose and carries `ExpectedLineCount = 1213`. Adding an empty state changes the line count;
-  re-anchor per `.agents/playbooks/clickgate-reanchor.md` and correct the prose.
+## D2 - the shared failure reason
 
-Both in the same commit as the behaviour change.
+`Program.cs:210` registers the service as a singleton; `DefenderEndpointDeviceService.cs:936`
+keeps `_lastBatchFailureReason` as a mutable instance field written and read per run. Two
+concurrent runs interleave and one reports the other's reason. Return it from
+`TryEnrichBatchAsync` instead; delete the field. **Sweep the class for the same shape** - a
+singleton with one such field usually has more.
 
-**Test:** the page does not call the service on first render. **Honest limit:** a lifecycle
-assertion, not a rendered-page one; there is no bUnit harness.
+**Test:** two concurrent `ListDevicesAsync` calls each report their own reason.
 
-## Slice D2 - the shared failure reason
+## D3 - one operation at a time
 
-`Program.cs` registers `DefenderEndpointDeviceService` as a singleton.
-`Services/DefenderEndpointDeviceService` declares `_lastBatchFailureReason` as a mutable instance
-field, written inside `TryEnrichBatchAsync` and read immediately after. Two concurrent runs
-interleave and one reports the other's reason.
+`LoadAsync:865` raises `isLoading` only after starting and nothing refuses a second entry. The
+page's own remarks say a load overlapping an export can replace rows under an audit record, so the
+guard covers both directions: `LoadAsync` refuses while busy **including during an export**, and
+`DownloadCsvAsync` refuses an overlapping entry.
 
-Return the reason from `TryEnrichBatchAsync` instead of storing it. Delete the field.
+---
 
-**Sweep the rest of the class for the same shape before calling this done.** A singleton with one
-mutable run-scoped field usually has more than one.
+# Part 3 - performance, last
 
-**Test:** two concurrent `ListDevicesAsync` calls with different batch failures each report their
-own reason.
+## D5 - stop recomputing
 
-## Slice D3 - one load at a time
+1. `AdSiteSubnetMap.FindSite:64` parses every subnet inside the per-device loop while `ApplySites`
+   calls it per device - millions of redundant parses per load. Prepare the parsed subnet list
+   once per load. **Measure the real subnet count before quoting one.**
+2. `FilteredDevices:645` is uncached and read from six sites, three in markup that re-render on
+   any state change. Compute once; **invalidate on `result`, `appliedSite` and `appliedSeenBy` -
+   all three.** A stale cache is worse than recomputing.
 
-`LoadAsync` raises `isLoading` only after it has started; nothing refuses a second entry. A
-double-click or an overlapping dispatch runs two reads racing to replace `result`.
+**Behaviour must not change**: the `seenByWasEvaluated` escape and the Site `(unavailable)` escape
+both survive. **Revision 1 said the existing filter tests must pass untouched - wrong.** They are
+source-shape assertions; a correct refactor may require rewriting them. The invariant is that the
+behaviour they describe still holds; re-derive each and say so.
 
-Add a server-side re-entry guard that refuses the second call outright. The browser's copy of a
-`disabled` attribute is one round trip stale - the stated reason the filters are snapshotted
-server-side, and it applies here.
+**Test:** a subnet is parsed once per load, not once per device - a behavioural count assertion.
 
-**Wider than "two loads" - corrected at review round 4.** The page's own remarks already say a
-load overlapping an export can replace the rows under an audit record. So `LoadAsync` must
-refuse while the page is busy **including during a CSV export**, and `DownloadCsvAsync` must
-refuse an overlapping entry too. Guard on the page's busy state, not on a load-only flag.
+---
 
-**Tests:** a second `LoadAsync` while the first is in flight does not reach the service; a
-`LoadAsync` during an export is refused; a second export is refused.
+## D6-local - stale comments in files these slices touch
 
-## Slice D4 - audit what actually narrowed the result, on both paths
+The codebase-wide audit is a separate plan. These are in code these slices edit:
 
-`DescribeFilters` takes `DefenderDeviceFilters`, which carries no Site or Seen-by - those are page
-fields applied after the fetch, and they decide what the CSV contains. Both lookup audit calls
-therefore describe a wider question than the operator asked.
-
-**Added at review: the CSV export audit has the same gap and is worse.** The export audits the
-action and a row count only, while the rows it writes are the filtered set. Include the applied
-filters there too.
-
-**And it must audit the APPLIED snapshot, not the live form.** `LoadAsync` keeps `filters` as a
-local, so there is no server-side record of what the current result was fetched with; reading
-`form` during export would describe controls the operator may have typed into since, which is
-the exact stale-form class the page's own comments exist to prevent. Store the applied filter
-description alongside `result` when a load completes, and have the export audit read that.
-
-Mark Site and Seen-by as client-side in the record so it does not imply Defender was asked for
-them.
-
-**Tests:** a lookup audit and an export audit for a run with Site and Seen-by set both name them.
-
-## Slice D5 - stop recomputing
-
-Two independent costs:
-
-1. `Services/AdSiteSubnetMap.FindSite` loops the subnets and calls `Parse(subnet)` inside the
-   loop; `ApplySites` calls `FindSite` once per device. The cost is **parsed subnets per device** -
-   with a tenant-sized inventory and a forest-sized subnet list that is millions of redundant
-   parses per load. Parse once into a prepared list and pass that to the matcher. **Measure the
-   real subnet count before quoting one in the commit; this plan does not assert it.**
-2. `Components/Pages/DefenderEndpointDevices.razor.FilteredDevices` is an uncached property
-   scanning the whole result, read from six sites including three in markup that re-render on any
-   state change. Compute once and **invalidate on `result`, `appliedSite` and `appliedSeenBy` -
-   all three.** A stale cached filter is worse than the current recomputation.
-
-**Behaviour must not change.** The `seenByWasEvaluated` escape and the Site `(unavailable)` escape
-both survive.
-
-**Revision 1 said the existing filter tests must pass untouched. That is wrong and was rejected at
-review:** those guards are source-shape assertions about `FilteredDevices`, so a correct caching
-refactor may legitimately require rewriting them. The invariant is that the *behaviour* they
-describe still holds - re-derive each assertion against the new shape and say so in the commit.
-
-**Test:** a subnet is parsed once per load, not once per device. A behavioural count assertion,
-not a source scan.
-
-## Slice D6-local - stale comments in the code these slices touch
-
-The codebase-wide audit is a separate plan. **Its carve-out was too broad** - these are in code
-these slices edit and are fixed with the slice that touches them:
-
-- `Services/DefenderEndpointDeviceService` - the subnet-map remarks still say an AD read failure
-  "FAILS THE RUN (plan Q10)"; `ApplySites` marks the column instead. Changed by `mde-1`; the
-  comment was left asserting the opposite.
-- Same file - "One query per refresh, never one per device" predates batching; the code issues a
-  posture and an observer request per batch.
-- `Components/Pages/DefenderEndpointDevices.razor` - the CSV projection comment says twenty-seven
-  columns; the header has twenty-nine.
-- **Added at review round 2, narrowed at round 3:** `Services/Comms10kService` and
-  `Modules/ModuleCatalog` say replaces "are not serialised" and "two concurrent replaces can
-  interleave". The only caller today is the bulk job runner, which runs one job at a time, so
-  that cannot happen **by that route**. But `ExecuteReplaceAsync` is public and holds no lock, so
-  the comment is not simply false. **Narrow it to the truth - serialised by the runner, not by
-  the method - and do not write a comment claiming a lock that does not exist.**
-- **Also round 3:** `ExchangeAdminWeb.Tests/Comms10kReplaceSequenceTests` asserts and explains
-  "Replaces are NOT serialised". Correcting only the service and catalog comments would leave a
-  false guard standing in the suite. Fix it with them.
-- **Also round 4:** `README.md` carries the same claim - that two Comms replaces can run at the
-  same time - and the README is this repo's full behaviour reference. Same narrowing: serialised
-  by the runner, not by the method.
-
-Fix each in the slice that touches its file. Do not start a wider sweep here.
+- `DefenderEndpointDeviceService.cs:39` - says an AD site-map read failure "FAILS THE RUN (plan
+  Q10)"; `ApplySites` marks the column instead. Changed by `mde-1`; the comment was left.
+- Same file, `:833` - "One query per refresh, never one per device" predates batching.
+- `DefenderEndpointDevices.razor:952` - says twenty-seven CSV columns; the header has 29.
+- **The "replaces are not serialised" comments in `Comms10kService`, `ModuleCatalog`,
+  `Comms10kReplaceSequenceTests` and `README.md:223` ARE TRUE AND MUST NOT BE "CORRECTED".**
+  Revisions 2-5 said to narrow them because the job runner is single-threaded. **The runner gate
+  is process-local and the jobs databases are instance-local, so dev and prod can overlap on the
+  same AD group.** Deleting that warning would replace a true statement with a false assurance.
+  Leave them; if anything, make the cross-instance case explicit.
 
 ---
 
 ## Sequencing
 
-C1 first - it is what stops the module touching the wrong thing. Then C3, C4, C7 (C4 and C7 are
-two halves of one guarantee and should land adjacent), C2, C6, C8. C5 is NOT in this sequence - it
-is deferred until it has a design note and its own approval.
-D1-D5 are independent of the Comms work and of each other; do D2 before D5 so the concurrency fix
-is not written on top of a caching change. D6-local rides its slice.
+**Part 1 in order: C9, C1, C10, C3, C4, C11, C5, C2, C7, C8, C6.** C9 first because it can write
+twice. C10 before C3 because C3 turns its quiet bug into a loud one. C11 and C5 adjacent - a
+truthful report is worth little if nobody can see it.
+
+**Then Part 2: D8, D10, D9, D4, D7, D1, D2, D3.** Correctness before the open-on-load change, so
+the page is right when it starts being used deliberately.
+
+**Then Part 3: D5.** Last, and only once everything above is green.
 
 ## Verification
 
-Per-slice gate as under Constraints. After the last slice, one full-suite run at the final head.
-`Invoke-ScriptAnalyzer -Path . -Recurse` and `Invoke-Pester tests/ps` only if a `.ps1` or `.psm1`
-changed - none is expected.
+Per-slice gate as under Constraints. One full-suite run at the final head. PSScriptAnalyzer and
+Pester only if a `.ps1`/`.psm1` changed - none expected.
 
-**Not covered:** that any page renders. No bUnit harness exists. The Comms-10k target pin and the
-Defender open-without-fetch both need a manual check on dev.
+**Not covered by any of this:** that any page renders - there is no bUnit harness. The group pin
+and the Defender open-without-fetch need manual checks on dev.
+
+## Carried forward - recorded, NOT fixed here
+
+- **Continuation-URL host check.** `DefenderApiClient.cs:257` concatenates relative input with the
+  base URL without checking the resulting host. No operator-controlled route to supply one was
+  found; a conditional boundary defect, not a demonstrated exploit.
+- **Page-initialization-only authorization.** Defender authorizes at `:832` and Search does not
+  re-authorize; Comms-10k reads are the same. Distinct from the acknowledged inability to see
+  Windows token changes.
+- **The physical-location workflow is unproven.** `BuildObserverQuery:151` assumes observer values
+  stringify and join to a device id; no acceptance check establishes it. The forest read has never
+  run here, `SeenBy()` has never returned data here, and whether AD site names locate anything is
+  unsettled. **Probing AD is forbidden without a direct owner go.**
+- **The codebase-wide comment audit (D6)** - separate plan, agent fan-out.
 
 ## Pending decisions
 
-1. **The partial-file path is being removed.** Confirm or veto at approval.
-2. **C7 has not been ruled on** - it was found by the plan review. It is the same class as C4 and
-   the plan assumes the same answer; say if not.
-3. **C5 needs a design note before implementation** and is not approved by this plan.
+1. **The partial-file path is removed.** Confirm or veto.
+2. **C7-C11 and D7-D10 were found after the ruling session and are unruled.** The plan assumes the
+   same answers. Say if any should be dropped or deferred.
