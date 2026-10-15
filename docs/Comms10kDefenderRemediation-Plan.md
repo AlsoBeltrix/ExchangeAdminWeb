@@ -214,6 +214,10 @@ honest outcome and final-count reporting. Evidence is recorded in `cdr-c9`'s ind
 
 ## C5 - the submitter can see and manage their own job
 
+Concrete service, ownership, paging and lifecycle choices are recorded in
+`.agents/review/cdr-c5-design.md` (Astra read-only design pass, 2026-10-15). They stay within
+this approved scope; re-read the touched symbols at implementation time.
+
 **No longer deferred.** C11 is why: the list can be left broken and the person responsible cannot
 currently discover it. Owner ruling: *"any case where a user can start a job that ends up here
 but not see it or manage it is a failure."*
