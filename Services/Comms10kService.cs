@@ -105,8 +105,7 @@ public class Comms10kService
         ps.Runspace = runspace;
 
         ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        InvokeAndClear(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
 
@@ -119,8 +118,7 @@ public class Comms10kService
           .AddParameter("Properties", new[] { "member", "SID" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        var groupResult = ps.Invoke();
-        ps.Commands.Clear();
+        var groupResult = InvokeAndClear(ps);
 
         if (ps.HadErrors || groupResult.Count == 0)
         {
@@ -153,8 +151,7 @@ public class Comms10kService
           .AddParameter("LDAPFilter", $"(primaryGroupID={rid})")
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        var primaries = ps.Invoke();
-        ps.Commands.Clear();
+        var primaries = InvokeAndClear(ps);
 
         if (ps.HadErrors)
         {
@@ -198,8 +195,7 @@ public class Comms10kService
         ps.Runspace = runspace;
 
         ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        InvokeAndClear(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
         var props = new[] { "sAMAccountName", "mail", "DisplayName" };
@@ -212,8 +208,7 @@ public class Comms10kService
               .AddParameter("Properties", props)
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "SilentlyContinue");
-            var objects = ps.Invoke();
-            ps.Commands.Clear();
+            var objects = InvokeAndClear(ps);
 
             if (ps.HadErrors)
             {
@@ -331,8 +326,7 @@ public class Comms10kService
         ps.Runspace = runspace;
 
         ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        InvokeAndClear(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
         var props = new[] { "userPrincipalName", "mail" };
@@ -345,8 +339,7 @@ public class Comms10kService
               .AddParameter("Properties", props)
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
-            var objects = ps.Invoke();
-            ps.Commands.Clear();
+            var objects = InvokeAndClear(ps);
 
             if (ps.HadErrors)
             {
@@ -441,8 +434,9 @@ public class Comms10kService
     /// <see cref="Comms10kReplaceWriter.ExecuteSequence"/> as delegates rather than being
     /// <c>internal virtual</c> seams of their own.</b> A seam per step, each opening its own
     /// runspace, costs an <c>Import-Module ActiveDirectory</c> per add batch - six extra module
-    /// imports at ten thousand members. The properties worth testing are the ORDER and the
-    /// outcome derivation, and both live in the pure writer where they need no directory.
+    /// imports at ten thousand members. Order and outcome derivation live in the pure writer;
+    /// command cleanup is also exercised through these operations with the real PowerShell SDK
+    /// and harmless local functions, without a directory.
     /// </remarks>
     private Comms10kUpdateResult PerformReplace(
         string group, Comms10kTarget target, List<string> resolvedDns,
@@ -456,8 +450,7 @@ public class Comms10kService
         ps.Runspace = runspace;
 
         ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        InvokeAndClear(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
 
@@ -502,8 +495,33 @@ public class Comms10kService
                 what, attempt, Comms10kReplaceWriter.MaxAttempts, typeName ?? "unknown", retryable, ex.Message),
             backoff: () => Thread.Sleep(RetryBackoff));
 
+    /// <summary>
+    /// Invokes only the queued operation, discarding its command state even when Invoke throws.
+    /// </summary>
+    /// <remarks>
+    /// A retained write could otherwise execute again during its retry or the read-back. Keep
+    /// the original exception for retry classification; returned non-terminating errors remain
+    /// available for the caller's existing error handling.
+    /// </remarks>
+    private static System.Collections.ObjectModel.Collection<PSObject> InvokeAndClear(PowerShell ps)
+    {
+        try
+        {
+            return ps.Invoke();
+        }
+        catch
+        {
+            ps.Streams.Error.Clear();
+            throw;
+        }
+        finally
+        {
+            ps.Commands.Clear();
+        }
+    }
+
     /// <summary>Empties the group's <c>member</c> attribute. One operation, whatever the size.</summary>
-    private static void ClearMembers(PowerShell ps, PSCredential credential, Comms10kTarget target)
+    internal static void ClearMembers(PowerShell ps, PSCredential credential, Comms10kTarget target)
     {
         ps.Streams.Error.Clear();
         ps.AddCommand("Set-ADGroup")
@@ -511,13 +529,12 @@ public class Comms10kService
           .AddParameter("Clear", "member")
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        InvokeAndClear(ps);
         ThrowIfErrors(ps, "the group could not be cleared");
     }
 
     /// <summary>Adds one batch. <c>-Add</c> on a member already present is a silent no-op, which is what makes a retry safe.</summary>
-    private static void AddMemberBatch(
+    internal static void AddMemberBatch(
         PowerShell ps, PSCredential credential, Comms10kTarget target, IReadOnlyList<string> batch)
     {
         ps.Streams.Error.Clear();
@@ -526,8 +543,7 @@ public class Comms10kService
           .AddParameter("Add", new System.Collections.Hashtable { { "member", batch.ToArray() } })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        InvokeAndClear(ps);
         ThrowIfErrors(ps, "a batch of members could not be added");
     }
 
@@ -541,7 +557,7 @@ public class Comms10kService
     /// rather than a discrepancy. Reading them as one list would make the read-back unable to
     /// match on any group that has one.
     /// </remarks>
-    private static Comms10kReplaceWriter.ReadBack ReadBackMembers(
+    internal static Comms10kReplaceWriter.ReadBack ReadBackMembers(
         PowerShell ps, PSCredential credential, Comms10kTarget target)
     {
         ps.Streams.Error.Clear();
@@ -550,8 +566,7 @@ public class Comms10kService
           .AddParameter("Properties", new[] { "member", "SID" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        var groupResult = ps.Invoke();
-        ps.Commands.Clear();
+        var groupResult = InvokeAndClear(ps);
         ThrowIfErrors(ps, "the membership could not be read back");
 
         if (groupResult.Count == 0)
@@ -578,8 +593,7 @@ public class Comms10kService
           .AddParameter("LDAPFilter", $"(primaryGroupID={rid})")
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        var primaries = ps.Invoke();
-        ps.Commands.Clear();
+        var primaries = InvokeAndClear(ps);
         ThrowIfErrors(ps, "the group's primary-group membership could not be read back");
 
         var primaryDns = new List<string>();
@@ -593,15 +607,14 @@ public class Comms10kService
     }
 
     /// <summary>Re-reads the target by its objectGUID and returns the identity as it stands now.</summary>
-    private static Comms10kTarget ReadTargetByGuid(PowerShell ps, PSCredential credential, Guid objectGuid)
+    internal static Comms10kTarget ReadTargetByGuid(PowerShell ps, PSCredential credential, Guid objectGuid)
     {
         ps.Streams.Error.Clear();
         ps.AddCommand("Get-ADGroup")
           .AddParameter("Identity", objectGuid.ToString())
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        var found = ps.Invoke();
-        ps.Commands.Clear();
+        var found = InvokeAndClear(ps);
         ThrowIfErrors(ps, "the group could not be re-read");
 
         if (found.Count == 0)
@@ -665,8 +678,7 @@ public class Comms10kService
         ps.Runspace = runspace;
 
         ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        InvokeAndClear(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
 
@@ -675,8 +687,7 @@ public class Comms10kService
           .AddParameter("Identity", group)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        var found = ps.Invoke();
-        ps.Commands.Clear();
+        var found = InvokeAndClear(ps);
 
         if (ps.HadErrors || found.Count == 0)
         {

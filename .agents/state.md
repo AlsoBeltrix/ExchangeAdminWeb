@@ -8,24 +8,29 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - Revision 6 approved, implementation starting
+### Comms-10k / Defender remediation - C9 implemented, independent review pending
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved. That plan owns the slice order and
 implementation table; `.agents/decisions.md` owns the Sol 6.1 / Astra dispatch exception.
 One fresh Sol 6.1 agent at max implements each finding, sequentially; Astra at max independently
-reviews the affected workflow. C9 is the first slice. No implementation has landed yet.
+reviews the affected workflow. C9 is the first slice; its implementation and guard proof are
+recorded in `.agents/review/findings/cdr-c9.md`. Independent Astra review is next.
 
-Baseline: clean `master` at `8853979`, verified against both `origin` and `github` on 2026-10-15.
+Implementation baseline: clean `master` at `8581484`; both `origin` and `github` remained at
+`8853979` when verified on 2026-10-15. The intervening approval bookkeeping is local.
 The old "unpushed since 96cdb89" assertions below are historical and superseded by this receipt.
 New implementation commits will be local until separately authorized under push policy `ask`.
 No work branch is in use. The previous handoff is preserved in `docs/history/state-archive.md`
 under Archived 2026-10-15 - remediation approval.
 
-Next: establish the baseline Release build, then implement and mutation-prove C9. A previous
-attempt failed during restore evaluation; its root cause was not established. Do not assume the
-same failure in this session. Current slice evidence will be recorded under
-`.agents/review/findings/cdr-*.md` and indexed in `.agents/review/index.md`.
+C9's baseline Release build and full per-slice gate passed. Its actual-PowerShell-SDK guards
+were mutation-proven against compiled pre-fix behavior, followed by byte-identical restore
+and mtime update. Counts, hashes, the LF normalization receipt and the review packet live in
+the finding record; `.agents/review/index.md` tracks the slice.
+
+Next: independent Astra review of C9's complete workflow.
+Do not start C1 until C9 has been assessed under the approved dispatch arrangement.
 
 Standing boundaries: no live AD probe, tenant write or deployment. The approval does not widen
 Comms-10k's protection exemption or authorize a push. No self-review. The module specification

@@ -688,6 +688,7 @@ public sealed class ModuleCatalog
             // ticket check (docs/ProgressCoverage-Plan.md S3).
             // 1.3.3: the three silent reads report - the member preview, the full export, and
             // the CSV upload parse (docs/ProgressCoverage-Plan.md S5).
+            // 1.4.5: failed PowerShell commands are discarded before retry or read-back (C9).
             // 1.4.4: a duplicate row is reported when the address it duplicates did NOT resolve.
             // The "a duplicate is not an error" rule held only when the first one resolved.
             // 1.4.3: the errors CSV is reachable from EVERY state with rejections - a mixed file
@@ -702,7 +703,7 @@ public sealed class ModuleCatalog
             // addresses and had no way to obtain the rest - the stakeholder's "requiring us to
             // manually identify the affected users". Owner ruling 2026-10-12: an address with no
             // exact match is not a match, so the fix is reporting, NOT widening the lookup keys.
-            Version = "1.4.4",
+            Version = "1.4.5",
             MainPermission = new(
                 "Access",
                 "Comms10k",

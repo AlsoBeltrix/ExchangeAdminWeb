@@ -18,9 +18,10 @@ namespace ExchangeAdminWeb.Tests;
 /// servicer opt-in that only makes sense alongside it, has to read the ruling first.
 /// </para>
 /// <para>
-/// <b>Source-level tripwires, explicitly NOT behavioural coverage.</b> A runspace and a
-/// domain controller cannot be exercised here. The behaviour that CAN be tested - the outcome
-/// procedure, the write ordering, the retry classification - lives in
+/// <b>Source-level tripwires, explicitly NOT behavioural coverage.</b> No domain controller is
+/// exercised here. Command lifecycle has real local runspace coverage in
+/// <see cref="Comms10kPowerShellLifecycleTests"/>. The outcome procedure, write ordering and
+/// retry classification live in
 /// <see cref="Comms10kReplaceWriterTests"/> against the pure writer, which is why that writer is
 /// pure. These pin the wiring around it.
 /// </para>

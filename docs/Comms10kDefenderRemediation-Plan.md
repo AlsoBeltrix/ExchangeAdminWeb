@@ -464,7 +464,7 @@ part of this implementation approval.
 
 | Finding | Implementation | Evidence |
 |---|---|---|
-| C9 | Pending | |
+| C9 | Implemented / pending independent review | [cdr-c9](../.agents/review/findings/cdr-c9.md) |
 | C1 | Pending | |
 | C10 | Pending | |
 | C3 | Pending | |
