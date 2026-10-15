@@ -4,6 +4,66 @@ Durable repo decisions. Not a chat log. Each entry should make sense without
 conversation history and should name superseded guidance when relevant.
 
 ## Decisions
+### 2026-10-15 - Comms-10k is pinned to one group by ObjectGUID, and may name it in source
+
+Status: Active. Supersedes nothing; narrows the 2026-09-30 exemption's basis.
+
+`Comms10k` took its target from a `TargetGroupName` module-config field of type AdGroup, so
+any AD group could be named. The module is exempt from BOTH protected-principal checks - no
+member check and no write-target check (owner ruling 2026-09-30, carried by
+`docs/ProjectConstitution.md`) - and that exemption is justified by the target being "one
+broadcast list whose membership grants access to nothing". Nothing in code enforced that. The
+real group is a Universal **Security** group, not a distribution list.
+
+**Ruling:** the target is pinned in source to ObjectGUID
+`87663f48-10a7-44b3-8da3-0a7e4cc3de0b` and the config field is deleted. GUID rather than name,
+DN or SamAccountName because it survives rename and move.
+
+**`.agents/repo-guidance.md` invariant 7 (environment neutrality) is waived for this one
+value**, on the owner's words: *"I am exempt from my own rules."* Comms-10k becomes
+ADI-specific and will not work in another forest. No other module may read itself into this
+waiver.
+
+A type check was considered and rejected: the real target is a Security group, so a
+"distribution groups only" guard would have refused it.
+
+### 2026-10-15 - The app refuses rather than writes a set the operator did not approve
+
+Status: Active.
+
+Owner, verbatim: *"the onus is on the user to provide accurate data. If they do not, they need
+to know that and resolve it themselves. We do not guess."*
+
+Applies to Comms-10k's background replace, where the job re-resolves the uploaded addresses at
+run time. If any address fails to resolve, or if the resolved count differs from what the
+operator confirmed on the page, the job writes nothing and reports the mismatch. It does not
+write the smaller set.
+
+**Consequence the owner accepted:** the existing partial-file path is removed. A file with any
+unmatched address can no longer be applied at all - the operator fixes the file and re-uploads.
+Previously the page offered Replace with "N address(es) will be excluded".
+
+Rejected alternative: write the smaller set and report loudly. Rejected because there is
+currently nowhere reliable to report to - see the job-visibility decision below - and because a
+visible refusal beats a quiet partial write regardless of how good the reporting becomes.
+
+### 2026-10-15 - A user who can start a background job must be able to see and manage it
+
+Status: Active. Design not yet settled; see `docs/Comms10kDefenderRemediation-Plan.md` C5.
+
+Owner, verbatim: *"any case where a user can start a job that ends up here but not see it or
+manage it is a failure. Figure that out, or redesign the whole bulk jobs thing, or reevaluate
+whether it's necessary at all."*
+
+Today a Comms-10k operator submits a job whose durable outcome is surfaced only by
+`AdminBulkJobs`, which is fail-closed behind its own permission because it aggregates every
+module's jobs across section-access boundaries. The status bar drops the result when the job
+finishes. So the person who pressed the button may never learn the outcome, including "partly
+applied".
+
+**`AdminBulkJobs`' permission is not to be widened** - its gate exists for the cross-module
+aggregation and that reasoning stands. The fix belongs on the submitting module's own page.
+
 
 ### 2026-10-14 - Defender Site: an AD failure marks the column, it does not fail the report
 
