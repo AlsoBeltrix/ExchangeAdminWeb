@@ -227,8 +227,9 @@
     private const string NotAnAddressReason = "Not an email address";
     private Comms10kResolveResult? resolveResult;
     private Comms10kUpdateResult? result;
+    private Comms10kConfirmation? confirmation;
 
-    private bool CanReplace => resolveResult is { Success: true }
+    private bool CanReplace => confirmation is not null && resolveResult is { Success: true }
         && resolveResult.ResolvedMembers.Count > 0 && AllRejections.Count == 0;
 
     protected override async Task OnInitializedAsync()
@@ -454,6 +455,7 @@
         rejectedBeforeLookup = new();
         duplicateRows = new();
         resolveResult = null;
+        confirmation = null;
         confirmPending = false;
         result = null;
 
@@ -561,6 +563,12 @@
 
     private async Task ValidateEmails()
     {
+        confirmation = null;
+        var sourceEmails = parsedEmails;
+        var emails = sourceEmails.ToArray();
+        var sourceFileName = uploadedFileName;
+        var trimmedTicket = ticketNumber.Trim();
+        var parseRejected = rejectedBeforeLookup.Count > 0;
         isLoading = true;
         await Task.Yield();
 
@@ -575,14 +583,13 @@
         // refusal - the same shape BlockedSenders.ConfirmUnblock and MailboxPermissions
         // .SubmitSingle settled on for the same preamble.
         using var resolving = Progress.Begin(
-            "Comms-10k", "Resolving addresses in AD", ActivitySize.Items(parsedEmails.Count));
+            "Comms-10k", "Resolving addresses in AD", ActivitySize.Items(emails.Length));
 
         try
         {
             // Ticket is optional (comms team won't always have one). Only validate a
             // ticket that was actually entered; an entered ticket is still enforced where
             // ServiceNow validation is configured. See docs/ProjectConstitution.md:104.
-            var trimmedTicket = ticketNumber.Trim();
             if (!string.IsNullOrEmpty(trimmedTicket))
             {
                 var ticketValidation = await ServiceNow.ValidateTicketAsync(trimmedTicket);
@@ -594,14 +601,18 @@
             }
             validatedTicket = trimmedTicket;
 
-            // The closing end needed nothing: ResolveEmailsAsync is the LAST remote call this
-            // handler makes - there is no notification tail here - and the Complete already sat
-            // below it, with no await between the assignment above and the read below, so the
-            // outcome it reports cannot be raced by another handler.
-            resolveResult = await Comms10kService.ResolveEmailsAsync(parsedEmails);
+            var resolved = await Comms10kService.ResolveEmailsAsync(emails.ToList());
+            // An upload that changed while validation awaited must be validated itself. The
+            // confirmation always binds the copied inputs to the result of that same lookup.
+            if (!ReferenceEquals(sourceEmails, parsedEmails) || !sourceEmails.SequenceEqual(emails)
+                || !string.Equals(sourceFileName, uploadedFileName, StringComparison.Ordinal))
+                return;
+            resolveResult = resolved;
+            if (!parseRejected && resolved.Success && resolved.ResolvedMembers.Count > 0 && AllRejections.Count == 0)
+                confirmation = new Comms10kConfirmation(emails, sourceFileName, trimmedTicket, resolved.ResolvedMembers);
             resolving.Report(resolveResult.ResolvedDns.Count);
             resolving.Complete(resolveResult.Success, resolveResult.Success
-                ? $"{resolveResult.ResolvedDns.Count:N0} of {parsedEmails.Count:N0} matched"
+                ? $"{resolveResult.ResolvedDns.Count:N0} of {emails.Length:N0} matched"
                 : resolveResult.Message);
 
             if (!resolveResult.Success)
@@ -613,9 +624,13 @@
 
     private async Task ExecuteReplace()
     {
+        // Capture approval and its completeness before the first await. Later field changes
+        // cannot pair an old fingerprint with another upload, filename or validated ticket.
+        var approved = confirmation;
+        var canReplace = CanReplace;
         isLoading = true;
         confirmPending = false;
-        var ticket = validatedTicket;
+        var ticket = approved?.Ticket ?? validatedTicket;
         await Task.Yield();
 
         try
@@ -628,7 +643,7 @@
                 return;
             }
 
-            if (!CanReplace)
+            if (!canReplace || approved is null)
             {
                 await RefuseReplaceAsync(
                     "The file must resolve completely with no rejected rows before Replace. Fix the file and re-upload.", ticket);
@@ -672,8 +687,9 @@
                         // The UPLOADED addresses, not the resolved ones: a resolved set is only
                         // valid at the moment it was read, and the job resolves as its first
                         // stage anyway.
-                        Emails = parsedEmails,
-                        SourceFileName = uploadedFileName,
+                        Emails = approved.Emails.ToList(),
+                        SourceFileName = approved.SourceFileName,
+                        ApprovedMemberFingerprint = approved.MemberFingerprint,
                     }),
                 SubmittedAtUtc = DateTime.UtcNow
             });
@@ -692,6 +708,7 @@
             };
 
             parsedEmails = new();
+            confirmation = null;
             rejectedBeforeLookup = new();
             resolveResult = null;
             duplicateRows = new();

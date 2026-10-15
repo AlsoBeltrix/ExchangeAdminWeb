@@ -366,9 +366,11 @@ public class Comms10kService
         return candidates;
     }
 
-    public virtual async Task<Comms10kUpdateResult> ExecuteReplaceAsync(List<string> resolvedDns, string performedBy)
+    public virtual async Task<Comms10kUpdateResult> ExecuteReplaceAsync(
+        IReadOnlyList<Comms10kAddressResolver.ResolvedMember> resolvedMembers, string performedBy)
     {
-        if (resolvedDns.Count == 0)
+        var memberGuids = resolvedMembers.Select(member => member.ObjectGuid).Distinct().ToArray();
+        if (memberGuids.Length == 0 || memberGuids.Contains(Guid.Empty))
             return new Comms10kUpdateResult { Success = false, Message = "Cannot replace with an empty member list." };
 
         var group = TargetGroupDisplayName;
@@ -381,7 +383,7 @@ public class Comms10kService
 
         return await Task.Run(() =>
         {
-            var outcome = RunReplace(group, resolvedDns, creds.Value);
+            var outcome = RunReplace(group, memberGuids, creds.Value);
 
             _logger.LogInformation(
                 "Comms10k replace by {User} on {Group}: {Outcome}, {Written} written, final {Final}",
@@ -413,7 +415,7 @@ public class Comms10kService
     /// </para>
     /// </remarks>
     private Comms10kUpdateResult RunReplace(
-        string group, List<string> resolvedDns, (string username, string password, string domain) creds)
+        string group, IReadOnlyList<Guid> memberGuids, (string username, string password, string domain) creds)
     {
         Comms10kTarget target;
         try
@@ -423,10 +425,10 @@ public class Comms10kService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to resolve the Comms10k target group {Group}", group);
-            return Refused(group, resolvedDns, $"The target group could not be resolved: {ex.Message}");
+            return Refused(group, memberGuids, $"The target group could not be resolved: {ex.Message}");
         }
 
-        return PerformReplace(group, target, resolvedDns, creds);
+        return PerformReplace(group, target, memberGuids, creds);
     }
 
     /// <summary>
@@ -443,7 +445,7 @@ public class Comms10kService
     /// and harmless local functions, without a directory.
     /// </remarks>
     private Comms10kUpdateResult PerformReplace(
-        string group, Comms10kTarget target, List<string> resolvedDns,
+        string group, Comms10kTarget target, IReadOnlyList<Guid> memberGuids,
         (string username, string password, string domain) creds)
     {
         var writeSequenceEntered = false;
@@ -471,16 +473,23 @@ public class Comms10kService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Comms10k could not re-read {Group} by objectGUID before the write", group);
-                return Refused(group, resolvedDns,
+                return Refused(group, memberGuids,
                     $"The target group could not be re-read immediately before the write: {ex.Message}");
             }
+
+            // A member-attribute clear cannot remove primary-group membership. Enforce the
+            // approved set before dispatch, rather than declaring post-write extras acceptable.
+            var primaries = ReadPrimaryMemberGuids(ps, credential, confirmed);
+            if (primaries.Except(memberGuids).Any())
+                return Refused(group, memberGuids,
+                    "The group has primary-group members outside the approved set. They cannot be removed by this operation. Correct the membership and validate again.");
 
             // From entry to the write sequence onwards, even an unexpected exception must
             // preserve uncertainty: clear may have been dispatched before that exception.
             writeSequenceEntered = true;
             return Comms10kReplaceWriter.ExecuteSequence(
                 group,
-                resolvedDns,
+                memberGuids,
                 clear: () => WithRetry("clear", () => ClearMembers(ps, credential, confirmed)),
                 addBatch: batch => WithRetry("add batch", () => AddMemberBatch(ps, credential, confirmed, batch)),
                 readBack: () => ReadBackMembers(ps, credential, confirmed));
@@ -488,7 +497,7 @@ public class Comms10kService
         catch (Exception ex) when (!writeSequenceEntered)
         {
             _logger.LogError(ex, "Comms10k write preparation failed for {Group} before any change", group);
-            return Refused(group, resolvedDns,
+            return Refused(group, memberGuids,
                 $"Directory write preparation failed before any change: {ex.Message}");
         }
     }
@@ -558,13 +567,18 @@ public class Comms10kService
 
     /// <summary>Adds one batch. <c>-Add</c> on a member already present is a silent no-op, which is what makes a retry safe.</summary>
     internal static void AddMemberBatch(
-        PowerShell ps, PSCredential credential, Comms10kTarget target, IReadOnlyList<string> batch)
+        PowerShell ps, PSCredential credential, Comms10kTarget target, IReadOnlyList<Guid> batch)
     {
         var identity = PinnedIdentity(target.ObjectGuid);
+        if (batch.Count == 0 || batch.Contains(Guid.Empty))
+            throw new ArgumentException("Every member add requires a nonempty ObjectGUID.", nameof(batch));
+        // MS-ADTS 3.1.1.3.1.2.4 permits GUID-only alternative DNs as modify attribute values.
+        // Never append a DN or fall back to one: a reused path must not select another person.
+        var values = batch.Select(guid => $"<GUID={guid:D}>").ToArray();
         ps.Streams.Error.Clear();
         ps.AddCommand("Set-ADGroup")
           .AddParameter("Identity", identity)
-          .AddParameter("Add", new System.Collections.Hashtable { { "member", batch.ToArray() } })
+          .AddParameter("Add", new System.Collections.Hashtable { { "member", values } })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         InvokeAndClear(ps);
@@ -572,17 +586,41 @@ public class Comms10kService
     }
 
     /// <summary>
-    /// The membership as it now stands: the raw <c>member</c> attribute, and separately the
-    /// members who hold this group as their PRIMARY group.
+    /// Strict immutable identities for every observed member, including primary membership.
     /// </summary>
     /// <remarks>
-    /// The two are kept apart because they behave differently under the write: a <c>member</c>
-    /// write cannot evict a primary-group member, so they are part of the expected final state
-    /// rather than a discrepancy. Reading them as one list would make the read-back unable to
-    /// match on any group that has one.
+    /// A missing or ambiguous DN-to-GUID mapping fails the observation. The display-list
+    /// resolver's permissive fallbacks cannot establish who the write actually produced.
     /// </remarks>
     internal static Comms10kReplaceWriter.ReadBack ReadBackMembers(
         PowerShell ps, PSCredential credential, Comms10kTarget target)
+    {
+        var group = ReadMembershipGroup(ps, credential, target);
+        var dns = new List<string>();
+        var value = group.Properties["member"]?.Value;
+        if (value is string single)
+            dns.Add(single);
+        else if (value is System.Collections.IEnumerable raw)
+        {
+            foreach (var member in raw)
+            {
+                if (member is not string dn || string.IsNullOrWhiteSpace(dn))
+                    throw new InvalidOperationException("A member distinguished name was unreadable.");
+                dns.Add(dn);
+            }
+        }
+        else if (value is not null)
+            throw new InvalidOperationException("The member attribute was unreadable.");
+
+        return new Comms10kReplaceWriter.ReadBack(
+            ReadMemberGuids(ps, credential, dns), ReadPrimaryMemberGuids(ps, credential, group));
+    }
+
+    internal static IReadOnlyList<Guid> ReadPrimaryMemberGuids(
+        PowerShell ps, PSCredential credential, Comms10kTarget target) =>
+        ReadPrimaryMemberGuids(ps, credential, ReadMembershipGroup(ps, credential, target));
+
+    private static PSObject ReadMembershipGroup(PowerShell ps, PSCredential credential, Comms10kTarget target)
     {
         var identity = PinnedIdentity(target.ObjectGuid);
         ps.Streams.Error.Clear();
@@ -595,39 +633,68 @@ public class Comms10kService
         ThrowIfErrors(ps, "the membership could not be read back");
 
         RequirePinnedTarget(groupResult);
+        return groupResult[0];
+    }
 
-        var members = new List<string>();
-        if (groupResult[0].Properties["member"]?.Value is System.Collections.IEnumerable raw)
-        {
-            foreach (var m in raw)
-            {
-                var dn = m?.ToString();
-                if (!string.IsNullOrWhiteSpace(dn)) members.Add(dn);
-            }
-        }
-
-        // Fail closed: an unreadable SID is a read-back FAILURE, never a silently shorter list
-        // that would then be compared against the target and reported as partly applied.
-        var rid = Comms10kMemberResolver.RidFromSid(groupResult[0].Properties["SID"]?.Value?.ToString());
+    private static IReadOnlyList<Guid> ReadPrimaryMemberGuids(PowerShell ps, PSCredential credential, PSObject group)
+    {
+        var rid = Comms10kMemberResolver.RidFromSid(group.Properties["SID"]?.Value?.ToString());
         if (rid is null)
-            throw new InvalidOperationException("the group's SID was unreadable, so primary-group members could not be counted");
+            throw new InvalidOperationException("The group's SID was unreadable, so primary-group identities could not be confirmed.");
 
         ps.Streams.Error.Clear();
         ps.AddCommand("Get-ADObject")
           .AddParameter("LDAPFilter", $"(primaryGroupID={rid})")
+          .AddParameter("Properties", new[] { "objectGUID" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         var primaries = InvokeAndClear(ps);
         ThrowIfErrors(ps, "the group's primary-group membership could not be read back");
 
-        var primaryDns = new List<string>();
+        var identities = new HashSet<Guid>();
         foreach (var p in primaries)
-        {
-            var dn = p?.Properties["DistinguishedName"]?.Value?.ToString();
-            if (!string.IsNullOrWhiteSpace(dn)) primaryDns.Add(dn);
-        }
+            identities.Add(RequireMemberGuid(p));
+        return identities.ToArray();
+    }
 
-        return new Comms10kReplaceWriter.ReadBack(members, primaryDns);
+    private static IReadOnlyList<Guid> ReadMemberGuids(PowerShell ps, PSCredential credential, IReadOnlyList<string> dns)
+    {
+        var identities = new HashSet<Guid>();
+        foreach (var batch in Comms10kMemberResolver.Batch(dns.Distinct(StringComparer.OrdinalIgnoreCase).ToArray()))
+        {
+            ps.Streams.Error.Clear();
+            ps.AddCommand("Get-ADObject")
+              .AddParameter("LDAPFilter", Comms10kMemberResolver.BuildBatchFilter(batch))
+              .AddParameter("Properties", new[] { "distinguishedName", "objectGUID" })
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var found = InvokeAndClear(ps);
+            ThrowIfErrors(ps, "member identities could not be read back");
+
+            var requested = new HashSet<string>(batch, StringComparer.OrdinalIgnoreCase);
+            var mapped = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+            foreach (var member in found)
+            {
+                var dn = member.Properties["DistinguishedName"]?.Value?.ToString();
+                var guid = RequireMemberGuid(member);
+                if (string.IsNullOrWhiteSpace(dn) || !requested.Contains(dn)
+                    || (mapped.TryGetValue(dn, out var previous) && previous != guid))
+                    throw new InvalidOperationException("A member identity mapping was missing, unexpected or ambiguous.");
+                mapped[dn] = guid;
+            }
+            if (mapped.Count != requested.Count)
+                throw new InvalidOperationException("Not every observed member could be mapped to an ObjectGUID.");
+            identities.UnionWith(mapped.Values);
+        }
+        return identities.ToArray();
+    }
+
+    private static Guid RequireMemberGuid(PSObject member)
+    {
+        var value = member.Properties["ObjectGUID"]?.Value;
+        if (!Guid.TryParse(value?.ToString(), out var guid) || guid == Guid.Empty)
+            throw new InvalidOperationException("A directory member had a missing or invalid ObjectGUID.");
+        return guid;
     }
 
     /// <summary>Re-reads the target by its objectGUID and returns the identity as it stands now.</summary>
@@ -691,7 +758,7 @@ public class Comms10kService
     /// hand - deciding outcomes at the error site is the habit that produced three rounds of
     /// contradictions in this plan.
     /// </summary>
-    private static Comms10kUpdateResult Refused(string group, IReadOnlyList<string> target, string reason)
+    private static Comms10kUpdateResult Refused(string group, IReadOnlyList<Guid> target, string reason)
     {
         return Comms10kReplaceWriter.Derive(
             group, target, reason, observed: null, readBackError: null, writeError: null);

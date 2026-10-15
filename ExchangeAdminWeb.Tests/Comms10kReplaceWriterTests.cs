@@ -170,7 +170,7 @@ public class Comms10kReplaceWriterTests
     public void AReadBackThatDiffers_IsPartlyApplied_AndCountsComeFromTheObservedMembership()
     {
         var target = Dns(100);
-        var observed = new Comms10kReplaceWriter.ReadBack(Dns(37), Array.Empty<string>());
+        var observed = new Comms10kReplaceWriter.ReadBack(Dns(37), Array.Empty<Guid>());
 
         var result = Comms10kReplaceWriter.Derive(
             Group, target, refusalBeforeClear: null, observed, readBackError: null, writeError: null);
@@ -186,23 +186,20 @@ public class Comms10kReplaceWriterTests
     }
 
     [Fact]
-    public void PrimaryGroupMembersSurviveTheClear_AndAreASuccessWithExceptions_NotADiscrepancy()
+    public void UnexpectedPrimaryGroupMembersAfterClearAreAMismatch()
     {
-        // A `member` write cannot evict somebody whose membership comes from their primary
-        // group. Without allowing for them the read-back could never match on such a group, and
-        // every replace would report as partly applied.
+        // Preflight can race a primary-group change. Its observation never expands approval.
         var target = Dns(10);
-        var primary = new[] { "CN=Svc,OU=Service,DC=example,DC=test" };
+        var primary = new[] { Guid.Parse("ed192cad-c7bf-491b-93b0-09fe2648d2c8") };
         var observed = new Comms10kReplaceWriter.ReadBack(target, primary);
 
         var result = Comms10kReplaceWriter.Derive(
             Group, target, refusalBeforeClear: null, observed, readBackError: null, writeError: null);
 
-        Assert.Equal(Comms10kOutcome.SucceededWithExceptions, result.Outcome);
-        Assert.True(result.Success);
+        Assert.Equal(Comms10kOutcome.PartlyApplied, result.Outcome);
+        Assert.False(result.Success);
         Assert.Equal(11, result.FinalCount);
-        Assert.Equal(primary, result.UnremovableMembers);
-        Assert.Contains("PRIMARY group", result.Message, StringComparison.Ordinal);
+        Assert.Empty(result.UnremovableMembers);
     }
 
     [Fact]
@@ -222,7 +219,7 @@ public class Comms10kReplaceWriterTests
     // ----- test 15: the five outcomes are distinguishable ---------------------------------------
 
     [Fact]
-    public void AllFiveOutcomesProduceDistinctMessages()
+    public void AllCurrentOutcomesProduceDistinctMessages()
     {
         var target = Dns(10);
 
@@ -231,14 +228,12 @@ public class Comms10kReplaceWriterTests
             Comms10kReplaceWriter.Derive(Group, target, "no lock.", null, null, null),
             Comms10kReplaceWriter.Derive(Group, target, null, Matching(target), null, null),
             Comms10kReplaceWriter.Derive(Group, target, null,
-                new Comms10kReplaceWriter.ReadBack(target, new[] { "CN=Svc,DC=example,DC=test" }), null, null),
-            Comms10kReplaceWriter.Derive(Group, target, null,
-                new Comms10kReplaceWriter.ReadBack(Dns(3), Array.Empty<string>()), null, null),
+                new Comms10kReplaceWriter.ReadBack(Dns(3), Array.Empty<Guid>()), null, null),
             Comms10kReplaceWriter.Derive(Group, target, null, null, "unreadable", null),
         };
 
-        Assert.Equal(5, messages.Select(m => m.Outcome).Distinct().Count());
-        Assert.Equal(5, messages.Select(m => m.Message).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(4, messages.Select(m => m.Outcome).Distinct().Count());
+        Assert.Equal(4, messages.Select(m => m.Message).Distinct(StringComparer.Ordinal).Count());
     }
 
     // ----- test 20: retry classification --------------------------------------------------------
@@ -369,9 +364,9 @@ public class Comms10kReplaceWriterTests
 
     // ----- harness -------------------------------------------------------------------------
 
-    private static List<string> Dns(int count) =>
-        Enumerable.Range(0, count).Select(i => $"CN=User{i},OU=People,DC=example,DC=test").ToList();
+    private static List<Guid> Dns(int count) =>
+        Enumerable.Range(0, count).Select(i => new Guid(i + 1, 0, 0, new byte[8])).ToList();
 
-    private static Comms10kReplaceWriter.ReadBack Matching(IReadOnlyList<string> target) =>
-        new(target, Array.Empty<string>());
+    private static Comms10kReplaceWriter.ReadBack Matching(IReadOnlyList<Guid> target) =>
+        new(target, Array.Empty<Guid>());
 }

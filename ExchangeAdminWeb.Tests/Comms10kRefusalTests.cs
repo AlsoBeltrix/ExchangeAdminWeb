@@ -17,7 +17,7 @@ using Page = ExchangeAdminWeb.Components.Pages.Comms10k;
 
 namespace ExchangeAdminWeb.Tests;
 
-public sealed class Comms10kRefusalTests
+public sealed partial class Comms10kRefusalTests
 {
     private static readonly Guid PersonGuid = new("acb299e2-f9db-4136-9f45-479b295fc845");
     private const string PersonDn = "CN=Person,DC=example,DC=test";
@@ -105,7 +105,7 @@ public sealed class Comms10kRefusalTests
         var replaceRow = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
         Assert.Equal(BulkJobRowStatus.Failed, replaceRow.Status);
         Assert.Equal(expectedReason, replaceRow.Message);
-        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<List<string>>(), Arg.Any<string>());
+        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>());
         await processor.OnJobCompletedAsync(job);
         fixture.AssertAudit(expectedReason, Comms10kOutcome.RefusedBeforeAnyChange);
         fixture.AssertNotification(expectedReason, Comms10kOutcome.RefusedBeforeAnyChange);
@@ -125,7 +125,7 @@ public sealed class Comms10kRefusalTests
 
         Assert.Equal(BulkJobRowStatus.Failed, row.Status);
         Assert.Equal(reason, row.Message);
-        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<List<string>>(), Arg.Any<string>());
+        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>());
         fixture.AssertAudit(reason, Comms10kOutcome.RefusedBeforeAnyChange);
         fixture.AssertNotification(reason, Comms10kOutcome.RefusedBeforeAnyChange);
     }
@@ -165,7 +165,7 @@ public sealed class Comms10kRefusalTests
         using var fixture = new Fixture();
         var service = fixture.ResolvingSubstitute();
         const string reason = "The target group could not be re-read immediately before the write: lookup unavailable.";
-        service.ExecuteReplaceAsync(Arg.Any<List<string>>(), Arg.Any<string>()).Returns(new Comms10kUpdateResult
+        service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>()).Returns(new Comms10kUpdateResult
         {
             Outcome = Comms10kOutcome.RefusedBeforeAnyChange,
             Message = reason,
@@ -187,7 +187,7 @@ public sealed class Comms10kRefusalTests
     {
         using var fixture = new Fixture();
         var service = fixture.ResolvingSubstitute();
-        service.ExecuteReplaceAsync(Arg.Any<List<string>>(), Arg.Any<string>()).Returns(
+        service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>()).Returns(
             Task.FromException<Comms10kUpdateResult>(new InvalidOperationException("Transport lost after dispatch.")));
         var processor = fixture.Processor(service);
         var job = Job();
@@ -208,7 +208,7 @@ public sealed class Comms10kRefusalTests
     {
         using var fixture = new Fixture();
         var service = fixture.ResolvingSubstitute();
-        service.ExecuteReplaceAsync(Arg.Any<List<string>>(), Arg.Any<string>()).Returns(new Comms10kUpdateResult
+        service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>()).Returns(new Comms10kUpdateResult
         {
             Success = true,
             Outcome = Comms10kOutcome.Succeeded,
@@ -224,7 +224,7 @@ public sealed class Comms10kRefusalTests
         await processor.OnJobCompletedAsync(job);
 
         Assert.Equal(BulkJobRowStatus.Success, row.Status);
-        await service.Received(1).ExecuteReplaceAsync(Arg.Is<List<string>>(dns => dns.SequenceEqual(new[] { PersonDn })), job.SubmittedBy);
+        await service.Received(1).ExecuteReplaceAsync(Arg.Is<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(members => members.SequenceEqual(CompleteResolution().ResolvedMembers)), job.SubmittedBy);
         fixture.AssertAudit(null, Comms10kOutcome.Succeeded, success: true);
         fixture.AssertNotification("Replaced and verified.", Comms10kOutcome.Succeeded, success: true);
     }
@@ -264,6 +264,7 @@ public sealed class Comms10kRefusalTests
         using var fixture = new Fixture();
         var page = fixture.Page(authorized: false);
         SetField(page, "resolveResult", CompleteResolution());
+        SetField(page, "confirmation", new Comms10kConfirmation([Address], "members.csv", "INC123", CompleteResolution().ResolvedMembers));
 
         Assert.True(CanReplace(page));
         await InvokeReplace(page);
@@ -278,6 +279,7 @@ public sealed class Comms10kRefusalTests
         using var fixture = new Fixture();
         var page = fixture.Page();
         SetField(page, "resolveResult", CompleteResolution());
+        SetField(page, "confirmation", new Comms10kConfirmation([Address], "members.csv", "INC123", CompleteResolution().ResolvedMembers));
 
         Assert.True(CanReplace(page));
         // Markup wiring only; the compiled property and direct handler are exercised above.
@@ -305,7 +307,7 @@ public sealed class Comms10kRefusalTests
         SubmittedIp = "192.0.2.7",
         SubmittedAtUtc = DateTime.UtcNow,
         Ticket = "INC123",
-        PayloadJson = JsonSerializer.Serialize(new Comms10kReplaceJobPayload { Emails = [Address], SourceFileName = "members.csv" }),
+        PayloadJson = JsonSerializer.Serialize(new Comms10kReplaceJobPayload { Emails = [Address], SourceFileName = "members.csv", ApprovedMemberFingerprint = Comms10kMemberSet.Fingerprint([PersonGuid]) }),
     };
 
     private static void SetField(object target, string name, object? value) =>
@@ -327,6 +329,19 @@ public sealed class Comms10kRefusalTests
         private readonly List<(bool Success, IReadOnlyDictionary<string, string> Details, string? Error)> _notifications = [];
         public IConfiguration Config { get; }
         public TestService Service { get; }
+
+        public (BulkJobService Queue, BulkJobRepository Repository) JobQueue()
+        {
+            var factory = new ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory(
+                Path.Combine(_root, "exchangeadmin-jobs.db"));
+            new JobStoreMigrator(factory).Migrate();
+            var repository = new BulkJobRepository(factory);
+            var queue = new BulkJobService(null!, repository, new BulkJobProcessorRegistry([]), Config,
+                NullLogger<BulkJobService>.Instance);
+            // Test the real persistence boundary without dispatching a background worker.
+            SetField(queue, "_pumpRunning", true);
+            return (queue, repository);
+        }
 
         public Fixture()
         {
@@ -370,6 +385,8 @@ public sealed class Comms10kRefusalTests
         {
             var service = Substitute.For<Comms10kService>(NullLogger<Comms10kService>.Instance, null!, null!, Config);
             service.ResolveEmailsAsync(Arg.Any<List<string>>()).Returns(CompleteResolution());
+            service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>())
+                .Returns(new Comms10kUpdateResult { Success = true, Outcome = Comms10kOutcome.Succeeded });
             return service;
         }
 
@@ -424,12 +441,15 @@ public sealed class Comms10kRefusalTests
         public void Dispose()
         {
             _http.Dispose();
-            using var pooled = new SqliteConnection(new SqliteConnectionStringBuilder
+            foreach (var name in new[] { "exchangeadmin.db", "exchangeadmin-jobs.db" })
             {
-                DataSource = Path.Combine(_root, "exchangeadmin.db"),
-                Mode = SqliteOpenMode.ReadWriteCreate,
-            }.ToString());
-            SqliteConnection.ClearPool(pooled);
+                using var pooled = new SqliteConnection(new SqliteConnectionStringBuilder
+                {
+                    DataSource = Path.Combine(_root, name),
+                    Mode = SqliteOpenMode.ReadWriteCreate,
+                }.ToString());
+                SqliteConnection.ClearPool(pooled);
+            }
             Directory.Delete(_root, recursive: true);
         }
     }
@@ -439,6 +459,7 @@ public sealed class Comms10kRefusalTests
     {
         public IReadOnlyList<Comms10kAddressResolver.Candidate> Candidates { get; set; } = [Candidate()];
         public string? PreparationFailure { get; set; }
+        public InitialSessionState? ReplaceState { get; set; }
         public int TargetLookups { get; private set; }
         public int ReplaceRunspaces { get; private set; }
         public List<string> Writes { get; } = [];
@@ -455,6 +476,7 @@ public sealed class Comms10kRefusalTests
         internal override Runspace CreateReplaceRunspace()
         {
             ReplaceRunspaces++;
+            if (ReplaceState is not null) return RunspaceFactory.CreateRunspace(ReplaceState);
             if (PreparationFailure == "creation") throw new InvalidOperationException("Runspace creation unavailable.");
             var state = InitialSessionState.CreateDefault2();
             state.Commands.Add(new SessionStateFunctionEntry("Import-Module", "[CmdletBinding()] param($Name) throw 'Directory import unavailable.'"));

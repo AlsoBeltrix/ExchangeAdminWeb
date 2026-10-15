@@ -38,7 +38,7 @@ public class Comms10kTargetPinTests
 
         Assert.Equal(ApprovedGuid.ToString(), Assert.Single(harness.Identities));
         if (operation == "add")
-            Assert.Equal([Harness.MemberDn], harness.AddedMembers);
+            Assert.Equal([$"<GUID={Harness.MemberGuid:D}>"], harness.AddedMembers);
     }
 
     [Theory]
@@ -94,6 +94,7 @@ public class Comms10kTargetPinTests
     private sealed class Harness : IDisposable
     {
         public const string MemberDn = "CN=Uploaded member,DC=example,DC=test";
+        public static readonly Guid MemberGuid = new("9d4e5c1d-ac4a-428c-a6d7-047828a30c58");
         private readonly Runspace _runspace;
         private readonly PSCredential _credential = new("EXAMPLE\\tester", new SecureString());
         public PowerShell PowerShell { get; }
@@ -135,7 +136,11 @@ public class Comms10kTargetPinTests
                 """));
             state.Commands.Add(new SessionStateFunctionEntry("Get-ADObject", """
                 [CmdletBinding()]
-                param([string] $LDAPFilter, [pscredential] $Credential)
+                param([string] $LDAPFilter, [string[]] $Properties, [pscredential] $Credential)
+                if ($LDAPFilter -notlike '(primaryGroupID=*') {
+                    [pscustomobject]@{ DistinguishedName = 'CN=Existing member,DC=example,DC=test'; ObjectGUID = [guid] '6263592c-0648-49c4-853f-bd8dfd1a590d' }
+                    return
+                }
                 $global:C1PrimaryQueries.Add($LDAPFilter)
                 """));
 
@@ -166,7 +171,7 @@ public class Comms10kTargetPinTests
                     Comms10kService.ClearMembers(PowerShell, _credential, target);
                     break;
                 case "add":
-                    Comms10kService.AddMemberBatch(PowerShell, _credential, target, [MemberDn]);
+                    Comms10kService.AddMemberBatch(PowerShell, _credential, target, [MemberGuid]);
                     break;
                 case "readback":
                     Comms10kService.ReadBackMembers(PowerShell, _credential, target);

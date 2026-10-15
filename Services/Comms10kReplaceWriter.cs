@@ -17,8 +17,8 @@ public enum Comms10kOutcome
     Succeeded,
 
     /// <summary>
-    /// The read-back matched, allowing for members a <c>member</c> write cannot evict: anyone
-    /// whose membership comes from their primary group. They are named in the result.
+    /// Legacy persisted outcome. New replaces refuse unapproved primary members before clear
+    /// and treat unexpected primary members observed after clear as a mismatch.
     /// </summary>
     SucceededWithExceptions,
 
@@ -78,22 +78,22 @@ public static class Comms10kReplaceWriter
     /// differently: <paramref name="MemberAttribute"/> is what the write controls, and
     /// <paramref name="PrimaryGroup"/> is what it cannot evict.
     /// </summary>
-    public sealed record ReadBack(IReadOnlyList<string> MemberAttribute, IReadOnlyList<string> PrimaryGroup);
+    public sealed record ReadBack(IReadOnlyList<Guid> MemberAttribute, IReadOnlyList<Guid> PrimaryGroup);
 
     /// <summary>
     /// Partitions the resolved member list into write-sized batches, in order, covering every
     /// element exactly once. Pagination, never truncation.
     /// </summary>
-    public static IEnumerable<IReadOnlyList<string>> Batch(IReadOnlyList<string> distinguishedNames)
+    public static IEnumerable<IReadOnlyList<Guid>> Batch(IReadOnlyList<Guid> members)
     {
-        ArgumentNullException.ThrowIfNull(distinguishedNames);
+        ArgumentNullException.ThrowIfNull(members);
 
-        for (var i = 0; i < distinguishedNames.Count; i += WriteBatchSize)
+        for (var i = 0; i < members.Count; i += WriteBatchSize)
         {
-            var take = Math.Min(WriteBatchSize, distinguishedNames.Count - i);
-            var batch = new List<string>(take);
+            var take = Math.Min(WriteBatchSize, members.Count - i);
+            var batch = new List<Guid>(take);
             for (var j = 0; j < take; j++)
-                batch.Add(distinguishedNames[i + j]);
+                batch.Add(members[i + j]);
             yield return batch;
         }
     }
@@ -220,9 +220,9 @@ public static class Comms10kReplaceWriter
     /// </remarks>
     public static Comms10kUpdateResult ExecuteSequence(
         string groupName,
-        IReadOnlyList<string> target,
+        IReadOnlyList<Guid> target,
         Action clear,
-        Action<IReadOnlyList<string>> addBatch,
+        Action<IReadOnlyList<Guid>> addBatch,
         Func<ReadBack> readBack)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -275,7 +275,7 @@ public static class Comms10kReplaceWriter
     /// </param>
     public static Comms10kUpdateResult Derive(
         string groupName,
-        IReadOnlyList<string> target,
+        IReadOnlyList<Guid> target,
         string? refusalBeforeClear,
         ReadBack? observed,
         string? readBackError,
@@ -313,52 +313,21 @@ public static class Comms10kReplaceWriter
             };
         }
 
-        var expected = new HashSet<string>(target, StringComparer.OrdinalIgnoreCase);
-
-        // A `member` write cannot evict somebody whose membership comes from their primary group,
-        // so they are part of the expected final state rather than a discrepancy. Without this
-        // the read-back could never match on a group that has one.
-        var unremovable = observed.PrimaryGroup
-            .Where(dn => !string.IsNullOrWhiteSpace(dn) && !expected.Contains(dn))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        foreach (var dn in observed.PrimaryGroup)
-            if (!string.IsNullOrWhiteSpace(dn)) expected.Add(dn);
-
-        var actual = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var dn in observed.MemberAttribute)
-            if (!string.IsNullOrWhiteSpace(dn)) actual.Add(dn);
-        foreach (var dn in observed.PrimaryGroup)
-            if (!string.IsNullOrWhiteSpace(dn)) actual.Add(dn);
+        // Primary membership is observed, never approved by the observation itself. Preflight
+        // refused extras before clear; a concurrent extra remains a discrepancy here.
+        var expected = new HashSet<Guid>(target);
+        var actual = new HashSet<Guid>(observed.MemberAttribute);
+        actual.UnionWith(observed.PrimaryGroup);
 
         if (actual.SetEquals(expected))
         {
-            if (unremovable.Count == 0)
-            {
-                return new Comms10kUpdateResult
-                {
-                    Outcome = Comms10kOutcome.Succeeded,
-                    Success = true,
-                    MembersWritten = target.Count,
-                    FinalCount = actual.Count,
-                    Message = $"Successfully updated {groupName}: {actual.Count} members."
-                };
-            }
-
-            var named = string.Join("; ", unremovable.Take(5));
-            var more = unremovable.Count > 5 ? $" and {unremovable.Count - 5} more" : "";
             return new Comms10kUpdateResult
             {
-                Outcome = Comms10kOutcome.SucceededWithExceptions,
+                Outcome = Comms10kOutcome.Succeeded,
                 Success = true,
                 MembersWritten = target.Count,
                 FinalCount = actual.Count,
-                UnremovableMembers = unremovable,
-                Message =
-                    $"Updated {groupName}: {actual.Count} members. {unremovable.Count} could not be removed "
-                    + $"because the group is their PRIMARY group, which a membership write cannot change: "
-                    + $"{named}{more}."
+                Message = $"Successfully updated {groupName}: {actual.Count} members."
             };
         }
 

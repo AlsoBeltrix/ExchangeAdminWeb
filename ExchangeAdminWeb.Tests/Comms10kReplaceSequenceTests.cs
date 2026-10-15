@@ -85,7 +85,7 @@ public class Comms10kReplaceSequenceTests
 
         Assert.True(resolve >= 0, "the replace no longer resolves the target group.");
         Assert.True(write > resolve, "the write is entered before the target is resolved.");
-        Assert.Contains("PerformReplace(group, target, resolvedDns, creds)", body, StringComparison.Ordinal);
+        Assert.Contains("PerformReplace(group, target, memberGuids, creds)", body, StringComparison.Ordinal);
     }
 
     [Fact]

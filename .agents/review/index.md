@@ -43,6 +43,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [cdr-c1](findings/cdr-c1.md) | HIGH - configurable target and DN-addressed writes can retarget the broadcast replace | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [v] | [cdr-c10](findings/cdr-c10.md) | MEDIUM - repeated batch rows reject one person as ambiguous | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [v] | [cdr-c3](findings/cdr-c3.md) | HIGH - partial resolution writes a shortened list and refusals lose their audit/reason | Verified on master; push pending | master | native / gpt-6-astra / max |
+| [v] | [cdr-c4](findings/cdr-c4.md) | HIGH - replacement can write a member set the operator did not approve | Verified locally on master; independent review / push pending | master | native / gpt-6-astra / max pending |
 
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.

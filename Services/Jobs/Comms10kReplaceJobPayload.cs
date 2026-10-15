@@ -32,4 +32,10 @@ public sealed class Comms10kReplaceJobPayload
     /// finished job is "the membership was replaced" with no way to tell with what.
     /// </summary>
     public string? SourceFileName { get; init; }
+
+    /// <summary>
+    /// Versioned fingerprint of the ObjectGUID set approved after validation. Nullable so older
+    /// payloads reach the processor's audited semantic refusal rather than failing CountRows.
+    /// </summary>
+    public string? ApprovedMemberFingerprint { get; init; }
 }

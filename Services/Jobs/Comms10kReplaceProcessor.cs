@@ -20,9 +20,9 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// result, and that result is what reaches the operator. Coarse and honest beats granular and
 /// wrong.
 ///
-/// The five outcomes are the module's existing contract and survive the move unchanged:
-/// succeeded, succeeded with unremovable primary-group members, partly applied, could not
-/// confirm, refused before any change. The two worth an operator's attention are "partly
+/// The outcome contract retains its legacy succeeded-with-exceptions value, but an unapproved
+/// primary-group member now refuses before clear or mismatches after clear. The outcomes worth
+/// an operator's attention are "partly
 /// applied" and "could not confirm", because those are the ones saying the list may be broken -
 /// see docs/Comms10kBulkResolveScale-Plan.md.
 ///
@@ -98,6 +98,9 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
     {
         var target = payload.SourceFileName ?? "uploaded list";
         _resolvedMembers = null;
+        if (!Comms10kMemberSet.IsSupportedFingerprint(payload.ApprovedMemberFingerprint))
+            return Refuse(job, payload, "The approved member fingerprint is missing, malformed or unsupported. Validate the file and resubmit.");
+
         Comms10kResolveResult resolve;
         try
         {
@@ -120,8 +123,20 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         if (resolve.ResolvedMembers.Count == 0)
             return Refuse(job, payload, "No members resolved. An empty list cannot replace the broadcast list.");
 
-        // Keep GUID/DN pairs together. Only a complete resolution becomes executable state;
-        // later approval-set and authorization guards can use the same refusal path below.
+        string fingerprint;
+        try
+        {
+            fingerprint = Comms10kMemberSet.Fingerprint(resolve.ResolvedMembers.Select(member => member.ObjectGuid));
+        }
+        catch (ArgumentException)
+        {
+            return Refuse(job, payload, "Resolved member identities were invalid. Validate the file and resubmit.");
+        }
+        if (!string.Equals(fingerprint, payload.ApprovedMemberFingerprint, StringComparison.Ordinal))
+            return Refuse(job, payload, "The resolved member set has changed since validation. Nothing was written. Validate the file and resubmit.");
+
+        // Keep GUID/DN pairs together. Only the complete operator-approved GUID set becomes
+        // executable state; descriptive DN changes cannot retarget the later member write.
         _resolvedMembers = resolve.ResolvedMembers.ToArray();
 
         return new BulkJobRowOutcome
@@ -147,7 +162,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         try
         {
             result = await _comms.ExecuteReplaceAsync(
-                _resolvedMembers.Select(m => m.DistinguishedName).ToList(), job.SubmittedBy);
+                _resolvedMembers, job.SubmittedBy);
         }
         catch (Exception ex)
         {

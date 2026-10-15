@@ -67,7 +67,7 @@ public class Comms10kPowerShellLifecycleTests
         using var harness = new Harness(operation);
 
         var result = Comms10kReplaceWriter.ExecuteSequence(
-            "Local broadcast", [Harness.NewMember],
+            "Local broadcast", [Harness.NewMemberGuid],
             clear: () => harness.Invoke("clear"),
             addBatch: _ => harness.Invoke("add"),
             readBack: () => Comms10kService.ReadBackMembers(
@@ -86,6 +86,7 @@ public class Comms10kPowerShellLifecycleTests
     private sealed class Harness : IDisposable
     {
         public const string NewMember = "CN=New member,DC=example,DC=test";
+        public static readonly Guid NewMemberGuid = new("a04e5a15-174b-4b8b-b743-26ffd2c84057");
         public static readonly Comms10kTarget Target = new(
             "CN=Local broadcast,DC=example,DC=test", Comms10kService.TargetGroupGuid);
 
@@ -134,7 +135,11 @@ public class Comms10kPowerShellLifecycleTests
                 """));
             state.Commands.Add(new SessionStateFunctionEntry("Get-ADObject", """
                 [CmdletBinding()]
-                param([string] $LDAPFilter, [pscredential] $Credential)
+                param([string] $LDAPFilter, [string[]] $Properties, [pscredential] $Credential)
+                if ($LDAPFilter -notlike '(primaryGroupID=*') {
+                    [pscustomobject]@{ DistinguishedName = 'CN=Existing member,DC=example,DC=test'; ObjectGUID = [guid] '6263592c-0648-49c4-853f-bd8dfd1a590d' }
+                    return
+                }
                 Invoke-LocalOperation 'primary'
                 """));
 
@@ -159,7 +164,7 @@ public class Comms10kPowerShellLifecycleTests
                     Comms10kService.ClearMembers(PowerShell, Credential, Target);
                     break;
                 case "add":
-                    Comms10kService.AddMemberBatch(PowerShell, Credential, Target, [NewMember]);
+                    Comms10kService.AddMemberBatch(PowerShell, Credential, Target, [NewMemberGuid]);
                     break;
                 case "members":
                 case "primary":

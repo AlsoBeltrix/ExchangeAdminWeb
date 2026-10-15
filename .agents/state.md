@@ -8,52 +8,38 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - first four slices independently reviewed; C4 next
+### Comms-10k / Defender remediation - C4 implemented; independent review owed
 
 Owner 2026-10-15: "approved. go." All twenty findings in
-`docs/Comms10kDefenderRemediation-Plan.md` are approved. That plan owns the slice order and
-implementation table; `.agents/decisions.md` owns the Sol 6.1 / Astra dispatch exception.
-One fresh Sol 6.1 agent at max implements each finding, sequentially; Astra at max independently
-reviews the affected workflow. C9 landed in `f530c62` and independent Astra review endorsed it;
-implementation, guard proof and review are recorded in `.agents/review/findings/cdr-c9.md`.
-C1 pins every group operation to the approved ObjectGUID; its implementation, guard proof
-and independent Astra approval are in `.agents/review/findings/cdr-c1.md`. C10 now indexes
-addresses by distinct ObjectGUID, so a person returned by two 500-address batches resolves
-once. Candidate identities are validated and GUID/DN member values stay paired for C4.
-Evidence, the workflow packet and independent Astra approval are in `.agents/review/findings/cdr-c10.md`.
-Comms-10k is `1.4.8`; no shared/app version change. C3 refuses any incomplete or empty
-resolution, keeps paired member state executable only after full success, and gates both the
-page offer and direct submission. Refusals audit once and keep their reason for completion;
-known pre-write preparation faults refuse while an arbitrary later throw remains unconfirmed.
-Implementation, compiled mutation proof and the workflow packet are in
-`.agents/review/findings/cdr-c3.md`; independent Astra review passed at `f0d79b0`.
+`docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and
+implementation status. `.agents/decisions.md` owns sequential fresh Sol 6.1 implementation
+at max and independent Astra workflow review at max. C9, C1, C10 and C3 are independently
+reviewed; their evidence is linked by `.agents/review/index.md`.
 
-Current slice began on clean `master` at `2b87f0e`. `origin` HEAD was verified at `8853979`
-on 2026-10-15; `github`'s last recorded receipt is also `8853979` (the C10 closeout).
-The intervening bookkeeping and implementation are local.
-The old "unpushed since 96cdb89" assertions below are historical and superseded by this receipt.
-New implementation commits will be local until separately authorized under push policy `ask`.
-No work branch is in use. The previous handoff is preserved in `docs/history/state-archive.md`
-under Archived 2026-10-15 - remediation approval.
+C4 now binds validation, captured submission, persisted payload, runtime resolution and actual
+member adds to the same approved GUID set. Primary members outside that set or unreadable
+primary identities refuse before clear. Strict batched GUID read-back cannot approve observed
+extras. Comms-10k is `1.4.9`; the base app remains `2.27.1`. Implementation details, compiled
+guard proof, gate results and the workflow review packet belong to
+`.agents/review/findings/cdr-c4.md`. Independent Astra C4 review is still owed.
 
-C3's restored Release build, full Release solution tests (3,907 passed / 3 skipped /
-0 failed), format, diff and staged ASCII gates passed. Its 23 new cases are all compiled
-mutation-proven: eleven groups, 31 intended assertion failures, SHA256/MD5-matched byte
-restores and advanced mtimes. Focused Comms/ClickGate/ProgressRegistry tests passed 520/520.
-Counts, hashes and limits belong to the finding record; `.agents/review/index.md` tracks
-the slices. The Comms page moved; no registry line entry required a change.
+C4 began on clean master `b936c604482447c36f93010b6fae135dd71d6df9`. Origin master was checked
+at `885397981d7550afebf6518ef21b4fc54b062859` on 2026-10-15; github's last recorded receipt is
+also `8853979`. The intervening work is local. Historical "unpushed since 96cdb89" assertions
+below are superseded by this receipt. No work branch is in use; push policy remains `ask`.
 
-Next: implement C4's exact approved member set, then independent Astra workflow review.
-C3 includes the thrown service-preparation failure audit/reason case found by C1's reviewer;
-C11 owns the ordinary interrupted-write count-label case found by C9's reviewer. The plan
-carries both reproductions and required coverage. C7 additionally owns the original rejected-row
-text inconsistency found by C10's reviewer. Defender D2 now precedes D7 as its per-call-result
-prerequisite; the plan and `.agents/review/cdr-d7-design.md` own the sequencing rationale.
+C4's 33 new cases are compiled mutation-proven. The restored Release build, full solution
+suite (3,940 passed / 3 skipped / 0 failed), format, diff and staged ASCII gates passed.
+Next: independent Astra workflow review of C4, then C11 implementation after that gate. C11 owns interrupted-write count labels;
+C5 job visibility, C2 authorization snapshots, and C7 broad reentry/atomic parsing remain
+pending. C7 also owns rejected-row original-text consistency. D2 precedes D7 to supply per-call
+failure diagnostics. The plan owns all remaining slice work.
 
-Standing boundaries: no live AD probe, tenant write or deployment. The approval does not widen
-Comms-10k's protection exemption or authorize a push. No self-review. The module specification
-still identifies version 2.0 / last verified June 25 while the app is 2.27.1; treat its stale
-version as a documentation flag and verify relevant contracts against code.
+Standing boundaries: no live AD probe, tenant write, deployment, push, protection check or
+locking. GUID-only alternative DN values follow official protocol/cmdlet documentation;
+installed-cmdlet interoperability and browser rendering remain unverified. No self-review.
+The module specification still identifies 2.0 / June 25 versus app 2.27.1; that known drift
+remains flagged and relevant contracts were checked against the Constitution and code.
 
 ### Defender review stream - NINE findings over four rounds, all fixed; round 5 is out
 
