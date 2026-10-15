@@ -114,8 +114,8 @@
                         <div class="alert alert-danger mt-2">
                             @if (resolveResult != null)
                             {
-                                <strong>Validation did not complete.</strong>
-                                <text> @AllRejections.Count row(s) were already rejected while reading the file.</text>
+                                <strong>File cannot be applied.</strong>
+                                <text> @AllRejections.Count row(s) were rejected. Fix the file and re-upload.</text>
                             }
                             else if (parsedEmails.Count == 0)
                             {
@@ -125,7 +125,7 @@
                             else
                             {
                                 <strong>@AllRejections.Count row(s) rejected while reading the file.</strong>
-                                <text> The other @parsedEmails.Count can still be validated.</text>
+                                <text> Fix the file and re-upload before applying it.</text>
                             }
                             <br /><button class="btn btn-outline-danger btn-sm mt-2" @onclick="DownloadRejections" disabled="@isLoading">Download errors CSV</button>
                         </div>
@@ -134,7 +134,7 @@
                     @if (resolveResult != null && resolveResult.Success)
                     {
                         <div class="alert alert-info mt-2">
-                            <strong>Validated &mdash; not applied yet.</strong>
+                            <strong>@(CanReplace ? "Validated; not applied yet." : "File cannot be applied.")</strong>
                             <strong>@resolveResult.ResolvedDns.Count</strong> of @parsedEmails.Count email(s) matched in AD.
                             The distribution list has <strong>not</strong> changed.
                             @if (AllRejections.Count > 0)
@@ -144,14 +144,10 @@
                             }
                         </div>
 
-                        @if (confirmPending)
+                        @if (CanReplace && confirmPending)
                         {
                             <div class="alert alert-danger">
                                 <p><strong>Confirm: Replace all members with @resolveResult.ResolvedDns.Count users?</strong>
-                                @if (AllRejections.Count > 0)
-                                {
-                                    <br /><small>@AllRejections.Count address(es) will be excluded.</small>
-                                }
                                 </p>
                                 <button class="btn btn-danger btn-sm me-2" @onclick="ExecuteReplace" disabled="@isLoading">
                                                                         Confirm Replace
@@ -159,7 +155,7 @@
                                 <button class="btn btn-secondary btn-sm" @onclick="() => confirmPending = false">Cancel</button>
                             </div>
                         }
-                        else if (resolveResult.ResolvedDns.Count > 0)
+                        else if (CanReplace)
                         {
                             <span class="badge bg-warning text-dark mb-2">Pending apply &mdash; list unchanged</span>
                             <p class="text-muted mb-2"><small>This is the step that actually changes the list.</small></p>
@@ -169,7 +165,7 @@
                         }
                         else
                         {
-                            <div class="alert alert-danger mt-2">No valid users resolved. Cannot proceed.</div>
+                            <div class="alert alert-danger mt-2">A nonempty, fully resolved file with no rejected rows is required. Fix the file and re-upload.</div>
                         }
                     }
                 </div>
@@ -231,6 +227,9 @@
     private const string NotAnAddressReason = "Not an email address";
     private Comms10kResolveResult? resolveResult;
     private Comms10kUpdateResult? result;
+
+    private bool CanReplace => resolveResult is { Success: true }
+        && resolveResult.ResolvedMembers.Count > 0 && AllRejections.Count == 0;
 
     protected override async Task OnInitializedAsync()
     {
@@ -625,7 +624,14 @@
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "Comms10k");
             if (!authCheck.Succeeded)
             {
-                result = new Comms10kUpdateResult { Success = false, Message = "Authorization denied." };
+                await RefuseReplaceAsync("Authorization denied.", ticket);
+                return;
+            }
+
+            if (!CanReplace)
+            {
+                await RefuseReplaceAsync(
+                    "The file must resolve completely with no rejected rows before Replace. Fix the file and re-upload.", ticket);
                 return;
             }
 
@@ -693,13 +699,35 @@
         }
         catch (Exception ex)
         {
-            result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
             // SUBMISSION failure, not a write failure - no job exists, so nothing downstream will
             // ever audit this. The processor owns both channels for a replace that actually ran.
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k", "submission failed", false, ticket, ex.Message); } catch { }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace", false, ticket, new Dictionary<string, string> { ["Target Group"] = "Comms-10k", ["Stage"] = "submission" }, ex.Message); } catch { }
+            await RefuseReplaceAsync(ex.Message, ticket);
         }
         finally { isLoading = false; }
+    }
+
+    private async Task RefuseReplaceAsync(string reason, string ticket)
+    {
+        result = new Comms10kUpdateResult { Success = false, Message = reason };
+        try
+        {
+            Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k",
+                uploadedFileName ?? "uploaded list", false, ticket, reason,
+                extra: new Dictionary<string, object?> { ["Outcome"] = Comms10kOutcome.RefusedBeforeAnyChange.ToString() });
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Comms-10k refused-submission audit failed"); }
+        try
+        {
+            await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace", false, ticket,
+                new Dictionary<string, string>
+                {
+                    ["Target Group"] = "Comms-10k",
+                    ["Stage"] = "submission",
+                    ["Outcome"] = Comms10kOutcome.RefusedBeforeAnyChange.ToString(),
+                    ["Detail"] = reason,
+                }, reason);
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Comms-10k refused-submission notification failed"); }
     }
 
     /// <summary>Bootstrap alert class per outcome. Green only where the membership is confirmed.</summary>

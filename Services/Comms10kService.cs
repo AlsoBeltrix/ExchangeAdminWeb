@@ -243,7 +243,7 @@ public class Comms10kService
     /// the I/O around it.
     /// </para>
     /// </remarks>
-    public async Task<Comms10kResolveResult> ResolveEmailsAsync(List<string> emails)
+    public virtual async Task<Comms10kResolveResult> ResolveEmailsAsync(List<string> emails)
     {
         if (!IsConfigured)
             return new Comms10kResolveResult { Success = false, Message = "Module not configured." };
@@ -273,7 +273,7 @@ public class Comms10kService
 
             return new Comms10kResolveResult
             {
-                Success = true,
+                Success = outcome.Rejections.Count == 0,
                 ResolvedMembers = outcome.ResolvedMembers,
                 Rejections = outcome.Rejections,
                 Message = $"{outcome.ResolvedDns.Count} resolved, {outcome.Rejections.Count} rejected."
@@ -366,7 +366,7 @@ public class Comms10kService
         return candidates;
     }
 
-    public async Task<Comms10kUpdateResult> ExecuteReplaceAsync(List<string> resolvedDns, string performedBy)
+    public virtual async Task<Comms10kUpdateResult> ExecuteReplaceAsync(List<string> resolvedDns, string performedBy)
     {
         if (resolvedDns.Count == 0)
             return new Comms10kUpdateResult { Success = false, Message = "Cannot replace with an empty member list." };
@@ -446,41 +446,59 @@ public class Comms10kService
         string group, Comms10kTarget target, List<string> resolvedDns,
         (string username, string password, string domain) creds)
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
-        runspace.Open();
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        InvokeAndClear(ps);
-
-        var credential = CreateCredential(creds.username, creds.password, creds.domain);
-
-        // Re-read by objectGUID. The Constitution requires a re-read before write where
-        // practical, and here it is one cheap query that also proves the object still exists. It
-        // verifies the pinned GUID again. Every subsequent operation keeps using that GUID,
-        // so a rename, move or replacement at the old DN cannot retarget the write.
-        Comms10kTarget confirmed;
+        var writeSequenceEntered = false;
         try
         {
-            confirmed = ReadTargetByGuid(ps, credential, target.ObjectGuid);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Comms10k could not re-read {Group} by objectGUID before the write", group);
-            return Refused(group, resolvedDns,
-                $"The target group could not be re-read immediately before the write: {ex.Message}");
-        }
+            using var runspace = CreateReplaceRunspace();
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
 
-        // ---- past this point the clear is issued; no path below may claim nothing changed ----
-        return Comms10kReplaceWriter.ExecuteSequence(
-            group,
-            resolvedDns,
-            clear: () => WithRetry("clear", () => ClearMembers(ps, credential, confirmed)),
-            addBatch: batch => WithRetry("add batch", () => AddMemberBatch(ps, credential, confirmed, batch)),
-            readBack: () => ReadBackMembers(ps, credential, confirmed));
+            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+            InvokeAndClear(ps);
+
+            var credential = CreateCredential(creds.username, creds.password, creds.domain);
+
+            // Re-read by objectGUID. The Constitution requires a re-read before write where
+            // practical, and here it is one cheap query that also proves the object still exists. It
+            // verifies the pinned GUID again. Every subsequent operation keeps using that GUID,
+            // so a rename, move or replacement at the old DN cannot retarget the write.
+            Comms10kTarget confirmed;
+            try
+            {
+                confirmed = ReadTargetByGuid(ps, credential, target.ObjectGuid);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Comms10k could not re-read {Group} by objectGUID before the write", group);
+                return Refused(group, resolvedDns,
+                    $"The target group could not be re-read immediately before the write: {ex.Message}");
+            }
+
+            // From entry to the write sequence onwards, even an unexpected exception must
+            // preserve uncertainty: clear may have been dispatched before that exception.
+            writeSequenceEntered = true;
+            return Comms10kReplaceWriter.ExecuteSequence(
+                group,
+                resolvedDns,
+                clear: () => WithRetry("clear", () => ClearMembers(ps, credential, confirmed)),
+                addBatch: batch => WithRetry("add batch", () => AddMemberBatch(ps, credential, confirmed, batch)),
+                readBack: () => ReadBackMembers(ps, credential, confirmed));
+        }
+        catch (Exception ex) when (!writeSequenceEntered)
+        {
+            _logger.LogError(ex, "Comms10k write preparation failed for {Group} before any change", group);
+            return Refused(group, resolvedDns,
+                $"Directory write preparation failed before any change: {ex.Message}");
+        }
+    }
+
+    // Separate creation from Open so local tests can exercise both preparation failure paths.
+    internal virtual Runspace CreateReplaceRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
     }
 
     /// <summary>

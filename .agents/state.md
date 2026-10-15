@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C9, C1 and C10 independently reviewed; C3 next
+### Comms-10k / Defender remediation - C3 implemented and verified; independent review pending
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved. That plan owns the slice order and
@@ -21,24 +21,30 @@ and independent Astra approval are in `.agents/review/findings/cdr-c1.md`. C10 n
 addresses by distinct ObjectGUID, so a person returned by two 500-address batches resolves
 once. Candidate identities are validated and GUID/DN member values stay paired for C4.
 Evidence, the workflow packet and independent Astra approval are in `.agents/review/findings/cdr-c10.md`.
-Comms-10k is `1.4.7`; no shared/app version change.
+Comms-10k is `1.4.8`; no shared/app version change. C3 refuses any incomplete or empty
+resolution, keeps paired member state executable only after full success, and gates both the
+page offer and direct submission. Refusals audit once and keep their reason for completion;
+known pre-write preparation faults refuse while an arbitrary later throw remains unconfirmed.
+Implementation, compiled mutation proof and the workflow packet are in
+`.agents/review/findings/cdr-c3.md`; independent Astra review is still owed.
 
-Current slice baseline: clean `master` at `f6f87a5`; both `origin` and `github` remained at
-`8853979` when verified on 2026-10-15. The intervening bookkeeping and implementation are local.
+Current slice began on clean `master` at `2b87f0e`. `origin` HEAD was verified at `8853979`
+on 2026-10-15; `github`'s last recorded receipt is also `8853979` (the C10 closeout).
+The intervening bookkeeping and implementation are local.
 The old "unpushed since 96cdb89" assertions below are historical and superseded by this receipt.
 New implementation commits will be local until separately authorized under push policy `ask`.
 No work branch is in use. The previous handoff is preserved in `docs/history/state-archive.md`
 under Archived 2026-10-15 - remediation approval.
 
-C10's restored Release build, full Release solution tests (3,884 passed / 3 skipped /
-0 failed), format, diff and ASCII checks passed. All nine new cases are compiled mutation-proven
-(six resolver failures, three identity-parser failures), with two additional distinct-person
-ambiguity failures; restores matched SHA256/MD5 and advanced mtimes. Counts, hashes and
-limitations belong to the finding record; `.agents/review/index.md` tracks the slices.
-No page or registry changed. Independent C10 review also passed 146 focused Comms tests.
+C3's restored Release build, full Release solution tests (3,907 passed / 3 skipped /
+0 failed), format, diff and staged ASCII gates passed. Its 23 new cases are all compiled
+mutation-proven: eleven groups, 31 intended assertion failures, SHA256/MD5-matched byte
+restores and advanced mtimes. Focused Comms/ClickGate/ProgressRegistry tests passed 520/520.
+Counts, hashes and limits belong to the finding record; `.agents/review/index.md` tracks
+the slices. The Comms page moved; no registry line entry required a change.
 
-Next: implement C3, partial-resolution refusal plus audit and completion reasons, then review.
-C3 also owns the thrown service-preparation failure audit/reason case found by C1's reviewer;
+Next: independently review C3's committed workflow, then implement C4.
+C3 includes the thrown service-preparation failure audit/reason case found by C1's reviewer;
 C11 owns the ordinary interrupted-write count-label case found by C9's reviewer. The plan
 carries both reproductions and required coverage. C7 additionally owns the original rejected-row
 text inconsistency found by C10's reviewer. Defender D2 now precedes D7 as its per-call-result

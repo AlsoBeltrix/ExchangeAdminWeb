@@ -47,8 +47,9 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
     // Carried from the resolve stage to the replace stage. Safe because the runner resolves ONE
     // processor instance per job and calls ProcessRowAsync in order on it (BulkJobService, the
     // row loop). A processor shared across jobs would make this a cross-job leak.
-    private List<string>? _resolvedDns;
+    private IReadOnlyList<Comms10kAddressResolver.ResolvedMember>? _resolvedMembers;
     private Comms10kUpdateResult? _result;
+    private bool _mutationAudited;
 
     public Comms10kReplaceProcessor(
         Comms10kService comms,
@@ -82,7 +83,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
 
         return rowIndex switch
         {
-            ResolveRow => await ResolveAsync(payload),
+            ResolveRow => await ResolveAsync(job, payload),
             ReplaceRow => await ReplaceAsync(job, payload),
             _ => new BulkJobRowOutcome
             {
@@ -93,38 +94,41 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         };
     }
 
-    private async Task<BulkJobRowOutcome> ResolveAsync(Comms10kReplaceJobPayload payload)
+    private async Task<BulkJobRowOutcome> ResolveAsync(BulkJob job, Comms10kReplaceJobPayload payload)
     {
         var target = payload.SourceFileName ?? "uploaded list";
-        var resolve = await _comms.ResolveEmailsAsync(payload.Emails);
-
-        if (!resolve.Success)
+        _resolvedMembers = null;
+        Comms10kResolveResult resolve;
+        try
         {
-            // Nothing has been written, so this is a clean refusal rather than a partial state.
-            // Leaving _resolvedDns null is what stops the replace stage running on a bad set.
-            return new BulkJobRowOutcome
-            {
-                Target = target,
-                Status = BulkJobRowStatus.Failed,
-                Message = resolve.Message,
-            };
+            resolve = await _comms.ResolveEmailsAsync(payload.Emails);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Comms10k resolution failed for job {JobId}", job.Id);
+            return Refuse(job, payload, $"Address resolution failed before any change: {ex.Message}");
         }
 
-        _resolvedDns = resolve.ResolvedDns;
+        if (!resolve.Success || resolve.Rejections.Count > 0)
+        {
+            var reason = resolve.Rejections.Count > 0
+                ? $"Address validation rejected {resolve.Rejections.Count:N0} address(es). Fix the file and re-upload. {resolve.Message}"
+                : resolve.Message;
+            return Refuse(job, payload, reason);
+        }
 
-        // Partial, not Success, when addresses were dropped: the operator asked for a list and
-        // is getting a smaller one. The count difference IS the finding, and burying it in a
-        // success would hide exactly the "missing email addresses" complaint this module
-        // already has against it.
-        var skipped = resolve.Rejections.Count;
+        if (resolve.ResolvedMembers.Count == 0)
+            return Refuse(job, payload, "No members resolved. An empty list cannot replace the broadcast list.");
+
+        // Keep GUID/DN pairs together. Only a complete resolution becomes executable state;
+        // later approval-set and authorization guards can use the same refusal path below.
+        _resolvedMembers = resolve.ResolvedMembers.ToArray();
 
         return new BulkJobRowOutcome
         {
             Target = target,
-            Status = skipped > 0 ? BulkJobRowStatus.Partial : BulkJobRowStatus.Success,
-            Message = skipped > 0
-                ? $"{resolve.ResolvedDns.Count:N0} of {payload.Emails.Count:N0} matched in AD; {skipped:N0} not found"
-                : $"{resolve.ResolvedDns.Count:N0} of {payload.Emails.Count:N0} matched in AD",
+            Status = BulkJobRowStatus.Success,
+            Message = $"{_resolvedMembers.Count:N0} of {payload.Emails.Count:N0} matched in AD",
         };
     }
 
@@ -132,38 +136,32 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
     {
         var target = payload.SourceFileName ?? "uploaded list";
 
-        if (_resolvedDns is null)
+        if (_resolvedMembers is null || _resolvedMembers.Count == 0)
         {
             // The resolve stage failed and the runner still reached this row. Refuse rather than
             // writing: an empty or stale set here would CLEAR the broadcast list.
-            return new BulkJobRowOutcome
-            {
-                Target = target,
-                Status = BulkJobRowStatus.Failed,
-                Message = "Addresses were not resolved, so nothing was written.",
-            };
+            return Refuse(job, payload, "Addresses were not resolved, so nothing was written.");
         }
 
-        var result = await _comms.ExecuteReplaceAsync(_resolvedDns, job.SubmittedBy);
-        _result = result;
-
-        SafeAudit(() => _audit.LogModuleAction(
-            job.SubmittedBy, job.SubmittedIp, "Comms10k_Replace", "Comms10k",
-            target, result.Success, job.Ticket ?? "", result.Success ? null : result.Message,
-            // The outcome rides `extra`, which is the ONLY channel that survives a SUCCESSFUL
-            // operation - LogModuleAction discards errorDetail on success, so "succeeded with
-            // exceptions", the one success an operator may need to act on, would otherwise be
-            // indistinguishable from a clean one in the trail.
-            extra: new Dictionary<string, object?>
+        Comms10kUpdateResult result;
+        try
+        {
+            result = await _comms.ExecuteReplaceAsync(
+                _resolvedMembers.Select(m => m.DistinguishedName).ToList(), job.SubmittedBy);
+        }
+        catch (Exception ex)
+        {
+            // The service converts known preparation failures to refusals. An arbitrary
+            // exception here cannot prove that clear was never dispatched.
+            _logger.LogError(ex, "Comms10k replace failed with an unconfirmed write state for job {JobId}", job.Id);
+            result = new Comms10kUpdateResult
             {
-                ["Outcome"] = result.Outcome.ToString(),
-                ["MemberCount"] = _resolvedDns.Count,
-                ["MembersWritten"] = result.MembersWritten,
-                // Absent rather than guessed. A read-back failure is exactly when a number
-                // invented here would be believed.
-                ["FinalCount"] = result.FinalCount?.ToString() ?? "UNKNOWN - read-back failed",
-                ["SourceFile"] = payload.SourceFileName,
-            }));
+                Success = false,
+                Outcome = Comms10kOutcome.CouldNotConfirm,
+                Message = $"The replace failed and its write state could not be confirmed: {ex.Message}",
+            };
+        }
+        RecordResult(job, payload, result);
 
         // The runner's three row states cannot express five outcomes, so the row status is the
         // coarse answer and the message carries the real one. "Could not confirm" maps to
@@ -184,6 +182,50 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
             Status = status,
             Message = result.Message,
         };
+    }
+
+    // Also used by the later authorization and approved-set gates. The runner proceeds after
+    // a failed row, so preserve the first refusal and emit its mutation audit only once.
+    private BulkJobRowOutcome Refuse(BulkJob job, Comms10kReplaceJobPayload payload, string reason)
+    {
+        _resolvedMembers = null;
+        if (_result is null)
+        {
+            RecordResult(job, payload, new Comms10kUpdateResult
+            {
+                Success = false,
+                Outcome = Comms10kOutcome.RefusedBeforeAnyChange,
+                Message = string.IsNullOrWhiteSpace(reason) ? "Address resolution failed before any change." : reason,
+            });
+        }
+
+        return new BulkJobRowOutcome
+        {
+            Target = payload.SourceFileName ?? "uploaded list",
+            Status = BulkJobRowStatus.Failed,
+            Message = _result!.Message,
+        };
+    }
+
+    private void RecordResult(BulkJob job, Comms10kReplaceJobPayload payload, Comms10kUpdateResult result)
+    {
+        _result = result;
+        if (_mutationAudited)
+            return;
+        _mutationAudited = true;
+
+        SafeAudit(() => _audit.LogModuleAction(
+            job.SubmittedBy, job.SubmittedIp, "Comms10k_Replace", "Comms10k",
+            payload.SourceFileName ?? "uploaded list", result.Success, job.Ticket ?? "", result.Success ? null : result.Message,
+            // Success discards errorDetail, so the outcome must also ride extra.
+            extra: new Dictionary<string, object?>
+            {
+                ["Outcome"] = result.Outcome.ToString(),
+                ["MemberCount"] = _resolvedMembers?.Count ?? 0,
+                ["MembersWritten"] = result.MembersWritten,
+                ["FinalCount"] = result.FinalCount?.ToString() ?? "UNKNOWN - read-back failed",
+                ["SourceFile"] = payload.SourceFileName,
+            }));
     }
 
     /// <summary>
