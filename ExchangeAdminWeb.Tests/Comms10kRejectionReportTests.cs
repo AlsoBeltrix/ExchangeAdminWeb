@@ -269,7 +269,7 @@ public class Comms10kRejectionReportTests
 
         var handler = HandlerBody(source, "DownloadRejections");
 
-        Assert.Contains("csvWriter.WriteRecords(rejections)", handler, StringComparison.Ordinal);
+        Assert.Contains("CsvExport.Write(", handler, StringComparison.Ordinal);
 
         // The defect this guards is specific and it already shipped once on this page: the
         // banner shows Take(10) then a literal "...". If that cap ever reaches the export, the

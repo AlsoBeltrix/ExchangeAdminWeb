@@ -406,7 +406,7 @@
     ///
     /// Completed BELOW the transfer rather than after the read, which is
     /// MessageTraceReports.Download's settled order - the transfer is the last thing the
-    /// operator waits on. The audit beneath it is a local JSONL write. The transfer MECHANISM is
+    /// operator waits on. SafeAudit logs a local audit failure separately after delivery. The transfer MECHANISM is
     /// deliberately untouched: docs/DownloadMemoryRetention-Plan.md proposes replacing it with
     /// streaming and is a DRAFT, not approved.
     /// </remarks>
@@ -422,13 +422,12 @@
         try
         {
             var full = await Comms10kService.GetMembersAsync();
-            using var writer = new System.IO.StringWriter();
-            using var csvWriter = new CsvWriter(writer, CultureInfo.InvariantCulture);
-            csvWriter.WriteRecords(full.Members);
-            var bytes = System.Text.Encoding.UTF8.GetBytes(writer.ToString());
+            var csv = CsvExport.Write(["Email", "SamAccountName", "DisplayName"],
+                full.Members.Select(member => new[] { member.Email, member.SamAccountName, member.DisplayName }));
+            var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
             var base64 = Convert.ToBase64String(bytes);
             await JS.InvokeVoidAsync("downloadFile", $"comms10k_members_{DateTime.Now:yyyyMMdd}.csv", "text/csv", base64);
-            Audit.LogLookupAction(currentUser, clientIpAddress, "Comms10k_Export", full.GroupName, true);
+            SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress, "Comms10k_Export", full.GroupName, true));
 
             // Reads full, a local, so nothing another handler owns is read after an await.
             activity.Complete(true, $"{full.Members.Count:N0} member(s) exported.");
@@ -517,18 +516,17 @@
         await Task.Yield();
         try
         {
-            using var writer = new System.IO.StringWriter();
-            using var csvWriter = new CsvWriter(writer, CultureInfo.InvariantCulture);
-            csvWriter.WriteRecords(rejections);
-            var bytes = System.Text.Encoding.UTF8.GetBytes(writer.ToString());
+            var csv = CsvExport.Write(["Address", "Reason"],
+                rejections.Select(rejection => new[] { rejection.Address, rejection.Reason }));
+            var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
             var base64 = Convert.ToBase64String(bytes);
             await JS.InvokeVoidAsync(
                 "downloadFile",
                 $"comms10k_rejected_{DateTime.Now:yyyyMMdd_HHmmss}.csv",
                 "text/csv",
                 base64);
-            Audit.LogLookupAction(
-                currentUser, clientIpAddress, "Comms10k_ExportRejected", $"{rejections.Count} address(es)", true);
+            SafeAudit(() => Audit.LogLookupAction(
+                currentUser, clientIpAddress, "Comms10k_ExportRejected", $"{rejections.Count} address(es)", true));
 
             activity.Complete(true, $"{rejections.Count:N0} rejected address(es) exported.");
         }
@@ -538,6 +536,18 @@
             activity.Complete(false, ex.Message);
         }
         finally { isLoading = false; }
+    }
+
+    private void SafeAudit(Action write)
+    {
+        try
+        {
+            write();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to write Comms-10k audit record.");
+        }
     }
 
     // Recorded so the job's durable record says WHICH list was applied. Without it a finished

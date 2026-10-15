@@ -980,42 +980,41 @@ public static class ProgressRegistry
             new("DownloadFull",
                 [
                     "Comms10kService.GetMembersAsync(",
-                    "csvWriter.WriteRecords(",
+                    "CsvExport.Write(",
                     "JS.InvokeVoidAsync(",
                 ],
                 "the page's slowest read. THREE calls named because the cost is in three "
                 + "consecutive places and each is operation-scale on the same ten thousand "
                 + "people: the unlimited GetMembersAsync resolves every member of the broadcast "
-                + "group out of AD, WriteRecords builds the whole CSV from them in memory, and "
+                + "group out of AD, CsvExport.Write builds and neutralizes the whole CSV in memory, and "
                 + "JS.InvokeVoidAsync base64-encodes the file and pushes it over the SignalR "
                 + "circuit. The middle one is LOCAL and is named under rule 1 as the S3 "
                 + "reviewer settled it on 2026-10-08. The Complete sits BELOW the transfer, "
                 + "which is MessageTraceReports.Download's settled order - the transfer is the "
-                + "last thing the operator waits on - with only a local JSONL audit beneath it. "
+                + "last thing the operator waits on - SafeAudit logs local audit faults separately. "
                 + "The transfer MECHANISM is deliberately untouched: "
                 + "docs/DownloadMemoryRetention-Plan.md proposes replacing it with streaming and "
                 + "is a DRAFT, not approved. The Complete reads full, a local"),
             new("DownloadRejections",
                 [
-                    "csvWriter.WriteRecords(",
+                    "CsvExport.Write(",
                     "JS.InvokeVoidAsync(",
                 ],
                 "the errors report the owner ruled for on 2026-10-12: every address that did "
                 + "not resolve, with the reason, as a CSV. TWO calls named rather than "
                 + "DownloadFull's three, and the missing one is the point - this handler makes "
-                + "NO directory call at all. The rejections were computed by the Validate that "
-                + "already ran and are sitting in resolveResult; re-querying AD to build the "
+                + "NO directory call at all. The snapshot combines upload parse rejections and "
+                + "completed resolver results; re-querying AD to build the "
                 + "error report would be able to disagree with the banner the operator is "
                 + "looking at. What is left is still operation-scale on the same input: "
-                + "WriteRecords builds the whole file in memory and JS.InvokeVoidAsync "
+                + "CsvExport.Write builds and neutralizes the whole file in memory and JS.InvokeVoidAsync "
                 + "base64-encodes it over the SignalR circuit, and on a ten-thousand-row upload "
                 + "where most rows failed, that file is most of the upload. The middle-call "
                 + "rule 1 reading the S3 reviewer settled on 2026-10-08 is what admits "
-                + "WriteRecords, exactly as it does for DownloadFull above. The Complete sits "
-                + "BELOW the transfer, matching DownloadFull and MessageTraceReports.Download. "
+                + "CsvExport.Write, exactly as it does for DownloadFull above. The Complete sits "
+                + "BELOW the transfer and SafeAudit, which logs audit faults without failing delivery. "
                 + "The Complete reads rejections, a LOCAL captured before the first await - "
-                + "which matters more here than on DownloadFull, because the field it came from "
-                + "is resolveResult and Validate replaces that wholesale. The early return for "
+                + "which keeps later upload or validation changes out of this transfer. The early return for "
                 + "an empty or null list sits ABOVE the Begin on purpose: a bar that opens and "
                 + "closes with nothing between it is worse than no bar, and there is no work"),
             new("HandleFileUpload", "csv.ReadAsync(",
