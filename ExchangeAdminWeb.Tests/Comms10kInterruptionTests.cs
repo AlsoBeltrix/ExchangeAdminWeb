@@ -215,6 +215,12 @@ public sealed class Comms10kInterruptionTests
             env.ContentRootPath.Returns(_temp.Path);
             var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(_temp.Path), NullLogger<ModuleConfigService>.Instance);
             moduleConfig.SaveModuleConfig("Comms10k", new Dictionary<string, string> { ["DelineaSecretId"] = "1" });
+            var sectionsRepository = new SectionAccessRepository(TestConfigStore.Create(_temp.Path));
+            sectionsRepository.SaveAll(new Dictionary<string, string[]> { ["Comms10k"] = ["S-1-5-21-100-200-300-4444"] });
+            var enablementRepository = TestConfigStore.CreateModuleEnablement(_temp.Path);
+            enablementRepository.SaveAll(new Dictionary<string, bool> { ["Comms10k"] = true });
+            var sections = new SectionAccessService(config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(), sectionsRepository);
+            var enablement = new ModuleEnablementService(new ModuleCatalog(), env, moduleConfig, enablementRepository, config, NullLogger<ModuleEnablementService>.Instance);
             _log = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
             var trace = new OperationTraceService(config, _log);
             var audit = new AuditService(_log, trace);
@@ -242,7 +248,7 @@ public sealed class Comms10kInterruptionTests
             var services = new ServiceCollection();
             services.AddScoped(_ =>
             {
-                var processor = new Comms10kReplaceProcessor(Service, audit, email, NullLogger<Comms10kReplaceProcessor>.Instance);
+                var processor = new Comms10kReplaceProcessor(Service, audit, email, sections, enablement, NullLogger<Comms10kReplaceProcessor>.Instance);
                 Processors.Add(processor);
                 return processor;
             });
@@ -259,6 +265,12 @@ public sealed class Comms10kInterruptionTests
             SubmittedBy = "EXAMPLE\\operator",
             SubmittedIp = "192.0.2.7",
             Ticket = "INC123",
+            AuthSnapshotJson = new JobAuthorizationSnapshot
+            {
+                Section = "Comms10k",
+                RoleClaims = ["S-1-5-21-100-200-300-4444"],
+                AuthorizedGroups = ["S-1-5-21-100-200-300-4444"],
+            }.ToJson(),
             SubmittedAtUtc = DateTime.UtcNow,
             PayloadJson = JsonSerializer.Serialize(new Comms10kReplaceJobPayload
             {
@@ -345,10 +357,11 @@ public sealed class Comms10kInterruptionTests
         public int Resolutions { get; private set; }
         public Comms10kUpdateResult? LastResult { get; private set; }
 
-        public override async Task<Comms10kUpdateResult> ExecuteReplaceAsync(IReadOnlyList<Comms10kAddressResolver.ResolvedMember> resolvedMembers, string performedBy)
+        public override async Task<Comms10kUpdateResult> ExecuteReplaceAsync(IReadOnlyList<Comms10kAddressResolver.ResolvedMember> resolvedMembers, string performedBy,
+            Func<string?> authorizationDenial)
         {
             if (directory.Mode == "unexpected-service-exception") throw new InvalidOperationException("Transport lost after dispatch.");
-            return LastResult = await base.ExecuteReplaceAsync(resolvedMembers, performedBy);
+            return LastResult = await base.ExecuteReplaceAsync(resolvedMembers, performedBy, authorizationDenial);
         }
 
         internal override IReadOnlyList<Comms10kAddressResolver.Candidate> QueryBatchCandidates(

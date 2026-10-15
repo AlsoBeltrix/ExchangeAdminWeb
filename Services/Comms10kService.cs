@@ -367,8 +367,10 @@ public class Comms10kService
     }
 
     public virtual async Task<Comms10kUpdateResult> ExecuteReplaceAsync(
-        IReadOnlyList<Comms10kAddressResolver.ResolvedMember> resolvedMembers, string performedBy)
+        IReadOnlyList<Comms10kAddressResolver.ResolvedMember> resolvedMembers, string performedBy,
+        Func<string?> authorizationDenial)
     {
+        ArgumentNullException.ThrowIfNull(authorizationDenial);
         var memberGuids = resolvedMembers.Select(member => member.ObjectGuid).Distinct().ToArray();
         if (memberGuids.Length == 0 || memberGuids.Contains(Guid.Empty))
             return new Comms10kUpdateResult { Success = false, MembersRequested = memberGuids.Length, MembersWritten = 0, Message = "Cannot replace with an empty member list." };
@@ -383,7 +385,7 @@ public class Comms10kService
 
         return await Task.Run(() =>
         {
-            var outcome = RunReplace(group, memberGuids, creds.Value);
+            var outcome = RunReplace(group, memberGuids, creds.Value, authorizationDenial);
 
             _logger.LogInformation(
                 "Comms10k replace by {User} on {Group}: {Outcome}, {Requested} requested, {Written} written (acknowledged adds), final {Final}",
@@ -416,7 +418,8 @@ public class Comms10kService
     /// </para>
     /// </remarks>
     private Comms10kUpdateResult RunReplace(
-        string group, IReadOnlyList<Guid> memberGuids, (string username, string password, string domain) creds)
+        string group, IReadOnlyList<Guid> memberGuids, (string username, string password, string domain) creds,
+        Func<string?> authorizationDenial)
     {
         Comms10kTarget target;
         try
@@ -429,7 +432,7 @@ public class Comms10kService
             return Refused(group, memberGuids, $"The target group could not be resolved: {ex.Message}");
         }
 
-        return PerformReplace(group, target, memberGuids, creds);
+        return PerformReplace(group, target, memberGuids, creds, authorizationDenial);
     }
 
     /// <summary>
@@ -447,9 +450,9 @@ public class Comms10kService
     /// </remarks>
     private Comms10kUpdateResult PerformReplace(
         string group, Comms10kTarget target, IReadOnlyList<Guid> memberGuids,
-        (string username, string password, string domain) creds)
+        (string username, string password, string domain) creds, Func<string?> authorizationDenial)
     {
-        var writeSequenceEntered = false;
+        var clearDispatched = false;
         try
         {
             using var runspace = CreateReplaceRunspace();
@@ -485,17 +488,28 @@ public class Comms10kService
                 return Refused(group, memberGuids,
                     "The group has primary-group members outside the approved set. They cannot be removed by this operation. Correct the membership and validate again.");
 
-            // From entry to the write sequence onwards, even an unexpected exception must
-            // preserve uncertainty: clear may have been dispatched before that exception.
-            writeSequenceEntered = true;
+            void RequireAuthorization()
+            {
+                if (authorizationDenial() is { } denial)
+                    throw new InvalidOperationException(denial);
+            }
+
             return Comms10kReplaceWriter.ExecuteSequence(
                 group,
                 memberGuids,
-                clear: () => WithRetry("clear", () => ClearMembers(ps, credential, confirmed)),
-                addBatch: batch => WithRetry("add batch", () => AddMemberBatch(ps, credential, confirmed, batch)),
-                readBack: () => ReadBackMembers(ps, credential, confirmed));
+                clear: () => WithRetry("clear", () => ClearMembers(ps, credential, confirmed, beforeDispatch: () =>
+                {
+                    RequireAuthorization();
+                    // Immediately before Invoke, after the gate. Merely entering the delegate
+                    // does not establish that any mutation has been dispatched.
+                    clearDispatched = true;
+                })),
+                addBatch: batch => WithRetry("add batch", () => AddMemberBatch(ps, credential, confirmed, batch,
+                    beforeDispatch: RequireAuthorization)),
+                readBack: () => ReadBackMembers(ps, credential, confirmed),
+                clearWasDispatched: () => clearDispatched);
         }
-        catch (Exception ex) when (!writeSequenceEntered)
+        catch (Exception ex) when (!clearDispatched)
         {
             _logger.LogError(ex, "Comms10k write preparation failed for {Group} before any change", group);
             return Refused(group, memberGuids,
@@ -535,10 +549,11 @@ public class Comms10kService
     /// the original exception for retry classification; returned non-terminating errors remain
     /// available for the caller's existing error handling.
     /// </remarks>
-    private static System.Collections.ObjectModel.Collection<PSObject> InvokeAndClear(PowerShell ps)
+    private static System.Collections.ObjectModel.Collection<PSObject> InvokeAndClear(PowerShell ps, Action? beforeDispatch = null)
     {
         try
         {
+            beforeDispatch?.Invoke();
             return ps.Invoke();
         }
         catch
@@ -553,7 +568,7 @@ public class Comms10kService
     }
 
     /// <summary>Empties the group's <c>member</c> attribute. One operation, whatever the size.</summary>
-    internal static void ClearMembers(PowerShell ps, PSCredential credential, Comms10kTarget target)
+    internal static void ClearMembers(PowerShell ps, PSCredential credential, Comms10kTarget target, Action? beforeDispatch = null)
     {
         var identity = PinnedIdentity(target.ObjectGuid);
         ps.Streams.Error.Clear();
@@ -562,13 +577,13 @@ public class Comms10kService
           .AddParameter("Clear", "member")
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        InvokeAndClear(ps);
+        InvokeAndClear(ps, beforeDispatch);
         ThrowIfErrors(ps, "the group could not be cleared");
     }
 
     /// <summary>Adds one batch. <c>-Add</c> on a member already present is a silent no-op, which is what makes a retry safe.</summary>
     internal static void AddMemberBatch(
-        PowerShell ps, PSCredential credential, Comms10kTarget target, IReadOnlyList<Guid> batch)
+        PowerShell ps, PSCredential credential, Comms10kTarget target, IReadOnlyList<Guid> batch, Action? beforeDispatch = null)
     {
         var identity = PinnedIdentity(target.ObjectGuid);
         if (batch.Count == 0 || batch.Contains(Guid.Empty))
@@ -582,7 +597,7 @@ public class Comms10kService
           .AddParameter("Add", new System.Collections.Hashtable { { "member", values } })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        InvokeAndClear(ps);
+        InvokeAndClear(ps, beforeDispatch);
         ThrowIfErrors(ps, "a batch of members could not be added");
     }
 

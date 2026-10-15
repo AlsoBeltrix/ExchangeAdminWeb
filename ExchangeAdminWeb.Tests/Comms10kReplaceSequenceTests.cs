@@ -85,7 +85,7 @@ public class Comms10kReplaceSequenceTests
 
         Assert.True(resolve >= 0, "the replace no longer resolves the target group.");
         Assert.True(write > resolve, "the write is entered before the target is resolved.");
-        Assert.Contains("PerformReplace(group, target, memberGuids, creds)", body, StringComparison.Ordinal);
+        Assert.Contains("PerformReplace(group, target, memberGuids, creds, authorizationDenial)", body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -160,8 +160,8 @@ public class Comms10kReplaceSequenceTests
         // the module is bound to for every command; the returned DN is descriptive only.
         var body = MemberBody(ServiceSource(), "private Comms10kUpdateResult PerformReplace(");
 
-        Assert.Contains("ClearMembers(ps, credential, confirmed)", body, StringComparison.Ordinal);
-        Assert.Contains("AddMemberBatch(ps, credential, confirmed, batch)", body, StringComparison.Ordinal);
+        Assert.Contains("ClearMembers(ps, credential, confirmed,", body, StringComparison.Ordinal);
+        Assert.Contains("AddMemberBatch(ps, credential, confirmed, batch,", body, StringComparison.Ordinal);
         Assert.Contains("ReadBackMembers(ps, credential, confirmed)", body, StringComparison.Ordinal);
     }
 

@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C5 review P1 corrected; C2 next
+### Comms-10k / Defender remediation - C2 implemented; independent review pending
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -49,9 +49,26 @@ before the single restored full suite: 4,045 passed / 3 skipped / 0 failed. Stag
 ASCII/diff passed and the page still matches exact restoration hashes. This P1/HIGH
 correction is closed on coder-side proof under repo policy; no second review was run.
 
-Next: fresh Sol 6.1 implementation of C2, followed by independent Astra max review.
-Thirteen original findings remain
-after C5; C2 fresh authorization/write boundaries,
+C2 began on clean master `ec824c03fcef2cb6abf357378d8950b17f976df2`. Submission captures
+current-principal/current-section authorization immediately with enqueue and uses that
+same full principal as SubmittedBy. Exact-section snapshots, originally authorizing usable
+SIDs and effective enablement gate both stages and every actual clear/add attempt/retry,
+after all credential/runspace/GUID/primary preparation. Explicit clear-dispatch tracking
+keeps pre-dispatch denials at known zero and reports actual/unknown read-back after any
+attempt. C4 approved GUIDs, C5 actor caches, C3 first reason/one audit and C11 counts remain.
+Comms is 1.4.14; base stays 2.27.3. The finding packet owns evidence and limits:
+`.agents/review/findings/cdr-c2.md`.
+
+All 46 new cases passed, then failed intended Assert.* assertions across 19 compiled
+production probes (75 failures), with exact bytes/MD5/SHA256 restoration and advanced
+mtimes. The single restored final gate passed: Release build 57 warnings / 0 errors;
+full format verification before tests; 4,091 passed / 3 skipped / 0 failed; staged
+ASCII/diff passed. Warnings are the same 40 NuGet advisories as C5 plus 17 existing
+C# diagnostics emitted by recompilation, on unchanged lines/files; none is in new C2
+logic/tests. All production hashes still match mutation receipts after the final gate.
+
+Next: independent Astra max workflow review of C2; no self-review ran.
+Twelve original implementation findings remain after C2;
 C7 handler reentry/atomic CSV/original rejection text, C8 export safety/audit and C6 ticket
 display remain separate. D2 precedes D7.
 The shared PowerShell audit inventory is `.agents/review/powershell-replay-audit.md`;

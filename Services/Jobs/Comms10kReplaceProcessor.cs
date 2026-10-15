@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ExchangeAdminWeb.Authorization;
 
 namespace ExchangeAdminWeb.Services.Jobs;
 
@@ -42,6 +43,8 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
     private readonly Comms10kService _comms;
     private readonly AuditService _audit;
     private readonly EmailService _email;
+    private readonly SectionAccessService _sectionAccess;
+    private readonly ModuleEnablementService _enablement;
     private readonly ILogger<Comms10kReplaceProcessor> _logger;
 
     // Carried from the resolve stage to the replace stage. Safe because the runner resolves ONE
@@ -55,11 +58,15 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         Comms10kService comms,
         AuditService audit,
         EmailService email,
+        SectionAccessService sectionAccess,
+        ModuleEnablementService enablement,
         ILogger<Comms10kReplaceProcessor> logger)
     {
         _comms = comms;
         _audit = audit;
         _email = email;
+        _sectionAccess = sectionAccess;
+        _enablement = enablement;
         _logger = logger;
     }
 
@@ -80,6 +87,9 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         ArgumentNullException.ThrowIfNull(job);
 
         var payload = Payload(job);
+
+        if (rowIndex is ResolveRow or ReplaceRow && AuthorizationDenial(job) is { } denial)
+            return Refuse(job, payload, denial);
 
         return rowIndex switch
         {
@@ -162,7 +172,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         try
         {
             result = await _comms.ExecuteReplaceAsync(
-                _resolvedMembers, job.SubmittedBy);
+                _resolvedMembers, job.SubmittedBy, () => AuthorizationDenial(job));
         }
         catch (Exception ex)
         {
@@ -199,10 +209,39 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         };
     }
 
+    // Re-read the live stores on every call, including after asynchronous write preparation
+    // and before each retry. This checks configuration, not Windows-token membership refresh.
+    private string? AuthorizationDenial(BulkJob job)
+    {
+        var snapshot = JobAuthorizationSnapshot.FromJson(job.AuthSnapshotJson);
+        if (snapshot is null)
+            return "The Comms-10k job authorization snapshot is missing or unreadable.";
+        if (!string.Equals(snapshot.Section, ModuleName, StringComparison.Ordinal))
+            return "The job authorization snapshot is not for Comms10k.";
+
+        try
+        {
+            if (!_enablement.IsModuleEnabled(ModuleName))
+                return "Comms-10k is currently disabled.";
+            var groups = _sectionAccess.GetGroupsForSection(ModuleName)
+                .Where(SectionAccessGroupIdentity.IsUsableGroupSid).ToArray();
+            // Only an original AuthorizedGroups grant may survive. A newly allowed RoleClaims
+            // SID is not a replacement for the decision captured when the job was submitted.
+            return snapshot.IsStillAuthorized(groups) ? null
+                : "The group that authorized this Comms-10k job is no longer allowed or section access is unavailable.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Comms-10k job authorization could not be verified for {JobId}", job.Id);
+            return "Comms-10k job authorization could not be verified.";
+        }
+    }
+
     // Also used by the later authorization and approved-set gates. The runner proceeds after
     // a failed row, so preserve the first refusal and emit its mutation audit only once.
     private BulkJobRowOutcome Refuse(BulkJob job, Comms10kReplaceJobPayload payload, string reason)
     {
+        var requested = _resolvedMembers?.Count;
         _resolvedMembers = null;
         if (_result is null)
         {
@@ -210,6 +249,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
             {
                 Success = false,
                 Outcome = Comms10kOutcome.RefusedBeforeAnyChange,
+                MembersRequested = requested,
                 MembersWritten = 0,
                 Message = string.IsNullOrWhiteSpace(reason) ? "Address resolution failed before any change." : reason,
             });

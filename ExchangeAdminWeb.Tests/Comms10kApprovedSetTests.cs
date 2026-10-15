@@ -68,7 +68,7 @@ public sealed partial class Comms10kRefusalTests
         Assert.Equal(BulkJobRowStatus.Failed, resolve.Status);
         Assert.Equal(reason, resolve.Message);
         Assert.Equal(reason, replace.Message);
-        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>());
+        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>(), Arg.Any<Func<string?>>());
         fixture.AssertAudit(reason, Comms10kOutcome.RefusedBeforeAnyChange);
         fixture.AssertNotification(reason, Comms10kOutcome.RefusedBeforeAnyChange);
     }
@@ -104,7 +104,7 @@ public sealed partial class Comms10kRefusalTests
         Assert.Equal(BulkJobRowStatus.Failed, resolve.Status);
         Assert.Equal(reason, resolve.Message);
         Assert.Equal(reason, replace.Message);
-        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>());
+        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>(), Arg.Any<Func<string?>>());
         fixture.AssertAudit(reason, Comms10kOutcome.RefusedBeforeAnyChange);
         fixture.AssertNotification(reason, Comms10kOutcome.RefusedBeforeAnyChange);
     }
@@ -123,7 +123,7 @@ public sealed partial class Comms10kRefusalTests
         Comms10kAddressResolver.ResolvedMember[] members = change == "order-and-duplicates"
             ? [second, first, first] : [first, second];
         service.ResolveEmailsAsync(Arg.Any<List<string>>()).Returns(new Comms10kResolveResult { Success = true, ResolvedMembers = members });
-        service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>())
+        service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>(), Arg.Any<Func<string?>>())
             .Returns(new Comms10kUpdateResult { Success = true, Outcome = Comms10kOutcome.Succeeded });
         var processor = fixture.Processor(service);
         var job = C4Job(Comms10kMemberSet.Fingerprint([PersonGuid, OtherGuid]));
@@ -132,7 +132,7 @@ public sealed partial class Comms10kRefusalTests
         Assert.Equal(BulkJobRowStatus.Success, (await processor.ProcessRowAsync(job, 1, CancellationToken.None)).Status);
 
         await service.Received(1).ExecuteReplaceAsync(
-            Arg.Is<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(actual => actual.SequenceEqual(members)), job.SubmittedBy);
+            Arg.Is<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(actual => actual.SequenceEqual(members)), job.SubmittedBy, Arg.Any<Func<string?>>());
     }
 
     [Theory]
@@ -264,7 +264,7 @@ public sealed partial class Comms10kRefusalTests
         fixture.Service.ReplaceState = directory.State;
         var members = directory.Rows.Select(row => new Comms10kAddressResolver.ResolvedMember(row.Guid, row.Dn)).ToArray();
 
-        var result = await fixture.Service.ExecuteReplaceAsync(members, "EXAMPLE\\operator");
+        var result = await fixture.Service.ExecuteReplaceAsync(members, "EXAMPLE\\operator", () => null);
 
         Assert.Equal(Comms10kOutcome.Succeeded, result.Outcome);
         Assert.Equal(2001, result.FinalCount);
@@ -305,7 +305,8 @@ public sealed partial class Comms10kRefusalTests
         SetField(page, "validatedTicket", "INC999");
         SetField(page, "confirmation", new Comms10kConfirmation(["other@example.test"], "other.csv", "INC999", [new(OtherGuid, PersonDn)]));
         release.SetResult(new AuthenticationState(new System.Security.Claims.ClaimsPrincipal(
-            new System.Security.Claims.ClaimsIdentity([new(System.Security.Claims.ClaimTypes.Name, "EXAMPLE\\operator")], "test"))));
+            new System.Security.Claims.ClaimsIdentity([new(System.Security.Claims.ClaimTypes.Name, "EXAMPLE\\operator"),
+                new(System.Security.Claims.ClaimTypes.GroupSid, C5GroupSid)], "test"))));
         await pending;
 
         var job = Assert.Single(repository.GetActive());
@@ -355,6 +356,7 @@ public sealed partial class Comms10kRefusalTests
             SubmittedIp = original.SubmittedIp,
             Ticket = original.Ticket,
             SubmittedAtUtc = original.SubmittedAtUtc,
+            AuthSnapshotJson = original.AuthSnapshotJson,
             PayloadJson = fingerprint is null
             ? "{\"Emails\":[\"person@example.test\"],\"SourceFileName\":\"members.csv\"}"
             : JsonSerializer.Serialize(new Comms10kReplaceJobPayload

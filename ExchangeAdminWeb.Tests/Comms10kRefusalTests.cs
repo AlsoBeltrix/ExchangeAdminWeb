@@ -105,7 +105,7 @@ public sealed partial class Comms10kRefusalTests
         var replaceRow = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
         Assert.Equal(BulkJobRowStatus.Failed, replaceRow.Status);
         Assert.Equal(expectedReason, replaceRow.Message);
-        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>());
+        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>(), Arg.Any<Func<string?>>());
         await processor.OnJobCompletedAsync(job);
         fixture.AssertAudit(expectedReason, Comms10kOutcome.RefusedBeforeAnyChange);
         fixture.AssertNotification(expectedReason, Comms10kOutcome.RefusedBeforeAnyChange);
@@ -125,7 +125,7 @@ public sealed partial class Comms10kRefusalTests
 
         Assert.Equal(BulkJobRowStatus.Failed, row.Status);
         Assert.Equal(reason, row.Message);
-        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>());
+        await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>(), Arg.Any<Func<string?>>());
         fixture.AssertAudit(reason, Comms10kOutcome.RefusedBeforeAnyChange);
         fixture.AssertNotification(reason, Comms10kOutcome.RefusedBeforeAnyChange);
     }
@@ -165,7 +165,7 @@ public sealed partial class Comms10kRefusalTests
         using var fixture = new Fixture();
         var service = fixture.ResolvingSubstitute();
         const string reason = "The target group could not be re-read immediately before the write: lookup unavailable.";
-        service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>()).Returns(new Comms10kUpdateResult
+        service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>(), Arg.Any<Func<string?>>()).Returns(new Comms10kUpdateResult
         {
             Outcome = Comms10kOutcome.RefusedBeforeAnyChange,
             Message = reason,
@@ -187,7 +187,7 @@ public sealed partial class Comms10kRefusalTests
     {
         using var fixture = new Fixture();
         var service = fixture.ResolvingSubstitute();
-        service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>()).Returns(
+        service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>(), Arg.Any<Func<string?>>()).Returns(
             Task.FromException<Comms10kUpdateResult>(new InvalidOperationException("Transport lost after dispatch.")));
         var processor = fixture.Processor(service);
         var job = Job();
@@ -208,7 +208,7 @@ public sealed partial class Comms10kRefusalTests
     {
         using var fixture = new Fixture();
         var service = fixture.ResolvingSubstitute();
-        service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>()).Returns(new Comms10kUpdateResult
+        service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>(), Arg.Any<Func<string?>>()).Returns(new Comms10kUpdateResult
         {
             Success = true,
             Outcome = Comms10kOutcome.Succeeded,
@@ -224,7 +224,7 @@ public sealed partial class Comms10kRefusalTests
         await processor.OnJobCompletedAsync(job);
 
         Assert.Equal(BulkJobRowStatus.Success, row.Status);
-        await service.Received(1).ExecuteReplaceAsync(Arg.Is<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(members => members.SequenceEqual(CompleteResolution().ResolvedMembers)), job.SubmittedBy);
+        await service.Received(1).ExecuteReplaceAsync(Arg.Is<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(members => members.SequenceEqual(CompleteResolution().ResolvedMembers)), job.SubmittedBy, Arg.Any<Func<string?>>());
         fixture.AssertAudit(null, Comms10kOutcome.Succeeded, success: true);
         fixture.AssertNotification("Replaced and verified.", Comms10kOutcome.Succeeded, success: true);
     }
@@ -307,6 +307,7 @@ public sealed partial class Comms10kRefusalTests
         SubmittedIp = "192.0.2.7",
         SubmittedAtUtc = DateTime.UtcNow,
         Ticket = "INC123",
+        AuthSnapshotJson = C2Snapshot(),
         PayloadJson = JsonSerializer.Serialize(new Comms10kReplaceJobPayload { Emails = [Address], SourceFileName = "members.csv", ApprovedMemberFingerprint = Comms10kMemberSet.Fingerprint([PersonGuid]) }),
     };
 
@@ -329,6 +330,11 @@ public sealed partial class Comms10kRefusalTests
         private readonly List<(bool Success, IReadOnlyDictionary<string, string> Details, string? Error)> _notifications = [];
         public IConfiguration Config { get; }
         public TestService Service { get; }
+        public SectionAccessService Sections { get; }
+        public ModuleEnablementService Enablement { get; }
+        public ExchangeAdminWeb.Services.Storage.SectionAccessRepository SectionRepository { get; }
+        public ExchangeAdminWeb.Services.Storage.ModuleEnablementRepository EnablementRepository { get; }
+        public Func<Task>? BeforeCredentialResponse { get; set; }
         public int C5NotificationCount => _notifications.Count;
         public IReadOnlyList<JsonElement> C5ControlAudits() => _log.GetAuditLogPaths(DateTime.Now)
             .Where(File.Exists).SelectMany(File.ReadAllLines).Select(line =>
@@ -363,6 +369,12 @@ public sealed partial class Comms10kRefusalTests
             env.ContentRootPath.Returns(_root);
             var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(_root), NullLogger<ModuleConfigService>.Instance);
             moduleConfig.SaveModuleConfig("Comms10k", new Dictionary<string, string> { ["DelineaSecretId"] = "1" });
+            SectionRepository = new(TestConfigStore.Create(_root));
+            SectionRepository.SaveAll(new Dictionary<string, string[]> { ["Comms10k"] = [C5GroupSid] });
+            EnablementRepository = TestConfigStore.CreateModuleEnablement(_root);
+            EnablementRepository.SaveAll(new Dictionary<string, bool> { ["Comms10k"] = true });
+            Sections = new SectionAccessService(Config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(), SectionRepository);
+            Enablement = new ModuleEnablementService(new ModuleCatalog(), env, moduleConfig, EnablementRepository, Config, NullLogger<ModuleEnablementService>.Instance);
             _log = new JsonlLogService(Config, NullLogger<JsonlLogService>.Instance);
             var trace = new OperationTraceService(Config, _log);
             _audit = new AuditService(_log, trace);
@@ -373,7 +385,12 @@ public sealed partial class Comms10kRefusalTests
                     _notifications.Add((call.ArgAt<bool>(3), call.ArgAt<IReadOnlyDictionary<string, string>>(5), call.ArgAt<string?>(6)));
                     return Task.CompletedTask;
                 });
-            _http = new HttpClient(new CredentialHandler());
+            _http = new HttpClient(new CredentialHandler(async request =>
+            {
+                if (!request.RequestUri!.AbsolutePath.EndsWith("/oauth2/token", StringComparison.Ordinal)
+                    && BeforeCredentialResponse is { } beforeResponse)
+                    await beforeResponse();
+            }));
             var factory = Substitute.For<IHttpClientFactory>();
             factory.CreateClient(Arg.Any<string>()).Returns(_http);
             var delinea = new DelineaService(factory, Config, NullLogger<DelineaService>.Instance,
@@ -386,13 +403,26 @@ public sealed partial class Comms10kRefusalTests
         }
 
         public Comms10kReplaceProcessor Processor(Comms10kService service) =>
-            new(service, _audit, _email, NullLogger<Comms10kReplaceProcessor>.Instance);
+            new(service, _audit, _email, Sections, Enablement, NullLogger<Comms10kReplaceProcessor>.Instance);
+
+        public void C2BreakStore(bool enablement)
+        {
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = Path.Combine(_root, "exchangeadmin.db"),
+                Pooling = false,
+            }.ToString());
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = enablement ? "DROP TABLE module_enablement;" : "DROP TABLE section_access;";
+            command.ExecuteNonQuery();
+        }
 
         public Comms10kService ResolvingSubstitute()
         {
             var service = Substitute.For<Comms10kService>(NullLogger<Comms10kService>.Instance, null!, null!, Config);
             service.ResolveEmailsAsync(Arg.Any<List<string>>()).Returns(CompleteResolution());
-            service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>())
+            service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>(), Arg.Any<Func<string?>>())
                 .Returns(new Comms10kUpdateResult { Success = true, Outcome = Comms10kOutcome.Succeeded });
             return service;
         }
@@ -405,11 +435,12 @@ public sealed partial class Comms10kRefusalTests
                 .Returns(authorized ? AuthorizationResult.Success() : AuthorizationResult.Failed());
             var authState = Substitute.For<AuthenticationStateProvider>();
             authState.GetAuthenticationStateAsync().Returns(new AuthenticationState(new ClaimsPrincipal(
-                new ClaimsIdentity([new Claim(ClaimTypes.Name, "EXAMPLE\\operator")], "test"))));
+                new ClaimsIdentity([new Claim(ClaimTypes.Name, "EXAMPLE\\operator"), new Claim(ClaimTypes.GroupSid, C5GroupSid)], "test"))));
             foreach (var (name, value) in new (string, object)[]
             {
                 ("Audit", _audit), ("Email", _email), ("AuthorizationService", authorization),
                 ("AuthStateProvider", authState), ("Logger", NullLogger<Page>.Instance),
+                ("SectionAccess", Sections), ("Enablement", Enablement),
             })
                 typeof(Page).GetProperty(name, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(page, value);
             SetField(page, "currentUser", "EXAMPLE\\operator");
@@ -470,7 +501,15 @@ public sealed partial class Comms10kRefusalTests
         public InitialSessionState? ReplaceState { get; set; }
         public int TargetLookups { get; private set; }
         public int ReplaceRunspaces { get; private set; }
+        public Action? BeforeTargetLookup { get; set; }
+        public Action? BeforeRunspaceCreation { get; set; }
+        public Comms10kUpdateResult? LastResult { get; private set; }
         public List<string> Writes { get; } = [];
+
+        public override async Task<Comms10kUpdateResult> ExecuteReplaceAsync(
+            IReadOnlyList<Comms10kAddressResolver.ResolvedMember> resolvedMembers, string performedBy,
+            Func<string?> authorizationDenial) =>
+            LastResult = await base.ExecuteReplaceAsync(resolvedMembers, performedBy, authorizationDenial);
 
         internal override IReadOnlyList<Comms10kAddressResolver.Candidate> QueryBatchCandidates(
             (string username, string password, string domain) creds, IReadOnlyList<string> addresses) => Candidates;
@@ -478,12 +517,14 @@ public sealed partial class Comms10kRefusalTests
         internal override Comms10kTarget QueryTargetGroup((string username, string password, string domain) creds)
         {
             TargetLookups++;
+            BeforeTargetLookup?.Invoke();
             return new("CN=Broadcast,DC=example,DC=test", TargetGroupGuid);
         }
 
         internal override Runspace CreateReplaceRunspace()
         {
             ReplaceRunspaces++;
+            BeforeRunspaceCreation?.Invoke();
             if (ReplaceState is not null) return RunspaceFactory.CreateRunspace(ReplaceState);
             if (PreparationFailure == "creation") throw new InvalidOperationException("Runspace creation unavailable.");
             var state = InitialSessionState.CreateDefault2();
@@ -496,15 +537,16 @@ public sealed partial class Comms10kRefusalTests
         }
     }
 
-    private sealed class CredentialHandler : HttpMessageHandler
+    private sealed class CredentialHandler(Func<HttpRequestMessage, Task>? beforeResponse = null) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Assert.Equal("credentials.invalid", request.RequestUri!.Host);
+            if (beforeResponse is not null) await beforeResponse(request);
             var body = request.RequestUri.AbsolutePath.EndsWith("/oauth2/token", StringComparison.Ordinal)
                 ? """{"access_token":"test-token","expires_in":3600}"""
                 : """{"items":[{"fieldName":"Username","itemValue":"test-user"},{"fieldName":"Password","itemValue":"test-password"},{"fieldName":"Domain","itemValue":"EXAMPLE"}]}""";
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) };
         }
     }
 }

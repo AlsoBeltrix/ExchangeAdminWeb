@@ -11,6 +11,8 @@
 @inject ServiceNowService ServiceNow
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
+@inject SectionAccessService SectionAccess
+@inject ModuleEnablementService Enablement
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject EmailService Email
@@ -779,6 +781,26 @@
             // The audit and the admin notification that used to sit here are GONE ON PURPOSE:
             // Comms10kReplaceProcessor performs both, because it performs the mutation. Putting
             // them back would double-file every replace.
+            JobAuthorizationSnapshot snapshot;
+            try
+            {
+                var groups = SectionAccess.GetGroupsForSection(Comms10kReplaceProcessor.ModuleName);
+                snapshot = JobAuthorizationSnapshot.Capture(authState.User, Comms10kReplaceProcessor.ModuleName, groups);
+                if (!Enablement.IsModuleEnabled(Comms10kReplaceProcessor.ModuleName) || !snapshot.IsStillAuthorized(groups))
+                {
+                    DenyOwnedJobs();
+                    await RefuseReplaceAsync("Authorization denied.", ticket);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Comms-10k submission authorization could not be captured");
+                DenyOwnedJobs();
+                await RefuseReplaceAsync("Authorization could not be verified.", ticket);
+                return;
+            }
+
             var jobId = BulkJobs.Enqueue(new ExchangeAdminWeb.Services.Jobs.BulkJob
             {
                 Id = Guid.NewGuid().ToString("N"),
@@ -788,6 +810,7 @@
                 SubmittedBy = submitter,
                 SubmittedByDisplay = submitter,
                 SubmittedIp = clientIpAddress,
+                AuthSnapshotJson = snapshot.ToJson(),
                 Ticket = ticket,
                 PayloadJson = System.Text.Json.JsonSerializer.Serialize(
                     new ExchangeAdminWeb.Services.Jobs.Comms10kReplaceJobPayload

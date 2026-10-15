@@ -214,8 +214,8 @@ public static class Comms10kReplaceWriter
     /// batch threw, because the membership is what decides the outcome, not the error.
     /// </para>
     /// <para>
-    /// Callers reach this only after everything that can refuse has refused. Nothing in here
-    /// returns "refused before any change".
+    /// A dispatch-aware caller supplies clearWasDispatched so a gate inside clear can refuse
+    /// before Invoke. Once any clear attempt was dispatched, every failure still reads back.
     /// </para>
     /// </remarks>
     public static Comms10kUpdateResult ExecuteSequence(
@@ -223,7 +223,8 @@ public static class Comms10kReplaceWriter
         IReadOnlyList<Guid> target,
         Action clear,
         Action<IReadOnlyList<Guid>> addBatch,
-        Func<ReadBack> readBack)
+        Func<ReadBack> readBack,
+        Func<bool>? clearWasDispatched = null)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(clear);
@@ -246,6 +247,10 @@ public static class Comms10kReplaceWriter
             // Recorded, not acted on. The read-back still runs and still decides.
             writeError = ex.Message;
         }
+
+        if (clearWasDispatched?.Invoke() == false)
+            return Derive(groupName, target, writeError ?? "The clear was not dispatched.",
+                observed: null, readBackError: null, writeError: null);
 
         ReadBack? observed = null;
         string? readBackError = null;
