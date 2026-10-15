@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C9 and C1 independently reviewed; C10 next
+### Comms-10k / Defender remediation - C10 implemented; independent review pending
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved. That plan owns the slice order and
@@ -16,25 +16,28 @@ implementation table; `.agents/decisions.md` owns the Sol 6.1 / Astra dispatch e
 One fresh Sol 6.1 agent at max implements each finding, sequentially; Astra at max independently
 reviews the affected workflow. C9 landed in `f530c62` and independent Astra review endorsed it;
 implementation, guard proof and review are recorded in `.agents/review/findings/cdr-c9.md`.
-C1 now pins every target lookup, clear, add and read-back to the approved ObjectGUID, removes
-the target setting and validates exactly one matching directory result. Its implementation,
-guard proof and independent Astra approval are in `.agents/review/findings/cdr-c1.md`.
-Comms-10k is `1.4.6`; no shared/app version change.
+C1 pins every group operation to the approved ObjectGUID; its implementation, guard proof
+and independent Astra approval are in `.agents/review/findings/cdr-c1.md`. C10 now indexes
+addresses by distinct ObjectGUID, so a person returned by two 500-address batches resolves
+once. Candidate identities are validated and GUID/DN member values stay paired for C4.
+Evidence and the complete-workflow review packet are in `.agents/review/findings/cdr-c10.md`.
+Comms-10k is `1.4.7`; no shared/app version change.
 
-Current slice baseline: clean `master` at `75b2d98`; both `origin` and `github` remained at
+Current slice baseline: clean `master` at `f6f87a5`; both `origin` and `github` remained at
 `8853979` when verified on 2026-10-15. The intervening bookkeeping and implementation are local.
 The old "unpushed since 96cdb89" assertions below are historical and superseded by this receipt.
 New implementation commits will be local until separately authorized under push policy `ask`.
 No work branch is in use. The previous handoff is preserved in `docs/history/state-archive.md`
 under Archived 2026-10-15 - remediation approval.
 
-C1's Release build, full Release solution tests (3,875 passed / 3 skipped / 0 failed), format,
-diff and ASCII checks passed. All 31 new cases were mutation-proven after successful compile,
-with byte-identical restoration/hash and mtime updates. The prior C9 lifecycle guards also
-passed. Counts, hashes and limitations live in the finding record; `.agents/review/index.md`
-tracks both slices. Page line positions were preserved, so no registry anchors moved.
+C10's restored Release build, full Release solution tests (3,884 passed / 3 skipped /
+0 failed), format, diff and ASCII checks passed. All nine new cases are compiled mutation-proven
+(six resolver failures, three identity-parser failures), with two additional distinct-person
+ambiguity failures; restores matched SHA256/MD5 and advanced mtimes. Counts, hashes and
+limitations belong to the finding record; `.agents/review/index.md` tracks the slices.
+No page or registry changed. C10 is independently unreviewed.
 
-Next: implement C10, resolver identity deduplication, then independent Astra workflow review.
+Next: independent Astra workflow review of C10 before implementing C3.
 C3 also owns the thrown service-preparation failure audit/reason case found by C1's reviewer;
 C11 owns the ordinary interrupted-write count-label case found by C9's reviewer. The plan
 carries both reproductions and required coverage.

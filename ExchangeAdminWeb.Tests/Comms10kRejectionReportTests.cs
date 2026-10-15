@@ -316,7 +316,7 @@ public class Comms10kRejectionReportTests
     // ---- helpers ----
 
     private static Comms10kAddressResolver.Candidate User(string dn, string? upn = null, string? mail = null) =>
-        new(dn, upn, mail);
+        new(Guid.NewGuid(), dn, upn, mail);
 
     /// <summary>
     /// The text of one handler, from its signature to the start of the next member.

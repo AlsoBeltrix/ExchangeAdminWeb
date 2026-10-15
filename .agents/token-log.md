@@ -296,3 +296,5 @@ Format: `date  slice  model  reqs N  mean-ctx NK  est $X.XX`
 **2026-10-15, Comms-10k C9.** One finding; real SDK guards 14/14 passed, compiled pre-fix mutation 14/14 assertion failures; full suite 3,844 passed / 3 skipped, Release/format/diff/ASCII passed. One format rerun corrected LF only; independent Astra review pending. Evidence: [cdr-c9](review/findings/cdr-c9.md).
 
 **2026-10-15, Comms-10k C1.** Fixed target and every group Identity use the approved GUID; 31 new cases mutation-proven in three compiled probes (6/21/4 failures), byte-identical restores with mtime updates; full gate passed, 3,875 passed / 3 skipped. Page lines preserved; independent Astra workflow review pending. Evidence: [cdr-c1](review/findings/cdr-c1.md).
+
+**2026-10-15, Comms-10k C10.** Address index counts distinct GUIDs and carries paired member identities; 9 new cases compiled mutation-proven (6/3 failures plus 2 ambiguity controls), byte-identical hash/mtime restores. Full gate passed, 3,884 passed / 3 skipped; independent Astra workflow review pending. Evidence: [cdr-c10](review/findings/cdr-c10.md).

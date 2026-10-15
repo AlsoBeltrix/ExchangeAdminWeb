@@ -274,7 +274,7 @@ public class Comms10kService
             return new Comms10kResolveResult
             {
                 Success = true,
-                ResolvedDns = outcome.ResolvedDns,
+                ResolvedMembers = outcome.ResolvedMembers,
                 Rejections = outcome.Rejections,
                 Message = $"{outcome.ResolvedDns.Count} resolved, {outcome.Rejections.Count} rejected."
             };
@@ -308,9 +308,8 @@ public class Comms10kService
         (string username, string password, string domain) creds,
         IReadOnlyList<string> addresses)
     {
-        var candidates = new List<Comms10kAddressResolver.Candidate>();
         if (addresses.Count == 0)
-            return candidates;
+            return [];
 
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -323,7 +322,15 @@ public class Comms10kService
         InvokeAndClear(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
-        var props = new[] { "userPrincipalName", "mail" };
+        return ReadAddressCandidates(ps, credential, addresses);
+    }
+
+    /// <summary>The real batch query and identity parsing, also usable with local SDK stand-ins.</summary>
+    internal static IReadOnlyList<Comms10kAddressResolver.Candidate> ReadAddressCandidates(
+        PowerShell ps, PSCredential credential, IReadOnlyList<string> addresses)
+    {
+        var candidates = new List<Comms10kAddressResolver.Candidate>();
+        var props = new[] { "userPrincipalName", "mail", "objectGUID" };
 
         foreach (var batch in Comms10kAddressResolver.Batch(addresses))
         {
@@ -346,7 +353,10 @@ public class Comms10kService
             {
                 if (o is null)
                     continue;
+                if (!Guid.TryParse(o.Properties["objectGUID"]?.Value?.ToString(), out var guid) || guid == Guid.Empty)
+                    throw new InvalidOperationException("A directory candidate has no valid, nonempty ObjectGUID; resolution was refused.");
                 candidates.Add(new Comms10kAddressResolver.Candidate(
+                    ObjectGuid: guid,
                     DistinguishedName: o.Properties["DistinguishedName"]?.Value?.ToString(),
                     UserPrincipalName: o.Properties["userPrincipalName"]?.Value?.ToString(),
                     Mail: o.Properties["mail"]?.Value?.ToString()));
@@ -730,7 +740,8 @@ public class Comms10kResolveResult
 {
     public bool Success { get; set; }
     public string Message { get; set; } = "";
-    public List<string> ResolvedDns { get; set; } = new();
+    public IReadOnlyList<Comms10kAddressResolver.ResolvedMember> ResolvedMembers { get; init; } = [];
+    public List<string> ResolvedDns => ResolvedMembers.Select(m => m.DistinguishedName).ToList();
 
     /// <summary>
     /// Every address that did not resolve, in input order, each with the reason. Owner ruling

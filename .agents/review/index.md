@@ -41,6 +41,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [mde-9](findings/mde-9.md) | MEDIUM - two rows of the same non-matching address are reported as one | Verified | - | codex / gpt-5.5 / xhigh |
 | [v] | [cdr-c9](findings/cdr-c9.md) | HIGH - a failed queued mutation replays during retry or read-back | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [v] | [cdr-c1](findings/cdr-c1.md) | HIGH - configurable target and DN-addressed writes can retarget the broadcast replace | Verified on master; push pending | master | native / gpt-6-astra / max |
+| [v] | [cdr-c10](findings/cdr-c10.md) | MEDIUM - repeated batch rows reject one person as ambiguous | Locally verified; independent review and push pending | master | Pending: native / gpt-6-astra / max |
 
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.

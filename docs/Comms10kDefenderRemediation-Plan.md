@@ -492,7 +492,7 @@ part of this implementation approval.
 |---|---|---|
 | C9 | Implemented / independently reviewed (`f530c62`) | [cdr-c9](../.agents/review/findings/cdr-c9.md) |
 | C1 | Implemented / independently reviewed (`00f453e`) | [cdr-c1](../.agents/review/findings/cdr-c1.md) |
-| C10 | Pending | |
+| C10 | Implemented / locally verified; independent review pending | [cdr-c10](../.agents/review/findings/cdr-c10.md) |
 | C3 | Pending | |
 | C4 | Pending | |
 | C11 | Pending | |

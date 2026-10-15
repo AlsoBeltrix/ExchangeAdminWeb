@@ -36,8 +36,11 @@ public static class Comms10kAddressResolver
     /// </remarks>
     public const int BatchSize = 500;
 
-    /// <summary>One directory row, reduced to the fields this module matches on.</summary>
-    public sealed record Candidate(string? DistinguishedName, string? UserPrincipalName, string? Mail);
+    /// <summary>One directory row, with its immutable identity and address keys.</summary>
+    public sealed record Candidate(Guid ObjectGuid, string? DistinguishedName, string? UserPrincipalName, string? Mail);
+
+    /// <summary>One resolved person. Keep the immutable identity and descriptive DN together.</summary>
+    public sealed record ResolvedMember(Guid ObjectGuid, string DistinguishedName);
 
     /// <summary>One rejected address, as the operator wrote it, and why it was rejected.</summary>
     /// <remarks>
@@ -79,16 +82,20 @@ public static class Comms10kAddressResolver
     }
 
     /// <summary>The assignment of every input address to resolved or rejected.</summary>
-    /// <param name="ResolvedDns">
-    /// Distinguished names to write, in the order their addresses first appeared, each appearing
-    /// once however many times its address did.
+    /// <param name="ResolvedMembers">
+    /// People in the order their addresses first resolved, each immutable identity appearing
+    /// once however many rows or different addresses matched it.
     /// </param>
     /// <param name="Rejections">
     /// Every address that produced no DN, in input order, each with the reason it was rejected.
     /// <b>This is the whole list, never a sample</b> - it is what the errors CSV is built from,
     /// and the view's ten-address preview is a view concern that must not reach back into here.
     /// </param>
-    public sealed record Outcome(List<string> ResolvedDns, List<Rejection> Rejections);
+    public sealed record Outcome(IReadOnlyList<ResolvedMember> ResolvedMembers, List<Rejection> Rejections)
+    {
+        /// <summary>The existing write contract, derived from the paired member identities.</summary>
+        public List<string> ResolvedDns => ResolvedMembers.Select(m => m.DistinguishedName).ToList();
+    }
 
     /// <summary>
     /// Partitions the input into query-sized batches, in order, covering every element exactly
@@ -169,8 +176,8 @@ public static class Comms10kAddressResolver
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The outcomes are exactly the ones the per-row loop produced, which is the point: this slice
-    /// changes how many questions are asked, never what the answers mean.
+    /// Directory rows are indexed by address and immutable object identity before assignment.
+    /// The same person can be returned by several batches; repeated rows are not ambiguity.
     /// </para>
     /// <list type="bullet">
     /// <item>One match resolves.</item>
@@ -178,7 +185,7 @@ public static class Comms10kAddressResolver
     /// arbitrary one of them.</item>
     /// <item>None is <see cref="Reasons.NoMatch"/>.</item>
     /// <item>A repeat of an already-resolved person is written once and is not reported as
-    /// rejected - the address did resolve, it just resolved to a DN already in the list.</item>
+    /// rejected - the address did resolve, it just resolved to an identity already in the list.</item>
     /// </list>
     /// <para>
     /// <b>An exact match is the only match</b> (owner ruling 2026-10-12, `.agents/decisions.md`).
@@ -198,8 +205,18 @@ public static class Comms10kAddressResolver
         ArgumentNullException.ThrowIfNull(addresses);
         ArgumentNullException.ThrowIfNull(candidates);
 
-        var resolved = new List<string>();
-        var resolvedSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var matchesByAddress = new Dictionary<string, Dictionary<Guid, Candidate>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in candidates)
+        {
+            if (candidate.ObjectGuid == Guid.Empty)
+                throw new ArgumentException("Every directory candidate must have a nonempty ObjectGUID.", nameof(candidates));
+
+            IndexCandidate(matchesByAddress, candidate.UserPrincipalName, candidate);
+            IndexCandidate(matchesByAddress, candidate.Mail, candidate);
+        }
+
+        var resolved = new List<ResolvedMember>();
+        var resolvedSet = new HashSet<Guid>();
         var rejected = new List<Rejection>();
 
         foreach (var address in addresses)
@@ -210,9 +227,11 @@ public static class Comms10kAddressResolver
                 continue;
             }
 
-            var matches = candidates
-                .Where(c => Matches(c, address))
-                .ToList();
+            if (!matchesByAddress.TryGetValue(address, out var matches))
+            {
+                rejected.Add(new Rejection(address, Reasons.NoMatch));
+                continue;
+            }
 
             if (matches.Count > 1)
             {
@@ -220,13 +239,8 @@ public static class Comms10kAddressResolver
                 continue;
             }
 
-            if (matches.Count == 0)
-            {
-                rejected.Add(new Rejection(address, Reasons.NoMatch));
-                continue;
-            }
-
-            var dn = matches[0].DistinguishedName;
+            var match = matches.Values.First();
+            var dn = match.DistinguishedName;
             if (string.IsNullOrWhiteSpace(dn))
             {
                 // A row that matched but carries no DN cannot be written. Reported as rejected
@@ -236,20 +250,28 @@ public static class Comms10kAddressResolver
                 continue;
             }
 
-            if (resolvedSet.Add(dn))
-                resolved.Add(dn);
+            if (resolvedSet.Add(match.ObjectGuid))
+                resolved.Add(new ResolvedMember(match.ObjectGuid, dn));
         }
 
         return new Outcome(resolved, rejected);
     }
 
     /// <summary>
-    /// Whether one directory row is a match for one address, on the same two keys the filter
-    /// asked about and with the same case-insensitivity the directory applies.
+    /// Indexes every returned address key, including keys changed between batch queries. Only
+    /// distinct GUIDs count as matches; the first row for that address/GUID supplies its DN.
     /// </summary>
-    private static bool Matches(Candidate candidate, string address) =>
-        string.Equals(candidate.UserPrincipalName, address, StringComparison.OrdinalIgnoreCase)
-        || string.Equals(candidate.Mail, address, StringComparison.OrdinalIgnoreCase);
+    private static void IndexCandidate(Dictionary<string, Dictionary<Guid, Candidate>> index, string? address, Candidate candidate)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+            return;
+        if (!index.TryGetValue(address, out var matches))
+        {
+            matches = new Dictionary<Guid, Candidate>();
+            index.Add(address, matches);
+        }
+        matches.TryAdd(candidate.ObjectGuid, candidate);
+    }
 
     /// <summary>
     /// The addresses worth sending to the directory: non-blank, and each distinct value once.

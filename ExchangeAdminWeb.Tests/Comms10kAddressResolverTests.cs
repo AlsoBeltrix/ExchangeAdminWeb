@@ -20,7 +20,7 @@ public class Comms10kAddressResolverTests
         Enumerable.Range(0, count).Select(i => $"user{i}@example.com").ToList();
 
     private static Comms10kAddressResolver.Candidate User(string dn, string? upn = null, string? mail = null) =>
-        new(dn, upn, mail);
+        new(Guid.NewGuid(), dn, upn, mail);
 
     // ---- 1. Batching covers every input exactly once, in order. ----
 
