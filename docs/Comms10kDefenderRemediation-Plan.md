@@ -174,6 +174,10 @@ the reason. **Assert `ExecuteReplaceAsync` was never called.**
 
 ## C4 - the job writes the approved set or nothing
 
+The concrete identity, confirmation, primary-member refusal and older-payload choices are in
+`.agents/review/cdr-c4-design.md` (Astra design pass, 2026-10-15). In particular, preserve the
+GUID through the actual member add, not only the fingerprint; C1 pins the group alone.
+
 Carry a fingerprint of the approved set in `Comms10kReplaceJobPayload`. The job re-resolves (keep
 that - the payload's remarks give the reason) and compares.
 
