@@ -1,6 +1,6 @@
 # cdr-c7 - shared busy ownership and atomic CSV publication
 
-Status: Implemented and verified locally; independent Astra max workflow review pending.
+Status: Implemented and independently reviewed on master; Astra max APPROVE.
 Push remains pending under policy ask.
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, Revision 6, C7.
 Baseline: clean master `097cfd1e74d4622c016d65308d1d71f7c8722fff`, base 2.27.3,
@@ -274,3 +274,25 @@ mtimes verified after each restore, and the test PDB document checksum matches t
 test source. Final Release build, full format verification before full tests, 4,121 passed /
 3 skipped / 0 failed, final diff and staged ASCII all passed. No browser, installed-cmdlet
 interoperability, live AD/tenant/vault probe, push or deployment was run. No self-review ran.
+
+## Independent workflow review - APPROVE, 2026-10-15
+
+Fresh native `gpt-6-astra` at `max` reviewed immutable range
+`097cfd1e74d4622c016d65308d1d71f7c8722fff..d8f59244a9e17241766f22a531830c00b36e7c82`.
+Verdict: **APPROVE**, no actionable introduced or in-scope defects. Capability proof
+succeeded with repository reads and Git inspection; checkout remained clean and range
+diff checking passed. The reviewer traced all six handlers, atomic publication, normalized
+lookup/raw rejection mapping, frozen approval, C2 refusal attribution and C5 cache ownership.
+
+Independent compiled verification passed 784/784, including all 27 C7 cases. The reviewer
+reconciled ten accepted mutation probes, 48 explicit assertion failures and exact coverage
+of all 27 names, with consistent restoration hashes and advanced mtimes. The current test
+source matched its portable PDB. Existing final-gate receipts confirmed 4,121 passed /
+3 skipped / 0 failed and format before tests; no full-suite or mutation rerun was needed.
+
+Verified SHA256: page `0B65C64D742B126CEB5AB710C0AD451593386148B26E4E609D13E684CD90A1DF`;
+new tests `05B920E898EBBFC0C145DBE2013B3AD985BDFA3238A6C0B526BB1FFDE99F4870`.
+Supplemental ignored evidence: `.agents/review/out/cdr-c7-astra-evidence.json` and
+`cdr-c7-astra-review/cdr-c7-astra-review.trx`. No source edits, live integrations or
+outward actions occurred. Browser and hosted-circuit acceptance remain unverified.
+C7 is closed locally; C8 is next, with C6 and the approved Defender slices following.

@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - C7 implemented; independent review pending
+### Comms-10k / Defender remediation - C7 independently approved; C8 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -36,8 +36,10 @@ Final Release build passed (40 existing NuGet warnings / 0 errors), then full fo
 verification passed before the single restored full suite: 4,121 passed / 3 skipped /
 0 failed. Diff and staged ASCII passed. The page still matches its exact mutation-restore
 hashes; the current test source matches its portable PDB document checksum. Independent
-Astra max workflow review is the pending step; no self-review or second review ran.
-`.agents/review/findings/cdr-c7.md` owns scope, proof, warning comparison and review packet.
+Astra max review APPROVED `d8f5924` with no actionable findings, independently passed
+784/784 and reconciled all accepted proof receipts. No self-review ran.
+`.agents/review/findings/cdr-c7.md` owns scope, proof, warning comparison and review receipt.
+Next: fresh Sol 6.1 implementation of C8, followed by independent Astra max review.
 
 C5 adds the submitter's Your jobs panel to Comms-10k with actual lifecycle status, job
 messages, ticket/times and recorded Resolve/Replace outcomes, including partial, unknown,
@@ -101,7 +103,7 @@ original C2); full format verification before tests; 4,094 passed / 3 skipped / 
 staged ASCII/diff passed. The page retains its exact correction hashes; worker/service/
 writer retain the independently reviewed originals. This P2 is closed on coder-side
 proof under repo policy; no second review or self-review ran. C7 follows in the record above.
-After C7's independent review, C8 export safety/audit and then C6 ticket display remain
+C8 export safety/audit and then C6 ticket display remain
 in Part 1. D2 precedes D7 in the Defender work.
 The shared PowerShell audit inventory is `.agents/review/powershell-replay-audit.md`;
 psl-2/3/4 remain separately recorded, unapproved follow-ups.
