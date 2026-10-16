@@ -520,5 +520,5 @@ part of this implementation approval.
 | D2 | Implemented / independently reviewed (`7e62358`) | [cdr-d2](../.agents/review/findings/cdr-d2.md) |
 | D7 | Implemented; independent CHANGES REQUIRED preserved, its one P2 corrected / coder-proof closed | [cdr-d7](../.agents/review/findings/cdr-d7.md) |
 | D1 | Implemented / independently reviewed (`568534c`) | [cdr-d1](../.agents/review/findings/cdr-d1.md) |
-| D3 | Pending | |
+| D3 | Implemented / locally verified; independent review pending | [cdr-d3](../.agents/review/findings/cdr-d3.md) |
 | D5 | Pending | |

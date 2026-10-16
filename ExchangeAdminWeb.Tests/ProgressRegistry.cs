@@ -1236,7 +1236,8 @@ public static class ProgressRegistry
         Reports =
         [
             new("LoadAsync", ["DeviceService.ListDevicesAsync"],
-                "includes inventory and its single bounded enrichment wait; the service owns "
+                "D3 refuses entry while either load or export owns IsBusy, before any work. "
+                + "Includes inventory and its single bounded enrichment wait; the service owns "
                 + "the shared deadline through credential setup, hunting, site admission and matching. "
                 + "Cancellation retains completed sites and inventory while the directory worker retains cleanup"),
             new("DownloadCsvAsync",
@@ -1244,7 +1245,9 @@ public static class ProgressRegistry
                     "BuildCsv(",
                     "JS.InvokeVoidAsync(",
                 ],
-                "the fifth of the silent CSV-export shape to be fixed and the FIRST of them on a "
+                "D3 refuses entry while either operation owns IsBusy; rejected calls start no "
+                + "progress and cannot lower the owning flag. The fifth of the silent CSV-export shape "
+                + "to be fixed and the FIRST of them on a "
                 + "ClickGate-converted page, which changes where the Begin goes and nothing else. "
                 + "The handler already had the guard, the snapshot, the isDownloadingCsv raise "
                 + "and an await Task.Yield() - so the Begin sits between the raise and the yield, "

@@ -860,6 +860,9 @@
 
     private async Task LoadAsync()
     {
+        if (IsBusy)
+            return;
+
         // Every filter is operator-writable and the browser's copy of a disabled attribute is one
         // round trip stale, so the whole form is turned into a request HERE, above the try and above
         // every await. Reading any control back afterwards would let the audit record name one
@@ -1026,6 +1029,9 @@
     /// </summary>
     private async Task DownloadCsvAsync()
     {
+        if (IsBusy)
+            return;
+
         var filterAudit = appliedFilterAudit;
         int? selectedCount = null;
         try

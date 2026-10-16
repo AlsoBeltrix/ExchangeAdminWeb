@@ -122,6 +122,10 @@ public sealed class DefenderFilterAuditTests
         fixture.Form("SeenBy", "reception");
         fixture.Form("DeviceNameStartsWith", "host");
         await fixture.Invoke("LoadAsync");
+        fixture.Form("Site", "edited before export");
+        await fixture.Invoke("DownloadCsvAsync");
+        Assert.Equal(5, fixture.Js.ExportedIds().Count);
+        AssertRequested(fixture.Audits()[1], "London", "reception", "host");
 
         // A pending second request must leave the first result and its applied question paired.
         fixture.Form("Site", "Paris");
@@ -138,7 +142,7 @@ public sealed class DefenderFilterAuditTests
             Assert.Equal(5, Devices(fixture.Page).Count);
             await fixture.Invoke("DownloadCsvAsync");
             Assert.Equal(5, fixture.Js.ExportedIds().Count);
-            AssertRequested(fixture.Audits()[1], "London", "reception", "host");
+            Assert.Equal(2, fixture.Audits().Length);
         }
         finally
         {
@@ -163,9 +167,10 @@ public sealed class DefenderFilterAuditTests
         await transferEntered.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         try
         {
-            // D3 owns refusing overlap. Here an already-selected export must keep its own audit.
+            // A refused load cannot replace the selected export's inventory or applied question.
             await fixture.Invoke("LoadAsync");
-            Assert.Equal(5, Devices(fixture.Page).Count);
+            Assert.Equal(90, Devices(fixture.Page).Count);
+            Assert.Equal(3, fixture.Audits().Length);
             fixture.Form("Site", "edited after load");
             fixture.Form("SeenBy", "edited after load");
         }

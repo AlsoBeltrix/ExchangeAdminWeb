@@ -8,7 +8,36 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D1 independently approved; D3 next
+### Comms-10k / Defender remediation - D3 verified locally; independent review next
+
+D3 starts on clean master `4416aadf90a0b2c745934996f2b874174b360290`;
+both live remote master refs remain `eb0d19122f4921eca66e4300efe0605403214e23`.
+The single writer adds early `IsBusy` refusal to Load and Download so rejected
+events cannot release the owning operation's flag. Defender/pin is 1.6.15;
+base remains 2.27.6 and Comms 1.4.18. D1/D4/D9/D7 behavior is preserved; D5
+remains a separate slice. Eight new compiled cases pass their fresh canonical
+baseline; six fresh production regressions yield 20 standard assertion failures
+with an exact eight-case union and complete restore/provenance receipts. The
+affected D4 case retains snapshot/audit binding while refusing both overlap
+directions; restored affected coverage passes 1,003/1,003. All 17 ClickGate
+anchors map exactly with no twins/unmapped, and the page has 1,277 lines.
+
+Final ordered Release build passes with 40 warnings / 0 errors; full solution
+format passes before the single full suite (4,239 passed / 3 known AD skips /
+0 failed; 4,242 unique execution IDs; console 5m7s, wall 319.23s). Numeric child
+exit 0 and timings are saved before parsing; repeated display names and raw
+notExecuted zero do not obscure the three actual skipped rows. Final staged
+diff/ASCII, exact proof/gate reconciliation and task/build-server shutdown
+receipts are owned by `.agents/review/findings/cdr-d3.md` and ignored `out/cdr-d3/`.
+The finding owns setup corrections and the complete Constitution packet.
+
+Eighteen original findings and psl-1 remain closed locally; D3 is implemented and
+awaits fresh independent Astra max workflow review. D5 follows only after this
+boundary is accepted. Known module-spec/guide Version 2.0 / June 25 drift and
+unrun browser/live acceptance remain flagged. No push/deploy/live probe or
+self-review is authorized.
+
+### Prior boundary - D1 independently approved
 
 D1 starts on clean master `a4c019255b85d69ddca3d9cd1d9d185d20e78b80`; both
 live remote master refs were checked at `eb0d19122f4921eca66e4300efe0605403214e23`
