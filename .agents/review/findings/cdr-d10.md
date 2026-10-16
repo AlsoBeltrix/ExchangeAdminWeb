@@ -1,7 +1,6 @@
 # cdr-d10 - measure page completeness before discarding malformed entries
 
-Status: Implemented and locally verified on master, 2026-10-16; independent Astra
-max workflow review pending.
+Status: Implemented and independently APPROVED on master, 2026-10-16.
 
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, APPROVED Revision 6, D10.
 Owner 2026-10-15: "approved. go." Implementation starts on clean master
@@ -258,3 +257,30 @@ Trace the complete workflow as needed; previous clean verdicts are not premises.
   compiled/runtime app copies match. No extra full-suite or self-review run occurred.
 - No browser, live-integration, physical-location, push or deployment verification.
   PSScriptAnalyzer/Pester were not run because no shipped PowerShell changed.
+
+## Independent workflow review - APPROVED, 2026-10-16
+
+Fresh native `gpt-6-astra` at `max` reviewed immutable range
+`82db64bc91b20bdf776e3f216c57aa81df9be76d..8baf9102927b6780ba98765283fb9c0e2e2195e0`.
+Completed at `2026-10-16 12:43:09 UTC`; verdict: **APPROVED**, no actionable D10
+findings. Intent and scope matched. Raw-versus-usable cardinality, cursor/top
+precedence, partition/refusal publication, null timestamps, filtering, ceiling,
+deduplication and numeric OS builds preserved the surrounding workflow.
+
+Independent focused verification passed 299/299 with four xUnit threads. A
+synthetic workflow probe passed 41 scenarios and 263 assertions, including actual
+page export selection and CSV generation. The original/recovery baselines and
+four compiled mutation receipts reconciled to nine standard assertion failures
+covering exactly seven cases. Restoration hashes, runtime/test provenance and
+sequential final gates reconciled, including 4,162 passed / 3 skipped / 0 failed.
+Neither the mutations nor the full suite were repeated during review.
+
+The independent rebuild refreshed test assembly commit metadata; production app
+bytes stayed identical at SHA256
+`aaf1b9b6bbbee1d8d30034d4ac43d475dea3e6761ff1a60c9f48bef8dd71b125`.
+Portable PDB checksums matched current production and test source bytes. Ignored
+receipts under `.agents/review/out/cdr-d10/` are `astra-review.json`,
+`astra-reconciliation.json` and `astra-probe-results.json`.
+No tracked edits, browser or live integration checks occurred; the checkout was
+clean at the reviewed hash and no review process remained. D10 is closed locally;
+D9 is next in the approved sequence.

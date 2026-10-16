@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D10 implemented; independent review pending
+### Comms-10k / Defender remediation - D10 approved; D9 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -33,8 +33,11 @@ union of all seven new cases; byte/MD5/SHA256/newer-mtime restoration and runtim
 test assembly provenance passed. No pre-restart mutation attempt is counted.
 Restored affected tests passed 299/299. The final Release build passed with 40
 existing warnings / 0 errors; full solution format passed before the single full
-suite: 4,162 passed / 3 skipped / 0 failed. Final diff and staged ASCII passed;
-independent Astra max workflow review is pending. No shipped page or PowerShell,
+suite: 4,162 passed / 3 skipped / 0 failed. Final diff and staged ASCII passed.
+Independent Astra max APPROVED `8baf910` with no actionable findings, passing
+299/299 focused tests plus 41 synthetic scenarios / 263 assertions and reconciling
+all proof/gate receipts. Thirteen original findings and psl-1 are closed locally;
+seven original Defender findings remain, starting with D9. No shipped page or PowerShell,
 live probe, self-review or adjacent finding was included. The D10 finding owns
 recovery, scope, exact proof, limitations and the complete Constitution packet:
 `.agents/review/findings/cdr-d10.md`.
@@ -54,9 +57,9 @@ page, PowerShell, live integration, self-review or adjacent-finding work is incl
 `.agents/review/findings/cdr-d8.md` owns scope, evidence, limits and the complete
 Constitution packet and independent APPROVED verdict for `a5f17de`. Astra passed 41/41
 focused tests, 26 extra workflow inputs and 23 direct assertions, and reconciled all
-proof/gate receipts without actionable findings. Twelve original findings and psl-1
-are closed locally; eight original Defender findings remain. D10 awaits independent
-Astra max review; D9 follows. Known module-spec Version 2.0 /
+proof/gate receipts without actionable findings. At that boundary twelve original
+findings and psl-1 were closed locally; D10's later approval is recorded above.
+Known module-spec Version 2.0 /
 June 25 drift remains flagged against base 2.27.4.
 
 C6 receipt (2026-10-15): it began on clean master `0413e3b81cabda8b9c70e9feed6e4d8beab8f5b5`. The compiled
