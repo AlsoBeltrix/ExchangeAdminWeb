@@ -1,6 +1,6 @@
 # cdr-d3 - refuse overlapping Defender loads and CSV exports
 
-Status: Implemented and locally verified on master, 2026-10-16; independent review pending.
+Status: Implemented and independently APPROVED on master, 2026-10-16 (`e2a20e4`).
 
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, APPROVED Revision 6, D3.
 Owner 2026-10-15: "approved. go." Recovery 2026-10-16: "system restarted. please
@@ -134,6 +134,33 @@ Sol token usage or cost is attributed.
   independent approval is implied by coder proof. No push/deployment/live probe,
   adjacent D5 work or hook override occurs.
 
+## Independent review
+
+Fresh native `gpt-6-astra` at max reviewed
+`4416aadf90a0b2c745934996f2b874174b360290..e2a20e494fc243d953069c6520b5f0296147f8f7`
+and returned **APPROVE**, with no actionable findings. Intent, scope and
+Constitution checks preceded review of both complete handler workflows,
+dispatcher admission, cleanup, progress, result publication, CSV and audit binding.
+The adapted D4 case preserves its applied-question/row association coverage.
+
+Independent Release Rebuild passed with 58 warnings / 0 errors (40 NuGet and
+18 compiler warnings; none of the compiler warnings concern changed D3 files).
+Fresh affected tests passed **1,003/1,003**, including all eight concurrency
+and eleven D4 cases. **317 evidence checks** reconciled seven saved sources,
+six reconstructed mutations, 20 standard failures and the exact eight-case
+union, restoration/provenance, 17 anchors and the original ordered gate with
+4,239 passes / 3 known skips / 0 failures and persisted numeric child exit 0.
+
+Receipt: `.agents/review/out/cdr-d3/reviewer-verdict.json`, with linked build,
+focused TRX, reconciliation and shutdown evidence. Rebuilt app/runtime DLL/PDB
+hashes match the canonical fixed proof. Test DLL/PDB hashes change across the
+commit because generated informational version includes `e2a20e4`; exact test
+sources match, and the fresh compiled tests pass. Historical mutation binaries
+were reconciled through recorded provenance and in-memory reconstruction;
+no mutation or full-suite replay occurred. No live/browser acceptance was run.
+Checkout remained clean at the reviewed hash, with review task/build servers
+stopped. D3 is closed locally; D5 is the last approved original slice.
+
 # Review Packet
 
 ## Mode
@@ -151,7 +178,7 @@ await, and ownership-safe cleanup.
 Scoped orchestration/authorization: `.agents/decisions.md`, 2026-10-15.
 
 ## Commit Range
-`4416aadf90a0b2c745934996f2b874174b360290..HEAD` (the D3 implementation commit).
+`4416aadf90a0b2c745934996f2b874174b360290..e2a20e494fc243d953069c6520b5f0296147f8f7`.
 
 ## Claimed Changes
 - Both handlers reject `IsBusy` before work or cleanup; their existing owner

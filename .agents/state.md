@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D3 verified locally; independent review next
+### Comms-10k / Defender remediation - D3 independently approved; D5 last
 
 D3 starts on clean master `4416aadf90a0b2c745934996f2b874174b360290`;
 both live remote master refs remain `eb0d19122f4921eca66e4300efe0605403214e23`.
@@ -31,11 +31,19 @@ diff/ASCII, exact proof/gate reconciliation and task/build-server shutdown
 receipts are owned by `.agents/review/findings/cdr-d3.md` and ignored `out/cdr-d3/`.
 The finding owns setup corrections and the complete Constitution packet.
 
-Eighteen original findings and psl-1 remain closed locally; D3 is implemented and
-awaits fresh independent Astra max workflow review. D5 follows only after this
-boundary is accepted. Known module-spec/guide Version 2.0 / June 25 drift and
-unrun browser/live acceptance remain flagged. No push/deploy/live probe or
-self-review is authorized.
+Fresh independent Astra max APPROVED `e2a20e4` with no actionable findings.
+Its Release Rebuild passed with 58 warnings / 0 errors, and all 1,003 affected
+tests passed. Independent reconciliation passed 317 checks covering exact
+source/provenance, reconstructed mutation failures, registry anchors and the
+original full gate. App/runtime compiled hashes match the fixed proof; test
+binary differences are explained by the generated committed informational
+version, with exact source and fresh passing execution. The finding owns the
+verdict and limits. The reviewer left the checkout clean and task servers stopped.
+
+Nineteen original findings and psl-1 are closed locally. Next: fresh Sol 6.1 max
+implementation of D5, the last original slice, then independent Astra max review.
+Known module-spec/guide Version 2.0 / June 25 drift and unrun browser/live
+acceptance remain flagged. No push/deploy/live probe or self-review is authorized.
 
 ### Prior boundary - D1 independently approved
 
