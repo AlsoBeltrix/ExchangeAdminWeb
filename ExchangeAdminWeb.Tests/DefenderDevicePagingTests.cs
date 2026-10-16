@@ -142,9 +142,9 @@ public class DefenderDevicePagingTests
         // No live-apply hook on any control.
         Assert.DoesNotContain("@bind:after", source, StringComparison.Ordinal);
 
-        // Snapshotted in LoadAsync above the first await, beside the filter snapshot.
+        // Captured locally above the first await; D4 publishes it with its returned result.
         var load = Member(source, "async Task LoadAsync()");
-        var snapshot = load.IndexOf("appliedSeenBy = form.SeenBy", StringComparison.Ordinal);
+        var snapshot = load.IndexOf("var seenBy = form.SeenBy", StringComparison.Ordinal);
         Assert.True(snapshot >= 0, "LoadAsync must snapshot the location filter when Search is pressed.");
 
         var firstAwait = load.IndexOf("await", StringComparison.Ordinal);

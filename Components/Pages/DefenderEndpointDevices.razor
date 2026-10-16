@@ -512,6 +512,7 @@
     private string? loadError;
     private string? csvExportError;
     private DefenderDeviceListResult? result;
+    private FilterAuditSnapshot? appliedFilterAudit;
 
     /// <summary>
     /// Every operator-writable filter control, in one object.
@@ -608,9 +609,10 @@
     /// of every control rather than of most of them.
     /// </para>
     /// <para>
-    /// Captured on the same line as the filter snapshot, above the first await, for the reason
+    /// Captured beside the filter snapshot, above the first await, for the reason
     /// ClickGateRegistry's PostAwaitLiveRead entry already gives: a value changed in the stale
-    /// attribute window would desync what the audit names from what the operator sees.
+    /// attribute window would desync what the audit names from what the operator sees. Published
+    /// with its result, so an in-flight load cannot change the previous report's question.
     /// </para>
     /// </remarks>
     private string appliedSeenBy = "";
@@ -880,8 +882,9 @@
         // the observer name does not exist until the second lookup - but it IS part of the
         // question the operator asked, so it is frozen when they asked it rather than read live
         // out of a control they may have typed into since.
-        appliedSeenBy = form.SeenBy;
-        appliedSite = form.Site;
+        var seenBy = form.SeenBy;
+        var site = form.Site;
+        var requestedAudit = CreateFilterAudit(filters, site, seenBy, null);
 
         isLoading = true;
         loadError = null;
@@ -894,7 +897,11 @@
                 "Defender for Endpoint Devices", "Listing devices", ActivitySize.Unknown);
 
             var loaded = await DeviceService.ListDevicesAsync(filters);
+            var filterAudit = CreateFilterAudit(filters, site, seenBy, loaded);
             result = loaded;
+            appliedSeenBy = seenBy;
+            appliedSite = site;
+            appliedFilterAudit = filterAudit;
             // Beside the result, never after a branch: an index left from a wider search can sit
             // past the end of a narrower one and render an empty table under a non-zero count.
             devicePageIndex = 0;
@@ -905,33 +912,34 @@
             var complete = loaded.Outcome == DefenderDeviceListOutcome.Complete;
             // A refusal is a failure, not a successful read of zero devices - same rule the audit
             // below follows.
+            var displayedCount = complete ? FilteredDevices.Count : 0;
             activity.Complete(complete, complete
-                ? $"{loaded.Devices.Count:N0} device(s)"
+                ? $"{displayedCount:N0} device(s)"
                 : loaded.Outcome.ToString());
+            var auditDetails = FilterAuditDetails(filterAudit, displayedCount);
+            auditDetails["Outcome"] = loaded.Outcome.ToString();
+            auditDetails["DistinctDevices"] = loaded.DistinctCount;
+            auditDetails["Requests"] = loaded.PagesFetched;
+            auditDetails["Ranges"] = loaded.RangesCompleted;
+            auditDetails["Ceiling"] = loaded.Ceiling;
             SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress,
-                "DefenderEndpointDevices_List", DescribeFilters(filters), complete,
+                "DefenderEndpointDevices_List", filterAudit.RequestedFilters, complete,
                 complete ? null : loaded.RefusalReason,
-                extra: new Dictionary<string, object?>
-                {
-                    ["Outcome"] = loaded.Outcome.ToString(),
-                    ["Devices"] = loaded.Devices.Count,
-                    ["DistinctDevices"] = loaded.DistinctCount,
-                    ["Requests"] = loaded.PagesFetched,
-                    ["Ranges"] = loaded.RangesCompleted,
-                    ["Ceiling"] = loaded.Ceiling
-                }));
+                extra: auditDetails));
         }
         catch (Exception ex)
         {
             // The previous run's table is retracted with the error, not left on screen beside it: a
             // stale list rendered next to a failure message reads as the answer to the new request.
             result = null;
+            appliedFilterAudit = null;
             devicePageIndex = 0;
             loadError = ex.Message;
             Logger.LogError(ex, "Failed to list Defender for Endpoint devices.");
 
             SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress,
-                "DefenderEndpointDevices_List", DescribeFilters(filters), false, ex.Message));
+                "DefenderEndpointDevices_List", requestedAudit.RequestedFilters, false, ex.Message,
+                extra: FilterAuditDetails(requestedAudit, 0)));
         }
         finally
         {
@@ -956,7 +964,7 @@
     }
 
     /// <summary>
-    /// The CSV projection - the twenty-seven columns of docs/DefenderEndpointDevices-Plan.md
+    /// The CSV projection - the twenty-nine columns of docs/DefenderEndpointDevices-Plan.md
     /// "CSV export", in that order. Static and argument-fed so tests call it without a page
     /// instance (DhcpAuthorization.razor's BuildCsv is the pattern), and over
     /// <see cref="CsvExport.Write"/> so quoting and spreadsheet-formula neutralisation stay the
@@ -1032,6 +1040,8 @@
     /// </summary>
     private async Task DownloadCsvAsync()
     {
+        var filterAudit = appliedFilterAudit;
+        int? selectedCount = null;
         try
         {
             // Keep selection inside the handled scope too: filtering can fail before CSV work.
@@ -1039,6 +1049,7 @@
             var rows = ExportableDevices;
             if (rows.Count == 0)
                 return;
+            selectedCount = rows.Count;
 
             // Both locals describe the loaded inventory even if a later load replaces result.
             var enrichment = result?.DiscoveryEnrichment ?? DefenderDiscoveryEnrichmentState.NotAttempted;
@@ -1068,7 +1079,8 @@
                 // throwing here would report a completed disclosure as a failed one. SafeAudit logs it
                 // instead, which is the same bargain the listing path makes.
                 SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv",
-                    "DefenderEndpointDevices", $"{rows.Count} rows", true));
+                    "DefenderEndpointDevices", $"{rows.Count} rows", true,
+                    extra: FilterAuditDetails(filterAudit, selectedCount)));
 
                 // Completed BELOW the transfer, the settled order on both worked examples: the base64
                 // push over the SignalR circuit is the last thing the operator waits on. The audit
@@ -1091,8 +1103,13 @@
             csvExportError = "CSV export could not be completed. Try Download CSV again.";
             Logger.LogError("Failed to export Defender for Endpoint devices ({ExceptionType}).",
                 ex.GetType().Name);
+            // A selected count is known after filtering; a failed delivery has no confirmed
+            // exported count. Keep the two facts distinct even when selection itself failed.
+            var auditDetails = FilterAuditDetails(filterAudit, null);
+            auditDetails["SelectedDevices"] = selectedCount.HasValue ? selectedCount.Value : "Unknown";
             SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv",
-                "DefenderEndpointDevices", "Device inventory", false, errorDetail: csvExportError));
+                "DefenderEndpointDevices", "Device inventory", false, errorDetail: csvExportError,
+                extra: auditDetails));
         }
     }
 
@@ -1109,8 +1126,8 @@
     }
 
     /// <summary>
-    /// The filters as one audit-target string, built from the SNAPSHOT rather than from the form,
-    /// so the record names the filter set the service was actually asked for.
+    /// The requested filters, including the two evaluated only after enrichment. Evaluation
+    /// status is recorded separately so an unavailable value cannot masquerade as a match.
     /// </summary>
     /// <remarks>
     /// Only filters that are set are listed, and each is prefixed with the API property it maps to,
@@ -1118,7 +1135,7 @@
     /// because "(any)" is a meaningful answer for it - it is the one filter with a non-empty
     /// default.
     /// </remarks>
-    private static string DescribeFilters(DefenderDeviceFilters filters)
+    private static string DescribeFilters(DefenderDeviceFilters filters, string site, string seenBy)
     {
         var parts = new List<string>
         {
@@ -1138,9 +1155,60 @@
         Add(parts, "lastSeen<", FormatUtc(filters.LastSeenTo));
         Add(parts, "firstSeen>=", FormatUtc(filters.FirstSeenFrom));
         Add(parts, "firstSeen<", FormatUtc(filters.FirstSeenTo));
+        Add(parts, "site~", site);
+        Add(parts, "recentlySeenBy~", seenBy);
 
         return string.Join(", ", parts);
     }
+
+    private sealed record LocationFilterAudit(string Status, int EvaluatedDevices, int UnavailableDevices);
+
+    private sealed record FilterAuditSnapshot(
+        string RequestedFilters,
+        string RequestFiltersEvaluation,
+        LocationFilterAudit SiteFilterEvaluation,
+        LocationFilterAudit SeenByFilterEvaluation,
+        int? InventoryDevices);
+
+    private static FilterAuditSnapshot CreateFilterAudit(
+        DefenderDeviceFilters filters, string site, string seenBy, DefenderDeviceListResult? loaded)
+    {
+        var complete = loaded?.Outcome == DefenderDeviceListOutcome.Complete;
+        return new(DescribeFilters(filters, site, seenBy), complete ? "Evaluated" : "Not completed",
+            DescribeLocationFilter(site, loaded, d => d.Site, true),
+            DescribeLocationFilter(seenBy, loaded, d => d.RecentlySeenBy,
+                loaded?.DiscoveryEnrichment is DefenderDiscoveryEnrichmentState.Succeeded
+                    or DefenderDiscoveryEnrichmentState.PartiallySucceeded),
+            loaded?.Devices.Count);
+    }
+
+    private static LocationFilterAudit DescribeLocationFilter(
+        string requested, DefenderDeviceListResult? loaded, Func<DefenderDevice, string> value, bool evaluated)
+    {
+        if (string.IsNullOrWhiteSpace(requested))
+            return new("Not requested", 0, 0);
+        if (loaded?.Outcome != DefenderDeviceListOutcome.Complete)
+            return new("Not evaluated", 0, 0);
+
+        // Each filter's availability is counted independently over the loaded candidates. A row
+        // whose value is unavailable is retained only if the OTHER filter also permits it.
+        var unavailable = evaluated
+            ? loaded.Devices.Count(d => string.Equals(value(d),
+                DefenderEndpointDeviceService.EnrichmentUnavailable, StringComparison.Ordinal))
+            : loaded.Devices.Count;
+        var known = loaded.Devices.Count - unavailable;
+        return new(unavailable == 0 ? "Evaluated" : known == 0 ? "Unavailable" : "Degraded", known, unavailable);
+    }
+
+    private static Dictionary<string, object?> FilterAuditDetails(FilterAuditSnapshot? snapshot, int? count) => new()
+    {
+        ["RequestedFilters"] = snapshot?.RequestedFilters,
+        ["RequestFiltersEvaluation"] = snapshot?.RequestFiltersEvaluation ?? "Unknown",
+        ["SiteFilterEvaluation"] = snapshot?.SiteFilterEvaluation,
+        ["SeenByFilterEvaluation"] = snapshot?.SeenByFilterEvaluation,
+        ["InventoryDevices"] = snapshot?.InventoryDevices,
+        ["Devices"] = count.HasValue ? count.Value : "Unknown"
+    };
 
     private static void Add(List<string> parts, string name, string value)
     {

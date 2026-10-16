@@ -4715,7 +4715,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DefenderEndpointDevices => new()
     {
         Page = "DefenderEndpointDevices.razor",
-        ExpectedLineCount = 1217,
+        ExpectedLineCount = 1285,
 
         Predicates =
         [

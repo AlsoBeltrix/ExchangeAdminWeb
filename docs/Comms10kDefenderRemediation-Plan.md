@@ -516,7 +516,7 @@ part of this implementation approval.
 | D8 | Implemented / independently reviewed (`a5f17de`) | [cdr-d8](../.agents/review/findings/cdr-d8.md) |
 | D10 | Implemented / independently reviewed (`8baf910`) | [cdr-d10](../.agents/review/findings/cdr-d10.md) |
 | D9 | Implemented / independently reviewed (`15e6531`) | [cdr-d9](../.agents/review/findings/cdr-d9.md) |
-| D4 | Pending | |
+| D4 | Implemented / independent review pending | [cdr-d4](../.agents/review/findings/cdr-d4.md) |
 | D7 | Pending | |
 | D1 | Pending | |
 | D2 | Pending | |

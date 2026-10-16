@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D9 approved; D4 next
+### Comms-10k / Defender remediation - D4 verified; independent review pending
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -17,6 +17,33 @@ Astra workflow review at max. C9, C1, C10, C3, C4 and C11 have independent revie
 `.agents/review/findings/cdr-c4.md` owns its P2 correction closed on coder-side proof.
 The separately approved shared Exchange psl-1 is independently reviewed; its record at
 `.agents/review/findings/psl-1.md` owns the evidence and verdict.
+
+D4 starts on clean master `dc37c7ad87392ee82d4d211ec55e64c382f90153`; live origin
+and github master still match `885397981d7550afebf6518ef21b4fc54b062859`.
+Its page-local applied audit snapshot records requested service/Site/Seen-by
+filters, completed versus degraded/unavailable evaluation, and final displayed/
+exported count. Captured location values publish with their result; export reuses
+that applied snapshot before selection/awaits. Unavailable-row escapes, exact
+selection and D9 safe failures/audit isolation remain. Defender is 1.6.10; base
+remains 2.27.4 and Comms 1.4.18. Known module-spec Version 2.0 / June 25 drift
+remains flagged.
+
+The final eleven-case compiled baseline passes. Seven fresh production probes
+produce 28 intended standard assertion failures with an exact eleven-name union;
+byte/MD5/SHA256/newer-mtime restoration and app/runtime/test/PDB provenance pass.
+A legacy source-only snapshot literal was adapted to the local capture; the new
+compiled cases prove the same behavior. Restored complete affected coverage
+passes 738/738. The final ordered gate passes: Release build with 40 existing
+warnings / 0 errors, full solution format before the one full suite (4,184 passed /
+3 skipped / 0 failed), then diff/staged ASCII including the new test and finding.
+The verified D4 slice now awaits independent Astra max review.
+`.agents/review/findings/cdr-d4.md` owns scope, proof and the complete Constitution
+packet; `.agents/review/out/cdr-d4/` holds ignored actual receipts.
+Do not start D2 until D4's independent disposition. Fourteen originals and psl-1
+remain closed locally; D4 is not yet independently reviewed. No push, deployment,
+live call, self-review or adjacent scope is authorized.
+
+D9 receipt:
 
 D9 implementation started on clean master `1f1b93d89f503b4c37171d547409533b7dcebbf4`;
 both live remote master refs still matched `885397981d7550afebf6518ef21b4fc54b062859`.
@@ -36,7 +63,7 @@ Independent Astra max APPROVED `15e6531` with no actionable findings. It passed
 reconciled proof/gate receipts with 117 checks. Fourteen original findings and
 psl-1 are closed locally; six original Defender findings remain, starting with D4.
 The D9 record owns scope, exact proof, reconciliation and the Constitution packet:
-`.agents/review/findings/cdr-d9.md`. D4 is the next implementation slice. No push, live
+`.agents/review/findings/cdr-d9.md`. D4 follows above. No push, live
 integration, deployment, self-review or adjacent finding work is authorized.
 
 Recovery 2026-10-16: owner said "system restarted. please recover and continue."
