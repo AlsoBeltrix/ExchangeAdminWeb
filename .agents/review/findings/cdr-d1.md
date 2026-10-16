@@ -1,6 +1,6 @@
 # cdr-d1 - open Defender with a ready form and search deliberately
 
-Status: Implemented and locally verified on master, 2026-10-16; independent review pending.
+Status: Implemented and independently APPROVED on master, 2026-10-16 (`568534c`).
 
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, APPROVED Revision 6, D1.
 Owner 2026-10-15: "approved. go." Recovery 2026-10-16: "system restarted. please
@@ -117,6 +117,31 @@ No native Sol token usage or cost is attributed by the Claude-only meter.
   outside this authorization. Compiled renderer coverage does not claim browser
   acceptance. No self-review or independent approval is implied by coder proof.
 
+## Independent review
+
+Fresh native `gpt-6-astra` at max reviewed
+`a4c019255b85d69ddca3d9cd1d9d185d20e78b80..568534c514594e1a2c1b839bcdbb7602cf3faae9`
+and returned **APPROVE**, with no actionable findings. Intent, scope and
+Constitution invariants were checked before the complete page lifecycle,
+Search/result/export workflow, callers, progress, audits and registries.
+
+The independent Release rebuild passed with 38 warnings / 0 errors. Focused
+tests passed **747/747**, including all four compiled lifecycle cases. Its
+**164 evidence checks** reconciled seven regressions / 14 standard failures,
+the exact four-case union, restoration and compiled provenance, all 17 anchors,
+the original 995 affected passes and ordered final gates. The original full
+TRX confirms 4,231 passes / 3 known skips with 4,234 unique execution IDs. The
+receipt-parser failure is distinguished from the completed passing test run;
+the unpersisted numeric child exit remains unknown.
+
+Receipt: `.agents/review/out/cdr-d1/astra-independent/review.md`, with linked
+reconciliation, build, focused TRX and closeout records. Historical mutation
+artifacts were assessed through preserved provenance; the independent focused
+run used freshly rebuilt assemblies. No full-suite or mutation replay, live
+services, browser acceptance or deployment occurred. Final checkout remained
+clean at the reviewed hash, with build servers and review task processes stopped.
+D1 is closed locally; D3 is next, followed by D5.
+
 # Review Packet
 
 ## Mode
@@ -133,7 +158,7 @@ on open, a real initial ready state, preserved default and allowed blank Search.
 Scoped orchestration/authorization: `.agents/decisions.md`, 2026-10-15.
 
 ## Commit Range
-`a4c019255b85d69ddca3d9cd1d9d185d20e78b80..HEAD` (the one D1 commit).
+`a4c019255b85d69ddca3d9cd1d9d185d20e78b80..568534c514594e1a2c1b839bcdbb7602cf3faae9`.
 
 ## Claimed Changes
 - Opening Defender renders an authorized/configured ready form with no inventory

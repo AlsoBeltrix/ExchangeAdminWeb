@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D1 implemented; independent review next
+### Comms-10k / Defender remediation - D1 independently approved; D3 next
 
 D1 starts on clean master `a4c019255b85d69ddca3d9cd1d9d185d20e78b80`; both
 live remote master refs were checked at `eb0d19122f4921eca66e4300efe0605403214e23`
@@ -35,11 +35,18 @@ exit is explicitly unpersisted, with no invented value or redundant suite run.
 Final staged diff/ASCII, exact reconciliation and process-shutdown receipts are
 owned by `.agents/review/findings/cdr-d1.md` and ignored `out/cdr-d1/`.
 
-Next: fresh independent Astra max workflow review of the one D1 commit. No
-independent verdict is implied by coder proof. After that review closes D1,
-continue D3, then D5, each in its separate sequential workflow. Browser/live
-acceptance remains unrun; no push, deployment, self-review or adjacent work is
-authorized. Seventeen original findings and psl-1 were closed before D1.
+Fresh independent Astra max APPROVED `568534c` with no actionable findings.
+Its Release rebuild passed with 38 warnings / 0 errors; focused tests passed
+747/747, including all four compiled lifecycle cases. Independent reconciliation
+passed 164 checks covering regression proof, restoration/provenance, registry
+mapping and the original gates, including the accurately disclosed receipt-parser
+failure and unknown numeric child exit. The finding owns the verdict and receipt.
+The reviewer left a clean checkout with its task/build-server processes stopped.
+
+Eighteen original findings and psl-1 are closed locally. Next: fresh Sol 6.1 max
+implementation of D3, then independent Astra max review; D5 follows in its own
+sequential workflow. Browser/live acceptance remains unrun; no push, deployment,
+self-review or adjacent work is authorized.
 
 ### Prior boundary - D7 P2 closed on coder proof
 
