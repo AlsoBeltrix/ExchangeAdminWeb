@@ -1160,6 +1160,7 @@ public sealed class ModuleCatalog
             // rises from 20000 to 100000.
             // 1.6.9: export failures are handled and safely audited without hiding inventory.
             // 1.6.10: audits bind requested/evaluated filters and final counts to the applied result.
+            // 1.6.14: open with a ready form; search inventory only on deliberate Search.
             // 1.6.13: observe the shared deadline throughout site matching; retain completed sites.
             // 1.6.12: one enrichment deadline and systemic hunting stop retain fetched inventory.
             // 1.6.11: concurrent inventory calls retain their own hunting batch diagnostics.
@@ -1192,7 +1193,7 @@ public sealed class ModuleCatalog
             //        devices "(unavailable)" and never blanks the batches that answered.
             // 1.2.0: device table paged at 50 rows. Rendering all of them killed the circuit.
             //        Paging bounds the DOM only - the CSV still carries the whole matching set.
-            Version = "1.6.13",
+            Version = "1.6.14",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",

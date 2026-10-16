@@ -1268,7 +1268,6 @@ public static class ProgressRegistry
         Exempt =
         [
             new("OnInitializedAsync", AuthPreambleOnly),
-            new("OnAfterRenderAsync", "the initial load is LoadAsync", "LoadAsync"),
             new("ClearFilters", LocalUiState),
             new("ToggleDetail", LocalUiState + "; the device is already in the result set"),
             new("GoToDevicePage", LocalUiState + "; it moves a window over the result set that is "

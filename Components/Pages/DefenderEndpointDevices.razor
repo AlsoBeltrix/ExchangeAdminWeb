@@ -39,7 +39,7 @@
        than beside the results: with no credential there must be no button that could start a call.
        DefenderEndpointDeviceService.ListDevicesAsync THROWS on an unset Secret ID rather than
        returning an empty result, so an ungated control here would render a stack-trace message as
-       the answer. OnAfterRenderAsync carries the same check for the same reason. *@
+       the answer. Opening the page never starts an inventory read. *@
     @if (!DeviceService.IsAvailable)
     {
         <div class="alert alert-danger">
@@ -254,14 +254,14 @@
     }
     else if (result == null)
     {
-        @* The first load runs from OnAfterRenderAsync, so there is a render in which nothing has
-           been asked for yet. Keyed on the absence of a result rather than on isLoading because
-           isLoading cannot be raised in OnInitializedAsync: it is the page's in-flight flag and
-           every raise of it has to sit inside a try whose finally lowers it again. *@
-        @* The in-flight banner is gone - the frame carries "Reading the device inventory"
-           and its elapsed time. The surrounding guard is untouched and still load-bearing. *@
-
-
+        @* The status frame owns in-flight progress; this notice is the ready form before Search. *@
+        @if (!isLoading)
+        {
+            <div class="alert alert-secondary">
+                <strong>No search has been run.</strong>
+                Set the filters you want, then Search.
+            </div>
+        }
     }
     else if (result.Outcome != DefenderDeviceListOutcome.Complete)
     {
@@ -507,13 +507,6 @@
     /// there - because an empty export should start no work.
     /// </summary>
     private bool isDownloadingCsv;
-
-    /// <summary>
-    /// Guards the deferred first load against a second OnAfterRenderAsync. Not a busy signal and
-    /// deliberately not part of IsBusy: it stays true for the life of the circuit, so folding it in
-    /// would disable the page permanently after the first load.
-    /// </summary>
-    private bool loadStarted;
 
     private string currentUser = "";
     private string clientIpAddress = "Unknown";
@@ -865,19 +858,6 @@
         authChecked = true;
     }
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        // authChecked is part of the guard, not decoration: the denied path leaves it false while
-        // NavigateTo is in flight, and an unauthorized visitor must not trigger an API call on the
-        // way out. IsAvailable is the second half - ListDevicesAsync throws on an unset Secret ID,
-        // so an unconfigured module must not reach it at all.
-        if (!firstRender || loadStarted || !authChecked || !DeviceService.IsAvailable)
-            return;
-
-        loadStarted = true;
-        await LoadAsync();
-    }
-
     private async Task LoadAsync()
     {
         // Every filter is operator-writable and the browser's copy of a disabled attribute is one
@@ -952,9 +932,7 @@
         finally
         {
             isLoading = false;
-            // The initial load runs from OnAfterRenderAsync, after which Blazor does NOT
-            // auto-render. Without this the spinner stays up and the Load button stays disabled
-            // even though the data has arrived. Harmless on the button-click path.
+            // Publish the settled result and re-enable controls on every handled search outcome.
             StateHasChanged();
         }
     }

@@ -4693,9 +4693,8 @@ public static class ClickGateRegistry
     /// ServiceHealth.razor raises its own flag. ServiceHealth is unconverted so nothing checks it;
     /// here that shape would be a raise with no try behind it, which is the stuck-flag defect
     /// <see cref="ClickGateTests.EveryRegisteredFlagIsLoweredInAFinally"/> exists for - and with a
-    /// page-wide predicate a stuck flag does not grey one button, it deadens the page. The first
-    /// render's spinner is keyed on <c>result == null</c> instead, which costs nothing because the
-    /// deferred load starts in OnAfterRenderAsync on that same render.
+    /// page-wide predicate a stuck flag does not grey one button, it deadens the page. Opening
+    /// this page leaves a ready form; only Search raises the load flag and starts inventory work.
     /// </para>
     /// <para>
     /// <b>PostAwaitLiveReads has ONE entry for twelve controls, and that is the point.</b> Revision
@@ -4715,7 +4714,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DefenderEndpointDevices => new()
     {
         Page = "DefenderEndpointDevices.razor",
-        ExpectedLineCount = 1293,
+        ExpectedLineCount = 1271,
 
         Predicates =
         [

@@ -8,7 +8,40 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D7 P2 closed on coder proof; D1 next
+### Comms-10k / Defender remediation - D1 implemented; independent review next
+
+D1 starts on clean master `a4c019255b85d69ddca3d9cd1d9d185d20e78b80`; both
+live remote master refs were checked at `eb0d19122f4921eca66e4300efe0605403214e23`
+on 2026-10-16. The automatic first-render inventory load and its single-use flag
+are removed. An authorized/configured page shows a ready form until Search;
+pending, searched-empty and failure states remain distinct. Default
+CanBeOnboarded and deliberate blank Search survive. Both registries are updated:
+1,293 to 1,271 page lines, all 17 anchors mapped by equal opcodes, no twins or
+unmapped anchors; the obsolete first-load Progress exemption is removed.
+Defender is **1.6.14**, base stays 2.27.6 and Comms stays 1.4.18. Existing module
+spec/guide Version 2.0 / June 25 drift remains flagged. D3/D5 are separate slices.
+
+Four actual compiled lifecycle/renderer/Search/service/audit cases pass. Seven
+fresh compiled production regressions yield 14 intended standard assertion
+failures with an exact four-case union, exact-byte/MD5/SHA256/newer-mtime restores
+and fresh app/runtime/test/PDB provenance. Restored affected coverage passes
+995/995. Ordered final Release build passes with 40 warnings / 0 errors, full
+solution format passes before the single full suite (4,231 passed / 3 known
+AD-unavailable skips / 0 failed; 4,234 rows; 5m57s). The passing suite's receipt
+wrapper then rejects three repeated display names. Original logs/TRX remain;
+execution-ID reconciliation proves 4,234 unique executions. Raw notExecuted is
+zero despite three actual NotExecuted rows. The wrapper's lost numeric child
+exit is explicitly unpersisted, with no invented value or redundant suite run.
+Final staged diff/ASCII, exact reconciliation and process-shutdown receipts are
+owned by `.agents/review/findings/cdr-d1.md` and ignored `out/cdr-d1/`.
+
+Next: fresh independent Astra max workflow review of the one D1 commit. No
+independent verdict is implied by coder proof. After that review closes D1,
+continue D3, then D5, each in its separate sequential workflow. Browser/live
+acceptance remains unrun; no push, deployment, self-review or adjacent work is
+authorized. Seventeen original findings and psl-1 were closed before D1.
+
+### Prior boundary - D7 P2 closed on coder proof
 
 Independent Astra max returned CHANGES REQUIRED for `421588e`, exactly one P2:
 the shared deadline is not observed after the captured site-read continuation or
