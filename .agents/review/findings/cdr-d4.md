@@ -1,6 +1,6 @@
 # cdr-d4 - audit the applied Defender filter result
 
-Status: Implemented and verified on master; independent Astra review pending, 2026-10-16.
+Status: Implemented and independently APPROVED on master, 2026-10-16.
 
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, APPROVED Revision 6, D4.
 Owner 2026-10-15: "approved. go." Recovery 2026-10-16: "system restarted. please
@@ -300,3 +300,28 @@ were not run. The minimal renderer supports handler lifecycle only and does not
 establish whole-page rendering. The established Claude-only token meter ran with
 the committed baseline; it does not measure this native Sol session, so no native
 usage or cost is attributed. Fresh independent Astra max review is still owed.
+
+## Independent workflow review - APPROVED, 2026-10-16
+
+Fresh native `gpt-6-astra` at `max` reviewed immutable range
+`dc37c7ad87392ee82d4d211ec55e64c382f90153..600914a358461654c9c10c914618ca9269997a64`.
+Verdict: **APPROVED**, no actionable D4 findings. Intent and scope matched the
+approved plan; the full lookup/filter/display/export/audit lifecycle was traced.
+
+Before rebuilding, 149 independent evidence checks passed: all eleven baseline
+cases, seven reconstructed mutations and 28 actual assertion failures, exact-name
+union, restoration hashes/timestamps, binary/PDB provenance, seventeen registry
+anchors and sequential final gates, including 4,184 passed / 3 skipped.
+Independent focused tests then passed 738/738. A compiled workflow probe passed
+47 scenarios and 646 assertions, including actual generated export events and
+JSONL audits, filter availability combinations, all requested audit fields,
+pagination, and complete/refused/thrown replacement loads during successful or
+failed delivery. Exported rows remained independent of the viewport, and audit
+failure preserved delivered success. The probe's initial unconfigured fixture
+was corrected with an isolated config stub; no production change was required.
+
+Ignored receipts are `.agents/review/out/cdr-d4/astra-review.md` and
+`astra-checks.json`, with the focused/probe evidence alongside them. No full-suite
+repeat, browser acceptance or live integration check occurred. Checkout/index
+remained clean at the reviewed hash; no task process remained and build servers
+were stopped. D4 is closed locally; D2 is next in the approved sequence.

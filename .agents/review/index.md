@@ -53,7 +53,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [cdr-d8](findings/cdr-d8.md) | MEDIUM - numeric OS builds disappear and escaped site names are truncated | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [v] | [cdr-d10](findings/cdr-d10.md) | MEDIUM - malformed entries make a capped device page appear complete | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [v] | [cdr-d9](findings/cdr-d9.md) | MEDIUM - export failures escape without a handled result or failed audit | Verified on master; push pending | master | native / gpt-6-astra / max |
-| [~] | [cdr-d4](findings/cdr-d4.md) | MEDIUM - inventory/export audits omit applied location filters, degradation and final counts | Implemented/verified; independent review pending | master | native / gpt-6-astra / max (pending) |
+| [v] | [cdr-d4](findings/cdr-d4.md) | MEDIUM - inventory/export audits omit applied location filters, degradation and final counts | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [ ] | [cdr-followup-1](findings/cdr-followup-1.md) | LOW - resolve-stage prose compares member count with address count | Recorded follow-up; not approved | - | native / gpt-6-astra / max |
 | [v] | [psl-1](findings/psl-1.md) | HIGH - failed optional Exchange command can replay in the next calendar-permission operation | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [ ] | [psl-2](findings/psl-2.md) | MEDIUM - licensing failure can select an earlier row's error | Recorded follow-up; not approved | - | native / gpt-6-astra / max audit |

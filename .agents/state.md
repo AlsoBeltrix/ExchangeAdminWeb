@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D4 verified; independent review pending
+### Comms-10k / Defender remediation - D4 approved; D2 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -36,11 +36,13 @@ compiled cases prove the same behavior. Restored complete affected coverage
 passes 738/738. The final ordered gate passes: Release build with 40 existing
 warnings / 0 errors, full solution format before the one full suite (4,184 passed /
 3 skipped / 0 failed), then diff/staged ASCII including the new test and finding.
-The verified D4 slice now awaits independent Astra max review.
+Independent Astra max APPROVED `600914a` with no actionable findings, passing
+738/738 focused tests and 47 compiled scenarios / 646 assertions. Its 149 evidence
+checks reconciled the proof, provenance, registry anchors and full gate receipts.
 `.agents/review/findings/cdr-d4.md` owns scope, proof and the complete Constitution
 packet; `.agents/review/out/cdr-d4/` holds ignored actual receipts.
-Do not start D2 until D4's independent disposition. Fourteen originals and psl-1
-remain closed locally; D4 is not yet independently reviewed. No push, deployment,
+Fifteen originals and psl-1 are closed locally; five original Defender findings
+remain, starting with D2, then D7, D1, D3 and D5. No push, deployment,
 live call, self-review or adjacent scope is authorized.
 
 D9 receipt:
@@ -60,8 +62,8 @@ bytes remained identical and a separately named fresh formatted fixed run passed
 skipped / 0 failed), then staged diff/ASCII checks including the new test file.
 Independent Astra max APPROVED `15e6531` with no actionable findings. It passed
 727/727 focused tests and thirteen renderer scenarios / 173 assertions, and
-reconciled proof/gate receipts with 117 checks. Fourteen original findings and
-psl-1 are closed locally; six original Defender findings remain, starting with D4.
+reconciled proof/gate receipts with 117 checks. At that boundary fourteen original
+findings and psl-1 were closed locally; D4's later approval is recorded above.
 The D9 record owns scope, exact proof, reconciliation and the Constitution packet:
 `.agents/review/findings/cdr-d9.md`. D4 follows above. No push, live
 integration, deployment, self-review or adjacent finding work is authorized.
