@@ -1235,7 +1235,10 @@ public static class ProgressRegistry
         Page = "DefenderEndpointDevices.razor",
         Reports =
         [
-            new("LoadAsync", "DeviceService.ListDevicesAsync"),
+            new("LoadAsync", ["DeviceService.ListDevicesAsync"],
+                "includes inventory and its single bounded enrichment wait; the service owns "
+                + "the shared deadline through credential setup, hunting and site admission. "
+                + "Cancellation returns inventory while the admitted directory worker retains cleanup"),
             new("DownloadCsvAsync",
                 [
                     "BuildCsv(",

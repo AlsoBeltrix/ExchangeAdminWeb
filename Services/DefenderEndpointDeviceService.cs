@@ -30,14 +30,14 @@ public sealed class DefenderEndpointDeviceService
     private readonly DelineaService? _delineaService;
     private readonly IHttpClientFactory? _httpClientFactory;
     private readonly Func<Task<DefenderApiClient?>> _apiClientFactory;
-    private readonly Func<Task<DefenderApiClient?>> _huntingClientFactory;
+    private readonly Func<CancellationToken, Task<DefenderApiClient?>> _huntingClientFactory;
 
     /// <summary>
     /// The forest's subnet-to-site map. Null only in tests that are not about location.
     /// </summary>
     /// <remarks>
     /// A read failure marks every Site cell unavailable and is reported independently, leaving
-    /// the device inventory usable. See ApplySites and the 2026-10-14 owner decision.
+    /// the device inventory usable. See ApplySitesAsync and the 2026-10-14 owner decision.
     /// </remarks>
     private readonly AdSiteDirectory? _siteDirectory;
     private readonly string? _maxDevicesOverride;
@@ -96,6 +96,9 @@ public sealed class DefenderEndpointDeviceService
     /// slow and would test the fixture as much as the code.
     /// </remarks>
     internal int HuntingBatchSizeOverride { get; init; }
+
+    internal static readonly TimeSpan DefaultEnrichmentDeadline = TimeSpan.FromMinutes(4);
+    internal TimeProvider EnrichmentTimeProvider { get; init; } = TimeProvider.System;
 
     private int EffectiveHuntingBatchSize =>
         HuntingBatchSizeOverride > 0 ? HuntingBatchSizeOverride : HuntingBatchSize;
@@ -283,14 +286,16 @@ public sealed class DefenderEndpointDeviceService
         Func<Task<DefenderApiClient?>>? huntingClientFactory = null,
         string? includeDiscoverySourcesOverride = null,
         int? pageSizeOverride = null,
-        AdSiteDirectory? siteDirectory = null)
+        AdSiteDirectory? siteDirectory = null,
+        Func<CancellationToken, Task<DefenderApiClient?>>? cancellableHuntingClientFactory = null)
     {
         _apiClientFactory = apiClientFactory;
         // Null leaves the Site column blank rather than failing: a test about paging or
         // enrichment should not have to stand up a directory to run.
         _siteDirectory = siteDirectory;
         _maxDevicesOverride = maxDevicesOverride;
-        _huntingClientFactory = huntingClientFactory ?? (() => Task.FromResult<DefenderApiClient?>(null));
+        _huntingClientFactory = cancellableHuntingClientFactory
+            ?? (_ => huntingClientFactory?.Invoke() ?? Task.FromResult<DefenderApiClient?>(null));
         _includeDiscoverySourcesOverride = includeDiscoverySourcesOverride;
         _pageSizeOverride = pageSizeOverride;
     }
@@ -317,13 +322,14 @@ public sealed class DefenderEndpointDeviceService
     /// client secret keeps failing until the app pool recycles. Two reads of a cached-token Secret
     /// Server client, once per operator click, is the cheaper side of that trade.
     /// </remarks>
-    private async Task<DefenderApiClient?> GetHuntingClientAsync() =>
+    private async Task<DefenderApiClient?> GetHuntingClientAsync(CancellationToken cancellationToken) =>
         await BuildClientAsync(
             DefenderApiClient.GraphBaseUrl,
             DefenderApiClient.GraphTokenScope,
-            HuntingHttpClientName);
+            HuntingHttpClientName, cancellationToken);
 
-    private async Task<DefenderApiClient?> BuildClientAsync(string baseUrl, string tokenScope, string httpClientName)
+    private async Task<DefenderApiClient?> BuildClientAsync(string baseUrl, string tokenScope, string httpClientName,
+        CancellationToken cancellationToken = default)
     {
         if (_moduleConfig == null || _delineaService == null || _httpClientFactory == null)
             return null;
@@ -333,7 +339,7 @@ public sealed class DefenderEndpointDeviceService
             throw new InvalidOperationException(
                 "Defender for Endpoint Devices is not configured. Set Graph App Delinea Secret ID in Module Config.");
 
-        var fields = await _delineaService.GetSecretFieldsAsync(secretId);
+        var fields = await _delineaService.GetSecretFieldsAsync(secretId, cancellationToken);
         if (fields == null)
             throw new InvalidOperationException(
                 $"Cannot retrieve the Defender for Endpoint Devices app secret {secretId} from Secret Server. "
@@ -545,12 +551,13 @@ public sealed class DefenderEndpointDeviceService
         // independent of the listing's success: a 403, a 429 or a timeout here leaves every device
         // row above fully rendered and turns five columns into "(unavailable)" with a reason. It
         // must never take the page down, and it must never leave those columns merely blank.
+        using var enrichmentBudget = new CancellationTokenSource(DefaultEnrichmentDeadline, EnrichmentTimeProvider);
         var enrichment = devices.Count == 0
             ? DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.NoDevices)
-            : await GetDiscoveryEnrichmentAsync(devices.Select(d => d.Id).ToList());
+            : await GetDiscoveryEnrichmentAsync(devices.Select(d => d.Id).ToList(), enrichmentBudget.Token);
 
         ApplyEnrichment(devices, enrichment);
-        var siteMapRead = ApplySites(devices);
+        var siteMapRead = await ApplySitesAsync(devices, enrichmentBudget.Token);
 
         return DefenderDeviceListResult.CompleteRun(
             devices,
@@ -563,7 +570,11 @@ public sealed class DefenderEndpointDeviceService
             enrichment.FailedBatches,
             enrichment.TotalBatches,
             siteMapRead,
-            enrichment.ObserverFailedBatches);
+            enrichment.ObserverFailedBatches,
+            enrichment.AttemptedBatches,
+            enrichment.ObserverAttemptedBatches,
+            enrichment.ObserverReason,
+            enrichmentBudget.IsCancellationRequested ? DefenderDiscoveryReasons.DeadlineReached : enrichment.StopReason);
     }
 
     /// <summary>
@@ -833,107 +844,123 @@ public sealed class DefenderEndpointDeviceService
     /// per device. Observer enrichment uses its own separately isolated request per batch.
     /// </para>
     /// </remarks>
-    internal async Task<DefenderDiscoveryEnrichment> GetDiscoveryEnrichmentAsync(IReadOnlyList<string> deviceIds)
+    internal async Task<DefenderDiscoveryEnrichment> GetDiscoveryEnrichmentAsync(
+        IReadOnlyList<string> deviceIds, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(deviceIds);
-
         if (!IncludeDiscoverySources)
             return DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.SwitchedOff);
 
-        DefenderApiClient? client;
-        try
-        {
-            client = await _huntingClientFactory();
-        }
-        catch (Exception ex) when (IsHuntingSideFailure(ex))
-        {
-            // BuildClientAsync throws three ways - no Secret ID configured, the secret unreadable,
-            // the fields incomplete - and the Secret Server call it makes can fail on its own. None
-            // of those is a fact about the device list, which has ALREADY completed by the time this
-            // runs. The reason is the fixed constant and never ex.Message: those messages name a
-            // Secret ID and a Secret Server condition, and this string is rendered to an operator.
-            return DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.CredentialsUnavailable);
-        }
-
-        if (client == null)
-            return DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.CredentialsUnavailable);
-
-        // An id this module cannot vouch for is never interpolated into KQL. It is dropped here
-        // and lands in unavailable below, so the device says so rather than showing a blank.
         var safeIds = deviceIds.Where(IsSafeDeviceId).ToList();
-        var unsafeIds = deviceIds.Where(id => !IsSafeDeviceId(id)).ToList();
-
         var batches = Chunk(safeIds, EffectiveHuntingBatchSize).ToList();
         if (batches.Count == 0)
             return DefenderDiscoveryEnrichment.Failed(DefenderDiscoveryReasons.MalformedResponse);
 
         var rows = new Dictionary<string, DefenderDeviceDiscovery>(StringComparer.OrdinalIgnoreCase);
-        var unavailable = new HashSet<string>(unsafeIds, StringComparer.OrdinalIgnoreCase);
-        var failedBatches = 0;
-        var lastFailureReason = "";
+        var unavailable = new HashSet<string>(deviceIds.Where(id => !IsSafeDeviceId(id)), StringComparer.OrdinalIgnoreCase);
+        var observerUnavailable = new HashSet<string>(unavailable, StringComparer.OrdinalIgnoreCase);
+        var attempted = 0;
+        var failed = 0;
+        var observerAttempted = 0;
+        var observerFailed = 0;
+        var reason = unavailable.Count > 0 ? DefenderDiscoveryReasons.MalformedResponse : "";
+        var observerReason = "";
+        var stopReason = "";
 
-        // Tracked apart from the posture failures above: the two can fail independently and a
-        // device may have real posture columns and an unavailable observer, or the reverse.
-        var observerUnavailable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var observerFailedBatches = 0;
+        DefenderDiscoveryEnrichment Finish()
+        {
+            // Every not-started batch is explicitly unavailable. Counts describe actual work;
+            // no failed request is invented for a batch that was never attempted.
+            foreach (var batch in batches.Skip(attempted))
+                foreach (var id in batch)
+                {
+                    unavailable.Add(id);
+                    observerUnavailable.Add(id);
+                }
+            return DefenderDiscoveryEnrichment.FromRun(rows, unavailable, observerUnavailable,
+                batches.Count, attempted, failed, observerAttempted, observerFailed,
+                reason, observerReason, stopReason);
+        }
+
+        DefenderApiClient? client;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            client = await _huntingClientFactory(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            reason = stopReason = DefenderDiscoveryReasons.DeadlineReached;
+            return Finish();
+        }
+        catch (Exception ex) when (IsHuntingSideFailure(ex))
+        {
+            reason = stopReason = DefenderDiscoveryReasons.CredentialsUnavailable;
+            return Finish();
+        }
+        if (client == null)
+        {
+            reason = stopReason = DefenderDiscoveryReasons.CredentialsUnavailable;
+            return Finish();
+        }
 
         foreach (var batch in batches)
         {
-            // Per batch, not per run. Known Failure Class 2: this loop is the aggregation point,
-            // and the rule is that one batch's failure must neither blank the batches that
-            // answered nor let the run claim the column is complete.
-            var posture = await TryEnrichBatchAsync(client, batch, rows);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                reason = stopReason = DefenderDiscoveryReasons.DeadlineReached;
+                break;
+            }
+            attempted++;
+            var posture = await TryEnrichBatchAsync(client, batch, rows, cancellationToken);
             if (!posture.Succeeded)
             {
-                failedBatches++;
-                lastFailureReason = posture.Reason;
+                failed++;
+                reason = posture.Reason;
                 foreach (var id in batch)
+                {
                     unavailable.Add(id);
-
-                // The observer pass is skipped for a batch whose posture pass already failed:
-                // its devices are marked unavailable either way, and a second doomed request
-                // per failed batch doubles the cost of an outage for no information.
+                    observerUnavailable.Add(id);
+                }
+                if (posture.StopHunting)
+                {
+                    stopReason = posture.Reason;
+                    break;
+                }
                 continue;
             }
 
-            // Separate request, separate failure. SeenBy() may be unsupported or shaped
-            // differently per tenant, and the five columns above are known to work - so this
-            // one's failure marks only the observer column, never theirs.
-            var observers = await TryReadObserversAsync(client, batch, rows);
+            HuntingBatchResult observers;
+            if (cancellationToken.IsCancellationRequested)
+            {
+                observers = new(false, DefenderDiscoveryReasons.DeadlineReached, true);
+            }
+            else
+            {
+                observerAttempted++;
+                observers = await TryReadObserversAsync(client, batch, rows, cancellationToken);
+                if (!observers.Succeeded)
+                    observerFailed++;
+            }
             if (!observers.Succeeded)
             {
-                observerFailedBatches++;
+                observerReason = observers.Reason;
                 foreach (var id in batch)
                     observerUnavailable.Add(id);
+                if (observers.StopHunting)
+                {
+                    stopReason = observers.Reason;
+                    // Preserve posture and its reason, even when the final observer stops.
+                    break;
+                }
             }
         }
-
-        if (failedBatches == batches.Count)
-            return DefenderDiscoveryEnrichment.Failed(lastFailureReason, batches.Count);
-
-        if (failedBatches > 0 || unavailable.Count > 0)
-        {
-            return DefenderDiscoveryEnrichment.PartiallySucceeded(
-                rows,
-                unavailable,
-                // An unsafe id is a failure of this run even though no batch carried it, so the
-                // count is never zero here - PartiallySucceeded rejects a zero.
-                Math.Max(failedBatches, 1),
-                Math.Max(batches.Count, 2),
-                failedBatches > 0 ? lastFailureReason : DefenderDiscoveryReasons.MalformedResponse,
-                observerUnavailable,
-                // Carried on this path too. Dropping it here meant a run where one posture
-                // batch AND a different observer lookup failed showed "(unavailable)" in the
-                // observer column with no banner - the count was zero, so nothing rendered.
-                observerFailedBatches);
-        }
-
-        return DefenderDiscoveryEnrichment.Succeeded(
-            rows, batches.Count, observerUnavailable, observerFailedBatches);
+        return Finish();
     }
 
     /// <summary>A batch's outcome and safe diagnostic belong to its call, including across awaits.</summary>
-    private sealed record HuntingBatchResult(bool Succeeded, string Reason);
+    private sealed record HuntingBatchResult(bool Succeeded, string Reason, bool StopHunting = false);
 
     /// <summary>
     /// Runs one hunting batch and merges its rows, returning its outcome and safe failure reason.
@@ -953,13 +980,22 @@ public sealed class DefenderEndpointDeviceService
     private async Task<HuntingBatchResult> TryEnrichBatchAsync(
         DefenderApiClient client,
         IReadOnlyList<string> batch,
-        Dictionary<string, DefenderDeviceDiscovery> into)
+        Dictionary<string, DefenderDeviceDiscovery> into,
+        CancellationToken cancellationToken)
     {
         DefenderApiResult response;
         try
         {
             response = await client.PostWithStatusAsync(
-                HuntingEndpoint, new { Query = BuildHuntingQuery(batch) });
+                HuntingEndpoint, new { Query = BuildHuntingQuery(batch) }, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new(false, DefenderDiscoveryReasons.DeadlineReached, true);
+        }
+        catch (DefenderAuthenticationException ex)
+        {
+            return new(false, DefenderDiscoveryReasons.SendFailed, ex.StopHunting);
         }
         catch (Exception ex) when (IsHuntingSideFailure(ex))
         {
@@ -967,7 +1003,8 @@ public sealed class DefenderEndpointDeviceService
         }
 
         if (response.Document == null)
-            return new(false, DescribeEnrichmentFailure(response));
+            return new(false, DescribeEnrichmentFailure(response),
+                response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden);
 
         using var document = response.Document;
 
@@ -993,13 +1030,22 @@ public sealed class DefenderEndpointDeviceService
     private async Task<HuntingBatchResult> TryReadObserversAsync(
         DefenderApiClient client,
         IReadOnlyList<string> batch,
-        Dictionary<string, DefenderDeviceDiscovery> into)
+        Dictionary<string, DefenderDeviceDiscovery> into,
+        CancellationToken cancellationToken)
     {
         DefenderApiResult response;
         try
         {
             response = await client.PostWithStatusAsync(
-                HuntingEndpoint, new { Query = BuildObserverQuery(batch) });
+                HuntingEndpoint, new { Query = BuildObserverQuery(batch) }, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new(false, DefenderDiscoveryReasons.DeadlineReached, true);
+        }
+        catch (DefenderAuthenticationException ex)
+        {
+            return new(false, DefenderDiscoveryReasons.SendFailed, ex.StopHunting);
         }
         catch (Exception ex) when (IsHuntingSideFailure(ex))
         {
@@ -1007,7 +1053,8 @@ public sealed class DefenderEndpointDeviceService
         }
 
         if (response.Document == null)
-            return new(false, DescribeEnrichmentFailure(response));
+            return new(false, DescribeEnrichmentFailure(response),
+                response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden);
 
         using var document = response.Document;
 
@@ -1113,9 +1160,8 @@ public sealed class DefenderEndpointDeviceService
     ///   Secret Server read. On the POST side the client already converts one into the TimedOut
     ///   reason, so this entry only bites on the factory.</description></item>
     /// </list>
-    /// Catching TaskCanceledException is safe here only because no CancellationToken is plumbed
-    /// through this call chain, so it cannot be a caller's cancellation being swallowed. If one is
-    /// ever added, this entry has to be revisited.
+    /// Requested cancellation is handled before this filter, at the orchestration boundary.
+    /// TaskCanceledException here retains the independent HTTP-timeout behavior.
     /// </para>
     /// </remarks>
     private static bool IsHuntingSideFailure(Exception ex) =>
@@ -1156,7 +1202,7 @@ public sealed class DefenderEndpointDeviceService
     /// </para>
     /// <para>Returns whether the map was read, which the caller reports.</para>
     /// </remarks>
-    private bool ApplySites(List<DefenderDevice> devices)
+    private async Task<bool> ApplySitesAsync(List<DefenderDevice> devices, CancellationToken cancellationToken)
     {
         if (_siteDirectory is null)
             return true;
@@ -1170,7 +1216,7 @@ public sealed class DefenderEndpointDeviceService
         IReadOnlyList<AdSiteSubnetMap.Subnet> subnets;
         try
         {
-            subnets = _siteDirectory.ReadSubnets();
+            subnets = await _siteDirectory.ReadSubnetsAsync(cancellationToken);
         }
         catch (Exception)
         {

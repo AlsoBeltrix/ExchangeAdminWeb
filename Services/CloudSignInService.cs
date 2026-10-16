@@ -311,7 +311,7 @@ public sealed class CloudSignInService
         {
             _logger?.LogDebug(ex, "True last logon: the signInActivity query threw.");
             return (CloudSignInAnswer.DidNotAnswer,
-                $"The signInActivity query could not be completed ({ex.GetType().Name}). "
+                $"The signInActivity query could not be completed ({SafeFailureType(ex)}). "
                 + "That is a failed check, not an absence of sign-ins.");
         }
     }
@@ -385,7 +385,7 @@ public sealed class CloudSignInService
             var kind = nonInteractive ? "non-interactive" : "interactive";
             _logger?.LogDebug(ex, "True last logon: the {Kind} sign-in log query threw.", kind);
             return (CloudSignInAnswer.DidNotAnswer, null,
-                $"The {kind} sign-in log query could not be completed ({ex.GetType().Name}). "
+                $"The {kind} sign-in log query could not be completed ({SafeFailureType(ex)}). "
                 + "That is a failed check, not an absence of sign-ins.");
         }
     }
@@ -518,6 +518,10 @@ public sealed class CloudSignInService
     }
 
     private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    // Defender's internal auth classification must not change this shared caller's safe error.
+    private static string SafeFailureType(Exception exception) => exception is DefenderAuthenticationException
+        ? nameof(InvalidOperationException) : exception.GetType().Name;
 
     private static CloudSignInDetail? Newer(CloudSignInDetail? a, CloudSignInDetail? b)
     {

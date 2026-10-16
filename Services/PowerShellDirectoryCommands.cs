@@ -20,15 +20,30 @@ namespace ExchangeAdminWeb.Services;
 /// Runs under the app pool's ambient identity - a read-only group lookup does not need the
 /// protected-principal directory-read secret (.agents/decisions.md 2026-07-31).
 /// </remarks>
-public sealed class PowerShellDirectoryCommands : ISectionAccessDirectoryCommands
+public sealed class PowerShellDirectoryCommands : ICancellableDirectoryCommands
 {
     private readonly Lazy<Runspace> _runspace;
+    private readonly object _lifecycle = new();
+    private PowerShell? _activeCommand;
+    private Task? _stopTask;
+    private bool _stopRequested;
 
     public PowerShellDirectoryCommands() => _runspace = new Lazy<Runspace>(CreateRunspace);
 
+    internal PowerShellDirectoryCommands(Func<Runspace> runspaceFactory) =>
+        _runspace = new Lazy<Runspace>(runspaceFactory);
+
     /// <inheritdoc />
     public DirectoryCommandOutcome Invoke(string command, IReadOnlyDictionary<string, object?> parameters)
+        => InvokeCore(command, parameters, CancellationToken.None, cancellable: false);
+
+    public DirectoryCommandOutcome Invoke(string command, IReadOnlyDictionary<string, object?> parameters,
+        CancellationToken cancellationToken) => InvokeCore(command, parameters, cancellationToken, cancellable: true);
+
+    private DirectoryCommandOutcome InvokeCore(string command, IReadOnlyDictionary<string, object?> parameters,
+        CancellationToken cancellationToken, bool cancellable)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace.Value;
 
@@ -36,7 +51,42 @@ public sealed class PowerShellDirectoryCommands : ISectionAccessDirectoryCommand
         foreach (var (name, value) in parameters)
             cmd.AddParameter(name, value);
 
-        var results = ps.Invoke();
+        IEnumerable<PSObject> results;
+        if (!cancellable)
+        {
+            results = ps.Invoke();
+        }
+        else
+        {
+            try
+            {
+                IAsyncResult invocation;
+                lock (_lifecycle)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (_stopRequested)
+                        throw new OperationCanceledException(cancellationToken);
+                    // BeginInvoke and stop admission share this short lock. A stop that wins
+                    // cannot be followed by a newly started command.
+                    invocation = ps.BeginInvoke();
+                    _activeCommand = ps;
+                }
+                results = ps.EndInvoke(invocation);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            finally
+            {
+                Task? stop;
+                lock (_lifecycle)
+                {
+                    _activeCommand = null;
+                    stop = _stopTask;
+                }
+                // Worker cleanup only. The canceled response never awaits this or Dispose.
+                try { stop?.GetAwaiter().GetResult(); }
+                catch (Exception) { /* Stop failure is observed; invocation owns its result. */ }
+            }
+        }
 
         // Read the error stream BEFORE clearing anything: rows and an error are independent, and
         // the caller needs both to tell a partial failure from an empty answer.
@@ -52,6 +102,20 @@ public sealed class PowerShellDirectoryCommands : ISectionAccessDirectoryCommand
         var rows = results.Select(ToDirectoryObject).ToList();
 
         return new DirectoryCommandOutcome(rows, error);
+    }
+
+    public void RequestStop()
+    {
+        lock (_lifecycle)
+        {
+            _stopRequested = true;
+            if (_activeCommand is not { } command || _stopTask is not null)
+                return;
+
+            // Even stop initiation stays off the response cancellation path. Retain the
+            // PowerShell until this task and the invocation complete, then dispose on worker.
+            _stopTask = Task.Run(() => command.StopAsync(null, null));
+        }
     }
 
     /// <inheritdoc />
@@ -107,7 +171,15 @@ public sealed class PowerShellDirectoryCommands : ISectionAccessDirectoryCommand
         iss.ImportPSModule("ActiveDirectory");
 
         var runspace = RunspaceFactory.CreateRunspace(iss);
-        runspace.Open();
-        return runspace;
+        try
+        {
+            runspace.Open();
+            return runspace;
+        }
+        catch
+        {
+            runspace.Dispose();
+            throw;
+        }
     }
 }

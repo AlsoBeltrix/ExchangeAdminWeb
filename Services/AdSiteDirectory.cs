@@ -28,6 +28,8 @@ namespace ExchangeAdminWeb.Services;
 public sealed class AdSiteDirectory
 {
     private readonly Func<ISectionAccessDirectoryCommands> _commandsFactory;
+    private readonly SemaphoreSlim _workerAdmission = new(1, 1);
+    internal TaskScheduler WorkerScheduler { get; init; } = TaskScheduler.Default;
 
     public AdSiteDirectory(Func<ISectionAccessDirectoryCommands> commandsFactory)
     {
@@ -43,8 +45,57 @@ public sealed class AdSiteDirectory
     public IReadOnlyList<AdSiteSubnetMap.Subnet> ReadSubnets()
     {
         using var commands = _commandsFactory();
+        return ReadSubnets(commands, CancellationToken.None);
+    }
 
-        var rootDse = commands.Invoke("Get-ADRootDSE", new Dictionary<string, object?>
+    /// <summary>
+    /// Bounds the caller's wait. A canceled native worker retains admission and owns cleanup
+    /// until it really finishes; repeated searches cannot accumulate abandoned runspaces.
+    /// </summary>
+    public async Task<IReadOnlyList<AdSiteSubnetMap.Subnet>> ReadSubnetsAsync(CancellationToken cancellationToken = default)
+    {
+        await _workerAdmission.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var worker = Task.Factory.StartNew(() =>
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                using var commands = _commandsFactory();
+                using var registration = cancellationToken.Register(() =>
+                {
+                    if (commands is ICancellableDirectoryCommands cancellable)
+                        cancellable.RequestStop();
+                });
+                return ReadSubnets(commands, cancellationToken);
+            }
+            finally
+            {
+                // Includes command disposal, which can itself block in native cleanup.
+                _workerAdmission.Release();
+            }
+        }, CancellationToken.None, TaskCreationOptions.DenyChildAttach, WorkerScheduler);
+
+        // Observe eventual failure even after the response has stopped awaiting the worker.
+        _ = worker.ContinueWith(task => _ = task.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return await worker.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static IReadOnlyList<AdSiteSubnetMap.Subnet> ReadSubnets(
+        ISectionAccessDirectoryCommands commands, CancellationToken cancellationToken)
+    {
+        DirectoryCommandOutcome Invoke(string command, IReadOnlyDictionary<string, object?> parameters)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = commands is ICancellableDirectoryCommands cancellable
+                ? cancellable.Invoke(command, parameters, cancellationToken)
+                : commands.Invoke(command, parameters);
+            cancellationToken.ThrowIfCancellationRequested();
+            return result;
+        }
+
+        var rootDse = Invoke("Get-ADRootDSE", new Dictionary<string, object?>
         {
             ["ErrorAction"] = "Stop"
         });
@@ -55,7 +106,7 @@ public sealed class AdSiteDirectory
 
         // One query for every subnet, not one per device. A 27,000-device report against 531
         // subnets is one directory read; per-device lookups would be 27,000.
-        var subnets = commands.Invoke("Get-ADObject", new Dictionary<string, object?>
+        var subnets = Invoke("Get-ADObject", new Dictionary<string, object?>
         {
             ["SearchBase"] = $"CN=Subnets,CN=Sites,{configNc}",
             ["LDAPFilter"] = "(objectClass=subnet)",

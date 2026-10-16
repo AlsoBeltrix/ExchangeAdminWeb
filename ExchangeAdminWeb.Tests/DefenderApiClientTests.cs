@@ -86,7 +86,7 @@ public class DefenderApiClientTests
         // its constructor argument cannot produce this value.
         var (client, handler) = CreateClient(scope: "https://example.invalid/.default");
 
-        await client.GetWithStatusAsync("/api/machines");
+        await client.GetWithStatusAsync("/api/machines", cancellationToken: TestContext.Current.CancellationToken);
 
         var body = Assert.Single(handler.TokenRequestBodies);
         Assert.Contains("scope=" + Uri.EscapeDataString("https://example.invalid/.default"), body);
@@ -98,7 +98,7 @@ public class DefenderApiClientTests
     {
         var (client, handler) = CreateClient();
 
-        await client.GetWithStatusAsync("/api/machines");
+        await client.GetWithStatusAsync("/api/machines", cancellationToken: TestContext.Current.CancellationToken);
 
         var body = Assert.Single(handler.TokenRequestBodies);
         Assert.Contains("scope=" + Uri.EscapeDataString(DefenderApiClient.DefenderTokenScope), body);
@@ -111,8 +111,8 @@ public class DefenderApiClientTests
         // all. Defeated by asserting exactly one token request, not zero.
         var (client, handler) = CreateClient();
 
-        await client.GetWithStatusAsync("/api/machines");
-        await client.GetWithStatusAsync("/api/machines");
+        await client.GetWithStatusAsync("/api/machines", cancellationToken: TestContext.Current.CancellationToken);
+        await client.GetWithStatusAsync("/api/machines", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(2, handler.RequestUrls.Count);
         Assert.Single(handler.TokenRequestBodies);
@@ -126,7 +126,7 @@ public class DefenderApiClientTests
     {
         var (client, handler) = CreateClient();
 
-        await client.GetWithStatusAsync("/api/machines?$top=5");
+        await client.GetWithStatusAsync("/api/machines?$top=5", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal("https://api.security.microsoft.com/api/machines?$top=5", Assert.Single(handler.RequestUrls));
     }
@@ -143,7 +143,7 @@ public class DefenderApiClientTests
         const string NextLink =
             "https://api.security.microsoft.com/api/machines?$top=2&$skiptoken=a%2Bb%2Fc%3D%3D&$filter=x%20eq%20'y'";
 
-        await client.GetWithStatusAsync(NextLink);
+        await client.GetWithStatusAsync(NextLink, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(NextLink, Assert.Single(handler.RequestUrls));
     }
@@ -158,7 +158,7 @@ public class DefenderApiClientTests
         // asserting no token request happened either.
         var (client, handler) = CreateClient();
 
-        var result = await client.GetWithStatusAsync("https://attacker.example/api/machines?$top=2");
+        var result = await client.GetWithStatusAsync("https://attacker.example/api/machines?$top=2", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Null(result.Document);
         Assert.Empty(handler.RequestUrls);
@@ -171,7 +171,7 @@ public class DefenderApiClientTests
     {
         var (client, handler) = CreateClient();
 
-        var result = await client.GetWithStatusAsync("http://api.security.microsoft.com/api/machines");
+        var result = await client.GetWithStatusAsync("http://api.security.microsoft.com/api/machines", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Null(result.Document);
         Assert.Empty(handler.RequestUrls);
@@ -192,7 +192,7 @@ public class DefenderApiClientTests
             {"error":{"code":"Forbidden","message":"Insufficient privileges","innerError":{"request-id":"secret-correlation-id"}}}
             """);
 
-        var result = await client.GetWithStatusAsync("/api/machines");
+        var result = await client.GetWithStatusAsync("/api/machines", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Null(result.Document);
         Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
@@ -210,7 +210,7 @@ public class DefenderApiClientTests
         var (client, handler) = CreateClient();
         handler.Responder = _ => throw new TaskCanceledException("timeout", new TimeoutException());
 
-        var result = await client.GetWithStatusAsync("/api/machines");
+        var result = await client.GetWithStatusAsync("/api/machines", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Null(result.Document);
         Assert.True(result.TimedOut);
@@ -224,7 +224,7 @@ public class DefenderApiClientTests
         var (client, handler) = CreateClient();
         handler.Responder = _ => StubHandler.Json(HttpStatusCode.RequestTimeout, """{"error":{"code":"Timeout"}}""");
 
-        var result = await client.GetWithStatusAsync("/api/machines");
+        var result = await client.GetWithStatusAsync("/api/machines", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.RequestTimeout, result.StatusCode);
         Assert.False(result.TimedOut);
@@ -236,7 +236,7 @@ public class DefenderApiClientTests
         var (client, handler) = CreateClient();
         handler.Responder = _ => StubHandler.Json(HttpStatusCode.OK, "<html>sign in please</html>");
 
-        var result = await client.GetWithStatusAsync("/api/machines");
+        var result = await client.GetWithStatusAsync("/api/machines", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Null(result.Document);
         Assert.Contains("could not be parsed", result.SafeError);
@@ -249,7 +249,7 @@ public class DefenderApiClientTests
         var (client, handler) = CreateClient();
         handler.Responder = _ => StubHandler.Json(HttpStatusCode.OK, """{"value":[{"id":"m1"}]}""");
 
-        var result = await client.GetWithStatusAsync("/api/machines");
+        var result = await client.GetWithStatusAsync("/api/machines", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(result.Document);
         using var document = result.Document;
@@ -268,7 +268,7 @@ public class DefenderApiClientTests
             scope: DefenderApiClient.GraphTokenScope);
         handler.Responder = _ => StubHandler.Json(HttpStatusCode.OK, """{"results":[]}""");
 
-        var result = await client.PostWithStatusAsync("/security/runHuntingQuery", new { Query = "DeviceInfo" });
+        var result = await client.PostWithStatusAsync("/security/runHuntingQuery", new { Query = "DeviceInfo" }, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal("https://graph.microsoft.com/v1.0/security/runHuntingQuery", Assert.Single(handler.RequestUrls));
         Assert.Contains("DeviceInfo", Assert.Single(handler.RequestBodies));
@@ -289,7 +289,7 @@ public class DefenderApiClientTests
             {"error":{"code":"TooManyRequests","message":"CPU quota exhausted"}}
             """);
 
-        var result = await client.PostWithStatusAsync("/security/runHuntingQuery", new { Query = "DeviceInfo" });
+        var result = await client.PostWithStatusAsync("/security/runHuntingQuery", new { Query = "DeviceInfo" }, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.TooManyRequests, result.StatusCode);
         Assert.Equal("TooManyRequests: CPU quota exhausted", result.SafeError);
@@ -303,7 +303,7 @@ public class DefenderApiClientTests
             scope: DefenderApiClient.GraphTokenScope);
         handler.Responder = _ => throw new TaskCanceledException("timeout", new TimeoutException());
 
-        var result = await client.PostWithStatusAsync("/security/runHuntingQuery", new { Query = "DeviceInfo" });
+        var result = await client.PostWithStatusAsync("/security/runHuntingQuery", new { Query = "DeviceInfo" }, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(result.TimedOut);
         Assert.Null(result.Document);

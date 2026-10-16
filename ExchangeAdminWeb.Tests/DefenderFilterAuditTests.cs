@@ -398,8 +398,10 @@ public sealed class DefenderFilterAuditTests
             using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
             var query = body.RootElement.GetProperty("Query").GetString()!;
             var observer = query.Contains("invoke SeenBy()", StringComparison.Ordinal);
-            if (HuntingFails || (ObserverFailures && observer && (query.Contains("\"0001\"", StringComparison.Ordinal) || query.Contains("\"0005\"", StringComparison.Ordinal))))
+            if (HuntingFails)
                 return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            if (ObserverFailures && observer && (query.Contains("\"0001\"", StringComparison.Ordinal) || query.Contains("\"0005\"", StringComparison.Ordinal)))
+                return new HttpResponseMessage(HttpStatusCode.BadRequest);
             var ids = Enumerable.Range(0, count).Where(i => query.Contains("\"" + i.ToString("x4") + "\"", StringComparison.Ordinal));
             return Json(JsonSerializer.Serialize(new
             {

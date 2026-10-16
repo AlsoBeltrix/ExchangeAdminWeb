@@ -16,13 +16,22 @@ public class DelineaService
     private string? _accessToken;
     private DateTime _tokenExpiry = DateTime.MinValue;
     private readonly SemaphoreSlim _tokenLock = new(1, 1);
+    private readonly Func<string, (string? username, string? password)> _readBootstrapCredentials;
 
     public DelineaService(IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<DelineaService> logger, ExtendedLogService extLog, OperationTraceService operationTrace)
+        : this(httpClientFactory, config, logger, extLog, operationTrace, CredentialManagerService.ReadCredential)
+    {
+    }
+
+    internal DelineaService(IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<DelineaService> logger,
+        ExtendedLogService extLog, OperationTraceService operationTrace,
+        Func<string, (string? username, string? password)> readBootstrapCredentials)
     {
         _httpClient = httpClientFactory.CreateClient();
         _logger = logger;
         _extLog = extLog;
         _operationTrace = operationTrace;
+        _readBootstrapCredentials = readBootstrapCredentials;
         _secretServerUrl = config["Delinea:SecretServerUrl"] ?? throw new InvalidOperationException("Delinea:SecretServerUrl not configured");
 
         _credentialTarget = config["Delinea:CredentialTarget"] ?? "Delinea_Client";
@@ -33,7 +42,7 @@ public class DelineaService
 
     private void LoadCredentials()
     {
-        var (username, password) = CredentialManagerService.ReadCredential(_credentialTarget);
+        var (username, password) = _readBootstrapCredentials(_credentialTarget);
 
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
@@ -47,8 +56,9 @@ public class DelineaService
         }
     }
 
-    public async Task<Dictionary<string, string>?> GetSecretFieldsAsync(int secretId)
+    public async Task<Dictionary<string, string>?> GetSecretFieldsAsync(int secretId, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrEmpty(_apiUsername) || string.IsNullOrEmpty(_apiKey))
         {
             LoadCredentials();
@@ -62,21 +72,21 @@ public class DelineaService
         try
         {
             _operationTrace.Step("VaultSecretFieldsRequested", backend: "Delinea", command: "GET /api/v1/secrets/{secretId}", details: new Dictionary<string, object?> { ["secretId"] = secretId });
-            var token = await GetAccessTokenAsync();
+            var token = await GetAccessTokenAsync(cancellationToken);
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{secretId}");
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            var response = await _httpClient.SendAsync(request);
+            var response = await _httpClient.SendAsync(request, cancellationToken);
 
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
                 response.StatusCode == System.Net.HttpStatusCode.Forbidden)
             {
                 _logger.LogWarning("Delinea returned {Status} for secret {SecretId} - forcing token refresh", response.StatusCode, secretId);
                 InvalidateToken();
-                token = await GetAccessTokenAsync();
+                token = await GetAccessTokenAsync(cancellationToken);
 
                 using var retryRequest = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{secretId}");
                 retryRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-                response = await _httpClient.SendAsync(retryRequest);
+                response = await _httpClient.SendAsync(retryRequest, cancellationToken);
             }
 
             if (!response.IsSuccessStatusCode)
@@ -87,7 +97,7 @@ public class DelineaService
                 return null;
             }
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             using var secret = JsonDocument.Parse(content);
 
             var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -102,6 +112,10 @@ public class DelineaService
             _operationTrace.Step("VaultSecretFieldsRetrieved", backend: "Delinea", details: new Dictionary<string, object?> { ["secretId"] = secretId, ["fieldCount"] = fields.Count });
             return fields;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving secret fields from Delinea for secret {SecretId}", secretId);
@@ -110,8 +124,9 @@ public class DelineaService
         }
     }
 
-    public async Task<(string username, string password, string domain)?> GetCredentialsBySecretIdAsync(int secretId)
+    public async Task<(string username, string password, string domain)?> GetCredentialsBySecretIdAsync(int secretId, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrEmpty(_apiUsername) || string.IsNullOrEmpty(_apiKey))
         {
             LoadCredentials();
@@ -129,22 +144,22 @@ public class DelineaService
         try
         {
             _operationTrace.Step("VaultCredentialRequested", backend: "Delinea", command: "GET /api/v1/secrets/{secretId}", details: new Dictionary<string, object?> { ["secretId"] = secretId });
-            var token = await GetAccessTokenAsync();
+            var token = await GetAccessTokenAsync(cancellationToken);
 
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{secretId}");
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            var response = await _httpClient.SendAsync(request);
+            var response = await _httpClient.SendAsync(request, cancellationToken);
 
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
                 response.StatusCode == System.Net.HttpStatusCode.Forbidden)
             {
                 _logger.LogWarning("Delinea returned {Status} for secret {SecretId} - forcing token refresh and retrying", response.StatusCode, secretId);
                 InvalidateToken();
-                token = await GetAccessTokenAsync();
+                token = await GetAccessTokenAsync(cancellationToken);
 
                 using var retryRequest = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{secretId}");
                 retryRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-                response = await _httpClient.SendAsync(retryRequest);
+                response = await _httpClient.SendAsync(retryRequest, cancellationToken);
             }
 
             if (!response.IsSuccessStatusCode)
@@ -155,7 +170,7 @@ public class DelineaService
                 return null;
             }
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             using var secret = JsonDocument.Parse(content);
 
             var items = secret.RootElement.GetProperty("items");
@@ -196,6 +211,10 @@ public class DelineaService
             _operationTrace.Step("VaultCredentialRetrieved", backend: "Delinea", details: new Dictionary<string, object?> { ["secretId"] = secretId, ["credentialFields"] = "Username,Password,Domain" });
             return (username!, password!, domain);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving credentials from Delinea Secret Server for secret {SecretId}", secretId);
@@ -229,9 +248,9 @@ public class DelineaService
         _tokenExpiry = DateTime.MinValue;
     }
 
-    private async Task<string> GetAccessTokenAsync()
+    private async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default)
     {
-        await _tokenLock.WaitAsync();
+        await _tokenLock.WaitAsync(cancellationToken);
         try
         {
             if (!string.IsNullOrEmpty(_accessToken) && DateTime.UtcNow < _tokenExpiry.AddMinutes(-5))
@@ -254,11 +273,11 @@ public class DelineaService
                 new KeyValuePair<string, string>("client_secret", _apiKey)
             });
 
-            var authResponse = await _httpClient.PostAsync($"{_secretServerUrl}/oauth2/token", authBody);
+            var authResponse = await _httpClient.PostAsync($"{_secretServerUrl}/oauth2/token", authBody, cancellationToken);
 
             if (!authResponse.IsSuccessStatusCode)
             {
-                var errorBody = await authResponse.Content.ReadAsStringAsync();
+                var errorBody = await authResponse.Content.ReadAsStringAsync(cancellationToken);
                 var oauthError = GetOAuthErrorCode(errorBody);
                 _logger.LogWarning("Delinea auth failed: {Status} | OAuthError: {OAuthError} - reloading credentials and retrying",
                     authResponse.StatusCode, oauthError);
@@ -275,10 +294,10 @@ public class DelineaService
                         new KeyValuePair<string, string>("client_id", retryClientId),
                         new KeyValuePair<string, string>("client_secret", _apiKey)
                     });
-                    var retryResponse = await _httpClient.PostAsync($"{_secretServerUrl}/oauth2/token", retryAuthBody);
+                    var retryResponse = await _httpClient.PostAsync($"{_secretServerUrl}/oauth2/token", retryAuthBody, cancellationToken);
                     if (retryResponse.IsSuccessStatusCode)
                     {
-                        var retryContent = await retryResponse.Content.ReadAsStringAsync();
+                        var retryContent = await retryResponse.Content.ReadAsStringAsync(cancellationToken);
                         using var retryDoc = JsonDocument.Parse(retryContent);
                         _accessToken = retryDoc.RootElement.GetProperty("access_token").GetString()!;
                         var retryExpiresIn = retryDoc.RootElement.GetProperty("expires_in").GetInt32();
@@ -296,7 +315,7 @@ public class DelineaService
                 throw new InvalidOperationException($"Failed to authenticate to Delinea Secret Server: {authResponse.StatusCode}");
             }
 
-            var tokenContent = await authResponse.Content.ReadAsStringAsync();
+            var tokenContent = await authResponse.Content.ReadAsStringAsync(cancellationToken);
             using var tokenDoc = JsonDocument.Parse(tokenContent);
 
             _accessToken = tokenDoc.RootElement.GetProperty("access_token").GetString()!;

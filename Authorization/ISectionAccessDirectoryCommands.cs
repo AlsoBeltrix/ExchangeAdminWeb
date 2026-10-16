@@ -98,3 +98,13 @@ public interface ISectionAccessDirectoryCommands : IDisposable
     /// </remarks>
     string? TranslateSidToNTAccount(string sid);
 }
+
+/// <summary>Opt-in cooperative cancellation for a worker that owns the entire command lifetime.</summary>
+public interface ICancellableDirectoryCommands : ISectionAccessDirectoryCommands
+{
+    DirectoryCommandOutcome Invoke(string command, IReadOnlyDictionary<string, object?> parameters,
+        CancellationToken cancellationToken);
+
+    /// <summary>Requests stop without waiting for native completion or cleanup.</summary>
+    void RequestStop();
+}

@@ -4715,7 +4715,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DefenderEndpointDevices => new()
     {
         Page = "DefenderEndpointDevices.razor",
-        ExpectedLineCount = 1285,
+        ExpectedLineCount = 1293,
 
         Predicates =
         [
@@ -4764,7 +4764,7 @@ public static class ClickGateRegistry
 
         AnnotatedControls =
         [
-            new AnnotatedControl(392, "@onclick=\"DownloadCsvAsync\"",
+            new AnnotatedControl(400, "@onclick=\"DownloadCsvAsync\"",
                 ["ExportableDevices.Count == 0"],
                 RendersOnlyWhen:
                 "only inside the complete branch - a refusal renders no table and offers no export "
@@ -4773,7 +4773,7 @@ public static class ClickGateRegistry
                 + "busy condition: a mechanical rewrite to the bare predicate would offer a "
                 + "header-only file, and a CSV leaves the app without the screen that explained it"),
 
-            new AnnotatedControl(470, "@onclick=\"() => GoToDevicePage(devicePageIndex - 1)\"",
+            new AnnotatedControl(478, "@onclick=\"() => GoToDevicePage(devicePageIndex - 1)\"",
                 ["devicePageIndex == 0"],
                 RendersOnlyWhen:
                 "only inside the complete branch, and only when DevicePageCount > 1 - a result "
@@ -4782,7 +4782,7 @@ public static class ClickGateRegistry
                 + "one. GoToDevicePage clamps as well, so the attribute and the handler agree "
                 + "rather than one trusting the other - the shape the D2(a) findings settled on"),
 
-            new AnnotatedControl(472, "@onclick=\"() => GoToDevicePage(devicePageIndex + 1)\"",
+            new AnnotatedControl(480, "@onclick=\"() => GoToDevicePage(devicePageIndex + 1)\"",
                 ["devicePageIndex >= DevicePageCount - 1"],
                 RendersOnlyWhen:
                 "same branch and same pager as Previous above. The clause is the upper bound and "

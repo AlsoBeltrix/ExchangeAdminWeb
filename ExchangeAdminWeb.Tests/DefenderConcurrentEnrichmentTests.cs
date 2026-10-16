@@ -30,7 +30,7 @@ public class DefenderConcurrentEnrichmentTests
         var secondHuntingHandler = new ScriptedHandler(query =>
         {
             if (query.Contains("\"beta-failed\"", StringComparison.Ordinal))
-                return Json("{}", HttpStatusCode.Forbidden);
+                return Json("{}", HttpStatusCode.ServiceUnavailable);
             if (query.Contains("\"beta-empty\"", StringComparison.Ordinal))
                 return Json("""{"results":[]}""");
             if (query.Contains("| invoke SeenBy()", StringComparison.Ordinal))
@@ -83,12 +83,12 @@ public class DefenderConcurrentEnrichmentTests
         Assert.Equal(DefenderDeviceListOutcome.Complete, first.Outcome);
         Assert.Equal(DefenderDeviceListOutcome.Complete, second.Outcome);
         Assert.Equal(ExpectedReason(failure), first.DiscoveryEnrichmentReason);
-        Assert.Equal(DefenderDiscoveryReasons.Forbidden, second.DiscoveryEnrichmentReason);
+        Assert.Equal(DefenderEndpointDeviceService.DescribeEnrichmentFailure(new(null, HttpStatusCode.ServiceUnavailable, null, false)), second.DiscoveryEnrichmentReason);
         Assert.NotEqual(first.DiscoveryEnrichmentReason, second.DiscoveryEnrichmentReason);
         Assert.Equal(partial ? DefenderDiscoveryEnrichmentState.PartiallySucceeded
             : DefenderDiscoveryEnrichmentState.Failed, first.DiscoveryEnrichment);
         Assert.Equal(DefenderDiscoveryEnrichmentState.PartiallySucceeded, second.DiscoveryEnrichment);
-        Assert.Equal(partial ? 1 : 0, first.DiscoveryFailedBatches);
+        Assert.Equal(1, first.DiscoveryFailedBatches);
         Assert.Equal(partial ? 2 : 1, first.DiscoveryTotalBatches);
         Assert.Equal(0, first.ObserverFailedBatches);
         Assert.Equal(1, second.DiscoveryFailedBatches);

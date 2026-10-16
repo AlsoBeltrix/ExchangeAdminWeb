@@ -8,7 +8,28 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D2 approved; D7 next
+### Comms-10k / Defender remediation - D7 verified; independent review pending
+
+D7 began on clean master `134b22d`. Both live remote master refs were checked
+at `eb0d191` on 2026-10-16. Canonical design:
+`.agents/review/cdr-d7-design.md`; current declared scope/evidence:
+`.agents/review/findings/cdr-d7.md`. Core deadline, actual HTTP cancellation,
+systemic-stop and single site-worker ownership paths are implemented. Thirty-four
+new cases plus six D2 cases pass; fifteen compiled regression groups produce 63
+counted standard assertion failures with an exact forty-case union. Receipts retain
+the page-literal reproof and test-run-token reconciliation. Restored affected
+coverage passes 988/988. Defender is 1.6.12, shared base 2.27.5 and Comms 1.4.18.
+Known AdminModuleSpec Version 2.0 / June 25 drift remains flagged. The first
+ordered gate stopped at xUnit1051 format
+diagnostics before a full suite; explicit test-run tokens fix those call sites.
+Fresh baseline passes 40/40. Final ordered Release build passes with 40 warnings /
+0 errors, full solution format passes before the single full suite (4,224 passed /
+3 known AD-unavailable skips / 0 failed). Final diff/staged-ASCII checks pass
+including all new files; completion receipts live with
+the finding. Native work may continue after response cancellation; one admitted
+worker retains its cleanup slot, and no physical native hard stop is claimed.
+Fresh independent Astra max workflow review is pending. D1, D3 and D5 remain after
+that review. No push/deploy, live probe or adjacent work occurred.
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -17,6 +38,8 @@ Astra workflow review at max. C9, C1, C10, C3, C4 and C11 have independent revie
 `.agents/review/findings/cdr-c4.md` owns its P2 correction closed on coder-side proof.
 The separately approved shared Exchange psl-1 is independently reviewed; its record at
 `.agents/review/findings/psl-1.md` owns the evidence and verdict.
+
+D2 receipt (closed before D7 above):
 
 D2 starts on clean master `eb0d19122f4921eca66e4300efe0605403214e23`; live origin
 and github master still match `885397981d7550afebf6518ef21b4fc54b062859`.

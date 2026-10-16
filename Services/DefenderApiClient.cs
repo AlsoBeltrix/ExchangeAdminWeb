@@ -34,8 +34,15 @@ public readonly record struct DefenderApiResult(
     string? SafeError,
     bool TimedOut);
 
+/// <summary>A known token/configuration failure, distinct from a hunting query failure.</summary>
+internal sealed class DefenderAuthenticationException(string message, bool stopHunting = true)
+    : InvalidOperationException(message)
+{
+    internal bool StopHunting { get; } = stopHunting;
+}
+
 /// <summary>
-/// A module-local OAuth client-credentials HTTP client for the Defender for Endpoint module
+/// An OAuth client-credentials HTTP client shared by Defender and CloudSignInService
 /// (docs/DefenderEndpointDevices-Plan.md T1). Modelled on <see cref="GraphTokenClient"/> but taking
 /// its base URL and token scope as CONSTRUCTOR ARGUMENTS instead of hardcoding them.
 /// </summary>
@@ -147,19 +154,20 @@ public sealed class DefenderApiClient
     /// reach the service exactly as the service wrote them, because a continuation token that has
     /// been re-encoded is not the token the service issued.
     /// </remarks>
-    public Task<DefenderApiResult> GetWithStatusAsync(string endpointOrAbsoluteUrl) =>
-        SendAsync(HttpMethod.Get, endpointOrAbsoluteUrl, body: null);
+    public Task<DefenderApiResult> GetWithStatusAsync(string endpointOrAbsoluteUrl, CancellationToken cancellationToken = default) =>
+        SendAsync(HttpMethod.Get, endpointOrAbsoluteUrl, body: null, cancellationToken);
 
     /// <summary>
     /// POST that surfaces the status, a sanitized error and a client-side timeout. Used by S4 for
     /// the Graph advanced-hunting query, whose 403 (permission not consented), 429 (CPU quota) and
     /// timeout must each render as a different reason.
     /// </summary>
-    public Task<DefenderApiResult> PostWithStatusAsync(string endpointOrAbsoluteUrl, object? body = null) =>
-        SendAsync(HttpMethod.Post, endpointOrAbsoluteUrl, body);
+    public Task<DefenderApiResult> PostWithStatusAsync(string endpointOrAbsoluteUrl, object? body = null, CancellationToken cancellationToken = default) =>
+        SendAsync(HttpMethod.Post, endpointOrAbsoluteUrl, body, cancellationToken);
 
-    private async Task<DefenderApiResult> SendAsync(HttpMethod method, string endpointOrAbsoluteUrl, object? body)
+    private async Task<DefenderApiResult> SendAsync(HttpMethod method, string endpointOrAbsoluteUrl, object? body, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!TryResolveRequestUri(endpointOrAbsoluteUrl, out var uri, out var rejection))
             return new DefenderApiResult(null, HttpStatusCode.BadRequest, rejection, false);
 
@@ -167,7 +175,7 @@ public sealed class DefenderApiClient
         {
             // Acquired INSIDE the try so a timeout on the token request is reported as a timeout
             // rather than escaping as an unhandled exception from a different call.
-            var token = await GetAccessTokenAsync();
+            var token = await GetAccessTokenAsync(cancellationToken);
 
             using var request = new HttpRequestMessage(method, uri);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -178,8 +186,8 @@ public sealed class DefenderApiClient
                 request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
             }
 
-            var response = await _httpClient.SendAsync(request);
-            var content = await response.Content.ReadAsStringAsync();
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
                 return new DefenderApiResult(null, response.StatusCode, GraphTokenClient.ExtractGraphError(content), false);
@@ -203,11 +211,10 @@ public sealed class DefenderApiClient
                     false);
             }
         }
-        catch (TaskCanceledException)
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // No CancellationToken is passed to SendAsync, so the only thing that cancels this task
-            // is the HttpClient's own timeout. Returned as a result rather than thrown: T7 requires
-            // a timeout to be one of the named reasons on the page, not a stack trace.
+            // Independent HTTP timeout keeps its result contract. Requested cancellation escapes
+            // to the orchestration boundary, which knows the overall enrichment deadline.
             return new DefenderApiResult(null, HttpStatusCode.RequestTimeout, null, true);
         }
     }
@@ -262,19 +269,19 @@ public sealed class DefenderApiClient
     /// Client-credentials token for the CONFIGURED scope, cached with the same lock-and-expiry shape
     /// as GraphTokenClient (five minutes of headroom before expiry).
     /// </summary>
-    private async Task<string> GetAccessTokenAsync()
+    private async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken)
     {
         if (!IsConfigured)
-            throw new InvalidOperationException("Defender API credentials not configured for this module.");
+            throw new DefenderAuthenticationException("Defender API credentials not configured for this module.");
 
-        await _tokenLock.WaitAsync();
+        await _tokenLock.WaitAsync(cancellationToken);
         try
         {
             if (!string.IsNullOrEmpty(_accessToken) && DateTime.UtcNow < _tokenExpiry.AddMinutes(-5))
                 return _accessToken;
 
             var tokenUrl = $"https://login.microsoftonline.com/{_tenantId}/oauth2/v2.0/token";
-            var body = new FormUrlEncodedContent(new[]
+            using var body = new FormUrlEncodedContent(new[]
             {
                 new KeyValuePair<string, string>("grant_type", "client_credentials"),
                 new KeyValuePair<string, string>("client_id", _clientId),
@@ -282,17 +289,27 @@ public sealed class DefenderApiClient
                 new KeyValuePair<string, string>("scope", _tokenScope)
             });
 
-            var response = await _httpClient.PostAsync(tokenUrl, body);
+            using var response = await _httpClient.PostAsync(tokenUrl, body, cancellationToken);
             if (!response.IsSuccessStatusCode)
                 // Status only. The auth response body can carry correlation data and is never
                 // echoed, logged or returned.
-                throw new InvalidOperationException($"Defender API token request failed: {response.StatusCode}");
+                throw new DefenderAuthenticationException($"Defender API token request failed: {response.StatusCode}",
+                    response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden);
 
-            var content = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(content);
-            _accessToken = doc.RootElement.GetProperty("access_token").GetString()!;
-            var expiresIn = doc.RootElement.GetProperty("expires_in").GetInt32();
-            _tokenExpiry = DateTime.UtcNow.AddSeconds(expiresIn);
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            try
+            {
+                using var doc = JsonDocument.Parse(content);
+                _accessToken = doc.RootElement.GetProperty("access_token").GetString()!;
+                var expiresIn = doc.RootElement.GetProperty("expires_in").GetInt32();
+                _tokenExpiry = DateTime.UtcNow.AddSeconds(expiresIn);
+                if (string.IsNullOrWhiteSpace(_accessToken))
+                    throw new DefenderAuthenticationException("Defender API token response did not contain an access token.");
+            }
+            catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+            {
+                throw new DefenderAuthenticationException("Defender API token response could not be read.");
+            }
 
             return _accessToken;
         }

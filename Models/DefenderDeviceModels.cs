@@ -245,10 +245,9 @@ public enum DefenderDiscoveryEnrichmentState
 /// and the rows it produced keyed by device id.
 /// </summary>
 /// <remarks>
-/// The factories are the invariant. A non-succeeded enrichment carries ZERO rows, and a succeeded
-/// one carries an EMPTY reason - so there is no value of this type that both claims a failure and
-/// offers data to merge, and none that populates columns while telling the operator they are
-/// unavailable.
+/// Posture, observer and stop diagnostics are independent. Successful posture remains usable
+/// when the observer fails or the deadline stops further work. Per-row unavailable sets name
+/// the missing data; attempted/failed/skipped counts never turn an unmade request into a failure.
 /// </remarks>
 public sealed class DefenderDiscoveryEnrichment
 {
@@ -276,11 +275,19 @@ public sealed class DefenderDiscoveryEnrichment
     public IReadOnlySet<string> UnavailableDeviceIds { get; private init; }
         = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Hunting batches that did not answer. Zero unless <see cref="State"/> is PartiallySucceeded.</summary>
+    /// <summary>Attempted posture lookups that did not answer.</summary>
     public int FailedBatches { get; private init; }
 
-    /// <summary>Hunting batches attempted. Zero when the query never ran.</summary>
+    /// <summary>Posture batches planned for the listed device ids, including those not attempted.</summary>
     public int TotalBatches { get; private init; }
+
+    /// <summary>Posture lookups started, including an in-flight lookup canceled at the deadline.</summary>
+    public int AttemptedBatches { get; private init; }
+    public int UnattemptedBatches => TotalBatches - AttemptedBatches;
+    public int ObserverAttemptedBatches { get; private init; }
+    public int ObserverUnattemptedBatches => TotalBatches - ObserverAttemptedBatches;
+    public string ObserverReason { get; private init; } = "";
+    public string StopReason { get; private init; } = "";
 
     /// <summary>
     /// Observer lookups that did not answer. Separate from FailedBatches: separate request.
@@ -310,6 +317,8 @@ public sealed class DefenderDiscoveryEnrichment
             Reason = "",
             Rows = rows,
             TotalBatches = totalBatches,
+            AttemptedBatches = totalBatches,
+            ObserverAttemptedBatches = totalBatches,
             ObserverUnavailableDeviceIds =
                 observerUnavailableDeviceIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
         };
@@ -351,6 +360,8 @@ public sealed class DefenderDiscoveryEnrichment
             UnavailableDeviceIds = unavailableDeviceIds,
             FailedBatches = failedBatches,
             TotalBatches = totalBatches,
+            AttemptedBatches = totalBatches,
+            ObserverAttemptedBatches = totalBatches,
             ObserverFailedBatches = observerFailedBatches,
             ObserverUnavailableDeviceIds =
                 observerUnavailableDeviceIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
@@ -361,7 +372,32 @@ public sealed class DefenderDiscoveryEnrichment
         new() { State = DefenderDiscoveryEnrichmentState.NotAttempted, Reason = reason };
 
     public static DefenderDiscoveryEnrichment Failed(string reason, int totalBatches = 0) =>
-        new() { State = DefenderDiscoveryEnrichmentState.Failed, Reason = reason, TotalBatches = totalBatches };
+        new() { State = DefenderDiscoveryEnrichmentState.Failed, Reason = reason, TotalBatches = totalBatches, AttemptedBatches = totalBatches };
+
+    // Actual orchestration counts do not invent a failed batch for an unsafe id or a skipped
+    // request. Legacy factories retain their public validation contracts for existing callers.
+    internal static DefenderDiscoveryEnrichment FromRun(
+        IReadOnlyDictionary<string, DefenderDeviceDiscovery> rows,
+        IReadOnlySet<string> unavailable, IReadOnlySet<string> observerUnavailable,
+        int total, int attempted, int failed, int observerAttempted, int observerFailed,
+        string reason, string observerReason, string stopReason) => new()
+        {
+            State = attempted == 0 ? DefenderDiscoveryEnrichmentState.NotAttempted
+                : attempted == failed ? DefenderDiscoveryEnrichmentState.Failed
+                : unavailable.Count > 0 ? DefenderDiscoveryEnrichmentState.PartiallySucceeded
+                : DefenderDiscoveryEnrichmentState.Succeeded,
+            Rows = rows,
+            UnavailableDeviceIds = unavailable,
+            ObserverUnavailableDeviceIds = observerUnavailable,
+            TotalBatches = total,
+            AttemptedBatches = attempted,
+            FailedBatches = failed,
+            ObserverAttemptedBatches = observerAttempted,
+            ObserverFailedBatches = observerFailed,
+            Reason = reason,
+            ObserverReason = observerReason,
+            StopReason = stopReason
+        };
 }
 
 /// <summary>
@@ -421,6 +457,10 @@ public static class DefenderDiscoveryReasons
     public const string TimedOut =
         "The advanced hunting query timed out. Load again, and narrow the filters if it keeps "
         + "happening.";
+
+    public const string DeadlineReached =
+        "The four-minute enrichment deadline was reached. The complete device inventory is retained; "
+        + "details that could not be loaded are marked unavailable. Narrow the filters and load again.";
 
     /// <summary>
     /// The request threw before any status came back - a sign-in that was refused, a transport
@@ -510,7 +550,7 @@ public sealed class DefenderDeviceListResult
     /// <summary>Why the enrichment columns read "(unavailable)". Empty when they are populated.</summary>
     public string DiscoveryEnrichmentReason { get; private init; } = "";
 
-    /// <summary>Hunting batches that did not answer. Zero unless the enrichment partly succeeded.</summary>
+    /// <summary>Attempted posture lookups that did not answer.</summary>
     /// <remarks>
     /// Carried so the banner can say HOW MUCH did not answer. "Some enrichment failed" is not an
     /// outcome an operator can act on; "2 of 13 batches" tells them whether to re-run or to read
@@ -518,8 +558,14 @@ public sealed class DefenderDeviceListResult
     /// </remarks>
     public int DiscoveryFailedBatches { get; private init; }
 
-    /// <summary>Hunting batches attempted. Zero when the query never ran.</summary>
+    /// <summary>Posture batches planned, including those not attempted.</summary>
     public int DiscoveryTotalBatches { get; private init; }
+    public int DiscoveryAttemptedBatches { get; private init; }
+    public int DiscoveryUnattemptedBatches => DiscoveryTotalBatches - DiscoveryAttemptedBatches;
+    public int ObserverAttemptedBatches { get; private init; }
+    public int ObserverUnattemptedBatches => DiscoveryTotalBatches - ObserverAttemptedBatches;
+    public string ObserverEnrichmentReason { get; private init; } = "";
+    public string EnrichmentStopReason { get; private init; } = "";
 
     /// <summary>
     /// Observer lookups that did not answer, counted apart from the posture batches because
@@ -549,7 +595,11 @@ public sealed class DefenderDeviceListResult
         int failedBatches = 0,
         int totalBatches = 0,
         bool siteMapRead = true,
-        int observerFailedBatches = 0) => new()
+        int observerFailedBatches = 0,
+        int? attemptedBatches = null,
+        int? observerAttemptedBatches = null,
+        string observerReason = "",
+        string stopReason = "") => new()
         {
             Outcome = DefenderDeviceListOutcome.Complete,
             Devices = devices,
@@ -561,6 +611,10 @@ public sealed class DefenderDeviceListResult
             DiscoveryEnrichmentReason = enrichmentReason,
             DiscoveryFailedBatches = failedBatches,
             DiscoveryTotalBatches = totalBatches,
+            DiscoveryAttemptedBatches = attemptedBatches ?? totalBatches,
+            ObserverAttemptedBatches = observerAttemptedBatches ?? totalBatches,
+            ObserverEnrichmentReason = observerReason,
+            EnrichmentStopReason = stopReason,
             ObserverFailedBatches = observerFailedBatches,
             SiteMapRead = siteMapRead
         };
