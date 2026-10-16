@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D9 implemented; independent review next
+### Comms-10k / Defender remediation - D9 approved; D4 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -31,10 +31,12 @@ bytes remained identical and a separately named fresh formatted fixed run passed
 11/11. The final ordered gate passed: Release build with 40 existing warnings /
 0 errors, full solution format before the single full suite (4,173 passed / 3
 skipped / 0 failed), then staged diff/ASCII checks including the new test file.
-Thirteen original findings and psl-1 remain closed; D9 awaits independent review.
+Independent Astra max APPROVED `15e6531` with no actionable findings. It passed
+727/727 focused tests and thirteen renderer scenarios / 173 assertions, and
+reconciled proof/gate receipts with 117 checks. Fourteen original findings and
+psl-1 are closed locally; six original Defender findings remain, starting with D4.
 The D9 record owns scope, exact proof, reconciliation and the Constitution packet:
-`.agents/review/findings/cdr-d9.md`. Independent Astra max review follows the code
-commit; D4 is the next implementation slice after that boundary. No push, live
+`.agents/review/findings/cdr-d9.md`. D4 is the next implementation slice. No push, live
 integration, deployment, self-review or adjacent finding work is authorized.
 
 Recovery 2026-10-16: owner said "system restarted. please recover and continue."
@@ -55,8 +57,8 @@ existing warnings / 0 errors; full solution format passed before the single full
 suite: 4,162 passed / 3 skipped / 0 failed. Final diff and staged ASCII passed.
 Independent Astra max APPROVED `8baf910` with no actionable findings, passing
 299/299 focused tests plus 41 synthetic scenarios / 263 assertions and reconciling
-all proof/gate receipts. Thirteen original findings and psl-1 are closed locally;
-seven original Defender findings remain, starting with D9. No shipped page or PowerShell,
+all proof/gate receipts. At that boundary thirteen original findings and psl-1
+were closed locally; D9's later approval is recorded above. No shipped page or PowerShell,
 live probe, self-review or adjacent finding was included. The D10 finding owns
 recovery, scope, exact proof, limitations and the complete Constitution packet:
 `.agents/review/findings/cdr-d10.md`.

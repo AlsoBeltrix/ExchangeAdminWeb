@@ -1,6 +1,6 @@
 # cdr-d9 - handled Defender CSV export failures
 
-Status: Implemented and verified locally on master; independent Astra max workflow review pending.
+Status: Implemented and independently APPROVED on master, 2026-10-16.
 
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, APPROVED Revision 6, D9.
 Owner 2026-10-15: "approved. go." Recovery 2026-10-16: "system restarted. please
@@ -311,3 +311,33 @@ restoration/format equivalence, final app/test/PDB provenance, ordered gate
 timestamps, staged paths and unchanged warning set. Original proof receipts were
 preserved. The pending step is fresh independent Astra max workflow review of
 the committed range; the parent coordinates that review before D4 implementation.
+
+## Independent workflow review - APPROVED, 2026-10-16
+
+Fresh native `gpt-6-astra` at `max` reviewed immutable range
+`1f1b93d89f503b4c37171d547409533b7dcebbf4..15e6531692d936ae368cf0539c85ca32d9cb9740`.
+Verdict: **APPROVED**, no actionable findings. Intent and scope matched. The review
+traced access/config gates, result eligibility, filtering, CSV generation, browser
+delivery, notice/table rendering, audit isolation and real progress cleanup.
+
+Before rebuilding, 117 independent reconciliation checks passed, including the
+exact eleven-case/sixteen-assertion mutation union, independently reconstructed
+mutation hashes, source restoration, formatter whitespace equivalence, final
+assembly/PDB provenance, all seventeen registry mappings and ordered gates.
+The recorded 727 affected passes and 4,173 full-suite passes / 3 skips reconciled.
+
+Independent focused tests passed 727/727 with four xUnit threads. An ignored
+compiled renderer/progress probe passed thirteen scenarios and 173 assertions.
+Generated download events automatically rendered a safe notice alongside retained
+table frames and released busy/progress after delayed JS failure, cancellation,
+disconnect, uncertain delivery, CSV-only projection failure and transient selection
+failure. Successful retry cleared the notice; audit faults preserved success.
+The CSV-only failure rendered without repairing the test inventory first.
+
+The receipt is `.agents/review/out/cdr-d9/astra-review.md`; supplemental evidence
+includes `astra-evidence-reconciliation.json`, `astra-checks.json`,
+`astra-affected/astra-affected.trx` and `astra-workflow.log`. No full-suite repeat,
+tracked changes, browser or live integration checks occurred. The renderer probe
+evaluated compiled page frames without activating unrelated child components.
+Final diff checks passed; checkout/index stayed clean at the reviewed hash and no
+task process remained. D9 is closed locally; D4 is next in the approved sequence.
