@@ -1,7 +1,6 @@
 # cdr-d5 - prepare subnets once and reuse applied filter results
 
-Status: Implemented on master, 2026-10-16; fresh independent Astra max workflow
-review remains pending. No independent approval is implied.
+Status: Implemented and independently APPROVED on master, 2026-10-16 (`91517a3`).
 
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, APPROVED Revision 6,
 D5. Owner 2026-10-15: "approved. go." Recovery 2026-10-16: "system restarted.
@@ -161,11 +160,42 @@ No tracked PowerShell changed, so PSScriptAnalyzer/Pester are inapplicable.
 The committed-baseline token meter covers Claude transcripts only and excludes
 this native Sol session; no native token usage or cost is invented.
 
+## Independent review
+
+Fresh native `gpt-6-astra` at max reviewed
+`999df700f4faf1435903ac76505b6f46e361c2f7..91517a32f49ae171c778fc9e6447b624de7d9858`
+and returned **APPROVE**, with no actionable findings. Scope and Constitution
+checks preceded the complete inventory/enrichment/preparation/matching and page
+load/filter/paging/audit/export review, including the shared helper's callers.
+
+The independent Release rebuild passed with 38 warnings / 0 errors, followed
+by **1,015/1,015** affected tests. Isolated probes passed **12,664 assertions**:
+matching equivalence across 20 synthetic maps and 4,200 addresses, public
+null-list/invalid-IP behavior, repeated cache failures and retry, parser-boundary
+cancellation and concurrent per-call observer isolation. These are synthetic
+behavioral checks, not claims about live forest size or production performance.
+
+**490 evidence checks** reconciled the seven new-case regression groups and
+separate two adapted D7 groups, exact failure unions, restoration and compiled
+provenance, the D4 fixture boundary, all 17 anchors and the original ordered gate
+with 4,251 passes / 3 known skips / 0 failures. Production DLL/PDB hashes match
+the fixed originals. Test binary differences match the generated informational
+version change from `999df700` to `91517a32`; exact test sources and fresh
+execution were verified. Historical mutation evidence was reconstructed and
+reconciled without replaying mutations or the full suite.
+
+Receipt: `.agents/review/out/cdr-d5/reviewer-verdict.json`, with linked focused
+TRX, compatibility/cache probes, reconciliation and shutdown records. The
+reviewer left the exact reviewed checkout clean and its task/build servers
+stopped. Browser/dev/live acceptance remains unrun. D5 closes the approved
+original implementation/review sequence locally; all twenty originals and the
+separately approved psl-1 are closed with their recorded dispositions.
+
 # Review Packet
 
 ## Mode
 
-IMPLEMENTATION_REVIEW - fresh independent Astra max workflow review pending.
+IMPLEMENTATION_REVIEW - independent disposition recorded above.
 
 ## Original Request
 
@@ -182,8 +212,9 @@ constraints; sequential scope exception in `.agents/decisions.md`.
 
 ## Commit Range
 
-`999df700f4faf1435903ac76505b6f46e361c2f7..HEAD` - one normal direct-master D5
-commit, with records. No branch, merge, deletion or history rewrite.
+`999df700f4faf1435903ac76505b6f46e361c2f7..91517a32f49ae171c778fc9e6447b624de7d9858`.
+One normal direct-master D5 commit, with records. No branch, merge, deletion or
+history rewrite.
 
 ## Claimed Changes
 
@@ -215,7 +246,7 @@ extra agents, self-review, push/deploy/live probes or unrelated remediation.
 
 ## Deferred Work
 
-Overall remediation remains pending D5's independent review disposition.
+The approved implementation/review sequence is locally closed by D5's approval.
 Manual dev group-pin and Defender opening checks remain unrun. Physical AD/SeenBy
 acceptance is still unproven. psl-2/3/4, cdr-followup-1, continuation-host checks,
 initialization-only authorization and broad D6 stay deferred/unapproved. Known

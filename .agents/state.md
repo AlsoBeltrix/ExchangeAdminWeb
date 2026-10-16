@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D5 implemented; independent review pending
+### Comms-10k / Defender remediation - approved code work closed locally
 
 D5 starts on clean master `999df700f4faf1435903ac76505b6f46e361c2f7`;
 both live remote master refs remain `eb0d19122f4921eca66e4300efe0605403214e23`.
@@ -36,11 +36,30 @@ are reconciled with the three actual skipped rows. Final staged diff/ASCII,
 exact reconciliation and task/build-server shutdown receipts live with
 `.agents/review/findings/cdr-d5.md`, which owns the complete Constitution packet.
 
-All twenty original slices are implemented locally; nineteen originals and psl-1
-are closed. Overall remediation remains pending D5's fresh independent Astra max
-workflow review disposition. Known module-spec/guide Version 2.0 / June 25 drift
-and unrun browser/live acceptance remain flagged. No push/deploy/live probe or
-self-review is authorized. Next: independent D5 workflow review.
+Fresh independent Astra max APPROVED `91517a3` with no actionable findings.
+Its Release rebuild passed with 38 warnings / 0 errors; affected tests passed
+1,015/1,015. Isolated matching, cache-failure/retry, cancellation and observer
+isolation probes passed 12,664 assertions. All 490 independent evidence checks
+passed, including the two separate mutation unions, D4 fixture boundary,
+restoration/provenance, registries and original ordered full gate. Production
+DLL/PDB hashes match; the generated commit-version change explains the test
+binary difference. The finding owns the full verdict and limitations. Review
+task/build servers are stopped and the reviewed checkout was clean.
+
+All twenty original findings and the separately approved psl-1 are closed locally
+with their recorded review dispositions. Earlier CHANGES REQUIRED verdicts and
+their noncritical coder-proof corrections remain preserved in the findings;
+this closeout does not relabel them as independent approvals. No approved
+implementation or review slice remains. Both live remote master refs were
+rechecked at `eb0d19122f4921eca66e4300efe0605403214e23` after D5 review; this
+workflow performed no push or deployment.
+
+Pending outside this implementation approval: manual dev checks of the Comms
+target pin and Defender opening/Search, physical-location acceptance, and any
+push/deployment. Proposed next action: a separately authorized dev smoke check.
+The approved plan owns the deferred continuation/auth/location/D6 scope; psl-2/3/4
+and cdr-followup-1 remain unapproved. Known module-spec/guide Version 2.0 /
+June 25 drift remains flagged. No live probe or self-review is authorized.
 
 ### Prior boundary - D3 independently approved; D5 last
 

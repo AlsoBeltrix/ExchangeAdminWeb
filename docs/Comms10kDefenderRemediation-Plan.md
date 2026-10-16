@@ -1,6 +1,9 @@
 # Comms-10k and Defender Remediation - Plan
 
-Status: **APPROVED Revision 6; implementation in progress, owner 2026-10-15: "approved. go."**
+Status: **IMPLEMENTED locally; all twenty findings closed with recorded review dispositions, 2026-10-16.**
+Revision 6 approval: owner 2026-10-15, "approved. go."
+Local implementation, automated verification and the approved review sequence are complete.
+Manual dev/live acceptance remains unrun; push and deployment were not authorized or performed.
 Approval covers all twenty findings and the Sol 6.1 implementation / independent Astra review
 arrangement recorded in `.agents/decisions.md`. Five review rounds on the Portkey codex
 harness (rounds 1-3 "do not approve", 4-5 "keep, amend"), then one round on codex-commercial /
@@ -470,8 +473,10 @@ keep their fixes and proofs in separate commits. Scope and executive summary are
 Per-slice gate as under Constraints. One full-suite run at the final head. PSScriptAnalyzer and
 Pester only if a `.ps1`/`.psm1` changed - none expected.
 
-**Not covered by any of this:** that any page renders - there is no bUnit harness. The group pin
-and the Defender open-without-fetch need manual checks on dev.
+Compiled page tests and independent renderer probes now cover the scoped lifecycle/event
+workflows; the finding records own their exact coverage. Live browser/dev acceptance of the
+group pin and Defender open-without-fetch remains unrun and needs separate authorization.
+The physical-location acceptance limitations below also remain.
 
 ## Carried forward - recorded, NOT fixed here
 
@@ -521,4 +526,4 @@ part of this implementation approval.
 | D7 | Implemented; independent CHANGES REQUIRED preserved, its one P2 corrected / coder-proof closed | [cdr-d7](../.agents/review/findings/cdr-d7.md) |
 | D1 | Implemented / independently reviewed (`568534c`) | [cdr-d1](../.agents/review/findings/cdr-d1.md) |
 | D3 | Implemented / independently reviewed (`e2a20e4`) | [cdr-d3](../.agents/review/findings/cdr-d3.md) |
-| D5 | Implemented; independent workflow review pending | [cdr-d5](../.agents/review/findings/cdr-d5.md) |
+| D5 | Implemented / independently reviewed (`91517a3`) | [cdr-d5](../.agents/review/findings/cdr-d5.md) |
