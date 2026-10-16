@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - Defender D8 independently approved; D10 next
+### Comms-10k / Defender remediation - D10 implemented; independent review pending
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -18,10 +18,31 @@ Astra workflow review at max. C9, C1, C10, C3, C4 and C11 have independent revie
 The separately approved shared Exchange psl-1 is independently reviewed; its record at
 `.agents/review/findings/psl-1.md` owns the evidence and verdict.
 
-D8 began on clean master `d9c71f6` and now preserves numeric osBuild through the
+Recovery 2026-10-16: owner said "system restarted. please recover and continue."
+The D10 implementer was lost; its four changed code/test files and declared finding
+survived on master `82db64bc91b20bdf776e3f216c57aa81df9be76d`. At recovery both
+live remote master refs remained `885397981d7550afebf6518ef21b4fc54b062859`.
+The new sole writer retained the exact saved implementation and test bytes. D10
+uses raw array cardinality for capped/short completeness while usable objects
+still govern device counts and ceiling. Explicit links and Last seen partition/
+unsplittable refusal remain. Defender is 1.6.8; base 2.27.4 and Comms 1.4.18.
+
+The original 7/7 baseline was retained and a separate recovery baseline passed
+7/7. Four compiled probes produced nine standard assertion failures with an exact
+union of all seven new cases; byte/MD5/SHA256/newer-mtime restoration and runtime/
+test assembly provenance passed. No pre-restart mutation attempt is counted.
+Restored affected tests passed 299/299. The final Release build passed with 40
+existing warnings / 0 errors; full solution format passed before the single full
+suite: 4,162 passed / 3 skipped / 0 failed. Final diff and staged ASCII passed;
+independent Astra max workflow review is pending. No shipped page or PowerShell,
+live probe, self-review or adjacent finding was included. The D10 finding owns
+recovery, scope, exact proof, limitations and the complete Constitution packet:
+`.agents/review/findings/cdr-d10.md`.
+
+D8 receipt (2026-10-15): it began on clean master `d9c71f6` and preserves numeric osBuild through the
 returned row/CSV and escaped first-RDN site names through directory mapping and
-the actual compiled Site filter/export. Defender is 1.6.7; the shared directory
-change independently requires base 2.27.4. Comms stays 1.4.18. Seven new compiled
+the actual compiled Site filter/export. That slice advanced Defender to 1.6.7;
+the shared directory change independently required base 2.27.4. Comms stayed 1.4.18. Seven new compiled
 cases passed, then five compiled production probes produced 14 standard assertion
 failures with an exact union of all seven cases. Exact-byte/MD5/SHA256 restoration,
 newer mtimes and runtime assembly provenance passed. The restored affected run
@@ -34,11 +55,11 @@ page, PowerShell, live integration, self-review or adjacent-finding work is incl
 Constitution packet and independent APPROVED verdict for `a5f17de`. Astra passed 41/41
 focused tests, 26 extra workflow inputs and 23 direct assertions, and reconciled all
 proof/gate receipts without actionable findings. Twelve original findings and psl-1
-are closed locally; eight original Defender findings remain. Next: fresh Sol 6.1 D10
-implementation, then independent Astra max review. Known module-spec Version 2.0 /
+are closed locally; eight original Defender findings remain. D10 awaits independent
+Astra max review; D9 follows. Known module-spec Version 2.0 /
 June 25 drift remains flagged against base 2.27.4.
 
-C6 began on clean master `0413e3b81cabda8b9c70e9feed6e4d8beab8f5b5`. The compiled
+C6 receipt (2026-10-15): it began on clean master `0413e3b81cabda8b9c70e9feed6e4d8beab8f5b5`. The compiled
 ticket input now shows the captured trimmed ticket and locks while busy or approved,
 including delayed oninput callbacks. Failed validation remains editable; new upload and
 successful enqueue use the existing approval resets. Optional blanks and all prior
@@ -56,10 +77,10 @@ ASCII checks passed, including the new test file. No self-review ran.
 `.agents/review/findings/cdr-c6.md` owns scope, proof, limits and the complete
 Constitution review packet and independent clean Astra max verdict for `66691b6`.
 Astra independently passed 8/8 plus an actual-renderer probe with 11 assertions,
-reconciled proof/gate receipts and found no actionable defects. All eleven original
-Comms findings and the additional shared psl-1 fix are closed locally. Nine original
-Defender findings remain. D8 implementation and its independent Astra max review
-are the current slice; the remaining approved sequence follows that boundary.
+reconciled proof/gate receipts and found no actionable defects. At that C6 boundary,
+all eleven original Comms findings and the additional shared psl-1 fix were closed
+locally, with nine original Defender findings remaining. D8 followed; current work
+is above.
 
 C8 is independently APPROVED (`4be636b`) with no actionable findings; its evidence,
 80/80 independent focused run and reviewed mutation/gate receipts are owned by

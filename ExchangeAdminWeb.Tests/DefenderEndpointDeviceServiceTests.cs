@@ -11,15 +11,13 @@ namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
 /// Paging, completion and parsing tests for the Defender for Endpoint device listing
-/// (docs/DefenderEndpointDevices-Plan.md S1). Every one runs against a locally declared HTTP stub:
-/// this slice makes no live call and cannot, because the module descriptor that would let anyone
-/// enter a Secret ID does not arrive until S2.
+/// (docs/DefenderEndpointDevices-Plan.md). Every one runs against a locally declared HTTP stub;
+/// none connects to a live tenant or Secret Server.
 /// </summary>
 /// <remarks>
 /// The load-bearing tests here are the completion rule's. A run is complete only on a POSITIVE
-/// proof of exhaustion, and the guard test - a full page carrying no continuation cursor must
-/// refuse - is the one that fails against the design this plan replaced, where that same response
-/// fell into a $skip fallback and rendered a list.
+/// proof of exhaustion. A full page carrying no continuation cursor must be partitioned or refuse
+/// when it cannot be divided; the earlier $skip fallback could silently render an incomplete list.
 /// </remarks>
 public class DefenderEndpointDeviceServiceTests
 {
@@ -75,7 +73,8 @@ public class DefenderEndpointDeviceServiceTests
             new(status) { Content = new StringContent(body) };
     }
 
-    private static (DefenderEndpointDeviceService Service, StubHandler Handler) CreateService(string? maxDevices = null)
+    private static (DefenderEndpointDeviceService Service, StubHandler Handler) CreateService(
+        string? maxDevices = null, int? pageSizeOverride = null)
     {
         var handler = new StubHandler();
         var apiClient = new DefenderApiClient(
@@ -87,7 +86,8 @@ public class DefenderEndpointDeviceServiceTests
             new HttpClient(handler));
         var service = new DefenderEndpointDeviceService(
             () => Task.FromResult<DefenderApiClient?>(apiClient),
-            maxDevices);
+            maxDevices,
+            pageSizeOverride: pageSizeOverride);
         return (service, handler);
     }
 
@@ -308,6 +308,110 @@ public class DefenderEndpointDeviceServiceTests
         Assert.Contains($"Stopped after {DefenderEndpointDeviceService.MaxRequestsPerRun} requests", result.RefusalReason);
     }
 
+    [Fact]
+    public async Task MalformedCappedRootPage_PartitionsAndReturnsTheCompleteInventory()
+    {
+        var inventory = Inventory(dated: 9, undated: 2);
+        var handler = new InventoryHandler(inventory, malformedRootEntry: true);
+        var service = PartitionService(handler, pageSize: 4);
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.Equal(11, result.DistinctCount);
+        Assert.Equal(inventory.Select(device => device.Id).Order().ToArray(),
+            result.Devices.Select(device => device.Id).Order().ToArray());
+        Assert.True(result.PagesFetched > 1);
+        Assert.Equal(handler.Filters.Count, result.PagesFetched);
+        Assert.Single(handler.Filters, filter => filter.Contains("lastSeen eq null", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task MalformedCappedPageWithoutSplitPoint_RefusesInsteadOfCompleting(int usableRows)
+    {
+        var (service, handler) = CreateService(maxDevices: "100", pageSizeOverride: 3);
+        handler.Responses.Add(() => Ok(MalformedCappedPage(usableRows)));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDeviceListOutcome.IncompletePaging, result.Outcome);
+        Assert.Empty(result.Devices);
+        Assert.Equal(usableRows, result.DistinctCount);
+        Assert.Equal(1, result.PagesFetched);
+        Assert.Equal(0, result.RangesCompleted);
+        Assert.Contains("cannot be divided further", result.RefusalReason);
+        Assert.Single(handler.RequestUrls);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task MalformedCappedPageWithCursor_FollowsItEvenWithFewUsableRows(int usableRows)
+    {
+        const string NextLink = Host + "/api/machines?$top=3&$skiptoken=after-malformed";
+        var (service, handler) = CreateService(maxDevices: "100", pageSizeOverride: 3);
+        handler.Responses.Add(() => Ok(MalformedCappedPage(usableRows, NextLink)));
+        handler.Responses.Add(() => Ok(Page(1, first: 4)));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        string[] expected = usableRows == 0 ? ["m4"] : ["m1", "m4"];
+        Assert.Equal(expected, result.Devices.Select(device => device.Id).Order().ToArray());
+        Assert.Equal(usableRows + 1, result.DistinctCount);
+        Assert.Equal(2, result.PagesFetched);
+        Assert.Equal(2, handler.RequestUrls.Count);
+        Assert.Equal(NextLink, handler.RequestUrls[1]);
+    }
+
+    [Fact]
+    public async Task MalformedCappedContinuation_UsesItsOwnTopAndRefusesWhenUnsplittable()
+    {
+        const string NextLink = Host + "/api/machines?$top=3&$skiptoken=smaller-cap";
+        var (service, handler) = CreateService(maxDevices: "100", pageSizeOverride: 7);
+        handler.Responses.Add(() => Ok(Page(1, first: 9, nextLink: NextLink)));
+        handler.Responses.Add(() => Ok(MalformedCappedPage(usableRows: 1)));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDeviceListOutcome.IncompletePaging, result.Outcome);
+        Assert.Empty(result.Devices);
+        Assert.Equal(2, result.DistinctCount);
+        Assert.Equal(2, result.PagesFetched);
+        Assert.Contains("cannot be divided further", result.RefusalReason);
+        Assert.Equal(NextLink, handler.RequestUrls[1]);
+    }
+
+    [Fact]
+    public async Task MalformedShortPage_CompletesWithOnlyUsableRows()
+    {
+        var (service, handler) = CreateService(maxDevices: "1", pageSizeOverride: 7);
+        handler.Responses.Add(() => Ok("""
+            {"value":[null,false,17,"bad",[],{"id":"m1","osBuild":22631}]}
+            """));
+
+        var result = await service.ListDevicesAsync();
+
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        var device = Assert.Single(result.Devices);
+        Assert.Equal("m1", device.Id);
+        Assert.Equal("22631", device.OsBuild);
+        Assert.Equal(1, result.DistinctCount);
+        Assert.Equal(1, result.Ceiling);
+        Assert.Equal(1, result.PagesFetched);
+        Assert.Equal(1, result.RangesCompleted);
+        Assert.Single(handler.RequestUrls);
+    }
+
+    private static string MalformedCappedPage(int usableRows, string? nextLink = null)
+    {
+        var first = usableRows == 0 ? "null" : """{"id":"m1","osBuild":22631}""";
+        var link = nextLink == null ? "" : $",\"@odata.nextLink\":\"{nextLink}\"";
+        return $"{{\"value\":[{first},false,[]]{link}}}";
+    }
+
     // ---- The Last seen partition: the whole point of Revision 3 --------------------------------
     //
     // These run against InventoryHandler rather than a canned script. It answers the query it is
@@ -328,7 +432,8 @@ public class DefenderEndpointDeviceServiceTests
     /// </remarks>
     private sealed class InventoryHandler(
         IReadOnlyList<(string Id, DateTimeOffset? LastSeen)> inventory,
-        bool supportsNullFilter = true) : HttpMessageHandler
+        bool supportsNullFilter = true,
+        bool malformedRootEntry = false) : HttpMessageHandler
     {
         public List<string> Filters { get; } = [];
 
@@ -357,6 +462,12 @@ public class DefenderEndpointDeviceServiceTests
             {
                 if (i > 0)
                     body.Append(',');
+
+                if (malformedRootEntry && Filters.Count == 1 && i == 0)
+                {
+                    body.Append("null");
+                    continue;
+                }
 
                 body.Append($"{{\"id\":\"{matches[i].Id}\",\"osPlatform\":\"Windows10\"");
                 if (matches[i].LastSeen is { } seen)

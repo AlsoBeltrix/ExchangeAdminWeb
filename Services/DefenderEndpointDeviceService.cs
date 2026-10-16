@@ -663,7 +663,7 @@ public sealed class DefenderEndpointDeviceService
 
             using var document = result.Document;
 
-            if (!TryReadPage(document, out var page, out var nextLink))
+            if (!TryReadPage(document, out var page, out var rawPageCount, out var nextLink))
                 return Refused(rows, keys, requests, requestedTop,
                     DefenderDeviceListOutcome.RequestFailed,
                     "The Defender for Endpoint API returned a response with no device collection in it. Load "
@@ -683,10 +683,10 @@ public sealed class DefenderEndpointDeviceService
                     DefenderDeviceListOutcome.CeilingExceeded, CeilingRefusal(ceiling));
 
             if (string.IsNullOrWhiteSpace(nextLink))
-                // The decisive test, unchanged from S1. A SHORT response with no cursor is P1/P2 -
-                // positive proof this part is exhausted. A FULL one proves nothing at all, and is
-                // handed back as ambiguous for the caller to divide.
-                return new PartFetch(rows, keys, requests, requestedTop, page.Count >= requestedTop, null, "");
+                // A SHORT raw response with no cursor proves this part is exhausted. Ignored
+                // malformed entries cannot turn a FULL response into that proof: it remains
+                // ambiguous and is handed back for the caller to divide.
+                return new PartFetch(rows, keys, requests, requestedTop, rawPageCount >= requestedTop, null, "");
 
             url = nextLink;
 
@@ -1596,9 +1596,11 @@ public sealed class DefenderEndpointDeviceService
     private static string DeduplicationKey(DefenderDevice device, int ordinal) =>
         string.IsNullOrWhiteSpace(device.Id) ? $"(no-id):{ordinal}" : device.Id;
 
-    private static bool TryReadPage(JsonDocument document, out List<DefenderDevice> devices, out string? nextLink)
+    private static bool TryReadPage(
+        JsonDocument document, out List<DefenderDevice> devices, out int rawPageCount, out string? nextLink)
     {
         devices = [];
+        rawPageCount = 0;
         nextLink = null;
 
         var root = document.RootElement;
@@ -1607,6 +1609,8 @@ public sealed class DefenderEndpointDeviceService
 
         if (!TryGetProperty(root, "value", out var value) || value.ValueKind != JsonValueKind.Array)
             return false;
+
+        rawPageCount = value.GetArrayLength();
 
         if (TryGetProperty(root, "@odata.nextLink", out var link) && link.ValueKind == JsonValueKind.String)
             nextLink = link.GetString();
