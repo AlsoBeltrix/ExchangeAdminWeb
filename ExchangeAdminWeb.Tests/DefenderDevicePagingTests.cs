@@ -220,7 +220,7 @@ public class DefenderDevicePagingTests
         var source = StripComments(ReadPage());
 
         Assert.Contains("!result.SiteMapRead", source, StringComparison.Ordinal);
-        Assert.Contains("Site could not be read from the directory.", source, StringComparison.Ordinal);
+        Assert.Contains("Site details could not be completed for every device.", source, StringComparison.Ordinal);
     }
 
     [Fact]

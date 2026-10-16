@@ -1200,7 +1200,7 @@ public sealed class DefenderEndpointDeviceService
     /// Q10 was ruled, so failing the run now means an operator looking for a machine gets
     /// nothing at all rather than a device list with one column degraded.
     /// </para>
-    /// <para>Returns whether the map was read, which the caller reports.</para>
+    /// <para>Returns whether all Site values were evaluated, which the caller reports.</para>
     /// </remarks>
     private async Task<bool> ApplySitesAsync(List<DefenderDevice> devices, CancellationToken cancellationToken)
     {
@@ -1239,10 +1239,33 @@ public sealed class DefenderEndpointDeviceService
             return false;
         }
 
-        foreach (var device in devices)
-            device.Site = AdSiteSubnetMap.FindSite(device.LastIpAddress, subnets);
+        return ApplySiteMatches(devices, subnets, cancellationToken);
+    }
 
-        return true;
+    internal static bool ApplySiteMatches(IReadOnlyList<DefenderDevice> devices,
+        IReadOnlyList<AdSiteSubnetMap.Subnet> subnets, CancellationToken cancellationToken)
+    {
+        // Establish truthful unknowns before matching. Once canceled, leave only fully
+        // evaluated sites in place; no worker ever receives or mutates these device rows.
+        foreach (var device in devices)
+            device.Site = EnrichmentUnavailable;
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var device in devices)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var site = AdSiteSubnetMap.FindSiteCancellable(device.LastIpAddress, subnets, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                device.Site = site;
+            }
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     private static void ApplyEnrichment(List<DefenderDevice> devices, DefenderDiscoveryEnrichment enrichment)

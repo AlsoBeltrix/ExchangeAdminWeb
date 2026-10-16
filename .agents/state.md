@@ -8,7 +8,38 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D7 verified; independent review pending
+### Comms-10k / Defender remediation - D7 P2 closed on coder proof; D1 next
+
+Independent Astra max returned CHANGES REQUIRED for `421588e`, exactly one P2:
+the shared deadline is not observed after the captured site-read continuation or
+during the device/subnet matching tail. The deterministic probe mapped all 5,000
+devices / 1,000 synthetic subnets after cancellation. Its verdict and independent
+988 affected passes / 865 provenance checks / native probes are preserved in
+`.agents/review/out/cdr-d7/reviewer-verdict.json` and its linked receipts.
+The coder corrected only this P2 from clean master `421588e`; both live remotes
+were rechecked at `eb0d191` on 2026-10-16. Scope and correction receipts are owned
+by `.agents/review/findings/cdr-d7.md` and `out/cdr-d7/p2-correction/`.
+The same deadline is enforced before and throughout site matching, completed
+data is preserved and unevaluated sites remain unavailable. Noncritical closure
+is coder-side guard proof; no second review or
+independent approval is implied. Three deterministic compiled guards initially
+pass, including actual paused continuation, intra-device subnet cancellation and
+final-publication cancellation. They cover partial Site retention, inventory and
+posture, exact applied filter/audit/export counts and compiled partial-site banner.
+Six fresh compiled regressions produce eight intended standard assertion failures
+with an exact three-name union, exact-byte/hash/newer-mtime restores and fresh
+app/runtime/test/PDB provenance. Original review receipts remain unchanged.
+Restored affected coverage passes 991/991. The ordered correction Release build
+passes with 40 warnings / 0 errors, full solution format passes before the single
+full suite with xUnit.MaxParallelThreads=4 (4,227 passed / 3 known AD-unavailable
+skips / 0 failed; 4,230 total; 5 minutes 11 seconds), then diff/staged-ASCII checks
+pass. Full logs/TRX and exact source/artifact/ordered-gate reconciliation remain
+in the correction folder; task build/test processes are stopped before handoff.
+Base is 2.27.6 and Defender 1.6.13; Comms remains 1.4.18. D7 is locally closed
+with the original CHANGES REQUIRED verdict preserved. D1 is the next approved
+slice, then D3 and D5, each in its separate implementation/review workflow.
+
+D7 implementation receipt before the independent P2:
 
 D7 began on clean master `134b22d`. Both live remote master refs were checked
 at `eb0d191` on 2026-10-16. Canonical design:
@@ -28,8 +59,8 @@ Fresh baseline passes 40/40. Final ordered Release build passes with 40 warnings
 including all new files; completion receipts live with
 the finding. Native work may continue after response cancellation; one admitted
 worker retains its cleanup slot, and no physical native hard stop is claimed.
-Fresh independent Astra max workflow review is pending. D1, D3 and D5 remain after
-that review. No push/deploy, live probe or adjacent work occurred.
+That original implementation's independent review returned the single P2 above.
+No push/deploy, live probe or adjacent work occurred.
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.

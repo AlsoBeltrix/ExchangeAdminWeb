@@ -518,7 +518,7 @@ part of this implementation approval.
 | D9 | Implemented / independently reviewed (`15e6531`) | [cdr-d9](../.agents/review/findings/cdr-d9.md) |
 | D4 | Implemented / independently reviewed (`600914a`) | [cdr-d4](../.agents/review/findings/cdr-d4.md) |
 | D2 | Implemented / independently reviewed (`7e62358`) | [cdr-d2](../.agents/review/findings/cdr-d2.md) |
-| D7 | Implemented / independent review pending | [cdr-d7](../.agents/review/findings/cdr-d7.md) |
+| D7 | Implemented; independent CHANGES REQUIRED preserved, its one P2 corrected / coder-proof closed | [cdr-d7](../.agents/review/findings/cdr-d7.md) |
 | D1 | Pending | |
 | D3 | Pending | |
 | D5 | Pending | |

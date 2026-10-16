@@ -579,8 +579,8 @@ public sealed class DefenderDeviceListResult
     public int ObserverFailedBatches { get; private init; }
 
     /// <summary>
-    /// False when the forest's subnet map could not be read, so every Site cell reads
-    /// "(unavailable)" rather than a place.
+    /// False when the subnet map or any Site evaluation did not complete. Completed sites
+    /// remain; unevaluated Site cells read "(unavailable)" rather than a place.
     /// </summary>
     public bool SiteMapRead { get; private init; } = true;
 

@@ -1,9 +1,138 @@
 # cdr-d7 - bound Defender enrichment after inventory
 
-Status: Implemented and locally verified on master; independent Astra max review
-pending, 2026-10-16.
+Status: Independent Astra max CHANGES REQUIRED for `421588e`; its one P2 is
+corrected and closed on coder-side guard proof, 2026-10-16. The original verdict
+is preserved; no second review or independent approval is claimed.
 
-## Evidence and declared scope (before code changes)
+## Independent review and P2 correction scope (before coding)
+
+Fresh native Astra max reviewed `134b22d..421588eb44b6d20e11e1e37f196bac53ec14e160`
+and returned **CHANGES REQUIRED**, exactly one **P2 / MEDIUM**: "Honor the deadline
+during site matching after the directory read." It found no additional actionable
+defects in the reviewed workflow. Original verdict and receipts are preserved at
+`.agents/review/out/cdr-d7/reviewer-verdict.json`, `reviewer-reconciliation.json`,
+`reviewer-probe/Program.cs` and `reviewer-probe.log`.
+
+The confirmed mechanism is ApplySitesAsync's unguarded continuation and device /
+subnet loops after ReadSubnetsAsync returns. The deterministic reviewer probe
+paused the captured UI continuation, fired the deadline, resumed it and observed
+all 5,000 devices mapped across 1,000 synthetic subnets after cancellation, with
+SiteMapRead true and DeadlineReached. Its extra 580 ms is an observation, never a
+timing assertion or a production-forest assumption. Independent affected coverage
+passed 988/988; 865 checks reconciled the original fifteen groups / 63 canonical
+failures / exact forty-case union and provenance. Twenty-one independent probe
+checks covered native blocked Open, retained admission, eventual disposal, no
+later commands and transient-token recovery. Review source reference:
+https://github.com/PowerShell/PowerShell/blob/v7.6.1/src/System.Management.Automation/engine/hostifaces/PowerShell.cs
+
+Correction starts on clean master `421588e`; both live remote master refs remain
+`eb0d19122f4921eca66e4300efe0605403214e23`. Enforce the same token before mapping,
+between devices and within each device's subnet scan; preserve completed Site /
+hunting data and inventory while unevaluated Site cells remain unavailable.
+Keep row mutations on the awaiting response path; the directory worker still
+returns data only. Update incomplete-site wording and its existing per-row filter /
+audit / CSV evidence. No D5 parsing/cache optimization, deadline reset or adjacent
+scope. Shared matching changes require base 2.27.5 -> 2.27.6 and Defender
+1.6.12 -> 1.6.13, including all version properties and catalog pin.
+
+Add minimal deterministic continuation / enumeration guards, mutation-prove every
+new case with fresh production compilation and standard assertions, preserve exact
+bytes / MD5 / SHA256 / newer-mtime and runtime/test/PDB provenance, then restored
+affected coverage and one ordered correction gate. Distinct correction receipts:
+`.agents/review/out/cdr-d7/p2-correction/`. Close this noncritical finding on
+coder-side proof under repo policy; preserve the original CHANGES REQUIRED verdict
+and do not commission a second review. No self-review, further agents, live calls,
+push/deploy, dependency/config/policy/hook/history changes are authorized.
+
+## P2 correction implementation and controlled guards
+
+The response path now establishes unavailable Site markers, checks the original
+token before matching, between devices, within each subnet scan and before
+publishing each completed match. Cancellation preserves already completed Site
+values; the current and remaining devices stay unavailable. SiteMapRead is false
+when any evaluation is incomplete. The native directory worker still returns
+subnet data only. Existing synchronous FindSite callers retain their public
+two-argument behavior; an internal cancellable entry point serves Defender.
+No CIDR parse/cache optimization was introduced.
+
+Three deterministic compiled guards pass initially. A held directory worker and
+paused SynchronizationContext reproduce the review's deadline-before-continuation
+case through actual ListDevicesAsync. Controlled enumeration fires the same fake
+budget within a later device's subnet scan and at the final MoveNext before
+publication. The guards retain complete inventory/posture and check exact per-row
+Site markers. The actual page's applied London filter, filter-audit builder and
+CSV projection retain unknowns and exclude known negatives: unavailable evaluation
+is 0 evaluated / 3 unavailable, partial evaluation is 1 / 2, and returned/exported
+counts are 3 and 2 respectively. Compiled rendering checks truthful partial-site
+wording. No elapsed-time race or long real wait determines an assertion.
+
+Touched files were formatted before proof lock. The initial setup run passed
+3/3, but exposed xUnit1051 warnings on existing two-argument subnet callers.
+Keeping the cancellable path internal and separately named preserves that public
+contract without editing unrelated callers or suppressing diagnostics. Setup
+receipts are not counted as regression proof. The page's exact HEAD/current equal
+opcode map confirms all 17 anchors stay fixed, no twin anchors, and line count
+1293; ProgressRegistry now names matching within the same reported operation.
+Correction proof/gate receipts remain separate from the accepted original D7
+and independent-review receipts.
+
+### Accepted P2 regression proof
+
+The formatted baseline passes all three new cases. Six freshly compiled
+production regressions produce eight intended standard assertion failures:
+
+| Production regression | Exact failed cases | Failure |
+| --- | --- | --- |
+| Reviewed original unchecked matching | All three new cases | Assert.False |
+| Missing per-subnet cancellation check | WithinOneSubnetScan | Assert.Equal (4 visits instead of 3) |
+| Missing final scan / publication checks | AtEndOfSubnetEnumeration | Assert.False |
+| Missing unevaluated Site markers | BeforeSiteContinuationResumes | Assert.All / Assert.Equal |
+| Discarding completed Site values on cancellation | WithinOneSubnetScan | Assert.Equal (Elsewhere lost) |
+| Original all-sites-unavailable banner | WithinOneSubnetScan | Assert.Contains (compiled rendering) |
+
+`proof-summary.json` records the exact three-name union. Every accepted run
+includes complete console output/TRX, no compiler errors, exact saved-byte /
+MD5 / SHA256 restoration with source mtimes advanced beyond mutated mtimes, and
+fresh production/runtime/test DLL/PDB provenance. Runtime app/PDB copies equal
+the freshly built app/PDB, and every mutation changes the production assembly.
+The original four independent-review receipt hashes remain unchanged. The
+initial setup pass is excluded from regression counts; no compiler/fixture failure
+is counted and no original D7 mutation group is replayed. Distinct receipts:
+`p2-correction/proof.py`, `proof.json`, `saved/`, six `*-evidence.json`, complete
+`*.log` / per-run TRX directories, `anchor-map.json` and `proof-summary.json`.
+
+### P2 correction verification and closure
+
+Restored affected coverage passes 991/991, including all three correction cases,
+original D7 and D2 overlap cases, shared Delinea/directory/API/CloudSignIn and
+section-access callers, full ClickGate and Progress groups and catalog pin.
+One final ordered correction gate passes: Release solution build (40 warnings /
+0 errors), full solution format verification, then the single full Release suite
+with xUnit.MaxParallelThreads=4 (4,227 passed / 3 known AD-unavailable skips /
+0 failed; 4,230 total; 5 minutes 11 seconds), followed by diff/staged-ASCII guards.
+Complete console output/TRX and ordered start/end receipts are retained; no
+compiler failure counts as assertion proof. No production/test bytes changed
+after restored affected verification. The initial setup pass and formatting
+preparation are excluded from canonical proof/gate counts.
+
+Final correction receipts are `final-*.json` / `.log`, `final-full/`,
+`closeout.json` (source / artifact / exact-union / ordered-gate reconciliation),
+`token-usage.json`, and `process-shutdown.*` under the isolated correction folder.
+The committed-baseline Claude-only meter ran; no native session usage or cost
+is attributed. No shipped PowerShell changed. The original independent review
+verdict and its receipts retain their exact hashes.
+
+This closes the single noncritical P2 on coder-side guard proof under repo policy.
+It does not replace Astra's original CHANGES REQUIRED verdict with an approval.
+No second independent review is required or commissioned. D7 is locally closed;
+the next approved slice is D1, then D3 and D5. No push or deployment occurred.
+Cancellation remains cooperative: a finite per-CIDR parse/match and the cheap
+finite-inventory marker pass can finish between checks. Native cleanup may
+continue after response return while retaining its one admission slot; the
+worker never mutates rows. No physical hard-stop or live AD/tenant/vault/browser
+acceptance is claimed.
+
+## Evidence and declared scope (before original code changes)
 
 Owner approved all Revision 6 findings on 2026-10-15 ("approved. go.") and
 requested recovery/continuation on 2026-10-16. Approved scope is D7 in
@@ -224,7 +353,10 @@ location / SeenBy schema acceptance remains unproven and requires separate owner
 authority. D1, D3 and D5 remain after this slice; the other deferred items named
 above remain unapproved. Independent Astra workflow review is the next gate.
 
-# Review Packet
+# Original implementation review packet (historical)
+
+This packet records the `421588e` handoff. Its pending-review wording is historical:
+the preserved independent result is CHANGES REQUIRED with the one P2 above.
 
 ## Mode
 
@@ -324,3 +456,107 @@ change after the final affected/gate runs. Final reconciliation binds current
 source/runtime/test/PDB hashes, exact proof scope, anchor map and ordered receipts.
 No shipped PowerShell changed, so PSScriptAnalyzer/Pester are inapplicable. Manual
 live checks were not run. Independent Astra review remains the pending step.
+
+# Review Packet
+
+## Mode
+
+IMPLEMENTATION_REVIEW - P2 correction record and coder-side guard closure;
+no self-review or second independent verification review is requested.
+
+## Original Request
+
+Owner approved all twenty Revision 6 findings and sequential Sol 6.1 max
+implementation / independent Astra max review, then requested recovery and
+continuation. The D7 reviewer returned exactly one P2 in `421588e`: deadline
+checks ended at the site read, leaving the captured continuation and nested
+matching loops unbounded by cancellation. Parent authorized correcting this P2,
+proving each new guard with fresh production regressions and committing normally.
+Preserve CHANGES REQUIRED as the original verdict and close on coder-side proof
+under the noncritical-review policy; no second review or independent approval.
+
+## Approved Plan
+
+`docs/Comms10kDefenderRemediation-Plan.md`, APPROVED Revision 6, D7;
+`.agents/review/cdr-d7-design.md`, plus the independent P2 described above.
+
+## Commit Range
+
+`421588eb44b6d20e11e1e37f196bac53ec14e160..HEAD` - one normal master P2 correction.
+Original independently reviewed range remains `134b22d..421588e`.
+
+## Claimed Changes
+
+- Observe the original deadline before matching, between devices, within each
+  subnet scan and immediately before publishing a completed Site result.
+- Preserve inventory, completed posture and completed Site values; report
+  incomplete Site coverage and leave all unevaluated Site cells unavailable.
+- Correct the page message for partial Site data. Existing per-row filters,
+  applied audit counts and CSV behavior remain and are exercised by compiled tests.
+- Preserve synchronous shared callers and data-only directory worker ownership.
+  Base 2.27.6 and Defender 1.6.13 include all version fields and catalog pin.
+- Three deterministic new guards; six compiled production regressions prove an
+  exact three-case union through eight intended standard assertion failures.
+
+## Constraints / Out Of Scope
+
+No D5 parse-once/filter caching, D1 initial-load or D3 reentry change. No
+credential/auth policy, protection, locking, config DB, dependency, privilege or
+native worker redesign. No live AD/tenant/vault calls, push/deploy, branches,
+history rewrite, git config/hooks/trust, further agents or self-review. Preserve
+original accepted receipts and the independent CHANGES REQUIRED verdict.
+
+## Design Decisions
+
+- Initialize cheap unavailable markers for the finite fetched inventory before
+  evaluating rows. Only a fully completed scan publishes a Site; cancellation
+  leaves completed earlier rows intact and marks current/later rows honestly.
+- Check cancellation inside the CIDR loop without changing longest-prefix rules
+  or introducing D5's parse/cache optimization. One finite CIDR parse/match can
+  complete between checks; this is cooperative cancellation, not a native hard stop.
+- Keep the public synchronous FindSite entry point and use a separately named
+  internal cancellable path for Defender. Section-access callers and native worker
+  ownership are unchanged. A worker still never receives the device rows.
+- SiteMapRead means every Site evaluation completed. Filters/audits already
+  inspect each unavailable marker, allowing truthful partial coverage without
+  replacing completed data or changing audit policy. The banner now describes that.
+- Deterministic held worker / queued SynchronizationContext and controlled subnet
+  enumeration reproduce cancellation at each boundary; watchdogs detect hangs
+  but no elapsed duration or scheduling race decides correctness.
+
+## Deferred Work
+
+D1, D3 and D5 remain approved separate slices; D1 is next after this correction.
+psl-2/3/4, cdr-followup-1, continuation-host validation and broad D6 audit remain
+deferred/unapproved. Physical AD/SeenBy acceptance is unproven; no deployment or
+push is included. Known AdminModuleSpec Version 2.0 / June 25 drift stays flagged.
+
+## Review Focus
+
+No second review is commissioned for this P2. The coder's guard evidence targets
+the reviewed original behavior, inner-scan cancellation, final publication,
+unavailable markers, completed Site retention and compiled partial-site wording.
+It also checks actual applied filtering, exact audit and exported-row counts with
+complete inventory/posture retained. Original D7 proof is retained without replay;
+correction receipts are isolated in `out/cdr-d7/p2-correction/`.
+
+## Verification Run
+
+Formatted fixed baseline 3/3; six fresh compiled production regression groups /
+eight intended standard assertion failures / exact three-case union; saved bytes,
+MD5/SHA256, newer-mtime restoration and app/runtime/test DLL/PDB provenance pass.
+Restored affected tests pass 991/991, including shared callers, all correction and
+original D7/D2 cases, complete ClickGate and Progress groups. Exact page mapping
+retains all 17 anchors (no twins) and ExpectedLineCount 1293; ProgressRegistry
+describes the same operation through matching. Ordered correction Release build
+passes with 40 warnings / 0 errors, full solution format verification passes
+before the single full Release suite (4,227 passed / 3 known AD-unavailable skips /
+0 failed; 4,230 total; 5 minutes 11 seconds), then diff/staged-ASCII guards pass.
+`closeout.json` reconciles the exact fixed bytes, current app/runtime/test/PDB
+artifacts, accepted proof union and ordered gate receipts. Task build/test servers
+are stopped before handoff, with a retained process-shutdown receipt.
+All complete test/build logs are checked for compiler errors; none are accepted
+as assertion proof. The initial setup run is excluded from proof counts.
+The Claude-only token meter ran against the committed baseline; it excludes this
+native session, so no native usage/cost is invented. No shipped PowerShell changed;
+PSScriptAnalyzer/Pester are inapplicable. No live/browser/deployment check was run.

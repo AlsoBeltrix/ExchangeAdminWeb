@@ -61,9 +61,14 @@ public static class AdSiteSubnetMap
     /// has no site", not the name of some broader subnet's site.
     /// </para>
     /// </remarks>
-    public static string FindSite(string? ipAddress, IReadOnlyList<Subnet> subnets)
+    public static string FindSite(string? ipAddress, IReadOnlyList<Subnet> subnets) =>
+        FindSiteCancellable(ipAddress, subnets, CancellationToken.None);
+
+    internal static string FindSiteCancellable(string? ipAddress, IReadOnlyList<Subnet> subnets,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(subnets);
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (!IPAddress.TryParse(ipAddress, out var address))
             return "";
@@ -74,6 +79,7 @@ public static class AdSiteSubnetMap
 
         foreach (var subnet in subnets)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var parsed = Parse(subnet);
             if (parsed is null || parsed.Family != address.AddressFamily)
                 continue;
@@ -92,6 +98,9 @@ public static class AdSiteSubnetMap
             }
         }
 
+        // The final MoveNext can coincide with cancellation too. Do not publish a match
+        // after the budget expires, even if that was the last subnet or an empty map.
+        cancellationToken.ThrowIfCancellationRequested();
         return bestSite;
     }
 
