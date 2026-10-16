@@ -1160,6 +1160,7 @@ public sealed class ModuleCatalog
             // rises from 20000 to 100000.
             // 1.6.9: export failures are handled and safely audited without hiding inventory.
             // 1.6.10: audits bind requested/evaluated filters and final counts to the applied result.
+            // 1.6.11: concurrent inventory calls retain their own hunting batch diagnostics.
             // 1.6.8: malformed entries cannot make a capped API response look complete.
             // 1.6.7: numeric OS builds and escaped AD site names survive parsing and export.
             // 1.6.6: a device whose id is blank reads "(unavailable)" in every enrichment cell
@@ -1189,7 +1190,7 @@ public sealed class ModuleCatalog
             //        devices "(unavailable)" and never blanks the batches that answered.
             // 1.2.0: device table paged at 50 rows. Rendering all of them killed the circuit.
             //        Paging bounds the DOM only - the CSV still carries the whole matching set.
-            Version = "1.6.10",
+            Version = "1.6.11",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",

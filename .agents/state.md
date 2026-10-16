@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D4 approved; D2 next
+### Comms-10k / Defender remediation - D2 verified; independent review next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -18,31 +18,30 @@ Astra workflow review at max. C9, C1, C10, C3, C4 and C11 have independent revie
 The separately approved shared Exchange psl-1 is independently reviewed; its record at
 `.agents/review/findings/psl-1.md` owns the evidence and verdict.
 
-D4 starts on clean master `dc37c7ad87392ee82d4d211ec55e64c382f90153`; live origin
+D2 starts on clean master `eb0d19122f4921eca66e4300efe0605403214e23`; live origin
 and github master still match `885397981d7550afebf6518ef21b4fc54b062859`.
-Its page-local applied audit snapshot records requested service/Site/Seen-by
-filters, completed versus degraded/unavailable evaluation, and final displayed/
-exported count. Captured location values publish with their result; export reuses
-that applied snapshot before selection/awaits. Unavailable-row escapes, exact
-selection and D9 safe failures/audit isolation remain. Defender is 1.6.10; base
-remains 2.27.4 and Comms 1.4.18. Known module-spec Version 2.0 / June 25 drift
-remains flagged.
+The singleton's shared diagnostic field is removed. Both hunting helpers return
+immutable per-call outcomes; posture reasons and independent observer failure
+counts/cells aggregate locally. Public reporting, successful empty batches,
+inventory, partial enrichment, filters and CSV contracts remain. Defender is
+1.6.11; base remains 2.27.4 and Comms 1.4.18. Known module-spec Version 2.0 /
+June 25 drift remains flagged. D2 intentionally precedes D7, whose separate scope
+owns cancellation, deadlines and systemic stop behavior.
 
-The final eleven-case compiled baseline passes. Seven fresh production probes
-produce 28 intended standard assertion failures with an exact eleven-name union;
-byte/MD5/SHA256/newer-mtime restoration and app/runtime/test/PDB provenance pass.
-A legacy source-only snapshot literal was adapted to the local capture; the new
-compiled cases prove the same behavior. Restored complete affected coverage
-passes 738/738. The final ordered gate passes: Release build with 40 existing
-warnings / 0 errors, full solution format before the one full suite (4,184 passed /
-3 skipped / 0 failed), then diff/staged ASCII including the new test and finding.
-Independent Astra max APPROVED `600914a` with no actionable findings, passing
-738/738 focused tests and 47 compiled scenarios / 646 assertions. Its 149 evidence
-checks reconciled the proof, provenance, registry anchors and full gate receipts.
-`.agents/review/findings/cdr-d4.md` owns scope, proof and the complete Constitution
-packet; `.agents/review/out/cdr-d4/` holds ignored actual receipts.
-Fifteen originals and psl-1 are closed locally; five original Defender findings
-remain, starting with D2, then D7, D1, D3 and D5. No push, deployment,
+Six deterministic real ListDevicesAsync overlap cases pass. Three fresh compiled
+production regressions produce 18 intended Assert.Equal failures with an exact
+six-case union; exact-byte/MD5/SHA256/newer-mtime restoration and app/runtime/test/
+PDB provenance pass. The class-field sweep records nine remaining readonly,
+constructor-assigned fields plus one init-only test property. Restored affected
+coverage passes 743/743. The final ordered gate passes: Release build with 40
+existing warnings / 0 errors, full solution format before the single full suite
+(4,190 passed / 3 known AD-unavailable skips / 0 failed), then staged diff/ASCII
+including the new test and finding. Independent Astra max review is owed after
+the normal one-finding commit; no next-slice work before that review.
+`.agents/review/findings/cdr-d2.md` owns scope/proof and the complete Constitution
+packet; `.agents/review/out/cdr-d2/` holds ignored actual receipts.
+Fifteen originals and psl-1 are closed locally (D4 independently APPROVED
+`600914a`); D2 is active, followed by D7, D1, D3 and D5. No push, deployment,
 live call, self-review or adjacent scope is authorized.
 
 D9 receipt:

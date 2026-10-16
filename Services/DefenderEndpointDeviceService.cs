@@ -882,10 +882,11 @@ public sealed class DefenderEndpointDeviceService
             // Per batch, not per run. Known Failure Class 2: this loop is the aggregation point,
             // and the rule is that one batch's failure must neither blank the batches that
             // answered nor let the run claim the column is complete.
-            if (!await TryEnrichBatchAsync(client, batch, rows))
+            var posture = await TryEnrichBatchAsync(client, batch, rows);
+            if (!posture.Succeeded)
             {
                 failedBatches++;
-                lastFailureReason = _lastBatchFailureReason;
+                lastFailureReason = posture.Reason;
                 foreach (var id in batch)
                     unavailable.Add(id);
 
@@ -898,7 +899,8 @@ public sealed class DefenderEndpointDeviceService
             // Separate request, separate failure. SeenBy() may be unsupported or shaped
             // differently per tenant, and the five columns above are known to work - so this
             // one's failure marks only the observer column, never theirs.
-            if (!await TryReadObserversAsync(client, batch, rows))
+            var observers = await TryReadObserversAsync(client, batch, rows);
+            if (!observers.Succeeded)
             {
                 observerFailedBatches++;
                 foreach (var id in batch)
@@ -930,15 +932,15 @@ public sealed class DefenderEndpointDeviceService
             rows, batches.Count, observerUnavailable, observerFailedBatches);
     }
 
-    /// <summary>Why the most recent batch failed. Read only immediately after a false return.</summary>
-    private string _lastBatchFailureReason = "";
+    /// <summary>A batch's outcome and safe diagnostic belong to its call, including across awaits.</summary>
+    private sealed record HuntingBatchResult(bool Succeeded, string Reason);
 
     /// <summary>
-    /// Runs one hunting batch and merges its rows, returning whether the batch answered.
+    /// Runs one hunting batch and merges its rows, returning its outcome and safe failure reason.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Merges into the shared dictionary only on success.</b> A batch that failed contributes
+    /// <b>Merges into the caller's per-run dictionary only on success.</b> A batch that failed contributes
     /// nothing, which is what lets the caller mark exactly its devices unavailable while leaving
     /// every other batch's data in place.
     /// </para>
@@ -948,7 +950,7 @@ public sealed class DefenderEndpointDeviceService
     /// parsing bug in this module stays an exception instead of becoming "the request failed".
     /// </para>
     /// </remarks>
-    private async Task<bool> TryEnrichBatchAsync(
+    private async Task<HuntingBatchResult> TryEnrichBatchAsync(
         DefenderApiClient client,
         IReadOnlyList<string> batch,
         Dictionary<string, DefenderDeviceDiscovery> into)
@@ -961,33 +963,26 @@ public sealed class DefenderEndpointDeviceService
         }
         catch (Exception ex) when (IsHuntingSideFailure(ex))
         {
-            _lastBatchFailureReason = DefenderDiscoveryReasons.SendFailed;
-            return false;
+            return new(false, DefenderDiscoveryReasons.SendFailed);
         }
 
         if (response.Document == null)
-        {
-            _lastBatchFailureReason = DescribeEnrichmentFailure(response);
-            return false;
-        }
+            return new(false, DescribeEnrichmentFailure(response));
 
         using var document = response.Document;
 
         if (!TryReadHuntingResults(document, out var batchRows))
-        {
-            _lastBatchFailureReason = DefenderDiscoveryReasons.MalformedResponse;
-            return false;
-        }
+            return new(false, DefenderDiscoveryReasons.MalformedResponse);
 
         foreach (var (id, row) in batchRows)
             into[id] = row;
 
-        return true;
+        return new(true, "");
     }
 
     /// <summary>
-    /// Runs one observer batch and merges the names onto rows already read, returning whether
-    /// the batch answered.
+    /// Runs one observer batch and merges the names onto rows already read, returning its
+    /// outcome and safe failure reason independently of the posture request.
     /// </summary>
     /// <remarks>
     /// Merges ONTO the existing rows rather than replacing them: the posture pass has already
@@ -995,7 +990,7 @@ public sealed class DefenderEndpointDeviceService
     /// no DeviceInfo row gets an entry anyway - the hunting row and the device are separate
     /// things, and ApplyEnrichment only ever looks rows up by device, never the reverse.
     /// </remarks>
-    private async Task<bool> TryReadObserversAsync(
+    private async Task<HuntingBatchResult> TryReadObserversAsync(
         DefenderApiClient client,
         IReadOnlyList<string> batch,
         Dictionary<string, DefenderDeviceDiscovery> into)
@@ -1008,16 +1003,16 @@ public sealed class DefenderEndpointDeviceService
         }
         catch (Exception ex) when (IsHuntingSideFailure(ex))
         {
-            return false;
+            return new(false, DefenderDiscoveryReasons.SendFailed);
         }
 
         if (response.Document == null)
-            return false;
+            return new(false, DescribeEnrichmentFailure(response));
 
         using var document = response.Document;
 
         if (!TryReadObserverNames(document, out var observers))
-            return false;
+            return new(false, DefenderDiscoveryReasons.MalformedResponse);
 
         foreach (var (id, names) in observers)
         {
@@ -1029,7 +1024,7 @@ public sealed class DefenderEndpointDeviceService
                 into[id] = new DefenderDeviceDiscovery { RecentlySeenBy = joined };
         }
 
-        return true;
+        return new(true, "");
     }
 
     /// <summary>
