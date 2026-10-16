@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D10 approved; D9 next
+### Comms-10k / Defender remediation - D9 implemented; independent review next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -17,6 +17,25 @@ Astra workflow review at max. C9, C1, C10, C3, C4 and C11 have independent revie
 `.agents/review/findings/cdr-c4.md` owns its P2 correction closed on coder-side proof.
 The separately approved shared Exchange psl-1 is independently reviewed; its record at
 `.agents/review/findings/psl-1.md` owns the evidence and verdict.
+
+D9 implementation started on clean master `1f1b93d89f503b4c37171d547409533b7dcebbf4`;
+both live remote master refs still matched `885397981d7550afebf6518ef21b4fc54b062859`.
+Selection/CSV/delivery failures now have a separate safe notice and failed audit,
+keeping loaded inventory and successful-delivery/audit-failure semantics. Defender
+is 1.6.9; base stays 2.27.4 and Comms 1.4.18. Eleven new compiled cases passed;
+four production regressions produced 16 intended assertion failures, exact union
+all eleven cases, with exact-byte/MD5/SHA256/newer-mtime restoration and runtime/test
+provenance. Restored Defender/catalog/full ClickGate/Progress tests passed 727/727.
+The format gate caught one test initializer's whitespace; all nonwhitespace test
+bytes remained identical and a separately named fresh formatted fixed run passed
+11/11. The final ordered gate passed: Release build with 40 existing warnings /
+0 errors, full solution format before the single full suite (4,173 passed / 3
+skipped / 0 failed), then staged diff/ASCII checks including the new test file.
+Thirteen original findings and psl-1 remain closed; D9 awaits independent review.
+The D9 record owns scope, exact proof, reconciliation and the Constitution packet:
+`.agents/review/findings/cdr-d9.md`. Independent Astra max review follows the code
+commit; D4 is the next implementation slice after that boundary. No push, live
+integration, deployment, self-review or adjacent finding work is authorized.
 
 Recovery 2026-10-16: owner said "system restarted. please recover and continue."
 The D10 implementer was lost; its four changed code/test files and declared finding

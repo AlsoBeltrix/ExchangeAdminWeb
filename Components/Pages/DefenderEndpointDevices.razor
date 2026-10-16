@@ -236,6 +236,11 @@
         </div>
     </div>
 
+    @if (csvExportError != null)
+    {
+        <div class="alert alert-danger" role="alert">@csvExportError</div>
+    }
+
     @* Branch order is load-bearing. A failed read must never fall through to the empty-table
        branch, and a refusal must never fall through to the table branch: a refusal carries zero
        devices by construction, so rendering it as a table would show an empty list as the answer to
@@ -480,7 +485,7 @@
     private bool authChecked;
 
     /// <summary>
-    /// The page's only in-flight flag, and therefore the whole of <see cref="IsBusy"/>. Raised in
+    /// The inventory load's in-flight flag, a member of <see cref="IsBusy"/>. Raised in
     /// LoadAsync alone, immediately above the try whose finally lowers it again - deliberately NOT
     /// in OnInitializedAsync, where there is no try to protect it and a raise would be the
     /// stuck-flag shape that deadens every control on the page.
@@ -491,7 +496,7 @@
     /// In flight for the whole of one CSV export, and a member of <see cref="IsBusy"/> for the same
     /// reason isLoading is: a load landing while the file is being served would replace the rows
     /// under the audit record. Raised BELOW DownloadCsvAsync's empty-set return - see the comment
-    /// there - because an early return leaves no finally behind it.
+    /// there - because an empty export should start no work.
     /// </summary>
     private bool isDownloadingCsv;
 
@@ -505,6 +510,7 @@
     private string currentUser = "";
     private string clientIpAddress = "Unknown";
     private string? loadError;
+    private string? csvExportError;
     private DefenderDeviceListResult? result;
 
     /// <summary>
@@ -879,6 +885,7 @@
 
         isLoading = true;
         loadError = null;
+        csvExportError = null;
         try
         {
             await Task.Yield();
@@ -1025,70 +1032,67 @@
     /// </summary>
     private async Task DownloadCsvAsync()
     {
-        // Guard first, snapshot second, raise third, and every step of that order is load-bearing.
-        //
-        // The raise sits BELOW the empty-set return because the return leaves no finally behind it,
-        // and isDownloadingCsv is a member of IsBusy: a raise above the guard would not grey one
-        // button, it would deaden every control on the page for the life of the circuit, the first
-        // time anyone clicked Download CSV with nothing to export.
-        //
-        // The rows and the enrichment state are captured into locals because LoadAsync REPLACES
-        // result wholesale rather than mutating it. Without the capture, a load landing while the
-        // interop await is in flight would put a different row count in the audit record than the
-        // file the operator actually received, and could flip the enrichment state between the
-        // cells that were written and the cells the operator is told to expect.
-        var rows = ExportableDevices;
-        if (rows.Count == 0)
-            return;
-
-        var enrichment = result?.DiscoveryEnrichment ?? DefenderDiscoveryEnrichmentState.NotAttempted;
-
-        isDownloadingCsv = true;
-
-        // The Begin sits ABOVE the yield already on this page, so the greyed controls and the
-        // status bar reach the operator in ONE frame rather than two. ActivitySize.Unknown rather
-        // than Items(rows.Count) although the count is known here: nothing between the Begin and
-        // the Complete can Report - the build and both encodes are one synchronous stretch - so a
-        // determinate bar would sit at 0% for the whole export and read as hung. The count goes in
-        // the label instead, which is AdminEventLog.DownloadCsv's and MessageTrace.ExportCsv's
-        // settled choice. The yield below is what makes any of it visible, and it was already
-        // here: without a flush point the first paint would not arrive until the interop await,
-        // after the expensive part was over.
-        using var activity = Progress.Begin(
-            "Defender for Endpoint Devices",
-            $"Exporting {rows.Count:N0} device(s) to CSV",
-            ActivitySize.Unknown);
-
-        await Task.Yield();
-
         try
         {
-            var csv = BuildCsv(rows, enrichment);
-            var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
-            var base64 = Convert.ToBase64String(bytes);
-            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            await JS.InvokeVoidAsync("downloadFile",
-                $"DefenderEndpointDevices_{timestamp}.csv", "text/csv", base64);
+            // Keep selection inside the handled scope too: filtering can fail before CSV work.
+            // The empty-set guard still precedes the busy raise. A refusal exports nothing.
+            var rows = ExportableDevices;
+            if (rows.Count == 0)
+                return;
 
-            // The bytes are already on their way to the browser by the time this runs, so an audit
-            // failure must not be allowed to fail the export: the operator HAS the file, and
-            // throwing here would report a completed disclosure as a failed one. SafeAudit logs it
-            // instead, which is the same bargain the listing path makes.
-            SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv",
-                "DefenderEndpointDevices", $"{rows.Count} rows", true));
+            // Both locals describe the loaded inventory even if a later load replaces result.
+            var enrichment = result?.DiscoveryEnrichment ?? DefenderDiscoveryEnrichmentState.NotAttempted;
+            isDownloadingCsv = true;
+            try
+            {
+                csvExportError = null;
 
-            // Completed BELOW the transfer, the settled order on both worked examples: the base64
-            // push over the SignalR circuit is the last thing the operator waits on. The audit
-            // above is inside the window because SafeAudit swallows and logs. A throw anywhere in
-            // the try never reaches this line and falls to the dispose fallback instead, which is
-            // what that fallback is for. The transfer MECHANISM is untouched -
-            // docs/DownloadMemoryRetention-Plan.md proposes replacing it and is a DRAFT. The read
-            // is `rows`, the local the method already captured before its first await.
-            activity.Complete(true, $"{rows.Count:N0} device(s) exported.");
+                // Begin before yielding so controls and progress reach the operator together. The
+                // synchronous projection/encoding has no reportable steps, so only its size is named.
+                using var activity = Progress.Begin(
+                    "Defender for Endpoint Devices",
+                    $"Exporting {rows.Count:N0} device(s) to CSV",
+                    ActivitySize.Unknown);
+
+                await Task.Yield();
+
+                var csv = BuildCsv(rows, enrichment);
+                var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+                var base64 = Convert.ToBase64String(bytes);
+                var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                await JS.InvokeVoidAsync("downloadFile",
+                    $"DefenderEndpointDevices_{timestamp}.csv", "text/csv", base64);
+
+                // The bytes are already on their way to the browser by the time this runs, so an audit
+                // failure must not be allowed to fail the export: the operator HAS the file, and
+                // throwing here would report a completed disclosure as a failed one. SafeAudit logs it
+                // instead, which is the same bargain the listing path makes.
+                SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv",
+                    "DefenderEndpointDevices", $"{rows.Count} rows", true));
+
+                // Completed BELOW the transfer, the settled order on both worked examples: the base64
+                // push over the SignalR circuit is the last thing the operator waits on. The audit
+                // above is inside the window because SafeAudit swallows and logs. A throw anywhere in
+                // the try never reaches this line and falls to the dispose fallback instead, which is
+                // what that fallback is for. The transfer MECHANISM is untouched -
+                // docs/DownloadMemoryRetention-Plan.md proposes replacing it and is a DRAFT. The read
+                // is `rows`, the local the method already captured before its first await.
+                activity.Complete(true, $"{rows.Count:N0} device(s) exported.");
+            }
+            finally
+            {
+                isDownloadingCsv = false;
+            }
         }
-        finally
+        catch (Exception ex)
         {
-            isDownloadingCsv = false;
+            // A delivery exception cannot prove whether the browser received any bytes. Report
+            // incomplete export without claiming zero delivery or hiding the loaded inventory.
+            csvExportError = "CSV export could not be completed. Try Download CSV again.";
+            Logger.LogError("Failed to export Defender for Endpoint devices ({ExceptionType}).",
+                ex.GetType().Name);
+            SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv",
+                "DefenderEndpointDevices", "Device inventory", false, errorDetail: csvExportError));
         }
     }
 

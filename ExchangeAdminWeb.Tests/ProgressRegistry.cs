@@ -1255,8 +1255,9 @@ public static class ProgressRegistry
                 + "Begin and the Complete can Report; the count is in the label. The Complete "
                 + "sits at the bottom of the TRY rather than in the finally, deliberately: the "
                 + "finally lowers isDownloadingCsv on every exit, but only the straight-line path "
-                + "is a finished export - a throw falls to the dispose fallback, which is what "
-                + "that fallback is for. No snapshot was added because the page already makes "
+                + "is a finished export. A throw disposes progress and is handled with a separate "
+                + "safe export notice and failed ExportCsv SafeAudit; inventory stays visible. "
+                + "Row selection is inside the same handled scope. No snapshot was added because the page already makes "
                 + "one; ClickGateRegistry's RaiseMustFollowEarlyReturn entry for this handler "
                 + "pins the guard/raise order and is untouched by the Begin landing below both"),
         ],
