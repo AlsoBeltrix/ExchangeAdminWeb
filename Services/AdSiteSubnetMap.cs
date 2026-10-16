@@ -37,7 +37,7 @@ public static class AdSiteSubnetMap
     public sealed record Subnet(string Cidr, string SiteName);
 
     /// <summary>A subnet parsed into the form matching needs.</summary>
-    private sealed record Parsed(byte[] Network, int PrefixLength, AddressFamily Family, string SiteName);
+    internal sealed record Parsed(byte[] Network, int PrefixLength, AddressFamily Family, string SiteName);
 
     /// <summary>
     /// The site containing <paramref name="ipAddress"/>, or empty when nothing contains it.
@@ -61,10 +61,33 @@ public static class AdSiteSubnetMap
     /// has no site", not the name of some broader subnet's site.
     /// </para>
     /// </remarks>
-    public static string FindSite(string? ipAddress, IReadOnlyList<Subnet> subnets) =>
-        FindSiteCancellable(ipAddress, subnets, CancellationToken.None);
+    public static string FindSite(string? ipAddress, IReadOnlyList<Subnet> subnets)
+    {
+        ArgumentNullException.ThrowIfNull(subnets);
+        if (!IPAddress.TryParse(ipAddress, out _))
+            return "";
 
-    internal static string FindSiteCancellable(string? ipAddress, IReadOnlyList<Subnet> subnets,
+        return FindSiteCancellable(ipAddress, Prepare(subnets, CancellationToken.None), CancellationToken.None);
+    }
+
+    internal static IReadOnlyList<Parsed> Prepare(IReadOnlyList<Subnet> subnets,
+        CancellationToken cancellationToken, Action<Subnet>? subnetParsed = null)
+    {
+        ArgumentNullException.ThrowIfNull(subnets);
+        cancellationToken.ThrowIfCancellationRequested();
+        var prepared = new List<Parsed>();
+        foreach (var subnet in subnets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var parsed = Parse(subnet, subnetParsed);
+            if (parsed is not null)
+                prepared.Add(parsed);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return prepared;
+    }
+
+    internal static string FindSiteCancellable(string? ipAddress, IReadOnlyList<Parsed> subnets,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(subnets);
@@ -77,11 +100,10 @@ public static class AdSiteSubnetMap
         var best = -1;
         var bestSite = "";
 
-        foreach (var subnet in subnets)
+        foreach (var parsed in subnets)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var parsed = Parse(subnet);
-            if (parsed is null || parsed.Family != address.AddressFamily)
+            if (parsed.Family != address.AddressFamily)
                 continue;
 
             if (!Contains(parsed, addressBytes))
@@ -136,8 +158,9 @@ public static class AdSiteSubnetMap
     /// directory of hundreds must not cost every other device its site - and an AD subnet object
     /// is created by hand, so a malformed one is a question of when, not whether.
     /// </remarks>
-    private static Parsed? Parse(Subnet subnet)
+    private static Parsed? Parse(Subnet subnet, Action<Subnet>? subnetParsed)
     {
+        subnetParsed?.Invoke(subnet);
         if (string.IsNullOrWhiteSpace(subnet.Cidr))
             return null;
 

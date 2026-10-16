@@ -8,7 +8,41 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D3 independently approved; D5 last
+### Comms-10k / Defender remediation - D5 implemented; independent review pending
+
+D5 starts on clean master `999df700f4faf1435903ac76505b6f46e361c2f7`;
+both live remote master refs remain `eb0d19122f4921eca66e4300efe0605403214e23`.
+Raw site subnets are now parsed once per load and matching reuses the prepared
+values under the original shared deadline. The page caches filtered rows against
+result, applied Site and applied Seen-by independently, preserving unavailable
+escapes, known negatives and ordering. Base is 2.27.7, Defender/pin 1.6.16 and
+Comms 1.4.18. All 17 ClickGate entries map exactly with no twins/unmapped;
+the page has 1,295 lines. ProgressRegistry includes preparation in the deadline.
+
+The canonical 43-case baseline includes all twelve new cases and affected old
+guards. Seven fresh compiled regressions yield twelve intended standard failures
+with the exact twelve-new-case union. Two separate compiled regressions prove the
+two adapted D7 matching guards. Exact saved bytes/MD5/SHA256/newer-mtime restores
+and fresh app/runtime/test DLL/PDB provenance pass. D4's selection-failure fixture
+now publishes a replacement result; its same applied snapshot and both failure
+stages pass. This test-only provenance delta is disclosed without replaying
+unchanged accepted proof. Restored affected coverage passes 1,015/1,015.
+
+Final ordered Release build passes with 40 warnings / 0 errors; full solution
+format passes before the single full suite (4,251 passed / 3 known AD skips /
+0 failed; 4,254 unique execution IDs; wall 305.70s). Numeric child exit 0 and
+timings are saved before parsing; repeated display names and raw notExecuted zero
+are reconciled with the three actual skipped rows. Final staged diff/ASCII,
+exact reconciliation and task/build-server shutdown receipts live with
+`.agents/review/findings/cdr-d5.md`, which owns the complete Constitution packet.
+
+All twenty original slices are implemented locally; nineteen originals and psl-1
+are closed. Overall remediation remains pending D5's fresh independent Astra max
+workflow review disposition. Known module-spec/guide Version 2.0 / June 25 drift
+and unrun browser/live acceptance remain flagged. No push/deploy/live probe or
+self-review is authorized. Next: independent D5 workflow review.
+
+### Prior boundary - D3 independently approved; D5 last
 
 D3 starts on clean master `4416aadf90a0b2c745934996f2b874174b360290`;
 both live remote master refs remain `eb0d19122f4921eca66e4300efe0605403214e23`.

@@ -57,7 +57,7 @@ public class DefenderSiteMatchingDeadlineTests
                 clock.Advance(TimeSpan.FromMinutes(4));
         });
 
-        var complete = DefenderEndpointDeviceService.ApplySiteMatches(loaded.Devices, subnets, budget.Token);
+        var complete = DefenderEndpointDeviceService.ApplyPreparedSiteMatches(loaded.Devices, subnets, budget.Token);
 
         Assert.False(complete);
         Assert.Equal(3, subnets.Visited); // Two completed subnets, then the canceled device's first.
@@ -85,7 +85,7 @@ public class DefenderSiteMatchingDeadlineTests
         });
         var device = loaded.Devices[0];
 
-        var complete = DefenderEndpointDeviceService.ApplySiteMatches([device], subnets, budget.Token);
+        var complete = DefenderEndpointDeviceService.ApplyPreparedSiteMatches([device], subnets, budget.Token);
 
         Assert.False(complete);
         Assert.Equal(2, subnets.Visited);
@@ -184,23 +184,24 @@ public class DefenderSiteMatchingDeadlineTests
         Assert.DoesNotContain("Every device shows", text);
     }
 
-    private sealed class ObservedSubnets(Action<int, int> visit) : IReadOnlyList<AdSiteSubnetMap.Subnet>
+    private sealed class ObservedSubnets(Action<int, int> visit) : IReadOnlyList<AdSiteSubnetMap.Parsed>
     {
-        private readonly AdSiteSubnetMap.Subnet[] _rows = [new("10.0.0.0/24", "Elsewhere"), new("10.0.1.0/24", "London")];
+        private readonly IReadOnlyList<AdSiteSubnetMap.Parsed> _rows = AdSiteSubnetMap.Prepare(
+            [new("10.0.0.0/24", "Elsewhere"), new("10.0.1.0/24", "London")], CancellationToken.None);
         internal int Enumerations;
         internal int Visited;
-        public int Count => _rows.Length;
-        public AdSiteSubnetMap.Subnet this[int index] => _rows[index];
-        public IEnumerator<AdSiteSubnetMap.Subnet> GetEnumerator()
+        public int Count => _rows.Count;
+        public AdSiteSubnetMap.Parsed this[int index] => _rows[index];
+        public IEnumerator<AdSiteSubnetMap.Parsed> GetEnumerator()
         {
             var enumeration = ++Enumerations;
-            for (var i = 0; i < _rows.Length; i++)
+            for (var i = 0; i < _rows.Count; i++)
             {
                 Visited++;
                 visit(enumeration, i);
                 yield return _rows[i];
             }
-            visit(enumeration, _rows.Length);
+            visit(enumeration, _rows.Count);
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }

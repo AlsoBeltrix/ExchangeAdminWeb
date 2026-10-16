@@ -521,4 +521,4 @@ part of this implementation approval.
 | D7 | Implemented; independent CHANGES REQUIRED preserved, its one P2 corrected / coder-proof closed | [cdr-d7](../.agents/review/findings/cdr-d7.md) |
 | D1 | Implemented / independently reviewed (`568534c`) | [cdr-d1](../.agents/review/findings/cdr-d1.md) |
 | D3 | Implemented / independently reviewed (`e2a20e4`) | [cdr-d3](../.agents/review/findings/cdr-d3.md) |
-| D5 | Pending | |
+| D5 | Implemented; independent workflow review pending | [cdr-d5](../.agents/review/findings/cdr-d5.md) |

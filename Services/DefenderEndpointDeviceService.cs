@@ -1243,7 +1243,24 @@ public sealed class DefenderEndpointDeviceService
     }
 
     internal static bool ApplySiteMatches(IReadOnlyList<DefenderDevice> devices,
-        IReadOnlyList<AdSiteSubnetMap.Subnet> subnets, CancellationToken cancellationToken)
+        IReadOnlyList<AdSiteSubnetMap.Subnet> subnets, CancellationToken cancellationToken,
+        Action<AdSiteSubnetMap.Subnet>? subnetParsed = null)
+    {
+        try
+        {
+            var prepared = AdSiteSubnetMap.Prepare(subnets, cancellationToken, subnetParsed);
+            return ApplyPreparedSiteMatches(devices, prepared, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            foreach (var device in devices)
+                device.Site = EnrichmentUnavailable;
+            return false;
+        }
+    }
+
+    internal static bool ApplyPreparedSiteMatches(IReadOnlyList<DefenderDevice> devices,
+        IReadOnlyList<AdSiteSubnetMap.Parsed> subnets, CancellationToken cancellationToken)
     {
         // Establish truthful unknowns before matching. Once canceled, leave only fully
         // evaluated sites in place; no worker ever receives or mutates these device rows.

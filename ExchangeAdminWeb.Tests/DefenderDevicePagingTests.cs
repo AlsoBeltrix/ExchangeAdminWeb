@@ -65,7 +65,7 @@ public class DefenderDevicePagingTests
         //
         // A BLANK site is the opposite case and is correctly filtered out: it means no subnet
         // in the forest contains that address, which is an answer rather than a gap.
-        var filtered = Member(StripComments(ReadPage()), "IReadOnlyList<DefenderDevice> FilteredDevices");
+        var filtered = Member(StripComments(ReadPage()), "IReadOnlyList<DefenderDevice> ComputeFilteredDevices()");
 
         // Sliced between the Where and the seen-by clause. Anchored on ".Where(d =>" rather
         // than on the first "seenBy.Length == 0", which appears EARLIER in the both-empty
@@ -87,7 +87,7 @@ public class DefenderDevicePagingTests
         // The filter reads a column that a failed enrichment batch never populated. Judging such
         // a device against it would drop it from the result - invisibly, and looking exactly
         // like a clean negative - which hides precisely the machines someone is hunting for.
-        var filtered = Member(StripComments(ReadPage()), "IReadOnlyList<DefenderDevice> FilteredDevices");
+        var filtered = Member(StripComments(ReadPage()), "IReadOnlyList<DefenderDevice> ComputeFilteredDevices()");
 
         Assert.Contains("EnrichmentUnavailable", filtered, StringComparison.Ordinal);
         Assert.Contains("RecentlySeenBy", filtered, StringComparison.Ordinal);
@@ -103,7 +103,7 @@ public class DefenderDevicePagingTests
         // BLANK, the escape never fires, and a seen-by filter drops every device in the tenant
         // under a banner saying the column is unavailable. The filter must not judge a column
         // that was never evaluated.
-        var filtered = Member(StripComments(ReadPage()), "IReadOnlyList<DefenderDevice> FilteredDevices");
+        var filtered = Member(StripComments(ReadPage()), "IReadOnlyList<DefenderDevice> ComputeFilteredDevices()");
 
         var start = filtered.IndexOf("&& (seenBy.Length == 0", StringComparison.Ordinal);
         Assert.True(start >= 0, "FilteredDevices no longer has a seen-by clause.");

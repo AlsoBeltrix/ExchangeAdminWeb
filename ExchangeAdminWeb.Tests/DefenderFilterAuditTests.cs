@@ -238,7 +238,10 @@ public sealed class DefenderFilterAuditTests
         if (stage == "selection")
         {
             var loaded = Field<DefenderDeviceListResult>(fixture.Page, "result");
-            typeof(DefenderDeviceListResult).GetProperty("Devices")!.SetValue(loaded, new FaultingRows());
+            var failing = DefenderDeviceListResult.CompleteRun(new FaultingRows(), loaded.DistinctCount,
+                loaded.PagesFetched, loaded.RangesCompleted, loaded.Ceiling, loaded.DiscoveryEnrichment,
+                loaded.DiscoveryEnrichmentReason);
+            typeof(Page).GetField("result", PrivateInstance)!.SetValue(fixture.Page, failing);
         }
         fixture.Js.BeforeTransfer = () => Task.FromException(new JSException("RAW_AUTH_BODY secret=sentinel"));
 

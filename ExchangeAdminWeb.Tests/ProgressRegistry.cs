@@ -1238,7 +1238,7 @@ public static class ProgressRegistry
             new("LoadAsync", ["DeviceService.ListDevicesAsync"],
                 "D3 refuses entry while either load or export owns IsBusy, before any work. "
                 + "Includes inventory and its single bounded enrichment wait; the service owns "
-                + "the shared deadline through credential setup, hunting, site admission and matching. "
+                + "the shared deadline through credential setup, hunting, site admission, subnet preparation and matching. "
                 + "Cancellation retains completed sites and inventory while the directory worker retains cleanup"),
             new("DownloadCsvAsync",
                 [
