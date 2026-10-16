@@ -8,6 +8,15 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
+### Repository audit - report saved; remediation unstarted
+
+The owner-authorized read-only audit of `34bac0872e0131ebeef595217590b03beeb3eee4`
+is complete. The report, saved at the owner's request, is
+[RepositoryAudit-2026-10-16.md](../docs/RepositoryAudit-2026-10-16.md).
+It owns the 8 high-priority and 32 medium-priority findings, additional improvements,
+limitations and integrity evidence. No code changes were made. Remediation is
+unapproved and unstarted; the proposed next step is a plan beginning with findings 1-8.
+
 ### Comms-10k / Defender remediation - approved code work closed locally
 
 D5 starts on clean master `999df700f4faf1435903ac76505b6f46e361c2f7`;

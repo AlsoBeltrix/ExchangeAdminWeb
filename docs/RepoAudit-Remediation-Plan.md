@@ -1,0 +1,351 @@
+# Repo Audit Remediation - Plan
+
+Status: **DRAFT - awaiting owner approval.** Source: the six-agent read-only audit of local
+master at `34bac08`, 2026-10-16 (owner-supplied, `repo_audit.md`). Eight high findings, 32
+medium, plus lower-priority items. Nothing in this plan has been implemented.
+
+## Exec summary
+
+**What this is.** An outside audit read the whole repository and found 40 defects. I verified
+ten of them against the code myself - all eight of the high-priority ones and two mediums
+picked at random - and every single one was real and described accurately. On that basis I am
+treating the other 30 as sound, but each still gets checked before anyone fixes it.
+
+**The shape of it.** Five of the eight worst are the same kind of mistake: **the app checks one
+identity and then acts on a different one.** It checks `FOREIGN\Ops` and accepts a member of
+`HOME\Ops`. It checks a mailbox's primary address and lets a secondary alias through. It checks
+whether `A\alex` is protected and logs off `B\alex`. It validates mailbox A and then writes
+whatever is in the box by the time the write happens. That is one class, not five accidents,
+and the plan treats it as one.
+
+**What it gets you.** The authorization and protected-user guards actually hold against the
+cases they were written for. Right now several of them can be walked past without anything
+looking wrong in the audit trail.
+
+**What it costs.** Roughly 30 slices across four waves. Wave 1 is the eight highs and is the
+only part I would call urgent. Waves 3 and 4 are mostly reporting, notification and deployment
+scripts and could be deferred without risk.
+
+**The biggest risk in doing it.** Wave 1 changes how authorization decides, in five modules. A
+mistake there locks people out of their own tools, or worse, quietly loosens a check while
+appearing to tighten it. Every slice in Wave 1 needs a test that fails before the fix, and two
+of them (group SID matching, Self-Service deny evaluation) change behaviour you will notice.
+
+**What approving authorises.** Wave 1 only. Waves 2 to 4 are listed so the work is not lost,
+but I want them re-approved once Wave 1 lands, because Wave 1 will teach us things about the
+identity-handling code that should shape the rest.
+
+---
+
+## Verification status - read this before fixing anything
+
+**Verified by me against the code at `34bac08`, all confirmed exactly as described:** A1, A2,
+A3, A4, A5, A6, A7, A8 (all eight highs), plus A30 and A31.
+
+**Not independently verified:** A9-A29, A32-A40 and the lower-priority list. They carry precise
+file:line citations and the verified sample was 10 for 10, so the prior is strong - but
+**every slice below re-verifies its own finding first.** A finding that does not reproduce is
+recorded as not-reproduced, not fixed around.
+
+**Audit scope limits, stated by the auditors:** no tests, builds, browser workflows or live
+infrastructure were exercised. Deployment activation of ServiceNow validation (A30) was not
+checked. Dependency review did not establish an exploitable package vulnerability; resolved
+transitive packages and deployed runtime versions remain unverified.
+
+---
+
+## Constraints
+
+- **Recorded exemptions are not defects. Do not "fix" them.** Comms-10k consults neither
+  protected-principal check (owner 2026-09-30); Self-Service Groups does not consult Protected
+  Group Targets but keeps its member check (owner 2026-08-31). A4 is about ACL **deny**
+  evaluation inside Self-Service Groups and does NOT touch that exemption.
+- `docs/ProjectConstitution.md` outranks this plan. The notification findings (A23-A27) and the
+  audit findings (A28) are Constitution-shaped - read its notification and audit sections before
+  designing those slices.
+- **Environment neutrality** (`.agents/repo-guidance.md` invariant 7) applies to every slice
+  here. The waiver granted for the Comms-10k group GUID is scoped to that one value and does
+  not extend to anything in this plan. Several fixes need directory scope - **discover it at
+  runtime and fail closed; never name or default a domain.**
+- One finding per commit. Full gate before each: Release build, `dotnet test
+  ExchangeAdminWeb.slnx`, `dotnet format --verify-no-changes`, `git diff --check`,
+  `tools/Test-AsciiOnly.ps1`. **Grep builds for `error CS`; never tail them.**
+- Every new test mutation-proven: revert, watch it fail, restore, md5-verify, `touch`.
+- PowerShell slices (Wave 4) additionally need `Invoke-ScriptAnalyzer -Path . -Recurse` and
+  `Invoke-Pester tests/ps`. `deploy.ps1` and anything it imports must stay pure ASCII - Windows
+  PowerShell 5.1 reads BOM-less non-ASCII as ANSI and fails to parse.
+- Page edits move `ClickGateRegistry` line keys. Re-anchor per
+  `.agents/playbooks/clickgate-reanchor.md`; check `ProgressRegistry` too.
+- **Line numbers below are the audit's, as of `34bac08`, and drift as slices land. Re-locate by
+  symbol.**
+
+---
+
+# Wave 1 - identity and authorization (the eight highs)
+
+**The unifying defect: a check is performed against one identity and the action is taken
+against another.** A1-A5 and A7 are all instances. Fix them as a class - the same test shape
+applies to each - but one commit each.
+
+## W1-A1 - group grants match across domains
+
+`Services/ModuleAdminService.cs:31`. `IsModuleAdmin` strips the domain
+(`group.Split('\\')[1]`) and then accepts a bare-name role match. A grant for `FOREIGN\Ops`
+is satisfied by a member of `HOME\Ops`. The group picker also discards domain information, so
+the stored value may already be ambiguous.
+
+Fix: store and compare **validated group SIDs**, not names. Resolve at configuration time, fail
+closed when a name cannot be resolved to exactly one SID.
+
+**Consequences to plan for:** existing stored grants are names. This needs a read path that
+still honours them, or a one-time resolution with a clear failure mode for grants that no
+longer resolve. **Decide that before writing code** - silently dropping unresolvable grants
+would lock admins out of their modules.
+
+Exposure if unfixed: module configuration and the AD attribute allowlist.
+
+## W1-A2 - a secondary alias bypasses protected-user rules
+
+`Services/PermissionValidator.cs:163`. `requiresFullResolution` is false when the protected
+config holds only address-form users, so `ResolveWithExchangeFallbackAsync` never runs. A
+secondary alias of a protected mailbox is then compared as a literal string and passes.
+Affects Mailbox Permissions, Calendar Permissions and Out of Office.
+
+Fix: resolve the target identity and compare the **resolved** identity, then write to that same
+resolved identity. Check and write must name one object.
+
+## W1-A3 - foreign-domain protected membership is checked in the wrong domain
+
+`Services/ProtectedPrincipalService.cs:904`. The transitive membership query
+(`memberOf:1.2.840.113556.1.4.1941:`) passes `-LDAPFilter` and `-Credential` but **no `-Server`
+and no `-SearchBase`**, so it runs against the host's default domain. A foreign-domain object
+returns a clean "no match" and Group Management treats it as unprotected.
+
+Fix: resolve the authoritative directory scope for the target at runtime and query there. **Fail
+closed when visibility is uncertain** - an unanswerable question is not a negative answer.
+Environment neutrality applies: discover the scope, do not configure or default it.
+
+## W1-A4 - Self-Service Groups ignores denies that apply through a group
+
+`Services/SelfServiceGroups/SelfServiceGroupService.cs:1359`. The ACE loop `continue`s on every
+ACE whose SID is not the caller's own, so a Deny carried by a group the caller belongs to is
+never evaluated. A group-level deny followed by a direct user allow reads as allow, and the
+privileged module credential performs the write.
+
+Fix: evaluate ACEs applicable to the caller's **token groups**, and honour ACE ordering (deny
+precedence). **This is not the Protected Group Targets exemption** - that ruling stands
+untouched.
+
+**Consequences to plan for:** this can start refusing writes that currently succeed. That is the
+point, but it is operator-visible.
+
+## W1-A5 - lockout remediation can log off the wrong account
+
+`Services/AccountLockoutRemediationService.cs:727`. The embedded script matches `quser`'s bare
+username column against the target list and calls `logoff.exe $sessionId`. Guarding `A\alex`
+can log off `B\alex` or a local `alex` - bypassing the protection and destroying unsaved work.
+
+Fix: resolve the session owner's domain/SID and compare that before logoff. Skip, and report,
+any session whose owner cannot be identified.
+
+## W1-A6 - a borrowed EXO connection can target the previous organization
+
+`Services/ExoConnectionPool.cs:389`. The new configuration marker (`_connectedUnder = current`)
+is published inside `_connectedLock`, and the pool drain happens **after** the lock is
+released. A borrower in that window reads the new configuration and receives a runspace
+connected under the old one, then executes against the previous organization.
+
+Fix: make the configuration identity and the retirement generation one atomic transition, so no
+borrower can observe one without the other.
+
+## W1-A7 - Out of Office writes a mailbox it did not check
+
+`Components/Pages/OutOfOffice.razor:301`. `setEmail` is read, awaited protection validation
+runs, and the field is still editable throughout. Changing A to protected B during the wait
+means B is written although only A passed.
+
+Fix: capture the request into a local and acquire the busy guard **before** the first await -
+the same shape as the Comms-10k C7 fix landed on 2026-10-16. Reuse that pattern.
+
+## W1-A8 - Conference Rooms jobs run after the module is disabled
+
+`Services/Jobs/ConferenceRoomBulkProcessor.cs:78`. Each row re-checks the captured snapshot
+against the section's current allowed groups, but **not module enablement**. With
+ExchangeOnline still enabled, a disabled Conference Rooms module keeps changing rooms.
+
+Fix: re-check effective module enablement before dispatch. **The Comms-10k C2 slice already
+added exactly this check on 2026-10-16** (`.agents/review/findings/cdr-c2.md`) - reuse it rather
+than inventing a second shape.
+
+---
+
+# Wave 2 - wrong target, lost work, false success
+
+Same family as Wave 1 but lower blast radius, plus the "a failure reads as a clean result"
+class that `mde-*` and `cdr-*` kept finding.
+
+**Stale target / state across an await** - the C7 class, now found in five more places:
+- A13 `Components/Pages/MfaReset.razor:50` - results follow the editable UPN, not the listed user.
+- A14 `Components/Pages/ADAttributeEditor.razor:543` - a save and a concurrent search cross; the
+  message and email name the wrong person and A's values populate B's display.
+- A15 `Components/Pages/LicensingUpdates.razor:84` - Cancel clears state while Apply continues;
+  completion dereferences the cleared preview and the required notification is suppressed
+  **after the backend mutation**.
+- A16 `Components/Shared/CountryCodePicker.razor:47` - initialises once, so switching location
+  A to B can save A's countries into B.
+- A7 is the Wave 1 instance. **Fix them with one shared discipline, not five bespoke patches.**
+
+**A failure reads as success:**
+- A17 `Services/M365GroupManagementService.cs:298`, `Services/NamedLocationsService.cs:59` -
+  collection reads return empty or truncated after an HTTP failure.
+- A18 `Services/DelegationReportService.cs:72` - a failed delegation read renders "No calendar
+  delegates" and the report records success.
+- A19 `Services/AccountLockoutRemediationService.cs:366` - refused users vanish from totals in a
+  mixed batch (Known Failure Class 2, success aggregation).
+- A32 `Services/Jobs/MessageTraceDetailJobProcessor.cs:101` + `Services/MessageTraceExportListing.cs:263`
+  - cancelled exports are emailed as ready and then refused on read.
+
+**Wrong object identity:**
+- A9 `Services/ADAttributeEditorUndoService.cs:177` - undo resolves the audit UPN without the
+  original object GUID, so a reassigned UPN can be modified instead. Same lesson as the
+  Comms-10k C4 fingerprint: **bind to the immutable id.**
+- A10 `Services/M365GroupManagementService.cs:262` - UPN/email passed where Graph requires an
+  object id, so ordinary UI input builds an invalid `directoryObjects/{UPN}` reference.
+
+**Other:**
+- A11, A12 `Services/MfaResetService.cs:140`, `:114` - phone deletion ordering is ineffective
+  (every phone maps to `Phone`), and a later throw discards known-successful deletions.
+- A20 `Components/Pages/AdminEventLog.razor:559` - FIFO truncation applies before timestamps
+  merge, so diagnostics can evict newer audit events. **Audit retention - Constitution-shaped.**
+- A21, A22 `Services/HeaderAnalysisService.cs:562`, `:418` - ARC passes mask direct
+  authentication failures; expanded spam-score keys never match the threshold checks.
+- A29 `Components/Pages/AdminBulkJobs.razor:294` - revoked Bulk Jobs access stays usable through
+  an already-open page, including cross-module cancel and delete.
+- A30 `Services/ServiceNowService.cs:69` - `number={ticketNumber}` is interpolated into
+  `sysparm_query`; URL-encoding does not neutralise `^OR` as **query grammar**, and the returned
+  number is never compared to the requested one. Fix both: encode for the grammar, and verify
+  the response matches the request. **Confirm whether validation is enabled in this deployment
+  before rating urgency** - the auditors did not check.
+- A31 `Components/Pages/Migration.razor:3953` - a circuit-local invalidation calls
+  `ReportStore.DeleteAll()`, destroying every operator's stored reports instance-wide.
+- A33 `Services/Storage/ConfigStoreMigrator.cs:200` - both instances read the old version before
+  locking, so the second repeats an applied `ALTER TABLE` and can abort startup. **Shared
+  config DB; additive-only migration rule applies.**
+
+---
+
+# Wave 3 - notification and audit obligations
+
+All Constitution-shaped. Read its notification and audit sections first; these are policy
+questions as much as code.
+
+- A23 `Components/Pages/MailboxPermissions.razor:514` - partial cloud changes suppress
+  affected-user notices because notification requires overall success.
+- A24 `MailboxPermissions.razor:602`, `CalendarPermissions.razor:559` - bulk rows get audit
+  records and an admin summary but no affected-user notice.
+- A25 `Components/Pages/GroupManagement.razor:651` - security-group changes notify
+  administrators only.
+- A26 `Services/ADAttributeEditorUndoService.cs:251` - undo sends no administrator notification
+  at all, because it bypasses the forward-edit page that owns dispatch.
+- A27 `Services/EmergencyDisableService.cs:1060` - sends to the global admin address instead of
+  the configured security recipient, while the UI may still claim the security team was
+  notified. **The false UI claim is the worse half.**
+- A28 `EmergencyDisableService.cs:157`, `ADAttributeEditorService.cs:534` - protection and
+  preflight refusals return before recording the attempted mutation, so refused attempts leave
+  no durable audit.
+
+**Owner decision needed before this wave:** A23-A25 add affected-user email to paths that
+deliberately or accidentally do not send it today. That changes who hears about administrative
+changes, at volume. **Confirm that is wanted before any of it is built.**
+
+---
+
+# Wave 4 - operations, deployment and docs
+
+PowerShell gates apply. None of these is urgent; several are recovery-path defects that only
+bite during an incident, which is also when they are least affordable.
+
+- A34 `tools/Install-ExchangeAdminWeb.ps1:598` - an update that omits the service account
+  silently replaces it with `ApplicationPoolIdentity`, potentially losing credential-store,
+  certificate, directory and database access.
+- A35 `deploy.ps1:496`, `Install-ExchangeAdminWeb.ps1:710` - pool-shutdown exceptions are
+  swallowed before mirroring, permitting partial replacement of a **live** application.
+- A36 `Install-ExchangeAdminWeb.ps1:698` - generic installer upgrades skip the verified database
+  backup, so binaries can start migrations with no recovery snapshot.
+- A38 `tools/promote-dev-to-prod.ps1:384` - restart sits in `finally`, outside the rollback
+  `catch`, so a restart failure leaves new files deployed with the pool stopped.
+- A39 `tools/Move-ConfigDbToShared.ps1:351` - accepts a database path inside a publish tree,
+  which later mirroring is entitled to delete.
+- A40 `tools/Move-ConfigDbToShared.ps1:515` - waits for startup logs without warming the app;
+  `AlwaysRunning` does not guarantee application initialisation, so cutover can fail on an idle
+  app that is fine.
+- A37 `docs/ConfigDbOperations.md:3` - the operator recovery guide still describes the retired
+  storage arrangement: local paths, single-pool shutdown, database recreation, name-based
+  authorization rows. **Docs-only, and arguably the cheapest high-value fix in this plan** -
+  it is what someone reads at 2am.
+
+**Lower-priority, same wave:**
+- `tools/deploy-pipeline.ps1:124` - provenance check fails open; a missing commit id or a Git
+  failure still yields "matches source HEAD".
+- `tools/SqliteConfigBackup.psm1:202` - `-WhatIf` creates a directory before `ShouldProcess`.
+- `tools/New-ExchangeAdminWebGraphApps.ps1:101` - a failure during the second registration
+  strands the first and suppresses its one-time secret output.
+- Header-processing bounds: capped raw headers still feed uncapped derived routing collections;
+  large-input runtime impact unmeasured.
+- Operational hardening: narrow publish-folder Modify permissions; require the SQLite-dependent
+  CI tests to actually run; exercise 5.1-compatible scripts under Windows PowerShell 5.1.
+
+---
+
+## Sequencing
+
+**Wave 1 in order: A1, A3, A2, A4, A5, A8, A6, A7.** Identity resolution first (A1, A3) because
+A2 and A4 build on knowing who someone actually is. A8 is a near-copy of an already-landed fix.
+A6 is self-contained. A7 reuses the C7 pattern.
+
+**Then Wave 2**, stale-target class together, then false-success class, then the rest.
+**Then Wave 3**, only after its owner decision. **Then Wave 4.**
+
+**A37 (the recovery doc) may be pulled forward at any time** - it is docs-only, blocks nothing,
+and is actively misleading during an incident.
+
+## Verification
+
+Per-slice gate as under Constraints. One full-suite run at the end of each wave.
+
+**The audit's own closing note is a requirement for this plan, not a suggestion:** *"Several
+existing tests validate individual pieces whose combined behavior is wrong."* Wave 1 and the
+Wave 2 stale-target slices need **composed-workflow tests** - paused operations, target changed
+mid-await, cross-circuit activity, partial failures - not another per-piece assertion.
+
+**Not covered by any of this:** that any page renders (no bUnit harness); live directory,
+tenant or deployment behaviour. A1, A3, A4 and A5 all touch directory semantics that only a
+real forest can confirm - each needs a stated manual check, and **probing Active Directory
+remains forbidden without a direct owner go.**
+
+## Already recorded elsewhere - not re-raised here
+
+`psl-2` (licensing diagnostics), `psl-3` (DHCP diagnostics), `psl-4` (EXO exception
+classification), `cdr-followup-1` (Comms count wording), `csv-1` (Event Log CSV formula
+injection). The broad navigation-cancellation promise exceeding implemented cancellation is
+recorded in `.agents/state.md`.
+
+**Unconfirmed, needs investigation before it can be planned:** protection rules retaining stale
+group DNs; legacy name-valued servicer grants; Emergency Disable's cloud UPN binding. The first
+two interact with A1 - resolving grants to SIDs may settle them.
+
+**Still open from the previous stream:** the `ps.Invoke(); ps.Commands.Clear();` pattern without
+`try`/`finally` at ~47 sites across `GroupManagementService`, `EmergencyDisableService`,
+`DhcpAuthorizationService`, `ConferenceRoomService`, `ProtectedPrincipalService` and
+`ADAttributeEditorService`. The pattern is confirmed present and the `PowerShell` object is
+confirmed reused; **reachability per site is not confirmed** - it bit in Comms-10k because a
+retry caught and resumed on the same object. Worth an audit slice, not 47 assumed defects.
+
+## Pending decisions
+
+1. **Wave 1 only, or the whole plan?** Recommend Wave 1, then re-approve.
+2. **A1's migration of existing name-based grants** - what happens to a stored grant that no
+   longer resolves to exactly one SID? Refusing is safe and could lock an admin out of a module.
+3. **Wave 3's affected-user notifications** (A23-A25) - adding them changes who gets mail, at
+   volume. Confirm before building.
+4. **A30** - is ServiceNow validation actually enabled in this deployment? It sets the urgency.
