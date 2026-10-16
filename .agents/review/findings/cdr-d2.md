@@ -1,6 +1,6 @@
 # cdr-d2 - isolate Defender hunting diagnostics per call
 
-Status: Implemented and locally verified on master; independent Astra review pending, 2026-10-16.
+Status: Implemented and independently APPROVED on master, 2026-10-16.
 
 Approved scope: `docs/Comms10kDefenderRemediation-Plan.md`, APPROVED Revision 6,
 D2, with dependency guidance in `.agents/review/cdr-d7-design.md`. Owner
@@ -303,3 +303,32 @@ not the deferred physical-location workflow. The established token meter ran
 against the committed baseline (`token-usage.json`); its Claude-only scope excludes
 this native Sol session, so no per-slice native usage/cost is attributed.
 Fresh independent Astra max workflow review remains owed after the code commit.
+
+## Independent workflow review - APPROVED, 2026-10-16
+
+Fresh native `gpt-6-astra` at `max` reviewed immutable range
+`eb0d19122f4921eca66e4300efe0605403214e23..7e6235883cc929916604ae65f357e46c4d781ec0`.
+Verdict: **APPROVE**, no actionable findings, recorded at
+`2026-10-16T14:38:32Z`. Intent and scope matched. The reviewer traced singleton
+inventory, posture/observer batching, per-call aggregation, unavailable values,
+filtering and CSV, and verified the class-field sweep against source.
+
+Before rebuilding, the reviewer reconciled all eighteen intended mutation
+failures, the exact six-case union, source restoration and artifact provenance.
+Recorded affected 743/743 and full-suite 4,190 passed / 3 known skips reconciled
+with the ordered gate receipts. Full TRX accounting used unique execution IDs and
+raw result rows because four truncated display names repeat elsewhere in the suite.
+
+A fresh Release rebuild passed with 38 warnings and zero errors. Independent
+focused Defender tests passed 232/232 with four xUnit threads, including all six
+overlap cases. Reviewed-range diff checks passed. No full-suite or mutation rerun,
+live-service, browser or deployment check occurred; historical mutated binaries
+were assessed through retained provenance and current restored bytes were rehashed.
+Checkout stayed clean at the reviewed hash, build servers were stopped, and no
+task process remained. Pre-existing language servers were left running.
+
+Ignored receipt: `.agents/review/out/cdr-d2/independent-review-verdict.json`, with
+reconciliation/build/test receipts alongside it. During review, both live remote
+master refs advanced to the reviewed base `eb0d19122f4921eca66e4300efe0605403214e23`;
+the parent independently confirmed both refs. No push was issued by this workflow.
+D2 is closed locally; the separately approved D7 slice is next.

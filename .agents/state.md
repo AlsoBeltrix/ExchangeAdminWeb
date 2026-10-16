@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Comms-10k / Defender remediation - D2 verified; independent review next
+### Comms-10k / Defender remediation - D2 approved; D7 next
 
 Owner 2026-10-15: "approved. go." All twenty findings in
 `docs/Comms10kDefenderRemediation-Plan.md` are approved; that plan owns sequence and status.
@@ -36,12 +36,16 @@ constructor-assigned fields plus one init-only test property. Restored affected
 coverage passes 743/743. The final ordered gate passes: Release build with 40
 existing warnings / 0 errors, full solution format before the single full suite
 (4,190 passed / 3 known AD-unavailable skips / 0 failed), then staged diff/ASCII
-including the new test and finding. Independent Astra max review is owed after
-the normal one-finding commit; no next-slice work before that review.
+including the new test and finding. Independent Astra max APPROVED `7e62358`
+without actionable findings. A fresh Release rebuild passed with 38 warnings /
+0 errors and focused Defender tests passed 232/232, including all six overlap
+cases; proof, field sweep and original full-gate receipts reconciled.
 `.agents/review/findings/cdr-d2.md` owns scope/proof and the complete Constitution
 packet; `.agents/review/out/cdr-d2/` holds ignored actual receipts.
-Fifteen originals and psl-1 are closed locally (D4 independently APPROVED
-`600914a`); D2 is active, followed by D7, D1, D3 and D5. No push, deployment,
+Sixteen originals and psl-1 are closed locally; D7 is next, followed by D1, D3 and
+D5. During D2 review, both live remote master refs were independently confirmed
+at `eb0d19122f4921eca66e4300efe0605403214e23`, superseding the earlier remote
+observation above. No push was issued by this workflow. No push, deployment,
 live call, self-review or adjacent scope is authorized.
 
 D9 receipt:
