@@ -63,8 +63,15 @@ public class NamedLocationsService
                 if (isFirstPage)
                     throw new InvalidOperationException($"Graph request for named locations failed: {(int)status} {status}.");
 
-                _logger.LogWarning("Graph API returned {Status} on a subsequent page; returning {Count} locations (list may be incomplete)", status, locations.Count);
-                break;
+                // Audit finding A17. A later page failing used to log and return the partial
+                // list, which reaches the caller indistinguishable from a complete one - and
+                // named locations gate conditional access, so a missing entry reads as "that
+                // network is not trusted anywhere". The log was the only trace and nobody
+                // reads logs to decide whether a list is whole.
+                _logger.LogWarning("Graph API returned {Status} on a subsequent page after {Count} locations", status, locations.Count);
+                throw new InvalidOperationException(
+                    $"Graph request for named locations failed partway through: {(int)status} {status}. "
+                    + $"{locations.Count} location(s) had been read; the list would have been incomplete.");
             }
 
             using var _ = doc;

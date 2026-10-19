@@ -293,10 +293,30 @@ public class M365GroupManagementService
         var results = new List<M365GroupMember>();
         var url = initialUrl;
 
+        var isFirstPage = true;
+
         while (!string.IsNullOrEmpty(url))
         {
-            using var doc = await client.GetAsync(url);
-            if (doc == null) break;
+            // Audit finding A17. This was `GetAsync` with `if (doc == null) break;`, so ANY
+            // page failure - including the very first - returned whatever had accumulated and
+            // the caller could not tell a short list from a complete one. A membership list
+            // that is silently missing people is the worst shape this can take: an operator
+            // concludes someone is not a member and acts on it.
+            //
+            // Refuse rather than guess, which is the standing rule for inaccurate data. The
+            // status is included because "it failed" and "you are throttled" need different
+            // responses from whoever reads it.
+            var (doc, status) = await client.GetWithStatusAsync(url);
+            if (doc == null)
+            {
+                throw new InvalidOperationException(isFirstPage
+                    ? $"Graph request for group members failed: {(int)status} {status}."
+                    : $"Graph request for group members failed partway through: {(int)status} {status}. "
+                      + $"{results.Count} member(s) had been read; the list would have been incomplete.");
+            }
+
+            isFirstPage = false;
+            using var page = doc;
 
             foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
                 results.Add(ParseMember(item));
