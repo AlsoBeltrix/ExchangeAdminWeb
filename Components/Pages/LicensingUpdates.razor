@@ -81,7 +81,7 @@
                 <div class="card mb-3">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <strong>Preview — @previewResult.Rows.Count row(s)</strong>
-                        <button class="btn btn-outline-secondary btn-sm" @onclick="ResetForm">Cancel</button>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="ResetForm" disabled="@isProcessing">Cancel</button>
                     </div>
                     <div class="card-body p-0">
                         <div>
@@ -346,6 +346,16 @@
         if (previewResult == null) return;
         isProcessing = true;
         operationResult = null;
+
+        // Audit finding A15. Everything this run needs, captured BEFORE the first await.
+        // Cancel (ResetForm) nulls previewResult and clears ticketNumber, and it was reachable
+        // throughout the apply - so a click during the write made previewResult.LicenseType
+        // throw INSIDE the notification try, where the catch logged an email failure and moved
+        // on. The licences had already been changed and the required admin notification was
+        // silently dropped. The ticket would have been empty by then too.
+        var preview = previewResult;
+        var ticket = ticketNumber.Trim();
+
         await Task.Yield();
 
         try
@@ -362,36 +372,37 @@
             // "x of y" rather than an undifferentiated spinner over a bulk licence change.
             using var activity = Progress.Begin(
                 "Licensing Updates", "Applying licence changes",
-                ActivitySize.Items(previewResult.Rows.Count));
+                ActivitySize.Items(preview.Rows.Count));
 
-            applyResult = await LicenseService.ApplyCsvAsync(previewResult, ticketNumber.Trim(), currentUser, clientIpAddress, authState.User);
-            activity.Report(applyResult.TotalRows);
-            activity.Complete(applyResult.Success, applyResult.Success
-                ? $"{applyResult.Succeeded:N0} applied, {applyResult.Unchanged:N0} unchanged, {applyResult.Failed:N0} failed"
-                : applyResult.Error);
+            var applied = await LicenseService.ApplyCsvAsync(preview, ticket, currentUser, clientIpAddress, authState.User);
+            applyResult = applied;
+            activity.Report(applied.TotalRows);
+            activity.Complete(applied.Success, applied.Success
+                ? $"{applied.Succeeded:N0} applied, {applied.Unchanged:N0} unchanged, {applied.Failed:N0} failed"
+                : applied.Error);
 
-            if (applyResult.Success)
+            if (applied.Success)
             {
-                operationResult = (true, $"Completed: {applyResult.Succeeded} updated, {applyResult.Unchanged} unchanged, {applyResult.Protected} protected, {applyResult.Failed} failed.");
+                operationResult = (true, $"Completed: {applied.Succeeded} updated, {applied.Unchanged} unchanged, {applied.Protected} protected, {applied.Failed} failed.");
             }
             else
             {
-                operationResult = (false, applyResult.Error ?? "Apply failed.");
+                operationResult = (false, applied.Error ?? "Apply failed.");
             }
 
             try
             {
                 await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "LicensingUpdates_BulkApply",
-                    applyResult.Success, ticketNumber.Trim(),
+                    applied.Success, ticket,
                     new Dictionary<string, string>
                     {
-                        ["License Type"] = previewResult.LicenseType,
-                        ["Total"] = applyResult.TotalRows.ToString(),
-                        ["Succeeded"] = applyResult.Succeeded.ToString(),
-                        ["Unchanged"] = applyResult.Unchanged.ToString(),
-                        ["Protected/Blocked"] = applyResult.Protected.ToString(),
-                        ["Failed"] = applyResult.Failed.ToString()
-                    }, applyResult.Error);
+                        ["License Type"] = preview.LicenseType,
+                        ["Total"] = applied.TotalRows.ToString(),
+                        ["Succeeded"] = applied.Succeeded.ToString(),
+                        ["Unchanged"] = applied.Unchanged.ToString(),
+                        ["Protected/Blocked"] = applied.Protected.ToString(),
+                        ["Failed"] = applied.Failed.ToString()
+                    }, applied.Error);
             }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for licensing apply"); }
         }

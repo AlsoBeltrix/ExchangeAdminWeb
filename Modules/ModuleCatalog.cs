@@ -1308,7 +1308,7 @@ public sealed class ModuleCatalog
             // 1.1.3: the preview reports the Delinea fetch, the two-minute AD throttle wait and
             // the per-row directory resolve instead of running with the frame idle
             // (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.1.3",
+            Version = "1.1.4",
             MainPermission = new(
                 "Access",
                 "LicensingUpdates",
@@ -1338,7 +1338,7 @@ public sealed class ModuleCatalog
             // check. It completed on the line after the AD read, so the frame said finished
             // while the operator was still waiting on the check that decides whether the edit
             // UI appears at all.
-            Version = "1.4.3",
+            Version = "1.4.4",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",

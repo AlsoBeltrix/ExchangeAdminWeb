@@ -93,3 +93,63 @@ the picker).
 ## Closeout
 
 Fixed directly on `master`. A14 and A15 outstanding. Independent review pending.
+
+## A14 and A15 built, 2026-10-19 - the group is now complete
+
+### A15 - Licensing Updates
+
+`Components/Pages/LicensingUpdates.razor`. Cancel calls `ResetForm`, which nulls
+`previewResult` and clears `ticketNumber` - and the button was **not disabled while the apply
+ran**. A click during the write made `previewResult.LicenseType` throw, and where it threw is
+the whole finding: **inside the notification's own `try`**, whose `catch` logged "email
+notification failed" and carried on.
+
+So the licences were changed, and the admin notification the Constitution requires was
+dropped with a log line. `ticketNumber` would have been empty by then too, and `applyResult`
+could be nulled between its assignment and its use.
+
+Fixed on both sides. The preview and the ticket are captured before the first await and used
+throughout, including in the notification; the apply result is held in a local and only
+mirrored to the field. And Cancel is now `disabled="@isProcessing"`, so the operator is not
+offered a button that abandons a running write.
+
+### A14 - AD Attribute Editor
+
+`Components/Pages/ADAttributeEditor.razor`. `ConfirmSave` already captured a display label
+before its await - the comment there says why - but **not the principal**. The write itself
+used `lookupResult!.Principal!`, and so did the success message and both notifications, all
+after awaits. A search completing in that window nulls `lookupResult` and replaces it with a
+different user, so the save could be aimed at B while the operator was reviewing A.
+
+The principal is captured alongside the label now, and refuses if there is none. The applied
+values are written back into the form only when `ReferenceEquals(lookupResult?.Principal,
+target)` still holds - populating B's form with A's new values is the half of this an
+operator would act on without noticing.
+
+### Guard proof for both
+
+| Test | What it pins |
+| --- | --- |
+| `LicensingApply_UsesWhatItCapturedBeforeTheWrite` | capture precedes the first await, and nothing after it re-reads the three mutable fields |
+| `LicensingCancel_IsNotClickableDuringAnApply` | the disabled attribute |
+| `AttributeSave_WritesToThePrincipalItCaptured_NotTheCurrentLookup` | same, plus the one permitted later mention is the identity re-check |
+
+The "nothing after" assertions slice from the **first await**, not from the capture. Slicing
+from the capture failed immediately, because the capture line itself necessarily reads the
+field - the question is only whether anything does so once the handler can be interrupted.
+
+| Mutation | Result |
+| --- | --- |
+| notification reads `previewResult.LicenseType` again | FAIL - `LicensingApply_...` |
+| save passes `lookupResult!.Principal!` again | FAIL - `AttributeSave_...` |
+
+Both files restored byte-identical (md5 verified), touched, rebuilt.
+
+Gate: suite 4352 passed / 3 known AD skips / 0 failed; format and `git diff --check` clean.
+`LicensingUpdates` 1.1.3 -> 1.1.4, `ADAttributeEditor` 1.4.3 -> 1.4.4.
+
+### Still not covered
+
+Behavioural coverage for all four. These remain source scans, and for A15 in particular the
+interesting property - that the notification still goes out when Cancel is clicked mid-apply -
+is exactly what a scan cannot show.
