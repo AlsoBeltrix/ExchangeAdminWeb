@@ -74,6 +74,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [ ] | [aud-a5](findings/aud-a5.md) | HIGH - lockout remediation logs off by bare username and can sign out the wrong domain's account | Designed, not implemented | - | implementer-verified |
 | [ ] | [aud-a4b](findings/aud-a4b.md) | HIGH - the self-service DACL gate is not a faithful Windows access check; 7 findings | Verified - 6 of 7 fixed; finding 7 carried | - | codex-commercial / gpt-6-astra / max |
 
+| [v] | [aud-a8](findings/aud-a8.md) | HIGH - Conference Rooms jobs keep writing after the module is disabled | Verified | - | implementer-verified; fix review pending |
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.
 

@@ -26,6 +26,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     private readonly IConferenceRoomBulkOperations _rooms;
     private readonly ConferenceRoomProtectionGate _protectionGate;
     private readonly SectionAccessService _sectionAccess;
+    private readonly ModuleEnablementService _enablement;
     private readonly OperationTraceService _trace;
     private readonly AuditService _audit;
     private readonly EmailService _email;
@@ -40,6 +41,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         IConferenceRoomBulkOperations rooms,
         ConferenceRoomProtectionGate protectionGate,
         SectionAccessService sectionAccess,
+        ModuleEnablementService enablement,
         OperationTraceService trace,
         AuditService audit,
         EmailService email,
@@ -48,6 +50,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         _rooms = rooms;
         _protectionGate = protectionGate;
         _sectionAccess = sectionAccess;
+        _enablement = enablement;
         _trace = trace;
         _audit = audit;
         _email = email;
@@ -75,6 +78,20 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         // 1) Off-circuit authorization re-check (option (a)): the submitter's captured claims must
         // still satisfy the section's allowed groups. Fail closed - a job whose snapshot lacks
         // access is denied on every row and audited, never processed.
+        // Audit finding A8. This checked the section's allowed groups and nothing else, so a
+        // DISABLED Conference Rooms module kept changing rooms: queued jobs and every
+        // subsequent row ran on, because live authorization rejects a disabled module and this
+        // off-circuit path never asked. Same gap Comms-10k closed as aud-c2, same shape, so
+        // this reuses it rather than inventing a second one.
+        //
+        // Checked before the snapshot: "the module is off" is true regardless of who submitted
+        // the job, and saying so is a better audit record than "authorization denied".
+        if (!_enablement.IsModuleEnabled(ModuleName))
+        {
+            Audit(job, actionAudit, target, success: false, ticket, "Conference Rooms is currently disabled.");
+            return Failed(target, "Conference Rooms is currently disabled.");
+        }
+
         var snapshot = JobAuthorizationSnapshot.FromJson(job.AuthSnapshotJson);
         var allowed = _sectionAccess.GetGroupsForSection(Section);
         if (snapshot is null || !snapshot.IsStillAuthorized(allowed))

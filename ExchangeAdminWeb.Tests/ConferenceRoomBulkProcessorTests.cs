@@ -85,6 +85,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         public required AuditService Audit { get; init; }
         public required EmailService Email { get; init; }
         public required SectionAccessService SectionAccess { get; init; }
+        public required ModuleEnablementService Enablement { get; init; }
         public required ConferenceRoomBulkProcessor Processor { get; init; }
     }
 
@@ -131,10 +132,23 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         var email = Substitute.ForPartsOf<EmailService>(config, NullLogger<EmailService>.Instance);
         var rooms = new FakeRoomOps();
 
-        var processor = new ConferenceRoomBulkProcessor(rooms, gate, sectionAccess, trace, audit, email,
+        var enablement = new ModuleEnablementService(catalog, env, moduleConfig,
+            TestConfigStore.CreateModuleEnablement(_tempDir), config, NullLogger<ModuleEnablementService>.Instance);
+        // The fixture represents a normally running module. A fresh enablement store has no
+        // row for Conference Rooms, and after A8 that reads as disabled - which is correct
+        // behaviour and would otherwise make every existing test fail for the wrong reason.
+        enablement.SaveEnablement(new Dictionary<string, bool>
+        {
+            [ConferenceRoomBulkProcessor.ModuleName] = true,
+            // IsModuleEnabled cascades through DependsOn, and Conference Rooms depends on
+            // ExchangeOnline - so the parent has to be on for the child to be effectively on.
+            ["ExchangeOnline"] = true,
+        });
+
+        var processor = new ConferenceRoomBulkProcessor(rooms, gate, sectionAccess, enablement, trace, audit, email,
             NullLogger<ConferenceRoomBulkProcessor>.Instance);
 
-        return new Fixture { Rooms = rooms, Pp = pp, Audit = audit, Email = email, SectionAccess = sectionAccess, Processor = processor };
+        return new Fixture { Rooms = rooms, Pp = pp, Audit = audit, Email = email, SectionAccess = sectionAccess, Enablement = enablement, Processor = processor };
     }
 
     private static BulkJob FinderJob(string authRoles = "AllUsers", params string[] emails)
@@ -320,5 +334,28 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
 
         await f.Email.Received().SendAdminNotificationAsync("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
             false, "INC1", Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task ADisabledModule_StopsTheJob_AndSaysSo()
+    {
+        // Audit finding A8. Each row re-checked the section's allowed groups and nothing else,
+        // so a DISABLED Conference Rooms module kept changing rooms - queued jobs and every
+        // subsequent row ran on, because live authorization rejects a disabled module and this
+        // off-circuit path never asked. Comms-10k closed the same gap as aud-c2.
+        var fx = CreateFixture();
+        fx.Enablement.SaveEnablement(new Dictionary<string, bool>
+        {
+            [ConferenceRoomBulkProcessor.ModuleName] = false,
+        });
+
+        var job = FinderJob("AllUsers", "room1@contoso.com");
+        var outcome = await fx.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+
+        Assert.False(outcome.Status == BulkJobRowStatus.Success);
+        Assert.Contains("disabled", outcome.Message, StringComparison.OrdinalIgnoreCase);
+
+        // And nothing reached the directory.
+        Assert.Empty(fx.Rooms.FinderCalls);
     }
 }
