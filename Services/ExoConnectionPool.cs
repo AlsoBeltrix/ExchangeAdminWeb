@@ -12,12 +12,28 @@ public sealed class PooledRunspace
     public DateTime LastUsed { get; set; }
     public long ConfigGeneration { get; }
 
-    public PooledRunspace(Runspace runspace, PowerShell ps, long configGeneration = 0)
+    /// <summary>
+    /// The ExchangeOnlineManagement ConnectionId this runspace's session was given, or null when
+    /// it could not be established.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A6B. `Disconnect-ExchangeOnline` with no selector calls
+    /// `RemoveAllConnectionContexts()` against a STATIC map, so it tears down every connection in
+    /// the process - every other borrower's included, mid-operation. Verified against the
+    /// installed 3.9.2 module. The id is what lets this runspace's session be closed on its own.
+    ///
+    /// Null means "do not disconnect": leaking one server-side session until it times out is
+    /// recoverable, and breaking every other operator is not.
+    /// </remarks>
+    public string? ConnectionId { get; }
+
+    public PooledRunspace(Runspace runspace, PowerShell ps, long configGeneration = 0, string? connectionId = null)
     {
         Runspace = runspace;
         PowerShell = ps;
         LastUsed = DateTime.UtcNow;
         ConfigGeneration = configGeneration;
+        ConnectionId = connectionId;
     }
 }
 
@@ -449,6 +465,56 @@ public sealed class ExoConnectionPool : IDisposable
             details: new Dictionary<string, object?> { ["connectionsDestroyed"] = drained });
     }
 
+    /// <summary>
+    /// Audit finding A6B. Connection establishment is serialised, and it has to be: the only way
+    /// to learn the ConnectionId the module generated is to compare the process-wide connection
+    /// list before and after, and two concurrent connects make that comparison ambiguous.
+    /// </summary>
+    /// <remarks>
+    /// Held across the whole Connect-ExchangeOnline call, which takes seconds. That is the cost
+    /// of the fix and it is deliberate: borrowing stays concurrent, only ESTABLISHING a new
+    /// connection queues, and the pool reuses connections so this is not the common path.
+    /// </remarks>
+    private readonly object _connectLock = new();
+
+    /// <summary>
+    /// The one id present after a connect that was not present before it. Null when that is not
+    /// exactly one id, which is the only honest answer - and callers must treat null as "never
+    /// disconnect this", because the alternative selector disconnects everybody.
+    /// </summary>
+    internal static string? NewConnectionId(IReadOnlyCollection<string> before, IReadOnlyCollection<string> after)
+    {
+        var added = after.Where(id => !before.Contains(id, StringComparer.OrdinalIgnoreCase)).ToList();
+        return added.Count == 1 ? added[0] : null;
+    }
+
+    /// <summary>Reads the ConnectionIds the module currently holds - process-wide, not per-runspace.</summary>
+    private static List<string> ReadConnectionIds(PowerShell ps)
+    {
+        try
+        {
+            ps.Commands.Clear();
+            ps.AddCommand("Get-ConnectionInformation").AddParameter("ErrorAction", "SilentlyContinue");
+            var ids = ps.Invoke()
+                .Select(item => item?.Properties["ConnectionId"]?.Value?.ToString())
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id!)
+                .ToList();
+            return ids;
+        }
+        catch
+        {
+            // An unreadable list means the id cannot be attributed, which the caller turns into
+            // "do not disconnect". Never into "disconnect everything".
+            return [];
+        }
+        finally
+        {
+            ps.Commands.Clear();
+            ps.Streams.ClearStreams();
+        }
+    }
+
     private PooledRunspace CreateConnected(ExoConnectionConfig config, long generation)
     {
         var (appId, organization, certSubject) = config;
@@ -471,26 +537,48 @@ public sealed class ExoConnectionPool : IDisposable
             ps.Commands.Clear();
 
             var cert = FindCertificate(certSubject);
-            ps.AddCommand("Connect-ExchangeOnline")
-              .AddParameter("AppId", appId)
-              .AddParameter("CertificateThumbprint", cert.Thumbprint)
-              .AddParameter("Organization", organization)
-              .AddParameter("ShowBanner", false)
-              .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
 
-            if (ps.Streams.Error.Count > 0)
+            // A6B: the connect and the two reads around it are one critical section. The id is
+            // only identifiable as "the one that appeared", so nothing else may connect in
+            // between.
+            string? connectionId;
+            lock (_connectLock)
             {
-                var msg = ps.Streams.Error.First().Exception?.Message ?? ps.Streams.Error.First().ToString();
-                throw new InvalidOperationException($"EXO Connect failed: {msg}");
+                var before = ReadConnectionIds(ps);
+
+                ps.AddCommand("Connect-ExchangeOnline")
+                  .AddParameter("AppId", appId)
+                  .AddParameter("CertificateThumbprint", cert.Thumbprint)
+                  .AddParameter("Organization", organization)
+                  .AddParameter("ShowBanner", false)
+                  .AddParameter("ErrorAction", "Stop");
+                ps.Invoke();
+
+                if (ps.Streams.Error.Count > 0)
+                {
+                    var msg = ps.Streams.Error.First().Exception?.Message ?? ps.Streams.Error.First().ToString();
+                    throw new InvalidOperationException($"EXO Connect failed: {msg}");
+                }
+
+                ps.Commands.Clear();
+                ps.Streams.ClearStreams();
+
+                connectionId = NewConnectionId(before, ReadConnectionIds(ps));
             }
 
-            ps.Commands.Clear();
-            ps.Streams.ClearStreams();
+            if (connectionId is null)
+            {
+                // Not fatal - the connection works. It just cannot be closed on its own later,
+                // so Return and the drain will dispose it without disconnecting rather than
+                // disconnect everybody. Worth a warning because it means a session will linger.
+                _logger.LogWarning(
+                    "EXO pool: could not identify the ConnectionId for a new connection (Org={Org}); its server session will be left to time out rather than risk disconnecting other operators",
+                    organization);
+            }
 
             _logger.LogInformation("EXO pool: created new connection (Org={Org})", organization);
-            _operationTrace.Step("ExoConnectionCreated", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = organization });
-            return new PooledRunspace(runspace, ps, generation);
+            _operationTrace.Step("ExoConnectionCreated", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = organization, ["connectionIdKnown"] = connectionId is not null });
+            return new PooledRunspace(runspace, ps, generation, connectionId);
         }
         catch (Exception ex)
         {
@@ -505,10 +593,28 @@ public sealed class ExoConnectionPool : IDisposable
     {
         try
         {
-            pooled.PowerShell.Commands.Clear();
-            pooled.PowerShell.AddCommand("Disconnect-ExchangeOnline")
-                  .AddParameter("Confirm", false);
-            pooled.PowerShell.Invoke();
+            // Audit finding A6B. Disconnect-ExchangeOnline with no selector routes to
+            // ConnectionContextFactory.RemoveAllConnectionContexts(), and that map is a STATIC
+            // field - verified against the installed 3.9.2 module. So the unselected form used
+            // to tear down every other borrower's live connection, mid-operation, every time
+            // this pool retired one runspace.
+            //
+            // Without an id there is nothing safe to send: the only other form is the one that
+            // hits everybody. Disposing without disconnecting leaks one server-side session
+            // until it times out, which is recoverable; breaking every operator in the process
+            // is not.
+            if (string.IsNullOrWhiteSpace(pooled.ConnectionId))
+            {
+                _logger.LogWarning("EXO pool: disposing a connection with no known ConnectionId; its server session is left to time out");
+            }
+            else
+            {
+                pooled.PowerShell.Commands.Clear();
+                pooled.PowerShell.AddCommand("Disconnect-ExchangeOnline")
+                      .AddParameter("ConnectionId", pooled.ConnectionId)
+                      .AddParameter("Confirm", false);
+                pooled.PowerShell.Invoke();
+            }
         }
         catch { }
         finally

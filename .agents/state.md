@@ -56,10 +56,8 @@ Versions: base app 2.27.7 -> 2.27.9; `AccountLockoutRemediation` 1.2.2 -> 1.3.0,
 bumps the Constitution requires**; nothing was deployed in between, so the later bumps cover
 them, but the omission is recorded rather than quietly corrected.
 
-**Open and unstarted**, each with a record: `aud-a6b` (reported by the reviewer and NOT
-verified by me - `Disconnect-ExchangeOnline` may clear a process-wide connection map, which
-would undermine the pool's whole design; read the installed module before anything else),
-`aud-a7b`, `aud-a5b`, plus the earlier `aud-a1b`, `aud-a2b`, `aud-a3b`, `aud-a4b` finding 7.
+**Open and unstarted**, each with a record: `aud-a7b`, and the earlier `aud-a1b`, `aud-a2b`,
+`aud-a3b`, `aud-a4b` finding 7. (`aud-a5b` is deferred with its module; `aud-a6b` is fixed.)
 
 **Account Lockout Remediation is parked** (owner ruling 2026-10-19, `.agents/decisions.md`).
 Never used, considered impractical as built, left registered and disabled rather than deleted.
@@ -84,11 +82,16 @@ re-anchor - confirmed by the registry tests, not assumed.
 single group is the stale-target-across-an-await class (A13-A16), which the plan says to fix
 with one shared discipline rather than four bespoke patches.
 
-`aud-a6b` is CONFIRMED and parked on an owner decision: `Disconnect-ExchangeOnline` with no
-selector clears a process-wide static map, so destroying one retired runspace breaks every
-other borrower. Verified locally, metadata-only, 3.9.2. Three costed options are on the
-finding; the cheapest is to stop pooling EXO connections concurrently. **No code should touch
-the pool until that is answered.**
+`aud-a6b` is CONFIRMED and FIXED. `Disconnect-ExchangeOnline` with no selector clears a
+process-wide STATIC map - verified locally from the installed 3.9.2 module - so retiring one
+pooled runspace tore down every other borrower mid-operation. The owner chose to keep
+concurrency, so the pool now disconnects by `ConnectionId`, and connection establishment is
+serialised because that id can only be identified as "the one that appeared". A runspace whose
+id is unknown is disposed WITHOUT disconnecting: leaking one session is recoverable, breaking
+every operator is not.
+
+**Live acceptance has NOT been done** - nothing here has touched a real tenant, and two
+concurrent operators against a real Exchange is the check that would actually confirm it.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green

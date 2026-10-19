@@ -3,7 +3,7 @@
 **Severity**: HIGH if confirmed - it would mean the connection pool's central premise is
 unsound, and that cleaning up one retired connection can break unrelated operators
 mid-operation, after earlier mutations have already committed.
-**Status**: CONFIRMED locally 2026-10-19 - not fixed; awaiting an owner decision on approach
+**Status**: CONFIRMED and FIXED 2026-10-19 (option 2, owner-chosen); review and live acceptance pending
 **Branch**: -
 **Commit**: -
 
@@ -134,3 +134,82 @@ shipped module plus the code that calls it.
 
 Verified, not fixed. Awaiting an owner decision on which option, per the plan's
 `W1F-A6B` entry, which already said to stop here.
+
+## Fixed, 2026-10-19 - option 2, on the owner's answer
+
+The owner was asked how often several people use the Exchange features at once and answered
+"regularly, it's a team" - the option whose text said multiple connections were worth keeping
+and that it would be prioritised. So: keep concurrency, disconnect by id.
+
+That answer also changes the read on severity. **If several operators really are in there at
+once, they have been interrupting each other already**, and it would have looked like
+intermittent Exchange flakiness rather than anything attributable.
+
+**The change.** `PooledRunspace` carries the `ConnectionId` its session was given.
+`DestroyRunspace` sends `Disconnect-ExchangeOnline -ConnectionId <id>` instead of the
+unselected form that clears the static map.
+
+Attributing the id is the awkward part, because `Connect-ExchangeOnline` generates it and does
+not accept one, and `Get-ConnectionInformation` reads the same process-wide map. So the pool
+reads the id list before and after the connect and takes the one that appeared - and
+**connection establishment is serialised under `_connectLock`** to make that comparison
+meaningful. Two concurrent connects would make it ambiguous.
+
+Borrowing stays concurrent. Only establishing a NEW connection queues, and the pool exists to
+reuse connections, so that is not the common path. **That is the cost of this option and it is
+deliberate.**
+
+**When the id cannot be established, the runspace is disposed WITHOUT disconnecting.** There is
+no safe alternative selector - the only other form is the one that hits everybody. Leaking a
+server-side session until it times out is recoverable; breaking every operator is not. Both the
+unknown-id case and the attribution failure log a warning, because a leaked session is still
+worth knowing about.
+
+## Guard proof
+
+Split by what can honestly be tested.
+
+**Behaviour** - `NewConnectionId` is a pure function and is tested as one: the id that appeared
+is returned; a first connection is identified; and **nothing is returned** for zero new ids,
+two new ids, an unchanged list, or a case-only difference. That last set is the important half,
+because a wrong answer there means disconnecting a connection someone else is using.
+
+**Source scans, and labelled as such** - the disconnect call itself needs a real module, a real
+tenant and a real second connection to observe the damage. Three scans instead: every
+`Disconnect-ExchangeOnline` in the pool names a `ConnectionId` before its `Invoke`; the
+unknown-id guard precedes the disconnect; and `Connect-ExchangeOnline` runs inside
+`_connectLock`.
+
+These read `RazorSyntax.CommentsBlanked`, not `ProgressScan.CodeView`. CodeView blanks string
+literals, and the cmdlet and parameter names under test *are* literals - it would have blanked
+the very thing being checked. Comments are still stripped, which matters because the comments
+in this file name both cmdlets repeatedly and would satisfy every scan on their own.
+
+| Mutation | Result |
+| --- | --- |
+| restore the unselected `Disconnect-ExchangeOnline` | FAIL - `TheDisconnectAlwaysNamesTheConnectionItIsClosing` |
+| replace `lock (_connectLock)` with `if (true)` | FAIL - `ConnectionEstablishmentIsSerialised` |
+
+Source restored byte-identical (md5 verified), touched, rebuilt.
+
+## Known gaps - and they are large
+
+- **Nothing here has run against a real tenant.** The central claim - that the targeted
+  disconnect closes one session and leaves the others alive - is read from Microsoft's module,
+  not observed. This is the finding most in need of a real-world check before it is trusted.
+- The before/after id diff assumes `Get-ConnectionInformation` lists connections made by other
+  runspaces in this process. That follows from the map being static, which was verified, but
+  the cmdlet's own behaviour was not.
+- Only 3.9.2 is installed here. A different version could route differently.
+- `ExoConnectionPool.cs:163` still waits on its slot with the caller's token and can return a
+  cached runspace without re-checking cancellation (the `flake-1` reviewer's fourth path). Left
+  alone: it is latent, with no product caller supplying a token, and it is not this finding.
+
+Gate: Release 0 errors; suite 4328 passed / 3 known AD skips / 0 failed; format and
+`git diff --check` clean. Base 2.27.11 -> 2.28.0 - a minor bump rather than a patch, because
+the pool's disconnect contract changed.
+
+## Closeout
+
+Fixed on `master`. Independent review pending. **Manual acceptance against a real tenant with
+two concurrent operators has NOT been done and is the thing that would actually confirm this.**
