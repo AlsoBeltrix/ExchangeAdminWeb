@@ -2,7 +2,7 @@
 
 **Severity**: HIGH - instance-wide data loss triggered by an ordinary, frequent action. Not a
 race and not an edge case: it happens every time anyone expands a batch.
-**Status**: Open - VERIFIED, fix designed, not built
+**Status**: Verified and FIXED - store side `7316dd9`, page side `6a26f21`; review pending
 **Branch**: -
 **Commit**: -
 
@@ -94,3 +94,71 @@ by line number**. Adding a parameter and seven arguments changes line counts. Re
 
 Not started. Verified and designed only; it is the first slice of Wave 2 and should be a fresh
 session's work, because the page edit plus re-anchoring is the bulk of it.
+
+## Built, 2026-10-19
+
+Two commits, store side first so it could land independently: `7316dd9` adds
+`DeleteForBatch`, `6a26f21` scopes the page's seven call sites to it.
+
+**The page edit changed no line counts, and that was deliberate.** Every call site went from
+`InvalidateStoredReports();` to `InvalidateStoredReports(<batch>);` in place, and the body from
+`DeleteAll()` to `DeleteForBatch(batchName ?? "")` in place. 4,382 lines before and after, so
+the three `ClickGateRegistry` entries on this page needed no re-anchoring - confirmed by the
+registry tests passing unchanged, not assumed. The re-anchor playbook this record said would be
+needed was avoided rather than run.
+
+The batch passed at each site, as built:
+
+| Site | Argument |
+| --- | --- |
+| `:1849` | `open` |
+| `:1917` | `requested` |
+| `:3128` | `batchName` |
+| `:3409` | `expandedBatch`, null-checked by the enclosing `if` |
+| `:3863` | `matchedBatch.BatchName` |
+| `:3894` | `searchResult.BatchId` |
+| `:3982` | `expandedBatch` - the generation guard immediately above has just proved the open batch unchanged, which is what makes it the right one |
+
+**The existing R24b guards had to change, and that is the part worth reading.** Nine
+assertions pinned the literal `"InvalidateStoredReports();"`. They now pin
+`"InvalidateStoredReports("`, so they still assert that every discard path invalidates - their
+actual purpose - without pinning an argument list. The one asserting
+`ReportStore.DeleteAll()` now requires `DeleteForBatch(` and explicitly refuses `DeleteAll(`.
+
+## Guard proof
+
+Store side, against a real temporary directory: `DeleteForBatch_LeavesEveryOtherBatchAlone`,
+`..._MatchesTheBatchNameCaseInsensitively`, `..._RefusesABlankNameRatherThanSweepingEverything`
+(two cases).
+
+Page side, source scans - and that limit is real, because the page has no harness here:
+`ThePageNeverDiscardsEveryOperatorsReports` and
+`EveryInvalidationNamesTheBatchItIsInvalidating`. Both read `ProgressScan.CodeView`, because
+the comments around this method name `DeleteAll` and would satisfy a raw-text scan.
+
+| Mutation | Result |
+| --- | --- |
+| `DeleteForBatch` widened back to `SweepInternal(_ => true)` | FAIL - `DeleteForBatch_LeavesEveryOtherBatchAlone`, alone |
+| page body back to `ReportStore.DeleteAll()` | FAIL - `ThePageNeverDiscardsEveryOperatorsReports` |
+| a call site changed to `InvalidateStoredReports(null)` | FAIL - `EveryInvalidationNamesTheBatchItIsInvalidating` |
+
+The third matters most: a null argument compiles, sweeps nothing, and would leave exactly the
+stale reports R24b exists to remove - silently, with every other guard still green.
+
+Both files restored byte-identical after mutation (md5 verified), touched, and rebuilt.
+
+Gate: Release 0 errors; suite 4316 passed / 3 known AD skips / 0 failed; format and
+`git diff --check` clean. Base 2.27.10 -> 2.27.11, Migration 1.23.0 -> 1.23.1.
+
+## Known gaps
+
+- The page guards are source scans. The store behaviour is real, but nothing here drives the
+  seven call sites through a rendered component.
+- Two operators on the same batch still clear each other's reports. That is intended, not
+  overlooked.
+- Nothing has run against a real instance with two concurrent operators, which is the exact
+  scenario the finding describes.
+
+## Closeout
+
+Fixed on `master`, pushed. Independent review pending.

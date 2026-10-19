@@ -74,11 +74,15 @@ token lock and the cached token and built its request anyway, in three clients. 
 from a test stub and is MEDIUM, because production's socket handler rejects the cancelled
 token before sending.
 
-**Next: Wave 2, starting with `aud-a31`** - verified and designed this session, not built.
-One operator expanding any batch calls `ReportStore.DeleteAll()`, and the store is a single
-shared directory, so it deletes every operator's stored migration reports instance-wide. The
-store-side fix is one method; the page side is seven call sites on a 4,000-line page whose
-`ClickGateRegistry` entries are line-keyed, so it needs re-anchoring and a fresh session.
+**Wave 2 has started. `aud-a31` is fixed** - store side `7316dd9`, page side `6a26f21`. One
+operator expanding any batch called `ReportStore.DeleteAll()` against a single shared
+directory, wiping every operator's stored migration reports. Now scoped per batch. The page
+edit changed no line counts, so the three line-keyed `ClickGateRegistry` entries needed no
+re-anchor - confirmed by the registry tests, not assumed.
+
+**Next: the rest of Wave 2** - roughly nineteen findings, listed in the plan. The largest
+single group is the stale-target-across-an-await class (A13-A16), which the plan says to fix
+with one shared discipline rather than four bespoke patches.
 
 `aud-a6b` is CONFIRMED and parked on an owner decision: `Disconnect-ExchangeOnline` with no
 selector clears a process-wide static map, so destroying one retired runspace breaks every
