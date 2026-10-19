@@ -160,9 +160,24 @@ public class PermissionValidator
                 return TargetValidation.Deny($"Access denied: {loadError}");
             }
 
-            bool requiresFullResolution = cfg != null &&
-                (cfg.Groups.Length > 0 || cfg.OrganizationalUnits.Length > 0 || cfg.SamAccountNamePatterns.Length > 0
-                 || cfg.Users.Any(u => !u.Contains('@') && !u.Contains('\\')));
+            // Audit finding A2. This used to skip resolution whenever the configuration held
+            // only address-form users, on the reasoning that an address can be compared as a
+            // string. It cannot: a mailbox has more than one address. With `vip@x.com`
+            // protected, an operator targeting a SECONDARY alias of that same mailbox built a
+            // principal straight from the alias, compared alias against vip, found no match,
+            // and modified the protected mailbox through its other name. Mailbox Permissions,
+            // Calendar Permissions and Out of Office all reach this method.
+            //
+            // The only way to know which mailbox an address belongs to is to ask the directory,
+            // so the directory is always asked. The check and the thing being checked must name
+            // one object.
+            //
+            // THE COST IS DELIBERATE AND IT IS A BEHAVIOUR CHANGE: with an address-only
+            // configuration and the directory unreachable, this now denies where it previously
+            // proceeded. That is the same rule A3 applies to the group check - an unanswerable
+            // question is not a negative answer - and the alternative is a protection control
+            // that quietly stops protecting during an outage.
+            bool requiresFullResolution = cfg != null;
 
             ResolvedDirectoryPrincipal principal;
 

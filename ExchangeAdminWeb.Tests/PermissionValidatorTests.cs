@@ -268,6 +268,53 @@ public class PermissionValidatorTests
 
     // --- Resolution outcomes: the operator-facing message must name the real cause ---
 
+    [Fact]
+    public async Task AddressOnlyConfig_StillAsksTheDirectory()
+    {
+        // Audit finding A2. With only address-form users configured, the validator skipped
+        // resolution and compared the operator's typed address as a string. A mailbox has more
+        // than one address, so the comparison answered a question nobody asked.
+        var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
+
+        await validator.ValidateTargetMailboxAsync("alias@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.Equal(1, pp.ResolveCalls);
+    }
+
+    [Fact]
+    public async Task ASecondaryAliasOfAProtectedMailbox_IsRefused()
+    {
+        // The finding itself. vip@contoso.com is protected; the operator targets a SECONDARY
+        // alias of that same mailbox. The directory resolves the alias to the protected
+        // primary, so the check must deny - previously the alias never reached the directory
+        // and passed as an unrelated address.
+        var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
+        pp.ResolveTo = new ResolvedDirectoryPrincipal(
+            "Test", "VIP", "vip@contoso.com", "vip", "vip@contoso.com", "CN=vip,DC=contoso,DC=com", "guid", null);
+
+        var result = await validator.ValidateTargetMailboxAsync(
+            "alias@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.NotNull(result.Error);
+        Assert.Contains("protected", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AddressOnlyConfig_DeniesWhenTheDirectoryCannotAnswer()
+    {
+        // The deliberate cost of always resolving: an address-only configuration used to work
+        // during a directory outage because it never asked. It now denies, by the same rule
+        // A3 applies - an unanswerable question is not a negative answer. Pinned so the
+        // trade-off cannot be reverted silently.
+        var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.Unavailable;
+
+        var result = await validator.ValidateTargetMailboxAsync(
+            "anyone@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.NotNull(result.Error);
+    }
+
     /// <summary>
     /// Scripts the resolution seam so the four outcomes can be driven without a directory. The
     /// gate calls ResolveWithExchangeFallbackAsync, so that is what is overridden.
@@ -295,10 +342,21 @@ public class PermissionValidatorTests
             : base(env, config, moduleConfig, repo, delinea, Substitute.For<ILogger<ProtectedPrincipalService>>())
         { }
 
+        /// <summary>How many times the directory was asked. Audit finding A2 is about a path
+        /// that never asked at all, so the count is the evidence.</summary>
+        public int ResolveCalls;
+
+        /// <summary>
+        /// Set to script what the directory says an address belongs to - the alias-to-primary
+        /// mapping A2 turns on. Null returns an identity principal, as before.
+        /// </summary>
+        public ResolvedDirectoryPrincipal? ResolveTo;
+
         public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
         {
+            ResolveCalls++;
             ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved
-                ? new ResolvedDirectoryPrincipal("Test", identity, identity, "sam", identity, "CN=x,DC=y", "guid", null)
+                ? ResolveTo ?? new ResolvedDirectoryPrincipal("Test", identity, identity, "sam", identity, "CN=x,DC=y", "guid", null)
                 : null;
             return Task.FromResult((p, Status));
         }
@@ -318,7 +376,8 @@ public class PermissionValidatorTests
     /// Builds a validator whose protected-principal config has a Group rule, which is what makes
     /// ValidateTargetMailboxAsync require full resolution and reach the scripted seam.
     /// </summary>
-    private static (PermissionValidator validator, ScriptedPpService pp) CreateValidatorWithScriptedResolution()
+    private static (PermissionValidator validator, ScriptedPpService pp) CreateValidatorWithScriptedResolution(
+        bool addressOnlyConfig = false)
     {
         var testDir = Path.Combine(Path.GetTempPath(), "eaw-res-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(testDir, "config"));
@@ -340,8 +399,13 @@ public class PermissionValidatorTests
             {
                 ProtectedPrincipals = new
                 {
-                    Users = Array.Empty<string>(),
-                    Groups = new[] { "CN=VIPs,OU=Groups,DC=contoso,DC=com" },
+                    // addressOnlyConfig is the A2 shape: every user entry is an address and
+                    // there are no Group/OU/pattern rules. That combination used to skip
+                    // directory resolution entirely.
+                    Users = addressOnlyConfig ? new[] { "vip@contoso.com" } : Array.Empty<string>(),
+                    Groups = addressOnlyConfig
+                        ? Array.Empty<string>()
+                        : new[] { "CN=VIPs,OU=Groups,DC=contoso,DC=com" },
                     OrganizationalUnits = Array.Empty<string>(),
                     SamAccountNamePatterns = Array.Empty<string>()
                 }

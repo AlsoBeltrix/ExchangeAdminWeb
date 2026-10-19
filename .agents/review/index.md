@@ -66,6 +66,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [ ] | [psl-4](findings/psl-4.md) | MEDIUM - exceptional pooled queries lose connection/precheck classification | Recorded follow-up; not approved | - | native / gpt-6-astra / max |
 | [v] | [aud-a1](findings/aud-a1.md) | HIGH - module-admin grants match a same-named group in another domain | Verified | - | implementer-verified; review findings repaired |
 | [v] | [aud-a3](findings/aud-a3.md) | HIGH - the protected-group check asks the host domain, so a foreign-domain target reads as unprotected | Verified | - | implementer-verified; fix review pending |
+| [v] | [aud-a2](findings/aud-a2.md) | HIGH - a secondary alias bypasses protected-user rules in three modules | Verified | - | implementer-verified; fix review pending |
 | [ ] | [aud-a1b](findings/aud-a1b.md) | MEDIUM - group-SID entry validates the shape, not the object; affects both access and admin controls | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
 
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
