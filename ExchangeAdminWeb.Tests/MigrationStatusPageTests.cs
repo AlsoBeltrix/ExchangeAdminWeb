@@ -1597,7 +1597,7 @@ public class MigrationStatusPageTests
         foreach (Match discard in discards)
         {
             Assert.StartsWith(
-                "InvalidateStoredReports();",
+                "InvalidateStoredReports(",
                 discard.Groups["next"].Value.Trim(),
                 StringComparison.Ordinal);
         }
@@ -1617,7 +1617,7 @@ public class MigrationStatusPageTests
         var body = GetMethodBody("AdoptSelectionAsOpenBatch");
 
         var discard = body.IndexOf("batchUsers = null;", StringComparison.Ordinal);
-        var close = body.IndexOf("InvalidateStoredReports();", StringComparison.Ordinal);
+        var close = body.IndexOf("InvalidateStoredReports(", StringComparison.Ordinal);
         var load = body.IndexOf("LoadMailboxesFor(", StringComparison.Ordinal);
 
         Assert.True(discard > 0, "the open batch changing must discard the rows");
@@ -1633,10 +1633,10 @@ public class MigrationStatusPageTests
         var body = GetMethodBody("SearchUser");
 
         var batchMatch = ExtractBlock(body, "if (matchedBatch != null)");
-        Assert.Contains("InvalidateStoredReports();", batchMatch, StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports(", batchMatch, StringComparison.Ordinal);
 
         var userMatch = body[(body.IndexOf(batchMatch, StringComparison.Ordinal) + batchMatch.Length)..];
-        Assert.Contains("InvalidateStoredReports();", userMatch, StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports(", userMatch, StringComparison.Ordinal);
 
         // S3: neither branch fetches for itself any more. Under R9 arriving at a batch IS
         // selecting it, so both hand off to AdoptSelectionAsOpenBatch, which navigates and loads.
@@ -1653,7 +1653,7 @@ public class MigrationStatusPageTests
         // cannot see it. The report still describes the pre-refresh state of the row.
         var body = GetMethodBody("RefreshBatchUsers");
 
-        var close = body.IndexOf("InvalidateStoredReports();", StringComparison.Ordinal);
+        var close = body.IndexOf("InvalidateStoredReports(", StringComparison.Ordinal);
         var fetch = body.IndexOf("LoadMailboxesFor(", StringComparison.Ordinal);
         Assert.True(close > 0, "RefreshBatchUsers must close the open report");
         Assert.True(fetch > close, "the close must precede the refetch");
@@ -1661,7 +1661,7 @@ public class MigrationStatusPageTests
         // The refetch itself is LoadMailboxesFor, which closes the report AGAIN after its await -
         // see ReplaceBatchUsers for why closing before the await is not enough on a path that
         // leaves the old rows, and their enabled Report button, rendered for the whole call.
-        Assert.Contains("InvalidateStoredReports();", GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports(", GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
     }
     [Fact]
     public void NoCodePathAssignsBatchUsersWithoutClosingTheReport()
@@ -1702,7 +1702,7 @@ public class MigrationStatusPageTests
         // fetch returns and any report opened mid-reload is discarded.
         var body = GetMethodBody("ReplaceBatchUsers");
 
-        var close = body.IndexOf("InvalidateStoredReports();", StringComparison.Ordinal);
+        var close = body.IndexOf("InvalidateStoredReports(", StringComparison.Ordinal);
         var assign = body.IndexOf("batchUsers = users;", StringComparison.Ordinal);
         Assert.True(close > 0, "ReplaceBatchUsers must close the open report");
         Assert.True(assign > close, "the close must precede the assignment");
@@ -1743,7 +1743,7 @@ public class MigrationStatusPageTests
 
         var guard = body.IndexOf("if (generation != batchUsersGeneration)", StringComparison.Ordinal);
         var bail = body.IndexOf("return;", StringComparison.Ordinal);
-        var close = body.IndexOf("InvalidateStoredReports();", StringComparison.Ordinal);
+        var close = body.IndexOf("InvalidateStoredReports(", StringComparison.Ordinal);
         var assign = body.IndexOf("batchUsers = users;", StringComparison.Ordinal);
 
         Assert.True(guard >= 0, "ReplaceBatchUsers must refuse a result from an overtaken load");
@@ -1862,7 +1862,7 @@ public class MigrationStatusPageTests
         var body = GetMethodBody("ExecuteUserAction");
 
         var reload = ExtractBlock(body, "if (result.Success && expandedBatch != null)");
-        Assert.Contains("InvalidateStoredReports();", reload, StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports(", reload, StringComparison.Ordinal);
         Assert.Contains("await LoadMailboxesFor(expandedBatch);", reload, StringComparison.Ordinal);
     }
 
@@ -1880,8 +1880,8 @@ public class MigrationStatusPageTests
         Assert.Contains("LoadMailboxesFor(", body, StringComparison.Ordinal);
 
         // Both of those close it; neither may stop doing so.
-        Assert.Contains("InvalidateStoredReports();", GetMethodBody("AdoptSelectionAsOpenBatch"), StringComparison.Ordinal);
-        Assert.Contains("InvalidateStoredReports();", GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports(", GetMethodBody("AdoptSelectionAsOpenBatch"), StringComparison.Ordinal);
+        Assert.Contains("InvalidateStoredReports(", GetMethodBody("ReplaceBatchUsers"), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1971,7 +1971,9 @@ public class MigrationStatusPageTests
 
         var invalidate = StripLineComments(GetMethodBody("InvalidateStoredReports"));
         Assert.Contains("reportGeneration++", invalidate, StringComparison.Ordinal);
-        Assert.Contains("ReportStore.DeleteAll()", invalidate, StringComparison.Ordinal);
+        Assert.Contains("ReportStore.DeleteForBatch(", invalidate, StringComparison.Ordinal);
+        // Audit finding A31: it must be the batch-scoped delete, never the instance-wide one.
+        Assert.DoesNotContain("ReportStore.DeleteAll(", invalidate, StringComparison.Ordinal);
 
         // No inline field reset in the markup: an inline reset cannot bump the generation, which
         // is how a manual Close during a slow fetch used to reopen the panel by itself.

@@ -1846,7 +1846,7 @@
         expandedBatch = open;
         batchUsersGeneration++;
         batchUsers = null;
-        InvalidateStoredReports();
+        InvalidateStoredReports(open);
 
         // S5. A different batch is a different list. Carrying the previous batch's filter over
         // would show "no mailbox matches" for a batch the operator has only just opened, and
@@ -1914,7 +1914,7 @@
         expandedBatch = requested;
         batchUsersGeneration++;
         batchUsers = null;
-        InvalidateStoredReports();
+        InvalidateStoredReports(requested);
 
         // R9: the address names the SELECTION, not a second concept sitting beside it. Without
         // this, pressing Back would move the pane to another batch while the tick boxes still
@@ -3125,7 +3125,7 @@
     {
         if (IsBusy) return;
 
-        InvalidateStoredReports();
+        InvalidateStoredReports(batchName);
         await LoadMailboxesFor(batchName);
     }
 
@@ -3406,7 +3406,7 @@
 
             if (result.Success && expandedBatch != null)
             {
-                InvalidateStoredReports();
+                InvalidateStoredReports(expandedBatch);
                 await LoadMailboxesFor(expandedBatch);
             }
         }
@@ -3860,7 +3860,7 @@
                 selectedBatches.Clear();
                 selectedBatches.Add(matchedBatch.BatchName);
                 batchUsers = null;
-                InvalidateStoredReports();
+                InvalidateStoredReports(matchedBatch.BatchName);
                 StateHasChanged();
 
                 await AdoptSelectionAsOpenBatch();
@@ -3891,7 +3891,7 @@
             selectedBatches.Clear();
             selectedBatches.Add(searchResult.BatchId!);
             batchUsers = null;
-            InvalidateStoredReports();
+            InvalidateStoredReports(searchResult.BatchId);
             StateHasChanged();
 
             await AdoptSelectionAsOpenBatch();
@@ -3938,7 +3938,7 @@
     // removed and recreated under the same name kept showing the PREVIOUS migration's report. The
     // batch name is the same, so nothing else distinguishes them. Every site that reloads or
     // discards batchUsers calls this, never DismissReportModal.
-    private void InvalidateStoredReports()
+    private void InvalidateStoredReports(string? batchName)
     {
         reportGeneration++;
         reportUser = null;
@@ -3950,7 +3950,7 @@
         // survives deletion is still refused on read once it expires, and its generation is gone.
         try
         {
-            ReportStore.DeleteAll();
+            ReportStore.DeleteForBatch(batchName ?? "");
         }
         catch (Exception ex)
         {
@@ -3979,7 +3979,7 @@
         if (generation != batchUsersGeneration)
             return;
 
-        InvalidateStoredReports();
+        InvalidateStoredReports(expandedBatch);
         batchUsers = users;
         mailboxLoadFailed = false;
 
