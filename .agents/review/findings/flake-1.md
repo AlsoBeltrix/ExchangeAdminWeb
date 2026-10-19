@@ -1,9 +1,10 @@
 # flake-1: a canceled caller waiting on the token lock still sends its request
 
-**Severity**: HIGH - a cancelled operation reaches the API anyway. Here the intermittently
-failing cases are GETs, but the defect is in the shared token path every Defender call uses,
-including the POSTs.
-**Status**: Open - DIAGNOSED, not fixed. Product defect, not a flaky test.
+**Severity**: MEDIUM - **downgraded from HIGH by review; see the correction at the end.** A
+cancelled caller takes a lock and a cached token it should not have, and proceeds to build and
+dispatch a request. In production the HTTP handler then rejects the cancelled token, so the
+request does not reach the service - which is what makes this MEDIUM rather than HIGH.
+**Status**: Fixed in three clients; reviewed; one latent fourth path carried.
 **Branch**: -
 **Commit**: `e8c9041` carries the diagnostic test change only.
 
@@ -144,3 +145,63 @@ DefenderEndpointDevices 1.6.16 -> 1.6.17.
 
 Fixed directly on `master`. Not pushed at time of writing. Independent review not yet run on
 this fix.
+
+## Independent review, 2026-10-19 (codex-commercial / gpt-6-astra / max) - corrections
+
+**The fix itself passed.** The reviewer verified the `SemaphoreSlim` diagnosis against the
+.NET 10.0.12 implementation rather than accepting it - cancellation makes
+`WaitUntilCountOrTimeoutAsync` yield, and it returns success if the waiter has already
+completed, throwing only if it removes the waiter itself, so `Release` can win that race even
+when `Cancel()` was called first. They confirmed all three new checks sit inside the `try`
+with the wait outside it, so lock ownership is preserved on the new throw path, and found no
+introduced regression and no remaining argument-binding mistake.
+
+Three corrections to what this record claimed, all accepted.
+
+### Severity was overstated - HIGH down to MEDIUM
+
+This record said a cancelled operation "reaches the API". It does not, in production. The test
+fixture's handler ignores its cancellation token and returns canned responses, so what the
+evidence shows is an unwanted **handler invocation**. Production resolves the standard socket
+handler through `IHttpClientFactory` (`Program.cs:132`, `:142`), and `SocketsHttpHandler`
+rejects an already-cancelled token before sending.
+
+So the defect is real - a cancelled caller takes a lock and a cached token it has no right to,
+and builds a request - but the request does not go out. Downgraded accordingly. **The original
+HIGH was my inference from a stub, not an observation of the system.**
+
+### "Mutation proof" was overstated
+
+The run counts are observations of failures and passes. They do not demonstrate closure, and
+they do not even give a reliable estimate of how much rarer the failure became, because
+nothing in the test **forces** the semaphore to grant the cancelled waiter its slot - a
+passing run can simply miss the repaired branch. The word "proof" was wrong for that evidence.
+Real proof needs the grant to be deterministic, which the current harness cannot arrange.
+
+The reviewer also notes the Graph tests now pass a cancellation token but never cancel
+anything, so Graph's repair has no behavioural coverage at all, and the waiter test never
+starts a third caller to show the new throw released the lock.
+
+### The "second layer of checks" was not as described
+
+Accurate: Defender has it (`DefenderApiClient.cs:183`). Delinea has it only after the first
+secret-fields acquisition (`:79`); its retry and credential paths do not (`:90`, `:152`,
+`:163`). Graph has none - its GET goes from token to request directly.
+
+**Deliberately not "fixed" by adding the missing ones.** The same fact that downgraded the
+severity makes that second layer redundant in production: every one of those paths ends in
+`SendAsync(request, cancellationToken)`, and the real handler rejects a cancelled token there.
+Adding four more `ThrowIfCancellationRequested` calls would buy nothing and would read as
+though it did. The record is corrected instead.
+
+### Carried, not fixed: a fourth path in the EXO pool
+
+`ExoConnectionPool.cs:163` waits on its slot with the caller's token and can then return a
+cached authenticated runspace at `:194` without re-checking, so the same interleaving could
+hand a cancelled borrower a usable connection. Pre-existing, and currently **latent**: the
+reviewer found no product caller that supplies a cancellation token on that path
+(`ExoConnectionPool.cs:264`, `RecipientAutocomplete.razor:113`).
+
+Carried here rather than fixed, because the approved scope was the token clients and this is
+neither a token cache nor currently reachable. It belongs with `aud-a6b`, the other open pool
+question.
