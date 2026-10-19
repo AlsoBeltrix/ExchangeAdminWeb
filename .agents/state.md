@@ -8,14 +8,65 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Repository audit - report saved; remediation unstarted
+### Repository audit remediation - Wave 1 complete and reviewed; Waves 2-4 not started
 
 The owner-authorized read-only audit of `34bac0872e0131ebeef595217590b03beeb3eee4`
 is complete. The report, saved at the owner's request, is
 [RepositoryAudit-2026-10-16.md](../docs/RepositoryAudit-2026-10-16.md).
 It owns the 8 high-priority and 32 medium-priority findings, additional improvements,
-limitations and integrity evidence. No code changes were made. Remediation is
-unapproved and unstarted; the proposed next step is a plan beginning with findings 1-8.
+limitations and integrity evidence.
+
+Remediation is planned in [RepoAudit-Remediation-Plan.md](../docs/RepoAudit-Remediation-Plan.md).
+**The owner approved all four waves on 2026-10-19** (`cb5b89b`), so the plan - not this
+section - owns the remaining scope and ordering.
+
+**All eight Wave 1 highs are landed on `master` and all eight have been independently
+reviewed.** Order was A1, A3, A2, A4, A5, A8, A6, A7. Each has its own finding record under
+`.agents/review/findings/` and its own commit:
+
+| Finding | Commit | Repair after review |
+| --- | --- | --- |
+| aud-a1 module-admin grants are group SIDs | `5059c6f` | `c5ca5bf` |
+| aud-a3 protected-group check asks the target's own domain | `d8702f0` | `2bf988a` |
+| aud-a2 resolve the target before judging protection | `efa08c5` | `a38f40d` |
+| aud-a4 evaluate the group DACL as Windows does | `a5b6216` | `c537051` |
+| aud-a6 retire the generation with the config identity | `1dcc1a1` | `f71d60a` |
+| aud-a5 match a logon session by SID, never a bare username | `cf3ed28` | - |
+| aud-a8 a disabled module stops its queued jobs | `4ce4680` | `6d5ef9a` (tests only) |
+| aud-a7 capture the target before awaiting | `da2c917` | `e8e8344` |
+
+**Six of the seven reviewed slices needed a repair commit, and four of those repaired a
+regression the fix itself had introduced.** That is the most important fact here: a Wave 1
+slice is not finished when its tests pass. A5 is the only one not yet independently reviewed.
+
+The dominant defect class across the whole wave is **checking one identity and acting on
+another** - A1 stripped the domain, A2 compared an alias, A3 queried the wrong domain, A5
+matched a bare username, A6 paired one organization's config with another's generation, A7
+re-read an editable field after awaiting. SID-based identity, or an atomically-read pair, is
+the recurring correct answer.
+
+The second recurring lesson is about guards: **a source scan passes for the wrong reason.**
+A7's scans passed while the page's form was left permanently disabled, and A8's enablement
+test passed against a check that never looked at the module it claimed to. Where a seam
+exists, drive behaviour; where one genuinely does not (A6's config/generation pairing), say
+so on the finding rather than implying more than the test proves.
+
+Versions: base app 2.27.7 -> 2.27.9; `AccountLockoutRemediation` 1.2.2 -> 1.3.0, `OutOfOffice`
+1.1.1 -> 1.1.2. **Commits `5059c6f` through `da2c917` shipped behaviour changes without the
+bumps the Constitution requires**; nothing was deployed in between, so the later bumps cover
+them, but the omission is recorded rather than quietly corrected.
+
+**Open and unstarted**, each with a record: `aud-a6b` (reported by the reviewer and NOT
+verified by me - `Disconnect-ExchangeOnline` may clear a process-wide connection map, which
+would undermine the pool's whole design; read the installed module before anything else),
+`aud-a7b`, `aud-a5b`, plus the earlier `aud-a1b`, `aud-a2b`, `aud-a3b`, `aud-a4b` finding 7.
+
+**Next:** Waves 2-4 of the plan, and an independent review of A5.
+
+Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
+name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green
+(4280 passed / 3 known AD skips / 0 failed each). **Not reproduced and still unidentified** -
+do not treat the green runs as proof it does not exist.
 
 ### Comms-10k / Defender remediation - approved code work closed locally
 
