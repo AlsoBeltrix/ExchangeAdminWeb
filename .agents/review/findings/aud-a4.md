@@ -52,9 +52,14 @@ set, and:
 
 - returns false on any applicable Deny conveying member-write;
 - returns true only if some applicable Allow conveys it;
-- **applies Deny precedence regardless of ACE order.** A canonical DACL lists denies first but
-  `GetAccessRules` guarantees no ordering, and guessing wrong in this direction grants access,
-  so every applicable entry is examined before answering.
+- **applies Deny precedence regardless of ACE order.** **THIS IS WRONG and review caught it -
+  see `aud-a4b` finding 1.** Windows evaluates a DACL in order and stops once the requested
+  right is satisfied, and canonical ordering puts EXPLICIT ACEs before INHERITED ones, so an
+  explicit Allow followed by an inherited group Deny grants access. This evaluator refuses it.
+  My claim that a canonical DACL lists all denies first was simply false. The direction is
+  conservative - it blocks legitimate self-service rather than permitting a write - but
+  `GroupDeny_BeatsAnIndividualAllow_EvenWhenTheAllowComesFirst` pins the incorrect behaviour
+  and must be rewritten when `aud-a4b` is built.
 
 The service now projects each ACE to a primitive `Entry` and calls it. Anything that is
 neither Allow nor Deny is dropped rather than guessed at.
@@ -109,10 +114,22 @@ None.
 ## Known gaps
 
 **Claims are the token as this app sees it, not as the DC computes it.** `ExtractGroupClaims`
-reads the Negotiate principal's group SIDs, which is what Windows put in the token - but a
-domain-local group from another domain, or a primary-group relationship, may be absent from
-it. That is the same family as `aud-a3b`, and it means a Deny carried by such a group is still
-invisible. Narrowing that needs an authoritative membership read, not a claims read.
+reads the Negotiate principal's group SIDs - but where the target group's domain differs from
+the web server's, an applicable domain-local membership can be absent, so a Deny it carries is
+still invisible.
+
+**Correction, from the review of this slice:** the sentence above originally also claimed
+primary-group membership may be missing. **That is wrong** - .NET emits it and
+`GroupMembershipChecker` already includes `PrimaryGroupSid`. I conflated it with the
+domain-local case and with `aud-a3b`, where primary-group invisibility is real because that
+check reads `memberOf`.
+
+**And the review found this slice is not a faithful Windows access check at all** - seven
+findings, recorded as `aud-a4b`. Two are mine: the unconditional Deny precedence below refuses
+grants Windows allows, and the null-principal refusal guards one entry point rather than the
+write. Five are pre-existing defects in `ConveysMemberWrite` and the ACE projection that
+survived the extraction - inheritance-only ACEs, Membership property-set denies, composite
+masks against a scoped ObjectType, and deny-only token SIDs.
 
 The evaluator is pure and fully tested; **the projection from `PSObject` into `Entry` is
 not** - it needs a domain controller. A mistake there (a renamed property, a changed
