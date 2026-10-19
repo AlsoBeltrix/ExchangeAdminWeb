@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using ExchangeAdminWeb.Authorization;
 using ExchangeAdminWeb.Services.Storage;
 
 namespace ExchangeAdminWeb.Services;
@@ -19,29 +20,68 @@ public class ModuleAdminService
         ImportLegacyIfPresent(legacyPath);
     }
 
+    /// <summary>
+    /// True when <paramref name="user"/> holds a group SID granted module-admin rights for
+    /// <paramref name="moduleId"/>. Fail closed: no grants, no usable grants, or no group claims
+    /// all deny.
+    /// </summary>
+    /// <remarks>
+    /// <b>This store is SIDs, and the comparison is EXACT.</b> It previously stripped the domain
+    /// (<c>group.Split('\\')[1]</c>) and accepted a bare-name match through
+    /// <c>WindowsPrincipal.IsInRole</c>, which made a grant for one domain's <c>Ops</c>
+    /// satisfiable by a member of a different domain's <c>Ops</c> - in the field that decides who
+    /// can reach a module's configuration and the AD attribute allowlist. Audit finding A1,
+    /// 2026-10-16; the same defect <c>section_access</c> fixed in
+    /// <c>docs/SectionAccessSidStorage-Plan.md</c>, which this store was simply missed by.
+    ///
+    /// <see cref="GroupMembershipChecker.UsableSidsOnly"/> is not optional and not belt-and-braces.
+    /// Review finding <c>sid-1</c> measured it: exact comparison ALONE does not make an unmigrated
+    /// row fail closed, because <c>IsInRole</c> resolves names as well as SIDs and a role claim can
+    /// carry a name too. Filtering to SIDs is what makes a legacy name-valued grant inert rather
+    /// than loosely matched.
+    ///
+    /// <b>A legacy name-valued grant therefore stops authorizing the moment this ships</b> - that
+    /// is the owner's ruling of 2026-10-19 (refuse rather than silently honour), and it is why the
+    /// list of non-resolving grants goes to the owner before deployment. Do NOT re-add a name
+    /// fallback here to soften it; that reopens the hole this closes.
+    ///
+    /// Contrast <c>Security:AdminGroups</c> in appsettings, which must NOT be filtered this way:
+    /// no migration converts it, it ships as <c>DOMAIN\Name</c>, and filtering it locks every
+    /// admin out of the admin page (review finding <c>sidf-1</c>). Different store, different rule.
+    /// </remarks>
     public bool IsModuleAdmin(string moduleId, ClaimsPrincipal user)
     {
-        var groups = GetModuleAdmins(moduleId);
-        if (groups.Length == 0) return false;
+        var usableGrants = GroupMembershipChecker.UsableSidsOnly(GetModuleAdmins(moduleId));
+        if (usableGrants.Count == 0) return false;
 
-        var roleClaims = user.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList();
+        return GroupMembershipChecker.IsMemberOfAny(
+            GroupMembershipChecker.ExtractGroupClaims(user), usableGrants);
+    }
 
-        foreach (var group in groups)
+    /// <summary>
+    /// Stored module-admin grants that are not usable group SIDs, by module. Empty once the store
+    /// is migrated.
+    /// </summary>
+    /// <remarks>
+    /// These grants authorize NOTHING - see <see cref="IsModuleAdmin"/>. This exists so that fact
+    /// is reportable before anyone is surprised by it, rather than discovered when an admin cannot
+    /// open their own module.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string[]> GetUnusableGrants()
+    {
+        var unusable = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (moduleId, groups) in ReadConfig())
         {
-            var normalizedGroup = group.Contains('\\')
-                ? group.Split('\\')[1]
-                : group;
+            var bad = groups
+                .Where(g => !SectionAccessGroupIdentity.IsUsableGroupSid(g))
+                .ToArray();
 
-            if (user.IsInRole(group)
-                || user.IsInRole(normalizedGroup)
-                || roleClaims.Any(r => r.Equals(group, StringComparison.OrdinalIgnoreCase))
-                || roleClaims.Any(r => r.Equals(normalizedGroup, StringComparison.OrdinalIgnoreCase)))
-            {
-                return true;
-            }
+            if (bad.Length > 0)
+                unusable[moduleId] = bad;
         }
 
-        return false;
+        return unusable;
     }
 
     public bool IsModuleAdminForAny(ClaimsPrincipal user)

@@ -52,21 +52,83 @@ public class ModuleAdminServiceTests
         Assert.Equal(new[] { "DOMAIN\\X" }, service.GetModuleAdmins("migration"));
     }
 
+    // Two domains, same group name, same RID. The whole of A1 is that these must not be
+    // interchangeable in the field that decides who can reach a module's configuration.
+    private const string HomeOpsSid = "S-1-5-21-1111111111-2222222222-3333333333-1101";
+    private const string ForeignOpsSid = "S-1-5-21-1444444444-1555555555-1666666666-1101";
+
     [Fact]
-    public void IsModuleAdmin_MatchesRoleClaim()
+    public void IsModuleAdmin_MatchesGrantedGroupSid()
     {
+        using var temp = new TempDir();
+        var service = CreateService(temp.Path, out _);
+        service.SetModuleAdmins("Migration", new[] { HomeOpsSid });
+
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.GroupSid, HomeOpsSid),
+        }, "test"));
+
+        Assert.True(service.IsModuleAdmin("Migration", user));
+        Assert.False(service.IsModuleAdmin("Migration",
+            new ClaimsPrincipal(new ClaimsIdentity(Array.Empty<Claim>(), "test"))));
+    }
+
+    [Fact]
+    public void IsModuleAdmin_DoesNotAcceptAnotherDomainsSameNamedGroup()
+    {
+        // Audit finding A1. IsModuleAdmin stripped the domain from the stored grant and then
+        // accepted a bare-name match, so a grant for FOREIGN\Ops was satisfied by a member of
+        // HOME\Ops. The caller here is in the WRONG domain's group and additionally carries a
+        // bare role claim spelled like the granted group - the exact shape that used to pass.
+        using var temp = new TempDir();
+        var service = CreateService(temp.Path, out _);
+        service.SetModuleAdmins("Migration", new[] { ForeignOpsSid });
+
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.GroupSid, HomeOpsSid),
+            new Claim(ClaimTypes.Role, "Ops"),
+            new Claim(ClaimTypes.Role, "DOMAIN\\Ops"),
+        }, "test"));
+
+        Assert.False(service.IsModuleAdmin("Migration", user));
+        Assert.False(service.IsModuleAdminForAny(user));
+    }
+
+    [Fact]
+    public void IsModuleAdmin_LegacyNameValuedGrantAuthorizesNothing()
+    {
+        // Owner ruling 2026-10-19: an unmigrated grant is refused, not silently honoured.
+        // Review finding sid-1 is why filtering to SIDs is required and exact comparison alone
+        // is not enough - a role claim can carry a name, and IsInRole resolves names too.
         using var temp = new TempDir();
         var service = CreateService(temp.Path, out _);
         service.SetModuleAdmins("Migration", new[] { "DOMAIN\\Migration-Admins" });
 
         var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
         {
+            new Claim(ClaimTypes.Role, "DOMAIN\\Migration-Admins"),
             new Claim(ClaimTypes.Role, "Migration-Admins"),
         }, "test"));
 
-        Assert.True(service.IsModuleAdmin("Migration", user));
-        Assert.False(service.IsModuleAdmin("Migration",
-            new ClaimsPrincipal(new ClaimsIdentity(Array.Empty<Claim>(), "test"))));
+        Assert.False(service.IsModuleAdmin("Migration", user));
+    }
+
+    [Fact]
+    public void GetUnusableGrants_ReportsOnlyTheRowsThatAuthorizeNothing()
+    {
+        // This list exists so the refusal above is reportable BEFORE an admin discovers it by
+        // losing access to their own module.
+        using var temp = new TempDir();
+        var service = CreateService(temp.Path, out _);
+        service.SetModuleAdmins("Migration", new[] { HomeOpsSid, "DOMAIN\\Legacy-Admins" });
+        service.SetModuleAdmins("Comms10k", new[] { ForeignOpsSid });
+
+        var unusable = service.GetUnusableGrants();
+
+        Assert.Equal(new[] { "DOMAIN\\Legacy-Admins" }, unusable["Migration"]);
+        Assert.DoesNotContain("Comms10k", unusable.Keys);
     }
 
     [Fact]

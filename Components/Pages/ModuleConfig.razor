@@ -613,7 +613,7 @@
                         {
                             var capturedGroup = group;
                             <tr>
-                                <td class="adm-grp">@capturedGroup</td>
+                                <td class="adm-grp" title="@capturedGroup">@DisplayNameFor(capturedGroup)</td>
                                 <td class="adm-act">
                                     <button class="adm-rm" type="button" @onclick="() => RemoveModuleAdmin(capturedGroup)">Remove</button>
                                 </td>
@@ -622,7 +622,7 @@
                         <tr>
                             <td colspan="2">
                                 <div class="input-group input-group-sm" style="max-width: 30rem;">
-                                    <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SAM" @bind-Value="newAdminGroup" Placeholder="Search groups in any domain..." />
+                                    <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SID" @bind-Value="newAdminGroup" Placeholder="Search groups in any domain..." />
                                     <button class="btn btn-outline-secondary" type="button" @onclick="AddModuleAdmin">Add</button>
                                 </div>
                             </td>
@@ -1464,10 +1464,31 @@
         if (e.Key == "Enter") AddAccessGroup(alias);
     }
 
+    /// <summary>
+    /// Adds a module-admin grant. Only a group SID chosen from the suggestion list is accepted.
+    /// </summary>
+    /// <remarks>
+    /// Identical rule, and identical reason, to <see cref="AddAccessGroup"/> - this field decides
+    /// who can change a module's configuration and its AD attribute allowlist. It stored a bare
+    /// SAM name until audit finding A1 (2026-10-16), which let a grant for one domain's group be
+    /// satisfied by a member of a same-named group in another domain.
+    /// </remarks>
     private void AddModuleAdmin()
     {
         var input = newAdminGroup?.Trim();
         if (string.IsNullOrWhiteSpace(input)) return;
+
+        if (!ExchangeAdminWeb.Authorization.SectionAccessGroupIdentity.IsUsableGroupSid(input))
+        {
+            statusMessage = ADSearch.IsAvailable
+                ? "Pick a group from the suggestion list - typed text is not accepted here, because "
+                  + "only a selected group supplies the identifier this field stores."
+                : "Active Directory is unreachable, so groups cannot be looked up. Try again later.";
+            statusIsError = true;
+            return;
+        }
+
+        statusMessage = null;
         if (!moduleAdminGroups.Contains(input, StringComparer.OrdinalIgnoreCase))
         {
             moduleAdminGroups.Add(input);

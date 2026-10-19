@@ -64,6 +64,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [ ] | [psl-2](findings/psl-2.md) | MEDIUM - licensing failure can select an earlier row's error | Recorded follow-up; not approved | - | native / gpt-6-astra / max audit |
 | [ ] | [psl-3](findings/psl-3.md) | MEDIUM - DHCP mutation report can include stale discovery errors | Recorded follow-up; not approved | - | native / gpt-6-astra / max audit |
 | [ ] | [psl-4](findings/psl-4.md) | MEDIUM - exceptional pooled queries lose connection/precheck classification | Recorded follow-up; not approved | - | native / gpt-6-astra / max |
+| [v] | [aud-a1](findings/aud-a1.md) | HIGH - module-admin grants match a same-named group in another domain | Verified | - | implementer-verified; fix review pending |
 
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.
