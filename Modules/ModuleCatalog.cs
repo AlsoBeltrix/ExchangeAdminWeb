@@ -797,7 +797,7 @@ public sealed class ModuleCatalog
             // 1.2.3: the method lookup the operator runs before the reset reports its Graph
             // round trip instead of running with the frame idle
             // (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.2.3",
+            Version = "1.2.4",
             MainPermission = new(
                 "Access",
                 "MfaReset",
@@ -927,7 +927,7 @@ public sealed class ModuleCatalog
             // handlers snapshot the form and their result so a mid-flight dismiss or keystroke can
             // no longer retarget a Conditional Access write, blank its ticket, or report a
             // successful write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 2).
-            Version = "1.3.1",
+            Version = "1.3.2",
             MainPermission = new(
                 "Access",
                 "NamedLocations",

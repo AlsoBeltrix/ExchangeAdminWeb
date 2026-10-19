@@ -69,7 +69,7 @@
         <div class="row mt-3">
             <div class="col-md-6">
                 <div class="alert alert-warning">
-                    <strong>Confirm MFA Reset for @userPrincipalName</strong>
+                    <strong>Confirm MFA Reset for @listedUpn</strong>
                     <p class="mb-2">This will remove @methods.Count authentication method(s). The user will be required to re-register MFA at their next sign-in.</p>
                     <button class="btn btn-danger btn-sm me-2" @onclick="ExecuteReset" disabled="@isLoading">
                         Reset MFA
@@ -98,7 +98,7 @@
             <div class="col-md-8">
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <strong>Authentication Methods for @userPrincipalName</strong>
+                        <strong>Authentication Methods for @listedUpn</strong>
                         <button class="btn btn-danger btn-sm" @onclick="ConfirmReset"
                                 disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">
                             Reset All Methods
@@ -135,6 +135,17 @@
     private bool authChecked;
     private bool isLoading;
     private string userPrincipalName = "";
+
+    /// <summary>
+    /// The user the methods on screen actually belong to - set when they were listed, and the
+    /// only identity any action on them may use.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A13. Both headings rendered the editable box and ExecuteReset re-read it,
+    /// so listing A, editing the box to B and clicking Reset wiped B's methods while the
+    /// operator was looking at A's list, and the audit recorded A's method types.
+    /// </remarks>
+    private string? listedUpn;
     private string ticketNumber = "";
     private bool resetConfirmPending;
     private List<AuthMethod> methods = new();
@@ -209,6 +220,10 @@
         methods = new();
         resetConfirmPending = false;
 
+        // A13: the previous listing stops being what is on screen the moment this starts, so
+        // the identity the panel names is cleared with it.
+        listedUpn = null;
+
         var upn = userPrincipalName.Trim();
 
         using var activity = Progress.Begin(
@@ -219,6 +234,7 @@
         try
         {
             methods = await MfaService.GetUserMethodsAsync(upn);
+            listedUpn = upn;
             if (methods.Count == 0)
                 result = new MfaResetResult { Success = true, Message = "No MFA methods registered for this user." };
 
@@ -269,7 +285,19 @@
         resetConfirmPending = false;
         await Task.Yield();
 
-        var upn = userPrincipalName.Trim();
+        // A13: the user whose methods are on screen, NOT the editable box. Re-reading the box
+        // here is how a reset aimed at the account the operator reviewed landed on whatever
+        // they had typed since.
+        var upn = listedUpn ?? "";
+        if (string.IsNullOrWhiteSpace(upn))
+        {
+            // Nothing is listed, so there is no reviewed account to act on. Fail closed rather
+            // than fall back to the box, which is the defect this guard exists to stop.
+            isLoading = false;
+            result = new MfaResetResult { Success = false, Message = "List the user's methods again before resetting." };
+            return;
+        }
+
         var ticket = ticketNumber.Trim();
         var methodTypesBeforeReset = methods.Select(m => m.MethodType).ToArray();
         // Set when an authorised servicer overrode a protected-principal refusal, and carried into

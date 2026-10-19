@@ -42,18 +42,31 @@
 
     private HashSet<string> _selectedCodes = new(StringComparer.OrdinalIgnoreCase);
     private string _filter = "";
-    private bool _initialized;
+    /// <summary>
+    /// The bound value this picker last read its selection from, so a CHANGE to it can be told
+    /// apart from a re-render carrying the same value.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A16. This used to be a one-shot <c>_initialized</c> latch, set the first
+    /// time <c>Value</c> arrived non-empty. A picker reused for a different record therefore
+    /// kept the previous record's selection, and applying it wrote location A's countries onto
+    /// location B.
+    ///
+    /// Null rather than "" to start with, so the very first render - even with an empty value -
+    /// still counts as a sync and the field is not re-read on every parameter set.
+    /// </remarks>
+    private string? _syncedFrom;
 
     protected override void OnParametersSet()
     {
-        if (!_initialized && !string.IsNullOrEmpty(Value))
-        {
-            _selectedCodes = Value
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(c => !string.IsNullOrWhiteSpace(c))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            _initialized = true;
-        }
+        if (string.Equals(_syncedFrom, Value, StringComparison.Ordinal))
+            return;
+
+        _selectedCodes = (Value ?? string.Empty)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _syncedFrom = Value;
     }
 
     private IEnumerable<CountryEntry> FilteredCountries =>
@@ -81,6 +94,10 @@
         var sorted = _selectedCodes.OrderBy(c => c).ToList();
         var value = string.Join("\n", sorted);
         Value = value;
+
+        // A16: record what we are emitting, so the parameter set that comes back carrying our
+        // own value is not mistaken for the record changing underneath us.
+        _syncedFrom = value;
         await ValueChanged.InvokeAsync(value);
     }
 
@@ -88,6 +105,7 @@
     {
         _selectedCodes.Clear();
         Value = "";
+        _syncedFrom = "";
         await ValueChanged.InvokeAsync("");
     }
 
