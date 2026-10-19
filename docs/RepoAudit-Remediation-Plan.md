@@ -456,13 +456,20 @@ connections in one process is unsound.
 It is **unverified**: it rests on someone else's reading of a module nobody here has opened,
 and nothing has been reproduced against a tenant.
 
-Sequence, and stop at the first answer that settles it:
+**Steps 1 and 2 are DONE, 2026-10-19, and both confirm it.** Evidence is on the finding: the
+default disconnect calls `RemoveAllConnectionContexts()` (`psm1:945`), and
+`connectionContextMap` is a **static** field, so the map is process-wide rather than
+per-runspace. Verified locally, metadata-only, no tenant and no module code executed. Only
+3.9.2 is installed here, so the reviewer's 3.10.1 half is still unchecked.
 
-1. Read the installed module and confirm or refute the call chain. Local, cheap, no tenant.
-2. If confirmed, establish whether `PooledRunspace` can carry a `ConnectionId` and whether
-   `Disconnect-ExchangeOnline -ConnectionId` exists in the installed version.
-3. **Report both answers to the owner and stop.** The repair is a design change to the
-   connection pool, not a fix, and it is outside everything this plan has been approved for.
+A `ConnectionId` parameter set does exist, but `Connect-ExchangeOnline` generates the id
+rather than accepting one, and the only way to read it back (`Get-ConnectionInformation`)
+reads that same global map - so attributing an id to a specific runspace needs connection
+establishment serialised first.
+
+**Step 3 stands: report and stop.** The repair is a design change to the connection pool, not
+a fix, and it is outside everything this plan has been approved for. The finding carries three
+costed options for the owner; the cheapest is to stop pooling EXO concurrently at all.
 
 Record: `.agents/review/findings/aud-a6b.md`.
 
