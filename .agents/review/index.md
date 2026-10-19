@@ -71,11 +71,14 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [ ] | [aud-a1b](findings/aud-a1b.md) | MEDIUM - group-SID entry validates the shape, not the object; affects both access and admin controls | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
 | [ ] | [aud-a3b](findings/aud-a3b.md) | HIGH - three same-forest fail-open holes in the protected-group membership check | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
 | [ ] | [aud-a2b](findings/aud-a2b.md) | HIGH - three ways a protected mailbox is still reachable; the checked object is not provably the written one | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
-| [ ] | [aud-a5](findings/aud-a5.md) | HIGH - lockout remediation logs off by bare username and can sign out the wrong domain's account | Designed, not implemented | - | implementer-verified |
+| [v] | [aud-a5](findings/aud-a5.md) | HIGH - lockout remediation logs off by bare username and can sign out the wrong domain's account | Verified `cf3ed28` | - | implementer-verified; fix review in flight |
 | [ ] | [aud-a4b](findings/aud-a4b.md) | HIGH - the self-service DACL gate is not a faithful Windows access check; 7 findings | Verified - 6 of 7 fixed; finding 7 carried | - | codex-commercial / gpt-6-astra / max |
-
-| [v] | [aud-a8](findings/aud-a8.md) | HIGH - Conference Rooms jobs keep writing after the module is disabled | Verified | - | implementer-verified; fix review pending |
-| [v] | [aud-a7](findings/aud-a7.md) | HIGH - Out of Office checks one mailbox and can write another | Verified | - | implementer-verified; fix review pending |
+| [v] | [aud-a8](findings/aud-a8.md) | HIGH - Conference Rooms jobs keep writing after the module is disabled | Verified `4ce4680`; guard widened `6d5ef9a` | - | codex-commercial / gpt-6-astra / max - no product defect, test gap closed |
+| [v] | [aud-a7](findings/aud-a7.md) | HIGH - Out of Office checks one mailbox and can write another | Verified `da2c917`; repair `e8e8344` | - | codex-commercial / gpt-6-astra / max - CHANGES REQUIRED, stuck busy flag, closed |
+| [v] | [aud-a6](findings/aud-a6.md) | HIGH - a borrowed EXO connection can target the previous organization | Verified `1dcc1a1`; repair `f71d60a` | - | codex-commercial / gpt-6-astra / max - CHANGES REQUIRED, fix was incomplete, closed |
+| [ ] | [aud-a6b](findings/aud-a6b.md) | HIGH if confirmed - Disconnect-ExchangeOnline may clear a process-wide connection map, breaking every other borrower | Reported by reviewer, NOT verified here; needs owner scope decision | - | codex-commercial / gpt-6-astra / max |
+| [ ] | [aud-a7b](findings/aud-a7b.md) | MEDIUM - Out of Office captures only the mailbox; state, messages, schedule and ticket are still post-await live reads | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
+| [ ] | [aud-a5b](findings/aud-a5b.md) | MEDIUM - blocked lockout targets vanish from the operator's report when any other target survives | Recorded follow-up; not approved | - | implementer |
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.
 
