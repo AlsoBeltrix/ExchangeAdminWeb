@@ -339,10 +339,16 @@ public sealed class AccountLockoutRemediationService
                 return EmptyLogoffResult(message, execute);
             }
 
+            // Null on the dry-run path, which never runs the guard. The SID step then has no
+            // approved object to compare against, and says so on the finding rather than
+            // pretending the cross-check happened.
+            Dictionary<string, ResolvedDirectoryPrincipal>? approvedPrincipals = null;
+
             if (execute)
             {
                 var guard = await GuardTargetUsersAsync(realMachines, context, ticketNumber, action);
                 realMachines = guard.machineMap;
+                approvedPrincipals = guard.approved;
                 if (guard.rows.Count > 0 && realMachines.Count == 0)
                 {
                     var blocked = guard.rows.Count(r => !r.Success);
@@ -365,15 +371,23 @@ public sealed class AccountLockoutRemediationService
             // Audit finding A5. Both paths, not just the destructive one: a dry run that named
             // the wrong person's session is what an operator reads before deciding to execute.
             _operationTrace.Step("ResolveTargetSids", backend: "ActiveDirectory", command: "Get-ADUser");
-            var sidMapping = await MapTargetsToSidsAsync(realMachines, context, ticketNumber, action, credentials.Value, execute);
+            var sidMapping = await MapTargetsToSidsAsync(
+                realMachines, context, ticketNumber, action, credentials.Value, execute, approvedPrincipals);
             realMachines = sidMapping.machineMap;
 
             if (realMachines.Count == 0)
             {
-                var blocked = sidMapping.rows.Count(r => !r.Success);
+                // Review of aud-a5, finding 5. This return used to hand back sidMapping.rows
+                // alone, which skipped the blank-source explanations appended below - so a
+                // discovery run that found only events with no caller computer reported
+                // nothing at all to explain itself. The rows are assembled the same way the
+                // main path assembles them.
+                var earlyRows = sidMapping.rows.ToList();
+                earlyRows.AddRange(includeBlankSourceRows.Select(BlankSourceRow));
+                var blocked = earlyRows.Count(r => !r.Success);
                 var message = $"No target user could be matched to a directory SID. {blocked} blocked row(s).";
                 scope.Complete(false, message);
-                return new AccountLogoffResult(false, message, execute, 0, 0, blocked, sidMapping.rows);
+                return new AccountLogoffResult(false, message, execute, 0, 0, blocked, earlyRows);
             }
 
             _operationTrace.Step(execute ? "RemoteLogoff" : "RemoteSessionQuery", backend: "WinRM", command: execute ? "logoff.exe" : "quser.exe");
@@ -382,17 +396,7 @@ public sealed class AccountLockoutRemediationService
             var allRows = rows.ToList();
             allRows.AddRange(sidMapping.rows);
 
-            foreach (var blank in includeBlankSourceRows)
-            {
-                allRows.Add(new ComputerSessionActionRow(
-                    "(unknown)",
-                    blank.UserRaw,
-                    "",
-                    "",
-                    "blank-source",
-                    false,
-                    blank.Detail));
-            }
+            allRows.AddRange(includeBlankSourceRows.Select(BlankSourceRow));
 
             var hits = allRows.Count(r => r.Action is "logged-off" or "would-log-off");
             var failures = allRows.Count(r => !r.Success);
@@ -432,7 +436,7 @@ public sealed class AccountLockoutRemediationService
     /// methods. Exposing the guard is what makes the decision testable; it stays a filter plus its
     /// audit rows, with no directory write of its own.
     /// </remarks>
-    internal async Task<(Dictionary<string, string[]> machineMap, List<ComputerSessionActionRow> rows)> GuardTargetUsersAsync(
+    internal async Task<(Dictionary<string, string[]> machineMap, List<ComputerSessionActionRow> rows, Dictionary<string, ResolvedDirectoryPrincipal> approved)> GuardTargetUsersAsync(
         Dictionary<string, string[]> machineMap,
         AccountLockoutOperatorContext context,
         string ticketNumber,
@@ -440,6 +444,9 @@ public sealed class AccountLockoutRemediationService
     {
         var allUsers = machineMap.Values.SelectMany(x => x).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var allowedUsers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Review of aud-a5, finding 3: the object that passed the check travels on with the
+        // name, so the SID step can prove it is still acting on the same object.
+        var approved = new Dictionary<string, ResolvedDirectoryPrincipal>(StringComparer.OrdinalIgnoreCase);
         var rows = new List<ComputerSessionActionRow>();
 
         foreach (var user in allUsers)
@@ -519,6 +526,7 @@ public sealed class AccountLockoutRemediationService
             }
 
             allowedUsers.Add(user);
+            approved[user] = secondResolution.principal;
         }
 
         var filtered = machineMap
@@ -526,7 +534,7 @@ public sealed class AccountLockoutRemediationService
             .Where(kvp => kvp.Value.Length > 0)
             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
 
-        return (filtered, rows);
+        return (filtered, rows, approved);
     }
 
     private async Task<(string username, string password, string domain)?> GetCredentialsAsync(string purpose)
@@ -673,7 +681,8 @@ foreach ($event in $events) {
         string ticketNumber,
         string action,
         (string username, string password, string domain) credentials,
-        bool execute)
+        bool execute,
+        IReadOnlyDictionary<string, ResolvedDirectoryPrincipal>? guarded = null)
     {
         var rows = new List<ComputerSessionActionRow>();
         var sidByUser = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -697,6 +706,20 @@ foreach ($event in $events) {
                 continue;
             }
 
+            // Review of aud-a5, finding 3. The guard resolved this name, re-read it, compared
+            // immutable identity and approved THAT object - then handed on only the name, and
+            // this method resolved the name again. A rename or an alias moving between the two
+            // meant the object that passed protection and the object whose SID became the
+            // destructive target were different objects. That is the exact defect class this
+            // whole wave is about, sitting inside its own fix.
+            if (guarded is not null && guarded.TryGetValue(user, out var approved)
+                && !ImmutableIdentityMatches(approved, resolution.principal))
+            {
+                Block(user, "identity-changed",
+                    "The target resolved to a different directory object than the one that passed the protected-principal check.");
+                continue;
+            }
+
             var dn = resolution.principal.DistinguishedName;
             if (string.IsNullOrWhiteSpace(dn))
             {
@@ -713,10 +736,10 @@ foreach ($event in $events) {
                 continue;
             }
 
-            string? sid;
+            (string? sid, string? guid) read;
             try
             {
-                sid = await Task.Run(() => SidReader(dn, server, credentials));
+                read = await Task.Run(() => SidReader(dn, server, credentials));
             }
             catch (Exception ex)
             {
@@ -725,14 +748,26 @@ foreach ($event in $events) {
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(sid) || !sid.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(read.sid) || !read.sid.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase))
             {
                 Block(user, "sid-unresolved", "The directory returned no usable objectSid for the target.");
                 continue;
             }
 
-            sidByUser[user] = sid;
-            sidNames[sid] = string.IsNullOrWhiteSpace(resolution.principal.SamAccountName)
+            // Binding the SID read to the object that was approved, not just to its name. A DN
+            // can be reused by a replacement object between the resolve and this read, so the
+            // GUID that came back has to be the GUID that passed the check.
+            var expectedGuid = resolution.principal.ObjectGuid;
+            if (!string.IsNullOrWhiteSpace(expectedGuid) && !string.IsNullOrWhiteSpace(read.guid)
+                && !string.Equals(expectedGuid, read.guid, StringComparison.OrdinalIgnoreCase))
+            {
+                Block(user, "identity-changed",
+                    "The object holding the target's distinguished name changed between resolution and the SID read.");
+                continue;
+            }
+
+            sidByUser[user] = read.sid;
+            sidNames[read.sid] = string.IsNullOrWhiteSpace(resolution.principal.SamAccountName)
                 ? user
                 : resolution.principal.SamAccountName!;
         }
@@ -756,19 +791,26 @@ foreach ($event in $events) {
     /// internal: reading objectSid reaches a live directory, so nothing could otherwise exercise
     /// the fail-closed branches. Defaults to the real read; only tests replace it.
     /// </summary>
-    internal Func<string, string, (string username, string password, string domain), string?> SidReader { get; set; } = null!;
+    internal Func<string, string, (string username, string password, string domain), (string? sid, string? guid)> SidReader { get; set; } = null!;
 
-    private string? ReadObjectSid(string dn, string server, (string username, string password, string domain) credentials)
+    /// <remarks>
+    /// Reads the GUID alongside the SID so the caller can prove the object it just read is the
+    /// object that passed the protected-principal check - review of aud-a5, finding 3. A DN can
+    /// be reused by a replacement object, so the DN alone is not identity.
+    /// </remarks>
+    private (string? sid, string? guid) ReadObjectSid(string dn, string server, (string username, string password, string domain) credentials)
     {
         using var ps = CreateAdPowerShell();
         ps.AddCommand("Get-ADUser")
           .AddParameter("Identity", dn)
-          .AddParameter("Properties", new[] { "objectSid" })
+          .AddParameter("Properties", new[] { "objectSid", "objectGUID" })
           .AddParameter("Server", server)
           .AddParameter("Credential", CreateCredential(credentials))
           .AddParameter("ErrorAction", "Stop");
 
-        return SidText(Invoke(ps).FirstOrDefault()?.Properties["objectSid"]?.Value);
+        var found = Invoke(ps).FirstOrDefault();
+        return (SidText(found?.Properties["objectSid"]?.Value),
+                found?.Properties["ObjectGUID"]?.Value?.ToString());
     }
 
     /// <summary>
@@ -876,25 +918,39 @@ $targetLabel = (@($targetSids | ForEach-Object { Get-TargetLabel $_ }) -join ','
 
 # One enumeration for the whole machine, then grouped by terminal-services session. Asking per
 # session would be the same data fetched once per row.
-$ownersBySession = @{}
-try {
+#
+# Review of aud-a5, finding 2: this runs AFTER quser, not before it. Collecting ownership
+# first and joining a later quser row to it by session number alone meant that if a session
+# ended and Windows reused its id - which it documents doing - the new occupant's row could
+# match the previous occupant's cached SID. The snapshot is still not atomic with the logoff,
+# but it is no longer taken before the session list it is joined to.
+function Get-SessionOwners {
+    $map = @{}
     foreach ($proc in @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)) {
+        $key = [string]$proc.SessionId
+        if (-not $map.ContainsKey($key)) {
+            $map[$key] = [pscustomobject]@{ Sids = (New-Object 'System.Collections.Generic.HashSet[string]'); Unreadable = 0 }
+        }
+
         $owner = $null
-        try { $owner = Invoke-CimMethod -InputObject $proc -MethodName GetOwnerSid -ErrorAction Stop } catch { continue }
-        if (-not $owner -or $owner.ReturnValue -ne 0) { continue }
+        # Review of aud-a5, finding 1: an owner that cannot be read is COUNTED, not skipped.
+        # GetOwnerSid is documented to return access-denied, and Windows lets a user run a
+        # process as another account inside their own desktop. Dropping the unreadable ones
+        # silently could leave a single readable secondary-account process standing as proof
+        # that the session belongs to that account - and log the real occupant off.
+        try { $owner = Invoke-CimMethod -InputObject $proc -MethodName GetOwnerSid -ErrorAction Stop } catch { $map[$key].Unreadable++; continue }
+        if (-not $owner -or $owner.ReturnValue -ne 0) { $map[$key].Unreadable++; continue }
         $sid = ([string]$owner.Sid).Trim().ToUpperInvariant()
-        if (-not $sid) { continue }
+        if (-not $sid) { $map[$key].Unreadable++; continue }
+
         # Machine identities, service accounts and virtual accounts are never a logged-on
         # person, and every interactive session has some of them.
         if ($sid -eq 'S-1-5-18' -or $sid -eq 'S-1-5-19' -or $sid -eq 'S-1-5-20') { continue }
         if ($sid -like 'S-1-5-80-*' -or $sid -like 'S-1-5-82-*' -or $sid -like 'S-1-5-83-*' -or $sid -like 'S-1-5-90-*' -or $sid -like 'S-1-5-96-*') { continue }
-        $key = [string]$proc.SessionId
-        if (-not $ownersBySession.ContainsKey($key)) { $ownersBySession[$key] = New-Object 'System.Collections.Generic.HashSet[string]' }
-        [void]$ownersBySession[$key].Add($sid)
+
+        [void]$map[$key].Sids.Add($sid)
     }
-} catch {
-    [pscustomobject]@{ User = $targetLabel; SessionId = ''; State = ''; Action = 'owner-query-failed'; Success = $false; Detail = ""Could not read session owners, so no session could be identified: $($_.Exception.Message)"" }
-    return
+    return $map
 }
 
 $out = quser.exe 2>&1
@@ -914,6 +970,14 @@ if ($noUsers -or -not $raw -or @($raw).Count -lt 2) {
     return
 }
 
+# Ownership is read only now that there is a session list to join it to.
+try {
+    $ownersBySession = Get-SessionOwners
+} catch {
+    [pscustomobject]@{ User = $targetLabel; SessionId = ''; State = ''; Action = 'owner-query-failed'; Success = $false; Detail = ""Could not read session owners, so no session could be identified: $($_.Exception.Message)"" }
+    return
+}
+
 $found = $false
 foreach ($line in ($raw | Select-Object -Skip 1)) {
     $l = $line -replace '^\s*>?\s*', ''
@@ -929,13 +993,21 @@ foreach ($line in ($raw | Select-Object -Skip 1)) {
 
     # The identity decision, and the only one. $quserName is a display string from here on; it
     # never selects a session.
-    $owners = $ownersBySession[[string]$sessionId]
+    $entry = $ownersBySession[[string]$sessionId]
+    $owners = if ($entry) { $entry.Sids } else { $null }
+    $unreadable = if ($entry) { $entry.Unreadable } else { 0 }
+
     if (-not $owners -or $owners.Count -eq 0) {
         [pscustomobject]@{ User = $quserName; SessionId = $sessionId; State = $state; Action = 'owner-unverified'; Success = $false; Detail = 'Session owner could not be identified; refusing to act on it' }
         continue
     }
     if ($owners.Count -gt 1) {
         [pscustomobject]@{ User = $quserName; SessionId = $sessionId; State = $state; Action = 'owner-unverified'; Success = $false; Detail = ""Session has $($owners.Count) distinct process owners; refusing to act on it"" }
+        continue
+    }
+    # One readable owner is only proof of ownership if there was nothing we could NOT read.
+    if ($unreadable -gt 0) {
+        [pscustomobject]@{ User = $quserName; SessionId = $sessionId; State = $state; Action = 'owner-unverified'; Success = $false; Detail = ""$unreadable process owner(s) in this session could not be read, so one readable owner does not identify it; refusing to act on it"" }
         continue
     }
 
@@ -1051,6 +1123,14 @@ if (-not $found) {
 
     private static ComputerSessionActionRow BlockedUserRow(string user, string action, string detail)
         => new("", user, "", "", action, false, detail);
+
+    /// <summary>
+    /// A 4740 event whose caller computer was blank: nothing to log off, but the operator has to
+    /// be told why that user is unaccounted for. Extracted so every return path can append them -
+    /// review of aud-a5 found one that did not.
+    /// </summary>
+    private static ComputerSessionActionRow BlankSourceRow(AccountLockoutEventRow blank)
+        => new("(unknown)", blank.UserRaw, "", "", "blank-source", false, blank.Detail);
 
     private static AccountLogoffResult EmptyLogoffResult(string message, bool execute)
         => new(false, message, execute, 0, 0, 0, []);

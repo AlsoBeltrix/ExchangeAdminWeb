@@ -47,7 +47,7 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: null);
 
-        var (filtered, rows) = await service.GuardTargetUsersAsync(
+        var (filtered, rows, _) = await service.GuardTargetUsersAsync(
             MachineMap("vip"), Context(UserIn(ServicerSid)), "INC123", "Logoff");
 
         Assert.Empty(filtered);
@@ -61,7 +61,7 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: [ServicerSid]);
 
-        var (filtered, rows) = await service.GuardTargetUsersAsync(
+        var (filtered, rows, _) = await service.GuardTargetUsersAsync(
             MachineMap("vip"), Context(UserIn("S-1-5-21-1-2-3-9999")), "INC123", "Logoff");
 
         Assert.Empty(filtered);
@@ -75,7 +75,7 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: [ServicerSid]);
 
-        var (filtered, rows) = await service.GuardTargetUsersAsync(
+        var (filtered, rows, _) = await service.GuardTargetUsersAsync(
             MachineMap("vip"), Context(UserIn(ServicerSid)), "INC123", "Logoff");
 
         // The user survives the filter, so the logoff will reach them.
@@ -91,7 +91,7 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
         // The containment that stops per-module scoping collapsing into a global bypass.
         var service = CreateService(servicerGroups: null, otherModuleServicerGroups: [ServicerSid]);
 
-        var (filtered, rows) = await service.GuardTargetUsersAsync(
+        var (filtered, rows, _) = await service.GuardTargetUsersAsync(
             MachineMap("vip"), Context(UserIn(ServicerSid)), "INC123", "Logoff");
 
         Assert.Empty(filtered);
@@ -104,7 +104,7 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
         // No role claims at all: nothing to match the grant against, so it must refuse.
         var service = CreateService(servicerGroups: [ServicerSid]);
 
-        var (filtered, rows) = await service.GuardTargetUsersAsync(
+        var (filtered, rows, _) = await service.GuardTargetUsersAsync(
             MachineMap("vip"), Context(new ClaimsPrincipal(new ClaimsIdentity())), "INC123", "Logoff");
 
         Assert.Empty(filtered);
@@ -118,7 +118,7 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
         // protected, so there is no refusal for a servicer to override.
         var service = CreateService(servicerGroups: [ServicerSid], resolutionUnavailable: true);
 
-        var (filtered, rows) = await service.GuardTargetUsersAsync(
+        var (filtered, rows, _) = await service.GuardTargetUsersAsync(
             MachineMap("vip"), Context(UserIn(ServicerSid)), "INC123", "Logoff");
 
         Assert.Empty(filtered);
@@ -132,7 +132,7 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
         // Per-user filtering: an ordinary user in the same sweep is unaffected by the refusal.
         var service = CreateService(servicerGroups: null, protectedUsers: ["vip"]);
 
-        var (filtered, rows) = await service.GuardTargetUsersAsync(
+        var (filtered, rows, _) = await service.GuardTargetUsersAsync(
             MachineMap("vip", "ordinary"), Context(UserIn(ServicerSid)), "INC123", "Logoff");
 
         var machine = Assert.Single(filtered);
@@ -148,7 +148,7 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
     public async Task AResolvedTarget_IsCarriedAsItsSid_NotItsName()
     {
         var service = CreateService(servicerGroups: null);
-        service.SidReader = (_, _, _) => "S-1-5-21-111-111-111-1001";
+        service.SidReader = (_, _, _) => ("S-1-5-21-111-111-111-1001", "guid-alex");
 
         var (map, names, rows) = await service.MapTargetsToSidsAsync(
             MachineMap("alex"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(), execute: true);
@@ -165,7 +165,7 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
         // resolves to the wrong person in the first place.
         var service = CreateService(servicerGroups: null);
         string? askedServer = null;
-        service.SidReader = (_, server, _) => { askedServer = server; return "S-1-5-21-111-111-111-1001"; };
+        service.SidReader = (_, server, _) => { askedServer = server; return ("S-1-5-21-111-111-111-1001", "guid-alex"); };
 
         await service.MapTargetsToSidsAsync(
             MachineMap("alex"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(), execute: true);
@@ -211,7 +211,7 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
     public async Task AnythingThatIsNotASid_IsRejected(string? returned)
     {
         var service = CreateService(servicerGroups: null);
-        service.SidReader = (_, _, _) => returned;
+        service.SidReader = (_, _, _) => (returned, null);
 
         var (map, _, rows) = await service.MapTargetsToSidsAsync(
             MachineMap("alex"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(), execute: true);
@@ -225,14 +225,64 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: null);
         service.SidReader = (dn, _, _) => dn.Contains("alex", StringComparison.OrdinalIgnoreCase)
-            ? "S-1-5-21-111-111-111-1001"
-            : null;
+            ? ("S-1-5-21-111-111-111-1001", null)
+            : (null, null);
 
         var (map, _, rows) = await service.MapTargetsToSidsAsync(
             MachineMap("alex", "sam"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(), execute: true);
 
         Assert.Equal(["S-1-5-21-111-111-111-1001"], map["WS-001"]);
         Assert.Equal("sid-unresolved", Assert.Single(rows).Action);
+    }
+
+    [Fact]
+    public async Task ATargetThatResolvesToADifferentObjectThanTheGuardApproved_IsBlocked()
+    {
+        // Review of aud-a5, finding 3. The guard resolved, re-read, compared immutable identity
+        // and approved THAT object - then passed on only the name, and the SID step resolved the
+        // name again. A rename or an alias moving in between meant one object passed protection
+        // and a different object's SID became the destructive target.
+        var service = CreateService(servicerGroups: null);
+        service.SidReader = (_, _, _) => ("S-1-5-21-111-111-111-1001", "guid-alex");
+
+        var approvedSomebodyElse = new Dictionary<string, ResolvedDirectoryPrincipal>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alex"] = new("AD", "alex", "alex", "alex", "alex",
+                "CN=alex,OU=Users,DC=child,DC=example,DC=com", "guid-someone-else", null),
+        };
+
+        var (map, _, rows) = await service.MapTargetsToSidsAsync(
+            MachineMap("alex"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(),
+            execute: true, guarded: approvedSomebodyElse);
+
+        Assert.Empty(map);
+        Assert.Equal("identity-changed", Assert.Single(rows).Action);
+    }
+
+    [Fact]
+    public async Task AnObjectThatReplacedTheTargetsDistinguishedName_IsBlocked()
+    {
+        // The same rule one step later: a DN can be reused by a replacement object between the
+        // resolve and the SID read, so the GUID that comes back has to be the one that passed.
+        var service = CreateService(servicerGroups: null);
+        service.SidReader = (_, _, _) => ("S-1-5-21-111-111-111-1001", "guid-a-different-object");
+
+        var (map, _, rows) = await service.MapTargetsToSidsAsync(
+            MachineMap("alex"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(), execute: true);
+
+        Assert.Empty(map);
+        Assert.Equal("identity-changed", Assert.Single(rows).Action);
+    }
+
+    [Fact]
+    public async Task TheGuardHandsOnTheObjectItApproved()
+    {
+        var service = CreateService(servicerGroups: null, protectedUsers: []);
+
+        var (_, _, approved) = await service.GuardTargetUsersAsync(
+            MachineMap("alex"), Context(UserIn(ServicerSid)), "INC123", "Logoff");
+
+        Assert.Equal("guid-alex", Assert.Contains("alex", approved).ObjectGuid);
     }
 
     // ---- harness ------------------------------------------------------------------------------

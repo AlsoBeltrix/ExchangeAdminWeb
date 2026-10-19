@@ -193,3 +193,97 @@ Independent review of the fix pending.
 ## Closeout
 
 Fixed directly on `master`. Not pushed.
+
+## Independent review, 2026-10-19 (codex-commercial / gpt-6-astra / max) - CHANGES REQUIRED
+
+Four HIGH and one MEDIUM. The reviewer's summary is the fair one: "the bare-name comparison is
+gone, but this fix does not guarantee that the person logged off is the requested,
+protected-principal-checked person." Every one of the five was correct.
+
+### 1. Partial CIM failures let another user's process stand as proof of ownership - FIXED
+
+`GetOwnerSid` exceptions, non-zero return codes and empty SIDs were silently discarded. Windows
+lets a user run a process under another account inside their own desktop, and `GetOwnerSid` is
+documented to return access-denied. So: B owns session 2 and runs something as A; B's processes
+fail to read, A's succeeds; the set is `{A}`; targeting A logs off B. **The "exactly one owner"
+rule was doing less than it looked - it counted what could be read, not what was there.**
+
+Unreadable owners are now counted per session, and a session with any unreadable owner is
+refused as `owner-unverified` however few readable owners remain.
+
+### 2. The owner snapshot was taken before the session list it was joined to - FIXED
+
+Ownership was collected, then `quser` ran, then rows were joined to the snapshot by session
+number. Windows reuses terminal-services session ids; a session ending in that gap could hand
+its id to a new occupant whose `quser` row then matched the previous occupant's cached SID.
+
+The enumeration now runs after `quser`. **This narrows the window rather than closing it** -
+the snapshot is still not atomic with the logoff - but it no longer precedes the list it is
+joined to.
+
+### 3. The SID was not bound to the object that passed protection - FIXED
+
+The worst of the five, because it is this wave's own defect class inside its own fix. The guard
+resolved, re-read, compared immutable identity and approved **that object** - then passed on
+only the username, and `MapTargetsToSidsAsync` resolved the username a third time and took
+whatever object came back. A rename or an alias moving between the two meant one object passed
+protection and a different object's SID became the destructive target.
+
+**The record previously called that third lookup "a cost, not a correctness problem". That was
+wrong, and the reviewer said so.**
+
+The guard now returns the principal it approved; the SID step refuses with `identity-changed`
+if the object it resolves is not that object. The SID read also returns the object's GUID, so a
+replacement object reusing the DN between resolution and read is refused too.
+
+### 4. Domain-qualified input still selects the wrong account - NOT FIXED, see `aud-a5c`
+
+`NormalizeUser` strips `A\`, and the resolver then searches by bare name against the host's own
+domain, so on a host in domain B, `A\alex` resolves to `B\alex`. The new code faithfully
+obtains and matches **B's** SID. Reading from the domain of an already-wrongly-selected DN does
+not repair the selection.
+
+The reviewer also found that the discovery path discards event 4740's `TargetSid`, which is the
+locked-out account's SID, present in the event schema. That is a better identity than anything
+resolved from a name.
+
+**This is the root the A5 design missed**, and this record's own claim that "the lockout event
+gives a bare name and no domain, so the event stream cannot supply it" is wrong as written -
+the event carries the SID. Filed as `aud-a5c`, not fixed here.
+
+### 5. The empty-SID-map return dropped blank-source rows - FIXED
+
+A regression this fix introduced: the new early return exited before `includeBlankSourceRows`
+was appended, so a discovery run finding only events with no caller computer reported nothing
+explaining itself. Row construction is now a shared helper used by both return paths.
+
+### Guards added
+
+| Test | What it pins |
+| --- | --- |
+| `AnUnreadableProcessOwnerMakesTheSessionUnverified_NotSomebodyElsesProof` | finding 1, with the RunAs counterexample |
+| `AnUnreadableProcessInTheTargetsOwnSession_StillRefuses` | fail closed even when the readable owner IS the target |
+| `SessionOwnershipIsReadAfterTheSessionList_NotBeforeIt` | finding 2's ordering, via recorded stub call order |
+| `ATargetThatResolvesToADifferentObjectThanTheGuardApproved_IsBlocked` | finding 3 |
+| `AnObjectThatReplacedTheTargetsDistinguishedName_IsBlocked` | finding 3 at the SID read |
+| `TheGuardHandsOnTheObjectItApproved` | the guard actually supplies it |
+
+Three mutations, each caught by the right test: dropping the unreadable-owner refusal fails
+both finding-1 guards; dropping the guarded-object comparison fails
+`ATargetThatResolvesToADifferentObject...`; moving the ownership read back above `quser` fails
+the ordering guard. Source restored byte-identical (md5 `d0aa3ffda3eca2f2c015dbd99d2ea676`),
+touched, rebuilt each time.
+
+**Finding 5 has no guard.** It lives in `RunLogoffAsync`, which fetches a credential and
+reaches a live directory before that line, so nothing can drive it. Stated rather than papered
+over.
+
+### Gate
+
+Release 0 errors; format and `git diff --check` clean. **The suite was 4309 passed / 3 known AD
+skips / 1 FAILED**, and the failure is not this change: it is
+`DefenderEnrichmentCancellationTests.CanceledTokenLockWaiterCannotSendALaterRequest`, a
+load-dependent intermittent that passes in isolation, predates this work and touches none of
+it. It is the previously unidentified flake, now identified and recorded as `flake-1`.
+
+Module version 1.3.0 -> 1.3.1.

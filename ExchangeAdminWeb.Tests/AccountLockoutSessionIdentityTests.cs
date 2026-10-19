@@ -31,10 +31,16 @@ public class AccountLockoutSessionIdentityTests
             .GetField("RemoteSessionScript", BindingFlags.NonPublic | BindingFlags.Static)!
             .GetValue(null)!;
 
-    private sealed record SessionProcess(int SessionId, string OwnerSid);
+    /// <summary>
+    /// <paramref name="OwnerReadable"/> false models what the real GetOwnerSid is documented to
+    /// do on a process the caller cannot inspect - it returns a non-zero code rather than a SID.
+    /// </summary>
+    private sealed record SessionProcess(int SessionId, string OwnerSid, bool OwnerReadable = true);
 
     private sealed record ScriptRun(List<PSObject> Rows, List<string> LogoffCalls)
     {
+        public List<string> CallOrder { get; init; } = [];
+
         public PSObject Single() => Assert.Single(Rows);
         public static string Field(PSObject row, string name) => row.Properties[name]?.Value?.ToString() ?? "";
         public IEnumerable<string> Actions => Rows.Select(r => Field(r, "Action"));
@@ -64,18 +70,20 @@ public class AccountLockoutSessionIdentityTests
 
         runspace.SessionStateProxy.SetVariable("stubQuser", quserText.ToArray());
         runspace.SessionStateProxy.SetVariable("stubProcs", processes
-            .Select(p => new PSObject(new { SessionId = p.SessionId, OwnerSid = p.OwnerSid }))
+            .Select(p => new PSObject(new { SessionId = p.SessionId, OwnerSid = p.OwnerSid, Readable = p.OwnerReadable }))
             .ToArray());
         runspace.SessionStateProxy.SetVariable("stubLogoffCalls", new List<string>());
+        runspace.SessionStateProxy.SetVariable("stubCallOrder", new List<string>());
 
         // Functions win over native commands in PowerShell's command resolution, so the shipped
         // script runs unaltered while quser, CIM and logoff are all under the test's control.
         ps.AddScript("""
-            function quser.exe { $global:LASTEXITCODE = 0; $global:stubQuser }
-            function Get-CimInstance { param($ClassName, $Filter, $ErrorAction) $global:stubProcs }
+            function quser.exe { $global:stubCallOrder.Add('quser'); $global:LASTEXITCODE = 0; $global:stubQuser }
+            function Get-CimInstance { param($ClassName, $Filter, $ErrorAction) $global:stubCallOrder.Add('cim'); $global:stubProcs }
             function Invoke-CimMethod {
                 param($InputObject, $MethodName, $ErrorAction)
-                [pscustomobject]@{ ReturnValue = 0; Sid = $InputObject.OwnerSid }
+                if (-not $InputObject.Readable) { [pscustomobject]@{ ReturnValue = 2; Sid = $null } }
+                else { [pscustomobject]@{ ReturnValue = 0; Sid = $InputObject.OwnerSid } }
             }
             function logoff.exe { param($id) $global:stubLogoffCalls.Add([string]$id); $global:LASTEXITCODE = 0 }
             """);
@@ -97,7 +105,8 @@ public class AccountLockoutSessionIdentityTests
             "Script wrote to the error stream: " + string.Join(" | ", ps.Streams.Error.Select(e => e.ToString())));
 
         var calls = (List<string>)runspace.SessionStateProxy.GetVariable("stubLogoffCalls");
-        return new ScriptRun(rows, calls);
+        var order = (List<string>)runspace.SessionStateProxy.GetVariable("stubCallOrder");
+        return new ScriptRun(rows, calls) { CallOrder = order };
     }
 
     // ---- the defect itself ---------------------------------------------------------------
@@ -200,6 +209,65 @@ public class AccountLockoutSessionIdentityTests
 
         Assert.Equal(["2"], run.LogoffCalls);
         Assert.Contains("logged-off", run.Actions);
+    }
+
+    // ---- review of aud-a5 -------------------------------------------------------------------
+
+    [Fact]
+    public void AnUnreadableProcessOwnerMakesTheSessionUnverified_NotSomebodyElsesProof()
+    {
+        // Review finding 1. B owns session 2 and is running something as A. B's own processes
+        // cannot be read; A's can. Discarding the unreadable ones left the set {A}, so targeting
+        // A logged off B. Windows allows running a process as another account inside your own
+        // desktop, and GetOwnerSid is documented to return access-denied.
+        var run = Run(
+            targetSids: [AlexInDomainA],
+            processes:
+            [
+                new SessionProcess(2, AlexInDomainB, OwnerReadable: false),
+                new SessionProcess(2, AlexInDomainA),
+            ],
+            quserRows: [QuserRow("alex", 2, "Active")]);
+
+        Assert.Empty(run.LogoffCalls);
+        var row = Assert.Single(run.Rows, r => ScriptRun.Field(r, "Action") == "owner-unverified");
+        Assert.Contains("could not be read", ScriptRun.Field(row, "Detail"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnUnreadableProcessInTheTargetsOwnSession_StillRefuses()
+    {
+        // Fail closed means fail closed: even when the one readable owner IS the target, an
+        // owner we could not read might be the real occupant.
+        var run = Run(
+            targetSids: [AlexInDomainA],
+            processes:
+            [
+                new SessionProcess(3, AlexInDomainA),
+                new SessionProcess(3, "S-1-5-21-999-999-999-1001", OwnerReadable: false),
+            ],
+            quserRows: [QuserRow("alex", 3, "Active")]);
+
+        Assert.Empty(run.LogoffCalls);
+        Assert.Contains("owner-unverified", run.Actions);
+    }
+
+    [Fact]
+    public void SessionOwnershipIsReadAfterTheSessionList_NotBeforeIt()
+    {
+        // Review finding 2. Ownership used to be collected before quser ran, so a session that
+        // ended in between and had its id reused - which Windows documents doing - could join a
+        // new occupant's row to the previous occupant's cached SID.
+        var run = Run(
+            targetSids: [AlexInDomainA],
+            processes: [new SessionProcess(2, AlexInDomainA)],
+            quserRows: [QuserRow("alex", 2, "Active")]);
+
+        var quser = run.CallOrder.IndexOf("quser");
+        var cim = run.CallOrder.IndexOf("cim");
+        Assert.True(quser >= 0 && cim >= 0, "Both quser and the CIM enumeration must have run.");
+        Assert.True(cim > quser,
+            "Session ownership must be read after the session list it is joined to, not before it.");
     }
 
     [Fact]
