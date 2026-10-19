@@ -405,6 +405,69 @@ retry caught and resumed on the same object. Worth an audit slice, not 47 assume
   legacy name-valued servicer grants; Emergency Disable's cloud UPN binding. The first two
   interact with A1 and may be settled by it.
 
+---
+
+# Wave 1 outcome and what it added, 2026-10-19
+
+All eight highs are landed and seven of the eight independently reviewed (A5's review was in
+flight at the time of writing). `.agents/state.md` owns the commit table; this section owns
+only what the wave **added to this plan's remaining scope**.
+
+Review found a repair necessary in six of seven slices, and four of those repaired a
+regression the fix itself had introduced. Waves 2-4 should be costed on that basis: a slice is
+not done when its tests pass, and the review round is doing generation work, not confirmation.
+
+Three new findings came out of Wave 1 and are in scope under the owner's ruling 1 of
+2026-10-19 ("all items that need to be remediated need to be planned if not already and
+fixed"). They are small and each has a record; they do not need their own wave.
+
+## W1F-A5B - blocked lockout targets vanish from the operator's report
+
+`Services/AccountLockoutRemediationService.RunLogoffAsync`. `GuardTargetUsersAsync`'s blocked
+rows are surfaced only when **every** target was blocked; block one protected user out of
+three and the operator is shown two successes and no mention of the third. The refusal is
+audited, so the record exists - the operator is simply never told.
+
+Fix: add the guard's rows to `allRows` alongside the SID-resolution rows, keeping the
+all-blocked early return so its message stays specific. One line plus a two-user guard.
+Record: `.agents/review/findings/aud-a5b.md`.
+
+## W1F-A7B - Out of Office captures only the mailbox
+
+`Components/Pages/OutOfOffice.razor`. A7 captured the mailbox; state, messages, schedule and
+ticket are still live field reads after awaits, so the audit row can name a ticket the change
+was not made under.
+
+Fix: capture them all as one snapshot before the first await. **Take the behavioural harness
+with this slice** - A7's guards are source scans, and they stayed green while the page's form
+was left permanently disabled. Comms-10k's reflection harness already drives a real page
+instance. Record: `.agents/review/findings/aud-a7b.md`.
+
+## W1F-A6B - Disconnect-ExchangeOnline may not be per-runspace - OWNER DECISION FIRST
+
+**This one is different and must not be picked up as a slice.** A reviewer reports, from IL
+inspection of the installed ExchangeOnlineManagement 3.9.2 and 3.10.1, that
+`Disconnect-ExchangeOnline` with no connection selector clears a **static**
+`connectionContextMap`. If so, `ExoConnectionPool.DestroyRunspace` tearing down one retired
+connection also tears down every other borrower's live connection, mid-operation, possibly
+after they have already written changes - and the pool's whole premise of N concurrent
+connections in one process is unsound.
+
+It is **unverified**: it rests on someone else's reading of a module nobody here has opened,
+and nothing has been reproduced against a tenant.
+
+Sequence, and stop at the first answer that settles it:
+
+1. Read the installed module and confirm or refute the call chain. Local, cheap, no tenant.
+2. If confirmed, establish whether `PooledRunspace` can carry a `ConnectionId` and whether
+   `Disconnect-ExchangeOnline -ConnectionId` exists in the installed version.
+3. **Report both answers to the owner and stop.** The repair is a design change to the
+   connection pool, not a fix, and it is outside everything this plan has been approved for.
+
+Record: `.agents/review/findings/aud-a6b.md`.
+
 ## Pending decisions
 
-None blocking. Wave 1 starts with A1.
+One, and it is W1F-A6B: whether to spend the verification step above, and if it confirms,
+whether a connection-pool redesign is in scope at all. Nothing else is blocked - Wave 2 starts
+whenever.
