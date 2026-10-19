@@ -387,6 +387,19 @@ public sealed class ExoConnectionPool : IDisposable
 
             previous = _connectedUnder.Value;
             _connectedUnder = current;
+
+            // Audit finding A6. The generation used to be incremented by DrainPoolCore AFTER
+            // this lock was released, which left a window: a second borrower arriving in it
+            // read the NEW marker, so this method returned false for them, and then read the
+            // OLD generation - so a pooled runspace still connected to the PREVIOUS
+            // organization passed the staleness test and was handed out. Commands then ran
+            // against the wrong tenant.
+            //
+            // Publishing the marker and retiring the generation must be one transition, so the
+            // increment happens here, under the same lock. Destroying the runspaces does not -
+            // that is slow and does not need to be atomic, because the generation bump has
+            // already made every one of them fail the borrow test.
+            RetireGeneration();
         }
 
         _logger.LogInformation(
@@ -394,13 +407,26 @@ public sealed class ExoConnectionPool : IDisposable
             previous.Organization, current.Organization);
         _operationTrace.Step("ExoPoolSharedConfigChanged", backend: "ExchangeOnline",
             details: new Dictionary<string, object?> { ["previousOrganization"] = previous.Organization, ["organization"] = current.Organization });
-        DrainPoolCore();
+        DestroyPooled();
         return true;
     }
 
     private void DrainPoolCore()
     {
-        Interlocked.Increment(ref _configGeneration);
+        RetireGeneration();
+        DestroyPooled();
+    }
+
+    /// <summary>
+    /// Retires every runspace created so far by moving the generation on. Nothing is destroyed
+    /// here; the bump alone is what makes a pooled runspace fail the borrow test at
+    /// <see cref="ConfigGeneration"/>, so this is the half that has to be atomic with
+    /// publishing a new connection identity.
+    /// </summary>
+    private void RetireGeneration() => Interlocked.Increment(ref _configGeneration);
+
+    private void DestroyPooled()
+    {
         var drained = 0;
         while (_available.TryTake(out var item))
         {

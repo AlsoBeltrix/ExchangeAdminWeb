@@ -64,10 +64,23 @@ public class ExoConnectionPoolSharedConfigTests : IDisposable
         [ExoConnectionPool.ConfigCertSubjectKey] = cert,
     };
 
-    private ExoConnectionPool NewPool(Action<ExoConnectionPool>? duringConnect = null)
+    /// <summary>
+    /// A logger that hands each formatted message to a callback. Audit finding A6 needs one:
+    /// the pool logs from INSIDE the drain window, so this is the seam that lets a test hold a
+    /// draining borrow there while a second borrow arrives.
+    /// </summary>
+    private sealed class CallbackLogger(Action<string> onMessage) : ILogger<ExoConnectionPool>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => onMessage(formatter(state, exception));
+    }
+
+    private ExoConnectionPool NewPool(Action<ExoConnectionPool>? duringConnect = null, ILogger<ExoConnectionPool>? logger = null)
     {
         ExoConnectionPool? self = null;
-        var pool = new ExoConnectionPool(_config, _moduleConfig, _enablement, Substitute.For<ILogger<ExoConnectionPool>>(), _trace,
+        var pool = new ExoConnectionPool(_config, _moduleConfig, _enablement, logger ?? Substitute.For<ILogger<ExoConnectionPool>>(), _trace,
             connect: (cfg, generation) =>
             {
                 _connectedWith.Add(cfg);
@@ -201,6 +214,65 @@ public class ExoConnectionPoolSharedConfigTests : IDisposable
 
         pool.Return(created);
         Assert.Equal(0, pool.AvailableCount);
+    }
+
+    // Audit finding A6. The drain publishes the new connection identity and retires the
+    // generation; it used to do them as two steps with the lock released in between. A borrow
+    // arriving in that gap read the NEW identity - so it decided no drain was needed - and then
+    // read the OLD generation, which a runspace connected to the PREVIOUS organization still
+    // matched. It was handed out, and its commands ran against the wrong tenant.
+    //
+    // This drives that exact interleaving through the pool's own log call, which sits inside
+    // the old window.
+    [Fact]
+    public async Task ABorrowArrivingDuringTheDrain_NeverGetsTheOldOrganizationsRunspace()
+    {
+        using var reachedWindow = new SemaphoreSlim(0, 1);
+        using var secondFinished = new SemaphoreSlim(0, 1);
+
+        var logger = new CallbackLogger(message =>
+        {
+            if (!message.Contains("connection config changed", StringComparison.Ordinal)) return;
+            reachedWindow.Release();
+            // Hold the draining borrow here, between publishing the identity and destroying the
+            // pooled runspaces, for as long as the second borrow needs.
+            secondFinished.Wait(TimeSpan.FromSeconds(30));
+        });
+
+        using var pool = NewPool(logger: logger);
+        var first = await BorrowAndReturn(pool);
+        Assert.Equal(1, pool.AvailableCount);
+
+        ForeignWrite(ExoConnectionPool.ConfigModuleKey,
+            Connection(AppId1, "fabrikam.onmicrosoft.com", "CN=EXO-Automation"));
+
+        // Captured out here: TestContext.Current is async-local and does not reliably flow into
+        // the Task.Run body.
+        var ct = TestContext.Current.CancellationToken;
+        var drainer = Task.Run(async () => await pool.BorrowAsync(ct), ct);
+
+        Assert.True(await reachedWindow.WaitAsync(TimeSpan.FromSeconds(30), ct),
+            "The draining borrow never reached the window - this test is stale.");
+
+        PooledRunspace second;
+        try
+        {
+            second = await pool.BorrowAsync(TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            secondFinished.Release();
+        }
+
+        var drainersRunspace = await drainer;
+
+        // The defect: `second` was `first`, still connected to contoso.
+        Assert.NotSame(first, second);
+        Assert.Equal(1, second.ConfigGeneration);
+        Assert.Equal("fabrikam.onmicrosoft.com", _connectedWith[1].Organization);
+
+        pool.Return(second);
+        pool.Return(drainersRunspace);
     }
 
     [Fact]
