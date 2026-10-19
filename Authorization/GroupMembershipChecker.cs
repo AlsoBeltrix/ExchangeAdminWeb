@@ -46,6 +46,39 @@ public static class GroupMembershipChecker
     /// <summary>
     /// Every group identifier a principal carries, across all of <see cref="GroupClaimTypes"/>.
     /// </summary>
+    /// <summary>
+    /// Claim types carrying DENY-ONLY memberships. Windows keeps these in the token so that
+    /// Deny ACEs still apply, while refusing to let them satisfy an Allow.
+    /// </summary>
+    /// <remarks>
+    /// Kept apart from <see cref="GroupClaimTypes"/> on purpose, and they must stay apart:
+    /// merging them into the ordinary set would let a deny-only membership GRANT access, which
+    /// is the opposite of what it means. Added for aud-a4b finding 6, where the self-service
+    /// DACL gate was missing these entirely and so honoured neither direction.
+    /// </remarks>
+    public static readonly string[] DenyOnlyGroupClaimTypes =
+    [
+        ClaimTypes.DenyOnlySid,
+        ClaimTypes.DenyOnlyPrimarySid,
+        ClaimTypes.DenyOnlyPrimaryGroupSid
+    ];
+
+    /// <summary>
+    /// A principal's deny-only group SIDs. Usable ONLY to make a Deny apply - never to grant.
+    /// </summary>
+    public static List<string> ExtractDenyOnlyGroupClaims(ClaimsPrincipal? user)
+    {
+        if (user is null)
+            return [];
+
+        return user.Claims
+            .Where(c => DenyOnlyGroupClaimTypes.Contains(c.Type, StringComparer.OrdinalIgnoreCase))
+            .Select(c => c.Value)
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     public static List<string> ExtractGroupClaims(ClaimsPrincipal? user)
     {
         if (user is null)

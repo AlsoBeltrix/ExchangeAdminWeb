@@ -72,7 +72,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [ ] | [aud-a3b](findings/aud-a3b.md) | HIGH - three same-forest fail-open holes in the protected-group membership check | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
 | [ ] | [aud-a2b](findings/aud-a2b.md) | HIGH - three ways a protected mailbox is still reachable; the checked object is not provably the written one | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
 | [ ] | [aud-a5](findings/aud-a5.md) | HIGH - lockout remediation logs off by bare username and can sign out the wrong domain's account | Designed, not implemented | - | implementer-verified |
-| [ ] | [aud-a4b](findings/aud-a4b.md) | HIGH - the self-service DACL gate is not a faithful Windows access check; 7 findings | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
+| [ ] | [aud-a4b](findings/aud-a4b.md) | HIGH - the self-service DACL gate is not a faithful Windows access check; 7 findings | Verified - 6 of 7 fixed; finding 7 carried | - | codex-commercial / gpt-6-astra / max |
 
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.

@@ -2,9 +2,9 @@
 
 **Severity**: HIGH - unauthorized writes remain possible, and some valid grants are now
 refused.
-**Status**: Open - not approved for implementation
-**Branch**: -
-**Commit**: -
+**Status**: Verified - six of seven fixed; finding 7 carried
+**Branch**: -- (direct-to-main)
+**Commit**: `<pending>`
 
 ## Evidence
 
@@ -101,11 +101,44 @@ worked around.** Reviewing the fix will also need counterexamples for each case 
 tests `aud-a4` added would all still pass if the service discarded group SIDs before calling
 the evaluator, or if the evaluator stopped honouring individual Denies.
 
+## Resolution
+
+**Six of the seven are fixed. Finding 7 is carried.**
+
+| # | What was done |
+|---|---|
+| 1 | Canonical evaluation: explicit before inherited, Deny before Allow *within* each level, first decisive match wins. An explicit Allow now defeats an inherited Deny. The ACEs are re-sorted rather than trusted in stored order, because `GetAccessRules` guarantees none and a non-canonical DACL must still be read canonically |
+| 2 | `RemoveListedMemberAsync` refuses a null principal, like `ChangeMemberAsync` |
+| 3 | `Entry` carries `IsInherited` and `InheritOnly`; the projection reads `IsInherited` and `PropagationFlags & 2`, and an inherit-only ACE applies to nothing on this object |
+| 4 | `ConveysMemberWrite` accepts the `Membership` property set GUID as covering `member` |
+| 5 | An object-scoped ACE keeps its scope whatever the mask, so `GenericWrite`/`GenericAll` against an unrelated attribute no longer conveys member-write. **The two tests that enforced the wrong assumption are rewritten, not worked around** |
+| 6 | `GroupMembershipChecker.ExtractDenyOnlyGroupClaims` is new and deliberately separate; deny-only SIDs are passed as their own set and can only make a Deny apply, never satisfy an Allow |
+| 7 | **Not fixed.** See below |
+
+A projection fault now defaults to "applies, not inherited" - the shape that gets evaluated
+rather than skipped - so a missing flag cannot silently drop a Deny.
+
+Eleven tests cover this, including both directions of inheritance-only and both halves of the
+deny-only rule. Mutations run this session: removing the `InheritOnly` skip fails two; putting
+Deny ahead of everything, which is what `aud-a4` did, fails `AnExplicitAllow_DefeatsAnInheritedDeny`.
+
 ## Known gaps
 
-All seven are source-level and specification-based. The reviewer said so, and I have not
-reproduced them either - **nothing here has run against a real directory, and probing AD is
-forbidden without a direct owner go.**
+**Finding 7 stands: the web server's token is not necessarily the resource domain's token.**
+Where the target group lives in a different domain, an applicable domain-local membership can
+be absent from the Negotiate principal, so a Deny it carries is still invisible while an
+individual Allow succeeds. Closing it needs an authoritative membership read against the
+resource domain rather than a claims read - the same requirement as `aud-a3b`, and it should
+be built with it.
+
+All seven were source-level and specification-based when raised, and the fixes are verified
+the same way. **Nothing here has run against a real directory, and probing AD is forbidden
+without a direct owner go.** In particular the `PropagationFlags & 2` test for
+`INHERIT_ONLY_ACE` and the Membership property-set GUID are taken from Microsoft's
+documentation, not observed on this forest.
+
+The evaluator is pure and fully tested; the projection from `PSObject` into `Entry` still is
+not, because it needs a domain controller.
 
 ## Reviewer comments
 

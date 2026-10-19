@@ -51,13 +51,32 @@ public static class GroupMembershipAce
     /// </summary>
     /// <param name="adRights">The ACE's ActiveDirectoryRights value, as an int bitmask.</param>
     /// <param name="objectType">The ACE's ObjectType GUID (Guid.Empty = applies to all properties).</param>
+    /// <summary>
+    /// Schema GUID of the <c>Membership</c> property set, which CONTAINS the <c>member</c>
+    /// attribute. An ACE scoped to the property set applies to every attribute in it.
+    /// </summary>
+    /// <remarks>
+    /// Added for aud-a4b finding 4: a Deny scoped here was skipped, because the classifier
+    /// accepted only the member attribute's own GUID, and a following Allow then authorised the
+    /// write. Windows applies the property-set ACE to <c>member</c>.
+    /// </remarks>
+    public static readonly Guid MembershipPropertySet = new("bc0ac240-79a9-11d0-9020-00c04fc2d4cf");
+
     public static bool ConveysMemberWrite(int adRights, Guid objectType)
     {
+        // An OBJECT-SPECIFIC ace keeps its scope even when the mask is a composite one.
+        // aud-a4b finding 5: this returned true for GenericWrite/GenericAll against ANY
+        // ObjectType, so an Allow of 0x00020028 scoped to an unrelated attribute passed as
+        // though it wrote every property. Expanded rights do not discard the ACE's ObjectType.
+        var scoped = objectType != Guid.Empty;
+        var appliesToMember = !scoped || objectType == MemberAttribute || objectType == MembershipPropertySet;
+
+        if (!appliesToMember)
+            return false;
+
         if ((adRights & GenericAll) == GenericAll) return true;
         if ((adRights & GenericWrite) == GenericWrite) return true;
-        if ((adRights & WriteProperty) == WriteProperty)
-            return objectType == Guid.Empty || objectType == MemberAttribute;
-        return false;
+        return (adRights & WriteProperty) == WriteProperty;
     }
 
     /// <summary>One access-control entry, projected to primitives so no ACL type crosses into C#.</summary>
@@ -65,7 +84,17 @@ public static class GroupMembershipAce
     /// <param name="IsDeny">True for a Deny ACE, false for Allow. Anything else is ignored.</param>
     /// <param name="Rights">The ACE's ActiveDirectoryRights value as an int bitmask.</param>
     /// <param name="ObjectType">The ACE's ObjectType GUID; Guid.Empty applies to all properties.</param>
-    public readonly record struct Entry(string? Sid, bool IsDeny, int Rights, Guid ObjectType);
+    /// <param name="IsInherited">
+    /// True for an ACE inherited from a parent container. Canonical order puts explicit ACEs
+    /// first, and the distinction decides outcomes - see <see cref="GrantsMemberWrite"/>.
+    /// </param>
+    /// <param name="InheritOnly">
+    /// True when the ACE carries <c>INHERIT_ONLY_ACE</c>, meaning it does NOT apply to this
+    /// object - only to children. aud-a4b finding 3: these were being read as effective
+    /// grants.
+    /// </param>
+    public readonly record struct Entry(
+        string? Sid, bool IsDeny, int Rights, Guid ObjectType, bool IsInherited, bool InheritOnly);
 
     /// <summary>
     /// Whether a DACL grants member-write to a caller, evaluated against their WHOLE token.
@@ -90,35 +119,59 @@ public static class GroupMembershipAce
     /// <see cref="ConveysMemberWrite"/>.
     /// </remarks>
     public static bool GrantsMemberWrite(
-        IEnumerable<Entry> aces, string callerSid, IReadOnlyCollection<string>? callerGroupSids)
+        IEnumerable<Entry> aces, string callerSid, IReadOnlyCollection<string>? callerGroupSids,
+        IReadOnlyCollection<string>? denyOnlySids = null)
     {
         ArgumentNullException.ThrowIfNull(aces);
 
-        var applicable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Trustees whose ACEs can GRANT. A deny-only SID is deliberately absent: Windows keeps
+        // such memberships in the token for denial purposes only, so letting one satisfy an
+        // Allow would invent access (aud-a4b finding 6).
+        var granting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrWhiteSpace(callerSid))
-            applicable.Add(callerSid);
+            granting.Add(callerSid);
         foreach (var groupSid in callerGroupSids ?? [])
         {
             if (!string.IsNullOrWhiteSpace(groupSid))
-                applicable.Add(groupSid);
+                granting.Add(groupSid);
         }
 
-        if (applicable.Count == 0)
+        // Trustees whose ACEs can DENY - everything above, plus the deny-only memberships.
+        var denying = new HashSet<string>(granting, StringComparer.OrdinalIgnoreCase);
+        foreach (var denyOnly in denyOnlySids ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(denyOnly))
+                denying.Add(denyOnly);
+        }
+
+        if (granting.Count == 0)
             return false;
 
-        var allow = false;
-        foreach (var ace in aces)
+        // CANONICAL ORDER, which is what Windows actually does and what aud-a4 got wrong.
+        // Explicit ACEs are evaluated before inherited ones, and within each group Deny before
+        // Allow; the first decisive match wins. So an explicit Allow DOES defeat an inherited
+        // Deny - aud-a4 refused that case and called it fail-closed, which was simply
+        // incorrect. Re-sorting here rather than trusting the stored order is deliberate:
+        // GetAccessRules guarantees no ordering, and a non-canonical DACL must still be
+        // evaluated canonically.
+        foreach (var inherited in new[] { false, true })
         {
-            if (ace.Sid is null || !applicable.Contains(ace.Sid))
-                continue;
-            if (!ConveysMemberWrite(ace.Rights, ace.ObjectType))
-                continue;
+            foreach (var deny in new[] { true, false })
+            {
+                foreach (var ace in aces)
+                {
+                    // INHERIT_ONLY never applies to the object carrying it (finding 3).
+                    if (ace.InheritOnly) continue;
+                    if (ace.IsInherited != inherited || ace.IsDeny != deny) continue;
+                    if (ace.Sid is null) continue;
+                    if (!(deny ? denying : granting).Contains(ace.Sid)) continue;
+                    if (!ConveysMemberWrite(ace.Rights, ace.ObjectType)) continue;
 
-            if (ace.IsDeny)
-                return false;
-            allow = true;
+                    return !deny;
+                }
+            }
         }
 
-        return allow;
+        return false;
     }
 }
