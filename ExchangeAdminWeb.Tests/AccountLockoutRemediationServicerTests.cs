@@ -142,7 +142,102 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
         Assert.False(row.Success);
     }
 
+    // ---- audit finding A5: the map carries SIDs, and fails closed when one cannot be had ------
+
+    [Fact]
+    public async Task AResolvedTarget_IsCarriedAsItsSid_NotItsName()
+    {
+        var service = CreateService(servicerGroups: null);
+        service.SidReader = (_, _, _) => "S-1-5-21-111-111-111-1001";
+
+        var (map, names, rows) = await service.MapTargetsToSidsAsync(
+            MachineMap("alex"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(), execute: true);
+
+        Assert.Empty(rows);
+        Assert.Equal(["S-1-5-21-111-111-111-1001"], map["WS-001"]);
+        Assert.Equal("alex", names["S-1-5-21-111-111-111-1001"]);
+    }
+
+    [Fact]
+    public async Task TheSidIsReadFromTheDomainThatOwnsTheObject()
+    {
+        // aud-a3's rule. Reading from whichever domain this host sits in is how a bare name
+        // resolves to the wrong person in the first place.
+        var service = CreateService(servicerGroups: null);
+        string? askedServer = null;
+        service.SidReader = (_, server, _) => { askedServer = server; return "S-1-5-21-111-111-111-1001"; };
+
+        await service.MapTargetsToSidsAsync(
+            MachineMap("alex"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(), execute: true);
+
+        Assert.Equal("child.example.com", askedServer);
+    }
+
+    [Fact]
+    public async Task ATargetWithNoDirectoryObject_IsDroppedAndReported()
+    {
+        var service = CreateService(servicerGroups: null, distinguishedName: _ => null);
+        service.SidReader = (_, _, _) => throw new InvalidOperationException("must not be reached");
+
+        var (map, _, rows) = await service.MapTargetsToSidsAsync(
+            MachineMap("cloudonly"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(), execute: true);
+
+        Assert.Empty(map);
+        var row = Assert.Single(rows);
+        Assert.Equal("sid-unresolved", row.Action);
+        Assert.False(row.Success);
+    }
+
+    [Fact]
+    public async Task ASidLookupFailure_DropsTheTargetRatherThanFallingBackToTheName()
+    {
+        // The whole point. Falling back to the bare name on failure would restore the defect.
+        var service = CreateService(servicerGroups: null);
+        service.SidReader = (_, _, _) => throw new InvalidOperationException("server down");
+
+        var (map, _, rows) = await service.MapTargetsToSidsAsync(
+            MachineMap("alex"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(), execute: true);
+
+        Assert.Empty(map);
+        var row = Assert.Single(rows);
+        Assert.Equal("sid-lookup-failed", row.Action);
+        Assert.False(row.Success);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("alex")]
+    public async Task AnythingThatIsNotASid_IsRejected(string? returned)
+    {
+        var service = CreateService(servicerGroups: null);
+        service.SidReader = (_, _, _) => returned;
+
+        var (map, _, rows) = await service.MapTargetsToSidsAsync(
+            MachineMap("alex"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(), execute: true);
+
+        Assert.Empty(map);
+        Assert.Equal("sid-unresolved", Assert.Single(rows).Action);
+    }
+
+    [Fact]
+    public async Task OneTargetFailing_DoesNotTakeTheOthersWithIt()
+    {
+        var service = CreateService(servicerGroups: null);
+        service.SidReader = (dn, _, _) => dn.Contains("alex", StringComparison.OrdinalIgnoreCase)
+            ? "S-1-5-21-111-111-111-1001"
+            : null;
+
+        var (map, _, rows) = await service.MapTargetsToSidsAsync(
+            MachineMap("alex", "sam"), Context(UserIn(ServicerSid)), "INC123", "Logoff", Creds(), execute: true);
+
+        Assert.Equal(["S-1-5-21-111-111-111-1001"], map["WS-001"]);
+        Assert.Equal("sid-unresolved", Assert.Single(rows).Action);
+    }
+
     // ---- harness ------------------------------------------------------------------------------
+
+    private static (string username, string password, string domain) Creds() => ("svc", "pw", "EXAMPLE");
 
     private static Dictionary<string, string[]> MachineMap(params string[] users) =>
         new(StringComparer.OrdinalIgnoreCase) { ["WS-001"] = users };
@@ -159,7 +254,8 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
         string[]? servicerGroups,
         string[]? otherModuleServicerGroups = null,
         bool resolutionUnavailable = false,
-        string[]? protectedUsers = null)
+        string[]? protectedUsers = null,
+        Func<string, string?>? distinguishedName = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -209,6 +305,7 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
         {
             Unavailable = resolutionUnavailable,
             ProtectedUsers = protectedUsers,
+            DistinguishedNameFor = distinguishedName,
         };
 
         return new AccountLockoutRemediationService(
@@ -230,11 +327,23 @@ public sealed class AccountLockoutRemediationServicerTests : IDisposable
         /// <summary>Null means every user is protected; otherwise only these are.</summary>
         public string[]? ProtectedUsers { get; init; }
 
+        /// <summary>
+        /// Audit finding A5 needs a distinguished name: the SID is read from the domain that
+        /// owns the object, so the DN is what routes the lookup. Null returns a DN-less
+        /// principal, which is what a cloud-only identity looks like.
+        /// </summary>
+        public Func<string, string?>? DistinguishedNameFor { get; init; }
+
         public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
             => Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus)>(
                 Unavailable
                     ? (null, ResolutionStatus.Unavailable)
-                    : (new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, $"guid-{identity}", null),
+                    : (new ResolvedDirectoryPrincipal(
+                           "AD", identity, identity, identity, identity,
+                           DistinguishedNameFor is null
+                               ? $"CN={identity},OU=Users,DC=child,DC=example,DC=com"
+                               : DistinguishedNameFor(identity),
+                           $"guid-{identity}", null),
                        ResolutionStatus.Resolved));
 
         public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)

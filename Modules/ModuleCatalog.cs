@@ -849,7 +849,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.2",
+            Version = "1.3.0",
             MainPermission = new(
                 "Access",
                 "AccountLockoutRemediation",

@@ -41,6 +41,7 @@ public sealed class AccountLockoutRemediationService
         _email = email;
         _operationTrace = operationTrace;
         _logger = logger;
+        SidReader = ReadObjectSid;
     }
 
     public async Task<AccountLockoutDiscoveryResult> DiscoverLockoutSourcesAsync(
@@ -361,10 +362,25 @@ public sealed class AccountLockoutRemediationService
                 }
             }
 
+            // Audit finding A5. Both paths, not just the destructive one: a dry run that named
+            // the wrong person's session is what an operator reads before deciding to execute.
+            _operationTrace.Step("ResolveTargetSids", backend: "ActiveDirectory", command: "Get-ADUser");
+            var sidMapping = await MapTargetsToSidsAsync(realMachines, context, ticketNumber, action, credentials.Value, execute);
+            realMachines = sidMapping.machineMap;
+
+            if (realMachines.Count == 0)
+            {
+                var blocked = sidMapping.rows.Count(r => !r.Success);
+                var message = $"No target user could be matched to a directory SID. {blocked} blocked row(s).";
+                scope.Complete(false, message);
+                return new AccountLogoffResult(false, message, execute, 0, 0, blocked, sidMapping.rows);
+            }
+
             _operationTrace.Step(execute ? "RemoteLogoff" : "RemoteSessionQuery", backend: "WinRM", command: execute ? "logoff.exe" : "quser.exe");
             var throttle = ClampThrottle(requestedThrottle <= 0 ? GetDefaultThrottleLimit() : requestedThrottle);
-            var rows = await Task.Run(() => QueryAndMaybeLogoff(realMachines, execute, throttle, credentials.Value));
+            var rows = await Task.Run(() => QueryAndMaybeLogoff(realMachines, execute, throttle, credentials.Value, sidMapping.sidNames));
             var allRows = rows.ToList();
+            allRows.AddRange(sidMapping.rows);
 
             foreach (var blank in includeBlankSourceRows)
             {
@@ -636,11 +652,144 @@ foreach ($event in $events) {
         return computers.OrderBy(x => x).ToArray();
     }
 
+    /// <summary>
+    /// Audit finding A5. Replaces each target username in the machine map with the SID of the
+    /// directory object that username resolves to, so the remote script matches a logon session
+    /// by SID rather than by a bare name that collides across domains.
+    /// </summary>
+    /// <remarks>
+    /// Internal as a TEST SEAM, for the same reason <see cref="GuardTargetUsersAsync"/> is:
+    /// RunLogoffAsync reaches a live directory before this point, so no test can drive it
+    /// through the public methods.
+    ///
+    /// Fail closed throughout. A user whose SID cannot be established is removed from the map
+    /// and reported - never passed through under their name, and never guessed at. The owner's
+    /// standing ruling is that inaccurate input is the user's to resolve, not ours to work
+    /// around.
+    /// </remarks>
+    internal async Task<(Dictionary<string, string[]> machineMap, Dictionary<string, string> sidNames, List<ComputerSessionActionRow> rows)> MapTargetsToSidsAsync(
+        Dictionary<string, string[]> machineMap,
+        AccountLockoutOperatorContext context,
+        string ticketNumber,
+        string action,
+        (string username, string password, string domain) credentials,
+        bool execute)
+    {
+        var rows = new List<ComputerSessionActionRow>();
+        var sidByUser = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var sidNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        void Block(string user, string blockAction, string detail)
+        {
+            rows.Add(BlockedUserRow(user, blockAction, detail));
+            AuditLogoff(context, action, user, false, ticketNumber, detail,
+                new Dictionary<string, object?> { ["sidResolutionFailed"] = true, ["execute"] = execute });
+        }
+
+        foreach (var user in machineMap.Values.SelectMany(x => x).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var resolution = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(user);
+            if (resolution.status != ProtectedPrincipalService.ResolutionStatus.Resolved || resolution.principal == null)
+            {
+                Block(user, "sid-unresolved", resolution.status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                    ? "Target identity is ambiguous, so no single SID can be matched to it."
+                    : "Target identity could not be resolved, so its SID is unknown.");
+                continue;
+            }
+
+            var dn = resolution.principal.DistinguishedName;
+            if (string.IsNullOrWhiteSpace(dn))
+            {
+                Block(user, "sid-unresolved", "Target has no on-premises directory object, so no Windows logon session can belong to it.");
+                continue;
+            }
+
+            // The same rule aud-a3 established: read from the domain that owns the object, not
+            // from whichever domain this host happens to sit in.
+            var server = GroupManagementService.ServerFromDn(dn);
+            if (server is null)
+            {
+                Block(user, "sid-unresolved", "Target's distinguished name names no domain, so its SID cannot be read from the owning domain.");
+                continue;
+            }
+
+            string? sid;
+            try
+            {
+                sid = await Task.Run(() => SidReader(dn, server, credentials));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not read objectSid for a lockout remediation target");
+                Block(user, "sid-lookup-failed", $"Reading the target's SID from {server} failed: {SafeError(ex)}");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(sid) || !sid.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase))
+            {
+                Block(user, "sid-unresolved", "The directory returned no usable objectSid for the target.");
+                continue;
+            }
+
+            sidByUser[user] = sid;
+            sidNames[sid] = string.IsNullOrWhiteSpace(resolution.principal.SamAccountName)
+                ? user
+                : resolution.principal.SamAccountName!;
+        }
+
+        var mapped = machineMap
+            .Select(kvp => new KeyValuePair<string, string[]>(
+                kvp.Key,
+                kvp.Value
+                    .Where(u => sidByUser.ContainsKey(u))
+                    .Select(u => sidByUser[u])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()))
+            .Where(kvp => kvp.Value.Length > 0)
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+        return (mapped, sidNames, rows);
+    }
+
+    /// <summary>
+    /// TEST SEAM for <see cref="MapTargetsToSidsAsync"/>, in the same spirit as that method being
+    /// internal: reading objectSid reaches a live directory, so nothing could otherwise exercise
+    /// the fail-closed branches. Defaults to the real read; only tests replace it.
+    /// </summary>
+    internal Func<string, string, (string username, string password, string domain), string?> SidReader { get; set; } = null!;
+
+    private string? ReadObjectSid(string dn, string server, (string username, string password, string domain) credentials)
+    {
+        using var ps = CreateAdPowerShell();
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Identity", dn)
+          .AddParameter("Properties", new[] { "objectSid" })
+          .AddParameter("Server", server)
+          .AddParameter("Credential", CreateCredential(credentials))
+          .AddParameter("ErrorAction", "Stop");
+
+        return SidText(Invoke(ps).FirstOrDefault()?.Properties["objectSid"]?.Value);
+    }
+
+    /// <summary>
+    /// objectSid arrives as a SecurityIdentifier in-process and as a deserialized PSObject
+    /// carrying a Value property over remoting; both must yield the S-1-... form.
+    /// </summary>
+    internal static string? SidText(object? value) => value switch
+    {
+        null => null,
+        System.Security.Principal.SecurityIdentifier sid => sid.Value,
+        PSObject pso => pso.Properties["Value"]?.Value?.ToString() ?? pso.BaseObject as string ?? pso.ToString(),
+        string text => text,
+        _ => value.ToString(),
+    };
+
     private List<ComputerSessionActionRow> QueryAndMaybeLogoff(
         Dictionary<string, string[]> machineMap,
         bool execute,
         int throttleLimit,
-        (string username, string password, string domain) credentials)
+        (string username, string password, string domain) credentials,
+        Dictionary<string, string> sidDisplayNames)
     {
         if (machineMap.Count == 0)
             return [];
@@ -651,7 +800,7 @@ foreach ($event in $events) {
           .AddParameter("Credential", CreateCredential(credentials))
           .AddParameter("ThrottleLimit", throttleLimit)
           .AddParameter("ScriptBlock", ScriptBlock.Create(RemoteSessionScript))
-          .AddParameter("ArgumentList", new object[] { machineMap, execute })
+          .AddParameter("ArgumentList", new object[] { machineMap, execute, sidDisplayNames })
           .AddParameter("ErrorAction", "Continue");
 
         var output = ps.Invoke();
@@ -684,20 +833,67 @@ foreach ($event in $events) {
         return rows.OrderBy(r => r.Computer, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.User, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    /// <remarks>
+    /// Audit finding A5. The map now carries target SIDs, not usernames, and a session is only
+    /// acted on when the SID of its owner - derived on the remote host - is in that set. The
+    /// bare USERNAME column `quser` prints has no domain in it, so matching on it logged off
+    /// `B\alex` or a local `alex` when the account checked was `A\alex`.
+    ///
+    /// A session whose owner cannot be established is REFUSED and reported, never logged off:
+    /// an unidentified session may well be the target, and refusing to act on it is the only
+    /// safe answer. `$sidDisplayNames` exists purely so those rows can name a person instead of
+    /// a SID.
+    /// </remarks>
     private static readonly string RemoteSessionScript = @"
-param($machineUserMap, [bool]$doExecute)
+param($machineUserMap, [bool]$doExecute, $sidDisplayNames)
 $me = $env:COMPUTERNAME.ToLowerInvariant()
-$targetUsers = @()
+$targetSids = @()
 foreach ($key in $machineUserMap.Keys) {
     $short = ([string]$key -replace '\..*$', '').ToLowerInvariant()
     if ($short -eq $me -or ([string]$key).ToLowerInvariant() -eq $me) {
-        $targetUsers = @($machineUserMap[$key])
+        $targetSids = @($machineUserMap[$key])
         break
     }
 }
-$targetUsers = @($targetUsers | ForEach-Object { ([string]$_).ToLowerInvariant() } | Where-Object { $_ })
-if (-not $targetUsers) {
+$targetSids = @($targetSids | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() } | Where-Object { $_ })
+if (-not $targetSids) {
     [pscustomobject]@{ User = ''; SessionId = ''; State = ''; Action = 'no-mapping'; Success = $false; Detail = ""No flagged users matched $me"" }
+    return
+}
+
+# Indexing, not .Contains or .ContainsKey: this map arrives as a Hashtable over remoting and as
+# a Dictionary[string,string] when the script is run in-process, and those two do not share a
+# single-argument lookup method. Indexing works on both and yields $null for a missing key.
+function Get-TargetLabel([string]$sid) {
+    if ($sidDisplayNames) {
+        $label = $null
+        try { $label = [string]$sidDisplayNames[$sid] } catch { $label = $null }
+        if ($label) { return $label }
+    }
+    return $sid
+}
+$targetLabel = (@($targetSids | ForEach-Object { Get-TargetLabel $_ }) -join ',')
+
+# One enumeration for the whole machine, then grouped by terminal-services session. Asking per
+# session would be the same data fetched once per row.
+$ownersBySession = @{}
+try {
+    foreach ($proc in @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)) {
+        $owner = $null
+        try { $owner = Invoke-CimMethod -InputObject $proc -MethodName GetOwnerSid -ErrorAction Stop } catch { continue }
+        if (-not $owner -or $owner.ReturnValue -ne 0) { continue }
+        $sid = ([string]$owner.Sid).Trim().ToUpperInvariant()
+        if (-not $sid) { continue }
+        # Machine identities, service accounts and virtual accounts are never a logged-on
+        # person, and every interactive session has some of them.
+        if ($sid -eq 'S-1-5-18' -or $sid -eq 'S-1-5-19' -or $sid -eq 'S-1-5-20') { continue }
+        if ($sid -like 'S-1-5-80-*' -or $sid -like 'S-1-5-82-*' -or $sid -like 'S-1-5-83-*' -or $sid -like 'S-1-5-90-*' -or $sid -like 'S-1-5-96-*') { continue }
+        $key = [string]$proc.SessionId
+        if (-not $ownersBySession.ContainsKey($key)) { $ownersBySession[$key] = New-Object 'System.Collections.Generic.HashSet[string]' }
+        [void]$ownersBySession[$key].Add($sid)
+    }
+} catch {
+    [pscustomobject]@{ User = $targetLabel; SessionId = ''; State = ''; Action = 'owner-query-failed'; Success = $false; Detail = ""Could not read session owners, so no session could be identified: $($_.Exception.Message)"" }
     return
 }
 
@@ -714,7 +910,7 @@ if (($code -ne 0 -or $err.Count) -and -not $noUsers) {
 }
 
 if ($noUsers -or -not $raw -or @($raw).Count -lt 2) {
-    [pscustomobject]@{ User = ($targetUsers -join ','); SessionId = ''; State = ''; Action = 'not-logged-on'; Success = $true; Detail = 'No matching session present' }
+    [pscustomobject]@{ User = $targetLabel; SessionId = ''; State = ''; Action = 'not-logged-on'; Success = $true; Detail = 'No matching session present' }
     return
 }
 
@@ -724,13 +920,28 @@ foreach ($line in ($raw | Select-Object -Skip 1)) {
     $cols = $l -split '\s{2,}'
     if ($cols.Count -lt 5) { continue }
 
-    $userName = $cols[0].Trim()
-    if ($userName.ToLowerInvariant() -notin $targetUsers) { continue }
+    $quserName = $cols[0].Trim()
 
     $sessionId = ($cols[1..($cols.Count - 1)] | Where-Object { $_ -match '^\d+$' } | Select-Object -First 1)
     if (-not $sessionId) { continue }
 
     $state = if ($cols.Count -ge 6) { $cols[3].Trim() } else { $cols[2].Trim() }
+
+    # The identity decision, and the only one. $quserName is a display string from here on; it
+    # never selects a session.
+    $owners = $ownersBySession[[string]$sessionId]
+    if (-not $owners -or $owners.Count -eq 0) {
+        [pscustomobject]@{ User = $quserName; SessionId = $sessionId; State = $state; Action = 'owner-unverified'; Success = $false; Detail = 'Session owner could not be identified; refusing to act on it' }
+        continue
+    }
+    if ($owners.Count -gt 1) {
+        [pscustomobject]@{ User = $quserName; SessionId = $sessionId; State = $state; Action = 'owner-unverified'; Success = $false; Detail = ""Session has $($owners.Count) distinct process owners; refusing to act on it"" }
+        continue
+    }
+
+    $ownerSid = @($owners)[0]
+    if ($ownerSid -notin $targetSids) { continue }
+
     $found = $true
     $action = if ($doExecute) { 'logged-off' } else { 'would-log-off' }
     $success = $true
@@ -745,11 +956,11 @@ foreach ($line in ($raw | Select-Object -Skip 1)) {
         }
     }
 
-    [pscustomobject]@{ User = $userName; SessionId = $sessionId; State = $state; Action = $action; Success = $success; Detail = $detail }
+    [pscustomobject]@{ User = (Get-TargetLabel $ownerSid); SessionId = $sessionId; State = $state; Action = $action; Success = $success; Detail = $detail }
 }
 
 if (-not $found) {
-    [pscustomobject]@{ User = ($targetUsers -join ','); SessionId = ''; State = ''; Action = 'not-logged-on'; Success = $true; Detail = 'Flagged user has no current session' }
+    [pscustomobject]@{ User = $targetLabel; SessionId = ''; State = ''; Action = 'not-logged-on'; Success = $true; Detail = 'Flagged user has no current session' }
 }
 ";
 
