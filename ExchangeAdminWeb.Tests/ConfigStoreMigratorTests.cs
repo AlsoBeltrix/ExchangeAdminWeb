@@ -310,4 +310,73 @@ public class ConfigStoreMigratorTests
         Assert.True(otherInstanceRan, "The other instance never ran - this test proves nothing.");
         Assert.Equal(ConfigStoreMigrator.TargetVersion, version);
     }
+
+    [Fact]
+    public void Migrate_OnAnAlreadyCurrentDatabase_DoesNotWaitForAWriter()
+    {
+        // Review of A33, finding 2. The first fix removed the current-version fast path, so the
+        // overwhelmingly common case - nothing to do - took a WRITE lock before discovering
+        // that. A competing writer could then delay it or fail it, and that exception leaves
+        // startup. Here another connection holds the write lock throughout.
+        using var temp = new TempDir();
+        var factory = new SqliteConnectionFactory(temp.DbPath);
+        new ConfigStoreMigrator(factory).Migrate();
+
+        using var blocker = factory.Open();
+        using var held = blocker.BeginTransaction(deferred: false);
+        using (var write = blocker.CreateCommand())
+        {
+            write.Transaction = held;
+            write.CommandText = "CREATE TABLE IF NOT EXISTS probe_holding_the_write_lock (x INTEGER);";
+            write.ExecuteNonQuery();
+        }
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var version = new ConfigStoreMigrator(factory).Migrate();
+        clock.Stop();
+
+        Assert.Equal(ConfigStoreMigrator.TargetVersion, version);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(3),
+            $"A no-op migration waited {clock.Elapsed} on another writer; it should not have asked for the lock at all.");
+
+        held.Rollback();
+    }
+
+    [Fact]
+    public void Migrate_WhenAnotherInstanceMakesTheSchemaNewerMidRun_StillChecksCompatibility()
+    {
+        // Review of A33, finding 3. Compatibility was checked only against the unlocked read at
+        // the top. A database that became newer while this instance was working left the loop
+        // with no check at all - so a schema this build cannot serve was accepted on one path
+        // and rejected on the other.
+        using var temp = new TempDir();
+        var factory = new SqliteConnectionFactory(temp.DbPath);
+        new ConfigStoreMigrator(factory).Migrate();
+
+        // Rewind the cursor so this migrator enters the loop rather than the no-op fast path -
+        // the schema itself is already complete.
+        using (var reset = factory.Open())
+        {
+            using var rewind = reset.CreateCommand();
+            rewind.CommandText = "PRAGMA user_version = 0;";
+            rewind.ExecuteNonQuery();
+        }
+
+        var migrator = new ConfigStoreMigrator(factory);
+        var tampered = false;
+        migrator.AfterVersionRead = () =>
+        {
+            if (tampered) return;
+            tampered = true;
+
+            using var other = factory.Open();
+            using var command = other.CreateCommand();
+            command.CommandText =
+                $"DROP TABLE app_setting; PRAGMA user_version = {ConfigStoreMigrator.TargetVersion + 1};";
+            command.ExecuteNonQuery();
+        };
+
+        var error = Assert.Throws<InvalidOperationException>(() => migrator.Migrate());
+        Assert.Contains("app_setting", error.Message, StringComparison.Ordinal);
+    }
 }

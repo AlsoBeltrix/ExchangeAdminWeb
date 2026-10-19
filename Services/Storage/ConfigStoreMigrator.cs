@@ -212,38 +212,69 @@ public sealed class ConfigStoreMigrator
         // reliably produce it, which a mutation run proved. Null in production.
         AfterVersionRead?.Invoke();
 
+        // Review of A33, finding 2. The common case by far is a database already at this
+        // build's version, and the first fix made that case take a WRITE lock before
+        // discovering there was nothing to do - so an unnecessary migration could be delayed
+        // by, or fail against, a competing writer, and that exception leaves startup. The old
+        // bounded loop never opened a transaction here. Restored as a fast path.
+        if (current == Migrations.Length)
+            return current;
+
         if (current > Migrations.Length)
         {
-            // Shared-DB rule (decisions 2026-09-04): the other instance is newer and steps are
-            // additive-only, so serve on its schema. Verify this build's tables and columns
-            // exist first - a non-additive step that slipped through must stop us here, not
-            // inside a later read or write.
-            var missing = FindMissingSchema(connection);
-            if (missing.Count > 0)
-            {
-                throw new InvalidOperationException(
-                    $"Config database schema version {current} is newer than this build ({Migrations.Length}) " +
-                    $"and lacks schema this build requires: {string.Join(", ", missing)}. A migration step " +
-                    "was not additive-only; restore a compatible database backup or deploy a matching build.");
-            }
-
-            _logger?.LogWarning(
-                "Config database schema version {DbVersion} is newer than this build supports ({BuildVersion}); " +
-                "serving on the newer schema (additive-only rule, decision 2026-09-04)",
-                current, Migrations.Length);
+            AcceptNewerSchema(connection, current);
             return current;
         }
 
-        // Audit finding A33. The version above was read with no lock held, and each step used to
-        // open a DEFERRED transaction - which takes only a read lock until its first write. Dev
-        // and prod share one database (decisions 2026-09-04), so both instances starting
-        // together could read the same version, both enter the same step, and the second's
-        // ALTER TABLE would fail with "duplicate column name" and abort startup.
-        //
-        // Two changes make that safe. The transaction is IMMEDIATE, so the write lock is taken
-        // up front and the instances serialise rather than collide; and the version is re-read
-        // INSIDE that lock, so the loser of the race sees the winner's work and skips it. The
-        // outer read stays only as the fast path for the common no-op case.
+        return MigrateUpward(connection);
+    }
+
+    /// <summary>
+    /// Shared-DB rule (decisions 2026-09-04): the other instance is newer and steps are
+    /// additive-only, so serve on its schema. Verify this build's tables and columns exist
+    /// first - a non-additive step that slipped through must stop us here, not inside a later
+    /// read or write.
+    /// </summary>
+    /// <remarks>
+    /// Review of A33, finding 3: this used to be inline and reachable only from the unlocked
+    /// read at the top. A database that became newer WHILE this instance was migrating then
+    /// left the loop without any compatibility check at all, so a version this build cannot
+    /// serve was accepted on one path and rejected on the other. Extracted so both reach it.
+    /// </remarks>
+    private void AcceptNewerSchema(SqliteConnection connection, int current)
+    {
+        var missing = FindMissingSchema(connection);
+        if (missing.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Config database schema version {current} is newer than this build ({Migrations.Length}) " +
+                $"and lacks schema this build requires: {string.Join(", ", missing)}. A migration step " +
+                "was not additive-only; restore a compatible database backup or deploy a matching build.");
+        }
+
+        _logger?.LogWarning(
+            "Config database schema version {DbVersion} is newer than this build supports ({BuildVersion}); " +
+            "serving on the newer schema (additive-only rule, decision 2026-09-04)",
+            current, Migrations.Length);
+    }
+
+    /// <summary>
+    /// Audit finding A33. The version at the top of <see cref="Migrate"/> is read with no lock
+    /// held, and dev and prod share one database (decisions 2026-09-04) - so both instances
+    /// restarting together could read the same version, both enter the same step, and the
+    /// loser run a statement against a schema that already had it. Most steps are
+    /// <c>CREATE TABLE IF NOT EXISTS</c> and survive that; the one <c>ALTER TABLE</c> does not,
+    /// and SQLite rejecting a duplicate column takes that instance's startup down.
+    ///
+    /// The fix is the re-read INSIDE each transaction's write lock: the loser sees the winner's
+    /// work and skips it. Review of the first attempt corrected a claim made here - this
+    /// provider's parameterless <c>BeginTransaction()</c> already issues BEGIN IMMEDIATE, so
+    /// the transaction was never deferred and the locked read is the whole of the fix. The
+    /// explicit <c>deferred: false</c> stays as a statement of the requirement rather than a
+    /// change in behaviour.
+    /// </summary>
+    private int MigrateUpward(SqliteConnection connection)
+    {
         while (true)
         {
             using var transaction = connection.BeginTransaction(deferred: false);
@@ -252,7 +283,14 @@ public sealed class ConfigStoreMigrator
             if (version >= Migrations.Length)
             {
                 transaction.Rollback();
-                break;
+
+                // Review of A33, finding 3. Another instance may have moved the database past
+                // this build while we were working. Leaving here without the compatibility
+                // check accepted a schema the top of Migrate would have rejected.
+                if (version > Migrations.Length)
+                    AcceptNewerSchema(connection, version);
+
+                return version;
             }
 
             using (var step = connection.CreateCommand())
@@ -272,8 +310,6 @@ public sealed class ConfigStoreMigrator
 
             transaction.Commit();
         }
-
-        return GetUserVersion(connection);
     }
 
     /// <summary>
