@@ -622,7 +622,7 @@
                         <tr>
                             <td colspan="2">
                                 <div class="input-group input-group-sm" style="max-width: 30rem;">
-                                    <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SID" @bind-Value="newAdminGroup" Placeholder="Search groups in any domain..." />
+                                    <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SID" @bind-Value="newAdminGroup" OnResultSelected="RememberGroupDisplayName" Placeholder="Search groups in any domain..." />
                                     <button class="btn btn-outline-secondary" type="button" @onclick="AddModuleAdmin">Add</button>
                                 </div>
                             </td>
@@ -1465,13 +1465,21 @@
     }
 
     /// <summary>
-    /// Adds a module-admin grant. Only a group SID chosen from the suggestion list is accepted.
+    /// Adds a module-admin grant. The value must have the shape of a usable group SID.
     /// </summary>
     /// <remarks>
     /// Identical rule, and identical reason, to <see cref="AddAccessGroup"/> - this field decides
     /// who can change a module's configuration and its AD attribute allowlist. It stored a bare
     /// SAM name until audit finding A1 (2026-10-16), which let a grant for one domain's group be
     /// satisfied by a member of a same-named group in another domain.
+    ///
+    /// <b>What this validates is the SHAPE, not the object.</b> A canonical SID typed by hand
+    /// passes, including a user's SID or one that resolves to nothing - the validator cannot tell
+    /// those apart from a group's. Such a row grants nothing and is not reported by
+    /// <c>GetUnusableGrants</c>, which also judges shape. Raised against this slice at review and
+    /// recorded as <c>aud-a1b</c>; <see cref="AddAccessGroup"/> has exactly the same weakness, so
+    /// it is fixed for both controls together or not at all. An earlier version of this comment
+    /// claimed only a selected group is accepted, which was untrue.
     /// </remarks>
     private void AddModuleAdmin()
     {

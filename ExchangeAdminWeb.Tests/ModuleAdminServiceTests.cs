@@ -116,6 +116,37 @@ public class ModuleAdminServiceTests
     }
 
     [Fact]
+    public void IsModuleAdmin_MixedGrantList_StillRefusesTheNameHalf()
+    {
+        // Review finding on aud-a1. The legacy-only test above cannot catch a bare-name
+        // fallback added AFTER the usable-SID early return, because an all-legacy list returns
+        // early and never reaches it. A MIXED list does: the SID keeps execution going, and a
+        // fallback iterating the raw grants would then authorize on the name half.
+        //
+        // The caller here is in NO granted group. They carry only name-shaped claims matching
+        // the legacy row, which must authorize nothing.
+        using var temp = new TempDir();
+        var service = CreateService(temp.Path, out _);
+        service.SetModuleAdmins("Migration", new[] { HomeOpsSid, "FOREIGN\\Ops" });
+
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.Role, "Ops"),
+            new Claim(ClaimTypes.Role, "FOREIGN\\Ops"),
+        }, "test"));
+
+        Assert.False(service.IsModuleAdmin("Migration", user));
+        Assert.False(service.IsModuleAdminForAny(user));
+
+        // And the SID half of the same list still works, so this is not passing by accident.
+        var granted = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.GroupSid, HomeOpsSid),
+        }, "test"));
+        Assert.True(service.IsModuleAdmin("Migration", granted));
+    }
+
+    [Fact]
     public void GetUnusableGrants_ReportsOnlyTheRowsThatAuthorizeNothing()
     {
         // This list exists so the refusal above is reportable BEFORE an admin discovers it by
@@ -168,6 +199,29 @@ public class ModuleAdminServiceTests
             Substitute.For<ILogger<ModuleAdminService>>());
 
         Assert.Equal(new[] { "DOMAIN\\Db-Admins" }, service.GetModuleAdmins("Migration"));
+    }
+
+    [Fact]
+    public void TryGetUnusableGrants_ReportsFailure_WhenTheStoreCannotBeRead()
+    {
+        // Review finding on aud-a1. This inventory is the deployment check, and it sat on a
+        // swallowed read error - an unreadable store reported zero unusable grants, the same
+        // answer as a fully migrated one. A report that cannot fail visibly is not a check.
+        // ModuleAdminRepository is sealed, so the failure is produced for real rather than
+        // substituted: a store pointed at a path SQLite cannot open, with no migration run, so
+        // GetAll throws exactly as an unreadable production database would.
+        using var temp = new TempDir();
+        var unopenable = Path.Combine(temp.Path, "no-such-directory", "exchangeadmin.db");
+        var repository = new ModuleAdminRepository(
+            new SqliteConfigStore(new SqliteConnectionFactory(unopenable)));
+
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(temp.Path);
+        var service = new ModuleAdminService(env, repository, Substitute.For<ILogger<ModuleAdminService>>());
+
+        Assert.False(service.TryGetUnusableGrants(out var unusable));
+        Assert.Empty(unusable);
+        Assert.Throws<InvalidOperationException>(() => service.GetUnusableGrants());
     }
 
     private static ModuleAdminService CreateService(string contentRoot, out ModuleAdminRepository repository)

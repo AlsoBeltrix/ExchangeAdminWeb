@@ -98,11 +98,22 @@ Mutations, both run this session:
 | drop `UsableSidsOnly`, compare raw stored values | FAIL (`LegacyNameValuedGrantAuthorizesNothing`) |
 | re-add the bare-name fallback **ahead of** the usable-SID filter | FAIL (same test) |
 
-**The second mutation passed on the first attempt and that was my error, not a weak test.**
-Placed after the `usableGrants.Count == 0` early return it is unreachable for a legacy grant,
-so it changed nothing. Moved ahead of the filter - where a regression would actually be
-written - it fails. Recorded because a mutation that cannot execute is not evidence, the same
-trap as the `8b56902` probe that did not compile.
+**The second mutation passed on the first attempt. I called that my error and said the
+mutation was unreachable. That explanation was WRONG, and review caught it.**
+
+It is unreachable only for an all-legacy grant list, where `usableGrants` is empty and the
+early return fires first. **For a MIXED list it is perfectly reachable**: a valid SID keeps
+execution past the return, and a fallback iterating the raw grants then authorizes on the name
+half. Every test I had used a single-kind list, so none of them covered the case that matters.
+
+Corrected in the repair commit: `IsModuleAdmin_MixedGrantList_StillRefusesTheNameHalf` grants
+`[HomeOpsSid, "FOREIGN\Ops"]` and asserts a caller holding only name-shaped claims is refused,
+while the SID half of the same list still authorizes so the test cannot pass by denying
+everything. **Re-run with the fallback placed after the early return - the exact mutation that
+escaped - it now fails.**
+
+The original lesson still stands and is now better evidenced: a mutation that does not execute
+is not evidence, and "I think it is unreachable" is a hypothesis, not a result.
 
 Service restored byte-identical after both (md5 verified) and touched.
 
@@ -138,8 +149,29 @@ should be checked before any of them becomes an authorization input.
 ## Reviewer comments
 
 Source: the six-agent read-only audit of `34bac08`, 2026-10-16, finding 1. Verified against the
-code by the implementer before changing anything. No independent review of the FIX has run yet.
+code by the implementer before changing anything.
+
+**Independent review of the fix: codex-commercial / `gpt-6-astra` / max, over `5059c6f`.**
+Verdict: *"The SID authorization change works in the paths I inspected; I found no demonstrated
+privilege bypass. The slice is not clean, however."* Four findings, all accepted:
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | `GetUnusableGrants` sat on a swallowed read error, so an unreadable store reported zero unusable grants - the same answer as a clean one, in the report that IS the deployment check | **Fixed** - split into `TryGetUnusableGrants(out ...)`; the wrapper throws rather than returning the ambiguous empty |
+| 2 | the tests missed a reachable mixed-grant regression, and this record's "unreachable" claim was wrong for mixed lists | **Fixed** - see Guard proof; the record is corrected above |
+| 3 | the guard validates SID SHAPE only, so a typed user SID or a nonexistent one passes, making the comment and operator message false | **Comment corrected; the weakness is filed as `aud-a1b`** - `AddAccessGroup` has it identically, so it is fixed for both controls or neither |
+| 4 | new grants rendered as raw SIDs - the picker lacked `OnResultSelected="RememberGroupDisplayName"` | **Fixed** |
+
+What it cleared, having been asked to attack it: no other path to module-admin rights still
+compares names; the `Security:AdminGroups` carve-out is sound and the handler passes the full
+configured name without stripping domains; no caller treats "no module admins" as allow;
+remaining write paths accept names but those rows are inert because authorization filters on
+read.
+
+It also noted the service's "Fail-open" comment and a similarly named test misdescribe the
+behaviour - an empty map denies. The comment is rewritten in the repair; the test name is
+pre-existing and left alone.
 
 ## Closeout
 
-Fixed directly on `master`. Full gate pending at time of writing. Not pushed.
+Fixed directly on `master` in `5059c6f`, repaired in the follow-up commit. Not pushed.

@@ -68,10 +68,32 @@ public class ModuleAdminService
     /// open their own module.
     /// </remarks>
     public IReadOnlyDictionary<string, string[]> GetUnusableGrants()
+        => TryGetUnusableGrants(out var unusable)
+            ? unusable
+            : throw new InvalidOperationException(
+                "Module-admin grants could not be read, so the unusable-grant inventory is unknown. "
+                + "Do not treat this as an empty result.");
+
+    /// <summary>
+    /// Stored module-admin grants that are not usable group SIDs, by module.
+    /// Returns false when the store could not be read - in which case
+    /// <paramref name="unusableGrants"/> is empty and means NOTHING.
+    /// </summary>
+    /// <remarks>
+    /// The out-parameter shape is the finding. This inventory is the deployment check for
+    /// aud-a1, and a swallowed read error previously made it report zero unusable grants -
+    /// the same answer as a fully migrated store. A report that cannot fail visibly is not a
+    /// check. <see cref="GetUnusableGrants"/> throws rather than returning the ambiguous value.
+    /// </remarks>
+    public bool TryGetUnusableGrants(out IReadOnlyDictionary<string, string[]> unusableGrants)
     {
         var unusable = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        unusableGrants = unusable;
 
-        foreach (var (moduleId, groups) in ReadConfig())
+        if (!TryReadConfig(out var config))
+            return false;
+
+        foreach (var (moduleId, groups) in config)
         {
             var bad = groups
                 .Where(g => !SectionAccessGroupIdentity.IsUsableGroupSid(g))
@@ -81,7 +103,7 @@ public class ModuleAdminService
                 unusable[moduleId] = bad;
         }
 
-        return unusable;
+        return true;
     }
 
     public bool IsModuleAdminForAny(ClaimsPrincipal user)
@@ -105,19 +127,42 @@ public class ModuleAdminService
         }
     }
 
+    /// <summary>
+    /// Every module's grants, or an empty map when the store cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// The old comment here called this "fail-open", which misdescribed it: an empty map means
+    /// no grants, and no grants DENIES. For authorization that is the right direction and it is
+    /// why <see cref="IsModuleAdmin"/> keeps using this.
+    ///
+    /// It is the wrong direction for anything that REPORTS, and that is what
+    /// <see cref="TryReadConfig"/> exists for - an unreadable store and a clean store are the
+    /// same value here, and a reporting caller must be able to tell them apart.
+    /// </remarks>
     private Dictionary<string, string[]> ReadConfig()
+        => TryReadConfig(out var config) ? config : new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Reads every module's grants, reporting whether the read actually succeeded.
+    /// </summary>
+    /// <remarks>
+    /// Separated from <see cref="ReadConfig"/> on a review finding against aud-a1: the
+    /// deployment check that lists unusable grants was built on a swallowed read error, so an
+    /// unreadable SQLite file produced "zero unusable grants" - indistinguishable from a clean
+    /// inventory, in the one report whose entire job is to say what will stop authorizing.
+    /// </remarks>
+    private bool TryReadConfig(out Dictionary<string, string[]> config)
     {
-        // Fail-open (silent): on any read error return an empty map, preserving the file
-        // version's behavior. With a DB this is effectively never hit, but the catch keeps the
-        // contract.
         try
         {
-            return _repository.GetAll();
+            config = _repository.GetAll();
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to read module admins from config store");
-            return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+            config = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+            return false;
         }
     }
 
