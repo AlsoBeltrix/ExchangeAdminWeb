@@ -90,3 +90,36 @@ Gate: Release 0 errors; suite 4336 passed / 3 known AD skips / 0 failed; format 
 ## Closeout
 
 Fixed directly on `master`. Independent review pending.
+
+## Independent review, 2026-10-19 (codex-commercial / gpt-6-astra / max) - CHANGES REQUIRED
+
+**The central claim of this finding was too strong, and the reviewer was right to attack it.**
+I asked them specifically whether re-authorizing against a cached `AuthenticationState`
+observes a revocation. It does not, for the case that matters most.
+
+`StillAuthorized` calls `AuthStateProvider.GetAuthenticationStateAsync()` again, but
+`ServerAuthenticationStateProvider` returns the **stored** state task, and
+`WindowsPrincipal.IsInRole` tests the access token rather than querying the directory. The app
+registers no revalidating provider (`Program.cs:119`). So the group claims this re-check
+evaluates are the same claims the page was rendered with, however long the circuit has been
+open.
+
+What the fix does and does not cover, precisely:
+
+| Revocation | Observed? |
+| --- | --- |
+| The group's grant is removed from the module's section access | **Yes** - `SectionAccessService` re-reads its configuration, so the re-check sees it |
+| The operator is removed from the allowed AD group | **No** - their token still carries the group SID |
+
+So it closes the administrative revocation and not the directory one. That is worth having -
+removing an app grant is the lever an administrator actually reaches for during an incident -
+but it is **half of what this record claimed**, and the claim is corrected rather than
+quietly narrowed.
+
+Filed as `aud-a29b`: making revocation authoritative needs either a per-click directory read
+or a revalidating authentication state provider, and the second is an app-wide change to how
+every page authenticates. That is an owner decision, not a slice.
+
+The reviewer's other questions on this commit came back clean: the refusal leaves the UI
+coherent, `WriteAudit` records the job and module attempted, and no other state-changing path
+on the page was found unguarded.

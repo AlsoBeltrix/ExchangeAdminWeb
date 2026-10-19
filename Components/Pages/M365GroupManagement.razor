@@ -110,7 +110,12 @@
                         <p class="text-muted p-3 mb-0">Enter a search term and click Search to find M365 groups.</p>
                     }
 
-                    @if (selectedGroup != null && members != null && !showForm)
+                    @if (refreshError != null)
+                    {
+                        <div class="alert alert-warning m-3 mb-0">@refreshError</div>
+                    }
+
+                    @if (selectedGroup != null && members != null && owners != null && !showForm)
                     {
                         <div class="border-top p-3">
                             <div class="mb-3">
@@ -318,6 +323,7 @@
     private bool isLoadingDetails;
     private bool isOperating;
     private string? searchError;
+    private string? refreshError;
 
     // One page-wide predicate over all four in-flight flags. isLoadingDetails is the one that
     // was wired to nothing: before this slice its only appearance in markup was the row spinner
@@ -422,6 +428,7 @@
     private async Task SelectGroup(M365Group group)
     {
         isLoadingDetails = true;
+        refreshError = null;
         selectedGroup = group;
         showForm = false;
         members = null;
@@ -444,11 +451,20 @@
         {
             Logger.LogError(ex, "Failed to load group details for {GroupId}", group.Id);
             searchError = $"Failed to load details: {ex.Message}";
+
+            // Review of aud-a17. The owners read runs after the members read, so a failure
+            // there left members populated and owners null - and null rendered as
+            // "Owners (0)" / "No owners", which is a claim about the group, not about the
+            // read. Both are cleared so the panel cannot assert something nobody checked.
+            members = null;
+            owners = null;
         }
         finally
         {
             isLoadingDetails = false;
-            detailActivity.Complete(members != null || owners != null);
+
+            // Both, not either: "members loaded but owners did not" is not a success.
+            detailActivity.Complete(members != null && owners != null);
         }
     }
 
@@ -718,8 +734,26 @@
             if (result.Success)
             {
                 onSuccess();
-                members = await GroupService.GetMembersAsync(group.Id);
-                owners = await GroupService.GetOwnersAsync(group.Id);
+
+                // Review of aud-a17. The refresh is OUTSIDE the mutation's catch, deliberately.
+                // The write has already happened, been audited and been notified; a failed
+                // reload afterwards is a display problem, not a failed operation. With both in
+                // one try, a 429 on either list sent the handler into the failure catch, which
+                // replaced the result, wrote a SECOND audit row saying the operation failed and
+                // sent a second notification saying the same - while the change stayed applied.
+                // An operator told it failed retries work that already succeeded.
+                try
+                {
+                    members = await GroupService.GetMembersAsync(group.Id);
+                    owners = await GroupService.GetOwnersAsync(group.Id);
+                }
+                catch (Exception refreshEx)
+                {
+                    Logger.LogWarning(refreshEx, "Reload after {Action} failed; the change itself succeeded", action);
+                    members = null;
+                    owners = null;
+                    refreshError = "The change was applied. The group lists could not be reloaded, so what is shown below may be out of date.";
+                }
             }
         }
         catch (Exception ex)

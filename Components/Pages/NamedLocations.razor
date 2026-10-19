@@ -52,7 +52,7 @@
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <strong>Named Locations</strong>
                     <div>
-                        <button class="btn btn-outline-secondary btn-sm me-1" @onclick="DownloadCsvAsync" disabled="@(IsBusy || locations.Count == 0)">Download CSV</button>
+                        <button class="btn btn-outline-secondary btn-sm me-1" @onclick="DownloadCsvAsync" disabled="@(IsBusy || loadError != null || locations.Count == 0)">Download CSV</button>
                         <button class="btn btn-outline-primary btn-sm me-1" @onclick="LoadLocations" disabled="@IsBusy">
                             @* No spinner: the load reports to the status bar. *@
                             Refresh
@@ -287,6 +287,12 @@
         {
             loadError = ex.Message;
             Logger.LogError(ex, "Failed to load named locations");
+
+            // Review of aud-a17. The previous list used to survive a failed refresh. The error
+            // banner hid the table, but Download CSV stayed enabled off that retained list and
+            // exported a stale snapshot under a fresh timestamp, recorded as a success. After a
+            // create or delete that is a file contradicting the change the operator just made.
+            locations.Clear();
         }
         finally
         {

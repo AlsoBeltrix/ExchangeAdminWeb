@@ -437,7 +437,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.1.0",
+            Version = "1.1.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -632,7 +632,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.DirectoryAndGroups,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.5.0",
+            Version = "1.5.1",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
@@ -927,7 +927,7 @@ public sealed class ModuleCatalog
             // handlers snapshot the form and their result so a mid-flight dismiss or keystroke can
             // no longer retarget a Conditional Access write, blank its ticket, or report a
             // successful write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 2).
-            Version = "1.3.0",
+            Version = "1.3.1",
             MainPermission = new(
                 "Access",
                 "NamedLocations",

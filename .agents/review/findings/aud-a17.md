@@ -101,3 +101,44 @@ receive an exception.
 ## Closeout
 
 Fixed directly on `master`. Independent review pending.
+
+## Independent review, 2026-10-19 (codex-commercial / gpt-6-astra / max) - CHANGES REQUIRED
+
+The services themselves were accepted. **The callers were not, and that is exactly what the
+review was pointed at.** Turning a silent truncation into an exception made three existing
+caller defects reachable that previously were not.
+
+### A successful membership change could be reported and audited as failed - FIXED
+
+`M365GroupManagement.razor`'s `RunMemberOpAsync` performed the write, audited it, notified on
+it - and then reloaded members and owners **inside the same try**. With this change a 429 on
+either reload threw into the mutation's catch, which replaced the result, wrote a **second**
+audit row saying the operation failed and sent a second notification saying the same. The
+change stayed applied.
+
+An operator told their change failed retries work that already succeeded. The reload is now
+outside that catch: a failed refresh is a display problem, and it says so in a banner while
+the mutation's own outcome stands.
+
+### A failed owners read rendered as "No owners" - FIXED
+
+`SelectGroup` loads members then owners. An owners failure left `members` populated and
+`owners` null, which rendered "Owners (0)" and "No owners" - a claim about the group, not
+about the read - alongside an error banner contradicting it. Its progress also completed
+successfully on `members != null || owners != null`.
+
+Both lists are cleared on failure now, the panel requires both, and the completion requires
+both.
+
+### A stale Named Locations list stayed exportable - FIXED
+
+`LoadLocations` caught the exception and kept the previous list. The banner hid the table but
+Download CSV stayed enabled off that retained list, exporting a stale snapshot under a fresh
+timestamp and recording success - including after a create or delete, so the file could
+contradict the change just made. The list is cleared and the button is gated on `loadError`.
+
+### Still not covered
+
+The M365 members path still has no behavioural test; only Named Locations is driven end to
+end. The reviewer confirmed the existing guard would not catch the caller defects above -
+which it did not, since they had to be found by review.

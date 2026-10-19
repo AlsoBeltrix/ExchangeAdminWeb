@@ -739,7 +739,7 @@ public static class ClickGateRegistry
     private static PageGateEntry NamedLocations => new()
     {
         Page = "NamedLocations.razor",
-        ExpectedLineCount = 593,
+        ExpectedLineCount = 599,
 
         Predicates =
         [
@@ -2925,7 +2925,7 @@ public static class ClickGateRegistry
     private static PageGateEntry M365GroupManagement => new()
     {
         Page = "M365GroupManagement.razor",
-        ExpectedLineCount = 747,
+        ExpectedLineCount = 781,
 
         Predicates =
         [
@@ -3100,7 +3100,7 @@ public static class ClickGateRegistry
                 + "whole of a search or a details load, which is the case the exemption exists for. "
                 + "Reinstate the field reads and this exemption is a live defect again"),
 
-            new ExemptControl(145, "@onclick=\"() => confirmRemoveMember = null\"",
+            new ExemptControl(150, "@onclick=\"() => confirmRemoveMember = null\"",
                 "backs out of a staged member removal, and the operator must always be able to do "
                 + "that. Confirm beside it at 144 is gated on IsBusy, so nothing can be executed "
                 + "from this state while the page is busy; cancelling only nulls one id and makes "
@@ -3112,14 +3112,14 @@ public static class ClickGateRegistry
                 + "callback assigns it and never reads it; the moment a handler READS it "
                 + "mid-flight, this control can null it under them and the exemption stops holding"),
 
-            new ExemptControl(187, "@onclick=\"() => confirmRemoveOwner = null\"",
+            new ExemptControl(192, "@onclick=\"() => confirmRemoveOwner = null\"",
                 "backs out of a staged owner removal, on exactly the footing of 145 above and with "
                 + "the same narrower guard. Confirm beside it at 186 is gated",
                 KeepsItsOwnGuard: "disabled=\"@isMemberOp\"",
                 ConditionThatKeepsItTrue:
                 "nothing reads confirmRemoveOwner after an await, as for confirmRemoveMember"),
 
-            new ExemptControl(287, "@onclick=\"() => confirmDelete = null\"",
+            new ExemptControl(292, "@onclick=\"() => confirmDelete = null\"",
                 "backs out of a staged group deletion. THIS is the staged cancel the usual "
                 + "exemption is written for, and the contrast with the form Cancel at 216 is the "
                 + "point: this one resets one nullable that no handler reads after an await, while "
@@ -3150,19 +3150,19 @@ public static class ClickGateRegistry
         [
             new DomSyncedControl(58, "placeholder=\"Search by display name...\"", "input",
                 "disabled=\"@IsBusy\""),
-            new DomSyncedControl(118, "@bind=\"memberTicketNumber\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(123, "@bind=\"addMemberIdentity\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(165, "@bind=\"addOwnerIdentity\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(243, "@bind=\"formDisplayName\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(250, "@bind=\"formMailNickname\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(264, "@bind=\"formDescription\"", "textarea", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(269, "@bind=\"formVisibility\"", "select", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(277, "@bind=\"formTicketNumber\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(123, "@bind=\"memberTicketNumber\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(128, "@bind=\"addMemberIdentity\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(170, "@bind=\"addOwnerIdentity\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(248, "@bind=\"formDisplayName\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(255, "@bind=\"formMailNickname\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(269, "@bind=\"formDescription\"", "textarea", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(274, "@bind=\"formVisibility\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(282, "@bind=\"formTicketNumber\"", "input", "disabled=\"@IsBusy\""),
         ],
 
         UngatedDomSyncedControls =
         [
-            new UngatedDomSyncedControl(258, "value=\"@editingGroup.Mail\"", "input",
+            new UngatedDomSyncedControl(263, "value=\"@editingGroup.Mail\"", "input",
                 "inert, and the same shape as NamedLocations 153. It is the read-only echo of an "
                 + "existing group's mail address, rendered only in the editingGroup != null branch: "
                 + "no @bind, no @onchange, no handler of any kind, and a static `disabled` with no "
@@ -3211,7 +3211,7 @@ public static class ClickGateRegistry
                 + "search being submitted; HandleSearchKeyDown applies the same emptiness test to "
                 + "the Enter path on the box beside it, registered under KeyboardPaths"),
 
-            new AnnotatedControl(124, "@onclick=\"AddMember\"",
+            new AnnotatedControl(129, "@onclick=\"AddMember\"",
                 [
                     "string.IsNullOrWhiteSpace(addMemberIdentity)",
                     "string.IsNullOrWhiteSpace(memberTicketNumber)",
@@ -3221,14 +3221,14 @@ public static class ClickGateRegistry
                 + "!= null && !showForm. Neither clause is belt and braces: RunMemberOpAsync checks "
                 + "only that a group is selected, and the service takes no ticket at all"),
 
-            new AnnotatedControl(144, "@onclick=\"() => RemoveMember(m)\"",
+            new AnnotatedControl(149, "@onclick=\"() => RemoveMember(m)\"",
                 ["string.IsNullOrWhiteSpace(memberTicketNumber)"],
                 RendersOnlyWhen:
                 "once per member row, inside the member panel, and then only while "
                 + "confirmRemoveMember == m.Id. The clause is the only thing requiring a ticket "
                 + "before a member is removed from an M365 group"),
 
-            new AnnotatedControl(166, "@onclick=\"AddOwner\"",
+            new AnnotatedControl(171, "@onclick=\"AddOwner\"",
                 [
                     "string.IsNullOrWhiteSpace(addOwnerIdentity)",
                     "string.IsNullOrWhiteSpace(memberTicketNumber)",
@@ -3236,13 +3236,13 @@ public static class ClickGateRegistry
                 RendersOnlyWhen:
                 "as AddMember at 124, on the owners half of the same panel"),
 
-            new AnnotatedControl(186, "@onclick=\"() => RemoveOwner(o)\"",
+            new AnnotatedControl(191, "@onclick=\"() => RemoveOwner(o)\"",
                 ["string.IsNullOrWhiteSpace(memberTicketNumber)"],
                 RendersOnlyWhen:
                 "once per owner row, only while confirmRemoveOwner == o.Id. Same sole enforcement "
                 + "as 144, on the half where removing the last row leaves a group nobody owns"),
 
-            new AnnotatedControl(216, "@onclick=\"CancelForm\"",
+            new AnnotatedControl(221, "@onclick=\"CancelForm\"",
                 [],
                 RendersOnlyWhen:
                 "only while showForm - it is the card header's Cancel, and it is registered with no "
@@ -3255,14 +3255,14 @@ public static class ClickGateRegistry
                 + "here, a later reader sweeping the page for exempt Cancels would find this one "
                 + "gated and helpfully 'fix' it"),
 
-            new AnnotatedControl(286, "@onclick=\"() => DeleteGroup(editingGroup)\"",
+            new AnnotatedControl(291, "@onclick=\"() => DeleteGroup(editingGroup)\"",
                 ["string.IsNullOrWhiteSpace(formTicketNumber)"],
                 RendersOnlyWhen:
                 "only while showForm && editingGroup != null && confirmDelete == editingGroup.Id. "
                 + "DeleteGroup does not re-check the ticket, so this clause IS the only enforcement "
                 + "of the ticket requirement on the most destructive action in the module"),
 
-            new AnnotatedControl(295, "@onclick=\"SaveGroup\"",
+            new AnnotatedControl(300, "@onclick=\"SaveGroup\"",
                 [
                     "string.IsNullOrWhiteSpace(formDisplayName)",
                     "string.IsNullOrWhiteSpace(formTicketNumber)",

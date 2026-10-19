@@ -78,6 +78,16 @@
                 }
 
                 <h5 class="mt-3">Calendar</h5>
+                @if (result.CalendarError != null)
+                {
+                    @* A18 review: shown whether or not rows were retained. A partial list with
+                       the warning suppressed is the original defect in a smaller shape. *@
+                    <div class="alert alert-warning">
+                        Calendar delegates could not be read in full, so this section may be incomplete.
+                        <span class="text-muted">@result.CalendarError</span>
+                    </div>
+                }
+
                 @if (result.Calendar.Any())
                 {
                     <table class="table table-sm table-striped">
@@ -90,16 +100,9 @@
                         </tbody>
                     </table>
                 }
-                else if (result.CalendarError != null)
+                else if (result.CalendarError == null)
                 {
-                    @* A18: "none" and "could not read" must not look the same. *@
-                    <div class="alert alert-warning mb-0">
-                        Calendar delegates could not be read, so this section is unknown rather than empty.
-                        <span class="text-muted">@result.CalendarError</span>
-                    </div>
-                }
-                else
-                {
+                    @* Only claim "none" when the read actually succeeded. *@
                     <p class="text-muted">No calendar delegates.</p>
                 }
             }

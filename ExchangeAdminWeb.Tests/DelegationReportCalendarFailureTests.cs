@@ -30,7 +30,7 @@ public sealed class DelegationReportCalendarFailureTests : IDisposable
         try { Directory.Delete(_directory, recursive: true); } catch { /* best effort */ }
     }
 
-    private DelegationReportService Service(bool calendarFails)
+    private DelegationReportService Service(bool calendarFails, bool malformedRow = false)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -59,6 +59,7 @@ public sealed class DelegationReportCalendarFailureTests : IDisposable
             {
                 var state = InitialSessionState.CreateDefault2();
                 state.Variables.Add(new SessionStateVariableEntry("CalendarFails", calendarFails, null));
+                state.Variables.Add(new SessionStateVariableEntry("MalformedRow", malformedRow, null));
                 state.Commands.Add(new SessionStateFunctionEntry("Disconnect-ExchangeOnline",
                     "[CmdletBinding()] param([string] $ConnectionId, [switch] $Confirm)"));
                 state.Commands.Add(new SessionStateFunctionEntry("Get-MailboxPermission", """
@@ -77,6 +78,7 @@ public sealed class DelegationReportCalendarFailureTests : IDisposable
                 state.Commands.Add(new SessionStateFunctionEntry("Get-MailboxFolderPermission", """
                     [CmdletBinding()] param([string] $Identity)
                     if ($CalendarFails) { throw 'The operation could not be completed: calendar unavailable' }
+                    if ($MalformedRow) { [pscustomobject]@{ User = $null; AccessRights = $null } }
                     [pscustomobject]@{ User = 'delegate@contoso.com'; AccessRights = 'Editor' }
                     """));
 
@@ -112,6 +114,19 @@ public sealed class DelegationReportCalendarFailureTests : IDisposable
         // The rest of the report is still valid and must not be failed wholesale.
         Assert.Null(result.Error);
         Assert.NotEmpty(result.FullAccess);
+    }
+
+    [Fact]
+    public async Task ASkippedMalformedRow_StillMarksTheSectionIncomplete()
+    {
+        // Review of A18. A row missing User or AccessRights was dropped in silence, so the
+        // list could be short while CalendarError stayed null - the same lie, one row at a
+        // time. The surviving row must still be reported.
+        var result = await Service(calendarFails: false, malformedRow: true)
+            .GetMailboxDelegationAsync("user@contoso.com");
+
+        Assert.Contains(result.Calendar, entry => entry.User == "delegate@contoso.com");
+        Assert.NotNull(result.CalendarError);
     }
 
     [Fact]

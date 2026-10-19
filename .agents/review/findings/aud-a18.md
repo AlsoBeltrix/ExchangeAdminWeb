@@ -95,3 +95,21 @@ Gate: Release 0 errors; suite 4340 passed / 3 known AD skips / 0 failed; format 
 ## Closeout
 
 Fixed directly on `master`. Independent review pending.
+
+## Independent review, 2026-10-19 (codex-commercial / gpt-6-astra / max) - CHANGES REQUIRED
+
+The command-failure path was accepted. The claim that **every** incomplete calendar section is
+now identified was too strong, in two ways, both fixed.
+
+- **A malformed row was dropped in silence.** A permission row missing `User` or
+  `AccessRights` was skipped with no record, so the list could be short while `CalendarError`
+  stayed null - this finding's own defect, one row at a time. Such a row now sets
+  `CalendarError` and is logged.
+- **The page checked `Calendar.Any()` first**, so if rows had been collected before a failure
+  the warning was never rendered and a partial table was presented as normal. The warning is
+  now shown whenever `CalendarError` is set, above the table, and "No calendar delegates" is
+  only claimed when the read actually succeeded.
+
+Guard: `ASkippedMalformedRow_StillMarksTheSectionIncomplete` - the good row is still returned
+AND the section is marked incomplete. Removing the `CalendarError` assignment fails it and
+only it.

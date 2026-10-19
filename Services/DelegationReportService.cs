@@ -60,8 +60,20 @@ public class DelegationReportService : ExchangeServiceBase
                     {
                         var user = perm.Properties["User"]?.Value?.ToString();
                         var rights = perm.Properties["AccessRights"]?.Value?.ToString();
-                        if (user != null && rights != null
-                            && !user.Equals("Default", StringComparison.OrdinalIgnoreCase)
+
+                        // Review of A18. A row missing either field used to be dropped in
+                        // silence, so the section could be short while CalendarError stayed
+                        // null - the same lie this finding is about, one row at a time.
+                        if (user == null || rights == null)
+                        {
+                            result.CalendarError ??=
+                                "At least one calendar permission could not be read and is missing from this list.";
+                            _logger.LogWarning(
+                                "Calendar permission row for {Email} had no User or AccessRights and was skipped", emailAddress);
+                            continue;
+                        }
+
+                        if (!user.Equals("Default", StringComparison.OrdinalIgnoreCase)
                             && !user.Equals("Anonymous", StringComparison.OrdinalIgnoreCase))
                         {
                             result.Calendar.Add(new CalendarDelegationEntry { User = user, AccessRights = rights });
