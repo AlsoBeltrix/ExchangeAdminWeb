@@ -300,6 +300,43 @@ public class PermissionValidatorTests
     }
 
     [Fact]
+    public async Task AConfiguredSecondaryAddress_StillProtects_AfterResolution()
+    {
+        // Regression caught reviewing aud-a2, and the mirror image of the bug that slice
+        // fixed. The protected entry is itself a SECONDARY address: it resolves to a mailbox
+        // whose UPN and primary SMTP are both different, and MatchesIdentity compares only the
+        // resolved fields. Always resolving therefore DISCARDED the configured address and the
+        // operation passed. Resolution must add the hidden identity, not remove the typed one.
+        var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
+        pp.ResolveTo = new ResolvedDirectoryPrincipal(
+            "Test", "VIP", "someone.else@contoso.com", "vip", "primary@contoso.com",
+            "CN=vip,DC=contoso,DC=com", "guid", null);
+
+        var result = await validator.ValidateTargetMailboxAsync(
+            "vip@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.NotNull(result.Error);
+        Assert.Contains("protected", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AddressOnlyConfig_AllowsAnUnprotectedTarget()
+    {
+        // Review showed the three aud-a2 tests would all pass against an implementation that
+        // called the resolver and then always denied. This is the case that forbids that: an
+        // ordinary unprotected mailbox, address-only rules, directory answering normally.
+        var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
+        pp.ResolveTo = new ResolvedDirectoryPrincipal(
+            "Test", "Nobody", "nobody@contoso.com", "nobody", "nobody@contoso.com",
+            "CN=nobody,DC=contoso,DC=com", "guid", null);
+
+        var result = await validator.ValidateTargetMailboxAsync(
+            "nobody@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.Null(result.Error);
+    }
+
+    [Fact]
     public async Task AddressOnlyConfig_DeniesWhenTheDirectoryCannotAnswer()
     {
         // The deliberate cost of always resolving: an address-only configuration used to work

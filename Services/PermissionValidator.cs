@@ -245,6 +245,50 @@ public class PermissionValidator
                 _logger.LogWarning("Attempted operation on protected principal: {Target} (rules: {Rules})", targetMailbox, string.Join(", ", result.MatchedRules));
                 return TargetValidation.Deny($"Access denied: {targetMailbox} is protected and cannot be modified through this interface.");
             }
+
+            // Regression caught reviewing aud-a2, and it is the mirror image of the bug that
+            // slice fixed. MatchesIdentity compares a configured value against the RESOLVED
+            // principal's six fields - UPN, primary SMTP, sAMAccountName, DN, objectGUID,
+            // Entra id - and a mailbox's SECONDARY addresses are not among them. Before always
+            // resolving, a protected entry that was itself a secondary alias matched because
+            // the principal was built from the typed string. After, it matches nothing.
+            //
+            // So the typed identity stays a candidate. Resolution ADDS the identity the
+            // operator may be hiding behind; it must not REMOVE the one they typed. Only runs
+            // when the resolved check came back clean, so the common path still costs one
+            // check, and only when the typed value is not already one of the resolved fields.
+            if (!TypedValueIsRedundant(targetMailbox, principal))
+            {
+                var literal = new ResolvedDirectoryPrincipal(
+                    Source: "PermissionValidator:typed",
+                    DisplayName: targetMailbox,
+                    UserPrincipalName: targetMailbox,
+                    SamAccountName: null,
+                    PrimarySmtpAddress: targetMailbox.Contains('@') ? targetMailbox : null,
+                    DistinguishedName: null,
+                    ObjectGuid: null,
+                    EntraObjectId: null);
+
+                var typedResult = await _protectedPrincipalService.CheckAsync(literal);
+                if (typedResult.CheckFailed)
+                {
+                    _logger.LogWarning(
+                        "Blocking operation on {Target} - protected-principal check failed for the typed identity: {Reason}",
+                        targetMailbox, typedResult.Reason);
+                    return TargetValidation.Deny($"Access denied: {typedResult.Reason}");
+                }
+                if (typedResult.IsProtected)
+                {
+                    var typedNote = ServicerNote(actingUser, moduleId, typedResult.MatchedRules);
+                    if (typedNote is not null)
+                        return TargetValidation.Serviced(typedNote);
+
+                    _logger.LogWarning(
+                        "Attempted operation on protected principal by the address typed: {Target} (rules: {Rules})",
+                        targetMailbox, string.Join(", ", typedResult.MatchedRules));
+                    return TargetValidation.Deny($"Access denied: {targetMailbox} is protected and cannot be modified through this interface.");
+                }
+            }
         }
 
         await EnsureInitializedAsync();
@@ -270,6 +314,33 @@ public class PermissionValidator
         }
 
         return TargetValidation.Ok;
+    }
+
+    /// <summary>
+    /// True when the operator's typed value is already one of the resolved principal's
+    /// identifiers, so checking it a second time would ask the same question twice.
+    /// </summary>
+    private static bool TypedValueIsRedundant(string typed, ResolvedDirectoryPrincipal principal)
+    {
+        if (string.IsNullOrWhiteSpace(typed))
+            return true;
+
+        foreach (var candidate in new[]
+                 {
+                     principal.UserPrincipalName,
+                     principal.PrimarySmtpAddress,
+                     principal.SamAccountName,
+                     principal.DistinguishedName,
+                     principal.ObjectGuid,
+                     principal.EntraObjectId
+                 })
+        {
+            if (!string.IsNullOrEmpty(candidate) &&
+                string.Equals(typed, candidate, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
