@@ -70,6 +70,12 @@ public class DelegationReportService : ExchangeServiceBase
                 }
                 catch (Exception ex)
                 {
+                    // Audit finding A18. This catch is deliberate - a mailbox with no calendar
+                    // folder must not fail the whole report - but it used to swallow the reason
+                    // entirely, leaving an empty list that renders as "No calendar delegates"
+                    // and an audit row that says the report succeeded. An operator reading
+                    // "none" cannot tell it from "we could not look".
+                    result.CalendarError = ex.Message.Split(Environment.NewLine)[0];
                     _logger.LogWarning(ex, "Could not retrieve calendar permissions for {Email}", emailAddress);
                 }
             }

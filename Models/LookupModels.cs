@@ -6,6 +6,21 @@ public class DelegationReportResult
     public List<DelegationEntry> FullAccess { get; set; } = new();
     public List<DelegationEntry> SendAs { get; set; } = new();
     public List<CalendarDelegationEntry> Calendar { get; set; } = new();
+
+    /// <summary>
+    /// Why the calendar section could not be read, when it could not be.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A18. The calendar read has its own catch because a mailbox can legitimately
+    /// have no calendar folder, and failing the whole report for that would be wrong. But
+    /// swallowing it left <see cref="Calendar"/> empty and <see cref="Error"/> null, so a failed
+    /// read rendered as "No calendar delegates" and the audit recorded a success.
+    ///
+    /// Separate from <see cref="Error"/> on purpose: the rest of the report is still valid and
+    /// still worth showing. This says one section of it is unknown, not that the report failed.
+    /// </remarks>
+    public string? CalendarError { get; set; }
+
     public string? Error { get; set; }
 }
 

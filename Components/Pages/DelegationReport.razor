@@ -90,6 +90,14 @@
                         </tbody>
                     </table>
                 }
+                else if (result.CalendarError != null)
+                {
+                    @* A18: "none" and "could not read" must not look the same. *@
+                    <div class="alert alert-warning mb-0">
+                        Calendar delegates could not be read, so this section is unknown rather than empty.
+                        <span class="text-muted">@result.CalendarError</span>
+                    </div>
+                }
                 else
                 {
                     <p class="text-muted">No calendar delegates.</p>
@@ -145,8 +153,13 @@
         try
         {
             result = await DelegationService.GetMailboxDelegationAsync(emailAddress.Trim());
-            activity.Complete(result.Error == null, result.Error);
-            Audit.LogLookupAction(currentUser, clientIpAddress, "DelegationReport", emailAddress.Trim(), result.Error == null, result.Error);
+
+            // A18: a report missing a section it could not read is not a successful report.
+            // It used to audit as a clean success, so a read that silently returned nothing
+            // looked identical to a mailbox that genuinely has no delegates.
+            var problem = result.Error ?? result.CalendarError;
+            activity.Complete(problem == null, problem);
+            Audit.LogLookupAction(currentUser, clientIpAddress, "DelegationReport", emailAddress.Trim(), problem == null, problem);
         }
         catch (Exception ex)
         {
