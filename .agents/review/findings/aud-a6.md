@@ -139,3 +139,71 @@ Independent review of the fix pending.
 ## Closeout
 
 Fixed directly on `master`. Not pushed.
+
+## Independent review, 2026-10-19 (codex-commercial / gpt-6-astra / max) - CHANGES REQUIRED
+
+The reviewer agreed the original window is closed - "the second cannot pass the identity
+comparison before the first retires the generation, because both happen under
+`_connectedLock`" - and then showed the fix was **incomplete**, because the borrow path still
+read the config and the generation as two separate operations.
+
+Their schedule, verified against the code before accepting it:
+
+| Step | State |
+| --- | --- |
+| Borrower A reads organization A, completes the config comparison, pauses before reading the generation | marker A, generation 0 |
+| Config changes to B. Borrower B publishes B, retires to generation 1, drains, borrows a B connection | marker B, generation 1 |
+| A resumes, reads generation **1**, and connects using **A** | A's runspace stamped 1 |
+| A returns it. `Return` compares 1 to 1 and pools it | a contoso runspace in a fabrikam pool |
+| Any later B borrower matches marker B and generation 1 | **it is handed A's connection** |
+
+That is persistent contamination of the pool, not one operation finishing late, and it was
+not newly introduced by the first fix - it survived it.
+
+**Repair.** `DrainIfConnectionConfigChanged` now returns `(drained, generation)`, read under the
+same lock that compares the config, and `BorrowAsync` uses that value instead of reading the
+counter again. The invariant this buys: a runspace stamped generation G was connected under the
+config that was current at generation G, so a borrower holding the pair (config C, generation G)
+can only ever accept runspaces built for C.
+
+`DrainPool`, the in-process path, had the mirror-image gap - it retired first and published
+afterwards, so a borrow holding an older snapshot could pick up the new generation and stamp a
+previous-organization connection with it. Both halves are now inside the one lock there too, and
+`DrainPoolCore` is gone: each caller states its own order explicitly.
+
+New guards:
+
+| Test | What it pins |
+| --- | --- |
+| `AConnectionMadeForOneOrganization_IsNeverPooledForAnother` | the end-to-end outcome: a switch during connect leaves the contoso runspace unpoolable and the fabrikam borrower unaffected |
+| `BorrowAsync_TakesTheGenerationFromTheConfigComparison_AndNeverRereadsIt` | the pairing itself |
+| `DrainIfConnectionConfigChanged_FirstCallRecordsWithoutDraining` (extended) | the returned generation, not just the drained flag |
+
+**The second of those is a source scan, and that is a real limit, not a shortcut.** The defect
+needs a borrow paused between comparing the config and reading the generation; once those are a
+single call there is no seam in that gap to pause at, so nothing executable can tell "uses the
+generation it was handed" from "re-reads it".
+
+Mutation: restoring the separate `Interlocked.Read` in `BorrowAsync` fails that guard and
+nothing else - which is exactly the honest result, and the reason the limit is stated rather
+than implied. Source restored byte-identical (md5 `e3e7212acb24349e748cdb2296a5a2cc`), touched,
+rebuilt.
+
+The reviewer also found the first test's blocking wait could expire silently after 30 seconds,
+letting the buggy ordering escape the intended schedule and pass. The wait's result is now
+asserted.
+
+Gate: Release 0 errors; 4301 passed / 3 known AD skips / 0 failed; format and
+`git diff --check` clean. Base app version 2.27.8 -> 2.27.9.
+
+## Still open after this repair
+
+**`Disconnect-ExchangeOnline` is not per-runspace.** The reviewer inspected the installed
+ExchangeOnlineManagement 3.9.2 and 3.10.1 modules - metadata and IL, not documentation - and
+reports that the default disconnect path calls `ConnectionContextFactory.RemoveAllConnectionContexts`
+against a **static** `connectionContextMap`. If that is right, `DestroyRunspace` tearing down one
+retired connection also tears down every other borrower's live connection, and the pool's whole
+premise of N concurrent EXO connections in one process is unsound.
+
+This predates every A6 change and is well outside the audit plan's scope. Recorded as `aud-a6b`
+for the owner, not fixed here. It is unverified by me and unverified against a live tenant.

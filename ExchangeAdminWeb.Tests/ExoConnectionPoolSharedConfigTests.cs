@@ -229,14 +229,17 @@ public class ExoConnectionPoolSharedConfigTests : IDisposable
     {
         using var reachedWindow = new SemaphoreSlim(0, 1);
         using var secondFinished = new SemaphoreSlim(0, 1);
+        var heldTheWindow = false;
 
         var logger = new CallbackLogger(message =>
         {
             if (!message.Contains("connection config changed", StringComparison.Ordinal)) return;
             reachedWindow.Release();
             // Hold the draining borrow here, between publishing the identity and destroying the
-            // pooled runspaces, for as long as the second borrow needs.
-            secondFinished.Wait(TimeSpan.FromSeconds(30));
+            // pooled runspaces, for as long as the second borrow needs. The result is asserted
+            // below: review of aud-a6 noted that letting this time out silently would let the
+            // buggy ordering escape the schedule and pass.
+            heldTheWindow = secondFinished.Wait(TimeSpan.FromSeconds(30));
         });
 
         using var pool = NewPool(logger: logger);
@@ -266,6 +269,9 @@ public class ExoConnectionPoolSharedConfigTests : IDisposable
 
         var drainersRunspace = await drainer;
 
+        Assert.True(heldTheWindow,
+            "The draining borrow's wait timed out, so the second borrow did not actually run inside the window - this result proves nothing.");
+
         // The defect: `second` was `first`, still connected to contoso.
         Assert.NotSame(first, second);
         Assert.Equal(1, second.ConfigGeneration);
@@ -275,15 +281,78 @@ public class ExoConnectionPoolSharedConfigTests : IDisposable
         pool.Return(drainersRunspace);
     }
 
+    // Review of aud-a6, the second half. Pairing the config with the generation is only worth
+    // anything if the end result holds: a runspace connected to one organization must never
+    // become reusable by a borrower of another. Here the switch happens while the first connect
+    // is still running, which is the widest version of that window.
+    [Fact]
+    public async Task AConnectionMadeForOneOrganization_IsNeverPooledForAnother()
+    {
+        var switched = false;
+        using var pool = NewPool(duringConnect: p =>
+        {
+            if (switched) return;
+            switched = true;
+
+            // The other instance repoints the tenant, and another borrow notices it and retires
+            // the generation - all while the first connect is still in flight.
+            ForeignWrite(ExoConnectionPool.ConfigModuleKey,
+                Connection(AppId2, "fabrikam.onmicrosoft.com", "CN=EXO-Automation"));
+            var other = p.BorrowAsync(CancellationToken.None).GetAwaiter().GetResult();
+            p.Return(other);
+        });
+
+        var contosoRunspace = await pool.BorrowAsync(TestContext.Current.CancellationToken);
+        pool.Return(contosoRunspace);
+
+        // Only the fabrikam runspace is poolable; the contoso one was destroyed on return.
+        Assert.Equal(1, pool.AvailableCount);
+        Assert.Equal(1, pool.ConfigGeneration);
+
+        var next = await pool.BorrowAsync(TestContext.Current.CancellationToken);
+        Assert.NotSame(contosoRunspace, next);
+        Assert.Equal("fabrikam.onmicrosoft.com", _connectedWith[1].Organization);
+        pool.Return(next);
+    }
+
+    /// <summary>
+    /// Review of aud-a6. This one IS a source scan, and deliberately so: the defect needs a
+    /// borrow paused between comparing the config and reading the generation, and once those are
+    /// a single call there is no seam left in that gap to pause at. Nothing executable can
+    /// distinguish "uses the generation it was handed" from "re-reads it" without one.
+    ///
+    /// So the property is pinned where it lives - BorrowAsync must take the generation from the
+    /// call that compared the config, and must not read it again. Return legitimately does read
+    /// the live generation and is not in scope here.
+    /// </summary>
+    [Fact]
+    public void BorrowAsync_TakesTheGenerationFromTheConfigComparison_AndNeverRereadsIt()
+    {
+        var text = File.ReadAllText(
+            AuditCategoryFilingTests.FindRepoFile("Services", "ExoConnectionPool.cs"));
+
+        var start = text.IndexOf("public async Task<PooledRunspace> BorrowAsync", StringComparison.Ordinal);
+        Assert.True(start >= 0, "BorrowAsync not found - this tripwire is stale.");
+        var end = text.IndexOf("\n    public void Return(", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound BorrowAsync - this tripwire is stale.");
+
+        var code = ProgressScan.CodeView(text[start..end]);
+
+        Assert.Contains("= DrainIfConnectionConfigChanged(current);", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("Interlocked.Read(ref _configGeneration)", code, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task DrainIfConnectionConfigChanged_FirstCallRecordsWithoutDraining()
     {
         using var pool = NewPool();
 
-        Assert.False(pool.DrainIfConnectionConfigChanged(new ExoConnectionConfig(AppId1, "contoso.onmicrosoft.com", "CN=EXO-Automation")));
-        Assert.False(pool.DrainIfConnectionConfigChanged(new ExoConnectionConfig(AppId1, "contoso.onmicrosoft.com", "CN=EXO-Automation")));
-        Assert.True(pool.DrainIfConnectionConfigChanged(new ExoConnectionConfig(AppId1, "contoso.onmicrosoft.com", "CN=Other")));
-        Assert.False(pool.DrainIfConnectionConfigChanged(new ExoConnectionConfig(AppId1, "contoso.onmicrosoft.com", "CN=Other")));
+        Assert.Equal((false, 0L), pool.DrainIfConnectionConfigChanged(new ExoConnectionConfig(AppId1, "contoso.onmicrosoft.com", "CN=EXO-Automation")));
+        Assert.Equal((false, 0L), pool.DrainIfConnectionConfigChanged(new ExoConnectionConfig(AppId1, "contoso.onmicrosoft.com", "CN=EXO-Automation")));
+        // The generation comes back from the same call that compared the config, so a caller can
+        // never pair one organization's identity with another's generation (aud-a6 review).
+        Assert.Equal((true, 1L), pool.DrainIfConnectionConfigChanged(new ExoConnectionConfig(AppId1, "contoso.onmicrosoft.com", "CN=Other")));
+        Assert.Equal((false, 1L), pool.DrainIfConnectionConfigChanged(new ExoConnectionConfig(AppId1, "contoso.onmicrosoft.com", "CN=Other")));
         Assert.Equal(1, pool.ConfigGeneration);
         await Task.CompletedTask;
     }

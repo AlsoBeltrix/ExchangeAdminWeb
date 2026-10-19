@@ -172,11 +172,17 @@ public sealed class ExoConnectionPool : IDisposable
         {
             // scdi-1: a save on the other instance never reaches this process's DrainPool, so
             // the pool retires its own runspaces when the connection config it just read
-            // differs from the one they connected under. Runs BEFORE the generation is read,
-            // so the drain below makes every pooled runspace fail the generation test.
-            DrainIfConnectionConfigChanged(current);
-
-            var currentGen = Interlocked.Read(ref _configGeneration);
+            // differs from the one they connected under.
+            //
+            // The generation comes back from that same call, read under the same lock, and is
+            // never re-read here. Review of aud-a6 found that reading it separately let the two
+            // drift apart: this borrow could compare configs, pause, watch another borrow retire
+            // the generation for a DIFFERENT organization, and then stamp its own connection
+            // with that newer generation. The connection would be for the organization THIS
+            // borrow read, but it would pass the staleness test of the newer one, be returned to
+            // the pool and handed to a borrower of the other organization. That is persistent
+            // contamination, not one operation finishing late.
+            var (_, currentGen) = DrainIfConnectionConfigChanged(current);
             if (_available.TryTake(out var pooled))
             {
                 if (pooled.ConfigGeneration == currentGen && DateTime.UtcNow - pooled.LastUsed < _idleTimeout)
@@ -355,15 +361,22 @@ public sealed class ExoConnectionPool : IDisposable
     /// </summary>
     public void DrainPool()
     {
-        DrainPoolCore();
-
         // The caller saved first, so what the store holds now is what the next runspace will
-        // connect under; recording it keeps the next borrow from draining a second time.
+        // connect under; recording it keeps the next borrow from draining a second time. Read
+        // before the lock so the store is not touched while holding it.
         var now = GetExoConfig();
+
+        // Retiring and publishing are one transition here too. Review of aud-a6: this path used
+        // to retire first and publish afterwards, which left its own window - a borrow holding
+        // an older config snapshot could pick up the already-incremented generation and stamp a
+        // connection to the previous organization with it.
         lock (_connectedLock)
         {
+            RetireGeneration();
             _connectedUnder = now;
         }
+
+        DestroyPooled();
     }
 
     /// <summary>
@@ -374,15 +387,16 @@ public sealed class ExoConnectionPool : IDisposable
     /// returned to the pool. A write to any OTHER module's config leaves these values equal and
     /// drains nothing. Returns true when it drained.
     /// </summary>
-    internal bool DrainIfConnectionConfigChanged(ExoConnectionConfig current)
+    internal (bool drained, long generation) DrainIfConnectionConfigChanged(ExoConnectionConfig current)
     {
         ExoConnectionConfig previous;
+        long generation;
         lock (_connectedLock)
         {
             if (_connectedUnder is null || _connectedUnder.Value == current)
             {
                 _connectedUnder = current;
-                return false;
+                return (false, Interlocked.Read(ref _configGeneration));
             }
 
             previous = _connectedUnder.Value;
@@ -399,7 +413,7 @@ public sealed class ExoConnectionPool : IDisposable
             // increment happens here, under the same lock. Destroying the runspaces does not -
             // that is slow and does not need to be atomic, because the generation bump has
             // already made every one of them fail the borrow test.
-            RetireGeneration();
+            generation = RetireGeneration();
         }
 
         _logger.LogInformation(
@@ -408,13 +422,7 @@ public sealed class ExoConnectionPool : IDisposable
         _operationTrace.Step("ExoPoolSharedConfigChanged", backend: "ExchangeOnline",
             details: new Dictionary<string, object?> { ["previousOrganization"] = previous.Organization, ["organization"] = current.Organization });
         DestroyPooled();
-        return true;
-    }
-
-    private void DrainPoolCore()
-    {
-        RetireGeneration();
-        DestroyPooled();
+        return (true, generation);
     }
 
     /// <summary>
@@ -423,7 +431,7 @@ public sealed class ExoConnectionPool : IDisposable
     /// <see cref="ConfigGeneration"/>, so this is the half that has to be atomic with
     /// publishing a new connection identity.
     /// </summary>
-    private void RetireGeneration() => Interlocked.Increment(ref _configGeneration);
+    private long RetireGeneration() => Interlocked.Increment(ref _configGeneration);
 
     private void DestroyPooled()
     {
