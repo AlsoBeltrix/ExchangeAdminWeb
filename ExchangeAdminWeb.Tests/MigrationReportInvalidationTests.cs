@@ -39,22 +39,55 @@ public class MigrationReportInvalidationTests
         // still be green and the bug would be back. Null or empty is refused here instead.
         var code = PageCode();
 
-        var calls = System.Text.RegularExpressions.Regex.Matches(
-            code, @"InvalidateStoredReports\(([^)]*)\)");
+        // Review of A31, finding 4. The earlier version skipped any match whose argument text
+        // began with a type, calling it "the declaration" - so an unused local function,
+        // void InvalidateStoredReports(string? ignored) { }, satisfied every check while the
+        // real call was gone. A declaration is now identified by its return type immediately
+        // before the name, and anything else must be a call with a usable argument.
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            code, @"(?<lead>\b\w[\w<>?,\s]*\s)?InvalidateStoredReports\((?<arg>[^)]*)\)");
 
-        // One declaration plus its call sites; the declaration is matched too and skipped below.
-        Assert.True(calls.Count >= 8, $"Expected the declaration and its call sites; found {calls.Count}.");
+        var declarations = 0;
+        var callSites = 0;
 
-        foreach (System.Text.RegularExpressions.Match call in calls)
+        foreach (System.Text.RegularExpressions.Match match in matches)
         {
-            var arg = call.Groups[1].Value.Trim();
-            if (arg.StartsWith("string?", StringComparison.Ordinal))
-                continue;   // the declaration
+            var arg = match.Groups["arg"].Value.Trim();
+            var lead = match.Groups["lead"].Value.Trim();
 
+            // A return type before the name means this is a declaration, not a call.
+            if (lead is "void" or "Task" or "async Task" or "private void")
+            {
+                declarations++;
+                Assert.Equal("string? batchName", arg);
+                continue;
+            }
+
+            callSites++;
             Assert.False(arg.Length == 0,
                 "An invalidation with no batch sweeps nothing and leaves stale reports served.");
             Assert.False(arg is "null" or "\"\"",
                 "An invalidation naming no batch sweeps nothing and leaves stale reports served.");
         }
+
+        Assert.Equal(1, declarations);
+        Assert.True(callSites >= 7,
+            $"Expected at least seven invalidation call sites; found {callSites}. A deleted call "
+            + "means a path that no longer discards the reports its reload invalidates.");
+    }
+
+    [Fact]
+    public void EveryAcceptedBatchInABulkActionHasItsReportsDiscarded()
+    {
+        // Review of A31, finding 1. Leaving this to the reload that follows was a regression:
+        // when the accepted batch was the only selected one, the open batch became null and the
+        // invalidation swept nothing, so another operator could still reopen the previous
+        // migration's report. The accepted names are known here, so they are used here.
+        var code = PageCode();
+
+        var deselect = code.IndexOf("selectedBatches.Remove(name);", StringComparison.Ordinal);
+        Assert.True(deselect > 0, "The accepted-batch deselect loop is gone - this guard is stale.");
+
+        Assert.Contains("ReportStore.DeleteForBatch(name);", code[deselect..], StringComparison.Ordinal);
     }
 }

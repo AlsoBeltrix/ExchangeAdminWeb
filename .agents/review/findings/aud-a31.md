@@ -162,3 +162,77 @@ Gate: Release 0 errors; suite 4316 passed / 3 known AD skips / 0 failed; format 
 ## Closeout
 
 Fixed on `master`, pushed. Independent review pending.
+
+## Independent review, 2026-10-19 (codex-commercial / gpt-6-astra / max) - CHANGES REQUIRED
+
+Three product defects and a weakened guard. All four correct, all four repaired.
+
+### 1. Removing the only selected batch invalidated nothing - FIXED
+
+A successful bulk action deselects every accepted batch and then reloads. If the accepted
+batch was the **only** selected one, `AdoptSelectionAsOpenBatch` set `expandedBatch` to null,
+which the helper turned into `""`, which the store refuses - so nothing was swept and another
+circuit could still reopen the previous migration's report.
+
+**A regression this fix introduced.** The old blanket `DeleteAll()` happened to cover it.
+
+Repaired at the source of truth rather than downstream: the accepted batch names are known in
+the bulk-action handler, so each is discarded there, by name, immediately after it is
+deselected.
+
+### 2. ExecuteUserAction could invalidate a different batch than it acted on - FIXED
+
+`expandedBatch` was read for invalidation **after** authorization, the action and the
+notification had all awaited. A URL navigation or selection change in that window moves it, so
+an action on A could finish by discarding B's reports and leaving A's stale.
+
+**This is the aud-a7 class again, inside the fix for a different finding.** The null check
+proved only that some batch was open, not that it was still this one. The batch is now
+captured before any await and used for both the invalidation and the reload.
+
+### 3. DeleteForBatch did not normalise the way the file key does - FIXED
+
+`FileNameFor` trims and lowercases, so a report written under `" Wave1 "` is readable as
+`"Wave1"` - but `Write` stores the original string, and the comparison was untrimmed, so
+`DeleteForBatch("Wave1")` left it behind and `TryRead` kept serving it until expiry. R24b
+through the back door. Both sides are trimmed now.
+
+### 4. The revised R24b guards accepted a declaration where a call was required - FIXED
+
+The reviewer demonstrated the bypass rather than asserting it: replacing the call in
+`ReplaceBatchUsers` with an unused local function
+
+```csharp
+void InvalidateStoredReports(string? ignored) { }
+```
+
+satisfied the relaxed prefix scan, and the argument scan then skipped it as "the declaration".
+The original `InvalidateStoredReports();` predicate would have rejected it. **So in loosening
+the guards to accept an argument I loosened them to accept a page with the call deleted.**
+
+A declaration is now identified by a return type immediately before the name, its parameter
+list is pinned exactly, and there must be exactly one of them and at least seven call sites.
+
+Note the original `MigrationStatusPageTests` guards are still satisfied by that local function;
+the new guard is what rejects it. Those were not re-tightened - recorded rather than hidden.
+
+## Repair guard proof
+
+| Mutation | Result |
+| --- | --- |
+| drop the `Trim()` from `DeleteForBatch` | FAIL - `DeleteForBatch_MatchesAReportWrittenUnderAPaddedName` |
+| delete the per-accepted-batch discard loop | FAIL - `EveryAcceptedBatchInABulkActionHasItsReportsDiscarded` |
+| replace the `ReplaceBatchUsers` call with the reviewer's local function | FAIL - `EveryInvalidationNamesTheBatchItIsInvalidating` |
+
+Three mutations, one failing test each, in a single build. Both files restored byte-identical
+(md5 verified), touched, rebuilt.
+
+Two existing guards pinned `if (result.Success && expandedBatch != null)` and
+`await LoadMailboxesFor(expandedBatch);` and were repointed at the captured local.
+
+`ClickGateRegistry`'s `ExpectedLineCount` for this page went 4382 -> 4401. The four
+line-anchored `ExemptControl` entries are all at or below line 1540 and the additions are
+below 3368, so none moved - checked, not assumed.
+
+Gate: suite 4318 passed / 3 known AD skips / 0 failed; format and `git diff --check` clean.
+Migration 1.23.1 -> 1.23.2.

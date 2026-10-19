@@ -527,4 +527,22 @@ public class MigrationReportStoreTests
         }
         finally { try { Directory.Delete(root, true); } catch { /* best effort */ } }
     }
+
+    [Fact]
+    public void DeleteForBatch_MatchesAReportWrittenUnderAPaddedName()
+    {
+        // Review of A31, finding 3. The file key trims, so " Wave1 " is readable as "Wave1" -
+        // but Write stores the ORIGINAL string, so an untrimmed comparison left the report
+        // behind and TryRead kept serving it until it expired. R24b through the back door.
+        var (store, root) = TempStore();
+        try
+        {
+            var now = DateTime.UtcNow;
+            store.Write(" Wave1 ", "a@x.com", "report A", now);
+
+            Assert.Equal(1, store.DeleteForBatch("Wave1"));
+            Assert.Null(store.TryRead("Wave1", "a@x.com", now));
+        }
+        finally { try { Directory.Delete(root, true); } catch { /* best effort */ } }
+    }
 }

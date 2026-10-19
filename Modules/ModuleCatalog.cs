@@ -402,7 +402,7 @@ public sealed class ModuleCatalog
             // is open can never widen what it removes - the count in the label is a bound, which
             // is what makes this different from the standalone sweep the owner removed on
             // 2026-08-10 (docs/MigrationRemoveCompleted-Plan.md).
-            Version = "1.23.1",
+            Version = "1.23.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

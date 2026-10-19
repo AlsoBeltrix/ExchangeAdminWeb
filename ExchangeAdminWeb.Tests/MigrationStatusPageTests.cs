@@ -1861,9 +1861,9 @@ public class MigrationStatusPageTests
         // panel is describing the state that action just changed.
         var body = GetMethodBody("ExecuteUserAction");
 
-        var reload = ExtractBlock(body, "if (result.Success && expandedBatch != null)");
+        var reload = ExtractBlock(body, "if (result.Success && actionBatch != null)");
         Assert.Contains("InvalidateStoredReports(", reload, StringComparison.Ordinal);
-        Assert.Contains("await LoadMailboxesFor(expandedBatch);", reload, StringComparison.Ordinal);
+        Assert.Contains("await LoadMailboxesFor(actionBatch);", reload, StringComparison.Ordinal);
     }
 
     [Fact]

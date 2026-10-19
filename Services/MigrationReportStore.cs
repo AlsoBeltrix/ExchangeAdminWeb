@@ -238,8 +238,15 @@ public sealed class MigrationReportStore
             return 0;
         }
 
+        // Normalised the same way the file key is (FileNameFor trims and lowercases), because
+        // Write stores the ORIGINAL string. Review of A31 found the mismatch: a report written
+        // under " Wave1 " is readable as "Wave1" - the key trims - but an untrimmed comparison
+        // here would leave it behind, and TryRead would keep serving it until it expired. That
+        // is R24b restored through the back door.
+        var wanted = batchName.Trim();
+
         return SweepInternal(report =>
-            string.Equals(report.BatchName, batchName, StringComparison.OrdinalIgnoreCase));
+            string.Equals(report.BatchName?.Trim(), wanted, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

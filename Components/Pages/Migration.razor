@@ -3367,6 +3367,14 @@
         actionInProgress = target;
         batchActionResult = null;
 
+        // Review of A31: the batch this action belongs to, captured before any await. Reading
+        // expandedBatch after them was wrong the same way aud-a7 was. Authorization, the action
+        // and the notification all await, and a URL navigation or selection change in that
+        // window moves expandedBatch - so an action started on A could finish by discarding B's
+        // reports and leaving A's stale ones in place. A null check only proves some batch is
+        // open, not that it is still this one.
+        var actionBatch = expandedBatch;
+
         using var activity = Progress.Begin(
             "Exchange Migration", $"{auditAction} on {target}", ActivitySize.Unknown);
 
@@ -3404,10 +3412,10 @@
                 Logger.LogWarning(ex, "Failed to send admin notification for Migration_{Action} on {Target}", auditAction, target);
             }
 
-            if (result.Success && expandedBatch != null)
+            if (result.Success && actionBatch != null)
             {
-                InvalidateStoredReports(expandedBatch);
-                await LoadMailboxesFor(expandedBatch);
+                InvalidateStoredReports(actionBatch);
+                await LoadMailboxesFor(actionBatch);
             }
         }
         catch (Exception ex)
@@ -3626,6 +3634,17 @@
             // stay ticked (D2(a)), so the operator can pick a different action for exactly them.
             foreach (var name in accepted)
                 selectedBatches.Remove(name);
+
+            // Review of A31. Every accepted batch had its rows acted on, so its stored reports
+            // are stale and must go - named here, where the identity is known for certain.
+            //
+            // Relying on the later reload to do it was a regression this fix introduced: if the
+            // accepted batch was the only selected one, AdoptSelectionAsOpenBatch sets
+            // expandedBatch to null and the invalidation swept nothing, leaving another circuit
+            // able to reopen the PREVIOUS migration's report. The old blanket DeleteAll happened
+            // to cover that case.
+            foreach (var name in accepted)
+                ReportStore.DeleteForBatch(name);
 
             // R25. ONE GLANCEABLE LINE. Counts only - which batch refused and why is written on
             // that batch's row. The audit warnings are logged rather than appended: an audit
