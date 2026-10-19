@@ -74,7 +74,17 @@ token lock and the cached token and built its request anyway, in three clients. 
 from a test stub and is MEDIUM, because production's socket handler rejects the cancelled
 token before sending.
 
-**Next:** Waves 2-4 of the plan.
+**Next: Wave 2, starting with `aud-a31`** - verified and designed this session, not built.
+One operator expanding any batch calls `ReportStore.DeleteAll()`, and the store is a single
+shared directory, so it deletes every operator's stored migration reports instance-wide. The
+store-side fix is one method; the page side is seven call sites on a 4,000-line page whose
+`ClickGateRegistry` entries are line-keyed, so it needs re-anchoring and a fresh session.
+
+`aud-a6b` is CONFIRMED and parked on an owner decision: `Disconnect-ExchangeOnline` with no
+selector clears a process-wide static map, so destroying one retired runspace breaks every
+other borrower. Verified locally, metadata-only, 3.9.2. Three costed options are on the
+finding; the cheapest is to stop pooling EXO connections concurrently. **No code should touch
+the pool until that is answered.**
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green

@@ -80,6 +80,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [ ] | [aud-a7b](findings/aud-a7b.md) | MEDIUM - Out of Office captures only the mailbox; state, messages, schedule and ticket are still post-await live reads | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
 | [-] | [aud-a5b](findings/aud-a5b.md) | MEDIUM - blocked lockout targets vanish from the operator's report when any other target survives | DEFERRED - module parked (owner 2026-10-19) | - | implementer |
 | [-] | [aud-a5c](findings/aud-a5c.md) | HIGH - a domain-qualified lockout target still resolves to the wrong domain's account; event 4740 carries TargetSid and it is discarded | DEFERRED - module parked (owner 2026-10-19) | - | codex-commercial / gpt-6-astra / max |
+| [ ] | [aud-a31](findings/aud-a31.md) | HIGH - one operator expanding a batch deletes every operator's stored migration reports, instance-wide | VERIFIED, fix designed, not built - first Wave 2 slice | - | implementer |
 | [v] | [flake-1](findings/flake-1.md) | MEDIUM - a cancelled caller took the token lock and the cached token and built its request anyway, in three clients | Verified `fc70130`; reviewed, record corrected `0ab6b75` | - | codex-commercial / gpt-6-astra / max |
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.
