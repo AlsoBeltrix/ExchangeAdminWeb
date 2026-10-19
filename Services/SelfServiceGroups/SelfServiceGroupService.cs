@@ -73,7 +73,8 @@ public class SelfServiceGroupService
     /// SID here so an alternate identity form (DN, GUID, sAMAccountName) - which Get-ADUser -Identity
     /// would otherwise happily accept and resolve to a DIFFERENT principal - is rejected. This is what
     /// keeps the self-service owner always the authenticated caller (AC6), not any submitted id.</param>
-    public async Task<IReadOnlyList<ManageableGroup>> GetOwnedGroupsAsync(string callerSid)
+    public async Task<IReadOnlyList<ManageableGroup>> GetOwnedGroupsAsync(
+        string callerSid, IReadOnlyCollection<string> callerGroupSids)
     {
         if (string.IsNullOrWhiteSpace(callerSid))
             throw new ArgumentException("Caller SID is required.", nameof(callerSid));
@@ -122,7 +123,7 @@ public class SelfServiceGroupService
                 // but NOT sufficient - "Manager can update membership" may be unchecked. Include the
                 // group ONLY when the caller holds member-write on it; fail-closed exclusion otherwise.
                 var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
-                if (!CallerCanManageMembers(ps, credential, groupDn, callerSid))
+                if (!CallerCanManageMembers(ps, credential, groupDn, callerSid, callerGroupSids))
                     continue;
 
                 results.Add(ProjectGroup(ps, credential, group, callerDn, ownerDisplayCache, canManageMembers: true));
@@ -147,7 +148,8 @@ public class SelfServiceGroupService
     /// not-found-or-not-manageable outcome whose message tells the user to contact the IT Support Desk.
     /// The two are deliberately indistinguishable to the user so the search cannot be used to probe
     /// which groups exist.</returns>
-    public async Task<GroupSearchResult> SearchManageableGroupAsync(string callerSid, string groupName)
+    public async Task<GroupSearchResult> SearchManageableGroupAsync(
+        string callerSid, IReadOnlyCollection<string> callerGroupSids, string groupName)
     {
         if (string.IsNullOrWhiteSpace(callerSid))
             throw new ArgumentException("Caller SID is required.", nameof(callerSid));
@@ -197,7 +199,7 @@ public class SelfServiceGroupService
 
             var group = found[0];
             var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
-            if (!CallerCanManageMembers(ps, credential, groupDn, callerSid))
+            if (!CallerCanManageMembers(ps, credential, groupDn, callerSid, callerGroupSids))
                 return new GroupSearchResult(null, contactSupport);
 
             var ownerDisplayCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -223,7 +225,8 @@ public class SelfServiceGroupService
     /// <see cref="GetOwnedGroupsAsync"/>).</param>
     /// <param name="groupObjectGuid">The immutable objectGUID of the target group (from a
     /// <see cref="ManageableGroup"/> the caller loaded).</param>
-    public async Task<IReadOnlyList<GroupMember>> GetGroupMembersAsync(string callerSid, string groupObjectGuid)
+    public async Task<IReadOnlyList<GroupMember>> GetGroupMembersAsync(
+        string callerSid, IReadOnlyCollection<string> callerGroupSids, string groupObjectGuid)
     {
         if (string.IsNullOrWhiteSpace(callerSid))
             throw new ArgumentException("Caller SID is required.", nameof(callerSid));
@@ -258,7 +261,7 @@ public class SelfServiceGroupService
 
             // Fail-closed eligibility gate (AC-M4): a caller who cannot manage the group is never
             // shown its membership. Throw rather than return empty, so the page shows an error.
-            if (!CallerCanManageMembers(ps, credential, groupDn, callerSid))
+            if (!CallerCanManageMembers(ps, credential, groupDn, callerSid, callerGroupSids))
                 throw new InvalidOperationException("You are not permitted to view or manage this group's membership.");
 
             // The member list comes from the group's own linked attribute, NOT Get-ADGroupMember:
@@ -445,6 +448,17 @@ public class SelfServiceGroupService
         if (string.IsNullOrWhiteSpace(memberIdentity))
             return MembershipChangeResult.From(PermissionResult.Fail("A member identity is required."));
 
+        // Audit finding A4. The DACL re-check below must evaluate the caller's whole token, not
+        // just their own SID, or a Deny carried by one of their groups is invisible. The token
+        // groups come from the live principal, so a null one leaves the check unable to see
+        // denies at all - refuse rather than evaluate a partial DACL, which is the permissive
+        // direction.
+        if (actingUser is null)
+            return MembershipChangeResult.From(PermissionResult.Fail(
+                "Your identity could not be read, so group permissions cannot be evaluated. Reload the page and try again."));
+
+        var callerGroupSids = ExchangeAdminWeb.Authorization.GroupMembershipChecker.ExtractGroupClaims(actingUser);
+
         // Fetch THIS module's credential first: it is used both to resolve the affected member and to
         // perform the write, so the resolution the protection check runs on and the write target are the
         // same directory object seen through the same credential.
@@ -518,6 +532,12 @@ public class SelfServiceGroupService
     {
         var memberDn = member.DistinguishedName!;
 
+        // Audit finding A4: the DACL re-check below evaluates the caller's whole token. The
+        // principal is non-null by the time execution reaches here - ChangeMemberAsync refuses
+        // without one - and an empty set would make group-carried denies invisible, which is
+        // the permissive direction.
+        var callerGroupSids = ExchangeAdminWeb.Authorization.GroupMembershipChecker.ExtractGroupClaims(actingUser);
+
         // Serialize per-group so two changes to the same group cannot interleave their check->write
         // cycles (plan section 6.5). Keyed on the immutable objectGUID.
         var gate = _groupWriteLocks.GetOrAdd(groupObjectGuid, _ => new SemaphoreSlim(1, 1));
@@ -555,7 +575,7 @@ public class SelfServiceGroupService
 
                 // Re-check eligibility RIGHT NOW (AC5): the caller's member-write right may have been
                 // revoked since the page listed the group. Same fail-closed DACL check the list uses.
-                if (!CallerCanManageMembers(ps, credential, groupDn, callerSid))
+                if (!CallerCanManageMembers(ps, credential, groupDn, callerSid, callerGroupSids))
                     return MembershipChangeResult.From(PermissionResult.Fail("You are no longer permitted to manage this group's membership."));
 
                 // Protected Group Targets deliberately do NOT gate self-service (owner ruling
@@ -1306,7 +1326,9 @@ public class SelfServiceGroupService
     /// group is EXCLUDED rather than shown as manageable. The per-ACE projection runs in PowerShell so
     /// this type takes no dependency on System.DirectoryServices ACL types; C# sees only primitives.
     /// </summary>
-    private static bool CallerCanManageMembers(PowerShell ps, PSCredential credential, string groupDn, string callerSid)
+    private static bool CallerCanManageMembers(
+        PowerShell ps, PSCredential credential, string groupDn, string callerSid,
+        IReadOnlyCollection<string> callerGroupSids)
     {
         if (string.IsNullOrWhiteSpace(groupDn))
             return false;
@@ -1352,28 +1374,30 @@ public class SelfServiceGroupService
             return false;
         }
 
-        var allow = false;
+        // Project to primitives, then let the pure evaluator decide. Audit finding A4 lived in
+        // the loop that used to be here: it matched each ACE against the caller's OWN SID only,
+        // so a Deny carried by one of their groups was invisible. The decision moved into
+        // GroupMembershipAce.GrantsMemberWrite because this method needs a domain controller
+        // and therefore was never unit-tested.
+        //
+        // Anything that is neither Allow nor Deny is dropped here rather than guessed at.
+        var entries = new List<GroupMembershipAce.Entry>(aces.Count);
         foreach (var ace in aces)
         {
-            var sid = ace.Properties["Sid"]?.Value?.ToString();
-            if (!string.Equals(sid, callerSid, StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            var rights = ace.Properties["Rights"]?.Value is int r ? r : 0;
-            var objectTypeRaw = ace.Properties["ObjectType"]?.Value?.ToString();
-            var objectType = Guid.TryParse(objectTypeRaw, out var g) ? g : Guid.Empty;
-
-            if (!GroupMembershipAce.ConveysMemberWrite(rights, objectType))
-                continue;
-
             var type = ace.Properties["Type"]?.Value?.ToString();
-            if (string.Equals(type, "Deny", StringComparison.OrdinalIgnoreCase))
-                return false; // an explicit Deny of member-write for the caller wins (fail-closed).
-            if (string.Equals(type, "Allow", StringComparison.OrdinalIgnoreCase))
-                allow = true;
+            var isDeny = string.Equals(type, "Deny", StringComparison.OrdinalIgnoreCase);
+            if (!isDeny && !string.Equals(type, "Allow", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var objectTypeRaw = ace.Properties["ObjectType"]?.Value?.ToString();
+            entries.Add(new GroupMembershipAce.Entry(
+                ace.Properties["Sid"]?.Value?.ToString(),
+                isDeny,
+                ace.Properties["Rights"]?.Value is int r ? r : 0,
+                Guid.TryParse(objectTypeRaw, out var g) ? g : Guid.Empty));
         }
 
-        return allow;
+        return GroupMembershipAce.GrantsMemberWrite(entries, callerSid, callerGroupSids);
     }
 
     /// <summary>

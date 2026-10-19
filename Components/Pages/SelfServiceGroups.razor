@@ -469,6 +469,8 @@
 
     private bool authChecked;
     private string? callerSid;
+    /// <summary>The caller's group SIDs, for DACL evaluation against the whole token (audit A4).</summary>
+    private IReadOnlyCollection<string> callerGroupSids = Array.Empty<string>();
     private string currentUser = "Unknown";
     private string clientIpAddress = "Unknown";
 
@@ -526,6 +528,8 @@
         // from the PrimarySid claim the Negotiate scheme populates; the service re-validates it as a
         // genuine SID and rejects any alternate identity form.
         callerSid = user.FindFirst(ClaimTypes.PrimarySid)?.Value;
+        // A Deny can be carried by any group in the token, so the DACL check needs them all.
+        callerGroupSids = ExchangeAdminWeb.Authorization.GroupMembershipChecker.ExtractGroupClaims(user);
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
@@ -586,7 +590,7 @@
             if (string.IsNullOrWhiteSpace(callerSid))
                 throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
 
-            groupMembers = await GroupService.GetGroupMembersAsync(callerSid, group.ObjectGuid);
+            groupMembers = await GroupService.GetGroupMembersAsync(callerSid, callerGroupSids, group.ObjectGuid);
         }
         catch (Exception ex)
         {
@@ -1147,7 +1151,7 @@
             using var activity = Progress.Begin(
                 "Self-Service Groups", "Reading group permissions", ActivitySize.Unknown);
 
-            ownedGroups = await GroupService.GetOwnedGroupsAsync(callerSid);
+            ownedGroups = await GroupService.GetOwnedGroupsAsync(callerSid, callerGroupSids);
             activity.Complete(true, $"{ownedGroups.Count:N0} group(s) you can manage");
             loaded = true;
         }
@@ -1184,7 +1188,7 @@
             if (string.IsNullOrWhiteSpace(callerSid))
                 throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
 
-            var result = await GroupService.SearchManageableGroupAsync(callerSid, searchName);
+            var result = await GroupService.SearchManageableGroupAsync(callerSid, callerGroupSids, searchName);
             if (result.Group != null)
                 searchResult = result.Group;
             else

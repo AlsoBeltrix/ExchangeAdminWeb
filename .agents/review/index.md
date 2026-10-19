@@ -67,6 +67,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [aud-a1](findings/aud-a1.md) | HIGH - module-admin grants match a same-named group in another domain | Verified | - | implementer-verified; review findings repaired |
 | [v] | [aud-a3](findings/aud-a3.md) | HIGH - the protected-group check asks the host domain, so a foreign-domain target reads as unprotected | Verified | - | implementer-verified; review findings repaired |
 | [v] | [aud-a2](findings/aud-a2.md) | HIGH - a secondary alias bypasses protected-user rules in three modules | Verified | - | implementer-verified; fix review pending |
+| [v] | [aud-a4](findings/aud-a4.md) | HIGH - Self-Service Groups ignores denies carried by the caller's groups | Verified | - | implementer-verified; fix review pending |
 | [ ] | [aud-a1b](findings/aud-a1b.md) | MEDIUM - group-SID entry validates the shape, not the object; affects both access and admin controls | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
 | [ ] | [aud-a3b](findings/aud-a3b.md) | HIGH - three same-forest fail-open holes in the protected-group membership check | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
 

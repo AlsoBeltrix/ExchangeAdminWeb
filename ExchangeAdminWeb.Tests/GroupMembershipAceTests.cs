@@ -75,4 +75,74 @@ public class GroupMembershipAceTests
         Assert.False(GroupMembershipAce.ConveysMemberWrite(0, Member));
         Assert.False(GroupMembershipAce.ConveysMemberWrite(0, Guid.Empty));
     }
+
+    // ----- Audit finding A4: the DACL is evaluated against the whole token -----
+
+    private const string Caller = "S-1-5-21-1111111111-2222222222-3333333333-1101";
+    private const string Contractors = "S-1-5-21-1111111111-2222222222-3333333333-1200";
+    private const string Stranger = "S-1-5-21-9999999999-8888888888-7777777777-1300";
+
+    private static GroupMembershipAce.Entry Allow(string sid) =>
+        new(sid, IsDeny: false, Rights: 0x00000020, ObjectType: GroupMembershipAce.MemberAttribute);
+
+    private static GroupMembershipAce.Entry Deny(string sid) =>
+        new(sid, IsDeny: true, Rights: 0x00000020, ObjectType: GroupMembershipAce.MemberAttribute);
+
+    [Fact]
+    public void GroupDeny_BeatsAnIndividualAllow()
+    {
+        // The finding. An administrator denies member-write to Contractors and allows it to the
+        // person directly. The old loop only ever looked at the caller's own SID, saw the
+        // allow, and let the privileged module credential perform the write.
+        var aces = new[] { Deny(Contractors), Allow(Caller) };
+
+        Assert.False(GroupMembershipAce.GrantsMemberWrite(aces, Caller, new[] { Contractors }));
+    }
+
+    [Fact]
+    public void GroupDeny_BeatsAnIndividualAllow_EvenWhenTheAllowComesFirst()
+    {
+        // GetAccessRules makes no ordering guarantee, so the answer must not depend on it.
+        var aces = new[] { Allow(Caller), Deny(Contractors) };
+
+        Assert.False(GroupMembershipAce.GrantsMemberWrite(aces, Caller, new[] { Contractors }));
+    }
+
+    [Fact]
+    public void AGroupAllow_IsHonoured()
+    {
+        // The same widening must work in the granting direction, or the fix would simply deny
+        // more and the deny tests above would pass for the wrong reason.
+        var aces = new[] { Allow(Contractors) };
+
+        Assert.True(GroupMembershipAce.GrantsMemberWrite(aces, Caller, new[] { Contractors }));
+    }
+
+    [Fact]
+    public void AnotherPrincipalsDeny_IsNotApplicable()
+    {
+        // Only the caller's own SID and their groups apply. A deny aimed at somebody else must
+        // not refuse them.
+        var aces = new[] { Deny(Stranger), Allow(Caller) };
+
+        Assert.True(GroupMembershipAce.GrantsMemberWrite(aces, Caller, new[] { Contractors }));
+    }
+
+    [Fact]
+    public void SelfMembershipRights_StillDoNotConveyMemberWrite_ThroughAGroup()
+    {
+        // Widening the trustee set must not widen the RIGHTS test: Self (0x08) shares the
+        // member attribute's GUID and still never qualifies.
+        var selfOnly = new GroupMembershipAce.Entry(
+            Contractors, IsDeny: false, Rights: 0x00000008, ObjectType: GroupMembershipAce.MemberAttribute);
+
+        Assert.False(GroupMembershipAce.GrantsMemberWrite(new[] { selfOnly }, Caller, new[] { Contractors }));
+    }
+
+    [Fact]
+    public void NoApplicableTrustee_Denies()
+    {
+        Assert.False(GroupMembershipAce.GrantsMemberWrite(new[] { Allow(Stranger) }, Caller, null));
+        Assert.False(GroupMembershipAce.GrantsMemberWrite(new[] { Allow(Caller) }, "", null));
+    }
 }

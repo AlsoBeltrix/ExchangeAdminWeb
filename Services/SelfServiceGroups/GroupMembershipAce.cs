@@ -14,9 +14,14 @@ namespace ExchangeAdminWeb.Services.SelfServiceGroups;
 /// distinguish them, so only WriteProperty / GenericWrite / GenericAll qualify here; Self (0x08) never
 /// does.
 ///
-/// Allow-vs-Deny and trustee-SID matching are decided by the caller (the live loop in
-/// <see cref="SelfServiceGroupService"/>): this method answers only "do these rights, targeting this
-/// attribute, convey member-write?" so the same predicate classifies both Allow and Deny ACEs.
+/// <c>ConveysMemberWrite</c> answers only "do these rights, targeting this attribute, convey
+/// member-write?", so the same predicate classifies both Allow and Deny ACEs.
+///
+/// Allow-vs-Deny and trustee matching used to be decided by the live loop in
+/// <see cref="SelfServiceGroupService"/>, which needed a domain controller and so was never
+/// unit-tested - and that is exactly where audit finding A4 sat. Both now live in
+/// <see cref="GroupMembershipAce.GrantsMemberWrite"/>, pure and here, for the same reason the
+/// rights classifier is.
 /// </summary>
 public static class GroupMembershipAce
 {
@@ -53,5 +58,67 @@ public static class GroupMembershipAce
         if ((adRights & WriteProperty) == WriteProperty)
             return objectType == Guid.Empty || objectType == MemberAttribute;
         return false;
+    }
+
+    /// <summary>One access-control entry, projected to primitives so no ACL type crosses into C#.</summary>
+    /// <param name="Sid">The trustee's SID.</param>
+    /// <param name="IsDeny">True for a Deny ACE, false for Allow. Anything else is ignored.</param>
+    /// <param name="Rights">The ACE's ActiveDirectoryRights value as an int bitmask.</param>
+    /// <param name="ObjectType">The ACE's ObjectType GUID; Guid.Empty applies to all properties.</param>
+    public readonly record struct Entry(string? Sid, bool IsDeny, int Rights, Guid ObjectType);
+
+    /// <summary>
+    /// Whether a DACL grants member-write to a caller, evaluated against their WHOLE token.
+    /// </summary>
+    /// <remarks>
+    /// <b>Audit finding A4.</b> This decision used to live in the live loop in
+    /// <see cref="SelfServiceGroupService"/>, which compared each ACE's trustee against the
+    /// caller's own SID and skipped everything else - so a Deny carried by a group the caller
+    /// belongs to was never seen. An administrator denying member-write to a group and allowing
+    /// it to the individual got the allow, and the privileged module credential performed the
+    /// write. Windows evaluates a DACL against the whole token.
+    ///
+    /// It is pure and here, rather than in the service, for the reason the rights classifier
+    /// above already is: the live loop needs a domain controller, so nothing in it was testable,
+    /// and that is where the defect sat.
+    ///
+    /// <b>Deny wins over Allow regardless of ACE order.</b> A canonical DACL lists denies first,
+    /// but <c>GetAccessRules</c> makes no ordering guarantee, and guessing wrong in this
+    /// direction grants access - so every applicable entry is examined before answering. An
+    /// entry whose trustee is neither the caller nor one of their groups is not applicable and
+    /// is skipped; an entry whose rights do not convey member-write is skipped by
+    /// <see cref="ConveysMemberWrite"/>.
+    /// </remarks>
+    public static bool GrantsMemberWrite(
+        IEnumerable<Entry> aces, string callerSid, IReadOnlyCollection<string>? callerGroupSids)
+    {
+        ArgumentNullException.ThrowIfNull(aces);
+
+        var applicable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(callerSid))
+            applicable.Add(callerSid);
+        foreach (var groupSid in callerGroupSids ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(groupSid))
+                applicable.Add(groupSid);
+        }
+
+        if (applicable.Count == 0)
+            return false;
+
+        var allow = false;
+        foreach (var ace in aces)
+        {
+            if (ace.Sid is null || !applicable.Contains(ace.Sid))
+                continue;
+            if (!ConveysMemberWrite(ace.Rights, ace.ObjectType))
+                continue;
+
+            if (ace.IsDeny)
+                return false;
+            allow = true;
+        }
+
+        return allow;
     }
 }
