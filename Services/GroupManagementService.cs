@@ -989,7 +989,7 @@ public class GroupManagementService
     {
         if (string.IsNullOrWhiteSpace(dn))
             return null;
-        var labels = System.Text.RegularExpressions.Regex.Split(dn, @"(?<!\\),")
+        var labels = System.Text.RegularExpressions.Regex.Split(dn, @"(?<=(?<!\\)(?:\\\\)*),")
             .Select(p => p.Trim())
             .Where(p => p.StartsWith("DC=", StringComparison.OrdinalIgnoreCase))
             .Select(p => p[3..])

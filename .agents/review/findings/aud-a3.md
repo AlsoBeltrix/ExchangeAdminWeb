@@ -94,22 +94,37 @@ None.
 
 ## Known gaps
 
-**Routing to the target's domain is better than the host's; it is not proof of cross-forest
-completeness.** `LDAP_MATCHING_RULE_IN_CHAIN` is evaluated by the DC answering the query, and
-its treatment of memberships that cross a domain boundary depends on group scope - a universal
-group's membership is in the global catalog, a domain-local group's is not. This slice fixes
-"asked the wrong directory". It does not establish that one DC can see every nesting path in a
-multi-domain forest. **Nothing here has run against a real forest, and probing AD is forbidden
-without a direct owner go.**
+**Two statements here were wrong and review corrected them. Both are recorded rather than
+quietly edited.**
 
-`ResolveProtectedGroupDn` is unchanged and may itself bind locally for a protected group that
-lives in another domain. That path already sets `expansionHadErrors` and so fails closed, which
-is why it is not in this slice - but it means a foreign protected group currently refuses
-everything rather than resolving. Worth its own slice; recorded here rather than widened into
-this one.
+**"Not proof of cross-forest completeness" understated it.** The uncovered case is
+**same-forest**: a user in domain A, in a global group in A, nested inside a protected
+**domain-local** group in B. A's DC does not hold B's domain-local links, `IN_CHAIN` returns
+zero, and the target reads as unprotected. Choosing a global catalog would not fix it, because
+domain-local membership is not replicated there. Filed as `aud-a3b` hole 1.
 
-Source tripwires prove the call shape, not the behaviour. They would not catch a `ServerFromDn`
-that returned the wrong domain - that rule is pinned by its own pure tests in this same file.
+**"A foreign protected group refuses everything rather than resolving" is false.**
+`ResolveProtectedGroupDn` strips the domain from `B\Privileged` and accepts a same-named group
+in the host domain in its place; a configured full DN returns with no lookup at all. It does
+not refuse - it silently answers about the wrong group. Filed as `aud-a3b` hole 3.
+
+Also newly recorded: **primary-group membership is invisible to this check** - `memberOf`
+excludes it and nothing reads `primaryGroupID` - so protecting a group that is somebody's
+primary group protects nobody through that path. `aud-a3b` hole 2.
+
+All three are pre-existing and none is fixed here. This slice fixed which directory is asked;
+it did not widen what the question can see.
+
+**Nothing here has run against a real forest, and probing AD is forbidden without a direct
+owner go.**
+
+Source tripwires prove the call shape, not the behaviour. **The first version of them proved
+less than that:** review showed they passed against the call being commented out, against a
+fail-open return inserted before the guard, and against the match condition inverted to
+`Count < 0`. They now read `ProgressScan.CodeView`, which blanks comments, and assert the
+absence of the fail-open return as well as the presence of the fail-closed one. All three
+mutations now fail. That is the prog-6/prog-8 class and the repo already owned the tool for
+it - I did not reach for it.
 
 ## Reviewer comments
 
