@@ -84,7 +84,7 @@ public sealed class ExoConnectionPool : IDisposable
     private readonly IConfiguration _config;
     private readonly TimeSpan _idleTimeout = TimeSpan.FromMinutes(20);
     private readonly Timer _cleanupTimer;
-    private readonly Func<ExoConnectionConfig, long, PooledRunspace> _connect;
+    private readonly Func<ExoConnectionConfig, long, CancellationToken, PooledRunspace> _connect;
     private readonly object _connectedLock = new();
     private long _configGeneration;
     private bool _disposed;
@@ -106,7 +106,7 @@ public sealed class ExoConnectionPool : IDisposable
     /// It receives the config to connect under and the pool generation the runspace must carry.
     /// </summary>
     internal ExoConnectionPool(IConfiguration config, ModuleConfigService moduleConfig, ModuleEnablementService enablement, ILogger<ExoConnectionPool> logger, OperationTraceService operationTrace,
-        Func<ExoConnectionConfig, long, PooledRunspace>? connect)
+        Func<ExoConnectionConfig, long, CancellationToken, PooledRunspace>? connect)
     {
         _logger = logger;
         _operationTrace = operationTrace;
@@ -225,7 +225,7 @@ public sealed class ExoConnectionPool : IDisposable
             // the config read before it: a drain that lands while Connect-ExchangeOnline runs
             // retired exactly that config, so the runspace must come back stale and be
             // discarded on Return instead of being stamped with the post-drain generation.
-            return await Task.Run(() => _connect(current, currentGen), ct);
+            return await Task.Run(() => _connect(current, currentGen, ct), ct);
         }
         catch (Exception ex)
         {
@@ -475,38 +475,75 @@ public sealed class ExoConnectionPool : IDisposable
     /// of the fix and it is deliberate: borrowing stays concurrent, only ESTABLISHING a new
     /// connection queues, and the pool reuses connections so this is not the common path.
     /// </remarks>
-    private readonly object _connectLock = new();
+    /// <remarks>
+    /// A semaphore rather than `lock`, because review of the first A6B fix showed `lock` was an
+    /// availability bug. A borrower has already taken one of five slots before it gets here, so
+    /// one stalled establishment could pin every slot with no timeout and no cancellation, and
+    /// `Task.Run(..., ct)` does not cancel a delegate already blocked inside a monitor.
+    ///
+    /// The section is also dearer than it looks: `Get-ConnectionInformation` pings each existing
+    /// connection over HTTP synchronously, so it scales with the number of live connections, not
+    /// with one. Serial establishment is the accepted cost of attributing the id; an unbounded
+    /// queue behind it is not.
+    /// </remarks>
+    private readonly SemaphoreSlim _connectGate = new(1, 1);
+
+    /// <summary>
+    /// How long a borrower waits for its turn to establish a connection before giving up. Long
+    /// enough for a connect plus its snapshots ahead of it, short enough that a wedged
+    /// establishment cannot hold the pool shut.
+    /// </summary>
+    private static readonly TimeSpan ConnectGateTimeout = TimeSpan.FromSeconds(90);
 
     /// <summary>
     /// The one id present after a connect that was not present before it. Null when that is not
     /// exactly one id, which is the only honest answer - and callers must treat null as "never
     /// disconnect this", because the alternative selector disconnects everybody.
     /// </summary>
-    internal static string? NewConnectionId(IReadOnlyCollection<string> before, IReadOnlyCollection<string> after)
+    internal static string? NewConnectionId(IReadOnlyCollection<string>? before, IReadOnlyCollection<string>? after)
     {
+        // Either snapshot being unreadable means there is no difference to take. Treating a
+        // failed read as "nothing was there" would invent an attribution out of a blind spot.
+        if (before is null || after is null)
+            return null;
+
         var added = after.Where(id => !before.Contains(id, StringComparer.OrdinalIgnoreCase)).ToList();
         return added.Count == 1 ? added[0] : null;
     }
 
-    /// <summary>Reads the ConnectionIds the module currently holds - process-wide, not per-runspace.</summary>
-    private static List<string> ReadConnectionIds(PowerShell ps)
+    /// <summary>
+    /// The ConnectionIds the module currently holds - process-wide, not per-runspace - or
+    /// <c>null</c> when the list could not be read at all.
+    /// </summary>
+    /// <remarks>
+    /// Null and empty are different answers and review of the first A6B fix was right to insist
+    /// on it: an earlier version returned an empty list on failure, so "I could not look" was
+    /// indistinguishable from "there is nothing there". That silently turned a readable
+    /// connection into an unattributable one.
+    ///
+    /// This also pings every existing connection over HTTP, synchronously, inside the module.
+    /// It is not a cheap map read, which is why the caller holds a bounded gate around it.
+    /// </remarks>
+    private static List<string>? ReadConnectionIds(PowerShell ps)
     {
         try
         {
             ps.Commands.Clear();
-            ps.AddCommand("Get-ConnectionInformation").AddParameter("ErrorAction", "SilentlyContinue");
-            var ids = ps.Invoke()
+            ps.AddCommand("Get-ConnectionInformation").AddParameter("ErrorAction", "Stop");
+            var results = ps.Invoke();
+
+            if (ps.Streams.Error.Count > 0)
+                return null;
+
+            return results
                 .Select(item => item?.Properties["ConnectionId"]?.Value?.ToString())
                 .Where(id => !string.IsNullOrWhiteSpace(id))
                 .Select(id => id!)
                 .ToList();
-            return ids;
         }
         catch
         {
-            // An unreadable list means the id cannot be attributed, which the caller turns into
-            // "do not disconnect". Never into "disconnect everything".
-            return [];
+            return null;
         }
         finally
         {
@@ -515,7 +552,7 @@ public sealed class ExoConnectionPool : IDisposable
         }
     }
 
-    private PooledRunspace CreateConnected(ExoConnectionConfig config, long generation)
+    private PooledRunspace CreateConnected(ExoConnectionConfig config, long generation, CancellationToken cancellationToken)
     {
         var (appId, organization, certSubject) = config;
 
@@ -542,7 +579,10 @@ public sealed class ExoConnectionPool : IDisposable
             // only identifiable as "the one that appeared", so nothing else may connect in
             // between.
             string? connectionId;
-            lock (_connectLock)
+            if (!_connectGate.Wait(ConnectGateTimeout, cancellationToken))
+                throw new InvalidOperationException(
+                    "Exchange service is busy establishing connections. Please try again shortly.");
+            try
             {
                 var before = ReadConnectionIds(ps);
 
@@ -564,6 +604,10 @@ public sealed class ExoConnectionPool : IDisposable
                 ps.Streams.ClearStreams();
 
                 connectionId = NewConnectionId(before, ReadConnectionIds(ps));
+            }
+            finally
+            {
+                _connectGate.Release();
             }
 
             if (connectionId is null)

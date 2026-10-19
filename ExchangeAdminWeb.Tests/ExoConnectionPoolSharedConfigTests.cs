@@ -77,11 +77,48 @@ public class ExoConnectionPoolSharedConfigTests : IDisposable
             Func<TState, Exception?, string> formatter) => onMessage(formatter(state, exception));
     }
 
-    private ExoConnectionPool NewPool(Action<ExoConnectionPool>? duringConnect = null, ILogger<ExoConnectionPool>? logger = null)
+    /// <summary>
+    /// Audit finding A6B, and the review of its first fix. Builds a runspace that is actually
+    /// OPEN and carries a stub <c>Disconnect-ExchangeOnline</c> recording the parameters it was
+    /// given, so the disconnect the pool issues can be asserted as behaviour instead of scanned
+    /// for in source. PowerShell resolves a function ahead of a cmdlet, so the pool's real call
+    /// runs unmodified.
+    /// </summary>
+    private static PooledRunspace StubbedRunspace(long generation, string? connectionId, System.Collections.IList log)
     {
+        var rs = RunspaceFactory.CreateRunspace();
+        rs.Open();
+        rs.SessionStateProxy.SetVariable("disconnectLog", log);
+
+        using (var init = PowerShell.Create())
+        {
+            init.Runspace = rs;
+            init.AddScript("""
+                function Disconnect-ExchangeOnline {
+                    param($ConnectionId, $Confirm)
+                    $global:disconnectLog.Add("ConnectionId=$ConnectionId")
+                }
+                """);
+            init.Invoke();
+        }
+
+        var ps = PowerShell.Create();
+        ps.Runspace = rs;
+        return new PooledRunspace(rs, ps, generation, connectionId);
+    }
+
+    private ExoConnectionPool NewPool(
+        Action<ExoConnectionPool>? duringConnect = null,
+        ILogger<ExoConnectionPool>? logger = null,
+        Func<ExoConnectionConfig, long, CancellationToken, PooledRunspace>? connect = null)
+    {
+        if (connect is not null)
+            return new ExoConnectionPool(_config, _moduleConfig, _enablement,
+                logger ?? Substitute.For<ILogger<ExoConnectionPool>>(), _trace, connect);
+
         ExoConnectionPool? self = null;
         var pool = new ExoConnectionPool(_config, _moduleConfig, _enablement, logger ?? Substitute.For<ILogger<ExoConnectionPool>>(), _trace,
-            connect: (cfg, generation) =>
+            connect: (cfg, generation, _) =>
             {
                 _connectedWith.Add(cfg);
                 duringConnect?.Invoke(self!);
@@ -340,6 +377,40 @@ public class ExoConnectionPoolSharedConfigTests : IDisposable
 
         Assert.Contains("= DrainIfConnectionConfigChanged(current);", code, StringComparison.Ordinal);
         Assert.DoesNotContain("Interlocked.Read(ref _configGeneration)", code, StringComparison.Ordinal);
+    }
+
+    // Review of the A6B fix, finding 4. The source scans it shipped with passed against a
+    // foreign selector value and against a disconnect moved outside its guard - the reviewer
+    // reproduced both. These drive the real call instead.
+
+    [Fact]
+    public async Task TheDisconnectNamesThisRunspacesOwnConnection()
+    {
+        var log = new System.Collections.ArrayList();
+        using var pool = NewPool(connect: (_, generation, _) => StubbedRunspace(generation, "conn-abc", log));
+
+        var borrowed = await pool.BorrowAsync(TestContext.Current.CancellationToken);
+        pool.Return(borrowed);
+        pool.DrainPool();
+
+        // Not just "a ConnectionId was passed" - the right one. A foreign value satisfied the
+        // scan this replaces.
+        Assert.Equal(["ConnectionId=conn-abc"], log.Cast<string>());
+    }
+
+    [Fact]
+    public async Task ARunspaceWithNoKnownConnectionIdIsNeverDisconnected()
+    {
+        // The whole point of the fallback: with no id there is no safe selector, and the
+        // unselected form would disconnect every other operator in this process.
+        var log = new System.Collections.ArrayList();
+        using var pool = NewPool(connect: (_, generation, _) => StubbedRunspace(generation, null, log));
+
+        var borrowed = await pool.BorrowAsync(TestContext.Current.CancellationToken);
+        pool.Return(borrowed);
+        pool.DrainPool();
+
+        Assert.Empty(log);
     }
 
     [Fact]

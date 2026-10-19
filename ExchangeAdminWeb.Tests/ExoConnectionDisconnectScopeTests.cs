@@ -50,66 +50,50 @@ public class ExoConnectionDisconnectScopeTests
         Assert.Null(ExoConnectionPool.NewConnectionId(["C1"], ["c1"]));
     }
 
-    // ---- the disconnect call, as a source scan ------------------------------------------------
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void AnUnreadableSnapshotIsNeverTreatedAsAnEmptyOne(bool beforeFailed, bool afterFailed)
+    {
+        // Review of the first A6B fix. ReadConnectionIds used to return an empty list when it
+        // could not look, so "I saw nothing" and "I could not see" were the same answer - and a
+        // readable connection silently became an unattributable one. Null now means unreadable,
+        // and no difference can be taken from a blind spot.
+        var before = beforeFailed ? null : new List<string> { "c1" };
+        var after = afterFailed ? null : new List<string> { "c1", "c2" };
+
+        Assert.Null(ExoConnectionPool.NewConnectionId(before, after));
+    }
+
+    // ---- serialisation, as a source scan -----------------------------------------------------
 
     /// <summary>
-    /// Comments blanked, string literals KEPT - the cmdlet names and parameter names being
-    /// checked here are literals, so <c>ProgressScan.CodeView</c> would blank the very thing
-    /// under test. The comments in this file name both cmdlets repeatedly and would otherwise
-    /// satisfy every scan below on their own.
+    /// Comments blanked, string literals KEPT - the cmdlet name under test is a literal, so
+    /// <c>ProgressScan.CodeView</c> would blank the very thing being checked, and the comments
+    /// in that file name the cmdlet repeatedly.
     /// </summary>
     private static string PoolCode() =>
         RazorSyntax.CommentsBlanked(File.ReadAllText(
             AuditCategoryFilingTests.FindRepoFile("Services", "ExoConnectionPool.cs")));
 
     [Fact]
-    public void TheDisconnectAlwaysNamesTheConnectionItIsClosing()
+    public void EstablishmentIsSerialisedBehindABoundedCancellableGate()
     {
-        // The unselected form is the defect. There must be no Disconnect-ExchangeOnline anywhere
-        // in the pool that is not immediately followed by a ConnectionId parameter.
+        // This one stays a scan: proving two connects do not overlap needs two real connects.
+        // What it pins is the shape review found wrong the first time - a bare lock, which has
+        // no timeout and no cancellation, so one stalled establishment could hold all five
+        // slots shut with no way out.
         var code = PoolCode();
 
-        var at = code.IndexOf("Disconnect-ExchangeOnline", StringComparison.Ordinal);
-        Assert.True(at > 0, "The pool no longer disconnects at all - this guard is stale.");
+        Assert.DoesNotContain("lock (_connectLock)", code, StringComparison.Ordinal);
 
-        while (at > 0)
-        {
-            // The AddParameter chain for one command, bounded by the Invoke that runs it.
-            var invoke = code.IndexOf("Invoke()", at, StringComparison.Ordinal);
-            Assert.True(invoke > at, "A Disconnect-ExchangeOnline with no Invoke after it.");
+        var gate = code.IndexOf("_connectGate.Wait(ConnectGateTimeout, cancellationToken)", StringComparison.Ordinal);
+        Assert.True(gate > 0, "Establishment must wait on a bounded, cancellable gate.");
 
-            Assert.Contains("\"ConnectionId\"", code[at..invoke], StringComparison.Ordinal);
+        var connect = code.IndexOf("\"Connect-ExchangeOnline\"", gate, StringComparison.Ordinal);
+        Assert.True(connect > gate, "Connect-ExchangeOnline must run after the gate is taken.");
 
-            at = code.IndexOf("Disconnect-ExchangeOnline", at + 1, StringComparison.Ordinal);
-        }
-    }
-
-    [Fact]
-    public void ARunspaceWithNoKnownConnectionIdIsNeverDisconnected()
-    {
-        // Leaking one server session until it times out is recoverable. Disconnecting every
-        // other operator is not, so the unknown case must bail out before the command is built.
-        var code = PoolCode();
-
-        var guard = code.IndexOf("if (string.IsNullOrWhiteSpace(pooled.ConnectionId))", StringComparison.Ordinal);
-        Assert.True(guard > 0, "DestroyRunspace must refuse to disconnect without an id.");
-
-        var disconnect = code.IndexOf("Disconnect-ExchangeOnline", guard, StringComparison.Ordinal);
-        Assert.True(disconnect > guard, "The guard must precede the disconnect it protects.");
-    }
-
-    [Fact]
-    public void ConnectionEstablishmentIsSerialised()
-    {
-        // The id is only identifiable as "the one that appeared", so two concurrent connects
-        // make the comparison ambiguous and NewConnectionId would correctly refuse both - the
-        // pool would then never be able to disconnect anything.
-        var code = PoolCode();
-
-        var lockAt = code.IndexOf("lock (_connectLock)", StringComparison.Ordinal);
-        Assert.True(lockAt > 0, "Connection establishment must be serialised.");
-
-        var connect = code.IndexOf("\"Connect-ExchangeOnline\"", lockAt, StringComparison.Ordinal);
-        Assert.True(connect > lockAt, "Connect-ExchangeOnline must run inside that lock.");
+        Assert.Contains("_connectGate.Release();", code, StringComparison.Ordinal);
     }
 }

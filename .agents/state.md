@@ -90,6 +90,13 @@ serialised because that id can only be identified as "the one that appeared". A 
 id is unknown is disposed WITHOUT disconnecting: leaking one session is recoverable, breaking
 every operator is not.
 
+Its own review then found a HIGH I had introduced - a bare `lock` behind the five-slot
+semaphore, with no timeout and no cancellation, so one stalled establishment could hold the
+pool shut. Now a bounded, cancellable gate. The reviewer also established by IL inspection
+that `Get-ConnectionInformation` performs a synchronous HTTP health check per existing
+connection, so that section is far dearer than this record first claimed. `aud-a6c` carries
+the pre-existing teardown gaps it also found.
+
 **Live acceptance has NOT been done** - nothing here has touched a real tenant, and two
 concurrent operators against a real Exchange is the check that would actually confirm it.
 

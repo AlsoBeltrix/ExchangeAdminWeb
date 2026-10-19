@@ -205,7 +205,7 @@ public sealed class MigrationMailboxLoadTests : IDisposable
             new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>()));
 
         _pool = new ExoConnectionPool(config, moduleConfig, enablement,
-            Substitute.For<ILogger<ExoConnectionPool>>(), trace, (_, generation) =>
+            Substitute.For<ILogger<ExoConnectionPool>>(), trace, (_, generation, _) =>
             {
                 // Exercise the real service, PowerShell parameter binding and result mapping.
                 // Only the network connection/cmdlets are replaced. A batch object's Identity
