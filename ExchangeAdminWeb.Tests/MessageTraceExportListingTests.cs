@@ -248,16 +248,35 @@ public sealed class MessageTraceExportListingTests : IDisposable
     }
 
     [Theory]
-    [InlineData(BulkJobStatus.Cancelled)]
     [InlineData(BulkJobStatus.Interrupted)]
-    public void JobThatNeverCompleted_IsNotProduced(BulkJobStatus status)
+    public void JobThatNeverProducedAnExport_IsNotProduced(BulkJobStatus status)
     {
+        // Interrupted stays here deliberately. Two of its three sources do run the completion
+        // hook, but the startup orphan sweep flips jobs in bulk without it, so treating it as
+        // produced would report a file that never existed as "Expired" - the exact collapse
+        // ClassifyState's own remarks warn against.
         SeedExport(status: status);
 
         var item = Assert.Single(CreateListing().GetExports());
 
         Assert.Equal(MessageTraceExportState.NotProduced, item.State);
         Assert.False(item.CanDownload);
+    }
+
+    [Fact]
+    public void ACancelledJobsPartialExport_IsServed_NotDeniedAsNeverProduced()
+    {
+        // Audit finding A32. BulkJobService.FinishAndNotify fires the completion hook on EVERY
+        // terminal transition, so a cancelled job builds its CSV, saves it, and mails the
+        // operator a link - and this page used to refuse it as never produced. The processor
+        // builds that partial export on purpose, marking unreached rows "Not processed".
+        var id = SeedExport(status: BulkJobStatus.Cancelled);
+        WriteExportFile(id);
+
+        var item = Assert.Single(CreateListing().GetExports());
+
+        Assert.Equal(MessageTraceExportState.Available, item.State);
+        Assert.True(item.CanDownload);
     }
 
     [Fact]

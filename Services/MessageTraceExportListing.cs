@@ -259,8 +259,19 @@ public class MessageTraceExportListing
     {
         fullPath = null;
 
-        // A job that never reached its completion step produced no export at all.
-        if (job.Status != BulkJobStatus.Completed)
+        // Audit finding A32. This used to be `!= Completed`, which was wrong for Cancelled:
+        // BulkJobService.FinishAndNotify fires the completion hook on EVERY terminal
+        // transition, so a cancelled job does build its CSV, does save it, and does send the
+        // operator a "your export is ready" mail with a link - and then this page refused to
+        // serve it as never produced. The processor builds that partial export deliberately,
+        // marking unreached rows "Not processed", so the file is real and wanted.
+        //
+        // Interrupted is deliberately NOT included and that asymmetry is the point: two of its
+        // three sources go through FinishAndNotify (a missing processor, and a throw out of the
+        // runner) but the startup orphan sweep flips jobs in bulk with no hook at all. Treating
+        // it as produced would report "Expired" for a file that never existed, which is exactly
+        // the collapse the comment above this method warns against.
+        if (job.Status is not (BulkJobStatus.Completed or BulkJobStatus.Cancelled))
             return MessageTraceExportState.NotProduced;
 
         if (SaveFailed(job))
