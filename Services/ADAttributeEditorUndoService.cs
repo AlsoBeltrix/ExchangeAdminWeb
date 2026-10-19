@@ -74,6 +74,10 @@ public class ADAttributeEditorUndoService : IUndoableModule
         if (!lookupResult.Success || lookupResult.CurrentValues == null)
             return ErrorPreview($"Cannot read current state of '{target}': {lookupResult.Error ?? "lookup failed"}", action, operationId);
 
+        var identityProblem = IdentityMismatch(auditEvent, lookupResult.Principal, target);
+        if (identityProblem != null)
+            return ErrorPreview(identityProblem, action, operationId);
+
         // Check protected principal
         if (lookupResult.Principal != null)
         {
@@ -180,6 +184,13 @@ public class ADAttributeEditorUndoService : IUndoableModule
                 var error = $"Cannot read current state of '{target}': {lookupResult.Error ?? "lookup failed"}";
                 scope.Complete(false, error);
                 return new UndoResult(false, error, null);
+            }
+
+            var identityProblem = IdentityMismatch(auditEvent, lookupResult.Principal, target);
+            if (identityProblem != null)
+            {
+                scope.Complete(false, identityProblem);
+                return new UndoResult(false, identityProblem, null);
             }
 
             // Check protected principal
@@ -325,6 +336,41 @@ public class ADAttributeEditorUndoService : IUndoableModule
             errorDetail: errorDetail,
             extra: extra);
     }
+    /// <summary>
+    /// Audit finding A9. The audit event names its target by UPN, and a UPN can be reassigned
+    /// to a different person. Undo resolves that name back to an object and writes to it, so
+    /// without an immutable id it can restore one person's old values onto another's account.
+    /// </summary>
+    /// <remarks>
+    /// Returns the refusal reason, or null when the identity is proven.
+    ///
+    /// A record written before the GUID was captured is REFUSED, not waved through. That is a
+    /// deliberate behaviour change: undo stops working for older audit rows. It is the right
+    /// way round - an undo that cannot prove its target is the failure this finding describes,
+    /// and the operator can still re-apply the values by hand, having read them in the record.
+    /// </remarks>
+    internal static string? IdentityMismatch(
+        Dictionary<string, object?> auditEvent, ResolvedDirectoryPrincipal? principal, string target)
+    {
+        var recorded = GetString(auditEvent, "targetObjectGuid");
+
+        if (string.IsNullOrWhiteSpace(recorded))
+            return $"Cannot undo: this audit record predates object-identity capture, so there is "
+                 + $"no way to prove '{target}' is still the same account that was changed. "
+                 + "Re-apply the recorded values manually if the change should be reversed.";
+
+        if (string.IsNullOrWhiteSpace(principal?.ObjectGuid))
+            return $"Cannot undo: the directory did not return an object id for '{target}', so it "
+                 + "cannot be matched against the account that was changed.";
+
+        if (!string.Equals(recorded, principal.ObjectGuid, StringComparison.OrdinalIgnoreCase))
+            return $"Cannot undo: '{target}' now resolves to a different directory object than the "
+                 + "one that was changed. The name has been reassigned; undoing would modify the "
+                 + "wrong account.";
+
+        return null;
+    }
+
 
     private static string? GetString(Dictionary<string, object?> evt, string key)
     {

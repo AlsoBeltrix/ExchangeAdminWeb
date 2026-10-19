@@ -930,7 +930,16 @@ public class ADAttributeEditorService
 
         _operationTrace.Step("AttributeWriteCompleted", success ? "Success" : "Failed", details: details);
 
-        _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, changes, success, ticket, errorDetail, extra: ProtectedPrincipalServicing.Extra(servicedNote));
+        // Audit finding A9. The UPN is a label and can be reassigned to a different person;
+        // the GUID cannot. Undo resolves this record back to an object, so without the GUID
+        // there is nothing for it to prove it reached the same one. Recorded here so the undo
+        // path has an immutable id to check - and so that a record WITHOUT one is detectable
+        // as older rather than indistinguishable from a verified match.
+        var extra = ProtectedPrincipalServicing.Extra(servicedNote) ?? new Dictionary<string, object?>();
+        if (!string.IsNullOrWhiteSpace(target.ObjectGuid))
+            extra["targetObjectGuid"] = target.ObjectGuid;
+
+        _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, changes, success, ticket, errorDetail, extra: extra);
     }
 
     private string[] GetConfiguredSearchBases()

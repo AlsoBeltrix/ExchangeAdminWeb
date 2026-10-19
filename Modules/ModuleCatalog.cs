@@ -1338,7 +1338,7 @@ public sealed class ModuleCatalog
             // check. It completed on the line after the AD read, so the frame said finished
             // while the operator was still waiting on the check that decides whether the edit
             // UI appears at all.
-            Version = "1.4.4",
+            Version = "1.5.0",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",
