@@ -131,11 +131,13 @@ public class DefenderEnrichmentCancellationTests
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var requests = new List<string>();
+        // flake-1: two calls are in flight at once here, so this is written from two threads.
+        // A plain List is not safe for that and could itself corrupt the count this asserts on.
+        var requests = new System.Collections.Concurrent.ConcurrentQueue<string>();
         using var http = D7.AsyncHttp(async (request, token) =>
         {
             var path = request.RequestUri!.AbsolutePath;
-            requests.Add(path);
+            requests.Enqueue(path);
             if (path.EndsWith("/token", StringComparison.Ordinal))
             {
                 entered.TrySetResult();
@@ -162,9 +164,22 @@ public class DefenderEnrichmentCancellationTests
         release.TrySetResult();
         await first;
         var error = await Record.ExceptionAsync(() => second);
-        Assert.IsAssignableFrom<OperationCanceledException>(error);
-        Assert.Equal(2, requests.Count);
-        Assert.DoesNotContain(requests, path => path is "/second" or "/api/v1/secrets/2");
+
+        // flake-1. These used to run cancellation-first, so an intermittent failure said only
+        // "expected OperationCanceledException, got null" and the two assertions that would
+        // have explained it never ran. The order is now worst-first: whether a later request
+        // actually went out is the product question this test exists to answer, and the
+        // cancellation assertion carries the request list so a failure is self-describing
+        // rather than something to reproduce.
+        var sent = requests.ToArray();
+        var detail = $"requests=[{string.Join(", ", sent)}]; error={error?.GetType().Name ?? "null"}";
+
+        Assert.False(
+            sent.Any(path => path is "/second" or "/api/v1/secrets/2"),
+            "A canceled waiter sent its request anyway. " + detail);
+        Assert.True(sent.Length == 2, "Unexpected request count. " + detail);
+        Assert.True(error is OperationCanceledException,
+            "The canceled waiter did not surface cancellation. " + detail);
     }
 
     [Fact]

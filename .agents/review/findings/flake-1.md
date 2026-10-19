@@ -1,16 +1,22 @@
-# flake-1: CanceledTokenLockWaiterCannotSendALaterRequest fails intermittently under load
+# flake-1: a canceled caller waiting on the token lock still sends its request
 
-**Severity**: MEDIUM as a test defect - it makes the gate unreliable, and an unreliable gate is
-how a real failure gets waved through. **Possibly HIGH as a product defect; that is not
-settled** - see below.
-**Status**: Open - identified and reproduced, NOT diagnosed
+**Severity**: HIGH - a cancelled operation reaches the API anyway. Here the intermittently
+failing cases are GETs, but the defect is in the shared token path every Defender call uses,
+including the POSTs.
+**Status**: Open - DIAGNOSED, not fixed. Product defect, not a flaky test.
 **Branch**: -
-**Commit**: -
+**Commit**: `e8c9041` carries the diagnostic test change only.
 
-## Evidence
+## What it was mistaken for
 
-`ExchangeAdminWeb.Tests/DefenderEnrichmentCancellationTests.cs:164`,
-`CanceledTokenLockWaiterCannotSendALaterRequest(vault: true)` and `(vault: false)`.
+This was recorded on 2026-10-19 as an unidentified flaky test. A full run reported one failure
+whose name a `tail -3` destroyed; three consecutive re-runs were green. It then reappeared
+during the `aud-a5` repair gate.
+
+**It is not a flake.** `ExchangeAdminWeb.Tests/DefenderEnrichmentCancellationTests.cs`,
+`CanceledTokenLockWaiterCannotSendALaterRequest`, was failing honestly and intermittently, and
+the test was written to catch exactly this. The reason it read as a flake is that its
+assertions ran cancellation-first, so every failure said only:
 
 ```
 Assert.IsAssignableFrom() Failure: Value is null
@@ -18,57 +24,73 @@ Expected: typeof(System.OperationCanceledException)
 Actual:   null
 ```
 
-**This is the flake that was hunted and not found on 2026-10-19.** A full run that day reported
-one failure whose name a `tail -3` destroyed; three consecutive full re-runs at that tree state
-were green, and it was recorded as unidentified. It surfaced again during the aud-a5 repair
-gate - both theory cases in one run, then one case in the very next run, then neither.
+which says nothing about what the code did. Reordering them worst-first - and attaching the
+request list - produced the real answer on the first failing run:
 
-Reproduction, such as it is: it fails only in a **full parallel suite run**
-(`xUnit.MaxParallelThreads` default). Run the test alone and it passes every time. It is
-load-dependent, not state-dependent.
-
-## Why it is not diagnosed here
-
-The test starts the second call and then cancels:
-
-```csharp
-var second = Invoke(true);
-cancellation.Cancel();
-release.TrySetResult();
+```
+A canceled waiter sent its request anyway.
+requests=[/tenant/oauth2/v2.0/token, /first, /second]; error=null
+requests=[/oauth2/token, /api/v1/secrets/1, /api/v1/secrets/2]; error=null
 ```
 
-Nothing synchronises "the second call has reached the token lock and is waiting" with the
-`Cancel()`. The comment above the release claims the sequence is "independent of scheduler
-speed"; the failure says otherwise. Under load the second call can still be before the
-cancellable region when `Cancel()` fires.
+`/second` and `secrets/2` are the canceled caller's requests. They went out, and the call
+returned success rather than throwing. Four full suite runs: failed in 3 of 4, both theory
+cases in one of them, neither in another. Always passes run alone.
 
-**Whether that makes it a test defect or a product defect is exactly what has not been
-established.** `error` being null means the second call *completed*. If it completed because it
-genuinely finished its work before cancellation was observed, the product is correct and the
-test's sequencing is wrong. If it completed because a canceled waiter went on to send a request
-anyway, that is the product defect the test was written to catch - and it would mean the test
-is failing honestly and intermittently rather than flaking.
+## Mechanism
 
-Settling that needs the other two assertions' values at the moment of failure
-(`requests.Count` and whether `/second` was sent), which the first assertion short-circuits.
-That is a small change to the test and the right first step.
+`Services/DefenderApiClient.cs:277`:
 
-## Proposed next step
+```csharp
+await _tokenLock.WaitAsync(cancellationToken);
+try
+{
+    if (!string.IsNullOrEmpty(_accessToken) && DateTime.UtcNow < _tokenExpiry.AddMinutes(-5))
+        return _accessToken;
+```
 
-1. Reorder the assertions, or capture all three, so a failure says whether the later request
-   was actually sent. That one run distinguishes test defect from product defect.
-2. Only then decide what to fix.
+`SemaphoreSlim.WaitAsync(token)` does **not** guarantee cancellation wins when the slot becomes
+available and cancellation is requested at the same moment - it can complete the wait
+successfully instead. The test arranges precisely that: it cancels, then releases the first
+caller's token request, freeing the lock.
 
-It is in the Defender work stream, not the repository-audit plan, and it is not mine - noting
-that for scope, not as a reason to leave it.
+The waiter therefore acquires the lock, finds the token the first caller just cached, returns
+it without looking at `cancellationToken` again, and `SendAsync` goes on to issue the request.
+`SendAsync` checks cancellation only at its entry (`:170`), before the lock wait.
 
-## Impact on current work
+So: **nothing re-checks cancellation between acquiring the token lock and issuing the
+request.**
 
-The aud-a5 repair's final gate ran with this failing: 4309 passed, 3 known AD skips, 1 failed.
-The failure is in a file that change does not touch, it predates the change, and the affected
-tests pass in isolation. That is the basis for treating it as unrelated - stated so it can be
-checked rather than taken on trust.
+`Services/GraphTokenClient.cs:248` is worse and should be fixed with it:
+`GetAccessTokenAsync()` there takes **no CancellationToken at all** - neither
+`_tokenLock.WaitAsync()` nor the token `PostAsync` is cancellable - and `GetWithStatusAsync`
+has no token parameter either. That client simply cannot be cancelled.
+
+## Proposed fix - NOT BUILT
+
+`cancellationToken.ThrowIfCancellationRequested()` immediately after the lock is acquired in
+`DefenderApiClient.GetAccessTokenAsync`, inside the `try` so the lock is still released, and
+again in `SendAsync` after `GetAccessTokenAsync` returns. That makes the outcome deterministic
+regardless of which way the semaphore race falls.
+
+Whether `GraphTokenClient` should be given cancellation support at the same time is a larger
+question - it changes a public signature used by several modules - and belongs to its own
+slice.
+
+## Why it is not fixed here
+
+It is in the Defender work stream, not `docs/RepoAudit-Remediation-Plan.md`, and it was found
+by the audit wave's gate rather than by that plan. It needs an owner go.
+
+## Guard
+
+The reordered assertions are the guard and they already bite - they are what produced the
+diagnosis. A fix must make all four of four runs pass; three of four is the current baseline.
+
+The test's `requests` list was also a plain `List<string>` written from two concurrent handler
+invocations, which is not safe and could have corrupted the count independently. Now a
+`ConcurrentQueue`. That was a second, separate defect in the same test.
 
 ## Closeout
 
-Not started.
+Diagnosed. Fix not started.
