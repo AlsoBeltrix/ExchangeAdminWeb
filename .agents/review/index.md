@@ -78,7 +78,9 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [aud-a6](findings/aud-a6.md) | HIGH - a borrowed EXO connection can target the previous organization | Verified `1dcc1a1`; repair `f71d60a` | - | codex-commercial / gpt-6-astra / max - CHANGES REQUIRED, fix was incomplete, closed |
 | [ ] | [aud-a6b](findings/aud-a6b.md) | HIGH if confirmed - Disconnect-ExchangeOnline may clear a process-wide connection map, breaking every other borrower | Reported by reviewer, NOT verified here; needs owner scope decision | - | codex-commercial / gpt-6-astra / max |
 | [ ] | [aud-a7b](findings/aud-a7b.md) | MEDIUM - Out of Office captures only the mailbox; state, messages, schedule and ticket are still post-await live reads | Recorded follow-up; not approved | - | codex-commercial / gpt-6-astra / max |
-| [ ] | [aud-a5b](findings/aud-a5b.md) | MEDIUM - blocked lockout targets vanish from the operator's report when any other target survives | Recorded follow-up; not approved | - | implementer |
+| [-] | [aud-a5b](findings/aud-a5b.md) | MEDIUM - blocked lockout targets vanish from the operator's report when any other target survives | DEFERRED - module parked (owner 2026-10-19) | - | implementer |
+| [-] | [aud-a5c](findings/aud-a5c.md) | HIGH - a domain-qualified lockout target still resolves to the wrong domain's account; event 4740 carries TargetSid and it is discarded | DEFERRED - module parked (owner 2026-10-19) | - | codex-commercial / gpt-6-astra / max |
+| [v] | [flake-1](findings/flake-1.md) | MEDIUM - a cancelled caller took the token lock and the cached token and built its request anyway, in three clients | Verified `fc70130`; reviewed, record corrected `0ab6b75` | - | codex-commercial / gpt-6-astra / max |
 Both from one Change review of `ad3c1e9..e5f9e5c` (the global-progress sweep), 2026-10-02.
 Raw reviewer output: `gps-sweep.result.json`; prompt and schema alongside it.
 

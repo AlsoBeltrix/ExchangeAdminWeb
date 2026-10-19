@@ -4,6 +4,29 @@ Durable repo decisions. Not a chat log. Each entry should make sense without
 conversation history and should name superseded guidance when relevant.
 
 ## Decisions
+
+### 2026-10-19 - Account Lockout Remediation is parked, not removed
+
+Owner ruling. The module has never been used and he considers it impractical as built. He
+first said to delete it, then reversed that in the same exchange: **leave it in the tree,
+leave it disabled, pick it up only after everything else is right.**
+
+Nothing was deleted. The module stays registered with `EnabledByDefault = false`, which is
+what it already was, so no code change was needed to enact this.
+
+What this decides for agents:
+
+- **Do not spend on it.** `aud-a5c` was mid-implementation when the ruling came and was
+  reverted. Its open findings - `aud-a5b`, `aud-a5c`, and the known gaps on `aud-a5` - are
+  DEFERRED, not abandoned, and must not be picked up as ordinary queue items.
+- **The findings stay filed and stay accurate.** They are the handover for whoever revisits
+  this. `aud-a5c` in particular records what was actually wrong with the design: the target is
+  resolved from a bare name against the wrong domain, when event 4740 carries `TargetSid`
+  outright - confirmed at index 2, typed `win:SID`, from the local Security-Auditing provider
+  template.
+- Reconsider only on the owner's explicit go. **The module being disabled is what makes the
+  open HIGH findings tolerable. If it is ever enabled, they are live again and block it.**
+
 ### 2026-10-15 - Add the confirmed shared Exchange replay fix before resuming C11
 
 Owner selected "Approve the additional slice (Recommended)" for

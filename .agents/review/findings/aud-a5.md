@@ -2,7 +2,7 @@
 
 **Severity**: HIGH - a destructive action on the wrong account. It bypasses the
 protected-principal guard and destroys unsaved work.
-**Status**: Verified
+**Status**: Verified; module DEFERRED by owner ruling 2026-10-19 - see Closeout
 **Branch**: -- (direct-to-main)
 **Commit**: `<pending>`
 
@@ -287,3 +287,8 @@ load-dependent intermittent that passes in isolation, predates this work and tou
 it. It is the previously unidentified flake, now identified and recorded as `flake-1`.
 
 Module version 1.3.0 -> 1.3.1.
+
+**DEFERRED 2026-10-19 by owner ruling** (`.agents/decisions.md`): Account Lockout
+Remediation has never been used and is parked, left registered and disabled. This finding is
+not abandoned and stays accurate as handover - it is simply not to be worked. If the module is
+ever enabled, this is live again.

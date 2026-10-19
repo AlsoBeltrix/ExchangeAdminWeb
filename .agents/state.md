@@ -61,7 +61,20 @@ verified by me - `Disconnect-ExchangeOnline` may clear a process-wide connection
 would undermine the pool's whole design; read the installed module before anything else),
 `aud-a7b`, `aud-a5b`, plus the earlier `aud-a1b`, `aud-a2b`, `aud-a3b`, `aud-a4b` finding 7.
 
-**Next:** Waves 2-4 of the plan, and an independent review of A5.
+**Account Lockout Remediation is parked** (owner ruling 2026-10-19, `.agents/decisions.md`).
+Never used, considered impractical as built, left registered and disabled rather than deleted.
+`aud-a5b` and `aud-a5c` are DEFERRED, not abandoned - and `aud-a5c` is the one that matters:
+the target is resolved from a bare name against the wrong domain when event 4740 carries
+`TargetSid` outright (index 2, typed `win:SID`, confirmed from the local provider template).
+The module being disabled is what makes that tolerable. **Do not work these without a go.**
+
+`flake-1` turned out to be a product defect, not a flaky test: a cancelled caller took the
+token lock and the cached token and built its request anyway, in three clients. Fixed
+(`fc70130`), reviewed, and the record corrected (`0ab6b75`) - the original HIGH was inferred
+from a test stub and is MEDIUM, because production's socket handler rejects the cancelled
+token before sending.
+
+**Next:** Waves 2-4 of the plan.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green

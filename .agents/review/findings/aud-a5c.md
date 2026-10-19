@@ -4,7 +4,7 @@
 exact; this makes the exact match land on the wrong person's SID, so the end result is
 unchanged: the wrong account is signed out, and the protected-principal check was made against
 the wrong account too.
-**Status**: Open - not started
+**Status**: DEFERRED by owner ruling 2026-10-19 - module parked; see Closeout
 **Branch**: -
 **Commit**: -
 
@@ -66,3 +66,8 @@ Source: codex-commercial / `gpt-6-astra` / max, 2026-10-19, finding 4 of the `cf
 ## Closeout
 
 Not started.
+
+**DEFERRED 2026-10-19 by owner ruling** (`.agents/decisions.md`): Account Lockout
+Remediation has never been used and is parked, left registered and disabled. This finding is
+not abandoned and stays accurate as handover - it is simply not to be worked. If the module is
+ever enabled, this is live again.

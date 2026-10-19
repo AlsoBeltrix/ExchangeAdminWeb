@@ -3,7 +3,7 @@
 **Severity**: MEDIUM - a protected principal the guard correctly refused is never shown to the
 operator, who is told the sweep succeeded. The refusal is audited, so the record exists; what
 is missing is the operator ever being told.
-**Status**: Open - not started
+**Status**: DEFERRED by owner ruling 2026-10-19 - module parked; see Closeout
 **Branch**: -
 **Commit**: -
 
@@ -47,3 +47,8 @@ is present in the result and that the failure count includes it.
 ## Closeout
 
 Not started. Separate commit from `aud-a5` by the one-finding-per-commit rule.
+
+**DEFERRED 2026-10-19 by owner ruling** (`.agents/decisions.md`): Account Lockout
+Remediation has never been used and is parked, left registered and disabled. This finding is
+not abandoned and stays accurate as handover - it is simply not to be worked. If the module is
+ever enabled, this is live again.
