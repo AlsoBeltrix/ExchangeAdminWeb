@@ -106,6 +106,49 @@ public class GroupMemberNestingProtectionTests
     }
 
     [Fact]
+    public void TransitiveCheck_AsksTheTargetsOwnDomain_NotTheHosts()
+    {
+        // Audit finding A3. The in-chain query carried no -Server, so it bound to the host's
+        // domain. A foreign-domain target is absent from that partition, so the query returned
+        // zero rows - a clean "not a member" - and the target read as unprotected. Same class,
+        // same helper and same reason as gmn-8 and fsr-1 on the Group Management side.
+        var body = TransitiveCheckBody();
+
+        // The owning domain is derived from the target's DN...
+        Assert.Contains("GroupManagementService.ServerFromDn(targetDn)", body, StringComparison.Ordinal);
+
+        // ...and the in-chain query is routed there.
+        var inChain = body.IndexOf("memberOf:1.2.840.113556.1.4.1941", StringComparison.Ordinal);
+        Assert.True(inChain >= 0, "In-chain membership filter not found - tripwire is stale.");
+        var invoke = body.IndexOf("ps.Invoke()", inChain, StringComparison.Ordinal);
+        Assert.True(invoke > inChain, "Could not bound the in-chain call - update the tripwire.");
+        Assert.Contains("AddParameter(\"Server\", targetServer)", body[inChain..invoke], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TransitiveCheck_FailsClosed_WhenTheOwningDomainCannotBeDetermined()
+    {
+        // ServerFromDn returns null for a DN with no DC components. Group Management's rule
+        // there is to omit -Server and keep the local binding, which is correct for a listing
+        // and wrong for a protection check: an unanswerable question is not a negative answer.
+        // This must return expansionHadErrors=true, which the caller turns into a refusal.
+        var body = TransitiveCheckBody();
+
+        var derive = body.IndexOf("GroupManagementService.ServerFromDn(targetDn)", StringComparison.Ordinal);
+        Assert.True(derive >= 0, "Owning-domain derivation not found - tripwire is stale.");
+
+        var loop = body.IndexOf("foreach (var protectedGroup", derive, StringComparison.Ordinal);
+        Assert.True(loop > derive,
+            "The owning domain must be resolved BEFORE the protected-group loop, so one unresolvable "
+            + "target fails the whole check closed rather than per group.");
+
+        // Between deriving it and entering the loop, a null must return the fail-closed tuple.
+        var guard = body[derive..loop];
+        Assert.Contains("targetServer is null", guard, StringComparison.Ordinal);
+        Assert.Contains("return (matches, true)", guard, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TransitiveCheck_UsesClassAgnosticCmdlet_ForBothDirectoryCalls()
     {
         var body = TransitiveCheckBody();

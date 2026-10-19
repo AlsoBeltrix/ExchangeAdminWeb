@@ -876,6 +876,30 @@ public class ProtectedPrincipalService
         if (string.IsNullOrEmpty(targetDn))
             return (matches, false);
 
+        // Audit finding A3. The in-chain query below carried no -Server, so it bound to the
+        // HOST's domain regardless of where the target lives. A foreign-domain object is simply
+        // absent from that partition, so the query returned zero rows - a clean "not a member"
+        // - and Group Management treated the target as unprotected. The protection check
+        // answered a question about the wrong directory.
+        //
+        // Route it to the target's OWN domain, derived from its DN. Same rule, same helper and
+        // the same reason as findings gmn-8 and fsr-1 on the Group Management side: the object
+        // lives in its own partition, so read it there.
+        //
+        // A DN with no DC components means the owning domain cannot be determined. Group
+        // Management's convention there is to omit -Server and keep the local binding, which is
+        // right for a listing and WRONG here: this is a protection check, and an unanswerable
+        // question is not a negative answer. Fail closed instead - the caller turns
+        // expansionHadErrors with no matches into a refusal.
+        var targetServer = GroupManagementService.ServerFromDn(targetDn);
+        if (targetServer is null)
+        {
+            _logger.LogWarning(
+                "Protected-group check cannot determine the owning domain for target DN {TargetDn} - failing closed",
+                targetDn);
+            return (matches, true);
+        }
+
         foreach (var protectedGroup in protectedGroups.Where(g => !string.IsNullOrWhiteSpace(g)))
         {
             try
@@ -903,6 +927,7 @@ public class ProtectedPrincipalService
                 // membership for any object class; only the cmdlet in front of it was wrong.
                 ps.AddCommand("Get-ADObject")
                   .AddParameter("LDAPFilter", $"(&(distinguishedName={targetFilter})(memberOf:1.2.840.113556.1.4.1941:={groupFilter}))")
+                  .AddParameter("Server", targetServer)
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
                 var inChainResult = ps.Invoke();
