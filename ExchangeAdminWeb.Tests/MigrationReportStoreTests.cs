@@ -466,4 +466,65 @@ public class MigrationReportStoreTests
 
         Assert.False(MigrationReportStore.IsExpired(taken, taken.AddMinutes(-5)));
     }
+
+    // ---- audit finding A31: the sweep must be scoped to one batch ----------------------------
+
+    [Fact]
+    public void DeleteForBatch_LeavesEveryOtherBatchAlone()
+    {
+        // The defect: the page called DeleteAll, and the store is ONE shared directory, so an
+        // operator expanding their batch deleted every other operator's reports too.
+        var (store, root) = TempStore();
+        try
+        {
+            var now = DateTime.UtcNow;
+            store.Write("Wave1", "a@x.com", "report A", now);
+            store.Write("Wave1", "b@x.com", "report B", now);
+            store.Write("Wave2", "c@x.com", "report C", now);
+
+            var removed = store.DeleteForBatch("Wave1");
+
+            Assert.Equal(2, removed);
+            Assert.Null(store.TryRead("Wave1", "a@x.com", now));
+            Assert.Null(store.TryRead("Wave1", "b@x.com", now));
+            Assert.NotNull(store.TryRead("Wave2", "c@x.com", now));
+        }
+        finally { try { Directory.Delete(root, true); } catch { /* best effort */ } }
+    }
+
+    [Fact]
+    public void DeleteForBatch_MatchesTheBatchNameCaseInsensitively()
+    {
+        // Batch names reach this from operator input and from Exchange, which do not agree on
+        // casing. A miss here would silently leave the stale reports R24b exists to remove.
+        var (store, root) = TempStore();
+        try
+        {
+            var now = DateTime.UtcNow;
+            store.Write("Wave1", "a@x.com", "report A", now);
+
+            Assert.Equal(1, store.DeleteForBatch("wAVE1"));
+            Assert.Null(store.TryRead("Wave1", "a@x.com", now));
+        }
+        finally { try { Directory.Delete(root, true); } catch { /* best effort */ } }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void DeleteForBatch_RefusesABlankNameRatherThanSweepingEverything(string blank)
+    {
+        // A blank predicate argument must never widen into DeleteAll - that is the defect
+        // restated, and it would be invisible.
+        var (store, root) = TempStore();
+        try
+        {
+            var now = DateTime.UtcNow;
+            store.Write("Wave1", "a@x.com", "report A", now);
+
+            Assert.Equal(0, store.DeleteForBatch(blank));
+            Assert.NotNull(store.TryRead("Wave1", "a@x.com", now));
+        }
+        finally { try { Directory.Delete(root, true); } catch { /* best effort */ } }
+    }
 }

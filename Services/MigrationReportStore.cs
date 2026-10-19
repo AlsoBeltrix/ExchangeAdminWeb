@@ -205,10 +205,42 @@ public sealed class MigrationReportStore
     }
 
     /// <summary>
-    /// Deletes every stored report. Used when a batch's rows are reloaded and the page cannot
-    /// cheaply enumerate which mailboxes had reports.
+    /// Deletes every stored report, for every batch and every operator.
     /// </summary>
+    /// <remarks>
+    /// Audit finding A31: this is almost never what a caller wants. The store is one shared
+    /// directory, so this reaches other operators' reports as well as the caller's. Invalidating
+    /// after a batch's rows were replaced wants <see cref="DeleteForBatch"/>; this is for
+    /// wiping the store outright.
+    /// </remarks>
     public void DeleteAll() => SweepInternal(_ => true);
+
+    /// <summary>
+    /// Deletes the stored reports belonging to one batch, and leaves every other batch's alone.
+    /// Returns how many were removed.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A31. The page could not cheaply enumerate which mailboxes in a batch had
+    /// reports, so it deleted all of them - instance-wide, because the directory is shared. It
+    /// does not need that enumeration: the report carries its own batch name, so the sweep can
+    /// select on it.
+    ///
+    /// Two operators working the SAME batch do still clear each other's reports, and that is
+    /// correct - the rows those reports describe really were replaced.
+    /// </remarks>
+    public int DeleteForBatch(string batchName)
+    {
+        // Fail closed on a missing name rather than sweeping everything: an empty predicate
+        // argument must never widen into DeleteAll by accident, which is the defect restated.
+        if (string.IsNullOrWhiteSpace(batchName))
+        {
+            _logger?.LogWarning("Refusing to discard migration reports for a blank batch name");
+            return 0;
+        }
+
+        return SweepInternal(report =>
+            string.Equals(report.BatchName, batchName, StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>
     /// Deletes reports older than <see cref="Retention"/>. Called on every write and once at
