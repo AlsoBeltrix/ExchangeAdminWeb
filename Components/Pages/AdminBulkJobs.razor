@@ -289,8 +289,34 @@
     // Cancel and Remove here are deliberately NOT module-scoped: crossing modules is this page's
     // purpose, and it is gated behind a fail-closed admin policy for exactly that reason. Both
     // audit, naming the module the job belonged to.
+    /// <summary>
+    /// Audit finding A29. The page's authorization was decided once, at
+    /// <see cref="OnInitializedAsync"/>. A Blazor circuit outlives that decision: revoke the
+    /// operator's access and their open tab keeps working, and these two actions reach across
+    /// EVERY module - cancelling and deleting other modules' jobs - which is exactly why the
+    /// policy is fail-closed in the first place.
+    /// </summary>
+    /// <remarks>
+    /// Returns false and audits the refusal. Audited rather than silently ignored: an operator
+    /// still clicking after their access was removed is worth a record, and a mutating action
+    /// that refuses without one looks identical to a bug.
+    /// </remarks>
+    private async Task<bool> StillAuthorized(string action, BulkJob job)
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if ((await AuthorizationService.AuthorizeAsync(authState.User, "AdminBulkJobs")).Succeeded)
+            return true;
+
+        WriteAudit(action, job, success: false);
+        actionMessage = "Your access to bulk job administration has been removed. Reload the page.";
+        return false;
+    }
+
     private async Task CancelJob(BulkJob job)
     {
+        if (!await StillAuthorized("AdminBulkJobs_CancelJob", job))
+            return;
+
         BulkJobs.CancelJob(job.Id);
         WriteAudit("AdminBulkJobs_CancelJob", job, success: true);
         actionMessage = $"Cancellation requested for {job.ModuleId} job {job.JobType}.";
@@ -299,6 +325,9 @@
 
     private async Task RemoveJob(BulkJob job)
     {
+        if (!await StillAuthorized("AdminBulkJobs_RemoveJob", job))
+            return;
+
         // DeleteJob keeps its module argument; this page passes the job's own module, which it
         // knows. No id-only overload exists, so the guard cannot be skipped by a future caller.
         var removed = BulkJobs.DeleteJob(job.ModuleId, job.Id);
