@@ -78,6 +78,13 @@ directory, wiping every operator's stored migration reports. Now scoped per batc
 edit changed no line counts, so the three line-keyed `ClickGateRegistry` entries needed no
 re-anchor - confirmed by the registry tests, not assumed.
 
+`aud-a33` is fixed: both instances share one config database and both read the schema version
+with no lock held, so a deploy restarting them together could make the second repeat
+`ALTER TABLE section_access ADD COLUMN` and abort its own startup. The transaction is now
+IMMEDIATE and the version is re-read inside it. **Its first guard did not discriminate** - four
+concurrent migrators passed against the mutated code too - so the migrator carries an
+`AfterVersionRead` test seam and the real guard drives the exact interleaving.
+
 **Next: the rest of Wave 2** - roughly nineteen findings, listed in the plan. The largest
 single group is the stale-target-across-an-await class (A13-A16), which the plan says to fix
 with one shared discipline rather than four bespoke patches.

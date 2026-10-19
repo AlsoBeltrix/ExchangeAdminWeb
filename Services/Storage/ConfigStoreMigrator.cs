@@ -187,6 +187,13 @@ public sealed class ConfigStoreMigrator
     }
 
     /// <summary>
+    /// TEST SEAM (audit finding A33): runs immediately after the unlocked version read, which is
+    /// the one window where another instance finishing its migration changes this one's outcome.
+    /// Never set outside tests.
+    /// </summary>
+    internal Action? AfterVersionRead { get; set; }
+
+    /// <summary>
     /// Brings the database up to <see cref="TargetVersion"/>. Idempotent and safe to run on
     /// every startup: applies only the steps newer than the database's current user_version,
     /// each in its own transaction. Returns the version the database is at afterward.
@@ -198,6 +205,12 @@ public sealed class ConfigStoreMigrator
         using var connection = _factory.Open();
 
         var current = GetUserVersion(connection);
+
+        // TEST SEAM for audit finding A33. The defect needs another instance to finish its
+        // migration in the window between this read and the loop below, and nothing else can
+        // open that window deterministically - a race between two fresh migrators does not
+        // reliably produce it, which a mutation run proved. Null in production.
+        AfterVersionRead?.Invoke();
 
         if (current > Migrations.Length)
         {
@@ -221,9 +234,26 @@ public sealed class ConfigStoreMigrator
             return current;
         }
 
-        for (var version = current; version < Migrations.Length; version++)
+        // Audit finding A33. The version above was read with no lock held, and each step used to
+        // open a DEFERRED transaction - which takes only a read lock until its first write. Dev
+        // and prod share one database (decisions 2026-09-04), so both instances starting
+        // together could read the same version, both enter the same step, and the second's
+        // ALTER TABLE would fail with "duplicate column name" and abort startup.
+        //
+        // Two changes make that safe. The transaction is IMMEDIATE, so the write lock is taken
+        // up front and the instances serialise rather than collide; and the version is re-read
+        // INSIDE that lock, so the loser of the race sees the winner's work and skips it. The
+        // outer read stays only as the fast path for the common no-op case.
+        while (true)
         {
-            using var transaction = connection.BeginTransaction();
+            using var transaction = connection.BeginTransaction(deferred: false);
+
+            var version = GetUserVersion(connection, transaction);
+            if (version >= Migrations.Length)
+            {
+                transaction.Rollback();
+                break;
+            }
 
             using (var step = connection.CreateCommand())
             {
@@ -289,9 +319,10 @@ public sealed class ConfigStoreMigrator
         return missing;
     }
 
-    private static int GetUserVersion(SqliteConnection connection)
+    private static int GetUserVersion(SqliteConnection connection, SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "PRAGMA user_version;";
         return Convert.ToInt32(command.ExecuteScalar());
     }

@@ -248,4 +248,66 @@ public class ConfigStoreMigratorTests
         command.Parameters.AddWithValue("$name", table);
         return command.ExecuteScalar() is not null;
     }
+
+    // ---- audit finding A33: two instances share one database ---------------------------------
+
+    [Fact]
+    public void Migrate_FromTwoInstancesAtOnce_DoesNotAbortEitherStartup()
+    {
+        // Dev and prod open the SAME file (decisions 2026-09-04). Both used to read
+        // user_version with no lock held and then open a DEFERRED transaction, so both could
+        // enter the same step and the loser's ALTER TABLE failed with "duplicate column name" -
+        // taking that instance's startup down.
+        using var temp = new TempDir();
+
+        var results = new System.Collections.Concurrent.ConcurrentBag<int>();
+        var failures = new System.Collections.Concurrent.ConcurrentBag<Exception>();
+
+        var start = new System.Threading.Barrier(4);
+        var threads = Enumerable.Range(0, 4).Select(_ => new Thread(() =>
+        {
+            try
+            {
+                start.SignalAndWait();
+                results.Add(new ConfigStoreMigrator(new SqliteConnectionFactory(temp.DbPath)).Migrate());
+            }
+            catch (Exception ex) { failures.Add(ex); }
+        })).ToList();
+
+        foreach (var t in threads) t.Start();
+        foreach (var t in threads) t.Join(TimeSpan.FromMinutes(2));
+
+        Assert.True(failures.IsEmpty,
+            "A concurrent migration aborted: " + string.Join(" | ", failures.Select(e => e.Message)));
+        Assert.Equal(4, results.Count);
+        Assert.All(results, v => Assert.Equal(ConfigStoreMigrator.TargetVersion, v));
+    }
+
+    [Fact]
+    public void Migrate_ResumesWhenAnotherInstanceAdvancedTheVersionFirst()
+    {
+        // The precise race, driven deterministically. This migrator reads the version, ANOTHER
+        // instance completes the whole migration in that window, and this one then runs its
+        // loop holding a stale number. It must notice and skip, not re-apply.
+        //
+        // Re-applying is not harmless: step 14 is
+        // "ALTER TABLE section_access ADD COLUMN group_display_name" and SQLite rejects a
+        // duplicate column, so the second instance would throw out of startup.
+        using var temp = new TempDir();
+        var factory = new SqliteConnectionFactory(temp.DbPath);
+
+        var migrator = new ConfigStoreMigrator(factory);
+        var otherInstanceRan = false;
+        migrator.AfterVersionRead = () =>
+        {
+            if (otherInstanceRan) return;
+            otherInstanceRan = true;
+            new ConfigStoreMigrator(factory).Migrate();
+        };
+
+        var version = migrator.Migrate();
+
+        Assert.True(otherInstanceRan, "The other instance never ran - this test proves nothing.");
+        Assert.Equal(ConfigStoreMigrator.TargetVersion, version);
+    }
 }
