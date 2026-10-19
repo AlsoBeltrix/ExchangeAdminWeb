@@ -108,3 +108,49 @@ anything. Independent review of the fix pending.
 ## Closeout
 
 Fixed directly on `master`. Not pushed.
+
+## Independent review, 2026-10-19 (codex-commercial / gpt-6-astra / max) - CHANGES REQUIRED
+
+The reviewer confirmed the target capture is complete - "validation, previous-state lookup,
+mutation, audit and notification all use `target`; the re-entry guard precedes every await" -
+and then found a regression this fix introduced.
+
+**The form locked permanently after a refusal.** `isSetting = true` was raised before the
+awaited protected-principal check, which was the point of the fix, but the refusal's `return`
+sat **above** the `try` whose `finally` clears the flag. So the mailbox box and the submit
+button stayed disabled and every further click returned at the re-entry guard. The operator had
+to reload the page.
+
+It is not limited to deliberately protected accounts: `ValidateTargetMailboxAsync` returns the
+same denial for a mailbox that does not exist or that it could not resolve, so an ordinary typo
+locked the form.
+
+Two paths, not one - anything thrown by `GetAuthenticationStateAsync` or
+`ValidateTargetMailboxAsync` stranded the flag the same way. Both are new; before this fix the
+flag went up after that region.
+
+**Repair.** The `try` now opens immediately after `Progress.Begin`, so the target check, the
+refusal and anything either throws all pass through the existing `finally`. There is still
+exactly one `Complete` in source order, so `ClickGateRegistry` condition 3 reads what it read
+before; the refusal now completes the activity as the non-success it is, carrying its reason,
+rather than being ended silently by the `using`. The stale comment asserting the opposite was
+removed.
+
+Guard: `SetOof_LeavesNoWayOutBetweenRaisingTheBusyFlagAndTheTryThatClearsIt` walks every
+`return` between the flag raise and the `try` and requires each to clear the flag first. The
+schedule-validation return does, and is allowed; any new one that does not fails.
+
+Mutation: deleting `isSetting = false;` from the schedule-validation return fails it with "A
+return between raising isSetting and the try must clear the flag first". Page restored
+byte-identical (md5 `1e5675ba71baa12a1a37006ba63183c4`), touched, rebuilt.
+
+Gate: 4299 passed / 3 known AD skips / 0 failed; format and `git diff --check` clean. Module
+version 1.1.1 -> 1.1.2; `da2c917` omitted its bump and nothing has been deployed, so this one
+covers both.
+
+**The reviewer's other point stands and is NOT fixed here.** These guards remain source scans.
+They would have passed with the stuck flag in place, and only caught it once a scan was written
+specifically for it. A behavioural harness for this page is still absent, and that limit is
+real: the page captures only the mailbox, while action, messages, schedule and ticket are still
+live field reads after awaits. That is pre-existing, outside A7's scope, and recorded as
+`aud-a7b`.

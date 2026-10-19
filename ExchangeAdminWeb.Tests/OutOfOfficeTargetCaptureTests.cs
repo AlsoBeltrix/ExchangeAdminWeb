@@ -48,6 +48,51 @@ public class OutOfOfficeTargetCaptureTests
     }
 
     [Fact]
+    public void SetOof_LeavesNoWayOutBetweenRaisingTheBusyFlagAndTheTryThatClearsIt()
+    {
+        // Review of aud-a7. Raising isSetting before the awaited protected-principal check put
+        // two new exits in front of the finally - the refusal's own return, and anything the
+        // resolve threw - and either left the form disabled until the operator reloaded the
+        // page. The schedule-validation return is the one exception: it clears the flag itself,
+        // before any await, so it is matched and skipped here rather than silently tolerated.
+        var code = SetOofCode();
+
+        var raise = code.IndexOf("isSetting = true;", StringComparison.Ordinal);
+        Assert.True(raise >= 0, "SetOof must raise the busy flag.");
+
+        var tryStart = code.IndexOf("\n        try\n", raise, StringComparison.Ordinal);
+        Assert.True(tryStart > raise, "SetOof must open a try after raising the busy flag.");
+
+        var between = code[raise..tryStart];
+        foreach (var (index, _) in Returns(between))
+        {
+            var preceding = between[..index];
+            var lastClear = preceding.LastIndexOf("isSetting = false;", StringComparison.Ordinal);
+            var lastOpenBrace = preceding.LastIndexOf('{');
+            Assert.True(lastClear > lastOpenBrace,
+                "A return between raising isSetting and the try must clear the flag first, or the form stays disabled.");
+        }
+    }
+
+    private static IEnumerable<(int index, string text)> Returns(string code)
+    {
+        for (var i = code.IndexOf("return", StringComparison.Ordinal); i >= 0;
+             i = code.IndexOf("return", i + 1, StringComparison.Ordinal))
+        {
+            yield return (i, "return");
+        }
+    }
+
+    [Fact]
+    public void SetOof_ClearsTheBusyFlagOnEveryPathOutOfTheTry()
+    {
+        var code = SetOofCode();
+        var finallyAt = code.IndexOf("finally", StringComparison.Ordinal);
+        Assert.True(finallyAt > 0, "SetOof must have a finally.");
+        Assert.Contains("isSetting = false;", code[finallyAt..], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SetOof_CapturesTheTarget_AndNeverRereadsTheEditableField()
     {
         // The guard closes the window; the capture means that even if something reopens it,

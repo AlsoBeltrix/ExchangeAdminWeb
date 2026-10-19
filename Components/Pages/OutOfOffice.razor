@@ -297,48 +297,50 @@
         // seconds. Leaving that above the Begin is exactly the PARTIAL shape
         // docs/ProgressCoverage-Plan.md records against MfaReset.ExecuteReset.
         //
-        // The protected-principal refusal below returns without an explicit Complete, and that is
-        // deliberate. The `using` disposes on that return and ends the activity as the non-success
-        // it was. An explicit Complete there would be the FIRST one in source order, which is what
-        // the registry's condition 3 reads, so every covered call after it would register as
-        // running past a completed activity.
-        //
         // Five steps, because the sequence is fixed once the operation proceeds. A refusal
         // completes early at the step it reached, which is what happened, not a lie about size.
         using var activity = Progress.Begin("Out of Office", oofLabel, ActivitySize.Steps(5));
 
-        activity.Step("checking the target");
-
-        // Own module id. This validator is shared with Mailbox Permissions and Calendar, so
-        // borrowing one of theirs would let a grant there authorise Out of Office changes to
-        // protected principals - the per-module boundary is the containment for this whole design.
+        // The try starts HERE, above the target check, not below it. Review of aud-a7 found that
+        // raising isSetting before the awaited protected-principal check - which is the whole
+        // point of that fix - put two new ways out of this method in front of the finally: the
+        // refusal's own return, and anything the resolve throws. Either left the mailbox box and
+        // the submit button disabled for good, with the operator having to reload the page.
         //
-        // The principal is read here rather than reused from below: this check runs BEFORE the
-        // authorization re-check that creates `authState`, and the servicer decision must be made
-        // against the current token wherever it is asked.
-        var oofAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
-        var protectedValidation = await Validator.ValidateTargetMailboxAsync(
-            target, oofAuthState.User, ServicerModuleId);
-        servicedNote = protectedValidation.ServicedNote;
-        var protectedError = protectedValidation.Error;
-        if (protectedError != null)
-        {
-            setResult = PermissionResult.Fail(protectedError);
-            try
-            {
-                Audit.LogModuleAction(currentUser, clientIpAddress,
-                    "OutOfOffice_Denied", "OutOfOffice", target, false, ticketNumber.Trim(), protectedError);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "Failed to write audit log for OOF protected-user denial on {Target}", target);
-            }
-            return;
-        }
-
-
+        // There is still exactly one Complete in source order, in the finally, so the registry's
+        // condition 3 reads what it read before. The refusal now completes the activity as the
+        // non-success it is, carrying its reason, instead of being ended silently by the using.
         try
         {
+            activity.Step("checking the target");
+
+            // Own module id. This validator is shared with Mailbox Permissions and Calendar, so
+            // borrowing one of theirs would let a grant there authorise Out of Office changes to
+            // protected principals - the per-module boundary is the containment for this whole design.
+            //
+            // The principal is read here rather than reused from below: this check runs BEFORE the
+            // authorization re-check that creates `authState`, and the servicer decision must be made
+            // against the current token wherever it is asked.
+            var oofAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var protectedValidation = await Validator.ValidateTargetMailboxAsync(
+                target, oofAuthState.User, ServicerModuleId);
+            servicedNote = protectedValidation.ServicedNote;
+            var protectedError = protectedValidation.Error;
+            if (protectedError != null)
+            {
+                setResult = PermissionResult.Fail(protectedError);
+                try
+                {
+                    Audit.LogModuleAction(currentUser, clientIpAddress,
+                        "OutOfOffice_Denied", "OutOfOffice", target, false, ticketNumber.Trim(), protectedError);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Failed to write audit log for OOF protected-user denial on {Target}", target);
+                }
+                return;
+            }
+
             activity.Step("checking your permission");
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "OutOfOffice");

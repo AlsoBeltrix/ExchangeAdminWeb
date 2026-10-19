@@ -529,7 +529,7 @@ public sealed class ModuleCatalog
             // chain - the protected-principal resolve, the authorization re-check, the read of the
             // current state, the live mailbox write and both notification emails - ran with the
             // bar reading Idle, on a page whose Check Status tab reported correctly.
-            Version = "1.1.1",
+            Version = "1.1.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
