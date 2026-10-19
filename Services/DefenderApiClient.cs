@@ -177,6 +177,11 @@ public sealed class DefenderApiClient
             // rather than escaping as an unhandled exception from a different call.
             var token = await GetAccessTokenAsync(cancellationToken);
 
+            // flake-1, belt and braces: acquiring a token is where this call can sit for
+            // seconds behind another caller, so the request is not built until cancellation
+            // has been checked on the far side of that wait.
+            cancellationToken.ThrowIfCancellationRequested();
+
             using var request = new HttpRequestMessage(method, uri);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -277,6 +282,14 @@ public sealed class DefenderApiClient
         await _tokenLock.WaitAsync(cancellationToken);
         try
         {
+            // flake-1. SemaphoreSlim.WaitAsync does NOT guarantee cancellation wins when the
+            // slot frees at the same moment cancellation is requested - it can complete the
+            // wait instead. A caller cancelled while queued here therefore arrived holding the
+            // lock, found the token the previous caller had just cached, returned it without
+            // looking at the token again, and went on to issue its request. Re-checked here,
+            // inside the try, so the lock is still released on the way out.
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (!string.IsNullOrEmpty(_accessToken) && DateTime.UtcNow < _tokenExpiry.AddMinutes(-5))
                 return _accessToken;
 

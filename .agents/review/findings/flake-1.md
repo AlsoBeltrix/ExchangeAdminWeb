@@ -94,3 +94,53 @@ invocations, which is not safe and could have corrupted the count independently.
 ## Closeout
 
 Diagnosed. Fix not started.
+
+## Fixed, 2026-10-19 - and it was in three clients, not one
+
+Owner go given to fix both `DefenderApiClient` and `GraphTokenClient`. Verifying that fix
+found a third.
+
+| Client | What it needed |
+| --- | --- |
+| `Services/DefenderApiClient.cs` | re-check after the lock, and after the token call in `SendAsync` |
+| `Services/GraphTokenClient.cs` | the same, **plus cancellation support at all** - nine public methods and the token path took no `CancellationToken` whatsoever |
+| `Services/DelineaService.cs` | the same shape again, in the vault token path |
+
+`GraphTokenClient`'s methods each gained `CancellationToken cancellationToken = default`, so
+every existing caller compiles unchanged, and the token now reaches the lock wait, the token
+POST, every `SendAsync` and every body read.
+
+**The third one is the part worth remembering.** After fixing the first two I ran the suite
+four times, got four clean runs, and said so. The fifth run failed on `vault: true` - the
+Delinea path, which neither fix touched. Four clean runs was not proof; it was the sample
+being too small for a race whose odds the first two fixes had already lowered. The claim was
+wrong when it was made, not merely unlucky.
+
+Evidence after all three:
+
+| State | Full suite runs | Failures |
+| --- | --- | --- |
+| Before any fix | 4 | 3 |
+| After Defender + Graph only | 5 | 1 (vault) |
+| After all three | 5 | 0 |
+
+The mutation proof is that first row rather than a reverted line: the pre-fix tree, measured,
+fails this test most of the time, and the post-fix tree has not failed it once.
+
+Two collateral repairs the change forced, both recorded rather than folded in silently:
+
+- Widening `GraphTokenClient`'s signatures made the xUnit analyzer flag eighteen existing call
+  sites in `GraphTokenClientTests`, which fails the `dotnet format` gate CI enforces. Each now
+  passes the test's own token. Three of them needed a **named** argument - positional put the
+  token in the `object? body` parameter, which compiled fine and would have silently passed a
+  `CancellationToken` as a request body.
+- `ModuleCatalogTests.Catalog_HasDefenderEndpointDevicesModule` pins the Defender module
+  version and was updated with the bump.
+
+Versions: base 2.27.9 -> 2.27.10 (GraphTokenClient and DelineaService are app-wide);
+DefenderEndpointDevices 1.6.16 -> 1.6.17.
+
+## Closeout
+
+Fixed directly on `master`. Not pushed at time of writing. Independent review not yet run on
+this fix.

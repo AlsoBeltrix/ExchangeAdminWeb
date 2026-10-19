@@ -73,6 +73,11 @@ public class DelineaService
         {
             _operationTrace.Step("VaultSecretFieldsRequested", backend: "Delinea", command: "GET /api/v1/secrets/{secretId}", details: new Dictionary<string, object?> { ["secretId"] = secretId });
             var token = await GetAccessTokenAsync(cancellationToken);
+
+            // flake-1: acquiring a token is where this call can sit behind another caller, so
+            // the request is not built until cancellation has been checked past that wait.
+            cancellationToken.ThrowIfCancellationRequested();
+
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{secretId}");
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
             var response = await _httpClient.SendAsync(request, cancellationToken);
@@ -253,6 +258,13 @@ public class DelineaService
         await _tokenLock.WaitAsync(cancellationToken);
         try
         {
+            // flake-1, the third place this shape appears. SemaphoreSlim.WaitAsync does not
+            // guarantee cancellation wins when the slot frees at the same moment cancellation
+            // is requested, so a cancelled caller can arrive holding the lock, take the token
+            // the previous caller just cached and go on to issue its request. Checked inside
+            // the try so the lock is still released.
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (!string.IsNullOrEmpty(_accessToken) && DateTime.UtcNow < _tokenExpiry.AddMinutes(-5))
             {
                 _extLog.Write(LogEventLevel.Debug, "Using cached Delinea access token", "Delinea", () => $"Target={_credentialTarget}; ExpiresUtc={_tokenExpiry:o}");

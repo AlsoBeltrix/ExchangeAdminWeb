@@ -29,19 +29,19 @@ public sealed class GraphTokenClient
     /// GET that surfaces the HTTP status so callers can distinguish "empty result"
     /// from "request failed" (403/404/429/5xx). Document is null on non-success.
     /// </summary>
-    public async Task<(JsonDocument? Document, System.Net.HttpStatusCode StatusCode)> GetWithStatusAsync(string endpoint)
+    public async Task<(JsonDocument? Document, System.Net.HttpStatusCode StatusCode)> GetWithStatusAsync(string endpoint, CancellationToken cancellationToken = default)
     {
         if (!TryResolveRequestUri(endpoint, out var uri))
             return (null, System.Net.HttpStatusCode.BadRequest);
 
-        var token = await GetAccessTokenAsync();
+        var token = await GetAccessTokenAsync(cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var response = await _httpClient.SendAsync(request);
+        var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode) return (null, response.StatusCode);
 
-        var content = await response.Content.ReadAsStringAsync();
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
         return (JsonDocument.Parse(content), response.StatusCode);
     }
 
@@ -106,15 +106,15 @@ public sealed class GraphTokenClient
 
     // Null collapses failure and "no content" into one value - prefer
     // GetWithStatusAsync anywhere the caller reports success/failure to a user.
-    public async Task<JsonDocument?> GetAsync(string endpoint)
+    public async Task<JsonDocument?> GetAsync(string endpoint, CancellationToken cancellationToken = default)
     {
-        var (document, _) = await GetWithStatusAsync(endpoint);
+        var (document, _) = await GetWithStatusAsync(endpoint, cancellationToken);
         return document;
     }
 
-    public async Task<bool> DeleteAsync(string endpoint)
+    public async Task<bool> DeleteAsync(string endpoint, CancellationToken cancellationToken = default)
     {
-        var (ok, _, _) = await DeleteWithStatusAsync(endpoint);
+        var (ok, _, _) = await DeleteWithStatusAsync(endpoint, cancellationToken);
         return ok;
     }
 
@@ -123,23 +123,23 @@ public sealed class GraphTokenClient
     /// PatchWithStatusAsync, so callers can distinguish a 403 (missing permission) from a 404
     /// (already gone) from a 5xx - a bare bool collapses all three into "failed" (idm-1).
     /// </summary>
-    public async Task<(bool Ok, System.Net.HttpStatusCode StatusCode, string? SafeError)> DeleteWithStatusAsync(string endpoint)
+    public async Task<(bool Ok, System.Net.HttpStatusCode StatusCode, string? SafeError)> DeleteWithStatusAsync(string endpoint, CancellationToken cancellationToken = default)
     {
-        var token = await GetAccessTokenAsync();
+        var token = await GetAccessTokenAsync(cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"{GraphBaseUrl}{endpoint}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var response = await _httpClient.SendAsync(request);
+        var response = await _httpClient.SendAsync(request, cancellationToken);
         if (response.IsSuccessStatusCode)
             return (true, response.StatusCode, null);
 
-        var content = await response.Content.ReadAsStringAsync();
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
         return (false, response.StatusCode, ExtractGraphError(content));
     }
 
-    public async Task<bool> PostNoContentAsync(string endpoint, object? body = null)
+    public async Task<bool> PostNoContentAsync(string endpoint, object? body = null, CancellationToken cancellationToken = default)
     {
-        var (ok, _, _) = await PostNoContentWithStatusAsync(endpoint, body);
+        var (ok, _, _) = await PostNoContentWithStatusAsync(endpoint, body, cancellationToken);
         return ok;
     }
 
@@ -148,9 +148,9 @@ public sealed class GraphTokenClient
     /// Graph error, the same shape as PatchWithStatusAsync, so callers can distinguish a 403 from
     /// a 404 from a 5xx instead of a bare bool (idm-1).
     /// </summary>
-    public async Task<(bool Ok, System.Net.HttpStatusCode StatusCode, string? SafeError)> PostNoContentWithStatusAsync(string endpoint, object? body = null)
+    public async Task<(bool Ok, System.Net.HttpStatusCode StatusCode, string? SafeError)> PostNoContentWithStatusAsync(string endpoint, object? body = null, CancellationToken cancellationToken = default)
     {
-        var token = await GetAccessTokenAsync();
+        var token = await GetAccessTokenAsync(cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{GraphBaseUrl}{endpoint}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -160,17 +160,17 @@ public sealed class GraphTokenClient
             request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
         }
 
-        var response = await _httpClient.SendAsync(request);
+        var response = await _httpClient.SendAsync(request, cancellationToken);
         if (response.IsSuccessStatusCode)
             return (true, response.StatusCode, null);
 
-        var content = await response.Content.ReadAsStringAsync();
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
         return (false, response.StatusCode, ExtractGraphError(content));
     }
 
-    public async Task<JsonDocument?> PostAsync(string endpoint, object? body = null)
+    public async Task<JsonDocument?> PostAsync(string endpoint, object? body = null, CancellationToken cancellationToken = default)
     {
-        var token = await GetAccessTokenAsync();
+        var token = await GetAccessTokenAsync(cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{GraphBaseUrl}{endpoint}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -180,10 +180,10 @@ public sealed class GraphTokenClient
             request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
         }
 
-        var response = await _httpClient.SendAsync(request);
+        var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode) return null;
 
-        var content = await response.Content.ReadAsStringAsync();
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
         return string.IsNullOrWhiteSpace(content) ? null : JsonDocument.Parse(content);
     }
 
@@ -193,26 +193,26 @@ public sealed class GraphTokenClient
     /// instead of a bare bool. SafeError contains only the Graph error.code/message, never the
     /// token or raw response body.
     /// </summary>
-    public async Task<(bool Ok, System.Net.HttpStatusCode StatusCode, string? SafeError)> PatchWithStatusAsync(string endpoint, object body)
+    public async Task<(bool Ok, System.Net.HttpStatusCode StatusCode, string? SafeError)> PatchWithStatusAsync(string endpoint, object body, CancellationToken cancellationToken = default)
     {
-        var token = await GetAccessTokenAsync();
+        var token = await GetAccessTokenAsync(cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Patch, $"{GraphBaseUrl}{endpoint}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var json = JsonSerializer.Serialize(body);
         request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
 
-        var response = await _httpClient.SendAsync(request);
+        var response = await _httpClient.SendAsync(request, cancellationToken);
         if (response.IsSuccessStatusCode)
             return (true, response.StatusCode, null);
 
-        var content = await response.Content.ReadAsStringAsync();
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
         return (false, response.StatusCode, ExtractGraphError(content));
     }
 
-    public async Task<bool> PatchAsync(string endpoint, object body)
+    public async Task<bool> PatchAsync(string endpoint, object body, CancellationToken cancellationToken = default)
     {
-        var (ok, _, _) = await PatchWithStatusAsync(endpoint, body);
+        var (ok, _, _) = await PatchWithStatusAsync(endpoint, body, cancellationToken);
         return ok;
     }
 
@@ -245,14 +245,21 @@ public sealed class GraphTokenClient
         return null;
     }
 
-    private async Task<string> GetAccessTokenAsync()
+    private async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken)
     {
         if (!IsConfigured)
             throw new InvalidOperationException("Graph API credentials not configured for this module.");
 
-        await _tokenLock.WaitAsync();
+        await _tokenLock.WaitAsync(cancellationToken);
         try
         {
+            // flake-1, the same race DefenderApiClient had. SemaphoreSlim.WaitAsync does not
+            // guarantee cancellation wins when the slot frees at the same moment cancellation
+            // is requested, so a cancelled caller can arrive here holding the lock, take the
+            // token the previous caller just cached and go on to issue its request. Checked
+            // inside the try so the lock is still released.
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (!string.IsNullOrEmpty(_accessToken) && DateTime.UtcNow < _tokenExpiry.AddMinutes(-5))
                 return _accessToken;
 
@@ -265,11 +272,11 @@ public sealed class GraphTokenClient
                 new KeyValuePair<string, string>("scope", "https://graph.microsoft.com/.default")
             });
 
-            var response = await _httpClient.PostAsync(tokenUrl, body);
+            var response = await _httpClient.PostAsync(tokenUrl, body, cancellationToken);
             if (!response.IsSuccessStatusCode)
                 throw new InvalidOperationException($"Graph token request failed: {response.StatusCode}");
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(content);
             _accessToken = doc.RootElement.GetProperty("access_token").GetString()!;
             var expiresIn = doc.RootElement.GetProperty("expires_in").GetInt32();

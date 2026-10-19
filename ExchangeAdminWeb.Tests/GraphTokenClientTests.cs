@@ -44,7 +44,7 @@ public class GraphTokenClientTests
         var (client, handler) = CreateClient();
         handler.GraphResponse = () => new HttpResponseMessage(status);
 
-        var (document, returnedStatus) = await client.GetWithStatusAsync("/users/x/authentication/methods");
+        var (document, returnedStatus) = await client.GetWithStatusAsync("/users/x/authentication/methods", TestContext.Current.CancellationToken);
 
         Assert.Null(document);
         Assert.Equal(status, returnedStatus);
@@ -55,7 +55,7 @@ public class GraphTokenClientTests
     {
         var (client, _) = CreateClient();
 
-        var (document, status) = await client.GetWithStatusAsync("/users/x/authentication/methods");
+        var (document, status) = await client.GetWithStatusAsync("/users/x/authentication/methods", TestContext.Current.CancellationToken);
 
         Assert.NotNull(document);
         Assert.Equal(HttpStatusCode.OK, status);
@@ -69,7 +69,7 @@ public class GraphTokenClientTests
         var (client, handler) = CreateClient();
         handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.Forbidden);
 
-        var document = await client.GetAsync("/groups");
+        var document = await client.GetAsync("/groups", TestContext.Current.CancellationToken);
 
         Assert.Null(document);
     }
@@ -80,7 +80,7 @@ public class GraphTokenClientTests
         var (client, handler) = CreateClient();
         handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
 
-        var (ok, status, safeError) = await client.PatchWithStatusAsync("/users/x", new { accountEnabled = false });
+        var (ok, status, safeError) = await client.PatchWithStatusAsync("/users/x", new { accountEnabled = false }, TestContext.Current.CancellationToken);
 
         Assert.True(ok);
         Assert.Equal(HttpStatusCode.NoContent, status);
@@ -98,7 +98,7 @@ public class GraphTokenClientTests
                 """)
         };
 
-        var (ok, status, safeError) = await client.PatchWithStatusAsync("/users/x", new { accountEnabled = false });
+        var (ok, status, safeError) = await client.PatchWithStatusAsync("/users/x", new { accountEnabled = false }, TestContext.Current.CancellationToken);
 
         Assert.False(ok);
         Assert.Equal(HttpStatusCode.BadRequest, status);
@@ -113,7 +113,7 @@ public class GraphTokenClientTests
         var (client, handler) = CreateClient();
         handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.Forbidden);
 
-        var ok = await client.PatchAsync("/users/x", new { accountEnabled = false });
+        var ok = await client.PatchAsync("/users/x", new { accountEnabled = false }, TestContext.Current.CancellationToken);
 
         Assert.False(ok);
     }
@@ -134,7 +134,7 @@ public class GraphTokenClientTests
         var (client, handler) = CreateClient();
         handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
 
-        var (ok, status, safeError) = await client.DeleteWithStatusAsync("/deviceManagement/managedDevices/x");
+        var (ok, status, safeError) = await client.DeleteWithStatusAsync("/deviceManagement/managedDevices/x", TestContext.Current.CancellationToken);
 
         Assert.True(ok);
         Assert.Equal(HttpStatusCode.NoContent, status);
@@ -153,7 +153,7 @@ public class GraphTokenClientTests
             Content = new StringContent("""{"error":{"code":"SomeError","message":"detail"}}""")
         };
 
-        var (ok, returnedStatus, safeError) = await client.DeleteWithStatusAsync("/deviceManagement/managedDevices/x");
+        var (ok, returnedStatus, safeError) = await client.DeleteWithStatusAsync("/deviceManagement/managedDevices/x", TestContext.Current.CancellationToken);
 
         Assert.False(ok);
         Assert.Equal(status, returnedStatus);
@@ -170,7 +170,7 @@ public class GraphTokenClientTests
             Content = new StringContent("<html>not json</html>")
         };
 
-        var (ok, _, safeError) = await client.DeleteWithStatusAsync("/deviceManagement/managedDevices/x");
+        var (ok, _, safeError) = await client.DeleteWithStatusAsync("/deviceManagement/managedDevices/x", TestContext.Current.CancellationToken);
 
         Assert.False(ok);
         Assert.Null(safeError);
@@ -182,7 +182,7 @@ public class GraphTokenClientTests
         var (client, handler) = CreateClient();
         handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.Forbidden);
 
-        var ok = await client.DeleteAsync("/deviceManagement/managedDevices/x");
+        var ok = await client.DeleteAsync("/deviceManagement/managedDevices/x", TestContext.Current.CancellationToken);
 
         Assert.False(ok);
     }
@@ -193,7 +193,7 @@ public class GraphTokenClientTests
         var (client, handler) = CreateClient();
         handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
 
-        var (ok, status, safeError) = await client.PostNoContentWithStatusAsync("/deviceManagement/managedDevices/x/retire");
+        var (ok, status, safeError) = await client.PostNoContentWithStatusAsync("/deviceManagement/managedDevices/x/retire", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(ok);
         Assert.Equal(HttpStatusCode.NoContent, status);
@@ -212,7 +212,7 @@ public class GraphTokenClientTests
             Content = new StringContent("""{"error":{"code":"SomeError","message":"detail"}}""")
         };
 
-        var (ok, returnedStatus, safeError) = await client.PostNoContentWithStatusAsync("/deviceManagement/managedDevices/x/wipe", new { keepUserData = false });
+        var (ok, returnedStatus, safeError) = await client.PostNoContentWithStatusAsync("/deviceManagement/managedDevices/x/wipe", new { keepUserData = false }, TestContext.Current.CancellationToken);
 
         Assert.False(ok);
         Assert.Equal(status, returnedStatus);
@@ -229,7 +229,7 @@ public class GraphTokenClientTests
             Content = new StringContent("<html>not json</html>")
         };
 
-        var (ok, _, safeError) = await client.PostNoContentWithStatusAsync("/deviceManagement/managedDevices/x/retire");
+        var (ok, _, safeError) = await client.PostNoContentWithStatusAsync("/deviceManagement/managedDevices/x/retire", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.False(ok);
         Assert.Null(safeError);
@@ -241,7 +241,7 @@ public class GraphTokenClientTests
         var (client, handler) = CreateClient();
         handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.Forbidden);
 
-        var ok = await client.PostNoContentAsync("/deviceManagement/managedDevices/x/retire");
+        var ok = await client.PostNoContentAsync("/deviceManagement/managedDevices/x/retire", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.False(ok);
     }
@@ -294,7 +294,7 @@ public class GraphTokenClientTests
     {
         var (client, handler) = CreateRecordingClient();
 
-        await client.GetWithStatusAsync("/identityProtection/riskyUsers?$top=500");
+        await client.GetWithStatusAsync("/identityProtection/riskyUsers?$top=500", TestContext.Current.CancellationToken);
 
         Assert.Equal(
             "https://graph.microsoft.com/v1.0/identityProtection/riskyUsers?$top=500",
@@ -312,7 +312,7 @@ public class GraphTokenClientTests
         const string nextLink =
             "https://graph.microsoft.com/v1.0/identityProtection/riskyUsers?$skiptoken=X%2fY%2bZ%3d%3d&$top=500";
 
-        await client.GetWithStatusAsync(nextLink);
+        await client.GetWithStatusAsync(nextLink, TestContext.Current.CancellationToken);
 
         Assert.Equal(nextLink, Assert.Single(handler.GraphRequests).OriginalString);
     }
@@ -337,7 +337,7 @@ public class GraphTokenClientTests
     {
         var (client, handler) = CreateRecordingClient();
 
-        var (document, status) = await client.GetWithStatusAsync(url);
+        var (document, status) = await client.GetWithStatusAsync(url, TestContext.Current.CancellationToken);
 
         Assert.Null(document);
         Assert.Equal(HttpStatusCode.BadRequest, status);
@@ -350,7 +350,7 @@ public class GraphTokenClientTests
     {
         var (client, handler) = CreateRecordingClient();
 
-        var (_, status) = await client.GetWithStatusAsync("identityProtection/riskyUsers");
+        var (_, status) = await client.GetWithStatusAsync("identityProtection/riskyUsers", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.Empty(handler.GraphRequests);
