@@ -259,15 +259,34 @@
 
     private async Task SetOof()
     {
+        // Audit finding A7. The mailbox box stayed editable through the awaited
+        // protected-principal check - isSetting went up only afterwards - and every later step
+        // re-read setEmail. So an operator could submit an unprotected mailbox, change the
+        // address while resolution was in flight, and have the write land on a protected one
+        // that nothing had checked. Three separate reviews reached this independently.
+        //
+        // Both halves are needed. The guard closes the window; the capture means that even if
+        // something else re-opens it, this run acts on the address it validated. Same shape as
+        // the Comms-10k C7 fix, and the first statement rather than a later one so no reset or
+        // await can sit in front of it.
+        if (isSetting) return;
+        isSetting = true;
+
+        var target = setEmail.Trim();
+
         setValidationError = null;
         setResult = null;
 
         setValidationError = ValidateOofSchedule(oofState, startTime, endTime);
-        if (setValidationError != null) return;
+        if (setValidationError != null)
+        {
+            isSetting = false;
+            return;
+        }
 
         var oofLabel = oofState == "Disabled"
-            ? $"Disabling auto-reply for {setEmail.Trim()}"
-            : $"Setting auto-reply for {setEmail.Trim()}";
+            ? $"Disabling auto-reply for {target}"
+            : $"Setting auto-reply for {target}";
 
         // Opened HERE, above the protected-principal resolve, and completed in the finally AFTER
         // both notification emails. NamedLocations.SaveLocation is the shape this copies.
@@ -299,7 +318,7 @@
         // against the current token wherever it is asked.
         var oofAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
         var protectedValidation = await Validator.ValidateTargetMailboxAsync(
-            setEmail.Trim(), oofAuthState.User, ServicerModuleId);
+            target, oofAuthState.User, ServicerModuleId);
         servicedNote = protectedValidation.ServicedNote;
         var protectedError = protectedValidation.Error;
         if (protectedError != null)
@@ -308,16 +327,15 @@
             try
             {
                 Audit.LogModuleAction(currentUser, clientIpAddress,
-                    "OutOfOffice_Denied", "OutOfOffice", setEmail.Trim(), false, ticketNumber.Trim(), protectedError);
+                    "OutOfOffice_Denied", "OutOfOffice", target, false, ticketNumber.Trim(), protectedError);
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "Failed to write audit log for OOF protected-user denial on {Target}", setEmail.Trim());
+                Logger.LogWarning(ex, "Failed to write audit log for OOF protected-user denial on {Target}", target);
             }
             return;
         }
 
-        isSetting = true;
 
         try
         {
@@ -330,11 +348,11 @@
                 try
                 {
                     Audit.LogModuleAction(currentUser, clientIpAddress,
-                        "OutOfOffice_Denied", "OutOfOffice", setEmail.Trim(), false, ticketNumber.Trim(), "Authorization denied (re-check)");
+                        "OutOfOffice_Denied", "OutOfOffice", target, false, ticketNumber.Trim(), "Authorization denied (re-check)");
                 }
                 catch (Exception ex)
                 {
-                    Logger.LogWarning(ex, "Failed to write audit log for OOF auth re-check denial on {Target}", setEmail.Trim());
+                    Logger.LogWarning(ex, "Failed to write audit log for OOF auth re-check denial on {Target}", target);
                 }
                 return;
             }
@@ -344,15 +362,15 @@
             try
             {
                 activity.Step("reading the current auto-reply state");
-                var currentOof = await OofService.GetOutOfOfficeAsync(setEmail.Trim());
+                var currentOof = await OofService.GetOutOfOfficeAsync(target);
                 if (currentOof != null && currentOof.Error == null)
                     previousState = currentOof.State ?? "Unknown";
             }
-            catch (Exception ex) { Logger.LogWarning(ex, "Could not retrieve current OOF state for {Target} before mutation", setEmail.Trim()); }
+            catch (Exception ex) { Logger.LogWarning(ex, "Could not retrieve current OOF state for {Target} before mutation", target); }
 
             activity.Step(oofState == "Disabled" ? "disabling the auto-reply" : "writing the auto-reply");
             setResult = await OofService.SetOutOfOfficeAsync(
-                setEmail.Trim(), oofState,
+                target, oofState,
                 oofState != "Disabled" ? internalMessage : null,
                 oofState != "Disabled" ? externalMessage : null,
                 oofState == "Scheduled" ? startTime : null,
@@ -374,12 +392,12 @@
             try
             {
                 Audit.LogModuleAction(currentUser, clientIpAddress,
-                    action, "OutOfOffice", setEmail.Trim(), setResult.Success, ticketNumber.Trim(),
+                    action, "OutOfOffice", target, setResult.Success, ticketNumber.Trim(),
                     setResult.Success ? null : setResult.Message, extra);
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "Failed to write audit log for SetOutOfOffice on {Target}", setEmail.Trim());
+                Logger.LogWarning(ex, "Failed to write audit log for SetOutOfOffice on {Target}", target);
             }
 
             activity.Step("sending notifications");
@@ -389,13 +407,13 @@
                 await Email.SendAdminNotificationAsync(
                     currentUser, clientIpAddress,
                     oofState == "Disabled" ? "DisableOutOfOffice" : $"SetOutOfOffice_{oofState}",
-                    setEmail.Trim(), "N/A", "OutOfOffice",
+                    target, "N/A", "OutOfOffice",
                     setResult.Success, ticketNumber.Trim(),
                     setResult.Success ? null : setResult.Message);
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "Failed to send admin notification for SetOutOfOffice on {Target}", setEmail.Trim());
+                Logger.LogWarning(ex, "Failed to send admin notification for SetOutOfOffice on {Target}", target);
             }
 
             if (setResult.Success)
@@ -403,12 +421,12 @@
                 try
                 {
                     await Email.SendOofNotificationAsync(
-                        setEmail.Trim(), currentUser,
+                        target, currentUser,
                         oofState == "Disabled" ? "disabled" : "enabled");
                 }
                 catch (Exception ex)
                 {
-                    Logger.LogWarning(ex, "Failed to send OOF notification to {Target}", setEmail.Trim());
+                    Logger.LogWarning(ex, "Failed to send OOF notification to {Target}", target);
                 }
             }
         }
@@ -419,12 +437,12 @@
             {
                 Audit.LogModuleAction(currentUser, clientIpAddress,
                     oofState == "Disabled" ? "OutOfOffice_Disable" : "OutOfOffice_Set",
-                    "OutOfOffice", setEmail.Trim(), false, ticketNumber.Trim(), ex.Message,
+                    "OutOfOffice", target, false, ticketNumber.Trim(), ex.Message,
                     new Dictionary<string, object?> { ["newState"] = oofState });
             }
             catch (Exception auditEx)
             {
-                Logger.LogError(auditEx, "Audit failed for OutOfOffice on {Target}", setEmail.Trim());
+                Logger.LogError(auditEx, "Audit failed for OutOfOffice on {Target}", target);
             }
         }
         finally
