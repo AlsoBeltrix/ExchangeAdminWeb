@@ -1,6 +1,6 @@
 # Repo Audit Remediation - Plan
 
-Status: **DRAFT - awaiting owner approval.** Source: the six-agent read-only audit of local
+Status: **APPROVED 2026-10-19 - all four waves; implementation unstarted.** Source: the six-agent read-only audit of local
 master at `34bac08`, 2026-10-16 (owner-supplied, `repo_audit.md`). Eight high findings, 32
 medium, plus lower-priority items. Nothing in this plan has been implemented.
 
@@ -31,9 +31,9 @@ mistake there locks people out of their own tools, or worse, quietly loosens a c
 appearing to tighten it. Every slice in Wave 1 needs a test that fails before the fix, and two
 of them (group SID matching, Self-Service deny evaluation) change behaviour you will notice.
 
-**What approving authorises.** Wave 1 only. Waves 2 to 4 are listed so the work is not lost,
-but I want them re-approved once Wave 1 lands, because Wave 1 will teach us things about the
-identity-handling code that should shape the rest.
+**What was approved.** All four waves, plus everything listed under "Added after the audit".
+Wave 1 is still first, because it will teach us things about the identity-handling code that
+should shape the rest. Defender/MDE work is P2, last.
 
 ---
 
@@ -94,13 +94,25 @@ applies to each - but one commit each.
 is satisfied by a member of `HOME\Ops`. The group picker also discards domain information, so
 the stored value may already be ambiguous.
 
-Fix: store and compare **validated group SIDs**, not names. Resolve at configuration time, fail
-closed when a name cannot be resolved to exactly one SID.
+**The picker is the other half, and it is worse than the audit stated.**
+`Components/Shared/ADGroupAutocomplete.razor:137` does
+`Value = result.SamAccountName ?? result.DisplayName`. It has already resolved a real directory
+object - it is holding the search result - and then stores only a name, falling back to the
+**display name** when `SamAccountName` is absent. So the stored value is not merely
+domain-less, it is not reliably even a SAM account name. Owner, 2026-10-19: *"so even though
+the GUI resolves groups on entry, it's still storing the arbitrary display name? yes, fix
+that."*
 
-**Consequences to plan for:** existing stored grants are names. This needs a read path that
-still honours them, or a one-time resolution with a clear failure mode for grants that no
-longer resolve. **Decide that before writing code** - silently dropping unresolvable grants
-would lock admins out of their modules.
+Fix: store and compare **validated group SIDs**, not names. The picker already has the resolved
+object, so capture the SID there rather than re-resolving later. Fail closed when a name cannot
+be resolved to exactly one SID.
+
+**Migration of existing grants - decided, 2026-10-19.** Existing stored grants are names.
+Resolve them once. A grant that does not resolve to exactly one SID is **refused**, not
+silently honoured. **Produce the list of non-resolving grants and give it to the owner BEFORE
+the change ships** - refusing is the safe behaviour, but it can remove an admin's access to
+their own module, and that must not be a surprise. The read path keeps honouring names only
+until that list is reviewed.
 
 Exposure if unfixed: module configuration and the AD attribute allowlist.
 
@@ -244,7 +256,11 @@ questions as much as code.
 - A24 `MailboxPermissions.razor:602`, `CalendarPermissions.razor:559` - bulk rows get audit
   records and an admin summary but no affected-user notice.
 - A25 `Components/Pages/GroupManagement.razor:651` - security-group changes notify
-  administrators only.
+  administrators only. **Owner ruling 2026-10-19 CHANGES THIS FINDING'S FIX. Do NOT email the
+  group's members** - *"that's just noise."* Email the **group's manager** (the `managedBy`
+  attribute) with a **summary of the changes**, not one message per member. A group with no
+  manager has no recipient: say so in the audit record rather than falling back to spraying
+  members or to the admin address.
 - A26 `Services/ADAttributeEditorUndoService.cs:251` - undo sends no administrator notification
   at all, because it bypasses the forward-edit page that owns dispatch.
 - A27 `Services/EmergencyDisableService.cs:1060` - sends to the global admin address instead of
@@ -254,9 +270,19 @@ questions as much as code.
   preflight refusals return before recording the attempted mutation, so refused attempts leave
   no durable audit.
 
-**Owner decision needed before this wave:** A23-A25 add affected-user email to paths that
-deliberately or accidentally do not send it today. That changes who hears about administrative
-changes, at volume. **Confirm that is wanted before any of it is built.**
+**Owner ruled 2026-10-19, verbatim:** *"it ABSOLUTELY needs to email users when mailbox or
+calendar permissions are changed. NOT for group membership changes. Email the manager of the
+group with a summary of the changes, but do not email every user in the group."*
+
+So this wave splits:
+
+- **A23, A24 - affected-user email is required.** Mailbox and calendar permission changes
+  notify the person whose mailbox or calendar it is, including on partial success (A23's
+  current gate on overall success is the defect) and on every successful row of a bulk run
+  (A24).
+- **A25 - affected-user email is explicitly refused.** Manager summary only, one message per
+  operation.
+- A26, A27, A28 are unaffected by the ruling and stand as written.
 
 ---
 
@@ -341,11 +367,44 @@ two interact with A1 - resolving grants to SIDs may settle them.
 confirmed reused; **reachability per site is not confirmed** - it bit in Comms-10k because a
 retry caught and resumed on the same object. Worth an audit slice, not 47 assumed defects.
 
+## Owner rulings, 2026-10-19
+
+1. **Everything gets planned and fixed.** *"All items that need to be remediated need to be
+   planned if not already and fixed."* All four waves are approved, and anything not yet
+   planned is added - see **Added after the audit** below.
+2. **A1** - store SIDs; fix the picker too. Non-resolving legacy grants are refused, with the
+   list given to the owner first.
+3. **A23/A24** - affected-user email required. **A25** - manager summary only, never per-member.
+4. **A30** - ServiceNow validation is **not enabled** and will not be until an API login exists.
+   Fix it anyway (ruling 1), at the bottom of Wave 2's priority.
+5. **Comms-10k manual acceptance** - the comms team will exercise it on their next real update.
+   Not a blocker, and not something to simulate.
+6. **MDE/Defender work is P2**, after everything else.
+
+## Added after the audit - needs the same treatment
+
+- **Blocked Senders: the unblock reason is passed through unbounded.**
+  `Components/Pages/BlockedSenders.razor:119` has no `maxlength` and
+  `Services/BlockedSenderService.cs:59` only trims before passing `-Reason` to
+  `Remove-BlockedSenderAddress`. **Field evidence, owner 2026-10-19: one L2 operator hits
+  "The Hygiene DAL retried a transient condition the maximum number of times" every time, and
+  a shorter reason works.** Microsoft documents no length cap on `-Reason`, so the limit is
+  undocumented rather than absent - cap it defensively, and surface our own message instead of
+  EXO's raw error. **I previously retracted this theory on the grounds that the docs show no
+  cap; the field result overrides that and the retraction was wrong.**
+- **`psl-2`, `psl-3`, `psl-4`, `cdr-followup-1`, `csv-1`** - recorded findings, previously
+  deferred as unapproved. Ruling 1 brings them in scope. They keep their existing records.
+- **The bare `ps.Invoke(); ps.Commands.Clear();` pattern at ~47 sites** across
+  `GroupManagementService`, `EmergencyDisableService`, `DhcpAuthorizationService`,
+  `ConferenceRoomService`, `ProtectedPrincipalService` and `ADAttributeEditorService`. Pattern
+  confirmed, reachability per site not. **First slice is the audit that establishes which sites
+  are reachable**, then fixes only those - do not rewrite 47 call sites on a presumption.
+- **`docs/ConfigDbOperations.md`** - documents the retired storage arrangement. Docs-only,
+  blocks nothing, pull forward whenever.
+- **Unconfirmed, investigate before planning:** protection rules retaining stale group DNs;
+  legacy name-valued servicer grants; Emergency Disable's cloud UPN binding. The first two
+  interact with A1 and may be settled by it.
+
 ## Pending decisions
 
-1. **Wave 1 only, or the whole plan?** Recommend Wave 1, then re-approve.
-2. **A1's migration of existing name-based grants** - what happens to a stored grant that no
-   longer resolves to exactly one SID? Refusing is safe and could lock an admin out of a module.
-3. **Wave 3's affected-user notifications** (A23-A25) - adding them changes who gets mail, at
-   volume. Confirm before building.
-4. **A30** - is ServiceNow validation actually enabled in this deployment? It sets the urgency.
+None blocking. Wave 1 starts with A1.
