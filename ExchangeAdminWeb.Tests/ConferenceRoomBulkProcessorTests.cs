@@ -358,4 +358,50 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         // And nothing reached the directory.
         Assert.Empty(fx.Rooms.FinderCalls);
     }
+
+    /// <summary>
+    /// Review of aud-a8. The test above omits ExchangeOnline from the save, and SaveEnablement
+    /// defaults an omitted module to its catalog default - which for ExchangeOnline is false. So
+    /// it switched BOTH off at once and would have passed just as well against a parent-only
+    /// check, or a child-only one that ignored the cascade. These two separate the cases.
+    /// </summary>
+    [Theory]
+    [InlineData(false, true, "the child alone being off must stop the job")]
+    [InlineData(true, false, "the parent alone being off must stop the job, because enablement cascades")]
+    public async Task EitherTheChildOrItsParentBeingOff_StopsTheJob(bool child, bool parent, string because)
+    {
+        var fx = CreateFixture();
+        fx.Enablement.SaveEnablement(new Dictionary<string, bool>
+        {
+            [ConferenceRoomBulkProcessor.ModuleName] = child,
+            ["ExchangeOnline"] = parent,
+        });
+
+        var outcome = await fx.Processor.ProcessRowAsync(
+            FinderJob("AllUsers", "room1@contoso.com"), 0, CancellationToken.None);
+
+        Assert.False(outcome.Status == BulkJobRowStatus.Success, because);
+        Assert.Contains("disabled", outcome.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(fx.Rooms.FinderCalls);
+    }
+
+    /// <summary>
+    /// The other side of the same coin: with both on, the row must proceed. Without this the
+    /// pair above is satisfied by a check that refuses everything.
+    /// </summary>
+    [Fact]
+    public async Task WithBothOn_TheRowStillReachesTheDirectory()
+    {
+        var fx = CreateFixture();
+        fx.Enablement.SaveEnablement(new Dictionary<string, bool>
+        {
+            [ConferenceRoomBulkProcessor.ModuleName] = true,
+            ["ExchangeOnline"] = true,
+        });
+
+        await fx.Processor.ProcessRowAsync(
+            FinderJob("AllUsers", "room1@contoso.com"), 0, CancellationToken.None);
+
+        Assert.NotEmpty(fx.Rooms.FinderCalls);
+    }
 }

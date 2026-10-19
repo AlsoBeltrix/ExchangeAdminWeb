@@ -96,3 +96,37 @@ Independent review of the fix pending.
 ## Closeout
 
 Fixed directly on `master`. Not pushed.
+
+## Independent review, 2026-10-19 (codex-commercial / gpt-6-astra / max) - no product defect, test gap
+
+The reviewer confirmed the behaviour: the guard precedes authorization, protection and both
+mutation branches, and the `DependsOn` cascade is real executable behaviour rather than an
+assumption. They checked processor registration, submission, the runner, both service branches
+and failure aggregation. No regression and no introduced behaviour change.
+
+**They found the guard proof weaker than it read.** `SaveEnablement` defaults an omitted module
+to its catalog default, and `ExchangeOnline` defaults to false - so a save naming only Conference
+Rooms switched **both** off. The test would have passed equally against a parent-only check, or
+a child-only check that ignored the cascade. It proved "something refuses", not "this module's
+effective enablement refuses".
+
+Added, test-only:
+
+| Test | What it pins |
+| --- | --- |
+| `EitherTheChildOrItsParentBeingOff_StopsTheJob(child: false, parent: true)` | the child alone |
+| `EitherTheChildOrItsParentBeingOff_StopsTheJob(child: true, parent: false)` | the cascade |
+| `WithBothOn_TheRowStillReachesTheDirectory` | the pair above is not satisfied by refusing everything |
+
+Mutation: narrowing the check to `IsModuleEnabled("ExchangeOnline")` fails the child-only case
+and nothing else - the original test passes it unchanged, which is the gap demonstrated rather
+than argued. Source restored byte-identical (md5 verified) and touched.
+
+The reviewer's two scope limits are restated rather than fixed, because both were already on
+this record and both are per-row by design: a disabled module stops the remaining rows but does
+not abort the job or undo rows already applied, and a row already admitted can still begin
+writing, since protection resolution and service preflight are awaited after the check. A
+job-level abort is different work.
+
+Gate: 4304 passed / 3 known AD skips / 0 failed. No version bump: tests only, no behaviour
+change.
