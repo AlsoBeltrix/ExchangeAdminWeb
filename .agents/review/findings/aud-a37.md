@@ -3,9 +3,9 @@
 **Severity**: MEDIUM as a document, HIGH in the moment it is used. It is read during an
 incident, by someone who is not going to cross-check it against the deploy script, and two
 of its four wrong instructions make the outage worse rather than merely failing.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed, independently reviewed, review findings remediated
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `8978732`
 
 ## Evidence
 
@@ -130,3 +130,29 @@ Fixed directly on `master`. Independent review pending - and currently impossibl
 review harnesses are returning 401 (`.agents/state.md`). A document is also the artifact
 where an independent reader is worth most, so this one should not be considered closed on my
 reading alone.
+
+## Independent review - `gemini-4-argon-high`, 2026-10-20
+
+Reviewed as batch 3 of the backlog. Prompt kept at `.agents/review/prompt-backlog-3.md`.
+
+**Any earlier claim in this record that review was impossible was wrong** - the probes had
+been invoked incorrectly. `.agents/state.md` carries that correction.
+
+**Two defects, both in the runbook I rewrote, and one of them could not work.**
+
+Step 3 told the operator to create a fresh shared database with
+`tools\Move-ConfigDbToShared.ps1`. On an already-cut-over server that script **refuses by
+design** - it fails when a file already exists at `SharedDbPath` and expects per-instance
+databases to copy from. A recovery instruction that aborts is worse than none at 2am. It now
+says to create an empty file with `sqlite3` and let the migrator build the schema, and
+explicitly warns against the cutover script.
+
+The backup location was also incomplete: it gave only the `deploy.ps1` path. Promotions write
+to `<BackupRoot>\cutover.<timestamp>` (default `D:\backups\ExchangeAdminWeb`) and generic
+installer upgrades to `<LogRoot>\ConfigBackups`. All three are now listed, because the
+operator needs the newest of them and would not have found two.
+
+The `.recover` step also omitted deleting the stale `-wal`/`-shm` sidecars, which belong to
+the corrupt database and let SQLite replay a WAL that does not match the recovered file.
+
+Remediation landed in the follow-up commit, every fix mutation-proven.

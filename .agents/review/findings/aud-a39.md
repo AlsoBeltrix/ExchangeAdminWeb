@@ -2,9 +2,9 @@
 
 **Severity**: HIGH. The loss is the authorization store for every instance, destroyed by a
 routine deploy weeks after the cutover that caused it.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed, independently reviewed, review findings remediated
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `ba0d418`
 
 ## Evidence
 
@@ -119,3 +119,24 @@ errors; the script parses clean. No .NET run - no C# or Razor changed.
 
 Fixed directly on `master`. Independent review pending - and currently impossible: both
 review harnesses are returning 401 (`.agents/state.md`).
+
+## Independent review - `gemini-4-argon-high`, 2026-10-20
+
+Reviewed as batch 3 of the backlog. Prompt kept at `.agents/review/prompt-backlog-3.md`.
+
+**Any earlier claim in this record that review was impossible was wrong** - the probes had
+been invoked incorrectly. `.agents/state.md` carries that correction.
+
+**One MEDIUM defect, and a false justification of mine.** `Test-PathIsInside` compared raw
+strings, so `..`, `.`, forward slashes and doubled separators walked straight past it:
+`D:\inetpub\App\..\App\x` is inside the tree on disk but does not start with
+`D:\inetpub\App\` as text. Both sides are now canonicalised with
+`[System.IO.Path]::GetFullPath`.
+
+**The record claimed resolving "would mean touching the filesystem in a read-only
+precondition". That was false** - `GetFullPath` is purely in-memory, the installer already
+uses it, and the same precondition block already calls `Test-Path`. The real limit is
+narrower and is recorded as such: `GetFullPath` does not resolve junctions or `subst`
+drives.
+
+Remediation landed in the follow-up commit, every fix mutation-proven.

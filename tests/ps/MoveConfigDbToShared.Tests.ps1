@@ -526,10 +526,15 @@ Describe 'A40: the cutover wakes the app before reading its startup log' {
             } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
         }
 
-        It 'counts a redirect as a live application' {
+        It 'does NOT count a redirect as a live application' {
+            # Review of A40: a 3xx returned true on the http pass and broke out of the
+            # scheme loop before https was ever tried. An IIS-level http-to-https redirect
+            # is exactly that case, and it proves nothing about whether the app started.
             $dir = New-SettingsDir -Json '{ }'
             try {
-                Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) 302 } | Should -BeTrue
+                Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) $script:requested.Add($Url); 302 } |
+                    Should -BeFalse
+                $script:requested | Should -Contain 'https://localhost/'
             } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
         }
 
@@ -602,6 +607,43 @@ Describe 'A40: the cutover wakes the app before reading its startup log' {
             $code | Should -Not -Match 'Invoke-WebRequest'
             $code | Should -Match '\[System\.Net\.WebRequest\]::Create'
             $code | Should -Match 'AllowAutoRedirect = \$false'
+        }
+    }
+
+    Context 'the warm-up can actually reach this application' {
+
+        # Review of A40 by a second reader. Every guard below exists because the warm-up
+        # was INERT against this app and no test could see it: they all inject a fake
+        # requester, so nothing exercised the real HTTP path.
+
+        BeforeAll {
+            $src = Get-Content $script:ScriptPath -Raw
+            $script:WarmupBody = $src.Substring($src.IndexOf('function Invoke-AppWarmup'))
+            $script:WarmupBody = $script:WarmupBody.Substring(0, $script:WarmupBody.IndexOf('function Assert-SchemaReadyLogged'))
+        }
+
+        It 'sends Windows credentials, because the site disables anonymous auth' {
+            # THE DEFECT. deploy.ps1 and the installer both set
+            # anonymousAuthentication=false with Windows Auth on. IIS rejects an
+            # unauthenticated request 401.2 at RQ_AUTHENTICATE_REQUEST, which runs BEFORE
+            # AspNetCoreModuleV2 starts the app at RQ_EXECUTE_REQUEST_HANDLER - so the
+            # request never reached ASP.NET Core and never woke anything.
+            $script:WarmupBody | Should -Match '\$request\.UseDefaultCredentials = \$true'
+        }
+
+        It 'uses a compiled TLS validator, not a scriptblock' {
+            # A scriptblock delegate needs a Runspace on the invoking thread. 5.1 runs the
+            # handshake on an IOCP thread; PowerShell 7's HttpWebRequest wraps
+            # SocketsHttpHandler and uses a threadpool thread. Neither has one, so the
+            # delegate throws and the catch swallowed it.
+            $script:WarmupBody | Should -Not -Match 'ServerCertificateValidationCallback = \{ \$true \}'
+            $script:WarmupBody | Should -Match 'ExchangeAdminWeb\.WarmupTls'
+        }
+
+        It 'counts only 2xx as a live application' {
+            # A 3xx returned true on the http pass and broke out before https was tried.
+            $script:WarmupBody | Should -Match '\$status -ge 200 -and \$status -lt 300'
+            $script:WarmupBody | Should -Not -Match '\$status -lt 400'
         }
     }
 

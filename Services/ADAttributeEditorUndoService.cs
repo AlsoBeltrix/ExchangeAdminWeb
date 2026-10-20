@@ -305,6 +305,18 @@ public class ADAttributeEditorUndoService : IUndoableModule
         catch (Exception ex)
         {
             _logger.LogError(ex, "Undo failed for ADAttributeEditor operation {OriginalOperationId}", originalOperationId);
+
+            // Review of A26: an exception out of SaveAsync - or anywhere else in this
+            // method - left NO audit record and NO notification. The forward path audits
+            // every outcome, and an attempted reversal that threw is exactly the event
+            // someone later asks about: it may have written to the directory before it
+            // failed. The operation trace saw it; the trace is diagnostic, with different
+            // retention and different readers.
+            LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, ex.Message, servicedNote: null);
+            await NotifyAdministratorsAsync(
+                performedBy, ip, ticket, target, changedAttributes, originalOperationId,
+                success: false, error: ex.Message);
+
             scope.Complete(false, ex.Message);
             return new UndoResult(false, $"Unexpected error during undo: {ex.Message}", null);
         }

@@ -437,6 +437,38 @@ service and dispatch stayed in the page, so no new dependencies; and every regis
 control sits at 35-307 while all edits are below 585, so only `ExpectedLineCount` moved.
 A scouting note is a starting hypothesis, not a plan.
 
+**THE REVIEW BACKLOG IS CLEARED.** All three batches reviewed, every finding remediated.
+
+- **batch 1** (`aud-a28`, `a27`, `a23`, `a24`) - codex. Clean in code; one runtime defect
+  (bulk calendar notices named the operator's verb, "Permission: Remove", not the access)
+  and five guard gaps.
+- **batch 2** (`aud-a35`, `a34`, `a36`, `a38`) - codex. Four defects, two HIGH: a mistyped
+  `-AppPoolName` could still mirror over a running application under a different pool, and
+  a configured-but-missing shared database was treated as "nothing to back up".
+- **batch 3** (`aud-a26`, `a37`, `a39`, `a40`, provenance, whatif, graphapps) -
+  `gemini-4-argon-high`. Eight defects and five false record claims.
+
+**The single most important finding of the whole stream**, from batch 3: the `aud-a40`
+warm-up was **inert**. This app's IIS site runs Windows Auth with `anonymousAuthentication`
+disabled, so an unauthenticated request is refused `401.2` at `RQ_AUTHENTICATE_REQUEST` -
+which runs BEFORE `AspNetCoreModuleV2` starts the application. Every warm-up it sent was
+turned away at the door. **No test could see it**, because they all inject a fake requester
+and none exercised the real HTTP path. A fix can be fully guarded, fully mutation-proven,
+and still do nothing.
+
+Three lessons recorded, all earned the hard way this session:
+
+1. **A tool that fails because of how you invoked it looks exactly like a tool that is
+   down.** I recorded both review harnesses as unavailable for most of a day. `codex` was
+   fine; I was passing `--model gpt-5.5`, which strips the Portkey routing prefix. Fifteen
+   findings landed unreviewed on that false belief. Read the tool's own config before
+   declaring it broken.
+2. **When a fix adds a helper, mutate the CALL SITE, not the helper.** Three guards this
+   session passed while the thing they guarded was dead code.
+3. **A record is as reviewable as a line of code.** Eleven false claims were found in my own
+   finding records across the three batches - including `aud-a40.md` still describing code
+   that my own commit had replaced while citing that record in its message.
+
 **What remains of the audit:** the rest of the
 plan's LOWER-PRIORITY Wave 4 list: header-processing bounds (capped raw headers still feed
 uncapped derived collections; large-input impact unmeasured) and the operational hardening

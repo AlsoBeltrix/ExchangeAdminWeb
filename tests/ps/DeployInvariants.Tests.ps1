@@ -768,7 +768,7 @@ Describe 'tools/deploy-pipeline.ps1' {
     It 'treats an unusable git probe as unverified, not as verified' {
         # git is a native executable and does not throw, so the old try/catch caught
         # nothing; an empty answer flowed straight into the skipped comparison.
-        $s.Text | Should -Match '\$commitProbeOk = \(\$LASTEXITCODE -eq 0\)'
+        $s.Text | Should -Match '\$commitProbeOk = -not \$commitProbeFailed'
         $s.Text | Should -Match 'Cannot verify that dev was built from the current source'
     }
 
@@ -776,7 +776,7 @@ Describe 'tools/deploy-pipeline.ps1' {
         # "git did not answer" and "the manifest has no commit" send the operator to
         # different places.
         $s.Text | Should -Match 'git could not report HEAD'
-        $s.Text | Should -Match 'manifest carries no gitCommit'
+        $s.Text | Should -Match 'manifest carries no usable gitCommit'
     }
 
     It 'makes promoting without verified provenance an explicit switch' {
@@ -789,6 +789,23 @@ Describe 'tools/deploy-pipeline.ps1' {
         # and when git failed, so silence meant either.
         $s.Text | Should -Match 'if \(-not \$statusProbeOk\)'
         $s.Text | Should -Match 'has NOT been checked'
+    }
+
+    It 'survives git being absent, so -AllowUnverifiedProvenance is usable' {
+        # Review: the exit-code check was right, but a MISSING git raises
+        # CommandNotFoundException before any exit code exists, and with
+        # $ErrorActionPreference = Stop that killed the run instead of reporting
+        # unverifiable provenance - so the override could not be used on a host without git.
+        $s.Text | Should -Match 'try \{ \$commitProbe = git'
+        $s.Text | Should -Match 'catch \{ \$commitProbeFailed = \$true \}'
+    }
+
+    It 'does not crash on a short or placeholder gitCommit' {
+        # "unknown" is what the manifest writer records when it cannot resolve HEAD.
+        # Substring(0,8) on it threw ArgumentOutOfRangeException, replacing a clear
+        # "dev is stale" message with a crash.
+        $s.Text | Should -Match '\$manifest\.gitCommit\.Length -ge 8'
+        $s.Text | Should -Match "gitCommit -eq .unknown."
     }
 
     It 'never claims that config was promoted (the config database is shared - scd-4)' {

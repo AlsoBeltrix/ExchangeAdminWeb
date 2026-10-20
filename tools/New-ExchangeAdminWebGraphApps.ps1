@@ -132,6 +132,18 @@ foreach ($reg in $Registrations) {
         }
     )
 
+    # Review: $results was only appended after the secret existed, so a failure in the
+    # service principal, the consent grant or the secret itself left a real application in
+    # the tenant that the catch could not name - it printed "No registrations were created."
+    # Record the application the moment it exists; the row is completed below.
+    $results += [pscustomobject]@{
+        Registration    = $reg.Name
+        "Tenant ID"     = $tenantId
+        "Client ID"     = $app.AppId
+        "Client Secret" = "(never issued - this registration is INCOMPLETE and must be deleted or finished by hand)"
+        SecretExpires   = $null
+    }
+
     Write-Step "Creating service principal"
     $sp = New-MgServicePrincipal -AppId $app.AppId
 
@@ -157,6 +169,8 @@ foreach ($reg in $Registrations) {
         "Client Secret" = $secret.SecretText
         SecretExpires  = $secret.EndDateTime
     }
+    # Replace the incomplete placeholder added above now that the secret exists.
+    $results = @($results | Where-Object { $_."Client ID" -ne $app.AppId })
     $results += $record
 
     # Printed HERE, as soon as it exists, not only in the summary at the end. The client

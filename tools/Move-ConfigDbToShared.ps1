@@ -135,8 +135,18 @@ function Test-PathIsInside {
 
     if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($Directory)) { return $false }
 
-    $dir = $Directory.TrimEnd('\', '/') + '\'
-    $candidate = $Path.TrimEnd('\', '/')
+    # Review of A39: comparing raw strings let `..`, `.`, forward slashes and doubled
+    # separators walk straight past this check - "D:\inetpub\App\..\App\x" does not start
+    # with "D:\inetpub\App\" as text but is inside it on disk. GetFullPath canonicalises
+    # all of those and is purely in-memory, so it costs a read-only precondition nothing.
+    # (It does NOT resolve junctions or subst drives; that limit is recorded on the finding.)
+    try {
+        $dir = [System.IO.Path]::GetFullPath($Directory).TrimEnd('\', '/') + '\'
+        $candidate = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+    } catch {
+        # An unparseable path is not provably outside, so refuse to call it safe.
+        return $true
+    }
 
     return $candidate.StartsWith($dir, [System.StringComparison]::OrdinalIgnoreCase)
 }
@@ -274,6 +284,28 @@ function Get-LatestSerilogLog {
         Select-Object -First 1
 }
 
+# Review of A40: a compiled validator for the warm-up's https attempt. A PowerShell
+# scriptblock assigned to ServerCertificateValidationCallback needs a Runspace on the thread
+# that invokes it, and the TLS handshake runs on a threadpool thread on both editions. This
+# is IL, so it has no such dependency. It accepts any certificate, which is correct for a
+# loopback request that reads nothing it needs to trust - and it is installed only around
+# that one request, then removed in a finally.
+if (-not ('ExchangeAdminWeb.WarmupTls' -as [type])) {
+    Add-Type -TypeDefinition @'
+namespace ExchangeAdminWeb {
+    public static class WarmupTls {
+        public static bool AcceptAny(
+            object sender,
+            System.Security.Cryptography.X509Certificates.X509Certificate certificate,
+            System.Security.Cryptography.X509Certificates.X509Chain chain,
+            System.Net.Security.SslPolicyErrors sslPolicyErrors) {
+            return true;
+        }
+    }
+}
+'@
+}
+
 function Get-AppPathBase {
     <#
     .SYNOPSIS
@@ -355,6 +387,17 @@ function Invoke-AppWarmup {
             $request = [System.Net.WebRequest]::Create($Url)
             $request.Method = 'GET'
             $request.Timeout = 30000
+
+            # Review of A40, and the defect that made the whole warm-up inert: this app's
+            # IIS site runs Windows Authentication with anonymousAuthentication DISABLED
+            # (deploy.ps1 and the installer both set it). WindowsAuthenticationModule runs
+            # at RQ_AUTHENTICATE_REQUEST and AspNetCoreModuleV2 starts the .NET host at
+            # RQ_EXECUTE_REQUEST_HANDLER - so an unauthenticated request is rejected 401.2
+            # BEFORE the application is ever asked to start. Every warm-up this function
+            # sent was refused at the door, and no test could see it because they all
+            # inject a fake requester.
+            $request.UseDefaultCredentials = $true
+
             # A redirect from http to https would be followed during the http pass, while
             # validation is still enforced, and fail there instead of being retried.
             $request.AllowAutoRedirect = $false
@@ -381,14 +424,28 @@ function Invoke-AppWarmup {
         $previousCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
         try {
             if ($scheme -eq 'https') {
-                [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+                # Review of A40: a PowerShell scriptblock here cannot work on EITHER
+                # edition. 5.1 runs the handshake on an IOCP thread; PowerShell 7's
+                # HttpWebRequest wraps SocketsHttpHandler and runs it on a threadpool
+                # thread. Neither has a Runspace, so the delegate throws
+                # PSInvalidOperationException and the handshake aborts - silently, because
+                # the catch below swallows it. A compiled delegate has no such dependency.
+                [System.Net.ServicePointManager]::ServerCertificateValidationCallback =
+                    [System.Net.Security.RemoteCertificateValidationCallback]::CreateDelegate(
+                        [System.Net.Security.RemoteCertificateValidationCallback],
+                        [ExchangeAdminWeb.WarmupTls].GetMethod('AcceptAny'))
             }
 
             $status = & $Requester $url
 
-            # 2xx and 3xx only. A 503 means the pool is still coming up and a 4xx usually
-            # means something else on this port answered - neither woke our application.
-            if ($status -ge 200 -and $status -lt 400) { return $true }
+            # 2xx only. A 3xx on the http pass used to return true and break out before the
+            # https attempt ever ran (review of A40); a 503 means the pool is still coming
+            # up; a 4xx usually means something else on this port answered. None of those
+            # proves our application started.
+            if ($status -ge 200 -and $status -lt 300) { return $true }
+
+            # A redirect means something is there but has not served the app. Keep going to
+            # the next scheme rather than declaring success.
         } catch {
             # Nothing usable on this scheme; try the next one.
         } finally {

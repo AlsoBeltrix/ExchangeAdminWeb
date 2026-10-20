@@ -2,9 +2,9 @@
 
 **Severity**: NONE as reported. The predicted behaviour does not occur. What landed is
 hardening plus the test coverage that proved the finding false.
-**Status**: FALSE POSITIVE - investigated, disproved, ordering hardened; review pending
+**Status**: FALSE POSITIVE - disproved, independently verified, ordering hardened
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `dd2f10d`
 
 ## The claim
 
@@ -114,3 +114,17 @@ Landed on `master`. Independent review pending - and currently impossible: both 
 harnesses are returning 401 (`.agents/state.md`). A reviewer should check the disproof
 before the change: if the finding is real on some PowerShell version, the record above is
 the thing that is wrong.
+
+## Independent review - `gemini-4-argon-high`, 2026-10-20
+
+Reviewed as batch 3 of the backlog. Prompt kept at `.agents/review/prompt-backlog-3.md`.
+
+**Any earlier claim in this record that review was impossible was wrong** - the probes had
+been invoked incorrectly. `.agents/state.md` carries that correction.
+
+**The disproof was independently verified.** A second reader confirmed that `New-Item` is a
+compiled cmdlet inheriting `$WhatIfPreference` from `Copy-SqliteDbFile`'s scope on both
+Windows PowerShell 5.1 and PowerShell 7, so `-WhatIf` never created the directory and the
+audit's claim was wrong. The ordering change stands as hardening.
+
+Remediation landed in the follow-up commit, every fix mutation-proven.

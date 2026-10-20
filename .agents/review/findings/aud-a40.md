@@ -3,9 +3,9 @@
 **Severity**: MEDIUM. It fails safe - the cutover aborts rather than proceeding on a broken
 instance - but it aborts on a correct one, mid-cutover, with both pools already restarted
 and a message blaming a startup error that did not happen.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed, independently reviewed, review findings remediated
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `eed6333`
 
 ## Evidence
 
@@ -151,3 +151,37 @@ errors; the script parses clean. No .NET run - no C# or Razor changed.
 
 Fixed directly on `master`. Independent review pending - and currently impossible: both
 review harnesses are returning 401 (`.agents/state.md`).
+
+## Independent review - `gemini-4-argon-high`, 2026-10-20
+
+Reviewed as batch 3 of the backlog. Prompt kept at `.agents/review/prompt-backlog-3.md`.
+
+**Any earlier claim in this record that review was impossible was wrong** - the probes had
+been invoked incorrectly. `.agents/state.md` carries that correction.
+
+**This record described code that no longer existed.** Commit `7ac9c04` rewrote
+`Invoke-AppWarmup`, cited this record in its message, and never updated it - so it went on
+claiming the function used `Invoke-WebRequest` and treated any `$_.Exception.Response` as
+success. Corrected here.
+
+**Then a second reader found the rewrite still wrong in three ways, one of them fatal.**
+
+1. **The warm-up was INERT against this application.** `deploy.ps1` and the installer both
+   set `anonymousAuthentication=false` with Windows Auth on. `WindowsAuthenticationModule`
+   runs at `RQ_AUTHENTICATE_REQUEST`; `AspNetCoreModuleV2` starts the .NET host at
+   `RQ_EXECUTE_REQUEST_HANDLER`. An unauthenticated request is refused `401.2` **before the
+   application is ever asked to start**, so no warm-up this function sent ever woke
+   anything. `UseDefaultCredentials` now fixes it. No test could see this: they all inject a
+   fake requester, so none exercised the real HTTP path.
+2. **The TLS callback could not work on either edition.** A PowerShell scriptblock assigned
+   to `ServerCertificateValidationCallback` needs a Runspace on the invoking thread. 5.1
+   runs the handshake on an IOCP thread; PowerShell 7's `HttpWebRequest` wraps
+   `SocketsHttpHandler` and uses a threadpool thread. Neither has one, and the `catch`
+   swallowed the resulting exception. Replaced with a compiled `Add-Type` delegate.
+3. **A 3xx counted as a live application**, returning true on the http pass and breaking out
+   before https was tried. Now 2xx only.
+
+The first version's diagnosis - that an idle pool never initialises the app - was
+independently **confirmed**. It was the remedy that was broken, twice.
+
+Remediation landed in the follow-up commit, every fix mutation-proven.

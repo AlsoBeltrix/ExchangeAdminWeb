@@ -127,12 +127,21 @@ if ($Prod) {
     # Provenance probe. `git` is a native executable: it does not throw on failure, so the
     # old try/catch caught nothing and a failed probe simply produced an empty string. The
     # exit code is what says whether the answer is trustworthy.
-    $commitProbe = git -C $repoRoot rev-parse HEAD 2>$null
-    $commitProbeOk = ($LASTEXITCODE -eq 0) -and -not [string]::IsNullOrWhiteSpace($commitProbe)
+    # Review: the exit-code check is right, but `git` ABSENT is a different failure -
+    # PowerShell raises CommandNotFoundException before any exit code exists, and with
+    # $ErrorActionPreference = "Stop" that terminated the run instead of reporting
+    # unverifiable provenance, so -AllowUnverifiedProvenance could not be used on a host
+    # without git. Catch the missing command; keep the exit code for the rest.
+    $commitProbe = $null
+    $commitProbeFailed = $false
+    try { $commitProbe = git -C $repoRoot rev-parse HEAD 2>$null } catch { $commitProbeFailed = $true }
+    $commitProbeOk = -not $commitProbeFailed -and ($LASTEXITCODE -eq 0) -and -not [string]::IsNullOrWhiteSpace($commitProbe)
     $currentCommit = if ($commitProbeOk) { "$commitProbe".Trim() } else { $null }
 
-    $statusProbe = git -C $repoRoot status --porcelain 2>$null
-    $statusProbeOk = ($LASTEXITCODE -eq 0)
+    $statusProbe = $null
+    $statusProbeFailed = $false
+    try { $statusProbe = git -C $repoRoot status --porcelain 2>$null } catch { $statusProbeFailed = $true }
+    $statusProbeOk = -not $statusProbeFailed -and ($LASTEXITCODE -eq 0)
     $currentDirty = $statusProbeOk -and -not [string]::IsNullOrWhiteSpace(($statusProbe | Out-String))
 
     Write-Host ""
@@ -151,8 +160,11 @@ if ($Prod) {
     $provenanceUnverifiable = $null
     if (-not $currentCommit) {
         $provenanceUnverifiable = "git could not report HEAD in $repoRoot (is it a repository, and is git on PATH?)"
-    } elseif ([string]::IsNullOrWhiteSpace($manifest.gitCommit)) {
-        $provenanceUnverifiable = "the dev deployment manifest carries no gitCommit, so what dev was built from is unknown"
+    } elseif ([string]::IsNullOrWhiteSpace($manifest.gitCommit) -or $manifest.gitCommit -eq 'unknown') {
+        # Review: "unknown" is what the manifest writer records when it cannot resolve HEAD.
+        # Treating it as a real commit compared it against the live SHA and reported the
+        # build as stale, which is the wrong diagnosis for "we never knew".
+        $provenanceUnverifiable = "the dev deployment manifest carries no usable gitCommit, so what dev was built from is unknown"
     }
 
     if ($provenanceUnverifiable) {
@@ -161,7 +173,13 @@ if ($Prod) {
         }
         Write-Warn "Promoting WITHOUT verified provenance: $provenanceUnverifiable. -AllowUnverifiedProvenance was specified."
     } elseif ($currentCommit -ne $manifest.gitCommit) {
-        throw "Dev is stale: built from commit $($manifest.gitCommit.Substring(0,8)) but source is at $($currentCommit.Substring(0,8)). Run -Dev first."
+        # Review: a manifest carrying a short or placeholder gitCommit - "unknown" is the
+        # one actually written when a build cannot resolve HEAD - made Substring(0,8) throw
+        # ArgumentOutOfRangeException, replacing a clear "dev is stale" message with a
+        # crash. Shorten only what is long enough to shorten.
+        $devShort = if ($manifest.gitCommit.Length -ge 8) { $manifest.gitCommit.Substring(0, 8) } else { $manifest.gitCommit }
+        $srcShort = if ($currentCommit.Length -ge 8) { $currentCommit.Substring(0, 8) } else { $currentCommit }
+        throw "Dev is stale: built from commit $devShort but source is at $srcShort. Run -Dev first."
     } else {
         Write-Ok "Dev commit matches source HEAD"
     }

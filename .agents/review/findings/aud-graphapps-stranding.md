@@ -3,9 +3,9 @@
 **Severity**: HIGH for the blast radius, LOW for frequency. The script is run once per
 environment, and when it goes wrong it leaves a real app registration in the tenant whose
 client secret nobody ever saw and nobody can retrieve.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed, independently reviewed, review findings remediated
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `aeab7ec`
 
 ## Evidence
 
@@ -129,3 +129,24 @@ Fixed directly on `master`. Independent review pending - and currently impossibl
 review harnesses are returning 401 (`.agents/state.md`). The third *Known gap* - the window
 between creating an application and recording its secret - is the part most likely to be
 judged insufficient.
+
+## Independent review - `gemini-4-argon-high`, 2026-10-20
+
+Reviewed as batch 3 of the backlog. Prompt kept at `.agents/review/prompt-backlog-3.md`.
+
+**Any earlier claim in this record that review was impossible was wrong** - the probes had
+been invoked incorrectly. `.agents/state.md` carries that correction.
+
+**One MEDIUM defect, and a false claim of mine.** The record said that if
+`New-MgApplication` succeeded and a later call threw, "the catch block and the existing
+name-collision preflight together tell the operator what is there". **That was false.** The
+catch inspects `$results`, which was only appended AFTER the secret existed - so a failure
+in `New-MgServicePrincipal`, the consent grant or `Add-MgApplicationPassword` stranded a real
+application and printed "No registrations were created."
+
+The application is now recorded in `$results` the moment it exists, with its secret field
+marked as never issued, and the completed row replaces it once the secret is in hand. An
+Application Administrator without Privileged Role Administrator - who gets a 403 on the
+consent grant - now sees exactly what was left behind.
+
+Remediation landed in the follow-up commit, every fix mutation-proven.

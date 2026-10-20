@@ -111,7 +111,7 @@ public class UndoNotificationTests
     }
 
     [Fact]
-    public void BothOutcomesOfExecuteUndo_DispatchTheNotice()
+    public void EveryOutcomeOfExecuteUndo_DispatchesTheNotice()
     {
         // The wiring, which the tests above cannot reach. ExecuteUndoAsync hits a live directory
         // through its lookup well before the notification, so this is read, not driven - and
@@ -120,10 +120,33 @@ public class UndoNotificationTests
             File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "ADAttributeEditorUndoService.cs")),
             "public async Task<UndoResult> ExecuteUndoAsync");
 
+        // THREE outcomes, not two. The review of A26 found that an exception out of
+        // SaveAsync left no audit record and no notification at all - and a reversal that
+        // threw is exactly the event someone later asks about, because it may have written
+        // to the directory before it failed.
         var calls = System.Text.RegularExpressions.Regex.Matches(body, "await NotifyAdministratorsAsync");
-        Assert.True(calls.Count == 2, $"Expected the success and failure dispatches; found {calls.Count}.");
+        Assert.True(calls.Count == 3,
+            $"Expected the success, save-failure and exception dispatches; found {calls.Count}.");
 
         Assert.Contains("success: true", body, StringComparison.Ordinal);
         Assert.Contains("success: false", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnExceptionDuringUndoIsAuditedAsWellAsNotified()
+    {
+        // Review of A26. The notification tells administrators; the audit record is what
+        // answers "did anyone try to reverse this, and what happened?" months later. The
+        // catch wrote neither.
+        var body = AuditCategoryFilingTests.MethodBody(
+            File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "ADAttributeEditorUndoService.cs")),
+            "public async Task<UndoResult> ExecuteUndoAsync");
+
+        var catchAt = body.LastIndexOf("catch (Exception ex)", StringComparison.Ordinal);
+        Assert.True(catchAt > 0, "the outer catch must still be there");
+
+        var tail = body[catchAt..];
+        Assert.Contains("LogUndoAudit(", tail, StringComparison.Ordinal);
+        Assert.Contains("NotifyAdministratorsAsync(", tail, StringComparison.Ordinal);
     }
 }

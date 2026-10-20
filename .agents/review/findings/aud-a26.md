@@ -3,9 +3,9 @@
 **Severity**: MEDIUM. The audit record was always written, so the reversal was never
 invisible to someone who went looking. What was missing is the push: administrators were told
 about the change and not about its retraction, which is the worse half of a pair to know.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed, independently reviewed, review findings remediated
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `02ba918`
 
 ## Evidence
 
@@ -106,3 +106,18 @@ Gate: Release 0 errors; suite 4413 passed / 3 known AD skips / 0 failed; format 
 
 Fixed directly on `master`. Independent review pending - and currently impossible: both
 review harnesses are returning 401 (`.agents/state.md`).
+
+## Independent review - `gemini-4-argon-high`, 2026-10-20
+
+Reviewed as batch 3 of the backlog. Prompt kept at `.agents/review/prompt-backlog-3.md`.
+
+**Any earlier claim in this record that review was impossible was wrong** - the probes had
+been invoked incorrectly. `.agents/state.md` carries that correction.
+
+**One MEDIUM defect.** An exception out of `SaveAsync` - or anywhere else in
+`ExecuteUndoAsync` - left no audit record AND no notification. The forward path audits every
+outcome, and a reversal that threw is exactly the event someone later asks about, because it
+may have written to the directory before it failed. The catch now writes the undo audit and
+notifies, with a null serviced note (the catch cannot know one).
+
+Remediation landed in the follow-up commit, every fix mutation-proven.

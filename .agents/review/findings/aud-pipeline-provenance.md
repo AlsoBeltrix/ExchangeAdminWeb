@@ -3,9 +3,9 @@
 **Severity**: HIGH for what it guards, LOW in likelihood. It is the only thing standing
 between a stale or unknown build and production, and when it could not do its job it said
 it had.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed, independently reviewed, review findings remediated
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `6c1b827`
 
 ## Evidence
 
@@ -118,3 +118,23 @@ errors; the script parses clean. No .NET run - no C# or Razor changed.
 
 Fixed directly on `master`. Independent review pending - and currently impossible: both
 review harnesses are returning 401 (`.agents/state.md`).
+
+## Independent review - `gemini-4-argon-high`, 2026-10-20
+
+Reviewed as batch 3 of the backlog. Prompt kept at `.agents/review/prompt-backlog-3.md`.
+
+**Any earlier claim in this record that review was impossible was wrong** - the probes had
+been invoked incorrectly. `.agents/state.md` carries that correction.
+
+**Two MEDIUM defects in my own fix.** Removing the `try/catch` was right about native exit
+codes and wrong about a missing executable: `git` absent raises `CommandNotFoundException`
+before any exit code exists, and with `$ErrorActionPreference = "Stop"` that killed the run
+instead of reporting unverifiable provenance - so `-AllowUnverifiedProvenance`, the escape
+hatch, could not be used on a host without git. Both probes now catch that separately.
+
+And a manifest carrying `"gitCommit": "unknown"` - which is what the writer records when it
+cannot resolve HEAD - passed the "is it empty" test, then crashed on `Substring(0, 8)` with
+`ArgumentOutOfRangeException`. It is now treated as unverifiable, and both shortenings are
+length-guarded.
+
+Remediation landed in the follow-up commit, every fix mutation-proven.

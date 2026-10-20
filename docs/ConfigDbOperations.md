@@ -129,23 +129,51 @@ it too (harmless if already present).
 **Do not delete the database.** With `ConfigStore:Path` set, the app will not start against a
 missing file and never creates one — deleting it turns a corrupt instance into a dead one.
 
-1. **Restore the pre-deploy backup.** Every deploy and promote writes a *verified* online
-   backup (`VACUUM INTO` + `integrity_check`, `tools/SqliteConfigBackup.psm1`) to
-   `<LogRoot>\ExchangeAdminWeb\ConfigBackups\config.<timestamp>.bak\exchangeadmin.<timestamp>.db`
-   — `LogRoot` defaults to `E:\WWWOutput`. With **both pools stopped**, copy it over the file
-   named by `ConfigStore:Path`, delete any stale `-wal` / `-shm` beside it, then start the
-   pools.
+1. **Restore the most recent verified backup.** Both routines write a *verified* online
+   backup (`VACUUM INTO` + `integrity_check`, `tools/SqliteConfigBackup.psm1`), but **to two
+   different places** — check both and take the newer:
+
+   | Written by | Location |
+   |---|---|
+   | `deploy.ps1` (a `-Dev` or `-Prod` deploy) | `<LogRoot>\ExchangeAdminWeb\ConfigBackups\config.<timestamp>.bak\exchangeadmin.<timestamp>.db`, `LogRoot` defaulting to `E:\WWWOutput` |
+   | `promote-dev-to-prod.ps1` (a promotion) | `<BackupRoot>\cutover.<timestamp>\…`, `BackupRoot` defaulting to `D:\backups\ExchangeAdminWeb` |
+   | `Install-ExchangeAdminWeb.ps1` (a generic upgrade) | `<LogRoot>\ConfigBackups\exchangeadmin.<timestamp>.db` |
+
+   With **both pools stopped**, copy the chosen file over the path named by
+   `ConfigStore:Path`, delete any stale `-wal` / `-shm` beside it, then start the pools.
+
 2. **Or salvage what is readable** with `.recover`:
    ```powershell
    sqlite3 $db ".recover" | sqlite3 "$db.recovered"
    sqlite3 "$db.recovered" "PRAGMA integrity_check;"
-   # if ok, with both pools stopped: move the bad file aside, rename the recovered one into
-   # its place - keeping the SAME path, because appsettings names it.
    ```
-3. **If there is no usable backup**, create a fresh shared database with
-   `tools\Move-ConfigDbToShared.ps1` rather than by hand, and expect to reconfigure from
-   scratch. **Authorization is the first thing to restore and verify** — an empty
-   `section_access` with its presence marker denies everyone.
+   If that prints `ok`, then with **both pools stopped**:
+   ```powershell
+   Move-Item  $db "$db.corrupt"
+   # The sidecars belong to the CORRUPT database. Leaving them beside the recovered file
+   # lets SQLite replay a WAL that does not match it.
+   Remove-Item "$db-wal", "$db-shm" -ErrorAction SilentlyContinue
+   Move-Item "$db.recovered" $db
+   ```
+   Keep the SAME path - `appsettings.json` names it.
+
+3. **If there is no usable backup**, create an EMPTY database at the configured path and let
+   the app build the schema on next start:
+   ```powershell
+   sqlite3 $db "PRAGMA user_version;"   # creates the file if absent
+   ```
+   The app refuses to start against a *missing* configured database but migrates an empty
+   one (`ConfigStoreMigrator` issues `CREATE TABLE IF NOT EXISTS`), so an empty file is a
+   valid starting point and a missing one is not.
+
+   > **Do NOT use `tools\Move-ConfigDbToShared.ps1` for this.** That script is a one-time
+   > cutover from two per-instance databases to one shared file. On a server that has
+   > already been cut over it refuses by design - its preconditions reject a `SharedDbPath`
+   > that already exists and expect per-instance databases to copy from. A previous version
+   > of this guide recommended it here; the instruction could not succeed.
+
+   **Authorization is the first thing to restore and verify** — an empty `section_access`
+   with its presence marker denies everyone.
 
 > The pre-2026 "rebuild from the archived JSON" route is **retired**. The legacy
 > `config\*.imported-<timestamp>` archives may still exist on disk, but the app no longer
