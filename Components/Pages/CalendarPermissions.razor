@@ -556,7 +556,7 @@
             // The re-authorised principal, so a servicer's CSV row is serviced exactly as their
             // single-target submit would be (pps-1).
             var bulkAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var bulk = await CalendarService.ProcessCalendarPermissionsCsvAsync(stream, isSet, Validator, currentUser, Audit, ipAddress, ticket, bulkAuthState.User);
+            var bulk = await CalendarService.ProcessCalendarPermissionsCsvAsync(stream, isSet, Validator, currentUser, Audit, Email, ipAddress, ticket, bulkAuthState.User);
             bulkResult = bulk;
             completedBulk = bulk;
 

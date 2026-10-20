@@ -599,7 +599,7 @@
             // is exempt from the gate and can null bulkResult while this handler is suspended, and
             // every read below would then throw into the catch and report a bulk run that succeeded
             // as a failure.
-            var bulk = await MailboxService.ProcessMailboxPermissionsCsvAsync(stream, isAdd, Validator, currentUser, Audit, ipAddress, ticket, bulkAuthState.User);
+            var bulk = await MailboxService.ProcessMailboxPermissionsCsvAsync(stream, isAdd, Validator, currentUser, Audit, Email, ipAddress, ticket, bulkAuthState.User);
             bulkResult = bulk;
             completedBulk = bulk;
 

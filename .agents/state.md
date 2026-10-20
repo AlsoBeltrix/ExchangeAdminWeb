@@ -185,10 +185,27 @@ put a URL in the permission-type line of a user's mail. Filed as `aud-a23b`.
 The page edit kept the file at exactly 808 lines, so no `ClickGateRegistry` key moved.
 MailboxPermissions 1.2.4 -> 1.3.0, base app 2.30.0 -> 2.31.0 (`PermissionResult` is shared).
 
-**Next:** A24 (bulk rows get an admin summary but no affected-user notice, in
-`MailboxPermissions.razor` and `CalendarPermissions.razor`) and A25 (manager summary only -
-do NOT email every member of a group) close Wave 3. Then Wave 4, which is PowerShell-heavy
-and needs the PSScriptAnalyzer and Pester gates, not just dotnet.
+`aud-a24` is landed. Both CSV processors audited every row and neither touched
+`EmailService` - the pages sent one admin summary for the whole run, so a 50-row upload
+changed fifty people's access and told none of them. A shared
+`PermissionChangeNotifier.NotifyAffectedAsync` now fires per row in both processors, gated on
+what applied (mailbox rows pass `AppliedRights`, so A23's partial rule holds for bulk too;
+calendar rows set one right, so success is the applied set). Both sends are independent and
+neither can fail the row or abandon the CSV. `SendUserNotificationAsync` and
+`SendOwnerNotificationAsync` were made `virtual` to be substitutable, matching the admin
+overloads on the same class. MailboxPermissions 1.3.0 -> 1.4.0, CalendarPermissions 1.2.4 ->
+1.3.0, base app 2.31.0 -> 2.32.0.
+
+Worth carrying: **volume is now real and intentional.** A 50-row CSV sends up to 100
+messages. That is what the owner's ruling requires for mailbox and calendar permissions, and
+it is the exact opposite of the A25 ruling for group membership - manager summary only, never
+one message per member. Do not "fix" one by copying the other.
+
+**Next:** A25 is the last of Wave 3 - `GroupManagement.razor:651` notifies administrators
+only; email the group's `managedBy` manager with a SUMMARY, and a group with no manager has
+no recipient, which is said in the audit record rather than falling back to the admin address
+or to spraying members. Then Wave 4, which is PowerShell-heavy and needs the PSScriptAnalyzer
+and Pester gates, not just dotnet.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green

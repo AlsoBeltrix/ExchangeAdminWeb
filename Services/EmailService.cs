@@ -232,7 +232,7 @@ public class EmailService
         return new NotificationDispatch(addresses.Count, delivered, firstError);
     }
 
-    public async Task SendUserNotificationAsync(
+    public virtual async Task SendUserNotificationAsync(
         string userEmail,
         string targetMailbox,
         string performedBy,
@@ -295,7 +295,7 @@ public class EmailService
         await SendEmailAsync(userEmail, subject, body);
     }
 
-    public async Task SendOwnerNotificationAsync(
+    public virtual async Task SendOwnerNotificationAsync(
         string ownerEmail,
         string grantedUser,
         string performedBy,

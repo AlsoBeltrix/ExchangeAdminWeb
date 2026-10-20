@@ -83,7 +83,7 @@ public class CalendarPermissionService : ExchangeServiceBase
     /// use it - the single-target form serviced a protected mailbox while the same mailbox in a CSV
     /// was refused (pps-1). Null refuses, so any caller without a principal is safe.
     /// </param>
-    public async Task<BulkOperationResult> ProcessCalendarPermissionsCsvAsync(Stream csvStream, bool isSet, PermissionValidator validator, string currentUser, AuditService audit, string ipAddress, string ticketNumber, ClaimsPrincipal? actingUser)
+    public async Task<BulkOperationResult> ProcessCalendarPermissionsCsvAsync(Stream csvStream, bool isSet, PermissionValidator validator, string currentUser, AuditService audit, EmailService email, string ipAddress, string ticketNumber, ClaimsPrincipal? actingUser)
     {
         var config = new CsvConfiguration(CultureInfo.InvariantCulture)
         {
@@ -177,6 +177,13 @@ public class CalendarPermissionService : ExchangeServiceBase
                     isSet ? row.AccessRight : null, result.Success, ticketNumber,
                     extra: ProtectedPrincipalServicing.Extra(servicedNote),
                     errorDetail: result.Success ? null : result.Message);
+
+                // Audit finding A24, and the trustee label matches the single-target path: a
+                // calendar notice names the target as "<address> (Calendar)". A calendar row
+                // sets one right, so success IS the applied set - there is no partial here.
+                await PermissionChangeNotifier.NotifyAffectedAsync(
+                    email, result.Success ? [permType] : [], $"{row.Target} (Calendar)",
+                    row.Target, row.User, currentUser, isSet, _logger);
 
                 if (result.Success)
                 {

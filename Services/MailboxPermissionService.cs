@@ -175,7 +175,7 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// use it - the single-target form serviced a protected mailbox while the same mailbox in a CSV
     /// was refused (pps-1). Null refuses, so any caller without a principal is safe.
     /// </param>
-    public async Task<BulkOperationResult> ProcessMailboxPermissionsCsvAsync(Stream csvStream, bool isAdd, PermissionValidator validator, string currentUser, AuditService audit, string ipAddress, string ticketNumber, ClaimsPrincipal? actingUser)
+    public async Task<BulkOperationResult> ProcessMailboxPermissionsCsvAsync(Stream csvStream, bool isAdd, PermissionValidator validator, string currentUser, AuditService audit, EmailService email, string ipAddress, string ticketNumber, ClaimsPrincipal? actingUser)
     {
         var config = new CsvConfiguration(CultureInfo.InvariantCulture)
         {
@@ -294,6 +294,13 @@ public class MailboxPermissionService : ExchangeServiceBase
                     result.Success, ticketNumber, isAdd && fullAccess ? autoMap : null,
                     errorDetail: result.Success ? null : result.Message,
                     extra: ProtectedPrincipalServicing.Extra(servicedNote));
+
+                // Audit finding A24. The row was audited and the operator's administrators got
+                // a summary; the trustee and the mailbox owner got nothing. AppliedRights rather
+                // than result.Success so a partial row notifies on the part that took (A23).
+                await PermissionChangeNotifier.NotifyAffectedAsync(
+                    email, result.AppliedRights ?? [], row.Target, row.Target, row.User,
+                    currentUser, isAdd, _logger);
 
                 if (result.Success)
                 {
