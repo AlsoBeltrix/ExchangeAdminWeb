@@ -118,7 +118,14 @@ but **not reviewed by the stated harness**. Given this stream's record - a repai
 eleven of thirteen reviewed slices - green tests are not a substitute, and these five should
 be treated as provisional until that review runs.
 
-The Portkey-routed `codex` still works and was used as a FALLBACK harness for them. That is
+**As of 2026-10-19 the FALLBACK is down too.** `codex-commercial` now fails with
+`workspace routing discovery unauthorized (401)` rather than the earlier `token_revoked`, and
+the default `CODEX_HOME` reports `refresh_token_invalidated` plus a missing
+`x-portkey-config` header. So there is currently NO working review harness, and `aud-a28` is
+landed unreviewed on top of the five already listed. Implementation continues and the review
+debt accumulates; clearing it needs the owner's interactive login.
+
+The Portkey-routed `codex` worked until then and was used as a FALLBACK harness for the five. That is
 explicitly not what the owner asked for - his instruction was "it needs to use the commercial
 account, not the portkey" - and it is recorded here as a substitution made because the stated
 route was unavailable, not as an equivalent. Each affected finding says which harness reviewed
