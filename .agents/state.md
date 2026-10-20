@@ -201,11 +201,31 @@ messages. That is what the owner's ruling requires for mailbox and calendar perm
 it is the exact opposite of the A25 ruling for group membership - manager summary only, never
 one message per member. Do not "fix" one by copying the other.
 
-**Next:** A25 is the last of Wave 3 - `GroupManagement.razor:651` notifies administrators
-only; email the group's `managedBy` manager with a SUMMARY, and a group with no manager has
-no recipient, which is said in the audit record rather than falling back to the admin address
-or to spraying members. Then Wave 4, which is PowerShell-heavy and needs the PSScriptAnalyzer
-and Pester gates, not just dotnet.
+**Next: A25, the last of Wave 3.** Scouted but NOT started - no code written. What the scout
+found, so it is not rediscovered:
+
+- `GroupInfo` (`Services/GroupManagementService.cs:1436`) carries Name, Email, Identity,
+  SamAccountName, GroupType, Backend and Domain. It has **no `ManagedBy`**, so the attribute
+  has to be read and plumbed before anything can be sent. This is why A25 is the largest of
+  the wave, not a notification tweak.
+- `managedBy` is already read elsewhere - `Services/SelfServiceGroups/AdOwnershipFilter.cs`
+  builds `(|(managedBy={dn})(msExchCoManagedByLink={dn}))`. That file also shows the forest
+  convention and that Exchange groups can carry MULTIPLE owners via
+  `msExchCoManagedByLink`. Decide deliberately whether the ruling's "the group's manager"
+  means `managedBy` alone or the co-manager set too; the owner said manager, singular.
+- `managedBy` is a DN. It must be resolved to a mailbox before it can be mailed, and a DN
+  that resolves to nothing is the no-recipient case, not an error to swallow.
+- Dispatch sites: the per-member paths around `GroupManagement.razor:651` and the batch
+  completions at `:890` and `:1023` (`AuditBatch`). The ruling is ONE message per operation
+  carrying a summary, so the batch paths get one message for the batch - not one per row.
+  This is the opposite shape to `aud-a24`; do not copy that fix here.
+- A group with no manager has no recipient. Say so in the audit record. Do NOT fall back to
+  the admin address and do NOT fall back to emailing members.
+- `GroupManagement.razor` is in `ClickGateRegistry` - check its `ExpectedLineCount` and keep
+  the page at it, or re-anchor via `.agents/playbooks/clickgate-reanchor.md`.
+
+Then Wave 4, which is PowerShell-heavy and needs the PSScriptAnalyzer and Pester gates, not
+just dotnet.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green
