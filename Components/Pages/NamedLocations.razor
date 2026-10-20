@@ -169,7 +169,12 @@
                         {
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Country Codes (ISO 3166-1 alpha-2)</label>
-                                <CountryCodePicker @bind-Value="formCountryCodes" Disabled="@IsBusy" />
+                                @* A16 review: keyed on the record being edited. Without a key Blazor reuses the
+                                   same picker instance across records, and a VALUE comparison cannot tell
+                                   "B happens to hold the same countries" from "still editing A" - so an
+                                   unapplied selection on A rode across onto B. The key makes Blazor build a
+                                   fresh picker per record, which is record identity rather than a guess at it. *@
+                                <CountryCodePicker @key="@(editingLocation?.Id ?? "new")" @bind-Value="formCountryCodes" Disabled="@IsBusy" />
                             </div>
                             <div class="mb-3 form-check">
                                 <input type="checkbox" class="form-check-input" id="chkUnknown" @bind="formIncludeUnknown" disabled="@IsBusy" />

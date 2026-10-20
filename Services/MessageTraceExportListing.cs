@@ -266,12 +266,16 @@ public class MessageTraceExportListing
         // serve it as never produced. The processor builds that partial export deliberately,
         // marking unreached rows "Not processed", so the file is real and wanted.
         //
-        // Interrupted is deliberately NOT included and that asymmetry is the point: two of its
-        // three sources go through FinishAndNotify (a missing processor, and a throw out of the
-        // runner) but the startup orphan sweep flips jobs in bulk with no hook at all. Treating
-        // it as produced would report "Expired" for a file that never existed, which is exactly
-        // the collapse the comment above this method warns against.
-        if (job.Status is not (BulkJobStatus.Completed or BulkJobStatus.Cancelled))
+        // Interrupted is included too. The first fix excluded it, on the stated grounds that
+        // the startup orphan sweep flips jobs with no completion hook - and review showed that
+        // is simply FALSE: BulkJobService.cs:95 captures the active jobs and fires their
+        // completion notifications right after the flip. All three sources of Interrupted run
+        // the hook, so all three produce and email an export, and excluding it left those
+        // files permanently undownloadable.
+        //
+        // Queued and Running are the only statuses that have certainly produced nothing, and
+        // neither reaches this listing anyway.
+        if (job.Status is BulkJobStatus.Queued or BulkJobStatus.Running)
             return MessageTraceExportState.NotProduced;
 
         if (SaveFailed(job))

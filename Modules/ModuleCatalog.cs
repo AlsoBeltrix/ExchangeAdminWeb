@@ -477,7 +477,7 @@ public sealed class ModuleCatalog
             // 1.5.7: the CSV export snapshots the result set and the date range. The progress
             // yield added in 1.5.6 let a trace started across it null the response under the
             // export loop, which threw (review finding prog-9).
-            Version = "1.5.8",
+            Version = "1.5.9",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -927,7 +927,7 @@ public sealed class ModuleCatalog
             // handlers snapshot the form and their result so a mid-flight dismiss or keystroke can
             // no longer retarget a Conditional Access write, blank its ticket, or report a
             // successful write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 2).
-            Version = "1.3.2",
+            Version = "1.3.3",
             MainPermission = new(
                 "Access",
                 "NamedLocations",
@@ -1338,7 +1338,7 @@ public sealed class ModuleCatalog
             // check. It completed on the line after the AD read, so the frame said finished
             // while the operator was still waiting on the check that decides whether the edit
             // UI appears at all.
-            Version = "1.5.0",
+            Version = "1.5.1",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",

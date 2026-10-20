@@ -85,6 +85,46 @@ public class StaleTargetDisciplineTests
     // ---- A14: AD Attribute Editor ------------------------------------------------------------
 
     [Fact]
+    public void AttributeSave_ComparesTheShownAccountByIdNotByReference()
+    {
+        // Review of A14 caught the first version using ReferenceEquals. Every lookup builds a
+        // NEW principal instance and search stays enabled during a save, so re-searching the
+        // SAME account made the check false and the page kept showing stale values while
+        // reporting success.
+        var body = Body(Page("Components", "Pages", "ADAttributeEditor.razor"), "private async Task ConfirmSave()");
+
+        Assert.DoesNotContain("ReferenceEquals(", body, StringComparison.Ordinal);
+        Assert.Contains("shown.ObjectGuid, target.ObjectGuid", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AttributeSave_CapturesTheChangesItIsApplying()
+    {
+        // Review of A14. A concurrent search clears pendingChanges, and proposedValues was
+        // built from the live collection after the yield - turning a real save into
+        // "successfully updated 0 attributes".
+        const string capture = "var changes = pendingChanges.ToList();";
+        var body = Body(Page("Components", "Pages", "ADAttributeEditor.razor"), "private async Task ConfirmSave()");
+
+        CaptureComesFirst(body, capture, "ConfirmSave");
+
+        var after = body[body.IndexOf("await ", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("pendingChanges.Select", after, StringComparison.Ordinal);
+        Assert.DoesNotContain("pendingChanges.Where", after, StringComparison.Ordinal);
+        Assert.DoesNotContain("in pendingChanges", after, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AttributeSave_NamesTheCapturedTargetEvenWhenItThrows()
+    {
+        // Review of A14: the outer catch still emailed lookupResult?.Principal, so a save on A
+        // that threw while a search displayed B sent a failure notification naming B.
+        var body = Body(Page("Components", "Pages", "ADAttributeEditor.razor"), "private async Task ConfirmSave()");
+
+        Assert.DoesNotContain("lookupResult?.Principal?.UserPrincipalName ?? searchIdentity }", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AttributeSave_WritesToThePrincipalItCaptured_NotTheCurrentLookup()
     {
         // A concurrent search nulls lookupResult and then replaces it with a different user.
@@ -101,7 +141,7 @@ public class StaleTargetDisciplineTests
 
         // The one permitted later mention: proving the panel still shows the same user before
         // writing the applied values back into its form.
-        Assert.Contains("ReferenceEquals(lookupResult?.Principal, target)", after, StringComparison.Ordinal);
+        Assert.Contains("shown.ObjectGuid, target.ObjectGuid", after, StringComparison.Ordinal);
     }
 
     // ---- A15: Licensing Updates --------------------------------------------------------------
@@ -137,6 +177,17 @@ public class StaleTargetDisciplineTests
     }
 
     // ---- A16: the country picker -------------------------------------------------------------
+
+    [Fact]
+    public void CountryPicker_IsKeyedToTheRecordBeingEdited()
+    {
+        // Review of A16. A value comparison cannot substitute for record identity: two records
+        // holding the same countries look identical to it, so an unapplied selection on A rode
+        // across onto B. The key makes Blazor build a fresh picker per record.
+        var host = Page("Components", "Pages", "NamedLocations.razor");
+
+        Assert.Contains("<CountryCodePicker @key=", host, StringComparison.Ordinal);
+    }
 
     [Fact]
     public void CountryPicker_ResyncsWhenItsBoundValueChanges()

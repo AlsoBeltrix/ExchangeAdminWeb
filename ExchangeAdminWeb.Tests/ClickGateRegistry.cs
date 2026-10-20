@@ -739,7 +739,7 @@ public static class ClickGateRegistry
     private static PageGateEntry NamedLocations => new()
     {
         Page = "NamedLocations.razor",
-        ExpectedLineCount = 599,
+        ExpectedLineCount = 604,
 
         Predicates =
         [
@@ -812,7 +812,7 @@ public static class ClickGateRegistry
                 + "the local is what closes it. Reinstate the field reads and this exemption is a "
                 + "live defect again"),
 
-            new ExemptControl(192, "@onclick=\"() => confirmDelete = null\"",
+            new ExemptControl(197, "@onclick=\"() => confirmDelete = null\"",
                 "backs out of a staged deletion, and the operator must always be able to do that. "
                 + "It can still be on screen during a refresh or an export because neither clears "
                 + "confirmDelete, and cancelling only resets a staged selection - Confirm Delete "
@@ -839,10 +839,10 @@ public static class ClickGateRegistry
             new DomSyncedControl(143, "@bind=\"formType\"", "select", "disabled=\"@IsBusy\""),
             new DomSyncedControl(161, "@bind=\"formIpRanges\"", "textarea", "disabled=\"@IsBusy\""),
             new DomSyncedControl(164, "@bind=\"formIsTrusted\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(172, "@bind-Value=\"formCountryCodes\"", "CountryCodePicker",
+            new DomSyncedControl(177, "@bind-Value=\"formCountryCodes\"", "CountryCodePicker",
                 "Disabled=\"@IsBusy\""),
-            new DomSyncedControl(175, "@bind=\"formIncludeUnknown\"", "input", "disabled=\"@IsBusy\""),
-            new DomSyncedControl(182, "@bind=\"formTicketNumber\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(180, "@bind=\"formIncludeUnknown\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(187, "@bind=\"formTicketNumber\"", "input", "disabled=\"@IsBusy\""),
         ],
 
         UngatedDomSyncedControls =
@@ -885,7 +885,7 @@ public static class ClickGateRegistry
                 + "see: 60 and 130 have byte-identical markup, so a reviewer reading either in "
                 + "isolation cannot tell they are two controls rather than one moved line"),
 
-            new AnnotatedControl(191, "@onclick=\"() => DeleteLocation(editingLocation)\"",
+            new AnnotatedControl(196, "@onclick=\"() => DeleteLocation(editingLocation)\"",
                 ["string.IsNullOrWhiteSpace(formTicketNumber)"],
                 RendersOnlyWhen:
                 "only while confirmDelete == editingLocation.Id. DeleteLocation does not re-check "
@@ -893,7 +893,7 @@ public static class ClickGateRegistry
                 + "of the ticket requirement on a deletion - the IntuneDevices 403 shape. It is "
                 + "OR-ed with IsBusy and must never be replaced by it"),
 
-            new AnnotatedControl(200, "@onclick=\"SaveLocation\"",
+            new AnnotatedControl(205, "@onclick=\"SaveLocation\"",
                 [
                     "string.IsNullOrWhiteSpace(formDisplayName)",
                     "string.IsNullOrWhiteSpace(formTicketNumber)",

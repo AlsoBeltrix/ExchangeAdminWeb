@@ -482,6 +482,12 @@
         // every use below sat after an await - so the write itself could be aimed at B while
         // the operator was reviewing A, and the message and the admin email would name B.
         var target = lookupResult?.Principal;
+
+        // Review of A14: the CHANGES too. A concurrent search clears pendingChanges, and
+        // proposedValues was built from the live collection after the yield - so a search
+        // landing in that window turned a real save into "successfully updated 0 attributes",
+        // and emptied the list the notification names as well.
+        var changes = pendingChanges.ToList();
         if (target is null)
         {
             isSaving = false;
@@ -532,7 +538,7 @@
                 return;
             }
             var authorizedNames = authorizedAllowlist.Select(a => a.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var unauthorized = pendingChanges.Where(c => !authorizedNames.Contains(c.Name)).ToList();
+            var unauthorized = changes.Where(c => !authorizedNames.Contains(c.Name)).ToList();
             if (unauthorized.Count > 0)
             {
                 operationResult = (false, $"Access denied: you do not have permission to edit {string.Join(", ", unauthorized.Select(u => u.Name))}.");
@@ -540,7 +546,7 @@
             }
 
             var proposedValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var change in pendingChanges)
+            foreach (var change in changes)
                 proposedValues[change.Name] = change.NewValue;
 
             activity.Step("writing the attributes to Active Directory");
@@ -561,7 +567,7 @@
                         new Dictionary<string, string>
                         {
                             ["Target"] = target.UserPrincipalName,
-                            ["Changed"] = string.Join(", ", pendingChanges.Select(c => c.Name))
+                            ["Changed"] = string.Join(", ", changes.Select(c => c.Name))
                         });
                 }
                 catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for AD attribute edit"); }
@@ -574,7 +580,18 @@
                 // they were applied to. A search that landed during the save has already
                 // replaced it, and populating B's form with A's new values is the half of this
                 // finding an operator would act on without noticing.
-                var stillShowingTarget = ReferenceEquals(lookupResult?.Principal, target);
+                // Compared by immutable id, not by reference. Review of A14 caught the first
+                // version using ReferenceEquals: every successful lookup builds a NEW principal
+                // instance, and search stays enabled during a save, so re-searching the SAME
+                // account made this false and the page kept showing the old values while
+                // reporting success. The question is "is the panel showing this account", and
+                // only the GUID answers it.
+                var shown = lookupResult?.Principal;
+                var stillShowingTarget =
+                    shown is not null
+                    && !string.IsNullOrWhiteSpace(shown.ObjectGuid)
+                    && !string.IsNullOrWhiteSpace(target.ObjectGuid)
+                    && string.Equals(shown.ObjectGuid, target.ObjectGuid, StringComparison.OrdinalIgnoreCase);
 
                 if (result.AppliedChanges != null && stillShowingTarget)
                 {
@@ -604,7 +621,7 @@
         {
             operationResult = completed = (false, ex.Message);
             Logger.LogError(ex, "AD attribute save failed");
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Target"] = lookupResult?.Principal?.UserPrincipalName ?? searchIdentity }, ex.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Target"] = target.UserPrincipalName }, ex.Message); } catch { }
         }
         finally
         {

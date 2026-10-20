@@ -153,3 +153,59 @@ Gate: suite 4352 passed / 3 known AD skips / 0 failed; format and `git diff --ch
 Behavioural coverage for all four. These remain source scans, and for A15 in particular the
 interesting property - that the notification still goes out when Cancel is clicked mid-apply -
 is exactly what a scan cannot show.
+
+## Independent review, 2026-10-19 (codex-commercial / gpt-6-astra / max) - CHANGES REQUIRED
+
+The licensing notification fix was accepted as sound against Cancel, and the ordinary MFA
+wrong-user path as fixed. Four findings against A14 and A16, all repaired.
+
+### A16 - value equality is not record identity - FIXED
+
+The re-sync gate compared the bound *string*. Two records holding the same countries are
+indistinguishable to that, and `ToggleCode` changes only the internal set without touching
+`Value` - so with A and B both holding `US`, ticking `CA` on A without pressing Apply and then
+opening B skipped the sync entirely and Apply emitted A's unfinished `CA, US` onto B.
+
+**That is half the original defect still live, and a value comparison cannot close it.** The
+parent now keys the picker on the record being edited, so Blazor builds a fresh component per
+record. That is record identity rather than a guess at it.
+
+### A14 - `ReferenceEquals` was a regression I introduced - FIXED
+
+Every successful lookup constructs a **new** principal instance, and search stays enabled
+during a save because its controls check `isLoading`, not `isSaving`. So re-searching the
+*same* account during a save made the write-back check false: the save succeeded and the page
+went on showing the old values while reporting success.
+
+Now compared by `ObjectGuid`. The question is "is the panel showing this account", and only
+the immutable id answers it.
+
+### A14 - the proposed changes were still mutable across the await - FIXED
+
+Capturing the principal was not enough. A concurrent search clears `pendingChanges`, and
+`proposedValues` was built from that live collection *after* the yield - so a search landing
+in the window turned a real save into a successful "updated 0 attributes", and emptied the
+list the notification names. **The principal fix turned what had been a null-lookup failure
+into a silent no-op**, which is worse. The changes are captured alongside the principal now.
+
+### A14 - the exception notification still named the live lookup - FIXED
+
+The outer catch used `lookupResult?.Principal?.UserPrincipalName ?? searchIdentity`, so a save
+on A that threw while a search displayed B emailed a failure naming B. It uses the captured
+target. The reviewer also noted the source guard missed this because it prohibited two exact
+spellings and not the nullable form - a fair hit on the guard, not just the code.
+
+### Repair guards
+
+| Test | What it pins |
+| --- | --- |
+| `CountryPicker_IsKeyedToTheRecordBeingEdited` | the parent key |
+| `AttributeSave_ComparesTheShownAccountByIdNotByReference` | no `ReferenceEquals`, GUID compared |
+| `AttributeSave_CapturesTheChangesItIsApplying` | capture before the await, no live reads after |
+| `AttributeSave_NamesTheCapturedTargetEvenWhenItThrows` | the nullable spelling is refused too |
+
+`ClickGateRegistry` re-anchored for `NamedLocations` via the playbook's diff map: 599 -> 604
+lines, six entries moved, one unmapped because it is the line that was edited.
+
+Gate: suite 4362 passed / 3 known AD skips / 0 failed. `NamedLocations` 1.3.3,
+`ADAttributeEditor` 1.5.1, `MessageTrace` 1.5.9.

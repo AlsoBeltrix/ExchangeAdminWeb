@@ -90,3 +90,31 @@ Gate: Release 0 errors; suite 4343 passed / 3 known AD skips / 0 failed; format 
 ## Closeout
 
 Fixed directly on `master`. Independent review pending.
+
+## Independent review, 2026-10-19 (codex-commercial / gpt-6-astra / max) - CHANGES REQUIRED
+
+**The reason this record gave for excluding `Interrupted` is false, and the reviewer proved
+it.** `BulkJobService.cs:95` captures the active jobs *before* the bulk flip and then fires
+their completion notifications - so the startup orphan sweep **does** run the hook, exactly
+like the other two sources. I read `InterruptAllNonTerminal` on the following line, concluded
+there was no hook, and wrote that into the finding and the commit message as the justification
+for an asymmetry that should not have existed.
+
+So interrupted jobs also build, save and email an export, and excluding them left those files
+permanently undownloadable - the same defect this finding is about, for a different status.
+
+Fixed: the test is now inverted. Only `Queued` and `Running` are `NotProduced`, and neither
+reaches this listing anyway; every terminal status falls through to `SaveFailed` / `TryResolve`
+as it should. The guard became a theory over `Cancelled` and `Interrupted`.
+
+### Carried, not fixed: LOW, the zero-count queued cancellation
+
+`MessageTrace.razor:1261` does not initialise `TotalRows`; the runner sets it only when the
+job starts (`BulkJobRepository.cs:64`). Cancel while still queued and that never happens, but
+the completion hook still exports every payload message. The listing reads `job.TotalRows` for
+its count and descriptor, so such a report can now appear as **Available with zero messages**
+while its CSV and its email describe many.
+
+The metadata defect predates this work; making the report downloadable is what exposes it.
+Recorded rather than fixed because the right repair is to the job record's row count at
+submission, which is a different slice.
