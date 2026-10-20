@@ -122,6 +122,25 @@ function Assert-LocalAbsolutePath {
     }
 }
 
+function Test-PathIsInside {
+    <#
+    .SYNOPSIS
+        True when $Path lies within $Directory.
+    .DESCRIPTION
+        Audit finding A39. Textual and case-insensitive, matching how this script already
+        compares the two publish paths. The trailing separator on the directory is what
+        stops "D:\inetpub\App" matching "D:\inetpub\AppOther".
+    #>
+    param([string]$Path, [string]$Directory)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($Directory)) { return $false }
+
+    $dir = $Directory.TrimEnd('\', '/') + '\'
+    $candidate = $Path.TrimEnd('\', '/')
+
+    return $candidate.StartsWith($dir, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Get-AppFileVersion {
     param([string]$PublishPath)
 
@@ -354,6 +373,30 @@ foreach ($p in @(@{ N = 'DevPublishPath'; V = $DevPublishPath }, @{ N = 'ProdPub
 }
 if ($DevPublishPath.TrimEnd('\', '/') -ieq $ProdPublishPath.TrimEnd('\', '/')) {
     Write-Fail "DevPublishPath and ProdPublishPath are the same directory."
+}
+
+# A39. The shared database must live outside BOTH publish folders - the architectural
+# invariant says so, and two separate things go wrong when it does not:
+#
+#   - Outside config\, a deploy mirrors the tree with robocopy /MIR, which deletes whatever
+#     it does not find in the source. The next deploy of that instance destroys the shared
+#     database, and with it every other instance's configuration.
+#   - Inside config\, today's deploy exclusions happen to spare it, but it is then one
+#     instance's private directory: the other instance depends on a folder that an uninstall
+#     or a clean reinstall of the first one removes. Relying on a deploy script's exclusion
+#     list to protect shared state is not a guarantee, it is a coincidence that holds.
+#
+# Refuse the whole tree. The distinction above is why the message names both reasons.
+foreach ($tree in @(
+        @{ N = 'DevPublishPath'; V = $DevPublishPath },
+        @{ N = 'ProdPublishPath'; V = $ProdPublishPath })) {
+    if (Test-PathIsInside -Path $SharedDbPath -Directory $tree.V) {
+        Write-Fail ("SharedDbPath ($SharedDbPath) is inside $($tree.N) ($($tree.V)). " +
+            "A publish folder is mirrored by deploys (robocopy /MIR deletes what is not in the source) " +
+            "and belongs to one instance's lifecycle, so shared state cannot live there. " +
+            "Use a path outside both publish folders, for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db. " +
+            "Nothing was changed.")
+    }
 }
 
 $devAppSettings = Join-Path $DevPublishPath 'appsettings.json'

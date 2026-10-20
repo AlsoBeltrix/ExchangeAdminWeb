@@ -323,3 +323,101 @@ Describe 'Get-AppPoolIdentity' {
         { Get-AppPoolIdentity -Name 'ExchangeAdminWeb' } | Should -Throw -ExpectedMessage '*no processModel*'
     }
 }
+
+Describe 'A39: the shared database may not live inside a publish folder' {
+
+    # Audit finding A39. Assert-LocalAbsolutePath rejected UNC paths and drive-relative
+    # paths, and accepted a path inside an instance's publish tree - which a deploy mirrors
+    # with robocopy /MIR, deleting whatever is not in the source.
+    #
+    # Write-Fail throws, so these use the same Should -Throw idiom as the UNC and
+    # drive-relative cases above rather than inspecting captured output.
+
+    It 'refuses a path inside the dev publish folder' {
+        $fake = New-FakeInstances
+        try {
+            $inside = Join-Path $fake.Dev 'shared\exchangeadmin.db'
+            { & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $inside -PlanOnly -MinimumAppVersion '1.0' *>&1 | Out-Null } |
+                Should -Throw -ExpectedMessage '*is inside DevPublishPath*'
+        } finally {
+            Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses a path inside the prod publish folder' {
+        $fake = New-FakeInstances
+        try {
+            $inside = Join-Path $fake.Prod 'shared\exchangeadmin.db'
+            { & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $inside -PlanOnly -MinimumAppVersion '1.0' *>&1 | Out-Null } |
+                Should -Throw -ExpectedMessage '*is inside ProdPublishPath*'
+        } finally {
+            Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "refuses an instance's own config folder, which deploy exclusions only happen to spare" {
+        # The deploy excludes config\ today, so /MIR would not delete it - but it is then one
+        # instance's private directory and the other instance depends on a folder that an
+        # uninstall removes. Relying on an exclusion list to protect shared state is a
+        # coincidence, not a guarantee.
+        $fake = New-FakeInstances
+        try {
+            $inside = Join-Path $fake.Dev 'config\exchangeadmin.db'
+            { & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $inside -PlanOnly -MinimumAppVersion '1.0' *>&1 | Out-Null } |
+                Should -Throw -ExpectedMessage '*is inside DevPublishPath*'
+        } finally {
+            Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'explains why, so the operator can choose a path rather than guess' {
+        $fake = New-FakeInstances
+        try {
+            $inside = Join-Path $fake.Dev 'shared\exchangeadmin.db'
+            { & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $inside -PlanOnly -MinimumAppVersion '1.0' *>&1 | Out-Null } |
+                Should -Throw -ExpectedMessage '*robocopy /MIR deletes what is not in the source*'
+        } finally {
+            Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses before doing any work at all' {
+        # A precondition, so a bad path must not leave a backup root or a database behind.
+        $fake = New-FakeInstances
+        try {
+            $inside = Join-Path $fake.Dev 'shared\exchangeadmin.db'
+            try { & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $inside -BackupRoot (Join-Path $fake.Root 'backups') -MinimumAppVersion '1.0' *>&1 | Out-Null } catch { }
+
+            Test-Path -LiteralPath (Join-Path $fake.Root 'backups') | Should -BeFalse
+            Test-Path -LiteralPath $inside | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'still accepts a path outside both trees' {
+        # A fix that refused everything would pass every test above.
+        $fake = New-FakeInstances -WithProdDb
+        try {
+            $out = Invoke-Cutover $fake @{ PlanOnly = $true; MinimumAppVersion = '1.0' }
+
+            $out | Should -Not -Match 'is inside (Dev|Prod)PublishPath'
+            $out | Should -Match 'Plan only - nothing was changed'
+        } finally {
+            Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'does not mistake a sibling folder with a shared prefix for a containing one' {
+        # "...\Dev" must not match "...\DevShared". The trailing separator is what stops it.
+        $fake = New-FakeInstances -WithProdDb
+        try {
+            $sibling = Join-Path ($fake.Dev + 'Shared') 'config\exchangeadmin.db'
+            $out = Invoke-Cutover $fake @{ SharedDbPath = $sibling; PlanOnly = $true; MinimumAppVersion = '1.0' }
+
+            $out | Should -Not -Match 'is inside DevPublishPath'
+        } finally {
+            Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}

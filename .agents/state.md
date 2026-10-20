@@ -329,11 +329,31 @@ condition and the throw together. Same lesson as A28's counting tests, caught ea
 time - by the mutation rather than by a reviewer. **Assert the condition, not just the
 string it guards.**
 
+**`aud-a39` is landed.** The cutover validated `-SharedDbPath` against UNC and
+drive-relative forms and accepted a path INSIDE an instance publish tree. Deploys mirror
+that tree with `robocopy /MIR`, which deletes what is not in the source - so the cutover
+could succeed, run correctly for weeks, and then have the shared database destroyed by a
+routine deploy, taking both instances' authorization store with it and leaving both pools
+refusing to start. A precondition now refuses any path inside either tree, including
+`config\` (which today's exclusions spare, but that is a deploy-script coincidence, and the
+directory still belongs to one instance's lifecycle).
+
+The trailing separator in `Test-PathIsInside` is load-bearing - without it `...\Dev` is
+judged to contain `...\DevShared` - and one mutation exists solely to prove that.
+
+**A first draft of the tests failed for the wrong reason** and was rewritten: they captured
+output with `*>&1 | Out-String`, but `Write-Fail` throws and a terminating exception is not
+captured that way, so all four refusal tests errored instead of asserting. The suite already
+had the right idiom (`Should -Throw`) for its UNC and drive-relative cases. **Match the
+suite's existing idiom before inventing one** - the harness usually already knows how the
+code under test fails.
+
 The rest of Wave 4 is PowerShell-heavy and needs the PSScriptAnalyzer and Pester gates, not
-just dotnet. Remaining: A39 and A40 (`Move-ConfigDbToShared.ps1` - `MoveConfigDbToShared.Tests.ps1`
-already exists with 22 tests, so that file has an established harness), the new follow-up
-`aud-a38b` (the promotion script still assumes its pool stopped), plus the lower-priority
-items the plan lists under the same wave. A25 is still the only Wave 3 remainder.
+just dotnet. Remaining: A40 (the cutover waits for startup logs without warming the app;
+`AlwaysRunning` does not guarantee initialisation, so cutover can fail on an idle app that
+is fine - same file, same harness), the follow-up `aud-a38b` (the promotion script still
+assumes its pool stopped), plus the lower-priority items the plan lists under the same wave.
+A25 is still the only Wave 3 remainder.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green
