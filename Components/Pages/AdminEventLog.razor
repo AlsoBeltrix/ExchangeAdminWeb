@@ -527,7 +527,16 @@
         var effectiveEnd = startDate <= endDate ? endDate : startDate;
 
         var filesLoaded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Audit finding A20. One shared FIFO used to hold all three sources, filled audit
+        // first and then diagnostics, and trimmed by dequeuing the OLDEST ENQUEUED rather than
+        // the oldest by time - so every diagnostic line past the cap evicted an audit record,
+        // whatever its timestamp. The sort by timestamp happened afterwards, on whatever had
+        // survived.
+        //
+        // Audit records are the ones that must not disappear, so they get their own buffer and
+        // diagnostics can only ever fill the room left over.
         var buffer = new Queue<MergedLogEntry>(MaxTotalEvents + 1);
+        var diagnostics = new Queue<MergedLogEntry>(MaxTotalEvents + 1);
         var filesNotFound = 0;
         var filesFound = 0;
         var rangeStartUtc = effectiveStart.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
@@ -589,9 +598,9 @@
                             if (entry == null) continue;
 
                             totalParsed++;
-                            buffer.Enqueue(entry);
-                            if (buffer.Count > MaxTotalEvents)
-                                buffer.Dequeue();
+                            diagnostics.Enqueue(entry);
+                            if (diagnostics.Count > MaxTotalEvents)
+                                diagnostics.Dequeue();
                         }
                     }
                     catch (Exception ex)
@@ -609,9 +618,9 @@
                     if (entry == null) continue;
 
                     totalParsed++;
-                    buffer.Enqueue(entry);
-                    if (buffer.Count > MaxTotalEvents)
-                        buffer.Dequeue();
+                    diagnostics.Enqueue(entry);
+                    if (diagnostics.Count > MaxTotalEvents)
+                        diagnostics.Dequeue();
                 }
             }
 
@@ -620,7 +629,7 @@
         }
 
         var anyFileFound = filesFound > 0;
-        if (buffer.Count == 0 && loadError == null)
+        if (buffer.Count == 0 && diagnostics.Count == 0 && loadError == null)
         {
             emptyResultMessage = !anyFileFound
                 ? (effectiveStart == effectiveEnd
@@ -635,8 +644,10 @@
         if (totalParsed > MaxTotalEvents)
             loadWarning = $"Showing last {MaxTotalEvents} of {totalParsed} events in range.";
 
-        // Sort merged entries by parsed timestamp (descending: newest first)
-        allEvents = buffer.OrderByDescending(e => e.Timestamp).ToList();
+        // A20: audit records first and in full, then diagnostics fill whatever room is left,
+        // newest first. The rule lives in AuditFirstMerge so it can be tested - the entry
+        // record here is private to this page.
+        allEvents = AuditFirstMerge.Merge(buffer, diagnostics, MaxTotalEvents, e => e.Timestamp);
         for (int i = 0; i < allEvents.Count; i++)
             allEvents[i].Index = i;
 
