@@ -254,8 +254,36 @@ No guard proof, deliberately: it is prose, and a source scan over a document wou
 "passes for the wrong reason" trap this stream has already hit twice. It is also the artifact
 where an independent reader is worth most, so do not treat it as closed on my reading alone.
 
+**`aud-a35` is landed.** Every deployment path stopped the app pool with
+`try { Stop-WebAppPool ... } catch {}` and a three-second sleep, then ran `robocopy /MIR`
+into the publish folder - so a pool that would not stop (wedged worker, not elevated, IIS
+refusing) was replaced file by file while it served requests, and robocopy's exit code does
+not call that a failure. `tools/AppPoolControl.psm1` now stops and then CONFIRMS by polling
+IIS, throws if the pool never stops or its state cannot be read, and returns `Absent` when
+there is no such pool. The stop exception is kept and surfaced in the timeout message,
+because "Access denied" is a different problem from a worker that will not exit.
+
+**The audit named two sites; there are three.** `deploy.ps1` has the pattern on both the
+update path and the fresh-install path, and only the first was listed. The guard that counts
+call sites is what found it - worth remembering that the audit's site lists are a starting
+point, not an inventory.
+
+Two repo invariants bit during this slice and both were right to:
+`DeployInvariants.Tests.ps1` failed the installer edit because a comment mentioned
+`deploy.ps1` by name (Invariant 1, standalone), and the module had to be pure ASCII because
+`deploy.ps1` is read by Windows PowerShell 5.1 (Invariant 6). No version bump - ops-script
+changes do not bump the app version here, per `7ba6b25`, `a1103cc`, `8657b57`, `f0658c0`.
+
+**A mutation round in this slice was vacuous** - the mutation script failed to parse, applied
+nothing, and the suite passed. Only the md5 restore check revealed it. When a mutation
+"passes", confirm the mutation actually happened before believing the guard is weak.
+
 The rest of Wave 4 is PowerShell-heavy and needs the PSScriptAnalyzer and Pester gates, not
-just dotnet.
+just dotnet. Remaining: A34 (an update that omits the service account silently reverts the
+pool to ApplicationPoolIdentity), A36 (installer upgrades skip the verified DB backup), A38
+(promote restart sits in `finally`, outside the rollback `catch`), A39 and A40
+(`Move-ConfigDbToShared.ps1`), plus the lower-priority items the plan lists under the same
+wave.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green

@@ -140,6 +140,7 @@ Import-Module (Join-Path $PSScriptRoot 'tools\SqliteConfigBackup.psm1') -Force
 
 # Shared warning about active bulk jobs before an app-pool recycle (BulkJobRunner-Plan).
 Import-Module (Join-Path $PSScriptRoot 'tools\JobStateWarning.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'tools\AppPoolControl.psm1') -Force
 
 if (-not $PathBase) { $PathBase = "/$AppAlias" }
 $PublishPath = $PublishPath.TrimEnd('\', '/')
@@ -493,8 +494,16 @@ if ($isUpgrade) {
     Write-Step "Stopping app pool"
     # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
     Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir | Out-Null
-    try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
-    Start-Sleep -Seconds 3
+    # A35: the empty catch here swallowed every stop failure, not only the harmless
+    # already-stopped one, and the fixed sleep was a guess about how long a worker takes to
+    # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
+    # CONFIRM, and abort before mirroring if it did not stop.
+    $poolState = Stop-AppPoolVerified -Name $AppPoolName
+    if ($poolState -eq 'Absent') {
+        Write-Warn "App pool $AppPoolName does not exist - nothing to stop."
+    } else {
+        Write-Success "App pool $AppPoolName confirmed stopped"
+    }
 
     $deploymentReadyForManifest = $false
     try {
@@ -683,8 +692,16 @@ if ($isUpgrade) {
     Write-Step "Stopping app pool for file deployment"
     # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
     Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir | Out-Null
-    try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
-    Start-Sleep -Seconds 3
+    # A35: the empty catch here swallowed every stop failure, not only the harmless
+    # already-stopped one, and the fixed sleep was a guess about how long a worker takes to
+    # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
+    # CONFIRM, and abort before mirroring if it did not stop.
+    $poolState = Stop-AppPoolVerified -Name $AppPoolName
+    if ($poolState -eq 'Absent') {
+        Write-Warn "App pool $AppPoolName does not exist - nothing to stop."
+    } else {
+        Write-Success "App pool $AppPoolName confirmed stopped"
+    }
 
     $deploymentReadyForManifest = $false
     try {

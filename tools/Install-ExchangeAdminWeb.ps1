@@ -560,6 +560,10 @@ if ($PlanOnly) {
     Write-Plan "Import WebAdministration and verify IIS site '$ParentSite'"
 } else {
     Import-Module WebAdministration -ErrorAction Stop
+    # A35. Ships beside this script and is environment-neutral - it names no host, domain or
+    # configuration - so importing it keeps this installer standalone and uncoupled from any
+    # environment-specific deploy tooling (Architectural Invariant 1).
+    Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
     if (-not (Get-Website -Name $ParentSite -ErrorAction SilentlyContinue)) {
         Write-Fail "IIS site '$ParentSite' was not found."
     }
@@ -707,9 +711,13 @@ Invoke-PlanOrAction "dotnet publish to staging: $stagingPath" {
     }
 }
 
-Invoke-PlanOrAction "Stop app pool $AppPoolName" {
-    try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
-    Start-Sleep -Seconds 2
+Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped" {
+    # A35: see tools/AppPoolControl.psm1. The empty catch hid a pool that would not stop,
+    # and the robocopy below mirrors over a live application.
+    $poolState = Stop-AppPoolVerified -Name $AppPoolName
+    if ($poolState -eq 'Absent') {
+        Write-Warn "App pool $AppPoolName does not exist yet - nothing to stop."
+    }
 }
 
 try {
