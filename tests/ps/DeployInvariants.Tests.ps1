@@ -648,6 +648,65 @@ Describe 'tools/Move-ConfigDbToShared.ps1 (static)' {
     }
 }
 
+Describe 'tools/New-ExchangeAdminWebGraphApps.ps1' {
+    BeforeAll { $script:g = Get-ScriptUnderTest 'tools/New-ExchangeAdminWebGraphApps.ps1' }
+
+    # A client secret cannot be read back from Entra. The script created both registrations
+    # in a loop and printed every secret in one summary AFTER it, so a failure on the second
+    # registration left the first one existing in the tenant with a secret nobody ever saw.
+
+    It 'parses without syntax errors' {
+        $g.Errors | Should -BeNullOrEmpty
+    }
+
+    It 'prints each registration as it is created, not only in the final summary' {
+        # The defect. Buffering an unrecoverable value until the end of a loop that can
+        # fail is what loses it.
+        $loopAt = $g.Text.IndexOf('foreach ($reg in $Registrations) {', $g.Text.IndexOf('$results = @()'))
+        $perItemAt = $g.Text.IndexOf('$record | Format-List')
+        $summaryAt = $g.Text.LastIndexOf('$results | Format-List')
+
+        $loopAt | Should -BeGreaterThan 0
+        $perItemAt | Should -BeGreaterThan $loopAt
+        $perItemAt | Should -BeLessThan $summaryAt -Because 'the per-registration print happens inside the loop'
+    }
+
+    It 'resolves every Graph role before creating anything' {
+        # The role lookup used to run inside the creation loop, so a hand-edited permission
+        # name that does not exist threw after the previous registration was already made.
+        $preflightAt = $g.Text.IndexOf('$rolesByRegistration = @{}')
+        $createAt = $g.Text.IndexOf('New-MgApplication')
+
+        $preflightAt | Should -BeGreaterThan 0
+        $preflightAt | Should -BeLessThan $createAt
+    }
+
+    It 'looks up AppRoles in exactly one place' {
+        # Two lookups would mean the preflight and the creation loop could disagree.
+        ([regex]::Matches($g.Text, '\$graphSp\.AppRoles')).Count | Should -Be 1
+    }
+
+    It 'names what was created when it fails partway' {
+        # Without this the tenant is half-configured and the only evidence is scrollback.
+        $g.Text | Should -Match '(?s)\} catch \{.*?WERE created and still exist'
+    }
+
+    It 'rethrows after reporting, so a partial run is not reported as success' {
+        $catchBlock = [regex]::Match($g.Text, '(?s)\} catch \{.*?\n\}')
+        $catchBlock.Success | Should -BeTrue
+        $catchBlock.Value | Should -Match '(?m)^\s*throw\s*$'
+    }
+
+    It 'still refuses before creating anything when a name already exists' {
+        # The pre-existing preflight must survive the new one.
+        $g.Text | Should -Match 'Refusing: app registration\(s\) already exist'
+    }
+
+    It 'supports -PlanOnly' {
+        $g.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Contain 'PlanOnly'
+    }
+}
+
 Describe 'tools/deploy-pipeline.ps1' {
     BeforeAll { $script:s = Get-ScriptUnderTest 'tools/deploy-pipeline.ps1' }
 

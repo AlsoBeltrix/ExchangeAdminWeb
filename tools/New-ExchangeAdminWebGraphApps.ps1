@@ -93,19 +93,36 @@ if ($collisions) {
     throw "Refusing: app registration(s) already exist - $($collisions -join '; '). Nothing was created. Remove or rename them first; this script does not modify existing registrations."
 }
 
+# Resolve EVERY role for EVERY registration before creating anything, for the same reason
+# the name check above exists. The role lookup used to run inside the creation loop, so an
+# unrecognised permission on the second registration threw after the first had been created,
+# consented and given a secret - and an unrecognised permission is the likeliest failure
+# here, because the Roles list is edited by hand.
+$rolesByRegistration = @{}
+foreach ($reg in $Registrations) {
+    $rolesByRegistration[$reg.Name] = foreach ($roleName in $reg.Roles) {
+        $role = $graphSp.AppRoles | Where-Object {
+            $_.Value -eq $roleName -and $_.AllowedMemberTypes -contains "Application"
+        }
+        if (-not $role) {
+            throw "Graph application permission '$roleName' (for '$($reg.Name)') not found. Nothing was created."
+        }
+        $role
+    }
+}
+
 $results = @()
+
+# A mid-run failure leaves real registrations behind. They are named here so the operator
+# knows what to record or remove - without this the tenant is half-configured and the only
+# evidence is scrollback.
+try {
 
 foreach ($reg in $Registrations) {
     Write-Host ""
     Write-Host "== $($reg.Name) ==" -ForegroundColor Green
 
-    $roles = foreach ($roleName in $reg.Roles) {
-        $role = $graphSp.AppRoles | Where-Object {
-            $_.Value -eq $roleName -and $_.AllowedMemberTypes -contains "Application"
-        }
-        if (-not $role) { throw "Graph application permission '$roleName' not found." }
-        $role
-    }
+    $roles = $rolesByRegistration[$reg.Name]
 
     Write-Step "Creating application"
     $app = New-MgApplication -DisplayName $reg.Name -SignInAudience "AzureADMyOrg" -RequiredResourceAccess @(
@@ -133,15 +150,37 @@ foreach ($reg in $Registrations) {
         EndDateTime = (Get-Date).AddYears($SecretLifetimeYears)
     }
 
-    $results += [pscustomobject]@{
+    $record = [pscustomobject]@{
         Registration   = $reg.Name
         "Tenant ID"    = $tenantId
         "Client ID"    = $app.AppId
         "Client Secret" = $secret.SecretText
         SecretExpires  = $secret.EndDateTime
     }
+    $results += $record
+
+    # Printed HERE, as soon as it exists, not only in the summary at the end. The client
+    # secret cannot be read back from Entra: if a later registration throws, the summary
+    # never runs and this secret is gone while the registration it belongs to still exists.
+    # Buffering an unrecoverable value until the end of a loop that can fail is the defect.
+    Write-Host ""
+    Write-Host "--- $($reg.Name): created. Copy this into its Delinea secret now. ---" -ForegroundColor Yellow
+    $record | Format-List
 }
 
 Write-Host ""
 Write-Host "Copy each row into its Delinea secret now - the Client Secret is not retrievable later." -ForegroundColor Yellow
 $results | Format-List
+
+} catch {
+    Write-Host ""
+    Write-Host "  X  FAILED partway through: $_" -ForegroundColor Red
+    if ($results.Count -gt 0) {
+        Write-Host ""
+        Write-Host "These registrations WERE created and still exist in the tenant. Record their secrets now or delete the registrations - the secrets cannot be retrieved later:" -ForegroundColor Yellow
+        $results | Format-List
+    } else {
+        Write-Host "No registrations were created." -ForegroundColor Yellow
+    }
+    throw
+}

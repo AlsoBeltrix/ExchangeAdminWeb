@@ -403,12 +403,29 @@ a fix: without the record, the next sweep spends the same hour.
 
 **What remains of the audit:** `A25` (Wave 3 - the group-manager summary; scouted in detail
 above, needs a ClickGate re-anchor and two new service dependencies) and the rest of the
-plan's LOWER-PRIORITY Wave 4 list: `New-ExchangeAdminWebGraphApps.ps1` stranding the first
-registration when the second fails and suppressing its one-time secret, header-processing
-bounds (capped raw headers still feed uncapped derived collections; large-input impact
-unmeasured), and the operational hardening items - narrow publish-folder Modify permissions,
-make the SQLite-dependent CI tests actually run, exercise 5.1-compatible scripts under
-Windows PowerShell 5.1.
+plan's LOWER-PRIORITY Wave 4 list: header-processing bounds (capped raw headers still feed
+uncapped derived collections; large-input impact unmeasured) and the operational hardening
+items - narrow publish-folder Modify permissions, make the SQLite-dependent CI tests
+actually run, exercise 5.1-compatible scripts under Windows PowerShell 5.1.
+
+**`aud-graphapps-stranding` is landed.** The Graph app-registration script created two
+registrations in a loop and printed every client secret in a summary AFTER it. With
+`$ErrorActionPreference = "Stop"`, a failure on the second registration skipped that summary
+entirely - leaving the first registration consented and live in the tenant with a secret
+that was generated, never displayed, and cannot be read back from Entra. The script's own
+line says the secret is not retrievable later, and it then buffered it across an operation
+that can fail.
+
+The likeliest trigger was in the same file: the Graph role lookup ran inside the creation
+loop, and the Roles lists are hand-edited literals, so a typo in the second registration
+threw exactly where it stranded the first. There was already a name-collision preflight with
+a comment explaining this shape - roles simply were not covered by it. Now they are, each
+registration prints as soon as it exists, and a mid-run failure names what was created
+before rethrowing.
+
+Note the **header-processing bounds** item is the only remaining lower-priority entry that
+is NOT PowerShell - it is C# and needs the dotnet gate, so budget a five-minute suite run
+per iteration rather than the thirty-second PowerShell one.
 
 Open follow-ups, unapproved: `aud-a1b`, `aud-a2b`, `aud-a3b`, `aud-a4b` finding 7,
 `aud-a6c`, `aud-a7b`, `aud-a23b`, `aud-a26b`, `aud-a28b`, `aud-a33c`, `aud-a38b`. Owner
