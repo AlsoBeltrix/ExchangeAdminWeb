@@ -51,6 +51,23 @@ jobs:
             Write-Error "PSScriptAnalyzer found errors."
             exit 1
           }
+      # Lower-priority Wave 4 item: "require the SQLite-dependent CI tests to actually run".
+      # Every backup test is gated on -Skip:(-not $HasSqlite), and nothing installed
+      # sqlite3, so the logic that protects the config database across every deploy and
+      # cutover had ZERO coverage here - the suite reported green by skipping it.
+      - name: Install sqlite3
+        shell: pwsh
+        run: |
+          choco install sqlite --no-progress -y
+          $sqlite = Get-Command sqlite3 -ErrorAction SilentlyContinue
+          if (-not $sqlite) {
+            # Chocolatey puts the shim on PATH for later steps, but not this one.
+            $env:PATH = "C:\ProgramData\chocolatey\bin;$env:PATH"
+            $sqlite = Get-Command sqlite3 -ErrorAction SilentlyContinue
+          }
+          if (-not $sqlite) { Write-Error "sqlite3 was not installed; the backup tests would silently skip."; exit 1 }
+          sqlite3 -version
+
       - name: Pester
         shell: pwsh
         run: |
@@ -59,4 +76,51 @@ jobs:
             exit 1
           }
           Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.5 -SkipPublisherCheck
-          Invoke-Pester tests/ps -CI
+          $result = Invoke-Pester tests/ps -CI -PassThru
+
+          # The skip gate exists so a developer without sqlite3 is not blocked. In CI it
+          # would hide exactly the tests this job is here to run, so a skip is a failure.
+          if ($result.SkippedCount -gt 0) {
+            Write-Error "$($result.SkippedCount) Pester test(s) skipped in CI. The SQLite-dependent tests must run here."
+            $result.Skipped | ForEach-Object { Write-Host "  skipped: $($_.ExpandedName)" }
+            exit 1
+          }
+
+      # Lower-priority Wave 4 item: "exercise 5.1-compatible scripts under Windows
+      # PowerShell 5.1". Every step above runs under pwsh (7.x), so Architectural Invariant
+      # 6 - deploy.ps1 and the modules it imports are read by Windows PowerShell 5.1, which
+      # treats a BOM-less non-ASCII file as ANSI and turns it into a parse error - was never
+      # exercised anywhere. These scripts are PARSED, never run: running a deploy on a CI
+      # runner is neither possible nor desirable.
+      - name: Parse 5.1-critical scripts under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          "Edition: $($PSVersionTable.PSEdition)  Version: $($PSVersionTable.PSVersion)"
+          if ($PSVersionTable.PSVersion.Major -ne 5) {
+            Write-Error "This step must run under Windows PowerShell 5.1; got $($PSVersionTable.PSVersion)."
+            exit 1
+          }
+
+          $targets = @(
+            'deploy.ps1',
+            'tools/SqliteConfigBackup.psm1',
+            'tools/JobStateWarning.psm1',
+            'tools/AppPoolControl.psm1'
+          )
+
+          $failed = $false
+          foreach ($t in $targets) {
+            if (-not (Test-Path $t)) { Write-Error "missing: $t"; $failed = $true; continue }
+            $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $t).Path, [ref]$null, [ref]$errors)
+            if ($errors) {
+              Write-Host "PARSE ERRORS in $t"
+              $errors | ForEach-Object { Write-Host "  $($_.Extent.StartLineNumber): $($_.Message)" }
+              $failed = $true
+            } else {
+              Write-Host "ok: $t"
+            }
+          }
+          if ($failed) { exit 1 }

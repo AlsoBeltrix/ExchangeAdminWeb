@@ -728,6 +728,41 @@ Describe 'tools/New-ExchangeAdminWebGraphApps.ps1' {
     }
 }
 
+Describe 'CI gates' {
+    # Lower-priority Wave 4 items: the SQLite-dependent tests were silently skipping in CI
+    # because nothing installed sqlite3, and every CI step ran under pwsh so Architectural
+    # Invariant 6 - the 5.1-readable scripts - was never exercised anywhere.
+    BeforeAll { $script:ci = Get-Content (Join-Path $RepoRoot '.github/workflows/ci.yml') -Raw }
+
+    It 'installs sqlite3 before running Pester' {
+        # The COMMAND, not the step name: a step renamed to "Install sqlite3-disabled"
+        # still contains "Install sqlite3" as a substring and slipped past the first
+        # version of this guard.
+        $sqliteAt = $script:ci.IndexOf('choco install sqlite')
+        $pesterAt = $script:ci.IndexOf('- name: Pester')
+
+        $sqliteAt | Should -BeGreaterThan 0
+        $sqliteAt | Should -BeLessThan $pesterAt
+        $script:ci | Should -Match 'the backup tests would silently skip'
+    }
+
+    It 'fails the build when a test skips in CI' {
+        # The -Skip gate exists so a developer without sqlite3 is not blocked. In CI it
+        # would hide exactly the tests the job is there to run, so a skip is a failure.
+        $script:ci | Should -Match '\$result\.SkippedCount -gt 0'
+    }
+
+    It 'parses the 5.1-critical scripts under Windows PowerShell 5.1' {
+        # shell: powershell is Windows PowerShell 5.1 on windows-latest; shell: pwsh is 7.
+        $script:ci | Should -Match 'shell: powershell'
+        $script:ci | Should -Match 'PSVersion\.Major -ne 5'
+
+        foreach ($f in @('deploy.ps1', 'tools/SqliteConfigBackup.psm1', 'tools/AppPoolControl.psm1')) {
+            $script:ci | Should -Match ([regex]::Escape($f))
+        }
+    }
+}
+
 Describe 'tools/deploy-pipeline.ps1' {
     BeforeAll { $script:s = Get-ScriptUnderTest 'tools/deploy-pipeline.ps1' }
 

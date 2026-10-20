@@ -15,6 +15,12 @@
       - Seeds required config fragments if missing.
       - Sets ACLs for publish, config, and log folders.
 
+    Hardening (optional):
+      - -NarrowPublishAcl grants the app pool identity ReadAndExecute rather than Modify on
+        the publish folder, so the identity running the binaries cannot rewrite them. logs\,
+        config\ and any shared config directory keep Modify. Validate on dev first: a module
+        that writes under the publish root would fail only after the pool restarts.
+
     Update:
       - Builds the app from the current source tree.
       - Takes a verified backup of an existing config database into <LogRoot>\ConfigBackups
@@ -90,6 +96,21 @@ param(
     # binaries may run schema migrations on first start. Skipping the pre-upgrade snapshot
     # is a deliberate acceptance of having no way back, so it is a switch, not a default.
     [switch]$SkipConfigBackup,
+    # Operational hardening (lower-priority Wave 4). The publish folder holds the binaries
+    # the app pool executes; the identity that runs them does not need to be able to rewrite
+    # them. With this switch the publish folder is granted ReadAndExecute instead of Modify,
+    # which removes the "a compromised worker can overwrite its own DLLs" step.
+    #
+    # OPT-IN on purpose. It cannot be validated from a build machine: the app is an IIS-
+    # hosted ASP.NET Core application and anything it writes under the publish root - a
+    # module that caches to disk, Data Protection falling back to the content root, a file
+    # provider - would start failing only once the pool restarts in a real environment.
+    # Shipping a silent permission reduction to every installation on reasoning alone is the
+    # kind of change that breaks production at a moment nobody connects to the deploy.
+    #
+    # To adopt it: run a dev install with -NarrowPublishAcl, exercise the modules, confirm
+    # the app log is clean, and then make it the default here.
+    [switch]$NarrowPublishAcl,
     [switch]$PlanOnly,
     [switch]$NonInteractive
 )
@@ -665,7 +686,13 @@ Invoke-PlanOrAction "Create or update IIS app pool $AppPoolName" {
     }
 }
 
-Set-DirectoryAcl -Path $PublishPath -Identity $appPoolIdentity -Rights "(OI)(CI)M"
+# logs\, config\ and the shared config directory keep Modify below - those are the paths
+# the app genuinely writes. Only the publish root narrows.
+$publishRights = if ($NarrowPublishAcl) { "(OI)(CI)RX" } else { "(OI)(CI)M" }
+if ($NarrowPublishAcl) {
+    Write-Warn "-NarrowPublishAcl: granting $appPoolIdentity ReadAndExecute (not Modify) on $PublishPath. If any module writes under the publish root, it will fail after the pool restarts - verify on dev before using this in production."
+}
+Set-DirectoryAcl -Path $PublishPath -Identity $appPoolIdentity -Rights $publishRights
 Set-DirectoryAcl -Path $LogRoot -Identity $appPoolIdentity -Rights "(OI)(CI)M"
 Set-DirectoryAcl -Path $configDir -Identity $appPoolIdentity -Rights "(OI)(CI)M"
 Set-DirectoryAcl -Path $appLogDir -Identity $appPoolIdentity -Rights "(OI)(CI)M"

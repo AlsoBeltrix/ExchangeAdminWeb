@@ -469,7 +469,32 @@ Three lessons recorded, all earned the hard way this session:
    finding records across the three batches - including `aud-a40.md` still describing code
    that my own commit had replaced while citing that record in its message.
 
-**What remains of the audit:** the rest of the
+**THE AUDIT IS COMPLETE.** Every numbered finding across all four waves, and every entry on
+the plan's lower-priority list, is closed. The last two:
+
+- **`aud-header-bounds`** - `ReceivedHeaders` is filled directly by `ProcessSpecialHeaders`
+  and never passes through `AddHeader`, so none of the model's ceilings bounded it: 5,000
+  pasted `Received:` lines produced 5,000 parsed hops and 5,000 regex passes on a circuit.
+  The caps that did exist dropped headers silently, so a truncated routing path rendered as
+  a complete one and the earliest surviving hop read as the origin.
+- **`aud-operational-hardening`** - CI never installed `sqlite3`, so every config-backup
+  test skipped and the job reported green; nothing anywhere ran the 5.1-critical scripts
+  under Windows PowerShell 5.1. Both fixed, and a skip is now a CI failure. The publish-folder
+  ACL narrowing is implemented as `-NarrowPublishAcl`, **opt-in**: it cannot be validated off
+  a host, and a silent permission reduction would fail only after a pool restart. **Owner
+  decision to make it the default, after a dev install exercises the modules.**
+
+**Two incidents from the final stretch, both recorded because they are about method:**
+
+1. **I nearly un-fixed `aud-header-bounds`.** A boundary test failed, I read it as proof my
+   new ceiling was redundant, deleted it, and wrote a confident note that the audit was half
+   wrong. The next run said `got 5000`. Only running the real parser over a real 5,000-hop
+   message caught it; no source scan would have.
+2. **A broken test file silently removed ~80 tests and the suite stayed green** (`P=170
+   F=0`). Pester contributes nothing for a file it cannot parse. `TestSuiteIntegrity.Tests.ps1`
+   now parses every sibling from outside - the check cannot live in the file it protects.
+
+**What remains (NOT audit scope):** the rest of the
 plan's LOWER-PRIORITY Wave 4 list: header-processing bounds (capped raw headers still feed
 uncapped derived collections; large-input impact unmeasured) and the operational hardening
 items - narrow publish-folder Modify permissions, make the SQLite-dependent CI tests

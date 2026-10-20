@@ -87,6 +87,20 @@ Describe 'A36: the pre-upgrade config database backup' {
         $script:Installer | Should -Match 'SKIP the config database backup entirely'
     }
 
+    It 'narrows the publish ACL only when asked, and keeps Modify where the app writes' {
+        # Operational hardening (lower-priority Wave 4). Opt-in deliberately: a permission
+        # reduction that cannot be validated from a build machine must not reach every
+        # installation silently - it would fail only after a pool restart, in an
+        # environment nobody connects to the deploy.
+        $script:Installer | Should -Match '\[switch\]\$NarrowPublishAcl'
+        $script:Installer | Should -Match 'if \(\$NarrowPublishAcl\) \{ "\(OI\)\(CI\)RX" \} else \{ "\(OI\)\(CI\)M" \}'
+
+        # The publish root is the ONLY path that narrows. logs, config and the shared
+        # config directory are where the app actually writes.
+        $script:Installer | Should -Match 'Set-DirectoryAcl -Path \$LogRoot -Identity \$appPoolIdentity -Rights "\(OI\)\(CI\)M"'
+        $script:Installer | Should -Match 'Set-DirectoryAcl -Path \$configDir -Identity \$appPoolIdentity -Rights "\(OI\)\(CI\)M"'
+    }
+
     It 'makes skipping the snapshot an explicit switch' {
         $script:Installer | Should -Match '\[switch\]\$SkipConfigBackup'
         $script:Installer | Should -Match 'if \(\$SkipConfigBackup\)'
