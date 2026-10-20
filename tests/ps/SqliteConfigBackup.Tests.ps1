@@ -249,6 +249,46 @@ Describe 'SqliteConfigBackup module' {
         }
     }
 
+    It 'Copy-SqliteDbFile -WhatIf does not create the destination directory' -Skip:(-not $HasSqlite) {
+        # The existing -WhatIf test above passes a destination inside a directory that
+        # already exists, so the New-Item was a no-op and the defect never showed. A dry run
+        # that creates directories is a dry run that writes.
+        $srcDir = New-TempDir
+        $dstRoot = New-TempDir
+        try {
+            $src = Join-Path $srcDir 'a.db'
+            & sqlite3 $src "CREATE TABLE t(x);"
+
+            $missingDir = Join-Path $dstRoot 'not-created-yet'
+            $dest = Join-Path $missingDir 'b.db'
+
+            Copy-SqliteDbFile -SourceDbPath $src -DestDbPath $dest -WhatIf | Out-Null
+
+            Test-Path -LiteralPath $missingDir | Should -BeFalse -Because '-WhatIf must not touch the filesystem'
+            Test-Path -LiteralPath $dest | Should -BeFalse
+        } finally {
+            Remove-Item $srcDir, $dstRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Copy-SqliteDbFile still creates the destination directory when it acts' -Skip:(-not $HasSqlite) {
+        # A fix that simply stopped creating the directory would pass the test above and
+        # break every real caller.
+        $srcDir = New-TempDir
+        $dstRoot = New-TempDir
+        try {
+            $src = Join-Path $srcDir 'a.db'
+            & sqlite3 $src "CREATE TABLE t(x);"
+
+            $dest = Join-Path (Join-Path $dstRoot 'made-on-demand') 'b.db'
+            Copy-SqliteDbFile -SourceDbPath $src -DestDbPath $dest | Out-Null
+
+            Test-Path -LiteralPath $dest | Should -BeTrue
+        } finally {
+            Remove-Item $srcDir, $dstRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'integrity helper passes on a good DB and throws on a corrupt one' -Skip:(-not $HasSqlite) {
         $dir = New-TempDir
         try {

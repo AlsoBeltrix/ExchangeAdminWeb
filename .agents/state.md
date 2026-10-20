@@ -386,10 +386,24 @@ comparison. A failed status probe now says drift was NOT checked instead of look
 recorded findings, not plan items - the approved plan is `docs/RepoAudit-Remediation-Plan.md`
 and its four waves. Implementing them needs an owner go first.
 
+**One lower-priority item turned out to be a FALSE POSITIVE** (`aud-whatif-directory`).
+The audit said `-WhatIf` creates a directory before `ShouldProcess` in
+`SqliteConfigBackup.psm1`. It does not: `New-Item` declares `SupportsShouldProcess` itself
+and inherits `$WhatIfPreference`, so a dry run printed "What if: Create Directory" and
+created nothing. Disproved by writing two tests that fail if the directory appears and
+running them against the UNMODIFIED module restored from HEAD - 18 passed, 0 failed. The
+ordering was moved below the gate anyway, as hardening, with the reasoning in the code so
+nobody undoes it; the guarantee now rests on where the call sits rather than on what
+`New-Item` happens to support.
+
+**Two audit entries in this wave did not survive contact with the code in opposite
+directions** - `aud-a35` and `aud-a38` each contained MORE than the audit listed, this one
+less. Treat the audit as a map, not a specification, and write up a disproof as carefully as
+a fix: without the record, the next sweep spends the same hour.
+
 **What remains of the audit:** `A25` (Wave 3 - the group-manager summary; scouted in detail
 above, needs a ClickGate re-anchor and two new service dependencies) and the rest of the
-plan's LOWER-PRIORITY Wave 4 list: `SqliteConfigBackup.psm1` creating a directory before
-`ShouldProcess` under `-WhatIf`, `New-ExchangeAdminWebGraphApps.ps1` stranding the first
+plan's LOWER-PRIORITY Wave 4 list: `New-ExchangeAdminWebGraphApps.ps1` stranding the first
 registration when the second fails and suppressing its one-time secret, header-processing
 bounds (capped raw headers still feed uncapped derived collections; large-input impact
 unmeasured), and the operational hardening items - narrow publish-folder Modify permissions,

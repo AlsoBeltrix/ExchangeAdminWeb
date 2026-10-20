@@ -200,12 +200,25 @@ function Copy-SqliteDbFile {
     $sqlite3 = Assert-Sqlite3Available
 
     $destDir = Split-Path -Parent $DestDbPath
-    if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
-        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-    }
 
     if (-not $PSCmdlet.ShouldProcess($DestDbPath, "Replace with consistent copy of $SourceDbPath")) {
         return $DestDbPath
+    }
+
+    # Creating the destination directory is an ACTION, so it sits below the gate.
+    #
+    # It used to sit above it. The 2026-10-16 audit read that as "-WhatIf creates a
+    # directory before ShouldProcess", and that is NOT what happened: New-Item declares
+    # SupportsShouldProcess itself and inherits $WhatIfPreference from this function, so a
+    # -WhatIf run printed "What if: Create Directory" and created nothing. Verified by
+    # running the two tests below against the unmodified module - both passed.
+    #
+    # The move is kept anyway, as hardening rather than a fix: the guarantee now holds
+    # because of where the call is, not because of what New-Item happens to support.
+    # Swapping it for [IO.Directory]::CreateDirectory, which honours nothing, would have
+    # made the audit right.
+    if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
     }
 
     $tmpDb = Join-Path $destDir ("exchangeadmin.copy.{0}.db" -f ([guid]::NewGuid().ToString('N')))
