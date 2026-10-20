@@ -241,7 +241,20 @@ stopped here deliberately rather than begin it with its judgment spent; this str
 is a repair needed in eleven of thirteen reviewed slices, and the repairs cluster where a
 slice was rushed.
 
-Then Wave 4, which is PowerShell-heavy and needs the PSScriptAnalyzer and Pester gates, not
+**`aud-a37` is landed, pulled forward out of Wave 4** as the plan explicitly permits
+(docs-only, blocks nothing). The operator recovery guide described the retired per-instance
+storage, told the operator to stop one pool when two instances share the file, pointed at a
+guessed backup path, documented the pre-SID two-column `section_access` insert, and offered a
+"delete the database and rebuild from JSON" last resort that **bricks a configured instance** -
+the app never creates a configured database and refuses to start without one
+(`deploy.ps1:447`). All four drifts the audit named were verified against code before being
+rewritten; the finding record lists the file and line behind every corrected claim.
+
+No guard proof, deliberately: it is prose, and a source scan over a document would be the
+"passes for the wrong reason" trap this stream has already hit twice. It is also the artifact
+where an independent reader is worth most, so do not treat it as closed on my reading alone.
+
+The rest of Wave 4 is PowerShell-heavy and needs the PSScriptAnalyzer and Pester gates, not
 just dotnet.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
