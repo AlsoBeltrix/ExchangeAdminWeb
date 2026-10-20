@@ -278,12 +278,30 @@ changes do not bump the app version here, per `7ba6b25`, `a1103cc`, `8657b57`, `
 nothing, and the suite passed. Only the md5 restore check revealed it. When a mutation
 "passes", confirm the mutation actually happened before believing the guard is weak.
 
+**`aud-a34` is landed.** The installer chose the pool identity from whether a PARAMETER was
+present: `-ServiceAccount` meant identityType 3, its absence meant identityType 4
+(ApplicationPoolIdentity). Since the script documents an Update path, re-running it without
+repeating the account moved a pool off its domain service account - and `$appPoolIdentity`,
+which every `Set-DirectoryAcl` and the certificate private-key grant use, was computed from
+the same parameter, so the run also handed Modify to the virtual account. Both halves had to
+move together: preserving the identity while ACLing the wrong principal is the same outage
+by a longer route. `Resolve-AppPoolIdentityPlan` now returns one of three actions, and
+`PreserveExisting` issues no `Set-ItemProperty` at all. `-ResetAppPoolIdentity` is the
+explicit opt-in and its warning names the account being dropped.
+
+The decision is a pure function because everything around it needs IIS - the same shape as
+A35, and now the established pattern for this script: read IIS once, decide in a testable
+function, act on the decision.
+
+**The mutation discipline tightened after A35's vacuous round:** every mutation in this
+slice was confirmed applied before its test run, and the loop reports loudly if the mutation
+script fails rather than letting a green suite look like a weak guard.
+
 The rest of Wave 4 is PowerShell-heavy and needs the PSScriptAnalyzer and Pester gates, not
-just dotnet. Remaining: A34 (an update that omits the service account silently reverts the
-pool to ApplicationPoolIdentity), A36 (installer upgrades skip the verified DB backup), A38
-(promote restart sits in `finally`, outside the rollback `catch`), A39 and A40
-(`Move-ConfigDbToShared.ps1`), plus the lower-priority items the plan lists under the same
-wave.
+just dotnet. Remaining: A36 (installer upgrades skip the verified DB backup - note it is the
+same installer A34 just touched), A38 (promote restart sits in `finally`, outside the
+rollback `catch`), A39 and A40 (`Move-ConfigDbToShared.ps1`), plus the lower-priority items
+the plan lists under the same wave.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green

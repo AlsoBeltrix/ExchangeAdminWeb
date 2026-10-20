@@ -17,6 +17,9 @@
 
     Update:
       - Builds the app from the current source tree.
+      - Keeps the app pool's existing custom identity when -ServiceAccount is omitted.
+        Pass -ServiceAccount to change it, or -ResetAppPoolIdentity to move it back to
+        ApplicationPoolIdentity.
       - Copies binaries/static files while preserving appsettings.json, config, and logs.
       - Seeds only newly missing config fragments.
 
@@ -76,6 +79,10 @@ param(
 
     [string]$ConfigStorePath,
     [switch]$RegenerateAppSettings,
+    # A34: moving an existing pool back to ApplicationPoolIdentity is destructive to every
+    # access the running account has, so it is opt-in rather than the default for an omitted
+    # -ServiceAccount. Modelled on -RegenerateAppSettings above.
+    [switch]$ResetAppPoolIdentity,
     [switch]$PlanOnly,
     [switch]$NonInteractive
 )
@@ -556,31 +563,56 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     Write-Fail "dotnet CLI was not found. Install the .NET SDK before running the installer."
 }
 
+# A35/A34. Ships beside this script and is environment-neutral - it names no host, domain
+# or configuration - so importing it keeps this installer standalone and uncoupled from any
+# environment-specific deploy tooling (Architectural Invariant 1). Imported outside the
+# PlanOnly guard because the identity decision below is reported during a dry run too.
+Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
+
 if ($PlanOnly) {
     Write-Plan "Import WebAdministration and verify IIS site '$ParentSite'"
 } else {
     Import-Module WebAdministration -ErrorAction Stop
-    # A35. Ships beside this script and is environment-neutral - it names no host, domain or
-    # configuration - so importing it keeps this installer standalone and uncoupled from any
-    # environment-specific deploy tooling (Architectural Invariant 1).
-    Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
     if (-not (Get-Website -Name $ParentSite -ErrorAction SilentlyContinue)) {
         Write-Fail "IIS site '$ParentSite' was not found."
     }
 }
 
-$appPoolIdentity = if ($ServiceAccount) { $ServiceAccount } else { "IIS AppPool\$AppPoolName" }
 $poolExists = if ($PlanOnly) { $false } else { Test-Path "IIS:\AppPools\$AppPoolName" }
+
+# A34. Read what the pool runs as TODAY before deciding anything. An omitted -ServiceAccount
+# used to mean "set identityType 4", so an update silently moved a pool off its domain
+# service account - and the Set-DirectoryAcl calls below then granted Modify to the virtual
+# account instead of to the one the app actually runs as.
+$existingIdentityType = $null
+$existingUser = $null
+if ($poolExists) {
+    $existingProcessModel = Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel
+    $existingIdentityType = [int]$existingProcessModel.identityType
+    $existingUser = $existingProcessModel.userName
+}
+
+$identityPlan = Resolve-AppPoolIdentityPlan `
+    -ServiceAccount $ServiceAccount `
+    -AppPoolName $AppPoolName `
+    -PoolExists $poolExists `
+    -ExistingIdentityType $existingIdentityType `
+    -ExistingUserName $existingUser `
+    -ResetRequested $ResetAppPoolIdentity.IsPresent
+
+if ($identityPlan.Reason) { Write-Warn $identityPlan.Reason }
+
+# Every folder ACL below is granted to this. Preserving an identity and then ACLing the
+# wrong principal would be the same outage by a longer route.
+$appPoolIdentity = $identityPlan.IdentityForAcl
+
+if ($PlanOnly) {
+    Write-Plan "App pool identity: $($identityPlan.Action) (an existing custom identity is kept unless -ServiceAccount or -ResetAppPoolIdentity is passed)"
+}
+
 $needsPassword = $false
 if ($ServiceAccount -and -not $PlanOnly) {
-    if (-not $poolExists) {
-        $needsPassword = $true
-    } else {
-        $existingUser = (Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel).userName
-        if ($existingUser -ne $ServiceAccount) {
-            $needsPassword = $true
-        }
-    }
+    $needsPassword = (-not $poolExists) -or ($existingUser -ne $ServiceAccount)
 }
 
 if ($needsPassword) {
@@ -599,13 +631,15 @@ Invoke-PlanOrAction "Create or update IIS app pool $AppPoolName" {
     Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.loadUserProfile -Value $true
     Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name startMode -Value "AlwaysRunning"
 
-    if ($ServiceAccount) {
+    # A34: three outcomes, not two. PreserveExisting deliberately touches nothing - an
+    # omitted parameter is not an instruction to change the identity.
+    if ($identityPlan.Action -eq 'SetCustom') {
         Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.identityType -Value 3
         Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.userName -Value $ServiceAccount
         if ($ServiceAccountPassword) {
             Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.password -Value (ConvertTo-PlainText $ServiceAccountPassword)
         }
-    } else {
+    } elseif ($identityPlan.Action -eq 'SetApplicationPoolIdentity') {
         Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.identityType -Value 4
     }
 }

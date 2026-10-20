@@ -99,3 +99,89 @@ function Stop-AppPoolVerified {
 }
 
 Export-ModuleMember -Function Stop-AppPoolVerified
+
+function Resolve-AppPoolIdentityPlan {
+    <#
+    .SYNOPSIS
+        Decides what an installer run should do to an app pool's identity, and which
+        principal the folder ACLs belong to.
+
+    .DESCRIPTION
+        Audit finding A34. The installer set the identity like this:
+
+            if ($ServiceAccount) { ... identityType 3, userName, password ... }
+            else                 { ... identityType 4 ... }
+
+        Type 4 is ApplicationPoolIdentity. So re-running the installer to UPDATE an
+        instance, without repeating -ServiceAccount, silently moved a pool that was running
+        as a domain service account back to a local virtual account - and the ACL calls
+        below it then granted Modify to "IIS AppPool\<name>" instead of to the account the
+        app actually runs as.
+
+        That single flag is what the app's access to the credential store, the certificate
+        private key, Active Directory and the shared config database all hang off. Nothing
+        failed at install time; the app simply could not do its job afterwards, for reasons
+        several layers away from the command that caused it.
+
+        An omitted parameter is not an instruction to change anything. So an existing custom
+        identity is PRESERVED unless -ServiceAccount names a new one or the operator asks
+        for the reset explicitly - the same shape as the installer's existing
+        -RegenerateAppSettings, which does not rewrite appsettings.json unless told to.
+
+    .OUTPUTS
+        A PSCustomObject with:
+          Action        - 'SetCustom', 'PreserveExisting' or 'SetApplicationPoolIdentity'
+          IdentityForAcl - the principal the folder ACLs must be granted to
+          Reason        - one line for the operator, or $null when nothing notable happened
+    #>
+    [CmdletBinding()]
+    param(
+        # The -ServiceAccount the run was given, if any.
+        [string]$ServiceAccount,
+
+        [string]$AppPoolName,
+
+        [bool]$PoolExists,
+
+        # processModel.identityType as IIS reports it: 3 is SpecificUser, 4 is
+        # ApplicationPoolIdentity. Ignored when the pool does not exist.
+        [Nullable[int]]$ExistingIdentityType,
+
+        # processModel.userName as IIS reports it.
+        [string]$ExistingUserName,
+
+        # Explicit opt-in to move a pool back to ApplicationPoolIdentity.
+        [bool]$ResetRequested
+    )
+
+    if ($ServiceAccount) {
+        return [pscustomobject]@{
+            Action         = 'SetCustom'
+            IdentityForAcl = $ServiceAccount
+            Reason         = $null
+        }
+    }
+
+    $hasCustomIdentity = $PoolExists -and ($ExistingIdentityType -eq 3) -and $ExistingUserName
+
+    if ($hasCustomIdentity -and -not $ResetRequested) {
+        return [pscustomobject]@{
+            Action         = 'PreserveExisting'
+            IdentityForAcl = $ExistingUserName
+            Reason         = "App pool $AppPoolName already runs as $ExistingUserName. Keeping it - pass -ServiceAccount to change it, or -ResetAppPoolIdentity to move it to ApplicationPoolIdentity."
+        }
+    }
+
+    $reason = $null
+    if ($hasCustomIdentity -and $ResetRequested) {
+        $reason = "App pool $AppPoolName is being moved from $ExistingUserName to ApplicationPoolIdentity because -ResetAppPoolIdentity was passed. Access that depended on $ExistingUserName - credential store, certificate private key, directory, shared config database - will stop working until it is re-granted."
+    }
+
+    return [pscustomobject]@{
+        Action         = 'SetApplicationPoolIdentity'
+        IdentityForAcl = "IIS AppPool\$AppPoolName"
+        Reason         = $reason
+    }
+}
+
+Export-ModuleMember -Function Resolve-AppPoolIdentityPlan

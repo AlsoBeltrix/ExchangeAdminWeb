@@ -157,3 +157,124 @@ Describe 'A35 call sites' {
         ($bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
     }
 }
+
+Describe 'Resolve-AppPoolIdentityPlan' {
+
+    # Audit finding A34. The installer treated an omitted -ServiceAccount as an instruction
+    # to set identityType 4, so an UPDATE silently moved a pool off its domain service
+    # account - taking the credential store, the certificate private key, the directory and
+    # the shared config database with it, none of which failed at install time.
+
+    Context 'an update that does not mention the service account' {
+
+        It 'keeps an existing custom identity instead of resetting it' {
+            $plan = Resolve-AppPoolIdentityPlan -AppPoolName 'ExchangeAdminWeb' `
+                -PoolExists $true -ExistingIdentityType 3 -ExistingUserName 'CONTOSO\svc-eaw' `
+                -ResetRequested $false
+
+            $plan.Action | Should -Be 'PreserveExisting'
+        }
+
+        It 'ACLs the account the app actually runs as, not the virtual account' {
+            # Preserving the identity and then granting Modify to "IIS AppPool\<name>" would
+            # be the same outage by a longer route.
+            $plan = Resolve-AppPoolIdentityPlan -AppPoolName 'ExchangeAdminWeb' `
+                -PoolExists $true -ExistingIdentityType 3 -ExistingUserName 'CONTOSO\svc-eaw' `
+                -ResetRequested $false
+
+            $plan.IdentityForAcl | Should -Be 'CONTOSO\svc-eaw'
+        }
+
+        It 'tells the operator how to change it on purpose' {
+            $plan = Resolve-AppPoolIdentityPlan -AppPoolName 'ExchangeAdminWeb' `
+                -PoolExists $true -ExistingIdentityType 3 -ExistingUserName 'CONTOSO\svc-eaw' `
+                -ResetRequested $false
+
+            $plan.Reason | Should -Match '-ServiceAccount'
+            $plan.Reason | Should -Match '-ResetAppPoolIdentity'
+        }
+    }
+
+    Context 'a pool already on ApplicationPoolIdentity' {
+
+        It 'sets ApplicationPoolIdentity without comment' {
+            # Nothing is being taken away, so there is nothing to warn about.
+            $plan = Resolve-AppPoolIdentityPlan -AppPoolName 'ExchangeAdminWeb' `
+                -PoolExists $true -ExistingIdentityType 4 -ExistingUserName '' `
+                -ResetRequested $false
+
+            $plan.Action | Should -Be 'SetApplicationPoolIdentity'
+            $plan.IdentityForAcl | Should -Be 'IIS AppPool\ExchangeAdminWeb'
+            $plan.Reason | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'a fresh install' {
+
+        It 'defaults to ApplicationPoolIdentity when no account is given' {
+            $plan = Resolve-AppPoolIdentityPlan -AppPoolName 'ExchangeAdminWeb' `
+                -PoolExists $false -ExistingIdentityType $null -ExistingUserName '' `
+                -ResetRequested $false
+
+            $plan.Action | Should -Be 'SetApplicationPoolIdentity'
+            $plan.IdentityForAcl | Should -Be 'IIS AppPool\ExchangeAdminWeb'
+        }
+
+        It 'uses the named account when one is given' {
+            $plan = Resolve-AppPoolIdentityPlan -ServiceAccount 'CONTOSO\svc-eaw' `
+                -AppPoolName 'ExchangeAdminWeb' -PoolExists $false `
+                -ExistingIdentityType $null -ExistingUserName '' -ResetRequested $false
+
+            $plan.Action | Should -Be 'SetCustom'
+            $plan.IdentityForAcl | Should -Be 'CONTOSO\svc-eaw'
+        }
+    }
+
+    Context 'changing the identity on purpose' {
+
+        It 'switches to a different named account' {
+            $plan = Resolve-AppPoolIdentityPlan -ServiceAccount 'CONTOSO\svc-new' `
+                -AppPoolName 'ExchangeAdminWeb' -PoolExists $true `
+                -ExistingIdentityType 3 -ExistingUserName 'CONTOSO\svc-old' -ResetRequested $false
+
+            $plan.Action | Should -Be 'SetCustom'
+            $plan.IdentityForAcl | Should -Be 'CONTOSO\svc-new'
+        }
+
+        It 'resets to ApplicationPoolIdentity when explicitly asked, and says what breaks' {
+            $plan = Resolve-AppPoolIdentityPlan -AppPoolName 'ExchangeAdminWeb' `
+                -PoolExists $true -ExistingIdentityType 3 -ExistingUserName 'CONTOSO\svc-eaw' `
+                -ResetRequested $true
+
+            $plan.Action | Should -Be 'SetApplicationPoolIdentity'
+            $plan.IdentityForAcl | Should -Be 'IIS AppPool\ExchangeAdminWeb'
+            $plan.Reason | Should -Match 'CONTOSO\\svc-eaw'
+            $plan.Reason | Should -Match 'credential store'
+        }
+    }
+}
+
+Describe 'A34 call site' {
+
+    It 'acts on the decision, not on whether -ServiceAccount was passed' {
+        $installer = Get-Content (Join-Path $PSScriptRoot '..\..\tools\Install-ExchangeAdminWeb.ps1') -Raw
+
+        $installer | Should -Match "identityPlan.Action -eq 'SetCustom'"
+        $installer | Should -Match "identityPlan.Action -eq 'SetApplicationPoolIdentity'"
+
+        # The old unconditional else is what reset the identity.
+        $installer | Should -Not -Match '\} else \{\s*Set-ItemProperty[^\n]*identityType -Value 4'
+    }
+
+    It 'grants the folder ACLs to the identity the plan chose' {
+        $installer = Get-Content (Join-Path $PSScriptRoot '..\..\tools\Install-ExchangeAdminWeb.ps1') -Raw
+
+        $installer | Should -Match '\$appPoolIdentity = \$identityPlan.IdentityForAcl'
+    }
+
+    It 'offers the reset as an explicit switch' {
+        $installer = Get-Content (Join-Path $PSScriptRoot '..\..\tools\Install-ExchangeAdminWeb.ps1') -Raw
+
+        $installer | Should -Match '\[switch\]\$ResetAppPoolIdentity'
+    }
+}
