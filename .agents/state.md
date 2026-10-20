@@ -221,8 +221,25 @@ found, so it is not rediscovered:
   This is the opposite shape to `aud-a24`; do not copy that fix here.
 - A group with no manager has no recipient. Say so in the audit record. Do NOT fall back to
   the admin address and do NOT fall back to emailing members.
-- `GroupManagement.razor` is in `ClickGateRegistry` - check its `ExpectedLineCount` and keep
-  the page at it, or re-anchor via `.agents/playbooks/clickgate-reanchor.md`.
+- `GroupManagement.razor` is pinned at `ExpectedLineCount = 1050`. The manager notice is an
+  ADDITION - administrators keep theirs, the ruling adds the manager - and it is dispatched
+  at the OPERATION boundary, which lives in the page, so the four call sites cannot be made
+  line-neutral the way `aud-a23` and `aud-a24` were. **A25 requires a ClickGate re-anchor**
+  via `.agents/playbooks/clickgate-reanchor.md`. Plan for it at the start rather than
+  discovering it after the edit.
+- `GroupManagementService` has NEITHER `AuditService` NOR `EmailService` in its constructor
+  (`moduleConfig, moduleCredentials, protectedPrincipals, servicers, logger`). Both have to
+  be added if the send and the no-manager audit are to live in the service, which is the only
+  way to keep the page edits small.
+- Dispatch must NOT go inside `AddMemberAsync`/`RemoveMemberAsync`: that fires once per
+  member, which is precisely what the owner refused.
+
+**Why this was scouted and not started:** it is the largest item in the wave - a new AD
+attribute read, a DN-to-mailbox resolution, two new service dependencies, an outcome enum, a
+summary format, four wiring sites and a re-anchor. The session that landed a23/a24/a26/a27/a28
+stopped here deliberately rather than begin it with its judgment spent; this stream's record
+is a repair needed in eleven of thirteen reviewed slices, and the repairs cluster where a
+slice was rushed.
 
 Then Wave 4, which is PowerShell-heavy and needs the PSScriptAnalyzer and Pester gates, not
 just dotnet.
