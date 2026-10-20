@@ -113,7 +113,7 @@ public class EmergencyDisableServiceTests : IDisposable
         // GAP B).
         // 1.3.2: PerformLookup reports the directory resolve and the protection check
         // (docs/ProgressCoverage-Plan.md S5).
-        Assert.Equal("1.3.2", module.Version);
+        Assert.Equal("1.4.0", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");
@@ -717,12 +717,18 @@ public class EmergencyDisableServiceTests : IDisposable
         // The gate allowed it: an ordinary operator gets BLOCKED here, this one gets SERVICED.
         Assert.Contains(result.Steps, s => s.Step == "ProtectedPrincipalCheck" && s.Status == "SERVICED");
 
-        // The run then stops at the Delinea credential fetch, which returns BEFORE LogAudit - a
-        // pre-existing early-return path this change does not alter, so there is no audit record
-        // to inspect and no audit file is written at all. Asserting emptiness here would pass for
-        // the wrong reason, so the audit-side guard is source-level instead, below. Stated plainly
-        // rather than left implicit: reaching LogAudit needs a live directory and Graph.
-        Assert.Empty(ReadAuditEvents());
+        // This used to assert the audit log was EMPTY, and said so apologetically: the run
+        // stops at the Delinea credential fetch, which returned before LogAudit, so nothing
+        // durable was written and the assertion "would pass for the wrong reason".
+        //
+        // That emptiness WAS audit finding A28. Every refusal now writes a record, so there is
+        // something real to assert: the attempt is in the durable log, named, and marked as
+        // having changed nothing.
+        var events = ReadAuditEvents();
+        Assert.NotEmpty(events);
+        Assert.Contains(events, e => e.Contains("EmergencyDisable_Refused", StringComparison.Ordinal));
+        Assert.Contains(events, e => e.Contains("ceo@contoso.com", StringComparison.Ordinal));
+        Assert.Contains(events, e => e.Contains("\"mutationAttempted\":false", StringComparison.Ordinal));
     }
 
     [Fact]

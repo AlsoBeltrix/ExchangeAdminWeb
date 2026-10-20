@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Repository audit remediation - Wave 1 complete and reviewed; Waves 2-4 not started
+### Repository audit remediation - Waves 1-2 complete, Wave 3 started; Wave 4 not started
 
 The owner-authorized read-only audit of `34bac0872e0131ebeef595217590b03beeb3eee4`
 is complete. The report, saved at the owner's request, is
@@ -124,7 +124,29 @@ account, not the portkey" - and it is recorded here as a substitution made becau
 route was unavailable, not as an equivalent. Each affected finding says which harness reviewed
 it.
 
-**Next:** Waves 3 and 4 of the plan.
+**Wave 3 is in progress.** `aud-a28` is landed on `master`: fifteen refusal paths across
+`EmergencyDisableService.DisableAsync` and `ADAttributeEditorService.SaveAsync` returned
+before recording anything, so a blocked attempt - including one aimed at a protected
+principal - left no durable audit. A `LogRefusal` helper in each service now writes the
+attempt, the step that refused it, and `mutationAttempted = false`, which is what separates a
+refusal from a failed write. EmergencyDisable 1.3.2 -> 1.4.0, ADAttributeEditor 1.5.1 ->
+1.6.0; module-scoped, so no base app bump.
+
+**The second pattern above recurred, in a new form, inside this slice.** The first version of
+the A28 edit put each `LogRefusal` call above a return that a brace-less `if` had governed
+alone, so the `if` guarded only the logging and the refusal return became unconditional -
+`SaveAsync` would have failed every call. **The three counting guards passed on that code**,
+because the call and the return were both present and the totals matched. `dotnet format`
+caught it, as whitespace errors, because the indentation no longer described the control
+flow. Counting proves a line exists, not that it is reachable on the path it was written for.
+A fourth test, `ARefusalLogSitsInsideABracedBlock`, now pins the shape and fails on the
+original bug.
+
+It also exposed `aud-a28b`: a `SaveAsync` that refused every call passed the full suite, so
+that method has no behavioural coverage at all. Filed, not approved.
+
+**Next:** the rest of Wave 3 (A23, A24, A25, A26, A27), then Wave 4. A25 is manager-summary
+email only, per the owner's standing ruling - do not email every member of a group.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green

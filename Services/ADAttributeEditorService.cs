@@ -525,7 +525,11 @@ public class ADAttributeEditorService
     {
         var allowlist = GetAllowlist();
         if (allowlist == null)
-            return new(false, "Attribute allowlist configuration is corrupt.", null);
+        {
+            const string msg = "Attribute allowlist configuration is corrupt.";
+            LogRefusal(target, performedBy, ip, ticket, "AllowlistConfig", msg);
+            return new(false, msg, null);
+        }
 
         // If a maxLevel is provided, filter the allowlist to enforce server-side level restrictions
         if (maxLevel.HasValue)
@@ -533,17 +537,27 @@ public class ADAttributeEditorService
 
         var validationError = ValidateProposedValues(proposedValues, allowlist);
         if (validationError != null)
+        {
+            LogRefusal(target, performedBy, ip, ticket, "Validation", validationError);
             return new(false, validationError, null);
+        }
 
         foreach (var key in proposedValues.Keys)
         {
             if (IsDenylisted(key))
-                return new(false, $"Attribute '{key}' is on the hard denylist and cannot be modified.", null);
+            {
+                var denied = $"Attribute '{key}' is on the hard denylist and cannot be modified.";
+                LogRefusal(target, performedBy, ip, ticket, "Denylist", denied);
+                return new(false, denied, null);
+            }
         }
 
         var protectionResult = await _protectedPrincipalService.CheckAsync(target);
         if (protectionResult.CheckFailed)
+        {
+            LogRefusal(target, performedBy, ip, ticket, "ProtectedPrincipalCheck", protectionResult.Reason);
             return new(false, protectionResult.Reason, null);
+        }
 
         // An authorised servicer may proceed. Protection is evaluated first and never weakened -
         // this only decides whether THIS operator may act on a target already known to be
@@ -555,15 +569,27 @@ public class ADAttributeEditorService
                 _servicers, actingUser, ServicerModuleId, protectionResult.MatchedRules);
 
             if (servicedNote is null)
-                return new(false, "Target is a protected principal and cannot be modified.", null);
+            {
+                const string msg = "Target is a protected principal and cannot be modified.";
+                LogRefusal(target, performedBy, ip, ticket, "ProtectedPrincipalCheck", msg);
+                return new(false, msg, null);
+            }
         }
 
         var creds = await _moduleCredentials.GetCredentialsAsync("ADAttributeEditor", "attribute save");
         if (creds == null)
-            return new(false, "AD credentials unavailable.", null);
+        {
+            const string msg = "AD credentials unavailable.";
+            LogRefusal(target, performedBy, ip, ticket, "GetADCredentials", msg);
+            return new(false, msg, null);
+        }
 
         if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
-            return new(false, "AD service is busy.", null);
+        {
+            const string msg = "AD service is busy.";
+            LogRefusal(target, performedBy, ip, ticket, "AcquireThrottle", msg);
+            return new(false, msg, null);
+        }
 
         try
         {
@@ -916,6 +942,40 @@ public class ADAttributeEditorService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Records an attempt that was refused before any write was tried.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A28. Every refusal in <c>SaveAsync</c> - corrupt allowlist, failed
+    /// validation, a denylisted attribute, a failed or blocking protected-principal check,
+    /// missing credentials, a busy throttle - returned before <see cref="LogAudit"/> and so
+    /// left nothing in the audit log. The operation trace saw them; the trace is diagnostic,
+    /// with different retention and different readers. "Who tried to edit this protected
+    /// account and was stopped?" is asked of the audit log, which did not know.
+    ///
+    /// <c>mutationAttempted</c> is false because that is the material difference between this
+    /// row and a failed write: nothing was sent to the directory.
+    /// </remarks>
+    private void LogRefusal(
+        ResolvedDirectoryPrincipal target,
+        string performedBy,
+        string ip,
+        string ticket,
+        string step,
+        string reason)
+    {
+        _audit.LogModuleAction(
+            performedBy,
+            ip,
+            "ADAttributeEdit_Refused",
+            "ADAttributeEditor",
+            target.UserPrincipalName,
+            false,
+            ticket,
+            reason,
+            new Dictionary<string, object?> { ["refusedAt"] = step, ["mutationAttempted"] = false });
     }
 
     private void LogAudit(ResolvedDirectoryPrincipal target, List<AttributeChange> changes, string performedBy, string ip, string ticket, bool success, string? errorDetail, string? servicedNote = null)

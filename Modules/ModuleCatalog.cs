@@ -959,7 +959,7 @@ public sealed class ModuleCatalog
             // docs/EmergencyDisableLockdownOU-Plan.md.
             // 1.3.2: the lookup reports the directory resolve and the protection check instead
             // of running with the frame idle (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.3.2",
+            Version = "1.4.0",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
@@ -1338,7 +1338,7 @@ public sealed class ModuleCatalog
             // check. It completed on the line after the AD read, so the frame said finished
             // while the operator was still waiting on the check that decides whether the edit
             // UI appears at all.
-            Version = "1.5.1",
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",

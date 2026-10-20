@@ -146,6 +146,7 @@ public class EmergencyDisableService
             _operationTrace.Step("TicketValidation", "Failed");
             steps.Add(new DisableStepResult("TicketValidation", "FAILED", msg));
             opScope.Complete(false, msg);
+            LogRefusal(target, performedBy, ip, ticket, "TicketValidation", msg);
             return new EmergencyDisableResult(false, msg, null, steps);
         }
 
@@ -160,6 +161,7 @@ public class EmergencyDisableService
             _operationTrace.Step("ProtectedPrincipalCheck", "Failed", details: new Dictionary<string, object?> { ["reason"] = protectionResult.Reason });
             steps.Add(new DisableStepResult("ProtectedPrincipalCheck", "BLOCKED", failMsg));
             opScope.Complete(false, failMsg);
+            LogRefusal(target, performedBy, ip, ticket, "ProtectedPrincipalCheck", failMsg);
             return new EmergencyDisableResult(false, failMsg, null, steps);
         }
         string? servicedNote = null;
@@ -177,6 +179,7 @@ public class EmergencyDisableService
                 _operationTrace.Step("ProtectedPrincipalCheck", "Blocked", details: new Dictionary<string, object?> { ["matchedRules"] = protectionResult.MatchedRules });
                 steps.Add(new DisableStepResult("ProtectedPrincipalCheck", "BLOCKED", blockedMsg));
                 opScope.Complete(false, blockedMsg);
+                LogRefusal(target, performedBy, ip, ticket, "ProtectedPrincipalCheck", blockedMsg);
                 return new EmergencyDisableResult(false, blockedMsg, null, steps);
             }
 
@@ -200,6 +203,7 @@ public class EmergencyDisableService
             _operationTrace.Step("GetADCredentials", "Failed", backend: "Delinea");
             steps.Add(new DisableStepResult("GetADCredentials", "FAILED", msg));
             opScope.Complete(false, msg);
+            LogRefusal(target, performedBy, ip, ticket, "GetADCredentials", msg);
             return new EmergencyDisableResult(false, msg, null, steps);
         }
         steps.Add(new DisableStepResult("GetADCredentials", "OK", null));
@@ -212,6 +216,7 @@ public class EmergencyDisableService
             _operationTrace.Step("GetGraphCredentials", "Failed", backend: "Delinea");
             steps.Add(new DisableStepResult("GetGraphCredentials", "FAILED", msg));
             opScope.Complete(false, msg);
+            LogRefusal(target, performedBy, ip, ticket, "GetGraphCredentials", msg);
             return new EmergencyDisableResult(false, msg, null, steps);
         }
         steps.Add(new DisableStepResult("GetGraphCredentials", "OK", null));
@@ -231,6 +236,7 @@ public class EmergencyDisableService
             _operationTrace.Step("ReadADPreState", "Failed", backend: "ActiveDirectory", exception: ex);
             steps.Add(new DisableStepResult("ReadADPreState", "FAILED", msg));
             opScope.Complete(false, msg);
+            LogRefusal(target, performedBy, ip, ticket, "ReadADPreState", msg);
             return new EmergencyDisableResult(false, msg, null, steps);
         }
 
@@ -244,6 +250,7 @@ public class EmergencyDisableService
             _operationTrace.Step("ReadEntraPreState", "Failed", backend: "MicrosoftGraph", exception: ex);
             steps.Add(new DisableStepResult("ReadEntraPreState", "FAILED", msg));
             opScope.Complete(false, msg);
+            LogRefusal(target, performedBy, ip, ticket, "ReadEntraPreState", msg);
             return new EmergencyDisableResult(false, msg, null, steps);
         }
 
@@ -274,6 +281,7 @@ public class EmergencyDisableService
             _operationTrace.Step("PersistSnapshot", "Failed", exception: ex);
             steps.Add(new DisableStepResult("PersistSnapshot", "FAILED", msg));
             opScope.Complete(false, msg);
+            LogRefusal(target, performedBy, ip, ticket, "PersistSnapshot", msg);
             return new EmergencyDisableResult(false, msg, snapshot, steps);
         }
         steps.Add(new DisableStepResult("PersistSnapshot", "OK", null));
@@ -996,6 +1004,41 @@ public class EmergencyDisableService
         "SKIPPED" or "NOT REQUESTED" => "table-secondary",
         _ => "table-danger"
     };
+
+    /// <summary>
+    /// Writes a durable audit row for an emergency disable that was REFUSED before any change
+    /// was attempted.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A28. Every refusal - a missing ticket, a failed or blocked
+    /// protected-principal check, unavailable credentials, an unreadable pre-state, an
+    /// unpersistable snapshot - returned before <see cref="LogAudit"/> and left nothing in the
+    /// audit log. The operation trace recorded them, but the trace is diagnostic: different
+    /// store, different retention, different readers. "Who tried to emergency-disable this
+    /// account and was stopped?" could not be answered from the durable record at all.
+    ///
+    /// An attempt on a protected principal is exactly the event someone will later go looking
+    /// for, and it was the one leaving no trace.
+    /// </remarks>
+    private void LogRefusal(
+        ResolvedDirectoryPrincipal target,
+        string performedBy,
+        string ip,
+        string ticket,
+        string step,
+        string reason)
+    {
+        _audit.LogModuleAction(
+            performedBy,
+            ip,
+            "EmergencyDisable_Refused",
+            "EmergencyDisable",
+            target.UserPrincipalName,
+            false,
+            ticket,
+            reason,
+            new Dictionary<string, object?> { ["refusedAt"] = step, ["mutationAttempted"] = false });
+    }
 
     private void LogAudit(
         ResolvedDirectoryPrincipal target,
