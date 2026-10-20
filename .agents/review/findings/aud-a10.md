@@ -85,3 +85,26 @@ member now performs an extra directory lookup and can fail for a new reason.
 ## Closeout
 
 Fixed directly on `master`. Independent review pending.
+
+## Independent review, 2026-10-20 - CHANGES REQUIRED
+
+**Fallback harness** (`gpt-5.5` via Portkey; the commercial login had expired) - see
+`aud-a21-a22` for the caveat.
+
+**The fix introduced a deployment break.** The new `/users/{identity}` lookup needs
+`User.Read.All`, and the module's own config description told administrators the app
+registration required only `Group.ReadWrite.All`. An app consented exactly as documented now
+fails every add-by-name with a 403, before reaching the add it used to fail at - so the fix
+would have replaced one unexplained failure with another.
+
+Both halves corrected: the catalog's `GraphDelineaSecretId` description names
+`User.Read.All` and says what it is for, and a 403 from the lookup returns a message naming
+the permission instead of a bare status.
+
+Guards: `AMissingGraphPermission_NamesThePermission`, and
+`TheModuleConfigDeclaresThePermissionTheLookupNeeds` - the second because code requiring a
+permission the catalog does not declare is a break nobody sees until production.
+
+The reviewer also noted the GUID fast path is type-blind: a group or device id passes through
+and Graph rejects it. Left as is - Graph's own rejection is the right authority on what may
+be a member - but recorded rather than unnoticed.

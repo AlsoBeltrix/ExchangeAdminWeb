@@ -94,3 +94,25 @@ Gate: Release 0 errors; suite 4374 passed / 3 known AD skips / 0 failed; format 
 ## Closeout
 
 Fixed directly on `master`. Independent review pending.
+
+## Independent review, 2026-10-20 - LOW finding, fixed
+
+**Fallback harness** (`gpt-5.5` via Portkey) - see `aud-a21-a22` for the caveat. The separate
+buffers were confirmed to work as claimed.
+
+**The truncation warning no longer described what the page did.** It still said "Showing last
+2000 of N events in range", which was true of the single FIFO and is not true of "every audit
+record that fit, plus the newest diagnostics after them". An operator deciding whether they
+are looking at a complete picture could not tell which kind had gone missing.
+
+The warning now names it: audit dropped at the limit, or diagnostics that did not fit. That
+needed per-source counters, because `totalParsed` covers all three and the audit queue
+self-caps, so neither could reveal how much audit had been discarded.
+
+This record's own phrase "audit is kept in full" was also too strong and the reviewer said
+so: audit is never dropped **for a diagnostic**, but it is still capped at 2000 on its own.
+The Approach section already said that; the summary line did not.
+
+Guards: `FitDiagnostics_ReportsExactlyWhatFitsAfterTheAudit`,
+`FitDiagnostics_KeepsNothingWhenAuditAlreadyFillsTheCap`, and a scan that the old wording is
+gone.

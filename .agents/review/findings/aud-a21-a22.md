@@ -104,3 +104,26 @@ verdict changes for messages carrying ARC.
 ## Closeout
 
 Fixed directly on `master`. Independent review pending.
+
+## Independent review, 2026-10-20 - CHANGES REQUIRED
+
+**Reviewed on a FALLBACK harness.** The codex-commercial login had expired (`token_revoked`),
+so this ran on the Portkey-routed `codex` - `@azure-openai-eus2-global/gpt-5.5-dzs` - not the
+stated `gpt-6-astra`. Recorded because it is not the harness the owner asked for; the finding
+should be re-reviewed when that login is restored.
+
+**It caught a regression the first fix introduced, which is the point of saying so.**
+
+Making every non-ARC header authoritative was wrong. A message carries one
+`Authentication-Results` **per hop**, and they are prepended, so the TOPMOST is the receiving
+system's. Overwriting on each direct header therefore let the LOWEST - an upstream relay's -
+beat the tenant's own verdict. Same masking as the original defect, pointed the other way.
+
+The rule is now: a direct header outranks ARC **and every later direct header**. The first
+one parsed wins, tracked by `EmailHeaders.AuthenticationFromDirectHeader`.
+
+Guard: `AnUpstreamDirectHeaderBelowTheReceivingSystems_DoesNotOverrideIt` - two direct
+headers, the tenant's failing above an upstream pass. The reviewer noted the original tests
+could not catch this because they only ever used ARC plus one direct header.
+
+A22 was confirmed sound.

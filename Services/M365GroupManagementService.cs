@@ -303,6 +303,14 @@ public class M365GroupManagementService
         var (doc, status) = await client.GetWithStatusAsync($"/users/{Uri.EscapeDataString(trimmed)}?$select=id");
         if (doc == null)
         {
+            // Review of aud-a10: this lookup needs User.Read.All, which the module's own
+            // config description did not previously mention - so an app registration
+            // consented exactly as documented fails here with a 403 and no clue why. The
+            // message names the permission rather than leaving an admin to guess.
+            if (status == System.Net.HttpStatusCode.Forbidden)
+                return (null, $"Not permitted to look up '{identity}'. The Graph app registration "
+                            + "needs User.Read.All to resolve a name to a directory object.");
+
             return (null, status == System.Net.HttpStatusCode.NotFound
                 ? $"'{identity}' was not found in the directory."
                 : $"Could not look up '{identity}': {(int)status} {status}.");

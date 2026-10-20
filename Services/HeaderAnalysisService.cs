@@ -651,7 +651,13 @@ public class HeaderAnalysisService
         // A21: the direct header always wins. ARC may only fill a slot nothing authoritative
         // has written yet, so a mechanism that is still "none" after the real
         // Authentication-Results was parsed is genuinely absent rather than overwritten.
-        var mayOverwrite = !isArc;
+        // Review of aud-a21. A direct header outranks ARC, but NOT an earlier direct header:
+        // every hop adds one and the topmost is the receiving system's. Overwriting on each
+        // would let the lowest upstream pass beat the tenant's own fail - the same masking
+        // the first fix was for, pointed the other way.
+        var mayOverwrite = !isArc && !headers.AuthenticationFromDirectHeader;
+        if (!isArc)
+            headers.AuthenticationFromDirectHeader = true;
 
         if (mayOverwrite || string.IsNullOrEmpty(headers.Authentication.RawValue))
             headers.Authentication.RawValue = value;

@@ -84,6 +84,41 @@ public class AuditFirstMergeTests
     }
 
     [Fact]
+    public void FitDiagnostics_ReportsExactlyWhatFitsAfterTheAudit()
+    {
+        // Review of A20: split out from Merge so the page can say how many diagnostics were
+        // dropped. The warning used to claim "showing last N of M", which described the old
+        // single-buffer behaviour and no longer matched what the page did.
+        var diagnostics = new[] { Diag(10), Diag(59), Diag(30) };
+
+        var fitted = AuditFirstMerge.FitDiagnostics(auditCount: 8, diagnostics, cap: 10, e => e.When);
+
+        Assert.Equal(2, fitted.Count);
+        Assert.Contains(Diag(59), fitted);
+        Assert.Contains(Diag(30), fitted);
+    }
+
+    [Fact]
+    public void FitDiagnostics_KeepsNothingWhenAuditAlreadyFillsTheCap()
+    {
+        var fitted = AuditFirstMerge.FitDiagnostics(auditCount: 10, [Diag(59)], cap: 10, e => e.When);
+        Assert.Empty(fitted);
+    }
+
+    [Fact]
+    public void ThePageWarnsAboutWhichKindOfEntryWasDropped()
+    {
+        // Source scan. The point of the split is the message, and "showing last N of M" would
+        // compile perfectly well while saying something untrue about what was kept.
+        var page = RazorSyntax.CommentsBlanked(File.ReadAllText(
+            AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminEventLog.razor")));
+
+        Assert.Contains("audit events; the oldest were dropped", page, StringComparison.Ordinal);
+        Assert.Contains("diagnostic entr", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("Showing last {MaxTotalEvents}", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ThePageHandsAuditAndDiagnosticsToSeparateBuffers()
     {
         // Source scan: the merge rule above is only correct if the page actually separates the
@@ -91,7 +126,7 @@ public class AuditFirstMergeTests
         var page = RazorSyntax.CommentsBlanked(File.ReadAllText(
             AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminEventLog.razor")));
 
-        Assert.Contains("AuditFirstMerge.Merge(buffer, diagnostics,", page, StringComparison.Ordinal);
+        Assert.Contains("AuditFirstMerge.FitDiagnostics(buffer.Count, diagnostics,", page, StringComparison.Ordinal);
 
         // Trace and extended lines must go to the diagnostics queue, not the audit one.
         Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(page, @"diagnostics\.Enqueue\(entry\);").Count);

@@ -83,6 +83,31 @@ body
         Assert.Equal("PASS", result.SpfResult);
     }
 
+    [Fact]
+    public void AnUpstreamDirectHeaderBelowTheReceivingSystems_DoesNotOverrideIt()
+    {
+        // Review of aud-a21 caught this as a regression the first fix introduced. Every hop
+        // may add its own Authentication-Results and the TOPMOST is the receiving system's -
+        // so making each direct header overwrite just moved the masking, letting a lower
+        // upstream pass beat the tenant's own fail.
+        var raw = """
+Authentication-Results: mx.analog.com; spf=fail smtp.mailfrom=example.com; dkim=fail header.d=example.com; dmarc=fail header.from=example.com
+Authentication-Results: relay.upstream.example; spf=pass smtp.mailfrom=example.com; dkim=pass header.d=example.com; dmarc=pass header.from=example.com
+From: Alice Sender <alice@example.com>
+To: Bob Recipient <bob@analog.com>
+Subject: Invoice
+Message-ID: <twodirect@example.com>
+
+body
+""";
+
+        var result = Service().AnalyzeHeaderText(raw);
+
+        Assert.Equal("FAIL", result.SpfResult);
+        Assert.Equal("FAIL", result.DkimResult);
+        Assert.Equal("FAIL", result.DmarcResult);
+    }
+
     // ---- A22: the spam-score thresholds never matched ----------------------------------------
 
     [Fact]

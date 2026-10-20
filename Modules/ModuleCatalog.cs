@@ -477,7 +477,7 @@ public sealed class ModuleCatalog
             // 1.5.7: the CSV export snapshots the result set and the date range. The progress
             // yield added in 1.5.6 let a trace started across it null the response under the
             // export loop, which threw (review finding prog-9).
-            Version = "1.6.0",
+            Version = "1.6.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -632,14 +632,14 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.DirectoryAndGroups,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.6.0",
+            Version = "1.6.1",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
                 "Open the module and create, rename, delete Microsoft 365 groups and change their members and owners through Graph; deleting a group is the destructive action here.",
                 FailClosed: true),
             ConfigFields = [
-                new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All)")
+                new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All, and User.Read.All to resolve a typed UPN or email to its object id)")
             ]
         },
         new()
@@ -1390,7 +1390,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Administration,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.3.0",
+            Version = "1.3.1",
             MainPermission = new(
                 "Access",
                 "EventLog",

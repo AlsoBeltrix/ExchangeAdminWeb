@@ -537,6 +537,12 @@
         // diagnostics can only ever fill the room left over.
         var buffer = new Queue<MergedLogEntry>(MaxTotalEvents + 1);
         var diagnostics = new Queue<MergedLogEntry>(MaxTotalEvents + 1);
+
+        // Counted separately from totalParsed, which covers all three sources: the warning
+        // below has to say WHICH kind was dropped, and the audit queue self-caps so its own
+        // Count cannot reveal how many it discarded.
+        var auditParsed = 0;
+        var diagnosticsParsed = 0;
         var filesNotFound = 0;
         var filesFound = 0;
         var rangeStartUtc = effectiveStart.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
@@ -566,6 +572,7 @@
                         if (entry == null) continue;
 
                         totalParsed++;
+                        auditParsed++;
                         buffer.Enqueue(entry);
                         if (buffer.Count > MaxTotalEvents)
                             buffer.Dequeue();
@@ -598,6 +605,7 @@
                             if (entry == null) continue;
 
                             totalParsed++;
+                            diagnosticsParsed++;
                             diagnostics.Enqueue(entry);
                             if (diagnostics.Count > MaxTotalEvents)
                                 diagnostics.Dequeue();
@@ -618,6 +626,7 @@
                     if (entry == null) continue;
 
                     totalParsed++;
+                    diagnosticsParsed++;
                     diagnostics.Enqueue(entry);
                     if (diagnostics.Count > MaxTotalEvents)
                         diagnostics.Dequeue();
@@ -641,13 +650,25 @@
             return;
         }
 
-        if (totalParsed > MaxTotalEvents)
-            loadWarning = $"Showing last {MaxTotalEvents} of {totalParsed} events in range.";
-
         // A20: audit records first and in full, then diagnostics fill whatever room is left,
         // newest first. The rule lives in AuditFirstMerge so it can be tested - the entry
         // record here is private to this page.
-        allEvents = AuditFirstMerge.Merge(buffer, diagnostics, MaxTotalEvents, e => e.Timestamp);
+        var keptDiagnostics = AuditFirstMerge.FitDiagnostics(buffer.Count, diagnostics, MaxTotalEvents, e => e.Timestamp);
+        allEvents = buffer.Concat(keptDiagnostics).OrderByDescending(e => e.Timestamp).ToList();
+
+        // Review of A20: the old wording - "showing last N of M" - described the single-FIFO
+        // behaviour and is no longer what happens. It is now "every audit record that fit,
+        // plus the newest diagnostics that fit after them", and an operator deciding whether
+        // they are looking at a complete picture needs to know WHICH kind was dropped.
+        var shownAudit = buffer.Count;
+        var droppedAudit = Math.Max(0, auditParsed - shownAudit);
+        var droppedDiagnostics = Math.Max(0, diagnosticsParsed - keptDiagnostics.Count);
+
+        if (droppedAudit > 0)
+            loadWarning = $"Showing {shownAudit:N0} of {auditParsed:N0} audit events; the oldest were dropped at the {MaxTotalEvents:N0} limit.";
+        else if (droppedDiagnostics > 0)
+            loadWarning = $"All {shownAudit:N0} audit events are shown. {droppedDiagnostics:N0} diagnostic entr{(droppedDiagnostics == 1 ? "y" : "ies")} did not fit and were dropped.";
+
         for (int i = 0; i < allEvents.Count; i++)
             allEvents[i].Index = i;
 

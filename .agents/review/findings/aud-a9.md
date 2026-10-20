@@ -89,3 +89,17 @@ changed for existing records.
 ## Closeout
 
 Fixed directly on `master`. Independent review pending.
+
+## Independent review, 2026-10-20 - no changes required
+
+**Fallback harness** (`gpt-5.5` via Portkey) - see `aud-a21-a22` for the caveat.
+
+The reviewer traced the one thing that would have made this fix worse than the defect: whether
+`targetObjectGuid` actually survives from the editor to the undo page. It does -
+`LookupAsync` populates `ObjectGuid`, `LogAudit` writes the key, `AuditService.MergeExtra`
+preserves it, the JSONL writer emits the dictionary, and `AdminEventLog` clones every property
+into `RawFields`, which both undo paths receive. Had any step dropped it, undo would have been
+permanently broken rather than safer.
+
+They also checked that `ProtectedPrincipalServicing.Extra` returns a new dictionary or null,
+so this fix mutating it cannot affect other callers.

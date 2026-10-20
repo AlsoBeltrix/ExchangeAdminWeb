@@ -6,6 +6,19 @@ public class EmailHeaders
     private const int MaxValuesPerHeader = 50;
     private int _totalHeaderCount;
 
+
+    /// <summary>
+    /// True once a non-ARC Authentication-Results header has been parsed.
+    /// </summary>
+    /// <remarks>
+    /// Review of aud-a21. Headers are parsed top-down and every hop may add its own
+    /// Authentication-Results, so "direct" is not one header - it is several, and the TOPMOST
+    /// is the receiving system's own verdict. The first fix made every direct header
+    /// overwrite, which simply moved the masking: a lower upstream pass then beat the
+    /// tenant's fail. The rule is: the first direct header wins over ARC and over every
+    /// later direct header.
+    /// </remarks>
+    public bool AuthenticationFromDirectHeader { get; set; }
     public Dictionary<string, List<string>> Headers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public string? From { get; set; }
     public string? ReplyTo { get; set; }

@@ -99,3 +99,19 @@ that used to be accepted can now be refused.
 ## Closeout
 
 Fixed directly on `master`. Independent review pending.
+
+## Independent review, 2026-10-20 - no changes required
+
+**Fallback harness** (`gpt-5.5` via Portkey) - see `aud-a21-a22` for the caveat.
+
+Both halves confirmed: the pattern runs before the URL is built, and the returned-number
+comparison closes the second half. The reviewer searched for other `sysparm_query`
+construction and found none - other callers route through `ValidateTicketAsync` or
+`TicketValidationService`.
+
+One caveat accepted rather than fixed: ServiceNow numbering is configurable per table, and
+real instances use prefixes like `INT` or `CASE`. The alphanumeric pattern is safe against
+the grammar but is **not a proven ServiceNow invariant**, so an instance with punctuation in
+its ticket numbers would be refused. This record already said the pattern was inferred; the
+reviewer's examples make the risk concrete. It fails visibly with a message, which is the
+right direction for a guess, and validation is not enabled here anyway.

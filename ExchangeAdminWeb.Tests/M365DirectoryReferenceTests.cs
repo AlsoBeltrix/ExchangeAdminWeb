@@ -92,6 +92,32 @@ public class M365DirectoryReferenceTests
     }
 
     [Fact]
+    public async Task AMissingGraphPermission_NamesThePermission()
+    {
+        // Review of aud-a10: this lookup needs User.Read.All, which the module's config
+        // description did not mention. An app consented exactly as documented fails here, so
+        // the message must say which permission rather than leave an admin guessing.
+        var (client, _) = Client(_ => Stub.Status(HttpStatusCode.Forbidden));
+
+        var (objectId, error) = await M365GroupManagementService.ResolveDirectoryObjectIdAsync(client, "alex@contoso.com");
+
+        Assert.Null(objectId);
+        Assert.Contains("User.Read.All", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheModuleConfigDeclaresThePermissionTheLookupNeeds()
+    {
+        // The code asking for a permission the catalog does not name is a deployment break
+        // nobody sees until an add fails in production.
+        var catalog = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Modules", "ModuleCatalog.cs"));
+        var entry = catalog[catalog.IndexOf("Id = \"M365GroupManagement\"", StringComparison.Ordinal)..];
+        var fields = entry[..entry.IndexOf("Id = \"", 10, StringComparison.Ordinal)];
+
+        Assert.Contains("User.Read.All", fields, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AFailedLookup_CarriesItsStatus()
     {
         var (client, _) = Client(_ => Stub.Status(HttpStatusCode.TooManyRequests));
