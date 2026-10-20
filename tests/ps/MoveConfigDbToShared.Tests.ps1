@@ -85,8 +85,9 @@ Describe 'Move-ConfigDbToShared.ps1 plan mode' {
             $out | Should -Match 'PLAN Set ConfigStore:Path = .* in .*Prod\\appsettings\.json'
             $out | Should -Match 'PLAN Start app pool ExchangeAdminWebDev'
             $out | Should -Match '(?m)^PLAN Start app pool ExchangeAdminWeb\s*$'
-            $out | Should -Match "PLAN Verify Dev logged 'Config store schema ready'"
-            $out | Should -Match "PLAN Verify Prod logged 'Config store schema ready'"
+            # A40: the step warms the instance before reading the log, and says so.
+            $out | Should -Match "PLAN Warm Dev on localhost, then verify it logged 'Config store schema ready'"
+            $out | Should -Match "PLAN Warm Prod on localhost, then verify it logged 'Config store schema ready'"
             $out | Should -Match 'Plan only - nothing was changed'
             $out | Should -Match 'To return to two databases'
 
@@ -418,6 +419,210 @@ Describe 'A39: the shared database may not live inside a publish folder' {
             $out | Should -Not -Match 'is inside DevPublishPath'
         } finally {
             Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'A40: the cutover wakes the app before reading its startup log' {
+
+    # Audit finding A40. Step 8 waits for "Config store schema ready", which Program.cs
+    # writes during APPLICATION startup. Starting an app pool creates a worker process; IIS
+    # does not load the application into it until a request arrives unless Application
+    # Initialization is installed and preloadEnabled is set. startMode=AlwaysRunning, which
+    # the installer does set, keeps the worker alive and initialises nothing.
+    #
+    # So a correct, healthy, idle instance never wrote the line and the cutover failed after
+    # 90 seconds reporting a startup error that had not happened.
+    #
+    # Functions are lifted out by AST, as Get-AppPoolIdentity above is - dot-sourcing the
+    # script would run the whole cutover.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:ScriptPath, [ref]$tokens, [ref]$errors)
+        $errors | Should -BeNullOrEmpty
+
+        foreach ($name in @('Get-AppPathBase', 'Invoke-AppWarmup')) {
+            $fn = $ast.FindAll(
+                {
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                    $node.Name -eq $name
+                }, $true) | Select-Object -First 1
+            $fn | Should -Not -BeNullOrEmpty -Because "the script must still define $name"
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+
+        function New-SettingsDir {
+            param([string]$Json)
+            $dir = Join-Path ([System.IO.Path]::GetTempPath()) ("a40_" + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            if ($PSBoundParameters.ContainsKey('Json')) {
+                Set-Content -LiteralPath (Join-Path $dir 'appsettings.json') -Encoding UTF8 -Value $Json
+            }
+            return $dir
+        }
+    }
+
+    Context 'Get-AppPathBase' {
+
+        It 'reads the configured path base' {
+            $dir = New-SettingsDir -Json '{ "Application": { "PathBase": "/Dev" } }'
+            try { Get-AppPathBase -PublishPath $dir | Should -Be '/Dev' }
+            finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'normalises a path base written without a leading slash' {
+            $dir = New-SettingsDir -Json '{ "Application": { "PathBase": "Dev" } }'
+            try { Get-AppPathBase -PublishPath $dir | Should -Be '/Dev' }
+            finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'returns empty when there is no path base' {
+            $dir = New-SettingsDir -Json '{ "Application": { "PathBase": "" } }'
+            try { Get-AppPathBase -PublishPath $dir | Should -Be '' }
+            finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'returns empty rather than throwing on unreadable settings' {
+            # This runs during a cutover. A warm-up helper must not be the thing that fails it.
+            $dir = New-SettingsDir -Json '{ not json'
+            try { Get-AppPathBase -PublishPath $dir | Should -Be '' }
+            finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'returns empty when appsettings.json is absent' {
+            $dir = New-SettingsDir
+            try { Get-AppPathBase -PublishPath $dir | Should -Be '' }
+            finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    Context 'Invoke-AppWarmup' {
+
+        BeforeEach {
+            $script:requested = [System.Collections.Generic.List[string]]::new()
+        }
+
+        It 'requests the instance on localhost, including its path base' {
+            # THE FINDING: without this request the application is never initialised and the
+            # log line it writes on startup never appears.
+            $dir = New-SettingsDir -Json '{ "Application": { "PathBase": "/Dev" } }'
+            try {
+                Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) $script:requested.Add($Url) } | Should -BeTrue
+                $script:requested[0] | Should -Be 'http://localhost/Dev/'
+            } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'requests the root when there is no path base' {
+            $dir = New-SettingsDir -Json '{ }'
+            try {
+                $null = Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) $script:requested.Add($Url) }
+                $script:requested[0] | Should -Be 'http://localhost/'
+            } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'tries both schemes when nothing usable answers' {
+            # A 404 or a 500 means ASP.NET Core started. Only "nothing answered" matters.
+            $dir = New-SettingsDir -Json '{ }'
+            try {
+                # Nothing usable answered on either scheme, so both were attempted and the
+                # result is false. The sibling branch - an exception that DOES carry a
+                # Response, meaning the app answered with a 404 or 500 and so did
+                # initialise - is not covered here; see the finding's Known gaps.
+                Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) $script:requested.Add($Url); throw 'refused' } | Should -BeFalse
+                $script:requested.Count | Should -Be 2
+            } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'falls back to https when http is not listening' {
+            $dir = New-SettingsDir -Json '{ }'
+            try {
+                $requester = {
+                    param($Url)
+                    $script:requested.Add($Url)
+                    if ($Url -like 'http://*') { throw 'connection refused' }
+                }
+                Invoke-AppWarmup -PublishPath $dir -Requester $requester | Should -BeTrue
+                $script:requested | Should -Contain 'https://localhost/'
+            } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'reports false when nothing answers, without throwing' {
+            # The caller still waits for the log line; a failed warm-up changes the advice,
+            # not the outcome.
+            $dir = New-SettingsDir -Json '{ }'
+            try { Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) throw 'connection refused' } | Should -BeFalse }
+            finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'restores certificate validation after relaxing it for https' {
+            # Relaxing it is scoped to the warm-up; leaking it would silently disable
+            # certificate checking for the rest of the cutover.
+            $before = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
+            $dir = New-SettingsDir -Json '{ }'
+            try {
+                $null = Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) throw 'connection refused' }
+                [System.Net.ServicePointManager]::ServerCertificateValidationCallback | Should -Be $before
+            } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    Context 'the wait loop actually calls it' {
+
+        # This guard exists because its absence was caught by a mutation, not by review.
+        # Disabling the warm-up call inside Assert-SchemaReadyLogged left all 41 tests
+        # green: every other test here drives Invoke-AppWarmup directly, so none of them
+        # noticed that nothing in the cutover was calling it. Proving a helper works is not
+        # proving it is used - the same trap as the A28 counting tests and the A38 message
+        # assertion.
+
+        BeforeAll {
+            $tokens = $null
+            $errors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:ScriptPath, [ref]$tokens, [ref]$errors)
+            $fn = $ast.FindAll(
+                {
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                    $node.Name -eq 'Assert-SchemaReadyLogged'
+                }, $true) | Select-Object -First 1
+            $fn | Should -Not -BeNullOrEmpty
+            $script:SchemaReadyBody = $fn.Extent.Text
+        }
+
+        It 'warms the instance from inside Assert-SchemaReadyLogged' {
+            $script:SchemaReadyBody | Should -Match 'Invoke-AppWarmup -PublishPath \$PublishPath'
+        }
+
+        It 'warms inside the retry loop, not once before it' {
+            # The first attempt can land while the worker process is still coming up, so the
+            # call has to be retried alongside the log poll.
+            $doAt = $script:SchemaReadyBody.IndexOf('do {')
+            $whileAt = $script:SchemaReadyBody.IndexOf('} while')
+            $warmAt = $script:SchemaReadyBody.IndexOf('Invoke-AppWarmup')
+
+            $doAt | Should -BeGreaterThan 0
+            $warmAt | Should -BeGreaterThan $doAt
+            $warmAt | Should -BeLessThan $whileAt
+        }
+
+        It 'warms before reading the log, not after' {
+            $warmAt = $script:SchemaReadyBody.IndexOf('Invoke-AppWarmup')
+            $readAt = $script:SchemaReadyBody.IndexOf('Get-LatestSerilogLog')
+
+            $warmAt | Should -BeLessThan $readAt
+        }
+    }
+
+    Context 'the failure message' {
+
+        It 'distinguishes "never asked to start" from "asked and failed"' {
+            # Which of the two happened changes what the operator should go and look at.
+            $source = Get-Content $script:ScriptPath -Raw
+            $source | Should -Match 'Nothing answered for this instance on localhost'
+            $source | Should -Match 'it was reached and still did not log the line'
         }
     }
 }

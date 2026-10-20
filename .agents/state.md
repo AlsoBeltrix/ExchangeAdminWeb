@@ -348,12 +348,37 @@ had the right idiom (`Should -Throw`) for its UNC and drive-relative cases. **Ma
 suite's existing idiom before inventing one** - the harness usually already knows how the
 code under test fails.
 
-The rest of Wave 4 is PowerShell-heavy and needs the PSScriptAnalyzer and Pester gates, not
-just dotnet. Remaining: A40 (the cutover waits for startup logs without warming the app;
-`AlwaysRunning` does not guarantee initialisation, so cutover can fail on an idle app that
-is fine - same file, same harness), the follow-up `aud-a38b` (the promotion script still
-assumes its pool stopped), plus the lower-priority items the plan lists under the same wave.
-A25 is still the only Wave 3 remainder.
+**`aud-a40` is landed, and with it every numbered Wave 4 finding in the plan.** Step 8 of
+the cutover waited 90 seconds for `Config store schema ready`, which `Program.cs` writes
+during APPLICATION startup - but starting an app pool creates a worker process and does not
+initialise the application. IIS loads it on the first request unless Application
+Initialization is installed and `preloadEnabled` is set; `startMode = AlwaysRunning` is a
+POOL setting and initialises nothing. So on a quiet server out of hours - exactly when a
+cutover runs - both instances moved correctly and then the script failed them both for a
+startup error that had not happened, mid-cutover, with both appsettings already repointed.
+It now sends a request to `http://localhost<PathBase>/` inside the retry loop, and the
+failure message distinguishes "answered and still did not log it" from "nothing answered".
+
+**The mutation that mattered was deleting the call, not breaking the helper.** Disabling the
+warm-up inside `Assert-SchemaReadyLogged` left all 41 tests green: every test drove
+`Invoke-AppWarmup` directly and nothing asserted the cutover calls it. Three AST guards were
+added and it now fails two. **Third instance of this class in the stream** - A28's counting
+tests, A38's message assertion, this - and all three were caught by mutation rather than by
+reading. Carry the rule: when a fix adds a helper, mutate the CALL SITE.
+
+Also fixed here: 99 lines of `MoveConfigDbToShared.Tests.ps1` converted back from CRLF to
+LF. I introduced them in the `aud-a39` commit when a CRLF probe saw one stray line and
+converted my whole appended block; git had been warning ever since.
+
+**What remains of the audit:** `A25` (Wave 3 - the group-manager summary; scouted in detail
+above, needs a ClickGate re-anchor and two new service dependencies), the follow-up
+`aud-a38b`, and the plan's LOWER-PRIORITY Wave 4 list, which is unstarted: the
+`deploy-pipeline.ps1` provenance check failing open, `SqliteConfigBackup.psm1` creating a
+directory before `ShouldProcess` under `-WhatIf`, `New-ExchangeAdminWebGraphApps.ps1`
+stranding the first registration on a second-registration failure, header-processing bounds,
+and the operational hardening items. Plus the earlier open follow-ups: `aud-a1b`, `aud-a2b`,
+`aud-a3b`, `aud-a4b` finding 7, `aud-a6c`, `aud-a7b`, `aud-a23b`, `aud-a26b`, `aud-a28b`,
+`aud-a33c`, and the owner-decision items `aud-a29b` and `aud-a33b`.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green

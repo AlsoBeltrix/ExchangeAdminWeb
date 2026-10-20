@@ -274,15 +274,108 @@ function Get-LatestSerilogLog {
         Select-Object -First 1
 }
 
+function Get-AppPathBase {
+    <#
+    .SYNOPSIS
+        The instance's Application:PathBase, or '' when it has none.
+    .DESCRIPTION
+        Audit finding A40. Needed to build the URL that wakes the application. Read from the
+        same appsettings.json this script has already been writing ConfigStore:Path into.
+    #>
+    param([string]$PublishPath)
+
+    $settings = Join-Path $PublishPath 'appsettings.json'
+    if (-not (Test-Path -LiteralPath $settings -PathType Leaf)) { return '' }
+
+    try {
+        $json = Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json
+    } catch {
+        return ''
+    }
+
+    if ($null -eq $json.Application) { return '' }
+
+    $base = [string]$json.Application.PathBase
+    if ([string]::IsNullOrWhiteSpace($base)) { return '' }
+
+    return '/' + $base.Trim().Trim('/')
+}
+
+function Invoke-AppWarmup {
+    <#
+    .SYNOPSIS
+        Sends one request to the instance so ASP.NET Core actually initialises.
+
+    .DESCRIPTION
+        Audit finding A40. Step 8 waits for "Config store schema ready", which Program.cs
+        writes during application startup - not when the app POOL starts. Starting a pool
+        creates a worker process; IIS does not load the application into it until a request
+        arrives, unless Application Initialization is installed AND the application has
+        preloadEnabled set. startMode=AlwaysRunning, which the installer does set, keeps the
+        worker alive but does not initialise the application.
+
+        So on a correctly configured, perfectly healthy, idle instance the log line never
+        appeared and the cutover failed after 90 seconds reporting a startup error.
+
+        Any HTTP response initialises the application - 200, 404 and 500 all do - so the
+        status is ignored. Only "nothing answered" matters, and even that is not fatal here:
+        the caller still waits for the log line, which is the actual verification.
+
+    .OUTPUTS
+        $true when something answered on localhost, $false otherwise.
+    #>
+    param(
+        [string]$PublishPath,
+
+        # Injectable so this is testable without a listener, the same way
+        # tools/AppPoolControl.psm1 injects its IIS calls. Nothing but the tests passes it.
+        [scriptblock]$Requester = {
+            param($Url)
+            $null = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
+        }
+    )
+
+    $pathBase = Get-AppPathBase -PublishPath $PublishPath
+    $suffix = if ($pathBase) { $pathBase + '/' } else { '/' }
+
+    foreach ($scheme in @('http', 'https')) {
+        $url = "${scheme}://localhost${suffix}"
+
+        # Windows PowerShell 5.1 has no -SkipCertificateCheck, and a cutover host's
+        # certificate will not match "localhost". Relax validation for this call only and
+        # put it back afterwards - a warm-up request reads nothing it needs to trust.
+        $previousCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
+        try {
+            if ($scheme -eq 'https') {
+                [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+            }
+            & $Requester $url
+            return $true
+        } catch {
+            # An HTTP error response still means the application was reached and initialised.
+            if ($_.Exception.Response) { return $true }
+        } finally {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $previousCallback
+        }
+    }
+
+    return $false
+}
+
 function Assert-SchemaReadyLogged {
     # Step 8. Each instance logs "Config store schema ready at version N" once per start
     # (Program.cs). One line since the restart proves the instance opened the shared file.
     param([string]$Label, [string]$PublishPath, [datetime]$Since)
 
-    Invoke-PlanOrAction "Verify $Label logged 'Config store schema ready' once since restart (logs\app-*.log under $PublishPath)" {
+    Invoke-PlanOrAction "Warm $Label on localhost, then verify it logged 'Config store schema ready' once since restart (logs\app-*.log under $PublishPath)" {
         $deadline = (Get-Date).AddSeconds(90)
         $count = 0
+        $warmed = $false
         do {
+            # A40: the log line is written during APPLICATION startup, which a request
+            # triggers. Retried each pass because the first attempt can land while the
+            # worker process is still coming up.
+            if (-not $warmed) { $warmed = Invoke-AppWarmup -PublishPath $PublishPath }
             $log = Get-LatestSerilogLog -PublishPath $PublishPath
             if ($log -and $log.LastWriteTime -ge $Since) {
                 $lines = Get-Content -LiteralPath $log.FullName -ErrorAction SilentlyContinue |
@@ -300,7 +393,13 @@ function Assert-SchemaReadyLogged {
         } while ((Get-Date) -lt $deadline)
 
         if ($count -lt 1) {
-            Write-Fail "$Label did not log 'Config store schema ready' within 90 s of starting. Check $PublishPath\logs for the startup error (a missing or unreadable shared database is fatal by design)."
+            # A40: which of the two failed changes what the operator should look at.
+            $reach = if ($warmed) {
+                "The instance answered on localhost, so it was reached and still did not log the line - this is a real startup failure."
+            } else {
+                "Nothing answered for this instance on localhost (http or https), so it may never have been asked to start. Check the site bindings and that the application is running before reading too much into the missing log line."
+            }
+            Write-Fail "$Label did not log 'Config store schema ready' within 90 s of starting. $reach Check $PublishPath\logs for the startup error (a missing or unreadable shared database is fatal by design)."
         }
         if ($count -gt 1) {
             Write-Warn "$Label logged 'Config store schema ready' $count times since the restart - more than one start happened; check the log."
