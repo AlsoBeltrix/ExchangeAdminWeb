@@ -5,6 +5,24 @@ using MimeKit;
 
 namespace ExchangeAdminWeb.Services;
 
+/// <summary>
+/// What became of one notification dispatch: how many recipients it was addressed to, and how
+/// many accepted it.
+/// </summary>
+/// <remarks>
+/// Audit finding A27. The caller needs this to tell the truth about it. Zero requested is a
+/// different event from zero delivered - "nobody is configured to hear about this" versus
+/// "the people configured to hear about it did not".
+/// </remarks>
+public sealed record NotificationDispatch(int Requested, int Delivered, string? FirstError)
+{
+    public static readonly NotificationDispatch NoRecipient = new(0, 0, null);
+
+    public bool AnyDelivered => Delivered > 0;
+
+    public bool AllDelivered => Requested > 0 && Delivered == Requested;
+}
+
 public class EmailService
 {
     private readonly IConfiguration _config;
@@ -119,6 +137,44 @@ public class EmailService
             return;
         }
 
+        await SendModuleNotificationAsync(
+            _adminEmail, performedBy, ipAddress, action, success, ticketNumber, details, errorDetail);
+    }
+
+    /// <summary>
+    /// Sends the admin-notification mail to an EXPLICIT recipient list and reports what
+    /// happened to it.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A27. Emergency Disable reads its own NotifySecurityTeam address and then
+    /// called the admin overload, so the configured address worked as an on/off switch and
+    /// the mail itself went to the global admin list. A module that owns a recipient needs to
+    /// be able to name it.
+    ///
+    /// It returns a <see cref="NotificationDispatch"/> rather than void because the caller has
+    /// a claim to make: the Emergency Disable page told the operator "Security team notified"
+    /// unconditionally. Per-recipient failures are aggregated, not collapsed into one bool -
+    /// Known Failure Class 2.
+    /// </remarks>
+    public virtual async Task<NotificationDispatch> SendModuleNotificationAsync(
+        string recipients,
+        string performedBy,
+        string ipAddress,
+        string action,
+        bool success,
+        string ticketNumber,
+        IReadOnlyDictionary<string, string> details,
+        string? errorDetail = null)
+    {
+        var addresses = (recipients ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(e => e.Trim())
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .ToList();
+
+        if (addresses.Count == 0)
+            return NotificationDispatch.NoRecipient;
+
         var subject = $"[Admin] {action} - {(success ? "SUCCESS" : "FAILED")} - Ticket #{ticketNumber}";
         var h = (string s) => WebUtility.HtmlEncode(s ?? "");
 
@@ -156,14 +212,24 @@ public class EmailService
 </body>
 </html>";
 
-        var adminEmails = _adminEmail.Split(',', StringSplitOptions.RemoveEmptyEntries)
-            .Select(e => e.Trim())
-            .Where(e => !string.IsNullOrWhiteSpace(e));
+        var delivered = 0;
+        string? firstError = null;
 
-        foreach (var email in adminEmails)
+        foreach (var email in addresses)
         {
-            await SendEmailAsync(email, subject, body);
+            try
+            {
+                await SendEmailOrThrowAsync(email, subject, body);
+                delivered++;
+            }
+            catch (Exception ex)
+            {
+                firstError ??= ex.Message;
+                _logger.LogError(ex, "Failed to send {Action} notification to {To}: {Message}", action, email, ex.Message);
+            }
         }
+
+        return new NotificationDispatch(addresses.Count, delivered, firstError);
     }
 
     public async Task SendUserNotificationAsync(

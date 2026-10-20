@@ -30,7 +30,7 @@
 
 <div class="container-fluid">
     <div class="alert alert-danger py-2 mb-3">
-        <small><strong>High-Impact Operation:</strong> Disabling an account revokes all sessions, resets the password, and blocks sign-in across AD and Entra ID. This action is audited and security team is notified immediately.</small>
+        <small><strong>High-Impact Operation:</strong> Disabling an account revokes all sessions, resets the password, and blocks sign-in across AD and Entra ID. This action is audited.@(SecurityRecipientConfigured ? " The security team is notified immediately." : " NO security-team recipient is configured, so NO notification will be sent - tell them yourself.")</small>
     </div>
     <h1 class="mb-4">Emergency Disable<ModuleVersion /></h1>
 
@@ -189,12 +189,12 @@
                         @if (disableResult.Success)
                         {
                             <p class="text-success"><strong>Account disabled successfully.</strong></p>
-                            <p class="text-muted">Security team has been notified. A snapshot has been saved for potential re-enablement.</p>
+                            <p class="text-muted">@SecurityNotificationText.For(disableResult.Notification) A snapshot has been saved for potential re-enablement.</p>
                         }
                         else
                         {
                             <p class="text-danger"><strong>Operation failed or partially completed.</strong></p>
-                            <p class="text-muted">Review the step results. Manual follow-up may be required for failed steps.</p>
+                            <p class="text-muted">@SecurityNotificationText.For(disableResult.Notification) Review the step results. Manual follow-up may be required for failed steps.</p>
                         }
                     </div>
                 }
@@ -283,6 +283,13 @@
 
         authChecked = true;
     }
+
+    // Audit finding A27. The page claimed a notification on every path. Whether one can even
+    // be sent is knowable before the operator clicks, so it is said here rather than
+    // discovered afterwards - and the sentence AFTER the operation comes from
+    // SecurityNotificationText, which is single-sourced with the service that decides it.
+    private bool SecurityRecipientConfigured =>
+        !string.IsNullOrWhiteSpace(ModuleConfig.GetValue("EmergencyDisable", "NotifySecurityTeam"));
 
     private async Task OnSearchKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
     {
@@ -451,7 +458,7 @@
 
             if (disableResult.Success)
             {
-                operationResult = (true, $"Account {resolvedPrincipal.DisplayName} has been disabled. Security team notified.");
+                operationResult = (true, $"Account {resolvedPrincipal.DisplayName} has been disabled. {SecurityNotificationText.For(disableResult.Notification)}");
             }
             else
             {

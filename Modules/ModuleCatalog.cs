@@ -959,7 +959,7 @@ public sealed class ModuleCatalog
             // docs/EmergencyDisableLockdownOU-Plan.md.
             // 1.3.2: the lookup reports the directory resolve and the protection check instead
             // of running with the frame idle (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.4.0",
+            Version = "1.5.0",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",

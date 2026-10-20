@@ -152,7 +152,17 @@ original bug.
 It also exposed `aud-a28b`: a `SaveAsync` that refused every call passed the full suite, so
 that method has no behavioural coverage at all. Filed, not approved.
 
-**Next:** the rest of Wave 3 (A23, A24, A25, A26, A27), then Wave 4. A25 is manager-summary
+`aud-a27` is landed too. Emergency Disable read its own NotifySecurityTeam address, used it
+as an on/off switch, and sent the mail to `Email:AdminNotificationEmail` - so pointing the
+module at a SOC changed only whether mail was sent, not who got it. The page then claimed
+"Security team notified" in three places, none conditional on anything, including when no
+recipient was configured and when SMTP refused. The configured address is now the recipient,
+the outcome is carried back to the page as `SecurityNotificationOutcome`, the sentence is
+single-sourced in `SecurityNotificationText`, and a non-`Sent` outcome writes an
+`EmergencyDisable_NotificationGap` audit record. EmergencyDisable 1.4.0 -> 1.5.0 and base app
+2.29.0 -> 2.30.0, because `EmailService` is shared code.
+
+**Next:** the rest of Wave 3 (A23, A24, A25, A26), then Wave 4. A25 is manager-summary
 email only, per the owner's standing ruling - do not email every member of a group.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose

@@ -22,11 +22,54 @@ public sealed record DisableSnapshot
     public List<DisableStepResult> Steps { get; init; } = new();
 }
 
+/// <summary>
+/// What happened to the security-team notification for one emergency disable.
+/// </summary>
+/// <remarks>
+/// Audit finding A27. The page said "Security team notified." on every success, whether or
+/// not a recipient was configured and whether or not the send worked. The operator acting in
+/// an incident needs to know when the notification did NOT go, because then telling the
+/// security team is still their job.
+/// </remarks>
+public enum SecurityNotificationOutcome
+{
+    NotAttempted,
+    NotConfigured,
+    Sent,
+    PartiallySent,
+    Failed
+}
+
+/// <summary>
+/// The one sentence the operator is shown about the notification.
+/// </summary>
+/// <remarks>
+/// Audit finding A27. It lives here, not in the page, so there is exactly one place where
+/// the claim is written and a test can hold it to the outcome it describes.
+/// </remarks>
+public static class SecurityNotificationText
+{
+    public static string For(SecurityNotificationOutcome outcome) => outcome switch
+    {
+        SecurityNotificationOutcome.Sent => "Security team notified.",
+        SecurityNotificationOutcome.PartiallySent =>
+            "SECURITY TEAM ONLY PARTIALLY NOTIFIED: some recipients did not receive it. Confirm manually.",
+        SecurityNotificationOutcome.NotConfigured =>
+            "SECURITY TEAM NOT NOTIFIED: no NotifySecurityTeam recipient is configured for this module. Tell them manually.",
+        SecurityNotificationOutcome.Failed =>
+            "SECURITY TEAM NOT NOTIFIED: sending failed. Tell them manually.",
+        _ => "Security team notification was not attempted.",
+    };
+}
+
 public sealed record EmergencyDisableResult(
     bool Success,
     string? Error,
     DisableSnapshot? Snapshot,
-    List<DisableStepResult> Steps);
+    List<DisableStepResult> Steps,
+    // Defaulted so the refusal returns above the notification step stay as they are: they did
+    // not attempt it, and that is a different fact from attempting it and failing.
+    SecurityNotificationOutcome Notification = SecurityNotificationOutcome.NotAttempted);
 
 /// <summary>
 /// Outcome of the lockdown-OU move. Only <see cref="NotRequested"/>, <see cref="Moved"/> and
@@ -387,12 +430,18 @@ public class EmergencyDisableService
             moveToLockdownOu, lockdownOutcome, lockdownStampOutcome);
 
         // 9. Send security team notification
-        await SendSecurityNotificationAsync(target, performedBy, ip, ticket, overallSuccess, steps,
+        var notification = await SendSecurityNotificationAsync(target, performedBy, ip, ticket, overallSuccess, steps,
             moveToLockdownOu, lockdownOutcome, lockdownStampOutcome);
+
+        // An emergency disable the security team never heard about is exactly what someone
+        // will later go looking for, so the gap is recorded durably rather than only shown
+        // once on a page the operator may already have closed.
+        if (notification != SecurityNotificationOutcome.Sent)
+            LogNotificationGap(target, performedBy, ip, ticket, notification);
 
         // 10. Return result
         opScope.Complete(overallSuccess, overallError);
-        return new EmergencyDisableResult(overallSuccess, overallError, finalSnapshot, steps);
+        return new EmergencyDisableResult(overallSuccess, overallError, finalSnapshot, steps, notification);
     }
 
     private async Task<GraphTokenClient?> GetGraphClientAsync()
@@ -1087,7 +1136,7 @@ public class EmergencyDisableService
             extra);
     }
 
-    private async Task SendSecurityNotificationAsync(
+    internal async Task<SecurityNotificationOutcome> SendSecurityNotificationAsync(
         ResolvedDirectoryPrincipal target,
         string performedBy,
         string ip,
@@ -1104,7 +1153,7 @@ public class EmergencyDisableService
             if (string.IsNullOrWhiteSpace(notifyEmail))
             {
                 _logger.LogWarning("EmergencyDisable NotifySecurityTeam email not configured, skipping notification");
-                return;
+                return SecurityNotificationOutcome.NotConfigured;
             }
 
             var stepDetails = new Dictionary<string, string>
@@ -1122,7 +1171,12 @@ public class EmergencyDisableService
                 stepDetails[step.Step] = step.Status + (step.Detail != null ? $" - {step.Detail}" : "");
             }
 
-            await _email.SendAdminNotificationAsync(
+            // The configured address is the RECIPIENT. It used to be read only as an on/off
+            // switch, and the mail then went to Email:AdminNotificationEmail - so a site that
+            // pointed this module at its security team still had the notices land with the
+            // general administrators.
+            var dispatch = await _email.SendModuleNotificationAsync(
+                notifyEmail,
                 performedBy,
                 ip,
                 "EmergencyDisable",
@@ -1130,11 +1184,47 @@ public class EmergencyDisableService
                 ticket,
                 stepDetails,
                 success ? null : "One or more steps failed. Manual follow-up required.");
+
+            if (dispatch.AllDelivered)
+                return SecurityNotificationOutcome.Sent;
+
+            return dispatch.AnyDelivered
+                ? SecurityNotificationOutcome.PartiallySent
+                : SecurityNotificationOutcome.Failed;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send security team notification for EmergencyDisable of {Target}", target.UserPrincipalName);
+            return SecurityNotificationOutcome.Failed;
         }
+    }
+
+    /// <summary>
+    /// Records that the security team was not told about a disable that happened.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A27. Separate from the operation audit record, which is written before
+    /// the notification is attempted and so cannot carry its outcome. Reordering the two to
+    /// fold it in would put a sent notification ahead of the durable record of the operation,
+    /// which is the wrong way round.
+    /// </remarks>
+    private void LogNotificationGap(
+        ResolvedDirectoryPrincipal target,
+        string performedBy,
+        string ip,
+        string ticket,
+        SecurityNotificationOutcome outcome)
+    {
+        _audit.LogModuleAction(
+            performedBy,
+            ip,
+            "EmergencyDisable_NotificationGap",
+            "EmergencyDisable",
+            target.UserPrincipalName,
+            false,
+            ticket,
+            SecurityNotificationText.For(outcome),
+            new Dictionary<string, object?> { ["notification"] = outcome.ToString() });
     }
 
     /// <summary>
