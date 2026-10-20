@@ -162,8 +162,20 @@ single-sourced in `SecurityNotificationText`, and a non-`Sent` outcome writes an
 `EmergencyDisable_NotificationGap` audit record. EmergencyDisable 1.4.0 -> 1.5.0 and base app
 2.29.0 -> 2.30.0, because `EmailService` is shared code.
 
-**Next:** the rest of Wave 3 (A23, A24, A25, A26), then Wave 4. A25 is manager-summary
-email only, per the owner's standing ruling - do not email every member of a group.
+`aud-a26` is landed. Undoing an AD attribute edit notified nobody: dispatch for attribute
+edits lives in the forward-edit page, and undo calls `SaveAsync` directly, so a reversal was
+the one attribute change administrators never heard about. The undo service now sends its
+own notice on both outcomes, as `ADAttributeEditor_Undo` rather than the forward action name
+so a change and its retraction are distinguishable. ADAttributeEditor 1.6.0 -> 1.7.0.
+
+The root cause is deliberately still there and filed as `aud-a26b`: dispatch belongs to the
+page, so every caller must remember, and this fix added a second remembering caller rather
+than removing the requirement. Moving it into `SaveAsync` means deleting the page call sites
+in the same change, where a miss is a duplicate notice - larger than this finding authorised.
+
+**Next:** A23, A24 and A25 close Wave 3, then Wave 4. A23 and A24 are the affected-user email
+the owner explicitly required for mailbox and calendar permission changes; A25 is
+manager-summary email only, per the same ruling - do not email every member of a group.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green

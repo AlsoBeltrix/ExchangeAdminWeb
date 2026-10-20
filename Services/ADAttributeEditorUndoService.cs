@@ -13,6 +13,11 @@ public class ADAttributeEditorUndoService : IUndoableModule
     private readonly ModuleEnablementService _moduleEnablement;
     private readonly AuditService _audit;
     private readonly OperationTraceService _operationTrace;
+
+    // Audit finding A26. Undo wrote the audit record and sent nothing. Notification dispatch
+    // for attribute edits lived in the forward-edit PAGE, and undo does not go through it, so
+    // a reversal was the one attribute change administrators never heard about.
+    private readonly EmailService _email;
     private readonly ILogger<ADAttributeEditorUndoService> _logger;
 
     public ADAttributeEditorUndoService(
@@ -22,6 +27,7 @@ public class ADAttributeEditorUndoService : IUndoableModule
         ModuleEnablementService moduleEnablement,
         AuditService audit,
         OperationTraceService operationTrace,
+        EmailService email,
         ILogger<ADAttributeEditorUndoService> logger)
     {
         _editorService = editorService;
@@ -30,6 +36,7 @@ public class ADAttributeEditorUndoService : IUndoableModule
         _moduleEnablement = moduleEnablement;
         _audit = audit;
         _operationTrace = operationTrace;
+        _email = email;
         _logger = logger;
     }
 
@@ -272,12 +279,19 @@ public class ADAttributeEditorUndoService : IUndoableModule
             {
                 // The SaveAsync already audits failure internally, but we also need the undo-specific audit
                 LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, saveResult.Error, servicedNote);
+                await NotifyAdministratorsAsync(
+                    performedBy, ip, ticket, target, changedAttributes, originalOperationId,
+                    success: false, error: saveResult.Error);
                 scope.Complete(false, saveResult.Error);
                 return new UndoResult(false, saveResult.Error, null);
             }
 
             // Log the undo-specific audit event (the SaveAsync already logged a standard ADAttributeEditor_Update)
             LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, true, null, servicedNote);
+
+            await NotifyAdministratorsAsync(
+                performedBy, ip, ticket, target, changedAttributes, originalOperationId,
+                success: true, error: null);
 
             var reversalOperationId = _operationTrace.CurrentOperationId;
             scope.Complete(true);
@@ -293,6 +307,53 @@ public class ADAttributeEditorUndoService : IUndoableModule
             _logger.LogError(ex, "Undo failed for ADAttributeEditor operation {OriginalOperationId}", originalOperationId);
             scope.Complete(false, ex.Message);
             return new UndoResult(false, $"Unexpected error during undo: {ex.Message}", null);
+        }
+    }
+
+    /// <summary>
+    /// Tells administrators that an attribute change was REVERSED.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A26. A forward edit sends this from the page; an undo never goes through
+    /// that page, so a reversal was silent. Administrators saw the change and not its
+    /// retraction, which is the worse way round to know only half of.
+    ///
+    /// The action is <c>ADAttributeEditor_Undo</c>, not the forward action name: a reader of
+    /// the mailbox needs to be able to tell a reversal from another edit, and reusing
+    /// <c>ADAttributeEditor_Update</c> would make the pair indistinguishable.
+    ///
+    /// Failures are logged and swallowed, matching the forward path. The notification is not
+    /// permitted to turn a completed reversal into a reported failure - the directory has
+    /// already been written and the audit record already exists.
+    /// </remarks>
+    internal async Task NotifyAdministratorsAsync(
+        string performedBy,
+        string ip,
+        string ticket,
+        string target,
+        string[] changedAttributes,
+        string? originalOperationId,
+        bool success,
+        string? error)
+    {
+        try
+        {
+            var details = new Dictionary<string, string>
+            {
+                ["Target"] = target,
+                ["Reverted"] = string.Join(", ", changedAttributes),
+                ["Original operation"] = originalOperationId ?? "(unknown)",
+            };
+
+            if (!success)
+                details["Error"] = error ?? "Unknown";
+
+            await _email.SendAdminNotificationAsync(
+                performedBy, ip, "ADAttributeEditor_Undo", success, ticket, details, error);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Email notification failed for AD attribute undo of {Target}", target);
         }
     }
 
