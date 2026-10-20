@@ -651,7 +651,17 @@
                 try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", result.Success, ticket, new Dictionary<string, string> { ["Group"] = group.Name, ["Member Added"] = memberLabel }, result.Success ? null : result.Message); } catch { }
             }
 
-            return new BulkRowOutcome(memberLabel, result.Success, result.Message);
+            // A25: the group's manager gets a summary of what changed. Only on success -
+            // nothing changed otherwise, so there is nothing to summarise - and only when
+            // this is a standalone operation, because sendAdminEmail is false for batch
+            // rows and a batch sends ONE message after its loop.
+            // result.Changed as well as Success: "already a member" is a success that
+            // changed nothing, and telling the manager their group changed when it did not
+            // is noise of exactly the kind the owner ruled against (review of A25).
+            if (sendAdminEmail && result.Success && result.Changed)
+                await NotifyGroupManagerAsync(group, "GroupManagement_AddMember", ticket, $"Added: {memberLabel}", true);
+
+            return new BulkRowOutcome(memberLabel, result.Success, result.Message) { Changed = result.Changed };
         }
         catch (Exception ex)
         {
@@ -760,7 +770,12 @@
                 try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", result.Success, ticket, new Dictionary<string, string> { ["Group"] = group.Name, ["Member Removed"] = member }, result.Success ? null : result.Message); } catch { }
             }
 
-            return new BulkRowOutcome(listed.DisplayName, result.Success, result.Message);
+            // A25: see AddOneAsync.
+            // See AddOneAsync: "is not a member" succeeds and changes nothing.
+            if (sendAdminEmail && result.Success && result.Changed)
+                await NotifyGroupManagerAsync(group, "GroupManagement_RemoveMember", ticket, $"Removed: {member}", true);
+
+            return new BulkRowOutcome(listed.DisplayName, result.Success, result.Message) { Changed = result.Changed };
         }
         catch (Exception ex)
         {
@@ -822,6 +837,56 @@
         showRemoveConfirm = false;
         bulkOutcome = null;
         resolution = null;
+    }
+
+    /// <summary>
+    /// Tells the group's manager what changed, in one message per operation.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A25, as the owner ruled it on 2026-10-19: security-group membership
+    /// changes notified administrators only; the fix is to email the group's MANAGER with a
+    /// summary. Members are explicitly NOT emailed - "that's just noise" - so this never
+    /// fans out, and a batch sends one message for the batch rather than one per row.
+    ///
+    /// A group with no manager has no recipient. That is recorded in the audit log and
+    /// nothing is sent: no fallback to the admin address, no fallback to the members. The
+    /// same is true when managedBy names an object that cannot be resolved or has no
+    /// mailbox - the operator's change still succeeded, and the gap in who heard about it
+    /// is a durable fact rather than a line in a log nobody reads.
+    /// </remarks>
+    private async Task NotifyGroupManagerAsync(GroupInfo group, string action, string ticket, string summary, bool cleanSuccess)
+    {
+        GroupManagerContact? manager = null;
+        string? lookupError = null;
+        try { manager = await GroupService.GetGroupManagerAsync(group); }
+        catch (Exception ex) { lookupError = ex.Message; }
+
+        if (manager is null)
+        {
+            var why = lookupError is not null
+                ? $"Could not resolve the group's manager: {lookupError}"
+                : string.IsNullOrWhiteSpace(group.ManagedBy)
+                    ? "The group names no manager (managedBy is empty), so there is no recipient for the change summary."
+                    : "The group's managedBy does not resolve to an object with a mailbox, so there is no recipient for the change summary.";
+
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, $"{action}_ManagerNotNotified", "GroupManagement", group.Name, false, ticket, why, new Dictionary<string, object?> { ["managedBy"] = group.ManagedBy, ["change"] = summary }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the manager-notification gap on {Group}", group.Name); }
+            return;
+        }
+
+        try
+        {
+            var dispatch = await Email.SendModuleNotificationAsync(manager.Email, currentUser, clientIpAddress, action, cleanSuccess, ticket,
+                new Dictionary<string, string> { ["Group"] = group.Name, ["Manager"] = manager.DisplayName, ["Change"] = summary });
+
+            if (!dispatch.AnyDelivered)
+            {
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, $"{action}_ManagerNotNotified", "GroupManagement", group.Name, false, ticket, $"Sending the change summary to {manager.Email} failed: {dispatch.FirstError ?? "no recipient accepted it"}.", new Dictionary<string, object?> { ["managedBy"] = group.ManagedBy, ["change"] = summary }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the manager-notification gap on {Group}", group.Name); }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Manager notification failed for {Group}", group.Name);
+        }
     }
 
     private void AuditBatch(string action, GroupInfo group, string ticket, bool success, string? errorDetail, int requested, int done, int notDone, IReadOnlyList<string> memberLines)
@@ -889,6 +954,18 @@
             var summary = BulkOutcomeSummary.Of(outcomes);
             AuditBatch(action, group, ticket, summary.Success, summary.ErrorDetail, summary.Requested, summary.Done, summary.NotDone, summary.MemberLines);
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, summary.Success, ticket, new Dictionary<string, string> { ["Group"] = group.Name, ["Requested"] = summary.Requested.ToString(), ["Done"] = summary.Done.ToString(), ["Not done"] = summary.NotDone.ToString(), ["Members"] = string.Join("; ", summary.MemberLines) }, summary.ErrorDetail); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
+
+            // A25: ONE message for the whole batch, listing what changed - not one per
+            // member. The owner ruling is explicit that members are not emailed and the
+            // manager gets a summary. Sent whenever anything landed, including a partial
+            // batch, because the manager's interest is in what their group now contains.
+            // ChangedCount, not Done: Done counts no-ops too. ChangedLines, not
+            // MemberLines: MemberLines lists failed rows alongside successful ones, so it
+            // would have put "Not done" entries inside a field labelled as what changed.
+            // And summary.Success, not true: a partial batch must not be framed as a clean
+            // success (review of A25).
+            if (summary.ChangedCount > 0)
+                await NotifyGroupManagerAsync(group, action, ticket, $"{summary.ChangedCount} of {summary.Requested} changed: {string.Join("; ", summary.ChangedLines)}", summary.Success);
 
             selectedGuids.Clear();
             bulkOutcome = outcomes;
@@ -1022,6 +1099,18 @@
             var summary = BulkOutcomeSummary.Of(outcomes);
             AuditBatch(action, group, ticket, summary.Success, summary.ErrorDetail, summary.Requested, summary.Done, summary.NotDone, summary.MemberLines);
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, summary.Success, ticket, new Dictionary<string, string> { ["Group"] = group.Name, ["Requested"] = summary.Requested.ToString(), ["Done"] = summary.Done.ToString(), ["Not done"] = summary.NotDone.ToString(), ["Members"] = string.Join("; ", summary.MemberLines) }, summary.ErrorDetail); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
+
+            // A25: ONE message for the whole batch, listing what changed - not one per
+            // member. The owner ruling is explicit that members are not emailed and the
+            // manager gets a summary. Sent whenever anything landed, including a partial
+            // batch, because the manager's interest is in what their group now contains.
+            // ChangedCount, not Done: Done counts no-ops too. ChangedLines, not
+            // MemberLines: MemberLines lists failed rows alongside successful ones, so it
+            // would have put "Not done" entries inside a field labelled as what changed.
+            // And summary.Success, not true: a partial batch must not be framed as a clean
+            // success (review of A25).
+            if (summary.ChangedCount > 0)
+                await NotifyGroupManagerAsync(group, action, ticket, $"{summary.ChangedCount} of {summary.Requested} changed: {string.Join("; ", summary.ChangedLines)}", summary.Success);
 
             bulkOutcome = outcomes;
             bulkOutcomeTitle = $"Add resolved: {summary.Done} of {summary.Requested} added";

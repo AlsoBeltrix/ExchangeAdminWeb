@@ -31,6 +31,12 @@ public class PermissionResult
     public IReadOnlyList<string>? AppliedRights { get; init; }
 
     /// <summary>
+    /// False when the operation succeeded without changing anything. See
+    /// <see cref="NoChange"/>.
+    /// </summary>
+    public bool Changed { get; init; } = true;
+
+    /// <summary>
     /// Set when the target was a protected principal and an authorised servicer overrode
     /// the refusal. Names the authorising group and the rules overridden.
     /// </summary>
@@ -44,6 +50,23 @@ public class PermissionResult
 
     public static PermissionResult Ok(string message = "Operation completed successfully.", string? servicedNote = null) =>
         new() { Success = true, Message = message, ServicedNote = servicedNote };
+
+    /// <summary>
+    /// Succeeded, but nothing actually changed - the target was already in the desired
+    /// state.
+    /// </summary>
+    /// <remarks>
+    /// Review of A25. "Already a member" and "is not a member" are successes, and the
+    /// manager notification was gated on success, so adding fifty people who were already
+    /// in a group mailed the manager "50 of 50 applied" after changing nothing.
+    ///
+    /// <see cref="Changed"/> defaults to TRUE so every existing caller keeps its meaning;
+    /// only a path that knows it was a no-op says so. That default is a trap for a future
+    /// no-op that forgets to use this factory, and it is the price of not auditing every
+    /// Ok() in the app.
+    /// </remarks>
+    public static PermissionResult NoChange(string message, string? servicedNote = null) =>
+        new() { Success = true, Changed = false, Message = message, ServicedNote = servicedNote };
 
     public static PermissionResult Fail(string message, string? detail = null) =>
         new() { Success = false, Message = message, Detail = detail };
@@ -65,6 +88,7 @@ public class PermissionResult
                 Detail = Detail,
                 ExcludedTargets = ExcludedTargets,
                 AppliedRights = AppliedRights,
+                Changed = Changed,
                 ServicedNote = servicedNote,
             };
 }

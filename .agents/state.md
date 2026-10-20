@@ -108,8 +108,9 @@ genuinely does not, say so on the finding rather than implying more than the tes
 earlier `aud-a1b`, `aud-a2b`, `aud-a3b` and `aud-a4b` finding 7. The lockout module's
 findings stay deferred with it.
 
-**BLOCKED, and the owner is the only one who can clear it: the codex-commercial login has
-expired.** `token_revoked` / "Your session has ended. Please log in again." Re-authenticating
+**SUPERSEDED 2026-10-20 - see the CORRECTION below; `codex` works and is now the stated
+harness.** (Original entry:) **BLOCKED, and the owner is the only one who can clear it: the
+codex-commercial login has expired.** `token_revoked` / "Your session has ended. Please log in again." Re-authenticating
 needs an interactive browser sign-in, so an agent cannot do it:
 `CODEX_HOME=~/.codex-commercial codex login`.
 
@@ -118,18 +119,34 @@ but **not reviewed by the stated harness**. Given this stream's record - a repai
 eleven of thirteen reviewed slices - green tests are not a substitute, and these five should
 be treated as provisional until that review runs.
 
-**As of 2026-10-19 the FALLBACK is down too.** `codex-commercial` now fails with
-`workspace routing discovery unauthorized (401)` rather than the earlier `token_revoked`, and
-the default `CODEX_HOME` reports `refresh_token_invalidated` plus a missing
-`x-portkey-config` header. So there is currently NO working review harness, and `aud-a28` is
-landed unreviewed on top of the five already listed. Implementation continues and the review
-debt accumulates; clearing it needs the owner's interactive login.
+**CORRECTION, 2026-10-20. The claim that there was no working review harness was WRONG, and
+it was wrong for most of a long session.** Owner instruction the same day: reviews move to
+plain `codex`; `codex-commercial` is no longer available.
 
-The Portkey-routed `codex` worked until then and was used as a FALLBACK harness for the five. That is
-explicitly not what the owner asked for - his instruction was "it needs to use the commercial
-account, not the portkey" - and it is recorded here as a substitution made because the stated
-route was unavailable, not as an equivalent. Each affected finding says which harness reviewed
-it.
+What actually happened: every probe I ran was `codex exec --model gpt-5.5`. The `--model`
+override replaced the configured model `@azure-openai-eus2-global/gpt-5.5-dzs` with a bare
+slug. That `@provider/model` prefix IS the Portkey routing, so without it Portkey answered
+`Either x-portkey-config or x-portkey-provider header is required` - correctly. I read that,
+plus a `refresh_token_invalidated` warning from the ChatGPT auth manager that is irrelevant
+when the provider authenticates by API key, as "the harness is down" and repeated it for
+many turns while landing finding after finding unreviewed.
+
+**Run reviews as `codex exec` with NO `--model` flag.** Verified working 2026-10-20.
+`CODEX_HOME=~/.codex-commercial` does genuinely 401 on workspace routing discovery, and the
+owner has retired it, so the distinction between "stated harness" and "fallback" is now
+moot: `codex` is the stated harness.
+
+The lesson is not about codex. **A tool that fails because of how I invoked it looks exactly
+like a tool that is down.** Before recording an external dependency as unavailable, run it
+the way its own configuration says to - here, reading `~/.codex/config.toml` would have
+shown `model_provider = "portkey"` and the routing prefix in one glance, and it is the first
+thing I should have done rather than the twentieth.
+
+**Consequence for the backlog:** the findings below marked "review pending" were landed on a
+false belief that review was impossible. They are not reviewed, the debt is real, and it is
+now clearable. Each record's closeout line saying review is "currently impossible" is wrong
+in the same way this paragraph corrects; records are updated as their reviews complete
+rather than swept.
 
 **Wave 3 is in progress.** `aud-a28` is landed on `master`: fifteen refusal paths across
 `EmergencyDisableService.DisableAsync` and `ADAttributeEditorService.SaveAsync` returned
@@ -401,8 +418,26 @@ directions** - `aud-a35` and `aud-a38` each contained MORE than the audit listed
 less. Treat the audit as a map, not a specification, and write up a disproof as carefully as
 a fix: without the record, the next sweep spends the same hour.
 
-**What remains of the audit:** `A25` (Wave 3 - the group-manager summary; scouted in detail
-above, needs a ClickGate re-anchor and two new service dependencies) and the rest of the
+**`aud-a25` is landed, and WAVE 3 IS COMPLETE.** The group's `managedBy` manager now gets a
+summary of membership changes - one message per operation, never one per member, with no
+fallback to the admin address or the members when there is no manager.
+
+**It is also the first finding in this stream reviewed BEFORE landing, and that changed the
+outcome.** `codex` returned four real defects: two High (a successful no-op announced as a
+change, because "already a member" returns Ok; and `managedBy` naming a mail-enabled GROUP
+being accepted as the recipient, which would have emailed every member - the exact thing the
+owner refused) and two Medium (no `ServerFromDn` routing, so out-of-domain managers resolved
+as "no manager"; and partial batches framed as SUCCESS with failed rows inside the "what
+changed" field). It also named three of my guards as passing against broken code. All four
+defects and all three gaps are remediated; the finding record carries the detail.
+
+**Carry this:** the scouting note above predicted this slice needed "a ClickGate re-anchor
+and two new service dependencies". Both predictions were wrong - resolution went in the
+service and dispatch stayed in the page, so no new dependencies; and every registered
+control sits at 35-307 while all edits are below 585, so only `ExpectedLineCount` moved.
+A scouting note is a starting hypothesis, not a plan.
+
+**What remains of the audit:** the rest of the
 plan's LOWER-PRIORITY Wave 4 list: header-processing bounds (capped raw headers still feed
 uncapped derived collections; large-input impact unmeasured) and the operational hardening
 items - narrow publish-folder Modify permissions, make the SQLite-dependent CI tests

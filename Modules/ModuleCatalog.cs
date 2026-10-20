@@ -613,7 +613,9 @@ public sealed class ModuleCatalog
             // of it for the first time - the protection check owned no in-flight flag at all - and
             // Load Members no longer reads the selection back after its await, which used to tear
             // the circuit down if the operator closed the panel or picked another group mid-load.
-            Version = "2.11.2",
+            // 2.12.0: a membership change now emails the group's managedBy manager a
+            // summary - one message per operation, never one per member (aud-a25).
+            Version = "2.12.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",

@@ -223,7 +223,15 @@ public static class BulkIdentityList
 }
 
 /// <summary>One member's outcome in a bulk add or remove (docs/GroupBulkActions-Plan.md AC4).</summary>
-public sealed record BulkRowOutcome(string Label, bool Done, string Message);
+public sealed record BulkRowOutcome(string Label, bool Done, string Message)
+{
+    /// <summary>
+    /// False when the row succeeded without changing anything (already a member, already
+    /// absent). Review of A25 - a no-op must not be announced as a change. Defaults true so
+    /// callers that do not distinguish keep their meaning.
+    /// </summary>
+    public bool Changed { get; init; } = true;
+}
 
 /// <summary>
 /// The batch-level facts derived from per-row outcomes (plan AC5). <c>Success</c> is true ONLY
@@ -234,7 +242,20 @@ public static class BulkOutcomeSummary
 {
     public sealed record Summary(
         bool Success, int Requested, int Done, int NotDone,
-        IReadOnlyList<string> MemberLines, string? ErrorDetail);
+        IReadOnlyList<string> MemberLines, string? ErrorDetail)
+    {
+        /// <summary>Rows that actually changed something - Done AND not a no-op.</summary>
+        /// <remarks>
+        /// Review of A25. <see cref="Done"/> counts successes, and a success can be "already
+        /// a member". <see cref="MemberLines"/> likewise lists every row, Done and Not done
+        /// together, so it is a report and not a summary of what landed. Anything telling a
+        /// third party what changed must use these two.
+        /// </remarks>
+        public int ChangedCount { get; init; }
+
+        /// <summary>Just the rows that changed something, labelled.</summary>
+        public IReadOnlyList<string> ChangedLines { get; init; } = [];
+    }
 
     public static Summary Of(IReadOnlyList<BulkRowOutcome> rows)
     {
@@ -243,12 +264,18 @@ public static class BulkOutcomeSummary
         var lines = rows
             .Select(r => $"{r.Label}: {(r.Done ? "Done" : "Not done")}{(string.IsNullOrWhiteSpace(r.Message) ? "" : " - " + r.Message)}")
             .ToList();
+        var changed = rows.Where(r => r.Done && r.Changed).ToList();
+
         return new Summary(
             Success: notDone == 0,
             Requested: rows.Count,
             Done: done,
             NotDone: notDone,
             MemberLines: lines,
-            ErrorDetail: notDone == 0 ? null : $"{notDone} of {rows.Count} not done");
+            ErrorDetail: notDone == 0 ? null : $"{notDone} of {rows.Count} not done")
+        {
+            ChangedCount = changed.Count,
+            ChangedLines = changed.Select(r => r.Label).ToList()
+        };
     }
 }

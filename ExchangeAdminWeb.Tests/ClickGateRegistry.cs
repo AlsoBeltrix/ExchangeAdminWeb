@@ -2344,7 +2344,10 @@ public static class ClickGateRegistry
     private static PageGateEntry GroupManagement => new()
     {
         Page = "GroupManagement.razor",
-        ExpectedLineCount = 1050,
+        // A25 added the manager-notification helper and four call sites, all inside @code
+        // well below every registered control (the lowest is 315), so no line key moved -
+        // only the count. Verified by running the ClickGate suite after the edit.
+        ExpectedLineCount = 1139,
 
         // One page-wide predicate, tested against this file rather than assumed. This page has a
         // single view: Search replaces searchResults and nulls the selection, SelectGroup replaces

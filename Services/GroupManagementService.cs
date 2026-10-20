@@ -131,7 +131,7 @@ public class GroupManagementService
 
             ps.AddCommand("Get-ADGroup")
               .AddParameter("Filter", $"Name -like '*{escaped}*' -or SamAccountName -like '*{escaped}*' -or Mail -like '*{escaped}*'")
-              .AddParameter("Properties", new[] { "Mail", "GroupCategory", "GroupScope", "SamAccountName", "Description" })
+              .AddParameter("Properties", new[] { "Mail", "GroupCategory", "GroupScope", "SamAccountName", "Description", "ManagedBy" })
               .AddParameter("Credential", credential)
               // Fetch wider than we display so ranking sees more than the shown set -
               // guarantees an exact match is fetched even when many groups share the
@@ -163,7 +163,8 @@ public class GroupManagementService
                     Backend = "OnPremAD",
                     // A forest-wide search returns groups from several domains; derived from the
                     // DN because it is already present - no extra round-trip per row.
-                    Domain = ADDirectorySearchService.DnsDomainFromDn(dn)
+                    Domain = ADDirectorySearchService.DnsDomainFromDn(dn),
+                    ManagedBy = group.Properties["ManagedBy"]?.Value?.ToString() ?? ""
                 });
             }
 
@@ -251,6 +252,109 @@ public class GroupManagementService
     /// DenialMessage null with IsProtected true is the servicer case - viewing and writing
     /// stay available, each write carrying the serviced note.
     /// </summary>
+    /// <summary>
+    /// Resolves a group's <c>managedBy</c> manager to something that can be emailed.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A25. Security-group membership changes notified administrators only.
+    /// The owner ruling of 2026-10-19 is that the group's MANAGER gets a summary - not the
+    /// members, which is "just noise" - so the manager has to be found and turned into an
+    /// address.
+    ///
+    /// Returns null for every way of not having one: no managedBy, a DN that no longer
+    /// resolves, a manager object with no mail attribute, or a directory read that fails.
+    /// The caller records which, because "this group has no manager" and "the lookup broke"
+    /// are different facts and neither may be allowed to look like a sent notification.
+    ///
+    /// Only <c>managedBy</c> is consulted. Exchange groups can also carry
+    /// <c>msExchCoManagedByLink</c> co-owners (see Services/SelfServiceGroups), and the
+    /// ruling says manager, singular - widening it is a decision, not an inference.
+    /// </remarks>
+    public async Task<GroupManagerContact?> GetGroupManagerAsync(GroupInfo group)
+    {
+        if (group is null || string.IsNullOrWhiteSpace(group.ManagedBy))
+            return null;
+
+        var creds = await GetCredentialsAsync("on-prem AD group manager lookup");
+        if (creds is null)
+            return null;
+
+        var managedBy = group.ManagedBy;
+
+        return await ThrottledAdAsync(async () => await Task.Run(() =>
+        {
+            try
+            {
+                var iss = InitialSessionState.CreateDefault();
+                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                runspace.Open();
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+
+                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+                ps.Invoke();
+                ps.Commands.Clear();
+
+                var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+
+                // -Identity with the DN, not a filter: the DN is already unambiguous and
+                // crosses domains without needing the global catalog.
+                ps.AddCommand("Get-ADObject")
+                  .AddParameter("Identity", managedBy)
+                  .AddParameter("Properties", new[] { "mail", "displayName", "objectClass" })
+                  .AddParameter("Credential", credential)
+                  .AddParameter("ErrorAction", "Stop");
+
+                // Review of A25: Get-ADObject binds to the credential's own domain unless
+                // told otherwise, which is why every other lookup in this service routes by
+                // DN. A forest search returns groups from several domains, so an unrouted
+                // manager lookup resolved to null for any group outside the home domain -
+                // and that null is indistinguishable from "no manager".
+                var managerServer = ServerFromDn(managedBy);
+                if (managerServer is not null)
+                    ps.AddParameter("Server", managerServer);
+
+                var found = ps.Invoke().FirstOrDefault();
+                ps.Commands.Clear();
+
+                if (found is null)
+                    return null;
+
+                // Review of A25, and the most important line here. managedBy can name a
+                // mail-enabled GROUP - including the managed group itself. Mailing that
+                // address delivers to every member, which is precisely what the owner
+                // refused ("do not email every user in the group"). An unexpected object
+                // class is therefore no recipient at all, not a best effort.
+                var classes = (found.Properties["objectClass"]?.Value as System.Collections.IEnumerable)?
+                    .Cast<object>().Select(o => o?.ToString() ?? "").ToArray() ?? [];
+                if (!classes.Any(c => string.Equals(c, "user", StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logger.LogWarning(
+                        "managedBy {Dn} on group {Group} is not a user (objectClass: {Classes}); refusing to notify it.",
+                        managedBy, group.Name, string.Join(",", classes));
+                    return null;
+                }
+
+                var mail = found.Properties["mail"]?.Value?.ToString();
+                if (string.IsNullOrWhiteSpace(mail))
+                    return null;
+
+                var display = found.Properties["displayName"]?.Value?.ToString();
+
+                return new GroupManagerContact(
+                    managedBy,
+                    string.IsNullOrWhiteSpace(display) ? managedBy : display,
+                    mail.Trim());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not resolve managedBy {Dn} for group {Group}", managedBy, group.Name);
+                return null;
+            }
+        }));
+    }
+
     public async Task<TargetProtectionCheck> CheckTargetProtectionAsync(
         string groupIdentity, string? samAccountName, ClaimsPrincipal? actingUser)
     {
@@ -589,7 +693,7 @@ public class GroupManagementService
             // Idempotent desired-state (AC11b): an add whose member is already present succeeds
             // as a no-op - and is therefore never misreported as a cycle by the guard below.
             if (IsDirectMemberOf(ps, credential, resolvedGroupDn, candidateDn))
-                return PermissionResult.Ok($"{member} is already a member of {groupIdentity} (on-premises).", combinedNote);
+                return PermissionResult.NoChange($"{member} is already a member of {groupIdentity} (on-premises).", combinedNote);
 
             if (resolvedMember.IsGroup)
             {
@@ -763,7 +867,7 @@ public class GroupManagementService
 
             // Idempotent desired-state: removing a member that is not present is a no-op.
             if (!IsDirectMemberOf(ps, credential, resolvedGroupDn, memberDnResolved))
-                return PermissionResult.Ok($"{member} is not a member of {groupIdentity} (on-premises).", combinedNote);
+                return PermissionResult.NoChange($"{member} is not a member of {groupIdentity} (on-premises).", combinedNote);
 
             Exception? writeError = null;
             // Same member-attribute write as the add path (2026-09-03): Remove-ADGroupMember
@@ -1433,6 +1537,12 @@ public class GroupManagementService
     }
 }
 
+/// <summary>
+/// A group manager who can be emailed: the <c>managedBy</c> DN, a display name and a
+/// mailbox. Audit finding A25.
+/// </summary>
+public sealed record GroupManagerContact(string DistinguishedName, string DisplayName, string Email);
+
 public class GroupInfo
 {
     public string Name { get; set; } = "";
@@ -1443,6 +1553,16 @@ public class GroupInfo
     public string Backend { get; set; } = "OnPremAD";
     /// <summary>DNS domain from the DN's DC components; null when the DN carried none.</summary>
     public string? Domain { get; set; }
+
+    /// <summary>
+    /// The group's <c>managedBy</c> distinguished name, or empty when it names no manager.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A25. A DN, not a mailbox - resolving it needs a second directory read,
+    /// which <see cref="GroupManagementService.GetGroupManagerAsync"/> does on demand rather
+    /// than on every row of a search.
+    /// </remarks>
+    public string ManagedBy { get; set; } = "";
     /// <summary>
     /// Display label ("AD", "WINROOT"): the DNS domain's first label, uppercased - the same
     /// convention the forest-wide pickers use. Empty when the domain is unknown, so the page
