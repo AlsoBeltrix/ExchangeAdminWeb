@@ -245,6 +245,14 @@ public class HeaderAnalysisService
     {
         var sorted = headers.ReceivedHeaders.OrderByDescending(r => r.Order).ToList();
         result.HopCount = sorted.Count;
+
+        // The routing path IS the Received list, so it inherits that list's ceiling. Carried
+        // onto the result because the page renders the result, and a path cut short without
+        // saying so reads as a complete path with a different origin.
+        // Two independent ceilings can shorten this path, and either makes the earliest
+        // hop shown look like the origin when it is not: the Received list's own cap, and
+        // the model's MaxTotalHeaders / MaxValuesPerHeader, which used to drop silently.
+        result.RoutingPathTruncated = headers.ReceivedHeadersTruncated || headers.HeadersTruncated;
         DateTimeOffset? previousDate = null;
         var hopNumber = 1;
 
@@ -350,6 +358,11 @@ public class HeaderAnalysisService
 
     private static void FindInterestingHeaders(EmailHeaders headers, HeaderAnalysisResult result)
     {
+        // Headers the parser discarded at its own ceiling never reach this method, so the
+        // list is short for a reason the list itself cannot see. Say so.
+        if (headers.HeadersTruncated)
+            result.InterestingHeadersTruncated = true;
+
         foreach (var headerName in InterestingHeaderNames)
         {
             var values = headers.GetHeaders(headerName);
@@ -632,6 +645,19 @@ public class HeaderAnalysisService
         if (dateMatch.Success && DateTimeOffset.TryParse(dateMatch.Groups[1].Value, out var date))
             received.Date = date;
 
+        // ReceivedHeaders is populated HERE, by ProcessSpecialHeaders, and never passes
+        // through EmailHeaders.AddHeader - so none of the model's ceilings apply to it. A
+        // paste with five thousand Received lines produced five thousand parsed hops, five
+        // thousand routing rows and five thousand regex passes on a Blazor circuit. That is
+        // precisely the "capped raw headers feed uncapped derived collections" the audit
+        // named, and an earlier pass at this item nearly deleted the fix after misreading a
+        // boundary test; the test above now pins it.
+        if (headers.ReceivedHeaders.Count >= MaxReceivedHeaders)
+        {
+            headers.ReceivedHeadersTruncated = true;
+            return;
+        }
+
         headers.ReceivedHeaders.Add(received);
     }
 
@@ -715,7 +741,8 @@ public class HeaderAnalysisService
     private static List<string> SplitAddresses(string? value) =>
         string.IsNullOrWhiteSpace(value)
             ? new List<string>()
-            : value.Split(',', ';').Select(v => v.Trim()).Where(v => !string.IsNullOrWhiteSpace(v)).ToList();
+            : value.Split(',', ';').Select(v => v.Trim()).Where(v => !string.IsNullOrWhiteSpace(v))
+               .Take(MaxSplitValues).ToList();
 
     private static string? ExtractIP(string value)
     {
@@ -775,6 +802,28 @@ public class HeaderAnalysisService
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength] + "...";
+
+    /// <summary>
+    /// A ceiling on the values parsed out of ONE header, which nothing else bounded.
+    /// </summary>
+    /// <remarks>
+    /// Lower-priority Wave 4 item, and the audit's premise turned out to be half wrong.
+    /// It said "capped raw headers still feed uncapped derived routing collections". The
+    /// collections were NOT uncapped: `EmailHeaders.AddHeader` has enforced
+    /// `MaxTotalHeaders = 500` and `MaxValuesPerHeader = 50` all along, so a paste with
+    /// fifty thousand Received lines yields fifty parsed hops, not fifty thousand.
+    ///
+    /// What was real is that those caps were SILENT. An analyst could not tell a complete
+    /// message from one cut off at 500 headers or 50 hops, and the earliest surviving
+    /// Received hop reads as the origin when it is not. That is now reported all the way to
+    /// the page.
+    ///
+    /// `MaxSplitValues` bounds something else the model does not touch: the list produced
+    /// by splitting a single comma or semicolon separated value.
+    /// </remarks>
+    internal const int MaxReceivedHeaders = 250;
+
+    internal const int MaxSplitValues = 100;
 }
 
 

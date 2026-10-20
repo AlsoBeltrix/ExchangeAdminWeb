@@ -485,7 +485,10 @@ public sealed class ModuleCatalog
             // 1.5.7: the CSV export snapshots the result set and the date range. The progress
             // yield added in 1.5.6 let a trace started across it null the response under the
             // export loop, which threw (review finding prog-9).
-            Version = "1.6.1",
+            // 1.7.0: the Received list has a ceiling (it bypassed every cap in the model),
+            // and a truncated routing path or header list now SAYS so - the earliest hop shown
+            // is not necessarily the origin (lower-priority Wave 4 header bounds).
+            Version = "1.7.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

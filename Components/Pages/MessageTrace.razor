@@ -167,6 +167,16 @@
 
             <div class="border rounded p-3 mb-3">
                 <h5 class="mb-3">Routing Path</h5>
+                @if (headerAnalysis.RoutingPathTruncated)
+                {
+                    @* A path cut short reads as a complete one with the wrong origin, so it
+                       is said here rather than left to the hop count. *@
+                    <div class="alert alert-warning py-2 small">
+                        <strong>Routing path truncated.</strong> This message carried more
+                        Received hops than are analysed, so the earliest hop below is
+                        <strong>not</strong> the origin.
+                    </div>
+                }
                 @if (headerAnalysis.RoutingPath.Any())
                 {
                     <div class="table-responsive">
@@ -223,6 +233,13 @@
                 <div class="col-xl-7">
                     <div class="border rounded p-3 h-100">
                         <h5 class="mb-3">Uncommon / Interesting Headers</h5>
+                        @if (headerAnalysis.InterestingHeadersTruncated)
+                        {
+                            <div class="alert alert-warning py-2 small">
+                                <strong>List truncated.</strong> This message carried more
+                                headers than are listed here.
+                            </div>
+                        }
                         @if (headerAnalysis.InterestingHeaders.Any())
                         {
                             <div class="small">

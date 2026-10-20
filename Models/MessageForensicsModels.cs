@@ -31,18 +31,49 @@ public class EmailHeaders
     public string? ContentType { get; set; }
     public string? FileName { get; set; }
     public List<ReceivedHeader> ReceivedHeaders { get; set; } = new();
+
+    /// <summary>
+    /// True when the message carried more Received hops than the analyser will process.
+    /// </summary>
+    /// <remarks>
+    /// This list is filled directly by the header parser and never passes through
+    /// <see cref="AddHeader"/>, so none of the ceilings there bound it. Its own cap lives
+    /// in HeaderAnalysisService.
+    /// </remarks>
+    public bool ReceivedHeadersTruncated { get; set; }
+
     public AuthenticationResults? Authentication { get; set; }
+
+    /// <summary>
+    /// True when headers were dropped because the message carried more than this parser
+    /// keeps.
+    /// </summary>
+    /// <remarks>
+    /// Lower-priority Wave 4 item. `MaxTotalHeaders` and `MaxValuesPerHeader` already
+    /// bounded the work - they predate this change and they are doing their job - but they
+    /// dropped the excess SILENTLY. An analyst reading a header list has no way to tell a
+    /// complete message from one quietly cut off at 500, and "the header you were looking
+    /// for is not there" and "the header you were looking for was discarded" are different
+    /// answers to the same question.
+    /// </remarks>
+    public bool HeadersTruncated { get; private set; }
 
     public void AddHeader(string name, string value)
     {
         if (_totalHeaderCount >= MaxTotalHeaders)
+        {
+            HeadersTruncated = true;
             return;
+        }
 
         if (!Headers.ContainsKey(name))
             Headers[name] = new List<string>();
 
         if (Headers[name].Count >= MaxValuesPerHeader)
+        {
+            HeadersTruncated = true;
             return;
+        }
 
         Headers[name].Add(value);
         _totalHeaderCount++;
@@ -114,10 +145,22 @@ public class HeaderAnalysisResult
     public string DkimResult { get; set; } = "NONE";
     public string DmarcResult { get; set; } = "NONE";
     public List<RoutingHop> RoutingPath { get; set; } = new();
+
+    /// <summary>
+    /// True when the message carried more Received hops than the analyser processed, so the
+    /// earliest hop shown is NOT the origin.
+    /// </summary>
+    public bool RoutingPathTruncated { get; set; }
     public int HopCount { get; set; }
     public TimeSpan? DeliveryTime { get; set; }
     public List<HeaderFinding> Findings { get; set; } = new();
     public List<string> InterestingHeaders { get; set; } = new();
+
+    /// <summary>
+    /// True when more headers were present than were kept or listed - either the parser
+    /// dropped them at its own ceiling, or this list hit its own.
+    /// </summary>
+    public bool InterestingHeadersTruncated { get; set; }
     public Dictionary<string, string> SpamScores { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public bool HasAttachments { get; set; }
     public string? OriginatingIP { get; set; }
