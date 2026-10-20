@@ -510,14 +510,14 @@
                     currentUser, ipAddress, action, target, user, permType,
                     opResult.Success, ticket, opResult.Success ? null : opResult.Message);
 
-                // Send notifications to both the user being granted access and the mailbox owner
-                if (opResult.Success)
+                // A23: notify on what ACTUALLY applied, not on overall success - a partial
+                // grant (FullAccess applied, SendAs failed) told the affected user nothing.
+                var applied = opResult.AppliedRights ?? [];
+                if (applied.Count > 0)
                 {
-                    var isGrant = isAdd;
-                    // Notify the user being granted/removed access
-                    await Email.SendUserNotificationAsync(user, target, currentUser, permType, isGrant);
-                    // Notify the mailbox owner
-                    await Email.SendOwnerNotificationAsync(target, user, currentUser, permType, isGrant);
+                    var notifyPerm = string.Join("+", applied);
+                    await Email.SendUserNotificationAsync(user, target, currentUser, notifyPerm, isAdd);
+                    await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isAdd);
                 }
 
                 result = opResult;

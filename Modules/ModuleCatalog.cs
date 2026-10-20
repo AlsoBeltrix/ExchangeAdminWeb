@@ -159,7 +159,9 @@ public sealed class ModuleCatalog
             // snapshots it, instead of running with the frame idle (same plan, S5).
             // 1.2.4: ExecuteOnPrem completes its progress activity from a local rather than from
             // the dismissible result field (review finding prog-7).
-            Version = "1.2.4",
+            // 1.3.0: a PARTIAL cloud change now notifies the affected user and the mailbox
+            // owner of the rights that actually applied; the gate was overall success (aud-a23).
+            Version = "1.3.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

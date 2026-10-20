@@ -57,7 +57,8 @@ public static class MailboxPermissionOutcome
                           + $"Failed: {string.Join("; ", failed)}",
                 // The applied rights, so the caller's audit row records what actually landed
                 // rather than only that something went wrong.
-                Detail = string.Join(", ", granted)
+                Detail = string.Join(", ", granted),
+                AppliedRights = granted
             };
         }
 
@@ -74,14 +75,15 @@ public static class MailboxPermissionOutcome
         // As in ForRevoke: the two paths worded success differently before extraction and that is
         // preserved verbatim. The on-prem path also has no OWA link to offer.
         if (onPrem)
-            return new PermissionResult { Success = true, Message = $"{user} has been granted {rights} on {targetMailbox} (on-premises)." };
+            return new PermissionResult { Success = true, Message = $"{user} has been granted {rights} on {targetMailbox} (on-premises).", AppliedRights = granted };
 
         return new PermissionResult
         {
             Success = true,
             Message = $"{user} has been granted {rights} rights to {targetMailbox}",
             Detail = "Users can access this mailbox in Outlook or at the following link:\n"
-                     + $"https://outlook.office.com/mail/{targetMailbox}/"
+                     + $"https://outlook.office.com/mail/{targetMailbox}/",
+            AppliedRights = granted
         };
     }
 
@@ -102,7 +104,8 @@ public static class MailboxPermissionOutcome
                 Success = false,
                 Message = $"Partial: removed {string.Join(", ", removed)} on {targetMailbox}{where}. "
                           + $"Failed: {string.Join("; ", failed)}",
-                Detail = string.Join(", ", removed)
+                Detail = string.Join(", ", removed),
+                AppliedRights = removed
             };
         }
 
@@ -118,8 +121,8 @@ public static class MailboxPermissionOutcome
         // both read these strings, so normalizing them is a separate, visible change.
         var rights = string.Join(" and ", removed);
         return onPrem
-            ? new PermissionResult { Success = true, Message = $"{rights} removed for {user} on {targetMailbox} (on-premises)." }
-            : new PermissionResult { Success = true, Message = $"{rights} rights removed for {user} on {targetMailbox}" };
+            ? new PermissionResult { Success = true, Message = $"{rights} removed for {user} on {targetMailbox} (on-premises).", AppliedRights = removed }
+            : new PermissionResult { Success = true, Message = $"{rights} rights removed for {user} on {targetMailbox}", AppliedRights = removed };
     }
 
     private static (List<string> Succeeded, List<string> Failed) Split(IReadOnlyList<RightOutcome> outcomes)

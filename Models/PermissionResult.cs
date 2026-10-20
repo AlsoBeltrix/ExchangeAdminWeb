@@ -15,6 +15,22 @@ public class PermissionResult
     public IReadOnlyList<string>? ExcludedTargets { get; init; }
 
     /// <summary>
+    /// The rights that were actually applied, whether or not the operation succeeded overall.
+    /// Null or empty when nothing landed.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding A23. A partial grant - FullAccess applied, SendAs failed - returns
+    /// <see cref="Success"/> false, and the page gated the affected-user notification on
+    /// Success, so the person whose access had really changed was told nothing.
+    ///
+    /// This is a field rather than a parse of <see cref="Detail"/> because Detail is
+    /// overloaded: on a partial result it holds the applied rights, but on a successful cloud
+    /// grant it holds the OWA link. Reading rights out of it would put a URL in the
+    /// permission-type line of a user's mail.
+    /// </remarks>
+    public IReadOnlyList<string>? AppliedRights { get; init; }
+
+    /// <summary>
     /// Set when the target was a protected principal and an authorised servicer overrode
     /// the refusal. Names the authorising group and the rules overridden.
     /// </summary>
@@ -48,6 +64,7 @@ public class PermissionResult
                 Message = Message,
                 Detail = Detail,
                 ExcludedTargets = ExcludedTargets,
+                AppliedRights = AppliedRights,
                 ServicedNote = servicedNote,
             };
 }

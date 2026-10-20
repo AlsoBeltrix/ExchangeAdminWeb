@@ -173,9 +173,22 @@ page, so every caller must remember, and this fix added a second remembering cal
 than removing the requirement. Moving it into `SaveAsync` means deleting the page call sites
 in the same change, where a miss is a duplicate notice - larger than this finding authorised.
 
-**Next:** A23, A24 and A25 close Wave 3, then Wave 4. A23 and A24 are the affected-user email
-the owner explicitly required for mailbox and calendar permission changes; A25 is
-manager-summary email only, per the same ruling - do not email every member of a group.
+`aud-a23` is landed. A partial cloud permission change - FullAccess granted, SendAs failed -
+returns `Success = false` by design, and the page gated the affected-user and mailbox-owner
+notices on that, so the one case where access really changed without anyone being told was
+the partial. `PermissionResult.AppliedRights` now carries what actually landed and the gate
+reads it. The field exists rather than a `Detail` parse because `Detail` holds the applied
+rights on a partial and the **OWA link** on a successful cloud grant - the on-prem path's
+existing parse is safe only because it never sees a cloud result, and copying it would have
+put a URL in the permission-type line of a user's mail. Filed as `aud-a23b`.
+
+The page edit kept the file at exactly 808 lines, so no `ClickGateRegistry` key moved.
+MailboxPermissions 1.2.4 -> 1.3.0, base app 2.30.0 -> 2.31.0 (`PermissionResult` is shared).
+
+**Next:** A24 (bulk rows get an admin summary but no affected-user notice, in
+`MailboxPermissions.razor` and `CalendarPermissions.razor`) and A25 (manager summary only -
+do NOT email every member of a group) close Wave 3. Then Wave 4, which is PowerShell-heavy
+and needs the PSScriptAnalyzer and Pester gates, not just dotnet.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green
