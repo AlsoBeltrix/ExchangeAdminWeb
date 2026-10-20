@@ -147,6 +147,23 @@ public class EmergencyDisableNotificationTests : IDisposable
         Assert.Contains("SecurityNotificationText.For(disableResult.Notification)", page, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TheNotificationGapIsStillRecordedByDisableAsync()
+    {
+        // Review of the A27 batch: every other guard here drives the notification in
+        // isolation, and the page scan pins one specific sentence. Nothing checked that
+        // DisableAsync still WRITES the gap record - the helper could keep working while
+        // nothing called it, which is how aud-a40 nearly shipped.
+        var body = AuditCategoryFilingTests.MethodBody(
+            File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "EmergencyDisableService.cs")),
+            "public async Task<EmergencyDisableResult> DisableAsync");
+
+        Assert.Contains("LogNotificationGap(target, performedBy, ip, ticket, notification)", body, StringComparison.Ordinal);
+
+        // And it is gated on the outcome, not written unconditionally.
+        Assert.Contains("if (notification != SecurityNotificationOutcome.Sent)", body, StringComparison.Ordinal);
+    }
+
     private void Dispatch(NotificationDispatch result) =>
         _email.SendModuleNotificationAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),

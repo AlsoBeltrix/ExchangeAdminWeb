@@ -3,9 +3,9 @@
 **Severity**: MEDIUM. Nothing is mis-mutated; what is lost is the record that someone tried.
 The attempts that matter most here - an edit or an emergency disable aimed at a protected
 principal - are exactly the ones that refused early and so recorded nothing.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed and independently reviewed
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `6eaf67b`
 
 ## Evidence
 
@@ -107,4 +107,28 @@ it fails on the original bug.
 
 ## Closeout
 
-Fixed directly on `master`. Independent review pending.
+Fixed on `master` as `6eaf67b`.
+
+## Independent review - `codex`, 2026-10-20
+
+Reviewed as batch 1 of the backlog, with `aud-a27`, `aud-a23` and `aud-a24`. Prompt kept at
+`.agents/review/prompt-backlog-1.md`.
+
+**Any earlier claim in this record that review was impossible was wrong.** Every probe had
+passed `--model gpt-5.5`, which strips the Portkey routing prefix out of the configured
+model slug; the harness was working the whole time. `.agents/state.md` carries the
+correction.
+
+**Verdict on this finding: clean in code.** The reviewer confirmed the fix does what this
+record claims and found no missed, unreachable or double-logged path.
+
+Guard gaps it found, closed in the follow-up commit:
+
+- The count guards stayed green if a `LogRefusal` were moved BELOW its return, or if a
+  braced call had its return outside the block. `EveryRefusalReturnHasItsLogImmediatelyAbove`
+  now walks the method and requires a log within the lines directly above each refusal
+  return.
+
+One MEDIUM runtime defect was found elsewhere in the batch - bulk calendar removals
+notified with the operator's word ("Remove") rather than the access ("Calendar Access") -
+and is fixed in the same follow-up. See `aud-a24`.

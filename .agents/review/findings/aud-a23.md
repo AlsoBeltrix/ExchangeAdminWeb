@@ -3,9 +3,9 @@
 **Severity**: HIGH. Access really changed and the person it changed for was not told. The
 owner's standing ruling is that mailbox and calendar permission changes must notify the
 affected user; a partial change is the case where that silently did not happen.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed and independently reviewed
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `67c0c65`
 
 ## Evidence
 
@@ -124,5 +124,28 @@ Gate: Release 0 errors; suite 4423 passed / 3 known AD skips / 0 failed; format 
 
 ## Closeout
 
-Fixed directly on `master`. Independent review pending - and currently impossible: both
-review harnesses are returning 401 (`.agents/state.md`).
+Fixed on `master` as `67c0c65`.
+
+## Independent review - `codex`, 2026-10-20
+
+Reviewed as batch 1 of the backlog, with `aud-a27`, `aud-a23` and `aud-a24`. Prompt kept at
+`.agents/review/prompt-backlog-1.md`.
+
+**Any earlier claim in this record that review was impossible was wrong.** Every probe had
+passed `--model gpt-5.5`, which strips the Portkey routing prefix out of the configured
+model slug; the harness was working the whole time. `.agents/state.md` carries the
+correction.
+
+**Verdict on this finding: clean in code.** The reviewer confirmed the fix does what this
+record claims and found no missed, unreachable or double-logged path.
+
+Guard gaps it found, closed in the follow-up commit:
+
+- The page scan passed if the applied-rights block were nested back under
+  `if (opResult.Success)`, which re-breaks the partial case while every asserted string
+  remains. The guard now requires no `opResult.Success` between taking the applied set and
+  sending.
+
+One MEDIUM runtime defect was found elsewhere in the batch - bulk calendar removals
+notified with the operator's word ("Remove") rather than the access ("Calendar Access") -
+and is fixed in the same follow-up. See `aud-a24`.

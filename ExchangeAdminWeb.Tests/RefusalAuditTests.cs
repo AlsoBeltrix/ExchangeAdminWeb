@@ -56,6 +56,36 @@ public class RefusalAuditTests
     }
 
     [Theory]
+    [InlineData("EmergencyDisableService.cs", "public async Task<EmergencyDisableResult> DisableAsync", "return new EmergencyDisableResult(false,")]
+    [InlineData("ADAttributeEditorService.cs", "public async Task<AttributeSaveResult> SaveAsync", "return new(false, ")]
+    public void EveryRefusalReturnHasItsLogImmediatelyAbove(string file, string signature, string refusal)
+    {
+        // Review of the A28 batch: counting calls and returns proves neither ORDER nor
+        // PAIRING. The counts stay equal if a LogRefusal is moved BELOW its return (dead
+        // code), or if a braced LogRefusal has its return outside the block. Both leave a
+        // refusal unrecorded while every count guard stays green.
+        //
+        // So: walk the method, and for each refusal return require a LogRefusal within the
+        // few lines directly above it.
+        var body = Body(Source(file), signature, "\n    private ");
+        var lines = body.Split('\n');
+
+        var unlogged = new List<string>();
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (!lines[i].TrimStart().StartsWith(refusal, StringComparison.Ordinal))
+                continue;
+
+            var window = lines.Skip(Math.Max(0, i - 6)).Take(i - Math.Max(0, i - 6));
+            if (!window.Any(l => l.Contains("LogRefusal(", StringComparison.Ordinal)))
+                unlogged.Add($"line {i + 1}: {lines[i].Trim()}");
+        }
+
+        Assert.True(unlogged.Count == 0,
+            $"{file}: refusal return(s) with no LogRefusal above them - " + string.Join("; ", unlogged));
+    }
+
+    [Theory]
     [InlineData("EmergencyDisableService.cs")]
     [InlineData("ADAttributeEditorService.cs")]
     public void ARefusalLogSitsInsideABracedBlock(string file)

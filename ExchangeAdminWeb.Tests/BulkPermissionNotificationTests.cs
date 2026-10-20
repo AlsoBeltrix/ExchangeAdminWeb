@@ -97,6 +97,15 @@ public class BulkPermissionNotificationTests
 
         // AppliedRights, not result.Success - a partial row must notify on the part that took.
         Assert.Contains("result.AppliedRights ?? []", body, StringComparison.Ordinal);
+
+        // Review of the A24 batch: the scan passed with the notifier duplicated, or sitting
+        // in the wrong branch, as long as the strings appeared somewhere. Exactly one call,
+        // and it must come BEFORE the success/failure branch so a partial row still fires.
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(body, "NotifyAffectedAsync"));
+
+        var notifyAt = body.IndexOf("PermissionChangeNotifier.NotifyAffectedAsync", StringComparison.Ordinal);
+        var branchAt = body.IndexOf("if (result.Success)", StringComparison.Ordinal);
+        Assert.True(branchAt > notifyAt, "the notifier must run before the success branch");
     }
 
     [Fact]
@@ -106,10 +115,17 @@ public class BulkPermissionNotificationTests
 
         Assert.Contains("PermissionChangeNotifier.NotifyAffectedAsync", body, StringComparison.Ordinal);
 
-        // A calendar row sets one right, so success is the applied set, and the trustee label
-        // matches what the single-target path on the page already sends.
-        Assert.Contains("result.Success ? [permType] : []", body, StringComparison.Ordinal);
+        // A calendar row sets one right, so success is the applied set.
+        Assert.Contains("result.Success ? [notifyPermType] : []", body, StringComparison.Ordinal);
         Assert.Contains("(Calendar)", body, StringComparison.Ordinal);
+
+        // Review of the A24 batch found the real bug this guard had missed: the notice sent
+        // `permType`, which is the OPERATOR's word for the row - "Reviewer", or "Remove" for
+        // a revoke - so a bulk removal told the affected person 'Permission: Remove', naming
+        // an action rather than the access. The single-target paths say "Calendar <level>"
+        // and "Calendar Access"; this pins the same wording.
+        Assert.Contains("$\"Calendar {row.AccessRight}\" : \"Calendar Access\"", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("result.Success ? [permType]", body, StringComparison.Ordinal);
     }
 
     [Theory]

@@ -4,9 +4,9 @@
 notify the affected user. Uploading a CSV was a way to change fifty people's access without
 any of them hearing about it, and the single-target path on the same page did notify, so the
 difference was invisible to anyone who had only ever tested one row.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed and independently reviewed
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `904e502`
 
 ## Evidence
 
@@ -52,6 +52,14 @@ than implying it.
 **Shared because the decision is identical and the wording is not.** A calendar notice names
 the target to the trustee as `someone@example.com (Calendar)` while the owner notice uses the
 bare address, which is what the single-target calendar path already does.
+
+> **Correction, review of 2026-10-20.** The claim that this matched the single-target path
+> was FALSE for the permission label. The bulk path passed `permType` - the operator's word
+> for the row, `"Reviewer"`, or `"Remove"` for a revoke - where the single-target path sends
+> `"Calendar <level>"` and `"Calendar Access"`. A bulk removal therefore told the affected
+> person `Permission: Remove`, naming an action rather than the access that changed. Fixed;
+> the guard that should have caught it checked that `permType` was present rather than what
+> value was sent, and now pins the wording.
 
 **Both sends are attempted independently, and neither can fail the row.** The permission is
 already applied and already audited; a mail server being down must not turn an applied change
@@ -121,5 +129,28 @@ Gate: Release 0 errors; suite 4432 passed / 3 known AD skips / 0 failed; format 
 
 ## Closeout
 
-Fixed directly on `master`. Independent review pending - and currently impossible: both
-review harnesses are returning 401 (`.agents/state.md`).
+Fixed on `master` as `904e502`.
+
+## Independent review - `codex`, 2026-10-20
+
+Reviewed as batch 1 of the backlog, with `aud-a27`, `aud-a23` and `aud-a24`. Prompt kept at
+`.agents/review/prompt-backlog-1.md`.
+
+**Any earlier claim in this record that review was impossible was wrong.** Every probe had
+passed `--model gpt-5.5`, which strips the Portkey routing prefix out of the configured
+model slug; the harness was working the whole time. `.agents/state.md` carries the
+correction.
+
+**Verdict on this finding: clean in code.** The reviewer confirmed the fix does what this
+record claims and found no missed, unreachable or double-logged path.
+
+Guard gaps it found, closed in the follow-up commit:
+
+- The mailbox bulk scan passed with the notifier duplicated or in the wrong branch. It now
+  requires exactly one call, before the success branch.
+- The calendar scan checked for `permType` and `(Calendar)` rather than the value actually
+  sent - which is why it missed the removal-label defect. It now pins the wording.
+
+One MEDIUM runtime defect was found elsewhere in the batch - bulk calendar removals
+notified with the operator's word ("Remove") rather than the access ("Calendar Access") -
+and is fixed in the same follow-up. See `aud-a24`.

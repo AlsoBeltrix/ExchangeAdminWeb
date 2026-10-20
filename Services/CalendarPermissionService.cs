@@ -181,8 +181,16 @@ public class CalendarPermissionService : ExchangeServiceBase
                 // Audit finding A24, and the trustee label matches the single-target path: a
                 // calendar notice names the target as "<address> (Calendar)". A calendar row
                 // sets one right, so success IS the applied set - there is no partial here.
+                //
+                // Review of A24: permType is the OPERATOR's word, and it feeds the audit row
+                // and the bulk outcome table - "Reviewer", or "Remove" for a revoke. Sending
+                // that to the affected person told them 'Permission: Remove', naming an
+                // action rather than the access that changed. The single-target paths say
+                // "Calendar <level>" and "Calendar Access"; this now says the same, and
+                // permType is left alone so the audit and the table are unchanged.
+                var notifyPermType = isSet ? $"Calendar {row.AccessRight}" : "Calendar Access";
                 await PermissionChangeNotifier.NotifyAffectedAsync(
-                    email, result.Success ? [permType] : [], $"{row.Target} (Calendar)",
+                    email, result.Success ? [notifyPermType] : [], $"{row.Target} (Calendar)",
                     row.Target, row.User, currentUser, isSet, _logger);
 
                 if (result.Success)

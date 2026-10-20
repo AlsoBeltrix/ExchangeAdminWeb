@@ -126,5 +126,15 @@ public class MailboxPartialNotificationTests
         // The notice must carry what landed, not the requested set.
         Assert.Contains("SendUserNotificationAsync(user, target, currentUser, notifyPerm", body, StringComparison.Ordinal);
         Assert.Contains("SendOwnerNotificationAsync(target, user, currentUser, notifyPerm", body, StringComparison.Ordinal);
+
+        // Review of the A23 batch: this passed if the whole applied-rights block were
+        // nested back under `if (opResult.Success)`, which re-breaks the partial case while
+        // every string above is still present. Nothing between taking the applied set and
+        // sending may test overall success.
+        var from = body.IndexOf("var applied = opResult.AppliedRights", StringComparison.Ordinal);
+        var to = body.IndexOf("SendOwnerNotificationAsync", StringComparison.Ordinal);
+        Assert.True(from > 0 && to > from, "the applied-rights block must still be there");
+
+        Assert.DoesNotContain("opResult.Success", body[from..to], StringComparison.Ordinal);
     }
 }

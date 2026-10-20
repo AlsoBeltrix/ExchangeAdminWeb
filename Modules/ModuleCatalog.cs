@@ -198,7 +198,9 @@ public sealed class ModuleCatalog
             // the dismissible result field (review finding prog-7).
             // 1.3.0: every applied row of a BULK run notifies the trustee and the calendar
             // owner; before, only the operator's administrators were told (aud-a24).
-            Version = "1.3.0",
+            // 1.3.1: a bulk calendar notice names the ACCESS, not the operator word for the
+            // row - a removal said "Permission: Remove" (review of aud-a24).
+            Version = "1.3.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
