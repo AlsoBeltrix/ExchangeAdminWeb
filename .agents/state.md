@@ -72,40 +72,43 @@ token lock and the cached token and built its request anyway, in three clients. 
 from a test stub and is MEDIUM, because production's socket handler rejects the cancelled
 token before sending.
 
-**Wave 2 has started. `aud-a31` is fixed** - store side `7316dd9`, page side `6a26f21`. One
-operator expanding any batch called `ReportStore.DeleteAll()` against a single shared
-directory, wiping every operator's stored migration reports. Now scoped per batch. The page
-edit changed no line counts, so the three line-keyed `ClickGateRegistry` entries needed no
-re-anchor - confirmed by the registry tests, not assumed.
+**Wave 2 is code-complete.** All of its findings are fixed on `master`, each with a record
+under `.agents/review/findings/` and its own commit. Base app version is 2.29.0.
 
-`aud-a33` is fixed: both instances share one config database and both read the schema version
-with no lock held, so a deploy restarting them together could make the second repeat
-`ALTER TABLE section_access ADD COLUMN` and abort its own startup. The transaction is now
-IMMEDIATE and the version is re-read inside it. **Its first guard did not discriminate** - four
-concurrent migrators passed against the mutated code too - so the migrator carries an
-`AfterVersionRead` test seam and the real guard drives the exact interleaving.
+The plan owns the list; what is worth carrying forward is the pattern. **Review required a
+repair in eleven of thirteen slices**, seven of them for a regression the fix itself
+introduced. Twice the problem was not the code but my STATED REASON for it:
 
-**Next: the rest of Wave 2** - roughly nineteen findings, listed in the plan. The largest
-single group is the stale-target-across-an-await class (A13-A16), which the plan says to fix
-with one shared discipline rather than four bespoke patches.
+- `aud-a32`: I wrote that the startup orphan sweep runs no completion hook. It does
+  (`BulkJobService.cs:95`), one line above where I stopped reading, and that false rationale
+  justified excluding interrupted jobs and left their exports undownloadable.
+- `aud-a33`: I wrote that the fix changed transactions from deferred to immediate. The
+  provider already issued BEGIN IMMEDIATE, so the locked re-read was the entire fix and I had
+  credited a mechanism that did not exist.
 
-`aud-a6b` is CONFIRMED and FIXED. `Disconnect-ExchangeOnline` with no selector clears a
-process-wide STATIC map - verified locally from the installed 3.9.2 module - so retiring one
-pooled runspace tore down every other borrower mid-operation. The owner chose to keep
-concurrency, so the pool now disconnects by `ConnectionId`, and connection establishment is
-serialised because that id can only be identified as "the one that appeared". A runspace whose
-id is unknown is disposed WITHOUT disconnecting: leaking one session is recoverable, breaking
-every operator is not.
+**A stated reason is as reviewable as a line of code, and mine were wrong twice.**
 
-Its own review then found a HIGH I had introduced - a bare `lock` behind the five-slot
-semaphore, with no timeout and no cancellation, so one stalled establishment could hold the
-pool shut. Now a bounded, cancellable gate. The reviewer also established by IL inspection
-that `Get-ConnectionInformation` performs a synchronous HTTP health check per existing
-connection, so that section is far dearer than this record first claimed. `aud-a6c` carries
-the pre-existing teardown gaps it also found.
+Second pattern, repeated often enough to be a rule: **a source scan passes for the wrong
+reason.** A reviewer demonstrated one accepting a page with the call deleted; another of mine
+asserted on a string the test itself built. Where a seam exists, drive behaviour; where one
+genuinely does not, say so on the finding rather than implying more than the test proves.
 
-**Live acceptance has NOT been done** - nothing here has touched a real tenant, and two
-concurrent operators against a real Exchange is the check that would actually confirm it.
+**Open and needing the owner**, not agent work:
+
+- `aud-a29b` (HIGH) - revocation is not observable at all while a circuit stays open. The
+  cached principal never refreshes, so removing someone from an AD group does nothing until
+  they reload. `aud-a29` closed only the application-grant half. The authoritative fix is an
+  app-wide revalidating authentication provider; that is a decision, not a slice.
+- `aud-a33b` (HIGH) - the SID data migration replaces grants from a pre-resolution snapshot
+  and can restore a grant that was revoked meanwhile.
+- `aud-a6b` live acceptance - the EXO pool now disconnects by ConnectionId, but nothing has
+  watched two real operators work at once to confirm one no longer kicks the other.
+
+**Open follow-ups, agent-workable:** `aud-a5b`, `aud-a7b`, `aud-a33c`, `aud-a6c`, plus the
+earlier `aud-a1b`, `aud-a2b`, `aud-a3b` and `aud-a4b` finding 7. The lockout module's
+findings stay deferred with it.
+
+**Next:** Waves 3 and 4 of the plan.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green
