@@ -632,7 +632,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.DirectoryAndGroups,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.5.1",
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",

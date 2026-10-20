@@ -257,18 +257,63 @@ public class M365GroupManagementService
             return gate.Denial;
 
         var client = await GetGraphClientAsync();
+
+        // Audit finding A10. `directoryObjects/{id}` wants an OBJECT ID, and the identity that
+        // reaches here is whatever the operator typed - a UPN or an email. Interpolating that
+        // produced a reference Graph cannot resolve, so every add through the UI failed, and
+        // the message below blamed the app's permissions for what was a malformed request.
+        var (objectId, resolveError) = await ResolveDirectoryObjectIdAsync(client, identity);
+        if (objectId is null)
+            return new M365GroupResult { Success = false, Message = resolveError };
+
         var body = new Dictionary<string, object>
         {
-            ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{Uri.EscapeDataString(identity)}"
+            ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{Uri.EscapeDataString(objectId)}"
         };
 
         var ok = await client.PostNoContentAsync($"/groups/{Uri.EscapeDataString(groupId)}/{relationship}/$ref", body);
         if (!ok)
-            return new M365GroupResult { Success = false, Message = $"Failed to add {identity}. Verify the user exists and the Graph app has Group.ReadWrite.All." };
+            return new M365GroupResult { Success = false, Message = $"Failed to add {identity}. Verify the Graph app has Group.ReadWrite.All." };
 
         var noun = relationship == "owners" ? "owner" : "member";
         _logger.LogInformation("Added {Noun} {Identity} to group {GroupId}", noun, identity, groupId);
         return new M365GroupResult { Success = true, Message = $"Added {noun} {identity}.", ServicedNote = gate.ServicedNote };
+    }
+
+    /// <summary>
+    /// Turns whatever the operator typed into the directory object id Graph needs, or returns
+    /// the reason it could not. Audit finding A10.
+    /// </summary>
+    /// <remarks>
+    /// An id that is already an id is passed straight through, so a caller that has one does
+    /// not pay for a lookup. Anything else is resolved through <c>/users/{identity}</c>, which
+    /// accepts a UPN - that is the one Graph route that takes the shape a person types.
+    ///
+    /// Refuses rather than guessing. An identity that does not resolve is the operator's to
+    /// correct, and the message says which part failed instead of blaming app permissions the
+    /// way the old failure did.
+    /// </remarks>
+    internal static async Task<(string? objectId, string error)> ResolveDirectoryObjectIdAsync(
+        GraphTokenClient client, string identity)
+    {
+        var trimmed = identity.Trim();
+        if (Guid.TryParse(trimmed, out _))
+            return (trimmed, "");
+
+        var (doc, status) = await client.GetWithStatusAsync($"/users/{Uri.EscapeDataString(trimmed)}?$select=id");
+        if (doc == null)
+        {
+            return (null, status == System.Net.HttpStatusCode.NotFound
+                ? $"'{identity}' was not found in the directory."
+                : $"Could not look up '{identity}': {(int)status} {status}.");
+        }
+
+        using var found = doc;
+        var id = found.RootElement.TryGetProperty("id", out var prop) ? prop.GetString() : null;
+
+        return string.IsNullOrWhiteSpace(id)
+            ? (null, $"The directory returned no object id for '{identity}'.")
+            : (id, "");
     }
 
     private async Task<M365GroupResult> RemoveDirectoryObjectAsync(string groupId, string relationship, string objectId, string identityForCheck, ClaimsPrincipal? actingUser)
