@@ -281,7 +281,7 @@ public class HeaderAnalysisService
         {
             var authHeader = headers.GetHeader("Authentication-Results");
             if (!string.IsNullOrWhiteSpace(authHeader))
-                ParseAuthenticationResults(authHeader, headers);
+                ParseAuthenticationResults(authHeader, headers, isArc: false);
         }
 
         if (headers.Authentication == null)
@@ -415,9 +415,14 @@ public class HeaderAnalysisService
 
         foreach (var score in result.SpamScores)
         {
-            if (score.Key.Contains("SCL", StringComparison.OrdinalIgnoreCase) && int.TryParse(score.Value, out var scl) && scl >= 5)
+            // Audit finding A22. These tested for "SCL" and "BCL", but the parser stores the
+            // EXPANDED names - "Spam Confidence Level", "Bulk Complaint Level" - which contain
+            // neither substring. So the two findings this loop exists to raise never fired at
+            // all. Both spellings are accepted: the expanded keys the parser writes, and the
+            // raw ones that reach SpamScores from other headers.
+            if (IsScore(score.Key, "SCL", "Spam Confidence Level") && int.TryParse(score.Value, out var scl) && scl >= 5)
                 AddFinding(result, "High", "Filtering", $"Spam Confidence Level is {scl}.", score.Key);
-            if (score.Key.Contains("BCL", StringComparison.OrdinalIgnoreCase) && int.TryParse(score.Value, out var bcl) && bcl >= 7)
+            if (IsScore(score.Key, "BCL", "Bulk Complaint Level") && int.TryParse(score.Value, out var bcl) && bcl >= 7)
                 AddFinding(result, "Warning", "Filtering", $"Bulk Complaint Level is {bcl}.", score.Key);
         }
 
@@ -426,6 +431,14 @@ public class HeaderAnalysisService
         if (result.HasAttachments)
             AddFinding(result, "Info", "Content", "Message has attachments.", null);
     }
+
+    /// <summary>
+    /// Matches a spam-score key by its abbreviation or by the expanded name the parser writes.
+    /// Audit finding A22: only the abbreviation was tested, and the parser never emits it.
+    /// </summary>
+    internal static bool IsScore(string key, string abbreviation, string expandedName) =>
+        key.Contains(abbreviation, StringComparison.OrdinalIgnoreCase)
+        || key.Contains(expandedName, StringComparison.OrdinalIgnoreCase);
 
     private static void ScanHeadersForFailureTerms(EmailHeaders headers, HeaderAnalysisResult result)
     {
@@ -560,8 +573,15 @@ public class HeaderAnalysisService
                 ParseReceivedHeader(headerValue, headers.ReceivedHeaders.Count, headers);
                 break;
             case "authentication-results":
+                ParseAuthenticationResults(headerValue, headers, isArc: false);
+                break;
             case "arc-authentication-results":
-                ParseAuthenticationResults(headerValue, headers);
+                // Audit finding A21. ARC records what an INTERMEDIARY saw, and intermediaries
+                // prepend their headers - so an ARC block normally sits above the receiving
+                // system's own Authentication-Results. Both used to feed the same parser,
+                // which keeps the first value it sees, so an ARC pass recorded before a
+                // forwarding break masked the real spf=fail underneath it.
+                ParseAuthenticationResults(headerValue, headers, isArc: true);
                 break;
             case "x-originating-ip":
                 var ipMatch = IPv4Regex.Match(headerValue);
@@ -615,7 +635,12 @@ public class HeaderAnalysisService
         headers.ReceivedHeaders.Add(received);
     }
 
-    private static void ParseAuthenticationResults(string value, EmailHeaders headers)
+    /// <summary>
+    /// Audit finding A21. <paramref name="isArc"/> separates what the receiving system
+    /// concluded from what an intermediary reported. The direct header is authoritative and
+    /// always overwrites; ARC only fills in what the direct header has not already said.
+    /// </summary>
+    private static void ParseAuthenticationResults(string value, EmailHeaders headers, bool isArc)
     {
         headers.Authentication ??= new AuthenticationResults
         {
@@ -623,12 +648,18 @@ public class HeaderAnalysisService
             DKIM = new DkimResult(),
             DMARC = new DmarcResult()
         };
-        headers.Authentication.RawValue = value;
+        // A21: the direct header always wins. ARC may only fill a slot nothing authoritative
+        // has written yet, so a mechanism that is still "none" after the real
+        // Authentication-Results was parsed is genuinely absent rather than overwritten.
+        var mayOverwrite = !isArc;
+
+        if (mayOverwrite || string.IsNullOrEmpty(headers.Authentication.RawValue))
+            headers.Authentication.RawValue = value;
 
         var truncated = value.Length > 8192 ? value[..8192] : value;
 
         var spfMatch = SpfRegex.Match(truncated);
-        if (spfMatch.Success && headers.Authentication.SPF!.Result == "none")
+        if (spfMatch.Success && (mayOverwrite || headers.Authentication.SPF!.Result == "none"))
         {
             headers.Authentication.SPF.Result = spfMatch.Groups[1].Value.ToLowerInvariant();
             var domainMatch = SmtpMailFromRegex.Match(truncated);
@@ -640,7 +671,7 @@ public class HeaderAnalysisService
         }
 
         var dkimMatch = DkimRegex.Match(truncated);
-        if (dkimMatch.Success && headers.Authentication.DKIM!.Result == "none")
+        if (dkimMatch.Success && (mayOverwrite || headers.Authentication.DKIM!.Result == "none"))
         {
             headers.Authentication.DKIM.Result = dkimMatch.Groups[1].Value.ToLowerInvariant();
             var domainMatch = HeaderDRegex.Match(truncated);
@@ -652,7 +683,7 @@ public class HeaderAnalysisService
         }
 
         var dmarcMatch = DmarcRegex.Match(truncated);
-        if (dmarcMatch.Success && headers.Authentication.DMARC!.Result == "none")
+        if (dmarcMatch.Success && (mayOverwrite || headers.Authentication.DMARC!.Result == "none"))
         {
             headers.Authentication.DMARC.Result = dmarcMatch.Groups[1].Value.ToLowerInvariant();
             var policyMatch = PolicyRegex.Match(truncated);

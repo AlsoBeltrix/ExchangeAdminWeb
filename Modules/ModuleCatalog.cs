@@ -477,7 +477,7 @@ public sealed class ModuleCatalog
             // 1.5.7: the CSV export snapshots the result set and the date range. The progress
             // yield added in 1.5.6 let a trace started across it null the response under the
             // export loop, which threw (review finding prog-9).
-            Version = "1.5.9",
+            Version = "1.6.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
