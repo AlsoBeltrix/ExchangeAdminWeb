@@ -278,3 +278,98 @@ Describe 'A34 call site' {
         $installer | Should -Match '\[switch\]\$ResetAppPoolIdentity'
     }
 }
+
+Describe 'Start-AppPoolVerified' {
+
+    # Audit finding A38. The promotion script called Start-WebAppPool and printed "Prod app
+    # pool started" on the next line, having checked nothing.
+
+    It 'returns Started once IIS confirms it' {
+        $result = Start-AppPoolVerified -Name 'Pool' `
+            -ExistsProbe { $true } -StartAction { } -StateProbe { 'Started' } -Sleep { }
+
+        $result | Should -Be 'Started'
+    }
+
+    It 'waits through Starting rather than reporting the request as the outcome' {
+        $script:states = @('Stopped', 'Starting', 'Started')
+        $script:index = 0
+
+        $result = Start-AppPoolVerified -Name 'Pool' `
+            -ExistsProbe { $true } -StartAction { } `
+            -StateProbe { $s = $script:states[$script:index]; $script:index++; $s } -Sleep { }
+
+        $result | Should -Be 'Started'
+    }
+
+    It 'throws when the pool never reaches Started, and says the application is down' {
+        # THE FINDING. IIS accepts the request; the pool stays stopped; the operator was
+        # told it was running.
+        {
+            Start-AppPoolVerified -Name 'ExchangeAdminWeb' -TimeoutSeconds 0 `
+                -ExistsProbe { $true } -StartAction { } -StateProbe { 'Stopped' } -Sleep { }
+        } | Should -Throw -ExpectedMessage '*ExchangeAdminWeb*DOWN*'
+    }
+
+    It 'surfaces what the start attempt said' {
+        {
+            Start-AppPoolVerified -Name 'Pool' -TimeoutSeconds 0 `
+                -ExistsProbe { $true } `
+                -StartAction { throw 'The service cannot be started.' } `
+                -StateProbe { 'Stopped' } -Sleep { }
+        } | Should -Throw -ExpectedMessage '*start attempt reported: The service cannot be started.*'
+    }
+
+    It 'treats a missing pool as an error, unlike the stop side' {
+        # Asymmetry on purpose: nothing to stop is safe, nothing to start means the
+        # application that was supposed to come back is not there.
+        {
+            Start-AppPoolVerified -Name 'Pool' `
+                -ExistsProbe { $false } -StartAction { } -StateProbe { 'Started' } -Sleep { }
+        } | Should -Throw -ExpectedMessage '*does not exist*'
+    }
+
+    It 'fails closed when the state cannot be read' {
+        {
+            Start-AppPoolVerified -Name 'Pool' `
+                -ExistsProbe { $true } -StartAction { } `
+                -StateProbe { throw 'RPC server unavailable' } -Sleep { }
+        } | Should -Throw -ExpectedMessage '*cannot be confirmed running*'
+    }
+}
+
+Describe 'A38: the promotion restart cannot erase the promotion verdict' {
+
+    BeforeAll {
+        $script:Promote = Get-Content (Join-Path $PSScriptRoot '..\..\tools\promote-dev-to-prod.ps1') -Raw
+    }
+
+    It 'does not let the restart throw out of the finally block' {
+        # An exception raised in finally REPLACES whatever was propagating, so a failed
+        # restart used to erase the promotion and rollback verdict entirely.
+        $script:Promote | Should -Match '(?s)\} finally \{.*?try \{\s*Start-AppPoolChecked'
+    }
+
+    It 'records the restart failure instead of discarding it' {
+        $script:Promote | Should -Match '\$poolStartError = \$_.Exception.Message'
+    }
+
+    It 'reports a failed promotion AND a dead pool together, not whichever threw last' {
+        $script:Promote | Should -Match '(?s)if \(\$promotionFailed\).*?if \(\$poolStartError\).*?NOT running'
+    }
+
+    It 'reports the case the old shape could not: promotion succeeded, application down' {
+        # New binaries in place, pool stopped, and previously a success message.
+        #
+        # The condition and the throw are matched TOGETHER. A first version of this guard
+        # asserted only the message text, and a mutation that changed the branch to
+        # if ($false) left the string sitting there unreachable and the guard green - the
+        # repo's recurring "a source scan passes for the wrong reason" trap.
+        $script:Promote | Should -Match '(?s)if \(\$poolStartError\) \{\s*throw "Promotion completed and prod now holds the new binaries, but the app pool did not start'
+    }
+
+    It 'confirms the pool is running rather than announcing it' {
+        $script:Promote | Should -Match 'Start-AppPoolVerified -Name \$Name'
+        $script:Promote | Should -Not -Match '(?m)^\s*Start-WebAppPool -Name \$Name\s*$'
+    }
+}

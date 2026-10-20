@@ -21,6 +21,8 @@ Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 
 # Shared warning about active bulk jobs before an app-pool recycle (BulkJobRunner-Plan).
 Import-Module (Join-Path $PSScriptRoot 'JobStateWarning.psm1') -Force
+# A38: Start-AppPoolVerified - IIS accepting a start request is not the pool running.
+Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
 
 function Write-Step { param([string]$Message) Write-Host ">>> $Message" -ForegroundColor Cyan }
 function Write-Ok { param([string]$Message) Write-Host " OK  $Message" -ForegroundColor Green }
@@ -237,8 +239,10 @@ function Start-AppPoolChecked {
     }
 
     Write-Step "Starting prod app pool: $Name"
-    Start-WebAppPool -Name $Name
-    Write-Ok "Prod app pool started"
+    # A38: confirm it, do not announce it. IIS accepts the request and can still leave the
+    # pool stopped - a bad identity password, a missing runtime, rapid-fail protection.
+    $null = Start-AppPoolVerified -Name $Name
+    Write-Ok "Prod app pool confirmed running"
 }
 
 $dev = Resolve-ExistingDirectory $DevPath "DevPath"
@@ -332,6 +336,9 @@ Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config")
 
 $promotionFailed = $false
 $rolledBack = $false
+# A38: a restart failure is its own outcome, reported alongside the promotion verdict rather
+# than replacing it.
+$poolStartError = $null
 try {
     Invoke-RobocopyChecked -Description "Promoting dev binaries to prod" -RobocopyArgs @(
         $dev, $prod,
@@ -382,15 +389,37 @@ try {
         Write-Warn "No backup available for automatic rollback. Restore manually."
     }
 } finally {
-    Start-AppPoolChecked -Name $ProdAppPoolName
+    # A38. This must always run - but it must never be the thing that throws. An exception
+    # raised in a finally block REPLACES whatever was propagating, so a failed restart used
+    # to erase the promotion and rollback verdict below and surface only the pool error.
+    # The operator then could not tell whether prod held old binaries or new ones.
+    try {
+        Start-AppPoolChecked -Name $ProdAppPoolName
+    } catch {
+        $poolStartError = $_.Exception.Message
+        Write-Host "  X  Prod app pool did not start: $poolStartError" -ForegroundColor Red
+    }
 }
 
 if ($promotionFailed) {
-    if ($rolledBack) {
-        throw "Promotion failed and was rolled back. Prod has been restored from backup."
+    $verdict = if ($rolledBack) {
+        "Promotion failed and was rolled back. Prod has been restored from backup."
     } else {
-        throw "Promotion failed and automatic rollback did not complete. Prod may be in an inconsistent state - restore manually from $backup."
+        "Promotion failed and automatic rollback did not complete. Prod may be in an inconsistent state - restore manually from $backup."
     }
+
+    # Both facts, not whichever threw last.
+    if ($poolStartError) {
+        $verdict += " The prod app pool is also NOT running ($poolStartError) - prod is DOWN until it is started by hand."
+    }
+
+    throw $verdict
+}
+
+# A38: the case the old shape could not report at all - the promotion worked, the files are
+# in place, and the application is down.
+if ($poolStartError) {
+    throw "Promotion completed and prod now holds the new binaries, but the app pool did not start ($poolStartError). Prod is DOWN until it is started by hand. Backup: $backup"
 }
 
 Remove-OldBackups -BackupRootPath $backupRootResolved -Retention $BackupRetention

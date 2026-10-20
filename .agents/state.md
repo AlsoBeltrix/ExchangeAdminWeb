@@ -310,12 +310,30 @@ The file carried a comment saying it "does not speak SQLite", which was the desi
 the gap came from. It was narrowed rather than deleted - the standalone and
 environment-neutral claim still holds - and a guard now fails if the stale sentence returns.
 
+**`aud-a38` is landed.** The promotion script restarted the prod pool in a `finally` block
+and let it throw. An exception from `finally` REPLACES the one propagating, so a failed
+restart erased the `if ($promotionFailed)` verdict below it - the rollback could have
+completed perfectly and the operator would see only a pool error. Reading the file turned up
+a second defect in the same three lines: the restart was never verified, so a pool that IIS
+accepted but did not start printed "Prod app pool started". Together those produce the worst
+case - promotion succeeds, binaries in place, application down, success message, exit 0 -
+and the old shape had no branch that could report it. There is one now.
+
+`Start-AppPoolVerified` is the symmetric twin of A35's stop, with one deliberate asymmetry:
+a missing pool is fine when stopping and an error when starting.
+
+**A guard in this slice was found weak by its own mutation.** The success-but-down test
+asserted only the throw's message text; disabling the branch with `if ($false)` left the
+string in the file unreachable and the suite stayed green at 33/0. It now matches the
+condition and the throw together. Same lesson as A28's counting tests, caught earlier this
+time - by the mutation rather than by a reviewer. **Assert the condition, not just the
+string it guards.**
+
 The rest of Wave 4 is PowerShell-heavy and needs the PSScriptAnalyzer and Pester gates, not
-just dotnet. Remaining: A38 (promote restart sits in `finally`, outside the rollback
-`catch`), A39 and A40 (`Move-ConfigDbToShared.ps1` - note `MoveConfigDbToShared.Tests.ps1`
-already exists with 22 tests, so that file has an established harness), plus the
-lower-priority items the plan lists under the same wave. A25 is still the only Wave 3
-remainder.
+just dotnet. Remaining: A39 and A40 (`Move-ConfigDbToShared.ps1` - `MoveConfigDbToShared.Tests.ps1`
+already exists with 22 tests, so that file has an established harness), the new follow-up
+`aud-a38b` (the promotion script still assumes its pool stopped), plus the lower-priority
+items the plan lists under the same wave. A25 is still the only Wave 3 remainder.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green

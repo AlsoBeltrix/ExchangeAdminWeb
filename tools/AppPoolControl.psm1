@@ -185,3 +185,72 @@ function Resolve-AppPoolIdentityPlan {
 }
 
 Export-ModuleMember -Function Resolve-AppPoolIdentityPlan
+
+function Start-AppPoolVerified {
+    <#
+    .SYNOPSIS
+        Starts an IIS application pool and PROVES it started.
+
+    .DESCRIPTION
+        Audit finding A38, and the symmetric twin of Stop-AppPoolVerified. The promotion
+        script called Start-WebAppPool and reported "Prod app pool started" on the next
+        line, having checked nothing. IIS accepts the start request and can still leave the
+        pool stopped - a bad identity password, a missing runtime, a rapid-fail-protection
+        trip - and the operator was told it was running.
+
+        Combined with the restart living in a finally block, that is how a promotion ended
+        with new binaries in place, the pool down, and a success message.
+
+    .OUTPUTS
+        'Started' when IIS confirms it. Throws otherwise - including when the pool does not
+        exist, which here IS an error: something was supposed to be running.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [int]$TimeoutSeconds = 60,
+
+        [int]$PollMilliseconds = 500,
+
+        [scriptblock]$ExistsProbe = { param($PoolName) Test-Path "IIS:\AppPools\$PoolName" },
+
+        [scriptblock]$StartAction = { param($PoolName) Start-WebAppPool -Name $PoolName -ErrorAction Stop },
+
+        [scriptblock]$StateProbe = { param($PoolName) (Get-WebAppPoolState -Name $PoolName).Value },
+
+        [scriptblock]$Sleep = { param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds }
+    )
+
+    if (-not (& $ExistsProbe $Name)) {
+        throw "App pool '$Name' does not exist, so it cannot be started. The application is down."
+    }
+
+    # An already-started pool throws here, exactly as the stop side does with an
+    # already-stopped one. The state check decides.
+    $startError = $null
+    try { & $StartAction $Name } catch { $startError = $_.Exception.Message }
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $state = $null
+
+    while ($true) {
+        try {
+            $state = & $StateProbe $Name
+        } catch {
+            throw "Cannot read the state of app pool '$Name', so it cannot be confirmed running: $($_.Exception.Message)"
+        }
+
+        if ($state -eq 'Started') { return 'Started' }
+
+        if ((Get-Date) -ge $deadline) {
+            $because = if ($startError) { " The start attempt reported: $startError." } else { '' }
+            throw "App pool '$Name' is '$state' after $TimeoutSeconds seconds, not Started.$because The application is DOWN."
+        }
+
+        & $Sleep $PollMilliseconds
+    }
+}
+
+Export-ModuleMember -Function Start-AppPoolVerified
