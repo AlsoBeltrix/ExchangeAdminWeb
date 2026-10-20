@@ -674,6 +674,43 @@ Describe 'tools/deploy-pipeline.ps1' {
         ([regex]::Matches($s.Text, 'IUnderstandThisOverwritesProd')).Count | Should -Be 1 -Because 'the consent switch must not be asserted anywhere else'
     }
 
+    It 'never reports a commit match it did not make (provenance fails closed)' {
+        # The check stood between a stale build and production and failed OPEN: when either
+        # side of the comparison was missing it skipped the comparison and printed
+        # "Dev commit matches source HEAD" anyway.
+        #
+        # Matched as condition-plus-statement, not as the message alone. A guard asserting
+        # only the text passes while the branch above it is dead - that mistake was made on
+        # aud-a38 and caught by a mutation.
+        $s.Text | Should -Match '(?s)\} else \{\s*Write-Ok "Dev commit matches source HEAD"'
+    }
+
+    It 'treats an unusable git probe as unverified, not as verified' {
+        # git is a native executable and does not throw, so the old try/catch caught
+        # nothing; an empty answer flowed straight into the skipped comparison.
+        $s.Text | Should -Match '\$commitProbeOk = \(\$LASTEXITCODE -eq 0\)'
+        $s.Text | Should -Match 'Cannot verify that dev was built from the current source'
+    }
+
+    It 'names the two distinct ways provenance can be unknown' {
+        # "git did not answer" and "the manifest has no commit" send the operator to
+        # different places.
+        $s.Text | Should -Match 'git could not report HEAD'
+        $s.Text | Should -Match 'manifest carries no gitCommit'
+    }
+
+    It 'makes promoting without verified provenance an explicit switch' {
+        $s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Contain 'AllowUnverifiedProvenance'
+        $s.Text | Should -Match 'if \(-not \$AllowUnverifiedProvenance\)'
+    }
+
+    It 'does not let a failed status probe read as a clean tree' {
+        # The drift warning was gated on a value that is $false both when the tree is clean
+        # and when git failed, so silence meant either.
+        $s.Text | Should -Match 'if \(-not \$statusProbeOk\)'
+        $s.Text | Should -Match 'has NOT been checked'
+    }
+
     It 'never claims that config was promoted (the config database is shared - scd-4)' {
         # SharedConfigDb-Plan AC6: help text and final messages must not tell the operator that
         # module configs or settings were promoted from dev; nothing is copied any more.

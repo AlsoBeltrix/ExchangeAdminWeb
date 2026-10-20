@@ -38,6 +38,9 @@ param(
     [switch]$Dev,
     [switch]$Prod,
     [switch]$AllowDirty,
+    # A provenance check that cannot run is not a provenance check that passed. This is the
+    # explicit way to promote anyway, modelled on -AllowDirty above.
+    [switch]$AllowUnverifiedProvenance,
     [switch]$PlanOnly,
 
     [string]$DevPath       = "D:\inetpub\ExchangeAdminWebDev",
@@ -121,8 +124,16 @@ if ($Prod) {
     }
 
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    $currentCommit = try { (git -C $repoRoot rev-parse HEAD 2>$null) } catch { $null }
-    $currentDirty = try { [bool](git -C $repoRoot status --porcelain 2>$null) } catch { $false }
+    # Provenance probe. `git` is a native executable: it does not throw on failure, so the
+    # old try/catch caught nothing and a failed probe simply produced an empty string. The
+    # exit code is what says whether the answer is trustworthy.
+    $commitProbe = git -C $repoRoot rev-parse HEAD 2>$null
+    $commitProbeOk = ($LASTEXITCODE -eq 0) -and -not [string]::IsNullOrWhiteSpace($commitProbe)
+    $currentCommit = if ($commitProbeOk) { "$commitProbe".Trim() } else { $null }
+
+    $statusProbe = git -C $repoRoot status --porcelain 2>$null
+    $statusProbeOk = ($LASTEXITCODE -eq 0)
+    $currentDirty = $statusProbeOk -and -not [string]::IsNullOrWhiteSpace(($statusProbe | Out-String))
 
     Write-Host ""
     Write-Host "=== Promote dev to prod ===" -ForegroundColor Magenta
@@ -133,10 +144,27 @@ if ($Prod) {
     Write-Host "  Source HEAD : $currentCommit" -ForegroundColor DarkGray
     Write-Host ""
 
-    if ($currentCommit -and $manifest.gitCommit -and $currentCommit -ne $manifest.gitCommit) {
-        throw "Dev is stale: built from commit $($manifest.gitCommit.Substring(0,8)) but source is at $($currentCommit.Substring(0,8)). Run -Dev first."
+    # The old shape skipped the comparison when EITHER side was missing and then printed
+    # "Dev commit matches source HEAD" regardless - a positive claim with no evidence, on
+    # the one check standing between a stale build and production. Each way of not knowing
+    # is now its own branch, and none of them reports a match.
+    $provenanceUnverifiable = $null
+    if (-not $currentCommit) {
+        $provenanceUnverifiable = "git could not report HEAD in $repoRoot (is it a repository, and is git on PATH?)"
+    } elseif ([string]::IsNullOrWhiteSpace($manifest.gitCommit)) {
+        $provenanceUnverifiable = "the dev deployment manifest carries no gitCommit, so what dev was built from is unknown"
     }
-    Write-Ok "Dev commit matches source HEAD"
+
+    if ($provenanceUnverifiable) {
+        if (-not $AllowUnverifiedProvenance) {
+            throw "Cannot verify that dev was built from the current source: $provenanceUnverifiable. Refusing to promote an unverified build to prod - re-run -Dev, or pass -AllowUnverifiedProvenance to promote anyway."
+        }
+        Write-Warn "Promoting WITHOUT verified provenance: $provenanceUnverifiable. -AllowUnverifiedProvenance was specified."
+    } elseif ($currentCommit -ne $manifest.gitCommit) {
+        throw "Dev is stale: built from commit $($manifest.gitCommit.Substring(0,8)) but source is at $($currentCommit.Substring(0,8)). Run -Dev first."
+    } else {
+        Write-Ok "Dev commit matches source HEAD"
+    }
 
     if ($manifest.gitDirty) {
         if (-not $AllowDirty) {
@@ -145,7 +173,10 @@ if ($Prod) {
         Write-Warn "Dev was built from a dirty source tree - proceeding because -AllowDirty was specified."
     }
 
-    if ($currentDirty -and -not $manifest.gitDirty) {
+    if (-not $statusProbeOk) {
+        # Absence of a warning must not read as "the tree is clean".
+        Write-Warn "Could not read the source tree status (git failed in $repoRoot), so drift since the dev build has NOT been checked."
+    } elseif ($currentDirty -and -not $manifest.gitDirty) {
         Write-Warn "Source tree has uncommitted changes since dev was built. Dev build is clean but source has drifted."
     }
 

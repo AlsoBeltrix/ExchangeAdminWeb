@@ -370,15 +370,35 @@ Also fixed here: 99 lines of `MoveConfigDbToShared.Tests.ps1` converted back fro
 LF. I introduced them in the `aud-a39` commit when a CRLF probe saw one stray line and
 converted my whole appended block; git had been warning ever since.
 
+**The first lower-priority Wave 4 item is landed** (`aud-pipeline-provenance`). The
+stale-build check guarding production skipped its comparison whenever either side was
+missing and then printed "Dev commit matches source HEAD" regardless - a positive claim with
+no comparison behind it. Two compounding causes: the success line sat outside the `if`, and
+the `try/catch` around `git` caught nothing, because a native executable sets
+`$LASTEXITCODE` rather than throwing, so a failed probe became an empty string and fell into
+the skipped comparison. Probes now test the exit code, each way of not knowing is its own
+branch, unverifiable provenance refuses the promotion unless `-AllowUnverifiedProvenance` is
+passed, and the success line is inside an `else` so it cannot be reached without a
+comparison. A failed status probe now says drift was NOT checked instead of looking clean.
+
+**Scope note for whoever picks this up:** the `*b` follow-ups I filed during this stream
+(`aud-a23b`, `aud-a26b`, `aud-a28b`, `aud-a38b`) are **not approved work**. They are
+recorded findings, not plan items - the approved plan is `docs/RepoAudit-Remediation-Plan.md`
+and its four waves. Implementing them needs an owner go first.
+
 **What remains of the audit:** `A25` (Wave 3 - the group-manager summary; scouted in detail
-above, needs a ClickGate re-anchor and two new service dependencies), the follow-up
-`aud-a38b`, and the plan's LOWER-PRIORITY Wave 4 list, which is unstarted: the
-`deploy-pipeline.ps1` provenance check failing open, `SqliteConfigBackup.psm1` creating a
-directory before `ShouldProcess` under `-WhatIf`, `New-ExchangeAdminWebGraphApps.ps1`
-stranding the first registration on a second-registration failure, header-processing bounds,
-and the operational hardening items. Plus the earlier open follow-ups: `aud-a1b`, `aud-a2b`,
-`aud-a3b`, `aud-a4b` finding 7, `aud-a6c`, `aud-a7b`, `aud-a23b`, `aud-a26b`, `aud-a28b`,
-`aud-a33c`, and the owner-decision items `aud-a29b` and `aud-a33b`.
+above, needs a ClickGate re-anchor and two new service dependencies) and the rest of the
+plan's LOWER-PRIORITY Wave 4 list: `SqliteConfigBackup.psm1` creating a directory before
+`ShouldProcess` under `-WhatIf`, `New-ExchangeAdminWebGraphApps.ps1` stranding the first
+registration when the second fails and suppressing its one-time secret, header-processing
+bounds (capped raw headers still feed uncapped derived collections; large-input impact
+unmeasured), and the operational hardening items - narrow publish-folder Modify permissions,
+make the SQLite-dependent CI tests actually run, exercise 5.1-compatible scripts under
+Windows PowerShell 5.1.
+
+Open follow-ups, unapproved: `aud-a1b`, `aud-a2b`, `aud-a3b`, `aud-a4b` finding 7,
+`aud-a6c`, `aud-a7b`, `aud-a23b`, `aud-a26b`, `aud-a28b`, `aud-a33c`, `aud-a38b`. Owner
+decisions: `aud-a29b`, `aud-a33b`, and the `aud-a6b` live acceptance.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green
