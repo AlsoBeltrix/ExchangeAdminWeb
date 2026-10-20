@@ -108,6 +108,22 @@ genuinely does not, say so on the finding rather than implying more than the tes
 earlier `aud-a1b`, `aud-a2b`, `aud-a3b` and `aud-a4b` finding 7. The lockout module's
 findings stay deferred with it.
 
+**BLOCKED, and the owner is the only one who can clear it: the codex-commercial login has
+expired.** `token_revoked` / "Your session has ended. Please log in again." Re-authenticating
+needs an interactive browser sign-in, so an agent cannot do it:
+`CODEX_HOME=~/.codex-commercial codex login`.
+
+Consequence: `aud-a9`, `aud-a10`, `aud-a20`, `aud-a21-a22` and `aud-a30` are fixed and pushed
+but **not reviewed by the stated harness**. Given this stream's record - a repair required in
+eleven of thirteen reviewed slices - green tests are not a substitute, and these five should
+be treated as provisional until that review runs.
+
+The Portkey-routed `codex` still works and was used as a FALLBACK harness for them. That is
+explicitly not what the owner asked for - his instruction was "it needs to use the commercial
+account, not the portkey" - and it is recorded here as a substitution made because the stated
+route was unavailable, not as an equivalent. Each affected finding says which harness reviewed
+it.
+
 **Next:** Waves 3 and 4 of the plan.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
