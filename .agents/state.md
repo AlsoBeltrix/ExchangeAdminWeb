@@ -297,11 +297,25 @@ function, act on the decision.
 slice was confirmed applied before its test run, and the loop reports loudly if the mutation
 script fails rather than letting a green suite look like a weak guard.
 
+**`aud-a36` is landed.** The generic installer's Update path mirrored new binaries over an
+instance whose config database those binaries migrate on first start, and snapshotted
+nothing - `deploy.ps1` has taken a verified backup for a while, but the ADI deploy script is
+not the supported way to upgrade a generic environment and this installer is. It now takes
+the same `VACUUM INTO` + `integrity_check` backup before the pool stops, resolving the
+database through `Resolve-ConfigDbPath` so a SHARED database outside the publish folder is
+the one that gets copied. A missing `sqlite3.exe` is fatal; `-SkipConfigBackup` is the
+explicit opt-out; a fresh install is detected first so it gains no new hard dependency.
+
+The file carried a comment saying it "does not speak SQLite", which was the design position
+the gap came from. It was narrowed rather than deleted - the standalone and
+environment-neutral claim still holds - and a guard now fails if the stale sentence returns.
+
 The rest of Wave 4 is PowerShell-heavy and needs the PSScriptAnalyzer and Pester gates, not
-just dotnet. Remaining: A36 (installer upgrades skip the verified DB backup - note it is the
-same installer A34 just touched), A38 (promote restart sits in `finally`, outside the
-rollback `catch`), A39 and A40 (`Move-ConfigDbToShared.ps1`), plus the lower-priority items
-the plan lists under the same wave.
+just dotnet. Remaining: A38 (promote restart sits in `finally`, outside the rollback
+`catch`), A39 and A40 (`Move-ConfigDbToShared.ps1` - note `MoveConfigDbToShared.Tests.ps1`
+already exists with 22 tests, so that file has an established harness), plus the
+lower-priority items the plan lists under the same wave. A25 is still the only Wave 3
+remainder.
 
 Unidentified flaky test: one full suite run on 2026-10-19 reported a single failure whose
 name was destroyed by a `tail -3`. Three full re-runs at the same tree state were green

@@ -17,6 +17,9 @@
 
     Update:
       - Builds the app from the current source tree.
+      - Takes a verified backup of an existing config database into <LogRoot>\ConfigBackups
+        before mirroring new binaries. Requires sqlite3.exe on PATH; pass -SkipConfigBackup
+        to upgrade without a snapshot.
       - Keeps the app pool's existing custom identity when -ServiceAccount is omitted.
         Pass -ServiceAccount to change it, or -ResetAppPoolIdentity to move it back to
         ApplicationPoolIdentity.
@@ -83,6 +86,10 @@ param(
     # access the running account has, so it is opt-in rather than the default for an omitted
     # -ServiceAccount. Modelled on -RegenerateAppSettings above.
     [switch]$ResetAppPoolIdentity,
+    # A36: an upgrade starts new binaries against an existing config database, and those
+    # binaries may run schema migrations on first start. Skipping the pre-upgrade snapshot
+    # is a deliberate acceptance of having no way back, so it is a switch, not a default.
+    [switch]$SkipConfigBackup,
     [switch]$PlanOnly,
     [switch]$NonInteractive
 )
@@ -568,6 +575,8 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 # environment-specific deploy tooling (Architectural Invariant 1). Imported outside the
 # PlanOnly guard because the identity decision below is reported during a dry run too.
 Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
+# A36. Same reasoning as above: a sibling module that names no host or environment.
+Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 
 if ($PlanOnly) {
     Write-Plan "Import WebAdministration and verify IIS site '$ParentSite'"
@@ -699,8 +708,10 @@ Write-AppSettings -Path $configPath -Settings (New-AppSettingsObject `
 # initial config (incl. the section-access authorization seed) without this script needing to
 # speak SQLite. The config/ ACL granted above is (OI)(CI)M, so the DB the app creates inside
 # config/ inherits Modify for the pool identity (WAL needs write) - no DB-specific ACL needed.
-# This script stays environment-neutral and standalone; it does not speak SQLite or couple to
-# any environment-specific deploy tooling.
+# This script stays environment-neutral and standalone. It does not speak SQLite to SEED
+# config - the JSON seeds above are the whole mechanism - but as of A36 it does take a
+# verified backup of an existing database before an upgrade, via the sibling
+# SqliteConfigBackup module. That module names no host or environment either.
 Write-JsonFileIfMissing -Path (Join-Path $configDir "sectionaccess.json") -Value (New-SectionAccessSeed -Groups $adminGroupsQualified) -Description "section access config (first-run import seed)"
 Write-JsonFileIfMissing -Path (Join-Path $configDir "modules-enabled.json") -Value (New-ModuleEnablementSeed) -Description "module enablement config"
 Write-JsonFileIfMissing -Path (Join-Path $configDir "protected-principals.json") -Value (New-ProtectedPrincipalsSeed) -Description "protected principals config"
@@ -743,6 +754,43 @@ Invoke-PlanOrAction "dotnet publish to staging: $stagingPath" {
     } finally {
         Pop-Location
     }
+}
+
+# A36. An upgrade mirrors new binaries over an existing instance, and those binaries may
+# run schema migrations against the config database the moment the pool starts. There was no
+# snapshot taken anywhere in this script, so a migration that went wrong had nothing to roll
+# back to - deploy tooling elsewhere takes this backup, but this installer is the supported
+# way to upgrade a generic environment and it did not.
+#
+# Online backup (VACUUM INTO + integrity_check), so it does not matter that this runs before
+# the pool stops - and running it first means a failure here aborts BEFORE anything is
+# touched.
+Invoke-PlanOrAction "Back up the config database before upgrading" {
+    if ($SkipConfigBackup) {
+        Write-Warn "-SkipConfigBackup was passed: no pre-upgrade snapshot. A failed schema migration will have nothing to roll back to."
+        return
+    }
+
+    $existingDb = Resolve-ConfigDbPath -PublishPath $PublishPath
+
+    if (-not (Test-IsSqliteConfigDbPresent -DbPath $existingDb)) {
+        # A fresh install, or an instance that has never started. Nothing to lose.
+        Write-Ok "No existing config database at $existingDb - nothing to back up."
+        return
+    }
+
+    # Deliberately fatal. The point of the backup is the upgrade that goes wrong, and an
+    # upgrade with no snapshot is exactly the situation this finding is about.
+    Assert-Sqlite3Available
+
+    $backupDir = Join-Path $LogRoot "ConfigBackups"
+    if (-not (Test-Path -LiteralPath $backupDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+    }
+
+    $backupStamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $backupFile = Backup-SqliteConfigDb -DbPath $existingDb -DestDir $backupDir -Timestamp $backupStamp
+    Write-Ok "Config database backed up (verified) to $backupFile"
 }
 
 Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped" {
