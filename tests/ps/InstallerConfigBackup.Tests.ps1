@@ -61,6 +61,32 @@ Describe 'A36: the pre-upgrade config database backup' {
         $script:Installer | Should -Match 'Resolve-ConfigDbPath -PublishPath \$PublishPath'
     }
 
+    It 'refuses when ConfigStore:Path names a database that is not there' {
+        # Review of aud-a36. A missing file with the key SET is not a fresh install - it is
+        # a broken instance. The app refuses to start against a configured database it did
+        # not find and never creates one, so proceeding mirrors new binaries over something
+        # that cannot start, with no snapshot, and reports success.
+        #
+        # Matched as condition-plus-Write-Fail: asserting the message alone would pass with
+        # the branch dead.
+        $script:Installer | Should -Match '\$configuredDbPath = Get-ConfigStorePathSetting'
+        $script:Installer | Should -Match '(?s)if \(\$configuredDbPath\) \{\s*Write-Fail'
+
+        # The refusal must precede the harmless "nothing to back up" exit, or it never runs.
+        $failAt = $script:Installer.IndexOf('if ($configuredDbPath) {')
+        $okAt = $script:Installer.IndexOf('No existing config database at')
+        $failAt | Should -BeGreaterThan 0
+        $failAt | Should -BeLessThan $okAt
+    }
+
+    It 'tells a dry run that -SkipConfigBackup means no snapshot' {
+        # Review of aud-a36: the skip was decided inside the action block, so -PlanOnly
+        # printed a backup step it would not perform and an operator could approve a plan
+        # believing a snapshot was coming.
+        $script:Installer | Should -Match '(?s)if \(\$SkipConfigBackup\) \{\s*if \(\$PlanOnly\) \{\s*Write-Plan'
+        $script:Installer | Should -Match 'SKIP the config database backup entirely'
+    }
+
     It 'makes skipping the snapshot an explicit switch' {
         $script:Installer | Should -Match '\[switch\]\$SkipConfigBackup'
         $script:Installer | Should -Match 'if \(\$SkipConfigBackup\)'

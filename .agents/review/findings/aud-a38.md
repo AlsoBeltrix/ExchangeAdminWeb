@@ -2,9 +2,9 @@
 
 **Severity**: HIGH. The failure mode is prod down with the operator told the wrong thing
 about why - or, on the success path, told nothing at all.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed, independently reviewed, review findings remediated
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `3fc5e6e`
 
 ## Evidence
 
@@ -153,5 +153,27 @@ changed.
 
 ## Closeout
 
-Fixed directly on `master`. Independent review pending - and currently impossible: both
-review harnesses are returning 401 (`.agents/state.md`).
+Fixed on `master` as `3fc5e6e`.
+
+## Independent review - `codex`, 2026-10-20
+
+Reviewed as batch 2 of the backlog, with the other three deployment findings. Prompt kept at
+`.agents/review/prompt-backlog-2.md`.
+
+**This record previously said review was "currently impossible".** That was wrong: every
+probe had passed `--model gpt-5.5`, stripping the Portkey routing prefix out of the
+configured model slug. `.agents/state.md` carries the correction.
+
+**No new defects.** The reviewer traced all three verdict flows and found them correct:
+promotion succeeds + restart fails throws "promotion completed, application down";
+promotion fails + rollback succeeds + restart fails reports both; promotion fails + rollback
+fails + restart succeeds reports the rollback failure. Exit status is non-zero in every
+failure case.
+
+It confirmed that `aud-a38b` - the promotion script still stopping its pool with a bare
+`Stop-WebAppPool` and a fixed sleep - is honestly filed rather than a false claim, and
+restated it as HIGH. That follow-up remains unapproved work.
+
+Remediation landed in the follow-up commit, each fix mutation-proven - including a
+"present but dead" mutation, because a guard that only checks a condition exists would pass
+with its refusal turned into a warning.

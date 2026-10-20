@@ -580,6 +580,16 @@ Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 
 if ($PlanOnly) {
     Write-Plan "Import WebAdministration and verify IIS site '$ParentSite'"
+    # Review of A34: plan mode forced $poolExists = $false, so the identity plan could never
+    # see an existing custom identity and always reported ApplicationPoolIdentity and the
+    # virtual account's ACLs - the opposite of what apply would do. Importing the module and
+    # reading pool state are side-effect free, so a dry run can and must do both. A machine
+    # without IIS still plans, with the limitation stated rather than hidden.
+    try {
+        Import-Module WebAdministration -ErrorAction Stop
+    } catch {
+        Write-Warn "WebAdministration is unavailable here, so this plan cannot read the existing app pool. The identity decision below assumes a NEW pool; a real run on the target host may preserve an existing identity instead."
+    }
 } else {
     Import-Module WebAdministration -ErrorAction Stop
     if (-not (Get-Website -Name $ParentSite -ErrorAction SilentlyContinue)) {
@@ -587,7 +597,9 @@ if ($PlanOnly) {
     }
 }
 
-$poolExists = if ($PlanOnly) { $false } else { Test-Path "IIS:\AppPools\$AppPoolName" }
+# Read it in both modes - see the plan-mode note above. Guarded because the IIS provider
+# may not exist on a machine that is only producing a plan.
+$poolExists = try { [bool](Test-Path "IIS:\AppPools\$AppPoolName") } catch { $false }
 
 # A34. Read what the pool runs as TODAY before deciding anything. An omitted -ServiceAccount
 # used to mean "set identityType 4", so an update silently moved a pool off its domain
@@ -765,16 +777,35 @@ Invoke-PlanOrAction "dotnet publish to staging: $stagingPath" {
 # Online backup (VACUUM INTO + integrity_check), so it does not matter that this runs before
 # the pool stops - and running it first means a failure here aborts BEFORE anything is
 # touched.
-Invoke-PlanOrAction "Back up the config database before upgrading" {
-    if ($SkipConfigBackup) {
+# Review of A36: the skip was decided INSIDE the action block, so a dry run printed "Back
+# up the config database" and said nothing about the real run skipping it. An operator could
+# approve a plan believing a snapshot was coming. Decide before planning.
+if ($SkipConfigBackup) {
+    if ($PlanOnly) {
+        Write-Plan "SKIP the config database backup entirely (-SkipConfigBackup was passed). The real run will NOT take a snapshot, and a failed schema migration will have nothing to roll back to."
+    } else {
         Write-Warn "-SkipConfigBackup was passed: no pre-upgrade snapshot. A failed schema migration will have nothing to roll back to."
-        return
     }
+} else {
 
+Invoke-PlanOrAction "Back up the config database before upgrading" {
     $existingDb = Resolve-ConfigDbPath -PublishPath $PublishPath
+    $configuredDbPath = Get-ConfigStorePathSetting -PublishPath $PublishPath
 
     if (-not (Test-IsSqliteConfigDbPresent -DbPath $existingDb)) {
-        # A fresh install, or an instance that has never started. Nothing to lose.
+        # Review of A36: these two cases were collapsed into "nothing to back up", and only
+        # one of them is harmless.
+        #
+        # With ConfigStore:Path SET, a missing file is not a fresh install - it is a broken
+        # instance. The app refuses to start against a configured database it did not find
+        # and never creates one, which is why the ADI deployment tooling fails on exactly
+        # this condition too. Proceeding would mirror new binaries over an instance that
+        # cannot start, with no snapshot, and report success.
+        if ($configuredDbPath) {
+            Write-Fail "ConfigStore:Path names '$existingDb' but no database exists there. The app will not start against a missing configured database (it never creates one). Fix the key, restore the file, or run tools\Move-ConfigDbToShared.ps1. Nothing was deployed."
+        }
+
+        # No key and no file: a fresh install, or an instance that has never started.
         Write-Ok "No existing config database at $existingDb - nothing to back up."
         return
     }
@@ -791,6 +822,8 @@ Invoke-PlanOrAction "Back up the config database before upgrading" {
     $backupStamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $backupFile = Backup-SqliteConfigDb -DbPath $existingDb -DestDir $backupDir -Timestamp $backupStamp
     Write-Ok "Config database backed up (verified) to $backupFile"
+}
+
 }
 
 Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped" {

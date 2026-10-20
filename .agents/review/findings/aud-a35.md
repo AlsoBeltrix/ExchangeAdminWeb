@@ -3,9 +3,9 @@
 **Severity**: HIGH. Partial replacement of a live application's binaries, with no error and
 no sign anything went wrong. It only bites when the pool fails to stop, which is also
 exactly when someone is already having a bad day.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed, independently reviewed, review findings remediated
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `dd8ee1a`
 
 ## Evidence
 
@@ -138,7 +138,34 @@ not run - no C# or Razor changed.
 
 ## Closeout
 
-Fixed directly on `master`. Independent review pending - and currently impossible: both
-review harnesses are returning 401 (`.agents/state.md`). Worth a reviewer's attention
+Fixed on `master` as `dd8ee1a`.
+
+## Independent review - `codex`, 2026-10-20
+
+Reviewed as batch 2 of the backlog, with the other three deployment findings. Prompt kept at
+`.agents/review/prompt-backlog-2.md`.
+
+**This record previously said review was "currently impossible".** That was wrong: every
+probe had passed `--model gpt-5.5`, stripping the Portkey routing prefix out of the
+configured model slug. `.agents/state.md` carries the correction.
+
+**One HIGH defect, and it is the question I asked the reviewer to attack.** Confirming that
+`$AppPoolName` stopped proves nothing when the IIS application being mirrored runs under a
+DIFFERENT pool: a mistyped `-AppPoolName` creates and stops that wrong pool, and
+`robocopy /MIR` then replaces the binaries of an application still serving requests. The
+A35 failure, reached by another door. Both deploy paths now ask IIS which pool serves
+`$ParentSite/$AppAlias` and refuse when it is not the one about to be stopped.
+
+The helper itself was found clean: `Stop-AppPoolVerified` returns `Stopped` only after the
+state probe says exactly that, and an unreadable state throws.
+
+**A false claim in this record is corrected**: it said an absent named pool means "nothing
+is serving". That is false on the deploy update path, where the application can be served
+by a different pool entirely. `Absent` is safe only once the binding has been checked, which
+it now is.
+
+Remediation landed in the follow-up commit, each fix mutation-proven - including a
+"present but dead" mutation, because a guard that only checks a condition exists would pass
+with its refusal turned into a warning. Worth a reviewer's attention
 specifically on the third site, which the audit did not list and which I found only because
 a guard counted call sites.

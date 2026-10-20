@@ -4,9 +4,9 @@
 security principal and then cannot reach the credential store, the certificate private key,
 the directory or the shared config database - several layers away from the command that
 caused it.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed, independently reviewed, review findings remediated
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `b071fd6`
 
 ## Evidence
 
@@ -147,6 +147,32 @@ changed.
 
 ## Closeout
 
-Fixed directly on `master`. Independent review pending - and currently impossible: both
-review harnesses are returning 401 (`.agents/state.md`). The identity-type mapping in
+Fixed on `master` as `b071fd6`.
+
+## Independent review - `codex`, 2026-10-20
+
+Reviewed as batch 2 of the backlog, with the other three deployment findings. Prompt kept at
+`.agents/review/prompt-backlog-2.md`.
+
+**This record previously said review was "currently impossible".** That was wrong: every
+probe had passed `--model gpt-5.5`, stripping the Portkey routing prefix out of the
+configured model slug. `.agents/state.md` carries the correction.
+
+**One MEDIUM defect: `-PlanOnly` lied.** It forced `$poolExists = $false`, so the identity
+plan could never see an existing custom identity and always reported ApplicationPoolIdentity
+and the virtual account's ACLs - the opposite of what an apply run would do. A dry run is
+for deciding whether to apply, so a dry run that describes different behaviour is worse than
+none. Plan mode now imports WebAdministration (read-only) and reads the pool, and says so
+plainly when IIS is unavailable rather than silently assuming a new pool.
+
+**A false claim in this record is corrected**: it said the dry run reports the identity
+decision. It did not.
+
+Apply-mode behaviour was found clean: the existing custom identity is preserved, 0/1/2/4 are
+treated as non-custom, fresh pools default to ApplicationPoolIdentity, the ACLs follow
+`IdentityForAcl`, and a preserved identity does not demand a password.
+
+Remediation landed in the follow-up commit, each fix mutation-proven - including a
+"present but dead" mutation, because a guard that only checks a condition exists would pass
+with its refusal turned into a warning. The identity-type mapping in
 *Known gaps* is the single assumption most worth an independent check.

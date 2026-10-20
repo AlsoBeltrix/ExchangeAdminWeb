@@ -3,9 +3,9 @@
 **Severity**: HIGH. Not an outage on its own - it is the removal of the recovery option,
 discovered at the moment it is needed. Schema migration steps are additive-only by invariant,
 which lowers the odds without making a snapshot optional.
-**Status**: Verified and fixed; review pending
+**Status**: Verified, fixed, independently reviewed, review findings remediated
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `239176c`
 
 ## Evidence
 
@@ -129,6 +129,36 @@ changed.
 
 ## Closeout
 
-Fixed directly on `master`. Independent review pending - and currently impossible: both
-review harnesses are returning 401 (`.agents/state.md`). The two backup roots named under
+Fixed on `master` as `239176c`.
+
+## Independent review - `codex`, 2026-10-20
+
+Reviewed as batch 2 of the backlog, with the other three deployment findings. Prompt kept at
+`.agents/review/prompt-backlog-2.md`.
+
+**This record previously said review was "currently impossible".** That was wrong: every
+probe had passed `--model gpt-5.5`, stripping the Portkey routing prefix out of the
+configured model slug. `.agents/state.md` carries the correction.
+
+**One HIGH defect: a configured database that is missing was treated as "nothing to back
+up".** With `ConfigStore:Path` set, a missing file is not a fresh install - it is a broken
+instance. The app refuses to start against a configured database it did not find and never
+creates one, so the installer would mirror new binaries over something that cannot start,
+with no snapshot, and report success. That case is now fatal; the no-key case stays
+harmless.
+
+**One MEDIUM defect: `-PlanOnly -SkipConfigBackup` was dishonest.** The skip was decided
+inside the action block, so a dry run printed a backup step it would not perform and an
+operator could approve a plan believing a snapshot was coming. The decision now happens
+before planning, and plan mode says the snapshot will be skipped.
+
+**A false claim in this record is corrected**: it said a backup failure aborts "before
+anything is touched". It does not - by that point the installer may already have created or
+updated the app pool, granted ACLs, written appsettings and seeds, updated the IIS
+application and published to staging. The backup is before the MIRROR, which is the thing
+that matters, and the record now says that instead.
+
+Remediation landed in the follow-up commit, each fix mutation-proven - including a
+"present but dead" mutation, because a guard that only checks a condition exists would pass
+with its refusal turned into a warning. The two backup roots named under
 *Known gaps* are the thing most likely to be judged wrong by a second reader.

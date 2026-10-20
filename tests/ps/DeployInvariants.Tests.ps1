@@ -84,6 +84,27 @@ BeforeAll {
 Describe 'deploy.ps1' {
     BeforeAll { $script:s = Get-ScriptUnderTest 'deploy.ps1' }
 
+    It 'verifies which pool serves the app before stopping one (review of aud-a35)' {
+        # Confirming that $AppPoolName stopped proves nothing if the IIS application being
+        # mirrored runs under a DIFFERENT pool. A mistyped -AppPoolName creates and stops
+        # that wrong pool, and robocopy /MIR then replaces the binaries of an application
+        # still serving requests - the A35 failure reached by another door.
+        #
+        # Both deploy paths, and matched as condition-plus-refusal so the check cannot be
+        # left present but dead.
+        ([regex]::Matches($s.Text, '\$boundPool = try \{ \(Get-WebApplication')).Count |
+            Should -Be 2 -Because 'the update path and the fresh-install path both mirror'
+        ([regex]::Matches($s.Text, 'if \(\$boundPool -and \$boundPool -ne \$AppPoolName\)')).Count |
+            Should -Be 2 -Because 'each site must refuse, not merely read the binding'
+        ([regex]::Matches($s.Text, '(?s)if \(\$boundPool -and \$boundPool -ne \$AppPoolName\) \{\s*Write-Fail')).Count |
+            Should -Be 2 -Because 'the condition must lead to a refusal, not sit there dead'
+
+        # And it must come before the stop, not after it.
+        $checkAt = $s.Text.IndexOf('$boundPool =')
+        $stopAt = $s.Text.IndexOf('Stop-AppPoolVerified')
+        $checkAt | Should -BeLessThan $stopAt
+    }
+
     It 'parses without syntax errors' {
         $s.Errors | Should -BeNullOrEmpty
     }

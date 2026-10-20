@@ -501,6 +501,9 @@ Describe 'A40: the cutover wakes the app before reading its startup log' {
 
     Context 'Invoke-AppWarmup' {
 
+        # The injected requester returns an HTTP STATUS CODE (0 = nothing answered), which
+        # is the contract the real one implements with a synchronous WebRequest.
+
         BeforeEach {
             $script:requested = [System.Collections.Generic.List[string]]::new()
         }
@@ -510,7 +513,7 @@ Describe 'A40: the cutover wakes the app before reading its startup log' {
             # log line it writes on startup never appears.
             $dir = New-SettingsDir -Json '{ "Application": { "PathBase": "/Dev" } }'
             try {
-                Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) $script:requested.Add($Url) } | Should -BeTrue
+                Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) $script:requested.Add($Url); 200 } | Should -BeTrue
                 $script:requested[0] | Should -Be 'http://localhost/Dev/'
             } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
         }
@@ -518,21 +521,38 @@ Describe 'A40: the cutover wakes the app before reading its startup log' {
         It 'requests the root when there is no path base' {
             $dir = New-SettingsDir -Json '{ }'
             try {
-                $null = Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) $script:requested.Add($Url) }
+                $null = Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) $script:requested.Add($Url); 200 }
                 $script:requested[0] | Should -Be 'http://localhost/'
             } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
         }
 
-        It 'tries both schemes when nothing usable answers' {
-            # A 404 or a 500 means ASP.NET Core started. Only "nothing answered" matters.
+        It 'counts a redirect as a live application' {
             $dir = New-SettingsDir -Json '{ }'
             try {
-                # Nothing usable answered on either scheme, so both were attempted and the
-                # result is false. The sibling branch - an exception that DOES carry a
-                # Response, meaning the app answered with a 404 or 500 and so did
-                # initialise - is not covered here; see the finding's Known gaps.
-                Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) $script:requested.Add($Url); throw 'refused' } | Should -BeFalse
-                $script:requested.Count | Should -Be 2
+                Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) 302 } | Should -BeTrue
+            } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'does NOT count a 503 as warmed - that is a pool still starting' {
+            # Review of A40, and the sharpest of its three findings. The old code returned
+            # true for any HTTP response, so the 503 a starting pool returns latched the
+            # caller's flag and stopped it retrying for the rest of the 90 seconds - exactly
+            # the case the retry exists for.
+            $dir = New-SettingsDir -Json '{ }'
+            try {
+                Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) $script:requested.Add($Url); 503 } | Should -BeFalse
+            } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'does NOT count a 404 from some other site as warmed, and still tries https' {
+            # Review of A40: a 404 from Default Web Site on port 80, a 400 from http.sys for
+            # an unmatched host header, or a 403.4 from "Require SSL" all have a response
+            # object. Treating those as success meant the https attempt never ran and the
+            # real application was never woken.
+            $dir = New-SettingsDir -Json '{ }'
+            try {
+                Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) $script:requested.Add($Url); 404 } | Should -BeFalse
+                $script:requested | Should -Contain 'https://localhost/'
             } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
         }
 
@@ -542,7 +562,8 @@ Describe 'A40: the cutover wakes the app before reading its startup log' {
                 $requester = {
                     param($Url)
                     $script:requested.Add($Url)
-                    if ($Url -like 'http://*') { throw 'connection refused' }
+                    if ($Url -like 'http://*') { return 0 }
+                    return 200
                 }
                 Invoke-AppWarmup -PublishPath $dir -Requester $requester | Should -BeTrue
                 $script:requested | Should -Contain 'https://localhost/'
@@ -550,22 +571,37 @@ Describe 'A40: the cutover wakes the app before reading its startup log' {
         }
 
         It 'reports false when nothing answers, without throwing' {
-            # The caller still waits for the log line; a failed warm-up changes the advice,
-            # not the outcome.
             $dir = New-SettingsDir -Json '{ }'
-            try { Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) throw 'connection refused' } | Should -BeFalse }
+            try { Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) 0 } | Should -BeFalse }
             finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
         }
 
         It 'restores certificate validation after relaxing it for https' {
-            # Relaxing it is scoped to the warm-up; leaking it would silently disable
-            # certificate checking for the rest of the cutover.
             $before = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
             $dir = New-SettingsDir -Json '{ }'
             try {
-                $null = Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) throw 'connection refused' }
+                $null = Invoke-AppWarmup -PublishPath $dir -Requester { param($Url) throw 'boom' }
                 [System.Net.ServicePointManager]::ServerCertificateValidationCallback | Should -Be $before
             } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'issues the real request synchronously, not through Invoke-WebRequest' {
+            # Review of A40: a PowerShell scriptblock assigned to
+            # ServerCertificateValidationCallback needs a Runspace on the invoking thread.
+            # Windows PowerShell 5.1 runs Invoke-WebRequest asynchronously, so the handshake
+            # fires on an IOCP thread with no Runspace and every https attempt aborts.
+            $source = Get-Content $script:ScriptPath -Raw
+            $body = $source.Substring($source.IndexOf('function Invoke-AppWarmup'))
+            $body = $body.Substring(0, $body.IndexOf('function Assert-SchemaReadyLogged'))
+
+            # Comments stripped: the claim is about the CODE, and the remarks above
+            # deliberately NAME Invoke-WebRequest to explain why it is not used. A
+            # guard that reads prose proves nothing about what executes.
+            $code = ((($body -replace '(?s)<#.*?#>', '') -split "`n") | Where-Object { $_.TrimStart() -notlike '#*' }) -join "`n"
+
+            $code | Should -Not -Match 'Invoke-WebRequest'
+            $code | Should -Match '\[System\.Net\.WebRequest\]::Create'
+            $code | Should -Match 'AllowAutoRedirect = \$false'
         }
     }
 
@@ -594,6 +630,12 @@ Describe 'A40: the cutover wakes the app before reading its startup log' {
 
         It 'warms the instance from inside Assert-SchemaReadyLogged' {
             $script:SchemaReadyBody | Should -Match 'Invoke-AppWarmup -PublishPath \$PublishPath'
+        }
+
+        It 'warms on every pass rather than latching on the first answer' {
+            # Review of A40: `if (-not $warmed)` stopped retrying as soon as anything
+            # answered, including the 503 of a pool that had not finished starting.
+            $script:SchemaReadyBody | Should -Not -Match 'if \(-not \$warmed\)'
         }
 
         It 'warms inside the retry loop, not once before it' {

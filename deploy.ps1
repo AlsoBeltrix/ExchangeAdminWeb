@@ -494,6 +494,17 @@ if ($isUpgrade) {
     Write-Step "Stopping app pool"
     # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
     Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir | Out-Null
+    # Review of A35: confirming that $AppPoolName stopped proves nothing if the IIS
+    # application being mirrored is served by a DIFFERENT pool. A mistyped -AppPoolName
+    # creates and stops that wrong pool, and robocopy /MIR then replaces the binaries of an
+    # application still running under the real one - the exact failure A35 set out to
+    # prevent, reached by another door. Ask IIS which pool serves this app, and refuse when
+    # it is not the one about to be stopped.
+    $boundPool = try { (Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop).applicationPool } catch { $null }
+    if ($boundPool -and $boundPool -ne $AppPoolName) {
+        Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
+    }
+
     # A35: the empty catch here swallowed every stop failure, not only the harmless
     # already-stopped one, and the fixed sleep was a guess about how long a worker takes to
     # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
@@ -692,6 +703,17 @@ if ($isUpgrade) {
     Write-Step "Stopping app pool for file deployment"
     # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
     Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir | Out-Null
+    # Review of A35: confirming that $AppPoolName stopped proves nothing if the IIS
+    # application being mirrored is served by a DIFFERENT pool. A mistyped -AppPoolName
+    # creates and stops that wrong pool, and robocopy /MIR then replaces the binaries of an
+    # application still running under the real one - the exact failure A35 set out to
+    # prevent, reached by another door. Ask IIS which pool serves this app, and refuse when
+    # it is not the one about to be stopped.
+    $boundPool = try { (Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop).applicationPool } catch { $null }
+    if ($boundPool -and $boundPool -ne $AppPoolName) {
+        Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
+    }
+
     # A35: the empty catch here swallowed every stop failure, not only the harmless
     # already-stopped one, and the fixed sleep was a guess about how long a worker takes to
     # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then

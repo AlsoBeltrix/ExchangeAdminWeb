@@ -311,27 +311,61 @@ function Invoke-AppWarmup {
         writes during application startup - not when the app POOL starts. Starting a pool
         creates a worker process; IIS does not load the application into it until a request
         arrives, unless Application Initialization is installed AND the application has
-        preloadEnabled set. startMode=AlwaysRunning, which the installer does set, keeps the
-        worker alive but does not initialise the application.
+        preloadEnabled set. startMode=AlwaysRunning keeps the worker alive and initialises
+        nothing. An independent review confirmed that diagnosis: with preloadEnabled unset,
+        GL_APPLICATION_PRELOAD never fires and Program.cs never runs until a request does.
 
-        So on a correctly configured, perfectly healthy, idle instance the log line never
-        appeared and the cutover failed after 90 seconds reporting a startup error.
+        The SAME review found the first version of this function wrong in three ways, all
+        of them because it treated "something answered" as "our application answered":
 
-        Any HTTP response initialises the application - 200, 404 and 500 all do - so the
-        status is ignored. Only "nothing answered" matters, and even that is not fatal here:
-        the caller still waits for the log line, which is the actual verification.
+        1. Any HTTP error response counted as success. A 503 from a pool that is still
+           starting - the exact case the caller retries for - therefore latched the
+           caller's $warmed flag and stopped it retrying for the remaining 90 seconds.
+        2. A 404 from another site on port 80 (Default Web Site), a 400 from http.sys for
+           an unmatched host header, or a 403.4 from "Require SSL" all counted as success
+           too, so the https attempt never happened and the real app was never woken.
+        3. The https attempt could not work at all under Windows PowerShell 5.1: a
+           PowerShell scriptblock assigned to ServerCertificateValidationCallback needs a
+           Runspace on the thread that invokes it, and Invoke-WebRequest runs the handshake
+           on an IOCP thread where there is none.
+
+        So: only a 2xx or 3xx counts as having reached a live application. Everything else
+        - including 503 - is "not yet", which is the honest answer and lets the caller keep
+        trying. The request is issued synchronously on the pipeline thread, which is also
+        what makes the certificate callback usable at all.
+
+        A failed warm-up is still not fatal. The log line remains the verification; this
+        only makes it reachable.
 
     .OUTPUTS
-        $true when something answered on localhost, $false otherwise.
+        $true when a live application answered 2xx/3xx, otherwise $false.
     #>
     param(
         [string]$PublishPath,
 
         # Injectable so this is testable without a listener, the same way
-        # tools/AppPoolControl.psm1 injects its IIS calls. Nothing but the tests passes it.
+        # tools/AppPoolControl.psm1 injects its IIS calls. Returns the HTTP status code as
+        # an int, or 0 when nothing answered. Nothing but the tests passes it.
         [scriptblock]$Requester = {
             param($Url)
-            $null = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
+
+            # Synchronous, on the pipeline thread, and deliberately NOT Invoke-WebRequest:
+            # 5.1 runs that asynchronously, and the certificate callback below then fires on
+            # a threadpool thread with no Runspace and aborts the handshake.
+            $request = [System.Net.WebRequest]::Create($Url)
+            $request.Method = 'GET'
+            $request.Timeout = 30000
+            # A redirect from http to https would be followed during the http pass, while
+            # validation is still enforced, and fail there instead of being retried.
+            $request.AllowAutoRedirect = $false
+
+            try {
+                $response = $request.GetResponse()
+                try { return [int]$response.StatusCode } finally { $response.Close() }
+            } catch [System.Net.WebException] {
+                if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode }
+                return 0
+            }
         }
     )
 
@@ -341,19 +375,22 @@ function Invoke-AppWarmup {
     foreach ($scheme in @('http', 'https')) {
         $url = "${scheme}://localhost${suffix}"
 
-        # Windows PowerShell 5.1 has no -SkipCertificateCheck, and a cutover host's
-        # certificate will not match "localhost". Relax validation for this call only and
-        # put it back afterwards - a warm-up request reads nothing it needs to trust.
+        # Windows PowerShell 5.1 has no -SkipCertificateCheck, and a host certificate will
+        # not match "localhost". Relax validation for this call only and put it back in a
+        # finally - a warm-up request reads nothing it needs to trust.
         $previousCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
         try {
             if ($scheme -eq 'https') {
                 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
             }
-            & $Requester $url
-            return $true
+
+            $status = & $Requester $url
+
+            # 2xx and 3xx only. A 503 means the pool is still coming up and a 4xx usually
+            # means something else on this port answered - neither woke our application.
+            if ($status -ge 200 -and $status -lt 400) { return $true }
         } catch {
-            # An HTTP error response still means the application was reached and initialised.
-            if ($_.Exception.Response) { return $true }
+            # Nothing usable on this scheme; try the next one.
         } finally {
             [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $previousCallback
         }
@@ -375,7 +412,11 @@ function Assert-SchemaReadyLogged {
             # A40: the log line is written during APPLICATION startup, which a request
             # triggers. Retried each pass because the first attempt can land while the
             # worker process is still coming up.
-            if (-not $warmed) { $warmed = Invoke-AppWarmup -PublishPath $PublishPath }
+            # Review of A40: this used to be gated on `-not $warmed`, which latched on the
+            # first non-null HTTP response - including the 503 a starting pool returns - and
+            # then never retried. Warm on EVERY pass; it is one request per five seconds and
+            # the whole point is to keep poking until the application comes up.
+            $warmed = (Invoke-AppWarmup -PublishPath $PublishPath) -or $warmed
             $log = Get-LatestSerilogLog -PublishPath $PublishPath
             if ($log -and $log.LastWriteTime -ge $Since) {
                 $lines = Get-Content -LiteralPath $log.FullName -ErrorAction SilentlyContinue |
