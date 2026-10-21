@@ -5,6 +5,21 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-21 - Every open review follow-up is approved for implementation
+
+Owner ruling, verbatim, after being asked whether "fix all the bugs that you know about and
+any more you find while doing so" included the eighteen open rows in `.agents/review/index.md`:
+"ALL the bugs includes ALL the bugs. those too. all of them. I thought that's what you were
+fixing all this time. EVERYTHING."
+
+Effect: every index row recorded as "Recorded follow-up; not approved" or "Recorded; not
+started" or "OWNER DECISION required" as of this date is approved for implementation under
+the existing discipline (one finding per commit, guard and mutation proof, codex review,
+records). For `aud-a29b`, whose record lists three options and says the choice should not
+be an agent's, the go selects option 1 (a revalidating authentication state provider, the
+framework's answer and the only option that fixes every page); the owner may veto before it
+lands. Queue and progress: `.agents/state.md` NEXT ACTION.
+
 ### 2026-10-21 - Orchestrating implementation subagents is allowed; the prohibition is removed
 
 Owner ruling, verbatim: "remove that rule." Context: the Token Budget bullet in

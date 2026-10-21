@@ -19,12 +19,30 @@ entry is closed, independently reviewed, and its review findings remediated.
 0 failed; Pester 255 passed / 0 failed / 0 skipped; PSScriptAnalyzer 0 errors; ASCII lint and
 `dotnet format` clean.
 
-**NEXT ACTION (2026-10-21): implement S2 of `docs/ConfigDbToolInApp-Plan.md`.** S1 landed
-(`86970a5`, app `db` mode, version `2.34.0`), codex-reviewed: one MEDIUM finding, `cdt-1`
-(a racing backup run could delete the other run's verified snapshot), fixed via temp-file
-then no-overwrite move in `872f211`, closed on coder-side guard proof. Implementation
-arrangement for this stream, owner 2026-10-21: Opus 5.5 agents dispatched from the
-supervising session (`.agents/decisions.md` 2026-10-21), codex reviews each slice.
+**NEXT ACTION (2026-10-21): work the FIX-EVERYTHING queue below, top to bottom, one Opus
+5.5 agent per item, codex defect review per group, records and guards per finding.** Owner
+go, verbatim: "fix all the bugs that you know about and any more you find while doing so."
+then "ALL the bugs includes ALL the bugs. those too. all of them. ... EVERYTHING." - which
+approves every open follow-up in `.agents/review/index.md` that was recorded "not approved"
+or "owner decision required" (`.agents/decisions.md` 2026-10-21, second entry). Arrangement:
+Opus 5.5 agents dispatched from the supervising session; codex reviews.
+
+| # | Item | State |
+| --- | --- | --- |
+| 1 | ConfigDbToolInApp S1 `86970a5` + cdt-1 `872f211`; S2 `b1577f7` + cdt-2 `96af3aa`, cdt-4 `5d6cee6` (cdt-3 declined) | done, pushed |
+| 2 | cdt-5 / cdt-6: deploy.ps1 fresh-install unset `$runtimeConfigDir`; staging left behind on backup failure | agent running |
+| 3 | `Comms10kRefusalTests` C6 theory intermittent hang (pre-existing; hang dumps under `ExchangeAdminWeb.Tests/TestResults/`) | queued |
+| 4 | aud-a38b: promote still assumes its pool stopped | queued |
+| 5 | aud-a3b, aud-a2b, aud-a4b finding 7, aud-a1b: protected-principal and self-service gate holes (HIGH) | queued |
+| 6 | aud-a29b (take option 1, the revalidating authentication state provider - the record's own "framework answer"; the owner's EVERYTHING covers the choice, flagged for veto), aud-a33b, aud-a33c | queued |
+| 7 | aud-a6c, aud-a7b, psl-2, psl-3, psl-4 | queued |
+| 8 | aud-a26b, aud-a28b, aud-a23b, cdr-followup-1 | queued |
+| 9 | ConfigDbToolInApp S3 docs + decision; close aud-sqlite3-path | queued |
+
+Constitution still applies inside the go: authorization changes get a short written plan
+section inside their finding record (approach, files, tests) before code; one finding per
+commit; mutation proof per guard; codex review per group; CRITICAL verdicts only go back
+to the reviewer.
 
 **Candidate finding, NOT admitted, surfaced while verifying cdt-1:**
 `Comms10kRefusalTests.C6ValidationWaitsKeepTheCapturedTicketVisibleAndRejectDelayedInput`
