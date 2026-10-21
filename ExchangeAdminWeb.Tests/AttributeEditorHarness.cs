@@ -35,6 +35,7 @@ internal sealed class AttributeEditorHarness : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "eaw-attr-" + Guid.NewGuid().ToString("N"));
     private readonly SectionAccessRepository _sections;
+    private readonly IConfigStore _allowlistStore;
 
     public AttributeEditorHarness()
     {
@@ -54,7 +55,8 @@ internal sealed class AttributeEditorHarness : IDisposable
         ModuleConfig = new ModuleConfigService(
             catalog, Env, TestConfigStore.CreateModuleConfig(_root), NullLogger<ModuleConfigService>.Instance);
 
-        Allowlist = new AttributeEditorRepository(TestConfigStore.Create(_root));
+        _allowlistStore = TestConfigStore.Create(_root);
+        Allowlist = new AttributeEditorRepository(_allowlistStore);
         Allowlist.SaveAllowlist(
         [
             new AttributeRow("title", "Job Title", "String", null, false, true, null, null, 1),
@@ -158,6 +160,24 @@ internal sealed class AttributeEditorHarness : IDisposable
         {
             ["DefaultSearchBase"] = string.Join(";", searchBases),
         });
+
+    /// <summary>
+    /// Leaves a row the allowlist cannot parse, which is the store's corrupt state: the service's
+    /// load returns null and every save refuses.
+    /// </summary>
+    public void CorruptAllowlist()
+    {
+        _allowlistStore.Write((connection, transaction) =>
+        {
+            using var insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText =
+                "INSERT INTO editable_attribute (name, label, type, choices_json, required, allow_clear, level) "
+                + "VALUES ('employeeType', 'Employee Type', 'Choice', '{not valid json', 0, 1, 1);";
+            insert.ExecuteNonQuery();
+        });
+        Service.InvalidateAllowlistCache();
+    }
 
     /// <summary>Authorises <see cref="ServicerSid"/> to service protected principals in this module.</summary>
     public void GrantServicer() =>
