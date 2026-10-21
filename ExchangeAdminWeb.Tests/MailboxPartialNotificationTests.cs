@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Services;
 
@@ -136,5 +137,125 @@ public class MailboxPartialNotificationTests
         Assert.True(from > 0 && to > from, "the applied-rights block must still be there");
 
         Assert.DoesNotContain("opResult.Success", body[from..to], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheOnPremPathReadsAppliedRights_NeverDetail()
+    {
+        // aud-a23b. Detail is overloaded - the applied rights on a partial, the OWA link on a
+        // successful cloud grant - and this handler split it into rights, correct only while it
+        // never sees a cloud result. AppliedRights says the same thing on every path. A scan, for
+        // aud-a23's reason: the handler around it needs a live Exchange connection.
+        var body = AuditCategoryFilingTests.MethodBody(
+            File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "MailboxPermissions.razor")),
+            "private async Task ExecuteOnPrem");
+
+        Assert.Contains("var applied = opResult.AppliedRights ?? [];", body, StringComparison.Ordinal);
+
+        // Every rights decision reads the applied set: both per-right audit rows, the _PARTIAL
+        // marker on the admin notice, the notification gate, and the rights the notice names.
+        Assert.Contains("opResult.Success || applied.Contains(\"FullAccess\")", body, StringComparison.Ordinal);
+        Assert.Contains("opResult.Success || applied.Contains(\"SendAs\")", body, StringComparison.Ordinal);
+        Assert.Contains("var isPartial = !opResult.Success && applied.Count > 0;", body, StringComparison.Ordinal);
+        Assert.Contains("if (opResult.Success || applied.Count > 0)", body, StringComparison.Ordinal);
+        Assert.Contains("string.Join(\"+\", applied.Count > 0 ? applied : new[] { permType })", body, StringComparison.Ordinal);
+
+        // And the handler's CODE never touches Detail at all. Comments and literals are blanked,
+        // so a remark explaining why does not count, and a parse re-spelled so that it no longer
+        // matches the strings above still cannot hide.
+        Assert.DoesNotMatch(@"\.\s*Detail\b", RazorSyntax.CodeView(body));
+    }
+
+    [Fact]
+    public void NoProductionCodeParsesADetailMember()
+    {
+        // aud-a23b, the convention as a tripwire. PermissionResult.Detail is display text whose
+        // meaning depends on the path that built it, so nothing may read rights - or anything
+        // else - out of it. Text-based over every production .cs and .razor, comments blanked.
+        // It refuses a .Detail of ANY type, which is broader than PermissionResult on purpose: no
+        // Detail in this app is parsed today, and a new one that genuinely must be should be
+        // argued for here, by name, rather than slip in.
+        var root = Path.GetDirectoryName(AuditCategoryFilingTests.FindRepoFile("ExchangeAdminWeb.csproj"))!;
+        var files = ProductionSourceFiles(root).ToList();
+
+        // Not vacuous: the scan reaches the page this exists for, and the patterns bite on the
+        // shapes they name and on nothing the app legitimately does with a Detail today.
+        Assert.Contains(files, f => f.EndsWith(Path.Combine("Components", "Pages", "MailboxPermissions.razor"), StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(files, f => f.EndsWith(Path.Combine("Services", "MailboxPermissionOutcome.cs"), StringComparison.OrdinalIgnoreCase));
+        foreach (var parse in DetailParseSamples)
+            Assert.True(DetailParses.Any(p => p.IsMatch(parse)), $"the tripwire must refuse: {parse}");
+        foreach (var read in DetailReadSamples)
+            Assert.False(DetailParses.Any(p => p.IsMatch(read)), $"the tripwire must allow: {read}");
+
+        var offenders = new List<string>();
+        foreach (var file in files)
+        {
+            var raw = File.ReadAllText(file);
+            var view = RazorSyntax.CommentsBlanked(raw);
+            foreach (var pattern in DetailParses)
+            {
+                foreach (Match match in pattern.Matches(view))
+                    offenders.Add($"{Path.GetRelativePath(root, file)}:{RazorSyntax.LineOf(raw, match.Index)}");
+            }
+        }
+
+        Assert.True(offenders.Count == 0,
+            "Detail is display text whose meaning differs by path (the applied rights on a partial, the OWA "
+            + "link on a cloud grant); read PermissionResult.AppliedRights for rights. Parsed here: "
+            + string.Join(", ", offenders));
+    }
+
+    private const string TextMethods =
+        "Split|Contains|IndexOf|IndexOfAny|LastIndexOf|LastIndexOfAny|StartsWith|EndsWith|Substring|AsSpan"
+        + "|Replace|Trim|TrimStart|TrimEnd|ToLower|ToLowerInvariant|ToUpper|ToUpperInvariant|Equals|CompareTo";
+
+    private static readonly Regex[] DetailParses =
+    [
+        // x.Detail.Split(...), x.Detail?.Contains(...), x.Detail!.IndexOf(...)
+        new($@"\.\s*Detail\b\s*[!?]?\s*\.\s*(?:{TextMethods})\s*\(", RegexOptions.CultureInvariant),
+        // (x.Detail ?? "").Split(...), (x.Detail ?? string.Empty).Contains(...)
+        new($@"\.\s*Detail\b\s*\?\?\s*(?:""""|[Ss]tring\s*\.\s*Empty)\s*\)\s*[!?]?\s*\.\s*(?:{TextMethods})\s*\(", RegexOptions.CultureInvariant),
+        // Regex.Split(x.Detail, ...), string.Equals(x.Detail, ...)
+        new(@"\b(?:Regex|[Ss]tring)\s*\.\s*(?:Split|Match|Matches|IsMatch|Replace|Count|EnumerateMatches|Equals|Compare|CompareOrdinal)\s*\(\s*[\w.?!()]*\.\s*Detail\b", RegexOptions.CultureInvariant),
+        // x.Detail == "FullAccess", "SendAs" != x.Detail
+        new(@"\.\s*Detail\b\s*[!=]=\s*@?""|""\s*[!=]=\s*[\w.?!()]*\.\s*Detail\b", RegexOptions.CultureInvariant),
+    ];
+
+    private static readonly string[] DetailParseSamples =
+    [
+        "var succeeded = opResult.Detail?.Split(',', StringSplitOptions.TrimEntries) ?? Array.Empty<string>();",
+        "var fa = opResult.Detail.Contains(\"FullAccess\");",
+        "var fa = opResult.Detail?.ToLowerInvariant().Contains(\"fullaccess\");",
+        "var rights = (opResult.Detail ?? \"\").Split(',');",
+        "var sa = (opResult.Detail ?? string.Empty).Contains(\"SendAs\");",
+        "var rights = Regex.Split(opResult.Detail!, \",\");",
+        "var fa = string.Equals(opResult.Detail, \"FullAccess\", StringComparison.Ordinal);",
+        "var fa = opResult.Detail == \"FullAccess\";",
+        "var sa = \"SendAs\" == opResult.Detail;",
+    ];
+
+    private static readonly string[] DetailReadSamples =
+    [
+        "<div class=\"mt-1\"><small>@result.Detail</small></div>",
+        "@if (!string.IsNullOrEmpty(result.Detail))",
+        "stepDetails[step.Step] = step.Status + (step.Detail != null ? $\" - {step.Detail}\" : \"\");",
+        "Detail = result.Detail,",
+        "return !string.IsNullOrWhiteSpace(last.Detail) ? last.Detail : last.Action;",
+    ];
+
+    private static IEnumerable<string> ProductionSourceFiles(string root)
+    {
+        static bool IsSource(string path) =>
+            path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".razor", StringComparison.OrdinalIgnoreCase);
+
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly).Where(IsSource))
+            yield return file;
+
+        foreach (var dir in new[] { "Authorization", "Components", "Middleware", "Models", "Modules", "Services" })
+        {
+            foreach (var file in Directory.EnumerateFiles(Path.Combine(root, dir), "*", SearchOption.AllDirectories).Where(IsSource))
+                yield return file;
+        }
     }
 }
