@@ -8,7 +8,67 @@ the latest sweep is Archived 2026-10-14).
 
 ## Now
 
-### Repository audit remediation - Waves 1-2 complete, Wave 3 started; Wave 4 not started
+### Repository audit remediation - COMPLETE, reviewed and pushed
+
+**Task:** the 2026-10-16 repository audit remediation. **Branch:** `master`. **Verified
+head:** `c1ada75`, pushed to both `github` and `origin` (0 unpushed, tree clean).
+**Stage:** finished - every numbered finding in all four waves and every lower-priority
+entry is closed, independently reviewed, and its review findings remediated.
+
+**Last verified gates** (not re-run for this handoff): .NET 4456 passed / 3 known AD skips /
+0 failed; Pester 255 passed / 0 failed / 0 skipped; PSScriptAnalyzer 0 errors; ASCII lint and
+`dotnet format` clean.
+
+**NEXT ACTION - a live security finding, not audit scope.** Four owner questions at the end
+of this session uncovered a privilege-escalation path on the deploy host. It is NOT written
+up yet; that is the first thing to do.
+
+The elevated deploy (`deploy-pipeline.ps1` carries `#Requires -RunAsAdministrator`) executes
+`sqlite3.exe` resolved from PATH by `Get-Sqlite3Path` in `tools/SqliteConfigBackup.psm1`:
+
+```powershell
+$cmd = Get-Command sqlite3 -CommandType Application -ErrorAction SilentlyContinue
+```
+
+On this host that resolves to
+`C:\Users\mcoelho\AppData\Local\Microsoft\WinGet\Packages\SQLite.SQLite_Microsoft.Winget.Source_8wekyb3d8bbwe\sqlite3.exe`
+- inside a user profile. Measured ACL: FullControl for `ANALOG\mcoelho`,
+`ANALOG\SVC_SCRIPTADM` and `ANALOG\VNatesan-2`. Authenticode status: **NotSigned**.
+
+So any code running as any of those three accounts, with no elevation, can replace that
+binary; the next deploy runs it as administrator against the live config database holding
+section-access authorization. Measured on 2026-10-21, not inferred.
+
+Root cause is the repo's own documented instruction: `winget install SQLite.SQLite`. winget
+here is itself per-user (`...\AppData\Local\Microsoft\WindowsApps\winget.exe`), so it
+installs into a writable profile. It also ties the dependency to one person's profile - a
+deploy by another admin may not find `sqlite3` and fails at the backup step - and may not
+work at all on Server Core or under a service account.
+
+Proposed fix, owner go NOT yet given:
+1. Install `sqlite3.exe` machine-wide and admin-only (`C:\Program Files\SQLite\`), not per-user.
+2. `Get-Sqlite3Path` takes an explicit configured absolute path first and REFUSES a binary in
+   a user-writable directory when elevated; PATH becomes a warning fallback.
+3. Correct `.agents/repo-guidance.md` and `docs/ConfigDbOperations.md`, which currently tell
+   operators to do the insecure per-user install.
+4. While there: no minimum-version check exists either, and `VACUUM INTO` needs 3.27+.
+
+**Also open, owner decisions:**
+- `-NarrowPublishAcl` shipped opt-in (`tools/Install-ExchangeAdminWeb.ps1`). Making it the
+  default needs a dev install that exercises the modules - it cannot be validated off a host.
+- `SQLitePCLRaw.lib.e_sqlite3 2.1.11` carries a known high-severity advisory and ships INSIDE
+  the app. Surfaced by build warnings; untouched, outside audit scope.
+- Untested seam: the app writes the config DB with `Microsoft.Data.Sqlite` and the ops scripts
+  back it up with `sqlite3.exe`. No test covers the handoff - every Pester fixture is created
+  and verified by the same CLI, which is close to self-certification.
+- Pre-existing: `aud-a29b`, `aud-a33b`, `aud-a6b` live acceptance.
+- Unapproved follow-ups I filed: `aud-a23b`, `a26b`, `a28b`, `a38b`, `a1b`-`a7b`, `a33c`, `a6c`.
+
+**No blockers.** Review harness is `codex exec` with NO `--model` flag; `agy` works headlessly
+only with `--dangerously-skip-permissions` (owner authorised 2026-10-20; print mode
+soft-denies every tool confirmation regardless of the allow-list).
+
+### Audit history (superseded by the line above)
 
 The owner-authorized read-only audit of `34bac0872e0131ebeef595217590b03beeb3eee4`
 is complete. The report, saved at the owner's request, is
