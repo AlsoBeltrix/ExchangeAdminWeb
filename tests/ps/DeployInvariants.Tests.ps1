@@ -714,8 +714,8 @@ Describe 'tools/Install-ExchangeAdminWeb.ps1' {
         $s.Text | Should -Not -Match 'New-Item[^\r\n]*\$ConfigStorePath' `
             -Because 'the installer must never create the shared database file'
         $s.Text | Should -Match 'StartsWith\(''\\\\''\)' -Because 'a UNC path must be refused'
-        $s.Text | Should -Match '-ConfigStorePath \$ConfigStorePath\)' `
-            -Because 'the generated appsettings must carry the key'
+        $s.Text | Should -Match '-ConfigStorePath \$configStorePlan\.Path\)' `
+            -Because 'the generated appsettings must carry the key (the decided one since cdt-11: supplied, else kept)'
     }
 
     It 'generated appsettings carries ConfigStore:Path only when -ConfigStorePath is given (byte-identical otherwise)' {

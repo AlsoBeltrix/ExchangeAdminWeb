@@ -40,7 +40,9 @@
     folder (which is still created and ACLed: the per-instance jobs database and the first-run
     seed files live there). The shared database must already exist - the installer never
     creates it; tools\Move-ConfigDbToShared.ps1 does, once, from an existing instance.
-    Without -ConfigStorePath the instance uses its own config\exchangeadmin.db as before.
+    Without -ConfigStorePath an existing instance keeps the ConfigStore:Path its appsettings.json
+    already names - also under -RegenerateAppSettings, which regenerates every other value - and
+    a new instance uses its own config\exchangeadmin.db.
 
 .EXAMPLE
     .\tools\Install-ExchangeAdminWeb.ps1
@@ -292,7 +294,10 @@ function Write-AppSettings {
         }
     }
 
-    Invoke-PlanOrAction "Write appsettings.json at $Path" {
+    # cdt-11: name a carried ConfigStore:Path, so a plan shows the key is kept.
+    $configStoreNote = ''
+    if ($Settings.ContainsKey('ConfigStore')) { $configStoreNote = " with ConfigStore:Path = $($Settings['ConfigStore']['Path'])" }
+    Invoke-PlanOrAction "Write appsettings.json at $Path$configStoreNote" {
         $dir = Split-Path -Parent $Path
         if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -519,6 +524,59 @@ function New-AppSettingsObject {
     return $settings
 }
 
+function Resolve-ConfigStorePlan {
+    # cdt-11. Decides ONCE, before anything is written, which ConfigStore:Path this run leaves in
+    # appsettings.json - and so which config database the instance opens afterwards, which is the
+    # one the banner reports and the pre-upgrade backup snapshots. -RegenerateAppSettings used to
+    # rebuild the file from parameters alone, so an omitted -ConfigStorePath silently dropped the
+    # key naming a shared database, and the backup then re-read the rewritten file and snapshotted
+    # the stale per-instance copy instead.
+    #
+    # When this run writes the file, a supplied path wins; otherwise the existing key is carried
+    # exactly as Get-ConfigStorePathSetting reads it. A file this run keeps keeps its own key. A
+    # file that does not parse stops the run here, before anything changes: overwriting a file the
+    # installer cannot read could drop the key.
+    param(
+        [string]$PublishPath,
+        [string]$SuppliedPath,
+        [bool]$RegenerateAppSettings
+    )
+
+    $appSettingsExists = Test-Path -LiteralPath (Join-Path $PublishPath 'appsettings.json') -PathType Leaf
+    $existingPath = Get-ConfigStorePathSetting -PublishPath $PublishPath
+    # Write-AppSettings' own rule: it writes when there is no file, or when told to regenerate.
+    $writesAppSettings = (-not $appSettingsExists) -or $RegenerateAppSettings
+
+    $path = $null
+    $source = 'None'
+    if ($writesAppSettings -and -not [string]::IsNullOrWhiteSpace($SuppliedPath)) {
+        $path = $SuppliedPath
+        $source = 'Supplied'
+    } elseif ($existingPath) {
+        $path = $existingPath
+        $source = 'Existing'
+    }
+
+    # No key: the per-instance default, from the same resolver the app's rule is mirrored in.
+    if ($path) {
+        $dbPath = $path
+    } else {
+        $dbPath = Resolve-ConfigDbPath -PublishPath $PublishPath
+    }
+
+    $summary = "$dbPath (this instance only)"
+    if ($source -eq 'Supplied') { $summary = "$path (shared, from -ConfigStorePath)" }
+    if ($source -eq 'Existing') { $summary = "$path (shared, ConfigStore:Path kept from the existing appsettings.json)" }
+
+    return [pscustomobject]@{
+        Path              = $path
+        Source            = $source
+        DbPath            = $dbPath
+        WritesAppSettings = $writesAppSettings
+        Summary           = $summary
+    }
+}
+
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
 $defaultPublishPath = Join-Path $env:SystemDrive "inetpub\$AppAlias"
 $defaultLogRoot = Join-Path $env:ProgramData "ExchangeAdminWeb\Logs"
@@ -557,6 +615,11 @@ $appLogDir = Join-Path $PublishPath "logs"
 $timestamp = Get-Date -Format "yyyyMMddHHmmss"
 $stagingPath = "$PublishPath.staging.$timestamp"
 
+# A36. A sibling module that names no host, domain or configuration, so importing it keeps this
+# installer standalone and environment-neutral (Architectural Invariant 1). Imported before the
+# banner because the config-store decision below reads appsettings.json through it (cdt-11).
+Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
+
 # Optional shared config database. The path must be absolute and local (SQLite locking is not
 # reliable over a network share) and the file MUST already exist: the app opens a configured
 # path without create and stops if it is missing, so the installer refuses here rather than
@@ -572,6 +635,11 @@ if (-not [string]::IsNullOrWhiteSpace($ConfigStorePath)) {
     $sharedConfigDir = Split-Path -Parent $ConfigStorePath
 }
 
+# cdt-11. Decided here, once: after -ConfigStorePath is validated, before the banner and before
+# anything is changed or written. The banner, the appsettings.json write and the pre-upgrade
+# backup all read this plan; nothing re-reads ConfigStore:Path from the file this run may rewrite.
+$configStorePlan = Resolve-ConfigStorePlan -PublishPath $PublishPath -SuppliedPath $ConfigStorePath -RegenerateAppSettings $RegenerateAppSettings.IsPresent
+
 Write-Host ""
 Write-Host "ExchangeAdminWeb installer" -ForegroundColor Magenta
 Write-Host "  Source      : $repoRoot" -ForegroundColor DarkGray
@@ -580,7 +648,7 @@ Write-Host "  App pool    : $AppPoolName" -ForegroundColor DarkGray
 Write-Host "  Publish     : $PublishPath" -ForegroundColor DarkGray
 Write-Host "  PathBase    : $PathBase" -ForegroundColor DarkGray
 Write-Host "  Log root    : $LogRoot" -ForegroundColor DarkGray
-Write-Host "  Config DB   : $(if ($sharedConfigDir) { "$ConfigStorePath (shared)" } else { "$configDir\exchangeadmin.db (this instance only)" })" -ForegroundColor DarkGray
+Write-Host "  Config DB   : $($configStorePlan.Summary)" -ForegroundColor DarkGray
 Write-Host "  Mode        : $(if ($PlanOnly) { 'PLAN ONLY' } else { 'APPLY' })" -ForegroundColor DarkGray
 Write-Host ""
 
@@ -597,8 +665,6 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 # environment-specific deploy tooling (Architectural Invariant 1). Imported outside the
 # PlanOnly guard because the identity decision below is reported during a dry run too.
 Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
-# A36. Same reasoning as above: a sibling module that names no host or environment.
-Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 
 if ($PlanOnly) {
     Write-Plan "Import WebAdministration and verify IIS site '$ParentSite'"
@@ -739,7 +805,7 @@ Write-AppSettings -Path $configPath -Settings (New-AppSettingsObject `
     -LogPath $LogRoot `
     -SecurityAllowedGroups $allowedGroupsQualified `
     -SecurityAdminGroups $adminGroupsQualified `
-    -ConfigStorePath $ConfigStorePath)
+    -ConfigStorePath $configStorePlan.Path)
 
 # Config seeds (SQLite note): runtime config now lives in config/exchangeadmin.db, created by
 # the app on first start. These JSON seeds are written only if missing and are consumed as
@@ -828,9 +894,11 @@ if ($SkipConfigBackup) {
 # .NET host in Program Files (docs/ConfigDbToolInApp-Plan.md). A plan runs before publish, so
 # it prints the paths it would use without requiring them to exist.
 $configDbToolPlan = Resolve-ConfigDbTool -AppPath $stagingPath -PlanOnly
-Invoke-PlanOrAction "Back up the config database before upgrading (via $($configDbToolPlan.Summary) backup)" {
-    $existingDb = Resolve-ConfigDbPath -PublishPath $PublishPath
-    $configuredDbPath = Get-ConfigStorePathSetting -PublishPath $PublishPath
+Invoke-PlanOrAction "Back up the config database before upgrading (via $($configDbToolPlan.Summary) backup): $($configStorePlan.DbPath)" {
+    # cdt-11: the database decided before appsettings.json was written. Re-reading the file here
+    # read it AFTER this run had rewritten it, so a dropped key sent the backup to the wrong file.
+    $existingDb = $configStorePlan.DbPath
+    $configuredDbPath = $configStorePlan.Path
 
     if (-not (Test-IsSqliteConfigDbPresent -DbPath $existingDb)) {
         # Review of A36: these two cases were collapsed into "nothing to back up", and only
