@@ -694,6 +694,49 @@ Describe 'deploy.ps1' {
         $gates[0].ElseClause.Statements[0].Extent.Text | Should -BeLike 'Write-Warn "POST-DEPLOY CHECK: no config DB at*'
     }
 
+    It 'writes and reports the manifest even when git cannot answer (cdt-14)' {
+        # Under PowerShell 7 a failed git leaves $gitCommit $null (5.1 maps it to "unknown"), and
+        # the writer - which runs in the finally that restarts the pool - called Substring on it.
+        foreach ($name in 'Write-Success', 'Write-DeploymentManifest') {
+            $fn = Find-FunctionDefinition $s $name
+            $fn | Should -Not -BeNullOrEmpty
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        $publish = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt14_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $publish -Force | Out-Null
+        # deploy.ps1's own preference. Under Continue a failed method call is written and skipped,
+        # so the old line would not escape the function and this test would pass for the wrong reason.
+        $ErrorActionPreference = 'Stop'
+        try {
+            $noRepository = Join-Path $publish 'no-such-repository'
+            $said = @(Write-DeploymentManifest -PublishFolder $publish -RepoRoot $noRepository 6>&1 | ForEach-Object { "$_" })
+            ($said -join "`n") | Should -Match 'Deployment manifest written: '
+            $manifest = Get-Content -LiteralPath (Join-Path $publish 'deployment-manifest.json') -Raw | ConvertFrom-Json
+            (@($null, '', 'unknown') -contains $manifest.gitCommit) | Should -BeTrue -Because 'git could not answer, so no commit is recorded'
+
+            $head = "$(& git -C $RepoRoot rev-parse HEAD)".Trim()
+            $LASTEXITCODE | Should -Be 0
+            $said = @(Write-DeploymentManifest -PublishFolder $publish -RepoRoot $RepoRoot 6>&1 | ForEach-Object { "$_" })
+            ($said -join "`n") | Should -Match ([regex]::Escape("@ $($head.Substring(0, 8))")) -Because 'a real commit is still shortened to eight characters'
+        } finally {
+            Remove-Item -LiteralPath $publish -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'shortens the manifest commit only when there is one long enough to shorten (cdt-14)' {
+        $fn = Find-FunctionDefinition $s 'Write-DeploymentManifest'
+        $calls = @($fn.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                    $node.Member.Extent.Text -eq 'Substring' }, $true))
+        $calls.Count | Should -Be 1 -Because 'one place shortens the commit'
+        $guard = $calls[0].Parent
+        while ($null -ne $guard -and -not ($guard -is [System.Management.Automation.Language.IfStatementAst])) { $guard = $guard.Parent }
+        $guard | Should -Not -BeNullOrEmpty -Because 'Substring on a null or short commit throws'
+        $guard.Clauses[0].Item1.Extent.Text | Should -BeExactly '$gitCommit -and $gitCommit.Length -ge 8'
+        $calls[0].Extent.StartOffset | Should -BeGreaterThan $guard.Clauses[0].Item2.Extent.StartOffset -Because 'it runs only in the then-branch'
+        $calls[0].Extent.EndOffset | Should -BeLessThan $guard.Clauses[0].Item2.Extent.EndOffset
+    }
+
     It 'runs a post-deploy live DB integrity check (DB is excluded from file drift by design)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,

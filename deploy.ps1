@@ -129,7 +129,13 @@ function Write-DeploymentManifest {
 
     $manifestPath = Join-Path $PublishFolder "deployment-manifest.json"
     $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-    Write-Success "Deployment manifest written: v$($manifest.version) @ $($gitCommit.Substring(0, [Math]::Min(8, $gitCommit.Length)))"
+    # Shorten only a commit long enough to shorten (cdt-14). Windows PowerShell 5.1 turns a failed
+    # git's stderr into an error the catch above maps to "unknown"; PowerShell 7 does not, so
+    # $gitCommit is $null there, and this runs inside the finally that restarts the pool, where a
+    # throw would replace the deploy's own outcome. Same guard as tools/deploy-pipeline.ps1.
+    $shortCommit = $gitCommit
+    if ($gitCommit -and $gitCommit.Length -ge 8) { $shortCommit = $gitCommit.Substring(0, 8) }
+    Write-Success "Deployment manifest written: v$($manifest.version) @ $shortCommit"
 }
 
 # -Force regenerates appsettings.json from parameters, and ConfigStore:Path is the one key that must
