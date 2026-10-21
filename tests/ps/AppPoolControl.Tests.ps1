@@ -738,3 +738,81 @@ Describe 'Assert-AppPoolServesPath' {
         $result.Count | Should -Be 1
     }
 }
+
+Describe 'aud-a38d: the promotion refuses to run where it cannot see the app pools' {
+
+    # Under PowerShell 7, WebAdministration loads through the compatibility session without its
+    # IIS: drive, and the module's Test-Path IIS:\AppPools\... probes then read every pool as
+    # absent. deploy.ps1 refuses at the import; the promotion carried on.
+
+    BeforeAll {
+        $promotePath = (Resolve-Path (Join-Path $PSScriptRoot '..\..\tools\promote-dev-to-prod.ps1')).Path
+        $tokens = $null
+        $parseErrors = $null
+        $script:DriveAst = [System.Management.Automation.Language.Parser]::ParseFile($promotePath, [ref]$tokens, [ref]$parseErrors)
+
+        function Get-DriveCommand {
+            param([string]$CommandName)
+            @($script:DriveAst.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.CommandAst]
+                    }, $true) | Where-Object { $_.GetCommandName() -eq $CommandName })
+        }
+
+        # The import, and the statement after it in the same block.
+        $script:Imports = @(Get-DriveCommand 'Import-Module' | Where-Object {
+                $_.CommandElements.Count -ge 2 -and $_.CommandElements[1].Extent.Text -eq 'WebAdministration'
+            })
+        $importStatement = $script:Imports[0].Parent
+        $block = $importStatement.Parent
+        $script:DriveGuard = $block.Statements[$block.Statements.IndexOf($importStatement) + 1]
+
+        # The real Write-Fail, so the lifted guard throws the way the script does - and the real
+        # Write-Warn, so a guard downgraded to a warning fails these tests by not throwing,
+        # rather than by a missing command.
+        $helpers = $script:DriveAst.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+            }, $true) | Where-Object Name -In 'Write-Fail', 'Write-Warn'
+        foreach ($helper in $helpers) { . ([scriptblock]::Create($helper.Extent.Text)) }
+    }
+
+    It 'imports WebAdministration once, in the apply path' {
+        $script:Imports.Count | Should -Be 1
+        $script:Imports[0].Extent.Text | Should -Be 'Import-Module WebAdministration -ErrorAction Stop'
+    }
+
+    It 'checks for the IIS: drive straight after the import, and refuses through Write-Fail' {
+        $script:DriveGuard | Should -BeOfType [System.Management.Automation.Language.IfStatementAst]
+        $script:DriveGuard.Clauses[0].Item1.Extent.Text | Should -Be '-not (Get-PSDrive -Name IIS -ErrorAction SilentlyContinue)'
+        $script:DriveGuard.Clauses[0].Item2.Statements[0].PipelineElements[0].GetCommandName() | Should -Be 'Write-Fail'
+    }
+
+    It 'refuses in a session with no IIS: drive - which this test session is' {
+        # The shipped statement, lifted from the file and run as it stands.
+        Get-PSDrive -Name IIS -ErrorAction SilentlyContinue | Should -BeNullOrEmpty -Because 'the precondition: no IIS: drive here'
+
+        { . ([scriptblock]::Create($script:DriveGuard.Extent.Text)) } |
+            Should -Throw -ExpectedMessage '*IIS: drive is unavailable*Windows PowerShell 5.1*Prod was not touched*'
+    }
+
+    It 'lets the promotion carry on once a drive of that name exists' {
+        $null = New-PSDrive -Name IIS -PSProvider FileSystem -Root $TestDrive
+        try {
+            { . ([scriptblock]::Create($script:DriveGuard.Extent.Text)) } | Should -Not -Throw
+        } finally {
+            Remove-PSDrive -Name IIS -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses before the backup, the mirror and the stop' {
+        $guardEnd = $script:DriveGuard.Extent.EndOffset
+        foreach ($name in 'Invoke-RobocopyChecked', 'Backup-SqliteConfigDb', 'Stop-AppPoolChecked') {
+            $calls = @(Get-DriveCommand $name)
+            $calls.Count | Should -BeGreaterThan 0 -Because "$name is called"
+            foreach ($call in $calls) {
+                $call.Extent.StartOffset | Should -BeGreaterThan $guardEnd -Because "line $($call.Extent.StartLineNumber) ($name) must come after the drive check"
+            }
+        }
+    }
+}

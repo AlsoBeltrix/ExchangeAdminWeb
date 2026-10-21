@@ -312,9 +312,17 @@ if (-not $Apply) {
 if ($Apply) {
     if (-not (Test-IsAdministrator)) { throw "Run this script from an elevated PowerShell session when using -Apply." }
     Import-Module WebAdministration -ErrorAction Stop
+    # aud-a38d: under PowerShell 7 WebAdministration loads through the compatibility session
+    # WITHOUT its IIS: drive, and the pool helpers' Test-Path IIS:\AppPools\... then reads every
+    # pool as absent - the verified stop refuses a pool that exists, the verified start reports
+    # prod down. Checking that the module loaded would not catch it: it does load. deploy.ps1
+    # refuses here for the same reason, and so does this, before any work is done.
+    if (-not (Get-PSDrive -Name IIS -ErrorAction SilentlyContinue)) {
+        Write-Fail "The IIS: drive is unavailable after importing WebAdministration, so no app pool can be seen - every one would read as absent. Run this script in Windows PowerShell 5.1 on the IIS server; the WebAdministration provider does not load under PowerShell 7. Prod was not touched."
+    }
     Assert-BackupFreeSpace -SourcePath $prod -BackupRootPath $backupRootResolved
 } else {
-    Write-Plan "Import-Module WebAdministration"
+    Write-Plan "Import-Module WebAdministration, and refuse unless its IIS: drive is available (Windows PowerShell 5.1)"
     Write-Plan "Check free space in $backupRootResolved for prod backup"
 }
 
