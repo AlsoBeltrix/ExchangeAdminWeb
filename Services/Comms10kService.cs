@@ -276,7 +276,12 @@ public class Comms10kService
                 Success = outcome.Rejections.Count == 0,
                 ResolvedMembers = outcome.ResolvedMembers,
                 Rejections = outcome.Rejections,
-                Message = $"{outcome.ResolvedDns.Count} resolved, {outcome.Rejections.Count} rejected."
+                // cdr-followup-2: resolved addresses and distinct members, named separately. This
+                // read "1 resolved, 1 rejected." for two aliases of one person and one unknown
+                // address: members counted beside addresses. Resolve gives every input address
+                // exactly one of a rejection or a resolution, so the subtraction is exact.
+                Message = Comms10kAddressResolver.DescribeResolved(
+                    emails.Count - outcome.Rejections.Count, outcome.ResolvedMembers.Count, outcome.Rejections.Count) + "."
             };
         });
     }
