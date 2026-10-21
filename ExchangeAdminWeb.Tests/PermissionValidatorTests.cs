@@ -10,11 +10,24 @@ namespace ExchangeAdminWeb.Tests;
 
 public class PermissionValidatorTests
 {
+    /// <summary>
+    /// An Exchange resolver that answers "no such recipient" for every identity - the legacy
+    /// list's entries then stay literals, which is what the tests written before aud-a2b relied
+    /// on implicitly when they ran with no resolver at all.
+    /// </summary>
+    private static IIdentityResolver ExchangeKnowsNobody()
+    {
+        var resolver = Substitute.For<IIdentityResolver>();
+        resolver.ResolveRecipientAsync(Arg.Any<string>()).Returns((ResolvedRecipient?)null);
+        return resolver;
+    }
+
     private static PermissionValidator CreateValidator(
         string[]? excludedUsers = null,
         bool preventSelfGrant = true,
         string[]? appsettingsExcludedUsers = null,
-        ExchangeAdminWeb.Services.Storage.IConfigStore? moduleConfigStore = null)
+        ExchangeAdminWeb.Services.Storage.IConfigStore? moduleConfigStore = null,
+        IIdentityResolver? resolver = null)
     {
         // Unique DB dir per validator so seeded module config does not leak across tests.
         var testDir = Path.Combine(Path.GetTempPath(), "eaw-test-" + Guid.NewGuid().ToString("N"));
@@ -45,6 +58,8 @@ public class PermissionValidatorTests
         var serviceProvider = Substitute.For<IServiceProvider>();
         scopeFactory.CreateScope().Returns(scope);
         scope.ServiceProvider.Returns(serviceProvider);
+        if (resolver is not null)
+            serviceProvider.GetService(typeof(IIdentityResolver)).Returns(resolver);
 
         var env = Substitute.For<IWebHostEnvironment>();
         env.ContentRootPath.Returns(testDir);
@@ -109,7 +124,8 @@ public class PermissionValidatorTests
     public async Task PermissionValidator_ReloadsWhenTokenMoves()
     {
         var store = NewStore();
-        var validator = CreateValidator(excludedUsers: new[] { "blocked@contoso.com" }, moduleConfigStore: store);
+        var validator = CreateValidator(excludedUsers: new[] { "blocked@contoso.com" }, moduleConfigStore: store,
+            resolver: ExchangeKnowsNobody());
         var now = DateTime.UtcNow;
         validator.ChangeWatcher.UtcNow = () => now;
 
@@ -132,7 +148,8 @@ public class PermissionValidatorTests
     public async Task PermissionValidator_DetectsAChangeMadeBeforeItsFirstPoll()
     {
         var store = NewStore();
-        var validator = CreateValidator(excludedUsers: new[] { "blocked@contoso.com" }, moduleConfigStore: store);
+        var validator = CreateValidator(excludedUsers: new[] { "blocked@contoso.com" }, moduleConfigStore: store,
+            resolver: ExchangeKnowsNobody());
 
         Assert.False(await validator.IsUserExcludedAsync("newly@contoso.com"));
 
@@ -199,12 +216,13 @@ public class PermissionValidatorTests
     // --- Fail-closed init state machine ---
 
     [Fact]
-    public async Task ValidateTargetMailbox_ExclusionConfigured_NoExchangeConfig_KeepsLiteralMatch()
+    public async Task ValidateTargetMailbox_ExclusionExchangeDoesNotKnow_KeepsLiteralMatch()
     {
-        // With exclusions configured but EXO not configured, group expansion
-        // is skipped (returns empty) and the identity is kept as a literal
-        // match. An unrelated target is allowed; the literal entry is blocked.
-        var validator = CreateValidator(excludedUsers: new[] { "SomeGroupThatNeedsExpansion" });
+        // Exchange answered and has no such recipient, so the entry stays a literal match. An
+        // unrelated target is allowed; the literal entry is blocked. (Before aud-a2b this ran
+        // with no resolver at all and passed only because the failed lookup was swallowed.)
+        var validator = CreateValidator(excludedUsers: new[] { "SomeGroupThatNeedsExpansion" },
+            resolver: ExchangeKnowsNobody());
 
         var resultUnrelated = await validator.ValidateTargetMailboxAsync("anyone@company.com");
         Assert.Null(resultUnrelated);
@@ -212,6 +230,111 @@ public class PermissionValidatorTests
         var resultProtected = await validator.ValidateTargetMailboxAsync("SomeGroupThatNeedsExpansion");
         Assert.NotNull(resultProtected);
         Assert.Contains("protected", resultProtected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ValidateTargetMailbox_ExclusionConfigured_ExchangeCannotBeAsked_FailsClosed()
+    {
+        // aud-a2b hole 1. With no way to ask Exchange, the list cannot recognise another address
+        // of an excluded mailbox - so it cannot say any target is clear. This used to load
+        // "successfully" with string matching only and allow everything else.
+        var validator = CreateValidator(excludedUsers: new[] { "vip@contoso.com" });
+
+        var result = await validator.ValidateTargetMailboxAsync("anyone@company.com");
+
+        Assert.NotNull(result);
+    }
+
+    // --- aud-a2b hole 1: the legacy excluded-user list ---
+
+    private static ResolvedRecipient Vip => new("vip@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true);
+
+    [Fact]
+    public async Task LegacyList_ASecondaryAddressOfAnExcludedMailbox_IsRefused()
+    {
+        // The finding: vip@contoso.com is excluded, and the operator types a secondary address of
+        // that same mailbox. Exchange names the recipient; its canonical address is excluded.
+        var resolver = ExchangeKnowsNobody();
+        resolver.ResolveRecipientAsync("vip@contoso.com").Returns(Vip);
+        resolver.ResolveRecipientAsync("alias@contoso.com").Returns(Vip);
+        var validator = CreateValidator(excludedUsers: new[] { "vip@contoso.com" }, resolver: resolver);
+
+        var result = await validator.ValidateTargetMailboxAsync("alias@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public async Task LegacyList_AnUnrelatedMailbox_IsAllowed()
+    {
+        // The opposite direction, so the refusal above cannot be passing by refusing everything.
+        var resolver = ExchangeKnowsNobody();
+        resolver.ResolveRecipientAsync("vip@contoso.com").Returns(Vip);
+        resolver.ResolveRecipientAsync("other@contoso.com")
+            .Returns(new ResolvedRecipient("other@contoso.com", "ext-other", "UserMailbox", ExistsOnPrem: true));
+        var validator = CreateValidator(excludedUsers: new[] { "vip@contoso.com" }, resolver: resolver);
+
+        var result = await validator.ValidateTargetMailboxAsync("other@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.Null(result.Error);
+    }
+
+    [Fact]
+    public async Task LegacyList_AnExcludedEntryExchangeCouldNotResolve_FailsClosed()
+    {
+        // The load used to swallow this and accept a list with no ids as complete; every alias
+        // then passed for the 30-minute cache lifetime.
+        var resolver = ExchangeKnowsNobody();
+        resolver.ResolveRecipientAsync("vip@contoso.com")
+            .Returns<ResolvedRecipient?>(_ => throw new InvalidOperationException("EXO unreachable"));
+        resolver.ResolveRecipientAsync("other@contoso.com")
+            .Returns(new ResolvedRecipient("other@contoso.com", "ext-other", "UserMailbox", ExistsOnPrem: true));
+        var validator = CreateValidator(excludedUsers: new[] { "vip@contoso.com" }, resolver: resolver);
+
+        var result = await validator.ValidateTargetMailboxAsync("other@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public async Task LegacyList_ATargetExchangeCouldNotResolve_FailsClosed()
+    {
+        // A failed lookup of the TARGET used to fall through to "not excluded".
+        var resolver = ExchangeKnowsNobody();
+        resolver.ResolveRecipientAsync("vip@contoso.com").Returns(Vip);
+        resolver.ResolveRecipientAsync("alias@contoso.com")
+            .Returns<ResolvedRecipient?>(_ => throw new InvalidOperationException("EXO unreachable"));
+        var validator = CreateValidator(excludedUsers: new[] { "vip@contoso.com" }, resolver: resolver);
+
+        var result = await validator.ValidateTargetMailboxAsync("alias@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public async Task LegacyList_AFailedLoad_IsRetriedAfterAMinute_NotServedForTheCacheLifetime()
+    {
+        // Failing closed is the rule; failing closed for half an hour after Exchange recovers is
+        // not. The first load fails, the next attempt inside the retry window is still refused
+        // from the cached failure, and once the window passes the recovered lookup is used.
+        var calls = 0;
+        var resolver = ExchangeKnowsNobody();
+        resolver.ResolveRecipientAsync("vip@contoso.com").Returns<ResolvedRecipient?>(_ =>
+            ++calls == 1 ? throw new InvalidOperationException("EXO unreachable") : Vip);
+        resolver.ResolveRecipientAsync("other@contoso.com")
+            .Returns(new ResolvedRecipient("other@contoso.com", "ext-other", "UserMailbox", ExistsOnPrem: true));
+        var validator = CreateValidator(excludedUsers: new[] { "vip@contoso.com" }, resolver: resolver);
+        var now = DateTime.UtcNow;
+        validator.UtcNow = () => now;
+        validator.ChangeWatcher.UtcNow = () => now;
+
+        Assert.NotNull((await validator.ValidateTargetMailboxAsync("other@contoso.com", null, "MailboxPermissions")).Error);
+
+        now = now.AddSeconds(30);
+        Assert.NotNull((await validator.ValidateTargetMailboxAsync("other@contoso.com", null, "MailboxPermissions")).Error);
+
+        now = now.Add(PermissionValidator.FailedLoadRetry);
+        Assert.Null((await validator.ValidateTargetMailboxAsync("other@contoso.com", null, "MailboxPermissions")).Error);
     }
 
     [Fact]
@@ -251,12 +374,13 @@ public class PermissionValidatorTests
     // --- Retry after init failure ---
 
     [Fact]
-    public async Task ValidateTargetMailbox_InitSucceeds_WhenExoNotConfigured()
+    public async Task ValidateTargetMailbox_InitSucceeds_WhenExchangeKnowsNoEntry()
     {
-        // When EXO is not configured, group expansion is skipped gracefully
-        // and the literal entries are still present. Init succeeds and
-        // unrelated targets are allowed.
-        var validator = CreateValidator(excludedUsers: new[] { "SomeGroup" });
+        // When EXO is not configured, group expansion is skipped gracefully and the literal
+        // entries are still present. Exchange answering "no such recipient" for every entry is a
+        // complete load, so init succeeds and unrelated targets are allowed. (It used to run
+        // with no resolver; since aud-a2b that refuses - see the FailsClosed test above.)
+        var validator = CreateValidator(excludedUsers: new[] { "SomeGroup" }, resolver: ExchangeKnowsNobody());
 
         var firstResult = await validator.ValidateTargetMailboxAsync("user@company.com");
         Assert.Null(firstResult);
@@ -337,6 +461,24 @@ public class PermissionValidatorTests
     }
 
     [Fact]
+    public async Task AnAdMatchExchangeDoesNotAgreeWith_IsNotTheObjectChecked()
+    {
+        // aud-a2b hole 2 at the validator. The AD-first resolution answers with an unrelated,
+        // unprotected account that shares the typed string; the Exchange-target resolution - the
+        // object the write will actually hit - refuses because the two disagree. Checking the AD
+        // account and handing the same string to Exchange is the bypass.
+        var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
+        pp.AdFirstStatus = ProtectedPrincipalService.ResolutionStatus.Resolved;
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.Ambiguous;
+        pp.CheckResult = ProtectedPrincipalResult.NotProtected();
+
+        var result = await validator.ValidateTargetMailboxAsync("vip", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.NotNull(result.Error);
+        Assert.Equal(1, pp.ResolveCalls);
+    }
+
+    [Fact]
     public async Task AddressOnlyConfig_DeniesWhenTheDirectoryCannotAnswer()
     {
         // The deliberate cost of always resolving: an address-only configuration used to work
@@ -354,7 +496,9 @@ public class PermissionValidatorTests
 
     /// <summary>
     /// Scripts the resolution seam so the four outcomes can be driven without a directory. The
-    /// gate calls ResolveWithExchangeFallbackAsync, so that is what is overridden.
+    /// gate calls ResolveExchangeTargetAsync since aud-a2b, so that is what is overridden; the
+    /// AD-first ResolveWithExchangeFallbackAsync is scripted separately so a validator that went
+    /// back to it would get an answer - the wrong one - rather than failing for another reason.
     /// </summary>
     private sealed class ScriptedPpService : ProtectedPrincipalService
     {
@@ -389,13 +533,25 @@ public class PermissionValidatorTests
         /// </summary>
         public ResolvedDirectoryPrincipal? ResolveTo;
 
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
         {
             ResolveCalls++;
             ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved
                 ? ResolveTo ?? new ResolvedDirectoryPrincipal("Test", identity, identity, "sam", identity, "CN=x,DC=y", "guid", null)
                 : null;
             return Task.FromResult((p, Status));
+        }
+
+        /// <summary>What the AD-first resolution says: by default an unrelated, resolved account.</summary>
+        public ResolutionStatus AdFirstStatus = ResolutionStatus.Resolved;
+
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
+        {
+            ResolvedDirectoryPrincipal? p = AdFirstStatus == ResolutionStatus.Resolved
+                ? new ResolvedDirectoryPrincipal("Test", "Unrelated", "unrelated@contoso.com", identity,
+                    null, "CN=Unrelated,DC=y", "unrelated-guid", null)
+                : null;
+            return Task.FromResult((p, AdFirstStatus));
         }
 
         public override (ProtectedPrincipalConfig? config, string[] legacyExclusions, string? error) LoadEffectiveConfig()

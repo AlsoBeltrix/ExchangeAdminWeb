@@ -417,7 +417,9 @@ public class ProtectedPrincipalService
 
     /// <summary>
     /// Resolves an identity through Active Directory, falling back to Exchange Online when AD
-    /// answers "no such object". This is the entry point protection gates should use.
+    /// answers "no such object". This is the entry point protection gates should use for a target
+    /// the write binds by DN or UPN; a gate whose write hands the operator's string to EXCHANGE
+    /// uses <see cref="ResolveExchangeTargetAsync"/> instead (aud-a2b).
     /// </summary>
     /// <remarks>
     /// AD alone cannot see three legitimate kinds of target: a mailbox addressed by a secondary
@@ -441,37 +443,9 @@ public class ProtectedPrincipalService
         if (status != ResolutionStatus.NotFound)
             return (principal, status);
 
-        if (_scopeFactory == null)
-        {
-            _logger.LogWarning(
-                "Cannot attempt Exchange fallback for {Identity} - no service scope factory. Failing closed.",
-                identity);
+        var (answered, recipient) = await AskExchangeAsync(identity);
+        if (!answered)
             return (null, ResolutionStatus.Unavailable);
-        }
-
-        ResolvedRecipient? recipient;
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
-            if (resolver == null)
-            {
-                _logger.LogWarning(
-                    "Cannot attempt Exchange fallback for {Identity} - no IIdentityResolver registered. Failing closed.",
-                    identity);
-                return (null, ResolutionStatus.Unavailable);
-            }
-
-            recipient = await resolver.ResolveRecipientAsync(identity);
-        }
-        catch (Exception ex)
-        {
-            // The lookup did not run. Reporting NotFound here would let an EXO outage present as
-            // an affirmative absence, and callers that allow on NotFound would un-protect the
-            // principal. Deny instead.
-            _logger.LogWarning(ex, "Exchange fallback lookup failed for {Identity} - failing closed", identity);
-            return (null, ResolutionStatus.Unavailable);
-        }
 
         if (recipient == null)
         {
@@ -498,7 +472,22 @@ public class ProtectedPrincipalService
                 _logger.LogInformation(
                     "Exchange resolved {Identity} to canonical address {Canonical} - re-resolving in AD",
                     identity, recipient.PrimarySmtpAddress);
-                return await ResolveWithStatusAsync(recipient.PrimarySmtpAddress);
+                var (canonical, canonicalStatus) = await ResolveWithStatusAsync(recipient.PrimarySmtpAddress);
+
+                // aud-a2b. Exchange says this recipient is synced and names its canonical
+                // address, and AD holds no object under it: the directories disagree, exactly as
+                // in the same-address case below. Passing AD's NotFound through was not only the
+                // wrong message - the gates that ALLOW on NotFound let the operation through.
+                if (canonicalStatus == ResolutionStatus.NotFound)
+                {
+                    _logger.LogWarning(
+                        "Exchange reports {Identity} as directory-synced with canonical address {Canonical}, "
+                        + "but Active Directory holds no object under it - directories disagree, failing closed",
+                        identity, recipient.PrimarySmtpAddress);
+                    return (null, ResolutionStatus.Unavailable);
+                }
+
+                return (canonical, canonicalStatus);
             }
 
             // Exchange says this recipient IS on-prem-backed, yet AD just missed it under the very
@@ -522,7 +511,152 @@ public class ProtectedPrincipalService
         //
         // Built from the CANONICAL address, never the typed one, so an alias-addressed cloud-only
         // principal is matched against the protected user rows by its real identity.
-        //
+        return (CloudOnlyPrincipal(identity, recipient), ResolutionStatus.Resolved);
+    }
+
+    /// <summary>
+    /// Resolves the target of an operation EXCHANGE will perform with the operator's string, the
+    /// way Exchange will resolve it, and refuses when Active Directory reads the same string as a
+    /// different object. aud-a2b hole 2.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ResolveWithExchangeFallbackAsync"/> asks AD first and stops at a Resolved answer.
+    /// A string can be the sAMAccountName of an unprotected AD account and the Exchange alias of a
+    /// protected mailbox: AD answered with the account, the check passed, and the write - which
+    /// hands the same string to Exchange - landed on the mailbox. Nothing established that the
+    /// object checked and the object written were the same object.
+    ///
+    /// Here Exchange is asked first, because it performs the write, and AD's reading of the
+    /// string must agree with it:
+    /// - synced recipient: the principal is the AD object behind its canonical address, and if AD
+    ///   reads the typed string as a DIFFERENT object (by objectGUID) the string names two
+    ///   objects - <c>Ambiguous</c>. No AD object under the canonical address is the directories
+    ///   disagreeing - <c>Unavailable</c>.
+    /// - cloud-only recipient: an AD object for the same string is a second object - <c>Ambiguous</c>.
+    /// - no recipient: an Exchange write cannot land anywhere, so AD's answer is the only object the
+    ///   string names; neither directory knowing it is <c>NotFound</c>.
+    /// - Exchange not asked, AD ambiguous or unavailable: refused, as everywhere else.
+    /// </remarks>
+    // virtual: the same test seam as ResolveWithExchangeFallbackAsync.
+    public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
+    {
+        var (answered, recipient) = await AskExchangeAsync(identity);
+        if (!answered)
+            return (null, ResolutionStatus.Unavailable);
+
+        var (adPrincipal, adStatus) = await ResolveWithStatusAsync(identity);
+        if (adStatus is ResolutionStatus.Ambiguous or ResolutionStatus.Unavailable)
+            return (null, adStatus);
+
+        if (recipient == null)
+        {
+            return adStatus == ResolutionStatus.Resolved && adPrincipal is not null
+                ? (adPrincipal, ResolutionStatus.Resolved)
+                : (null, ResolutionStatus.NotFound);
+        }
+
+        if (!recipient.ExistsOnPrem)
+        {
+            if (adStatus == ResolutionStatus.Resolved)
+            {
+                _logger.LogWarning(
+                    "{Identity} is a cloud-only recipient in Exchange but an on-premises object in Active Directory "
+                    + "- the string names two objects, failing closed",
+                    identity);
+                return (null, ResolutionStatus.Ambiguous);
+            }
+
+            return (CloudOnlyPrincipal(identity, recipient), ResolutionStatus.Resolved);
+        }
+
+        var (canonical, canonicalStatus) =
+            string.Equals(recipient.PrimarySmtpAddress, identity, StringComparison.OrdinalIgnoreCase)
+                ? (adPrincipal, adStatus)
+                : await ResolveWithStatusAsync(recipient.PrimarySmtpAddress);
+
+        if (canonicalStatus == ResolutionStatus.NotFound)
+        {
+            _logger.LogWarning(
+                "Exchange reports {Identity} as directory-synced with canonical address {Canonical}, but Active "
+                + "Directory holds no object under it - directories disagree, failing closed",
+                identity, recipient.PrimarySmtpAddress);
+            return (null, ResolutionStatus.Unavailable);
+        }
+
+        if (canonicalStatus != ResolutionStatus.Resolved || canonical is null)
+            return (null, canonicalStatus == ResolutionStatus.Resolved ? ResolutionStatus.Unavailable : canonicalStatus);
+
+        if (adStatus == ResolutionStatus.Resolved && (adPrincipal is null || !IsSameDirectoryObject(adPrincipal, canonical)))
+        {
+            _logger.LogWarning(
+                "{Identity} resolves to one object in Active Directory and Exchange will write another "
+                + "(canonical {Canonical}) - failing closed",
+                identity, recipient.PrimarySmtpAddress);
+            return (null, ResolutionStatus.Ambiguous);
+        }
+
+        return (canonical, ResolutionStatus.Resolved);
+    }
+
+    /// <summary>
+    /// The same directory object: objectGUID when both carry one, otherwise the DN. Two
+    /// principals that carry neither cannot be shown to be one object, so they are not.
+    /// </summary>
+    internal static bool IsSameDirectoryObject(ResolvedDirectoryPrincipal a, ResolvedDirectoryPrincipal b)
+    {
+        if (!string.IsNullOrWhiteSpace(a.ObjectGuid) && !string.IsNullOrWhiteSpace(b.ObjectGuid))
+            return string.Equals(a.ObjectGuid, b.ObjectGuid, StringComparison.OrdinalIgnoreCase);
+
+        return !string.IsNullOrWhiteSpace(a.DistinguishedName)
+               && string.Equals(a.DistinguishedName, b.DistinguishedName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Asks Exchange which recipient an identity is. <c>answered</c> is false when the question
+    /// could not be put - no scope, no resolver, or a lookup that threw - and the recipient is
+    /// then meaningless; a null recipient with <c>answered</c> true is Exchange's affirmative
+    /// "no such recipient".
+    /// </summary>
+    private async Task<(bool answered, ResolvedRecipient? recipient)> AskExchangeAsync(string identity)
+    {
+        if (_scopeFactory == null)
+        {
+            _logger.LogWarning(
+                "Cannot ask Exchange about {Identity} - no service scope factory. Failing closed.",
+                identity);
+            return (false, null);
+        }
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
+            if (resolver == null)
+            {
+                _logger.LogWarning(
+                    "Cannot ask Exchange about {Identity} - no IIdentityResolver registered. Failing closed.",
+                    identity);
+                return (false, null);
+            }
+
+            return (true, await resolver.ResolveRecipientAsync(identity));
+        }
+        catch (Exception ex)
+        {
+            // The lookup did not run. Reporting NotFound here would let an EXO outage present as
+            // an affirmative absence, and callers that allow on NotFound would un-protect the
+            // principal. Deny instead.
+            _logger.LogWarning(ex, "Exchange lookup failed for {Identity} - failing closed", identity);
+            return (false, null);
+        }
+    }
+
+    /// <summary>
+    /// A principal for a recipient with no on-premises object, built from its CANONICAL address
+    /// so an alias-addressed cloud-only principal is matched by its real identity.
+    /// </summary>
+    private ResolvedDirectoryPrincipal CloudOnlyPrincipal(string identity, ResolvedRecipient recipient)
+    {
         // CheckOuMatches and CheckTransitiveGroupMembership both degrade to "no match" on a null
         // DN without raising a failure, so this is logged rather than left silent: an operator
         // reading the audit trail has to be able to see which rules could not be evaluated.
@@ -532,7 +666,7 @@ public class ProtectedPrincipalService
             + "only protected user rows apply",
             identity, recipient.PrimarySmtpAddress);
 
-        var cloudOnly = new ResolvedDirectoryPrincipal(
+        return new ResolvedDirectoryPrincipal(
             Source: "ProtectedPrincipalService-EXO",
             DisplayName: recipient.PrimarySmtpAddress,
             UserPrincipalName: recipient.PrimarySmtpAddress,
@@ -541,8 +675,6 @@ public class ProtectedPrincipalService
             DistinguishedName: null,
             ObjectGuid: null,
             EntraObjectId: recipient.ExternalDirectoryObjectId);
-
-        return (cloudOnly, ResolutionStatus.Resolved);
     }
 
     private ResolvedDirectoryPrincipal? ResolveViaActiveDirectory(string identity, string username, string password, string domain)

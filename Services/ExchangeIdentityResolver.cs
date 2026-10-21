@@ -97,28 +97,36 @@ public class ExchangeIdentityResolver : ExchangeServiceBase, IIdentityResolver
                 $"Exchange Online returned a recipient for '{identity}' with no PrimarySmtpAddress.");
         }
 
+        // aud-a2b hole 3. Sync state decides which rules can apply: a synced recipient is
+        // re-resolved in AD so its group, OU and pattern rules run, a cloud-only one is matched
+        // against the user rows alone. An unknown state used to read as cloud-only, which is the
+        // branch that checks LESS - so the comment that called it conservative was wrong. A
+        // recipient whose sync state cannot be read has not been resolved; fail the lookup, the
+        // same way a missing primary address does above.
+        var synced = IsDirSynced(recipient)
+            ?? throw new InvalidOperationException(
+                $"Exchange Online returned a recipient for '{identity}' without a readable IsDirSynced.");
+
         return new ResolvedRecipient(
             PrimarySmtpAddress: primary.Trim(),
             ExternalDirectoryObjectId: recipient.Properties["ExternalDirectoryObjectId"]?.Value?.ToString(),
             RecipientType: recipient.Properties["RecipientType"]?.Value?.ToString(),
-            ExistsOnPrem: IsDirSynced(recipient));
+            ExistsOnPrem: synced);
     }
 
     /// <summary>
-    /// True only when Exchange positively reports the recipient as directory-synced. Anything
-    /// else - absent property, unparseable value - is false, which routes the caller down the
-    /// cloud-only path. That path cannot evaluate on-prem group rules, so it is the branch that
-    /// assumes less. Guessing "synced" would instead assume group rules were checked when they
-    /// were not.
+    /// Exchange's directory-synced flag, or null when it is absent or unparseable. Null is not a
+    /// third answer the caller may pick a branch for: <see cref="MapRecipient"/> fails the lookup
+    /// on it.
     /// </summary>
-    private static bool IsDirSynced(PSObject recipient)
+    private static bool? IsDirSynced(PSObject recipient)
     {
         var value = recipient.Properties["IsDirSynced"]?.Value;
         return value switch
         {
             bool b => b,
-            string s => bool.TryParse(s, out var parsed) && parsed,
-            _ => false
+            string s when bool.TryParse(s, out var parsed) => parsed,
+            _ => null
         };
     }
 }

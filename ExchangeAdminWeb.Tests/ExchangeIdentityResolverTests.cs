@@ -19,17 +19,23 @@ namespace ExchangeAdminWeb.Tests;
 /// </summary>
 public class ExchangeIdentityResolverTests
 {
+    /// <remarks>
+    /// <paramref name="isDirSynced"/> defaults to a definite <c>false</c>: since aud-a2b an absent
+    /// flag fails the lookup, so a recipient built without one is no longer a neutral fixture.
+    /// <paramref name="omitIsDirSynced"/> leaves the property off entirely.
+    /// </remarks>
     private static PSObject Recipient(
         string? primarySmtp = "user@contoso.com",
         string? externalId = "ext-1",
         string? recipientType = "UserMailbox",
-        object? isDirSynced = null)
+        object? isDirSynced = null,
+        bool omitIsDirSynced = false)
     {
         var o = new PSObject();
         if (primarySmtp != null) o.Properties.Add(new PSNoteProperty("PrimarySmtpAddress", primarySmtp));
         if (externalId != null) o.Properties.Add(new PSNoteProperty("ExternalDirectoryObjectId", externalId));
         if (recipientType != null) o.Properties.Add(new PSNoteProperty("RecipientType", recipientType));
-        if (isDirSynced != null) o.Properties.Add(new PSNoteProperty("IsDirSynced", isDirSynced));
+        if (!omitIsDirSynced) o.Properties.Add(new PSNoteProperty("IsDirSynced", isDirSynced ?? false));
         return o;
     }
 
@@ -152,23 +158,23 @@ public class ExchangeIdentityResolverTests
         Assert.False(result!.ExistsOnPrem);
     }
 
-    [Fact]
-    public void MapRecipient_IsDirSyncedAbsent_DefaultsToCloudOnly()
-    {
-        // Undetermined must take the conservative branch: cloud-only cannot match on-prem group
-        // rules, so it assumes less than claiming the object is synced.
-        var result = ExchangeIdentityResolver.MapRecipient(
-            Results(Recipient(isDirSynced: null)), "user@contoso.com");
+    // aud-a2b hole 3. These two used to assert that an undetermined sync state "defaults to
+    // cloud-only", on the reasoning that cloud-only assumes less. It assumes MORE: the cloud-only
+    // branch skips the group, OU and pattern rules a synced recipient is subject to, so a synced
+    // protected mailbox with unreadable metadata was checked against its user rows alone. They
+    // are rewritten to the opposite assertion, not worked around.
 
-        Assert.False(result!.ExistsOnPrem);
+    [Fact]
+    public void MapRecipient_IsDirSyncedAbsent_FailsTheLookup()
+    {
+        Assert.Throws<InvalidOperationException>(() => ExchangeIdentityResolver.MapRecipient(
+            Results(Recipient(omitIsDirSynced: true)), "user@contoso.com"));
     }
 
     [Fact]
-    public void MapRecipient_IsDirSyncedUnparseable_DefaultsToCloudOnly()
+    public void MapRecipient_IsDirSyncedUnparseable_FailsTheLookup()
     {
-        var result = ExchangeIdentityResolver.MapRecipient(
-            Results(Recipient(isDirSynced: "sometimes")), "user@contoso.com");
-
-        Assert.False(result!.ExistsOnPrem);
+        Assert.Throws<InvalidOperationException>(() => ExchangeIdentityResolver.MapRecipient(
+            Results(Recipient(isDirSynced: "sometimes")), "user@contoso.com"));
     }
 }
