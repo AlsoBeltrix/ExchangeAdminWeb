@@ -132,17 +132,14 @@ Describe 'JobStateWarning module' {
     It 'warns and returns nothing, without running it, when the app binary predates the db mode' {
         # An app older than the db mode would not exit with a usage error; it would try to
         # start. So an old binary is never executed - the check degrades to the soft note.
-        $old = Get-ChildItem -LiteralPath $PSHOME -Filter '*.dll' -File |
-            Where-Object {
-                $v = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($_.FullName)
-                $v.FileVersion -and ($v.FileMajorPart -lt 2 -or ($v.FileMajorPart -eq 2 -and $v.FileMinorPart -lt 34))
-            } | Select-Object -First 1
-        $old | Should -Not -BeNullOrEmpty -Because 'the test needs some DLL with a file version below 2.34'
         $dir = New-TempConfigDir
         $oldApp = New-TempConfigDir
         try {
             New-JobsDb -ConfigDir $dir -Statuses @('Running') | Out-Null
-            Copy-Item -LiteralPath $old.FullName -Destination (Join-Path $oldApp 'ExchangeAdminWeb.dll')
+            # cdt-4: a deterministic fixture. A text file reads as version 0.0.0, below the floor.
+            # Were it run, the host would fail and the warning would be the "Could not read the
+            # bulk jobs database" one, so the not-found warning below proves it was never run.
+            [System.IO.File]::WriteAllText((Join-Path $oldApp 'ExchangeAdminWeb.dll'), 'not an assembly')
             $warnings = @()
             $jobs = @(Get-ActiveBulkJobs -ConfigDir $dir -AppPath $oldApp -WarningVariable warnings 3>$null)
             $jobs.Count | Should -Be 0

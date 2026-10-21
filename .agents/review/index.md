@@ -103,7 +103,7 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [cdt-1](findings/cdt-1.md) | MEDIUM - backup cleanup after a same-destination race deletes the other run's verified snapshot | Closed on guard proof | - | codex / gpt-5.5-dzs / xhigh |
 | [~] | [cdt-2](findings/cdt-2.md) | MEDIUM - installer mirrors staging even when ExchangeAdminWeb.dll is missing, if there is no database to back up | Fixed; awaiting verdict | - | codex / gpt-5.5-dzs / xhigh |
 | [-] | cdt-3 | plan-mode paths read a database through the app tool - pre-existing and deliberate (scdi-3); declined, see `cdt-3.contested.md` | Declined | - | codex / gpt-5.5-dzs / xhigh |
-| [ ] | [cdt-4](findings/cdt-4.md) | LOW - two Pester fixtures pick an arbitrary old DLL from $PSHOME | Admitted; fix pending | - | codex / gpt-5.5-dzs / xhigh |
+| [~] | [cdt-4](findings/cdt-4.md) | LOW - two Pester fixtures pick an arbitrary old DLL from $PSHOME | Fixed; awaiting verdict | - | codex / gpt-5.5-dzs / xhigh |
 | [v] | [aud-a28](findings/aud-a28.md) | MEDIUM - fifteen refusal paths across emergency disable and attribute edit returned before recording anything, so a blocked attempt left no durable audit | Verified and fixed; review pending | - | implementer |
 | [ ] | [aud-a28b](findings/aud-a28b.md) | MEDIUM - SaveAsync has no behavioural coverage; a version that refused every call passed the full suite | Recorded follow-up; not approved | - | implementer |
 | [v] | [aud-a30](findings/aud-a30.md) | MEDIUM as deployed, HIGH if enabled - a ticket number reached ServiceNow's query grammar, and the row that came back was never checked against the one requested | Verified and fixed; review pending | - | implementer |

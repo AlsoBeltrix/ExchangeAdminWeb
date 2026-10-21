@@ -103,16 +103,14 @@ Describe 'SqliteConfigBackup module' {
         It 'refuses an app binary older than the db mode, before running it' {
             # An app that predates db mode does not exit with a usage error: it would start
             # the web host. So the version is checked before anything is executed.
-            $old = Get-ChildItem -LiteralPath $PSHOME -Filter '*.dll' -File |
-                Where-Object {
-                    $v = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($_.FullName)
-                    $v.FileMajorPart -ge 0 -and ($v.FileMajorPart -lt 2 -or ($v.FileMajorPart -eq 2 -and $v.FileMinorPart -lt 34)) -and $v.FileVersion
-                } | Select-Object -First 1
-            $old | Should -Not -BeNullOrEmpty -Because 'the test needs some DLL with a file version below 2.34'
             $dir = New-TempDir
             try {
-                Copy-Item -LiteralPath $old.FullName -Destination (Join-Path $dir 'ExchangeAdminWeb.dll')
-                { Resolve-ConfigDbTool -AppPath $dir } | Should -Throw -ExpectedMessage '*older than the backup tool; deploy dev first*'
+                # cdt-4: a deterministic fixture. A text file has no version resource, so
+                # FileVersionInfo reads 0/0/0 and the resolver sees 0.0.0, below the floor. The
+                # resolver never executes anything; with the floor gone it returns the tool and
+                # this assertion fails on the missing throw.
+                [System.IO.File]::WriteAllText((Join-Path $dir 'ExchangeAdminWeb.dll'), 'not an assembly')
+                { Resolve-ConfigDbTool -AppPath $dir } | Should -Throw -ExpectedMessage '*version 0.0.0, older than the backup tool*deploy dev first*'
             } finally {
                 Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
             }
