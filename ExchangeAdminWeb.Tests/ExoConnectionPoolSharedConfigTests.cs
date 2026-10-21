@@ -23,7 +23,7 @@ namespace ExchangeAdminWeb.Tests;
 /// replaced through the internal connect seam (a live tenant cannot be unit-hosted). "The other
 /// instance" writes through a second repository over the same database file.
 /// </summary>
-public class ExoConnectionPoolSharedConfigTests : IDisposable
+public partial class ExoConnectionPoolSharedConfigTests : IDisposable
 {
     private const string AppId1 = "11111111-1111-1111-1111-111111111111";
     private const string AppId2 = "22222222-2222-2222-2222-222222222222";

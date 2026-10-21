@@ -87,7 +87,19 @@ public sealed class ExoConnectionPool : IDisposable
     private readonly Func<ExoConnectionConfig, long, CancellationToken, PooledRunspace> _connect;
     private readonly object _connectedLock = new();
     private long _configGeneration;
-    private bool _disposed;
+
+    // Audit finding aud-a6c. Dispose used to drain only what was idle at that instant and leave
+    // the pool open behind it: a runspace borrowed (or still connecting) at shutdown came back
+    // afterwards, passed the generation test and was pooled into a pool whose cleanup timer had
+    // stopped - never reaped, its session never closed. So the pool now has one stop transition
+    // and one way in. _poolLock guards _stopped and every ADD to _available (TryPool); takes stay
+    // lock-free, so borrowing is unchanged.
+    private readonly object _poolLock = new();
+    private bool _stopped;
+
+    // Every Disconnect-ExchangeOnline that threw or wrote an error, for the life of the pool. A
+    // failed disconnect used to be swallowed, so it looked identical to one that worked.
+    private long _failedDisconnects;
 
     // The connection config every runspace in the pool (and every one still borrowed) was
     // connected under; null until the first borrow. Review finding scdi-1: with the shared
@@ -123,6 +135,9 @@ public sealed class ExoConnectionPool : IDisposable
 
     /// <summary>Test seam: how many idle runspaces the pool holds right now.</summary>
     internal int AvailableCount => _available.Count;
+
+    /// <summary>How many disconnects have failed over this pool's lifetime (aud-a6c).</summary>
+    internal long FailedDisconnects => Interlocked.Read(ref _failedDisconnects);
 
     public bool IsConfigured
     {
@@ -164,6 +179,11 @@ public sealed class ExoConnectionPool : IDisposable
     /// </summary>
     public async Task<PooledRunspace> BorrowAsync(TimeSpan waitTimeout, CancellationToken ct = default)
     {
+        // aud-a6c: a stopped pool opens no new sessions. Best effort by design - a borrow already
+        // past this line comes back through Return, which refuses a stopped pool and destroys the
+        // runspace. That refusal, not this check, is what keeps a connection from being stranded.
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _stopped), this);
+
         if (!_enablement.IsModuleEnabled("ExchangeOnline"))
             throw new InvalidOperationException("Exchange Online module is not enabled. Enable it in Admin Settings and configure the connection on the Exchange Online config page.");
 
@@ -248,9 +268,40 @@ public sealed class ExoConnectionPool : IDisposable
         runspace.LastUsed = DateTime.UtcNow;
         runspace.PowerShell.Commands.Clear();
         runspace.PowerShell.Streams.ClearStreams();
-        _available.Add(runspace);
-        _operationTrace.Step("ExoConnectionReturned", backend: "ExchangeOnline");
+
+        // aud-a6c: a runspace borrowed before Dispose and returned after it passes the generation
+        // test above, so the generation cannot be what refuses it - the stop flag is.
+        if (TryPool(runspace))
+        {
+            _operationTrace.Step("ExoConnectionReturned", backend: "ExchangeOnline");
+        }
+        else
+        {
+            DestroyRunspace(runspace);
+            _operationTrace.Step("ExoConnectionDiscardedPoolStopped", backend: "ExchangeOnline");
+        }
         _slots.Release();
+    }
+
+    /// <summary>
+    /// The only way into <c>_available</c>. Refuses once the pool has stopped, and the caller
+    /// must then destroy what it offered: nothing will ever take it out of a stopped pool.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding aud-a6c. Why this closes the window rather than narrowing it: the add and the
+    /// stop are serialised on <c>_poolLock</c>, and <see cref="Dispose"/> drains only AFTER its
+    /// stop. So every add that succeeded happened before the drain began and the drain sees it;
+    /// every offer made after the stop is refused here and destroyed by whoever made it.
+    /// </remarks>
+    private bool TryPool(PooledRunspace runspace)
+    {
+        lock (_poolLock)
+        {
+            if (_stopped)
+                return false;
+            _available.Add(runspace);
+            return true;
+        }
     }
 
     public void Discard(PooledRunspace runspace)
@@ -451,18 +502,30 @@ public sealed class ExoConnectionPool : IDisposable
 
     private void DestroyPooled()
     {
-        var drained = 0;
-        while (_available.TryTake(out var item))
-        {
-            DestroyRunspace(item);
-            drained++;
-        }
+        var (drained, failed) = DestroyAllPooled();
 
         if (drained > 0)
-            _logger.LogInformation("EXO pool: drained {Count} pooled connection(s) after config change", drained);
+            _logger.LogInformation("EXO pool: drained {Count} pooled connection(s) after config change; {Failed} disconnect(s) failed", drained, failed);
 
         _operationTrace.Step("ExoPoolDrained", backend: "ExchangeOnline",
-            details: new Dictionary<string, object?> { ["connectionsDestroyed"] = drained });
+            details: new Dictionary<string, object?> { ["connectionsDestroyed"] = drained, ["disconnectsFailed"] = failed });
+    }
+
+    /// <summary>
+    /// Takes every idle runspace out of the pool and destroys each one. <see cref="DestroyRunspace"/>
+    /// never throws, so one failed disconnect cannot stop the rest; the failures are counted.
+    /// </summary>
+    private (int destroyed, int failed) DestroyAllPooled()
+    {
+        var destroyed = 0;
+        var failed = 0;
+        while (_available.TryTake(out var item))
+        {
+            destroyed++;
+            if (!DestroyRunspace(item))
+                failed++;
+        }
+        return (destroyed, failed);
     }
 
     /// <summary>
@@ -633,8 +696,13 @@ public sealed class ExoConnectionPool : IDisposable
         }
     }
 
-    private void DestroyRunspace(PooledRunspace pooled)
+    /// <summary>
+    /// Disconnects and disposes one runspace. Never throws. Returns false when a disconnect was
+    /// attempted and failed; the failure is recorded here (aud-a6c).
+    /// </summary>
+    private bool DestroyRunspace(PooledRunspace pooled)
     {
+        Exception? failure = null;
         try
         {
             // Audit finding A6B. Disconnect-ExchangeOnline with no selector routes to
@@ -653,39 +721,104 @@ public sealed class ExoConnectionPool : IDisposable
             }
             else
             {
+                // aud-a6c. Cleared FIRST: Discard reaches here straight from a failed operation,
+                // and an error that borrower's own cmdlet left behind must not be read as the
+                // disconnect's.
                 pooled.PowerShell.Commands.Clear();
+                pooled.PowerShell.Streams.ClearStreams();
                 pooled.PowerShell.AddCommand("Disconnect-ExchangeOnline")
                       .AddParameter("ConnectionId", pooled.ConnectionId)
                       .AddParameter("Confirm", false);
                 pooled.PowerShell.Invoke();
+
+                // A disconnect can fail without throwing - a non-terminating error record - and
+                // that used to be ignored along with the throw. Both are a session that may still
+                // be open.
+                if (pooled.PowerShell.Streams.Error.Count > 0)
+                {
+                    var error = pooled.PowerShell.Streams.Error[0];
+                    failure = error.Exception ?? new InvalidOperationException(error.ToString());
+                }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            // Contained, not rethrown: every caller loops over several connections, and one
+            // failed disconnect must not leave the rest of a drain or a shutdown undone.
+            failure = ex;
+        }
         finally
         {
             try { pooled.PowerShell.Dispose(); } catch { }
             try { pooled.Runspace.Dispose(); } catch { }
         }
+
+        if (failure is null)
+            return true;
+
+        RecordFailedDisconnect(pooled.ConnectionId, failure);
+        return false;
     }
 
-    private void CleanupIdle(object? state)
+    /// <summary>
+    /// aud-a6c: a failed disconnect is counted, logged with the id it could not close and traced.
+    /// It is not retried in place - the runspace is already gone - and this is the only record that
+    /// the session may still be open, because the id was the only handle on it.
+    /// </summary>
+    private void RecordFailedDisconnect(string? connectionId, Exception failure)
+    {
+        var total = Interlocked.Increment(ref _failedDisconnects);
+        _logger.LogWarning(failure,
+            "EXO pool: Disconnect-ExchangeOnline failed for ConnectionId {ConnectionId}; that session may still be open and nothing will retry it ({FailedDisconnects} failed disconnect(s) so far)",
+            connectionId, total);
+        _operationTrace.Step("ExoConnectionDisconnectFailed", "Failed", backend: "ExchangeOnline", command: "Disconnect-ExchangeOnline",
+            details: new Dictionary<string, object?> { ["connectionId"] = connectionId, ["failedDisconnects"] = total },
+            exception: failure);
+    }
+
+    /// <summary>The cleanup timer's idle sweep. Internal as a test seam.</summary>
+    /// <remarks>
+    /// Audit finding aud-a6c. The sweep takes everything out and puts the keepers back, so a
+    /// <see cref="Dispose"/> that lands in between drains an empty pool - and the sweep used to put
+    /// its keepers back afterwards, into the stopped pool, where nothing would ever reap them. The
+    /// put-back now goes through <see cref="TryPool"/>, and a refused keeper is destroyed with the
+    /// idle ones: the sweep owns whatever it took.
+    ///
+    /// Keepers go back BEFORE anything is destroyed, so they are out of the pool for a moment
+    /// rather than for a disconnect round trip each. The retiring count is logged before the
+    /// put-back; the teardown tests (ExoConnectionPoolTeardownTests.cs) pause on that call to run
+    /// Dispose inside the window.
+    /// </remarks>
+    internal void CleanupIdle(object? state)
     {
         var snapshot = new List<PooledRunspace>();
         while (_available.TryTake(out var item))
             snapshot.Add(item);
 
+        var now = DateTime.UtcNow;
+        var retiring = new List<PooledRunspace>();
+        var keeping = new List<PooledRunspace>();
         foreach (var item in snapshot)
+            (now - item.LastUsed > _idleTimeout ? retiring : keeping).Add(item);
+
+        if (retiring.Count > 0)
+            _logger.LogInformation("EXO pool: idle sweep retiring {Count} of {Total} pooled connection(s)", retiring.Count, snapshot.Count);
+
+        foreach (var item in keeping)
         {
-            if (DateTime.UtcNow - item.LastUsed > _idleTimeout)
-            {
-                DestroyRunspace(item);
-                _logger.LogInformation("EXO pool: disposed idle connection");
-            }
-            else
-            {
-                _available.Add(item);
-            }
+            if (!TryPool(item))
+                retiring.Add(item);
         }
+
+        var failed = 0;
+        foreach (var item in retiring)
+        {
+            if (!DestroyRunspace(item))
+                failed++;
+        }
+
+        if (retiring.Count > 0)
+            _logger.LogInformation("EXO pool: idle sweep disposed {Count} connection(s); {Failed} disconnect(s) failed", retiring.Count, failed);
     }
 
     private static X509Certificate2 FindCertificate(string certSubject)
@@ -713,13 +846,29 @@ public sealed class ExoConnectionPool : IDisposable
         return cert ?? throw new InvalidOperationException($"Certificate '{certSubject}' not found in LocalMachine or CurrentUser certificate stores.");
     }
 
+    /// <remarks>
+    /// Audit finding aud-a6c. The stop is recorded under <c>_poolLock</c> BEFORE the drain, which
+    /// is what lets <see cref="TryPool"/> promise that nothing is added after the drain has looked.
+    /// Anything borrowed, still connecting, or held by a sweep in progress comes back through
+    /// <see cref="TryPool"/>, is refused, and is destroyed by whoever was holding it.
+    ///
+    /// The finding suggested retiring the generation here instead. That cannot hold by itself: a
+    /// borrow that read the generation AFTER such a retire would stamp its connection with the new
+    /// value and pass Return's generation test straight into the stopped pool. The flag is the
+    /// mechanism; a generation bump beside it would only look like one.
+    /// </remarks>
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        lock (_poolLock)
+        {
+            if (_stopped) return;
+            _stopped = true;
+        }
+
         _cleanupTimer.Dispose();
 
-        while (_available.TryTake(out var item))
-            DestroyRunspace(item);
+        var (destroyed, failed) = DestroyAllPooled();
+        if (destroyed > 0)
+            _logger.LogInformation("EXO pool: shut down; disposed {Count} pooled connection(s); {Failed} disconnect(s) failed", destroyed, failed);
     }
 }
