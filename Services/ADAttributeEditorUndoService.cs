@@ -16,7 +16,8 @@ public class ADAttributeEditorUndoService : IUndoableModule
 
     // Audit finding A26. Undo wrote the audit record and sent nothing. Notification dispatch
     // for attribute edits lived in the forward-edit PAGE, and undo does not go through it, so
-    // a reversal was the one attribute change administrators never heard about.
+    // a reversal was the one attribute change administrators never heard about. Since aud-a26b
+    // SaveAsync announces its own results; this is kept for the exception path only.
     private readonly EmailService _email;
     private readonly ILogger<ADAttributeEditorUndoService> _logger;
 
@@ -266,6 +267,10 @@ public class ADAttributeEditorUndoService : IUndoableModule
                 else int.TryParse(lvlObj?.ToString(), out maxLevel);
             }
 
+            // aud-a26b: SaveAsync announces this reversal itself, for whatever result it returns,
+            // and the reversal record is what makes it read as ADAttributeEditor_Undo rather than
+            // another update. So neither branch below dispatches; only the catch does, for an
+            // exception SaveAsync never returns.
             var saveResult = await _editorService.SaveAsync(
                 lookupResult.Principal,
                 proposedValues,
@@ -273,25 +278,19 @@ public class ADAttributeEditorUndoService : IUndoableModule
                 ip,
                 ticket,
                 actingUser,
-                maxLevel);
+                maxLevel,
+                reversal: new AttributeEditReversal(target, changedAttributes, originalOperationId));
 
             if (!saveResult.Success)
             {
                 // The SaveAsync already audits failure internally, but we also need the undo-specific audit
                 LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, saveResult.Error, servicedNote);
-                await NotifyAdministratorsAsync(
-                    performedBy, ip, ticket, target, changedAttributes, originalOperationId,
-                    success: false, error: saveResult.Error);
                 scope.Complete(false, saveResult.Error);
                 return new UndoResult(false, saveResult.Error, null);
             }
 
             // Log the undo-specific audit event (the SaveAsync already logged a standard ADAttributeEditor_Update)
             LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, true, null, servicedNote);
-
-            await NotifyAdministratorsAsync(
-                performedBy, ip, ticket, target, changedAttributes, originalOperationId,
-                success: true, error: null);
 
             var reversalOperationId = _operationTrace.CurrentOperationId;
             scope.Complete(true);
@@ -323,20 +322,22 @@ public class ADAttributeEditorUndoService : IUndoableModule
     }
 
     /// <summary>
-    /// Tells administrators that an attribute change was REVERSED.
+    /// Tells administrators that an attempt to REVERSE an attribute change threw.
     /// </summary>
     /// <remarks>
-    /// Audit finding A26. A forward edit sends this from the page; an undo never goes through
-    /// that page, so a reversal was silent. Administrators saw the change and not its
-    /// retraction, which is the worse way round to know only half of.
+    /// Audit finding A26: a reversal was silent, because dispatch lived in the forward-edit page
+    /// and undo never goes through it. Since aud-a26b SaveAsync announces every result it returns,
+    /// told by the <see cref="AttributeEditReversal"/> it is given that this is an undo. What is
+    /// left here is the one case SaveAsync cannot announce: an exception, out of SaveAsync or
+    /// anywhere else in ExecuteUndoAsync.
     ///
-    /// The action is <c>ADAttributeEditor_Undo</c>, not the forward action name: a reader of
-    /// the mailbox needs to be able to tell a reversal from another edit, and reusing
-    /// <c>ADAttributeEditor_Update</c> would make the pair indistinguishable.
+    /// The action and rows come from <see cref="AttributeEditReversal"/>, the same builder
+    /// SaveAsync uses, so the two notices cannot drift. The action is <c>ADAttributeEditor_Undo</c>,
+    /// not the forward action name: a reader of the mailbox needs to tell a reversal from another
+    /// edit.
     ///
     /// Failures are logged and swallowed, matching the forward path. The notification is not
-    /// permitted to turn a completed reversal into a reported failure - the directory has
-    /// already been written and the audit record already exists.
+    /// permitted to change the reported outcome - the audit record already exists.
     /// </remarks>
     internal async Task NotifyAdministratorsAsync(
         string performedBy,
@@ -350,18 +351,11 @@ public class ADAttributeEditorUndoService : IUndoableModule
     {
         try
         {
-            var details = new Dictionary<string, string>
-            {
-                ["Target"] = target,
-                ["Reverted"] = string.Join(", ", changedAttributes),
-                ["Original operation"] = originalOperationId ?? "(unknown)",
-            };
-
-            if (!success)
-                details["Error"] = error ?? "Unknown";
+            var reversal = new AttributeEditReversal(target, changedAttributes, originalOperationId);
 
             await _email.SendAdminNotificationAsync(
-                performedBy, ip, "ADAttributeEditor_Undo", success, ticket, details, error);
+                performedBy, ip, AttributeEditReversal.NoticeAction, success, ticket,
+                reversal.NoticeDetails(success, error), error);
         }
         catch (Exception ex)
         {

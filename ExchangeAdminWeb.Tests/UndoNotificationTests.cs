@@ -10,11 +10,12 @@ namespace ExchangeAdminWeb.Tests;
 /// the forward-edit page and undo does not go through it.
 /// </summary>
 /// <remarks>
-/// Split coverage, and the split is the honest part. The dispatch itself is driven for real
-/// against a substituted <see cref="EmailService"/>, so the action name, the contents and the
-/// swallowed-failure behaviour are observed rather than read. That it is CALLED on both the
-/// success and failure paths is a source scan, because <c>UndoAsync</c> reaches a live
-/// directory through the lookup long before it gets there.
+/// The undo's own dispatcher, driven for real against a substituted <see cref="EmailService"/>,
+/// so the action name, the contents and the swallowed-failure behaviour are observed rather than
+/// read. Since aud-a26b that dispatcher sends only the exception-path notice; the returned
+/// results are announced by SaveAsync, and that is driven end to end through ExecuteUndoAsync
+/// in <see cref="ADAttributeEditorNotificationTests"/>, which replaced the source scan that used
+/// to count three dispatches here.
 /// </remarks>
 public class UndoNotificationTests
 {
@@ -108,28 +109,6 @@ public class UndoNotificationTests
             .Returns<Task>(_ => throw new InvalidOperationException("smtp down"));
 
         await Notify(Service(), success: true);
-    }
-
-    [Fact]
-    public void EveryOutcomeOfExecuteUndo_DispatchesTheNotice()
-    {
-        // The wiring, which the tests above cannot reach. ExecuteUndoAsync hits a live directory
-        // through its lookup well before the notification, so this is read, not driven - and
-        // it is why the four tests above exist to cover what the dispatch actually does.
-        var body = AuditCategoryFilingTests.MethodBody(
-            File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "ADAttributeEditorUndoService.cs")),
-            "public async Task<UndoResult> ExecuteUndoAsync");
-
-        // THREE outcomes, not two. The review of A26 found that an exception out of
-        // SaveAsync left no audit record and no notification at all - and a reversal that
-        // threw is exactly the event someone later asks about, because it may have written
-        // to the directory before it failed.
-        var calls = System.Text.RegularExpressions.Regex.Matches(body, "await NotifyAdministratorsAsync");
-        Assert.True(calls.Count == 3,
-            $"Expected the success, save-failure and exception dispatches; found {calls.Count}.");
-
-        Assert.Contains("success: true", body, StringComparison.Ordinal);
-        Assert.Contains("success: false", body, StringComparison.Ordinal);
     }
 
     [Fact]
