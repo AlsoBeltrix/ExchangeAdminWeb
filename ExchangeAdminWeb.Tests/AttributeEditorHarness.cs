@@ -387,8 +387,10 @@ internal sealed class LocalAd
 
     /// <summary>
     /// Per search base, how Get-ADUser fails there: <c>"terminating"</c> (the cmdlet's
-    /// ThrowTerminatingError - an unreachable server, a base that does not exist) or
-    /// <c>"nonterminating"</c> (its WriteError - an incomplete answer).
+    /// ThrowTerminatingError - an unreachable server, a base that does not exist),
+    /// <c>"nonterminating"</c> (its WriteError, and nothing returned), <c>"partial"</c> (its
+    /// WriteError, and the matches returned anyway) or <c>"recorded"</c> (an error RECORD left on
+    /// the stream despite SilentlyContinue, as a nested command's error is, and nothing returned).
     /// </summary>
     public Dictionary<string, string> FailingBases { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -420,6 +422,11 @@ internal sealed class LocalAd
         foreach (var (name, value) in attributes)
             user.Attributes[name] = value;
 
+        return Add(user);
+    }
+
+    public User Add(User user)
+    {
         lock (_users)
             _users.Add(user);
 
@@ -501,7 +508,10 @@ internal sealed class LocalAd
 
     public InitialSessionState CreateSessionState()
     {
-        var state = InitialSessionState.CreateDefault2();
+        // CreateDefault, as production builds, not CreateDefault2: with autoloading off the latter
+        // has no Utility cmdlets, and a stand-in reaching for one (Write-Error) fails with
+        // command-not-found - which SilentlyContinue then swallows, so the case proves nothing.
+        var state = InitialSessionState.CreateDefault();
         state.Variables.Add(new SessionStateVariableEntry("AttributeDirectory", this, "local stand-in for the directory"));
         // Belt and braces: a command the code under test reaches that is not defined below fails
         // as not found instead of loading the real ActiveDirectory module.
@@ -522,10 +532,15 @@ internal sealed class LocalAd
                     [System.InvalidOperationException]::new("The server is not operational: $SearchBase"),
                     'BaseUnavailable', [System.Management.Automation.ErrorCategory]::ResourceUnavailable, $SearchBase))
             }
-            if ($failure -eq 'nonterminating') {
+            if ($failure -in 'nonterminating', 'partial') {
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                     [System.InvalidOperationException]::new("A referral was returned from the server: $SearchBase"),
                     'BaseIncomplete', [System.Management.Automation.ErrorCategory]::ReadError, $SearchBase))
+                if ($failure -eq 'nonterminating') { return }
+            }
+            if ($failure -eq 'recorded') {
+                Write-Error -Message "Access to the search base was denied: $SearchBase" -ErrorAction Continue
+                return
             }
             $found = $directory.Find([string]$Identity, [string]$LDAPFilter, [string]$SearchBase)
             if ($Identity -and $found.Length -eq 0) {

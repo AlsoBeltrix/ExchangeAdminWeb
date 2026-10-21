@@ -721,6 +721,7 @@ public class ADAttributeEditorService
         var properties = GetPropertiesToLoad(allowlist);
 
         var allUsers = new List<PSObject>();
+        var failedBases = new List<(string SearchBase, string Reason)>();
 
         if (searchBases.Length == 0)
         {
@@ -731,9 +732,21 @@ public class ADAttributeEditorService
               .AddParameter("ErrorAction", "Stop");
             allUsers.AddRange(ps.Invoke());
             ps.Commands.Clear();
+
+            if (ps.HadErrors)
+            {
+                var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "AD query failed.";
+                ps.Streams.Error.Clear();
+                return new(false, errMsg, null, null, false, null, null);
+            }
         }
         else
         {
+            // psl-6: each base is judged on its own invocation, here, before the next one runs.
+            // HadErrors describes only the most recent invocation and survives
+            // Streams.Error.Clear(), so the one check that used to follow this loop saw the LAST
+            // base alone: a failure there failed a lookup that had already found the user, and a
+            // failure on any earlier base was lost.
             foreach (var sb in searchBases)
             {
                 ps.AddCommand("Get-ADUser")
@@ -745,18 +758,24 @@ public class ADAttributeEditorService
                 try
                 {
                     allUsers.AddRange(ps.Invoke());
-                }
-                catch { }
-                ps.Streams.Error.Clear();
-                ps.Commands.Clear();
-            }
-        }
 
-        if (ps.HadErrors)
-        {
-            var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "AD query failed.";
-            ps.Streams.Error.Clear();
-            return new(false, errMsg, null, null, false, null, null);
+                    // Under SilentlyContinue a cmdlet's error writes no record but still sets the
+                    // flag, so the flag is the evidence and a record, when there is one, the detail.
+                    if (ps.HadErrors)
+                        failedBases.Add((sb, ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "the query reported an error without detail"));
+                }
+                catch (Exception ex)
+                {
+                    // A terminating error throws whatever the ErrorAction: an unreachable server,
+                    // a search base that does not exist.
+                    failedBases.Add((sb, ex.InnerException?.Message ?? ex.Message));
+                }
+                finally
+                {
+                    ps.Streams.Error.Clear();
+                    ps.Commands.Clear();
+                }
+            }
         }
 
         var users = allUsers
@@ -765,7 +784,24 @@ public class ADAttributeEditorService
             .ToList();
 
         if (users.Count == 0)
+        {
+            // Nobody found while a base did not answer: the user may be in that base, so this is a
+            // lookup that could not be completed, and it says where - not "not found".
+            if (failedBases.Count > 0)
+                return new(false, $"AD lookup for '{identity}' could not be completed: {DescribeFailedBases(failedBases)}.", null, null, false, null, null);
+
             return new(false, $"User '{identity}' not found.", null, null, false, null, null);
+        }
+
+        // Found, while another base did not answer: the lookup stands and the failure is logged
+        // against its base (owner's rule for psl-6). The ambiguity check below sees only the bases
+        // that answered.
+        if (failedBases.Count > 0)
+        {
+            _logger.LogWarning(
+                "AD attribute lookup for {Identity} found a match, but {Count} search base(s) could not be searched: {FailedBases}",
+                identity, failedBases.Count, DescribeFailedBases(failedBases));
+        }
 
         if (users.Count > 1)
             return new(false, $"Ambiguous: '{identity}' matches {users.Count} AD users. Use a more specific identifier.", null, null, false, null, null);
@@ -797,6 +833,10 @@ public class ADAttributeEditorService
 
         return new(true, null, principal, "OnPremAD", false, null, currentValues);
     }
+
+    /// <summary>Each failed search base with its reason, for the operator's message and the log (psl-6).</summary>
+    private static string DescribeFailedBases(IEnumerable<(string SearchBase, string Reason)> failedBases) =>
+        string.Join("; ", failedBases.Select(f => $"search base '{f.SearchBase}' failed ({f.Reason})"));
 
     private AttributeSavePreview ComputePreview(
         ResolvedDirectoryPrincipal target,
