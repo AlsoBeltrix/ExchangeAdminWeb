@@ -314,17 +314,6 @@ public abstract class ExchangeServiceBase
     // Validation helpers
     // -------------------------------------------------------------------------
 
-    protected static string ValidateMailbox(PowerShell ps, string mailbox)
-    {
-        ps.AddCommand("Get-Mailbox")
-          .AddParameter("Identity", mailbox)
-          .AddParameter("ErrorAction", "Stop");
-        var result = Invoke(ps);
-        var mbx = result.FirstOrDefault();
-
-        return mbx?.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? mailbox;
-    }
-
     /// <summary>
     /// Reads the validated mailbox back by its GUID and refuses unless Exchange returns exactly
     /// that mailbox (aud-a2d). Returns its primary SMTP address, for messages only - never as an

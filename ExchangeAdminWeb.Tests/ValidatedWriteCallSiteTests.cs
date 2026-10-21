@@ -22,6 +22,11 @@ public sealed class ValidatedWriteCallSiteTests
     [InlineData("MailboxPermissions.razor", @"MailboxService\.RemoveMailboxPermissionsAsync\(\s*target,\s*validation\.Mailbox,")]
     [InlineData("MailboxPermissions.razor", @"MailboxService\.AddMailboxPermissionsOnPremAsync\(\s*target,\s*onPremValidation\.Mailbox,")]
     [InlineData("MailboxPermissions.razor", @"MailboxService\.RemoveMailboxPermissionsOnPremAsync\(\s*target,\s*onPremValidation\.Mailbox,")]
+    [InlineData("CalendarPermissions.razor", @"CalendarService\.GetMailboxLocationAsync\(\s*validation\.Mailbox\s*\)")]
+    [InlineData("CalendarPermissions.razor", @"CalendarService\.SetCalendarPermissionAsync\(\s*target,\s*validation\.Mailbox,")]
+    [InlineData("CalendarPermissions.razor", @"CalendarService\.RemoveCalendarPermissionAsync\(\s*target,\s*validation\.Mailbox,")]
+    [InlineData("CalendarPermissions.razor", @"CalendarService\.SetCalendarPermissionOnPremAsync\(\s*target,\s*onPremValidation\.Mailbox,")]
+    [InlineData("CalendarPermissions.razor", @"CalendarService\.RemoveCalendarPermissionOnPremAsync\(\s*target,\s*onPremValidation\.Mailbox,")]
     public void EveryPageWrite_IsBoundToItsOwnValidation(string page, string pattern)
     {
         var source = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", page));
@@ -32,6 +37,7 @@ public sealed class ValidatedWriteCallSiteTests
 
     [Theory]
     [InlineData("MailboxPermissions.razor", 2)]
+    [InlineData("CalendarPermissions.razor", 2)]
     public void EveryPageWriteAudit_RecordsTheIdentityWritten(string page, int expected)
     {
         // The audit keeps the typed target; the identity written rides in extra beside it.

@@ -1,12 +1,6 @@
 using System.Management.Automation;
 using System.Text;
-using ExchangeAdminWeb.Models;
-using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
-using ExchangeAdminWeb.Services.Storage;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -176,19 +170,14 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
     {
         // Nothing protected, so the validator binds each row through Exchange: "sales" is the
         // checked mailbox here (the resolver says so), "ghost" is no mailbox at all.
-        var resolver = Substitute.For<IIdentityResolver>();
-        // The self-grant check compares object ids; unstubbed, both would be "" and match.
-        resolver.ResolveToObjectIdAsync(Arg.Any<string>()).Returns((string?)null);
-        resolver.ResolveRecipientAsync(Arg.Any<string>()).Returns((ResolvedRecipient?)null);
-        resolver.ResolveRecipientAsync(Typed).Returns(
-            new ResolvedRecipient("shared@contoso.test", "ext-shared", "UserMailbox", ExistsOnPrem: false, ExchangeGuid: Checked));
+        var resolver = ExchangeWriteHarness.ExchangeKnows(Typed, "shared@contoso.test", Checked);
         var email = Substitute.For<EmailService>(_h.Config, Substitute.For<ILogger<EmailService>>());
 
         var csv = "Target,User,FullAccess,SendAs,AutoMapping\n"
             + $"{Typed},{Trustee},True,False,False\n"
             + $"ghost@contoso.test,{Trustee},True,False,False\n";
         var bulk = await Service().ProcessMailboxPermissionsCsvAsync(
-            new MemoryStream(Encoding.UTF8.GetBytes(csv)), isAdd: true, NothingProtected(resolver), @"CONTOSO\operator",
+            new MemoryStream(Encoding.UTF8.GetBytes(csv)), isAdd: true, _h.NothingProtectedValidator(resolver), @"CONTOSO\operator",
             _h.Audit, email, "10.0.0.5", "INC100", actingUser: null);
 
         Assert.Equal(1, bulk.SuccessCount);
@@ -203,31 +192,5 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
         var refused = Assert.Single(rows, r => r.GetProperty("action").GetString() == "BulkAdd_ExcludedTarget");
         Assert.Equal("ghost@contoso.test", refused.GetProperty("target").GetString());
         Assert.Equal(PermissionValidator.NoMailboxMessage("ghost@contoso.test"), refused.GetProperty("error").GetString());
-    }
-
-    /// <summary>A real validator with no protection configured, asking Exchange through <paramref name="resolver"/>.</summary>
-    private PermissionValidator NothingProtected(IIdentityResolver resolver)
-    {
-        var env = Substitute.For<IWebHostEnvironment>();
-        env.ContentRootPath.Returns(_h.Dir);
-        var httpClientFactory = Substitute.For<IHttpClientFactory>();
-        httpClientFactory.CreateClient(Arg.Any<string>()).Returns(_ => new HttpClient());
-        var extLog = new ExtendedLogService(_h.Config, env, TestConfigStore.CreateAppSettings(_h.Dir),
-            Substitute.For<ILogger<ExtendedLogService>>());
-        var delinea = new DelineaService(httpClientFactory, _h.Config, Substitute.For<ILogger<DelineaService>>(), extLog, _h.Trace);
-        var protectedPrincipals = new ProtectedPrincipalService(env, _h.Config, _h.ModuleConfig,
-            TestConfigStore.CreateProtectedPrincipal(_h.Dir), delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
-        var servicers = new ProtectedPrincipalServicerService(
-            new SectionAccessService(_h.Config, Substitute.For<ILogger<SectionAccessService>>(), env, new ModuleCatalog(),
-                new SectionAccessRepository(TestConfigStore.Create(_h.Dir))),
-            Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
-        var scopeFactory = Substitute.For<IServiceScopeFactory>();
-        var scope = Substitute.For<IServiceScope>();
-        var provider = Substitute.For<IServiceProvider>();
-        scopeFactory.CreateScope().Returns(scope);
-        scope.ServiceProvider.Returns(provider);
-        provider.GetService(typeof(IIdentityResolver)).Returns(resolver);
-        return new PermissionValidator(_h.Config, _h.ModuleConfig, _h.Pool, protectedPrincipals, servicers,
-            Substitute.For<ILogger<PermissionValidator>>(), scopeFactory);
     }
 }

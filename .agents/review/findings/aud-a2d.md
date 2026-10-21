@@ -203,6 +203,19 @@ Conference Rooms. Gates before each.
   validation's mailbox; both audit sites add `writtenIdentity`. Line count unchanged (808), so no
   ClickGate entry moved.
 
+### Calendar Permissions
+
+- Cloud set/remove: null refused before a connection is borrowed; read-back by GUID; the folder
+  identity is `GetCalendarFolderName(ps, <GUID>)` - the folder NAME is read from the validated
+  mailbox too, so a localized "Kalender" can only come from the mailbox being written.
+  `Set-MailboxFolderPermission`, its `Add-` fallback and `Remove-MailboxFolderPermission` take
+  `<GUID>:\<folder>`. The result message names the mailbox's primary address (from the read-back)
+  and the identity written; it used to show `<primary of the typed string>:\Calendar`.
+- On-prem set/remove: null refused before a credential; the remote script's `$Identity` is the
+  GUID, so it writes `<GUID>:\Calendar`.
+- CSV and page as for Mailbox Permissions. `ValidateMailbox(string)` removed - it had no caller
+  left. Line count unchanged (762).
+
 ## Guard proof
 
 | Test | What it pins |
@@ -266,3 +279,40 @@ restored md5 equals "before"; final rebuild and every named test green. Files as
 A page cannot be mutated to pass the typed string to a write at all: no write method takes a
 string identity any more, so that mutation does not compile. P3 is the one page call that still
 can, because the string overload of the location read remains for read-only callers.
+
+**Calendar tests** (`CalendarPermissionWriteIdentityTests`; the typed alias names a different
+mailbox whose calendar folder is "Kalender"):
+
+| Test | What it pins |
+| --- | --- |
+| `ASet_WritesTheValidatedMailboxsCalendar_NotTheStringTyped` | read-back, folder lookup and `Set-MailboxFolderPermission` all use the GUID; the identity is `<GUID>:\Calendar` |
+| `ASetThatFallsBackToAdd_AddsOnTheValidatedMailboxsCalendar` | the `Add-` fallback takes the same folder identity |
+| `ARemove_WritesTheValidatedMailboxsCalendar_NotTheStringTyped` | the remove path |
+| `WithoutAValidatedMailbox_NothingIsWritten_AndNoConnectionIsBorrowed` (2) | null refuses before a connection |
+| `AReadBackOfADifferentMailbox_RefusesBeforeAnyWrite` | read-back mismatch stops the write |
+| `AnOnPremSet_SendsTheValidatedMailbox_AndWritesItsCalendar`, `AnOnPremRemove_...` | the remote script receives the GUID and writes `<GUID>:\Calendar` |
+| `WithoutAValidatedMailbox_TheOnPremPathAsksForNoCredential_AndRunsNothing` (2) | on-prem refusal before the credential |
+| `TheBulkLoop_WritesEachRowsOwnValidatedCalendar_AndRefusesARowWithNone` | the CSV row's own mailbox, `writtenIdentity` audited; a row with none denied as `BulkSetCalendar_ExcludedTarget` |
+
+**Mutations, round 2** (Calendar Permissions):
+
+| # | Mutation | File, md5 before (= restored) | md5 mutated | Named test | Result |
+| --- | --- | --- | --- | --- | --- |
+| C1 | set: folder identity built from the typed string | `CalendarPermissionService.cs` `1ae332eb5ac0b62fc754e355e58779e4` | `c0c1b3676e6c1a38007fef78e7520ac2` | `ASet_WritesTheValidatedMailboxsCalendar_NotTheStringTyped` | FAIL |
+| C2 | `Set-MailboxFolderPermission -Identity <typed>:\Calendar` | same | `9a4a36bc81a97616ae1f4cdc7666f522` | same | FAIL |
+| C3 | `Add-MailboxFolderPermission` fallback `-Identity <typed>:\Calendar` | same | `bf1434ccc58537571a02b958bafe7342` | `ASetThatFallsBackToAdd_AddsOnTheValidatedMailboxsCalendar` | FAIL |
+| C4 | remove: folder identity built from the typed string | same | `6b80c2fbe434ae33201850e8014a22d7` | `ARemove_WritesTheValidatedMailboxsCalendar_NotTheStringTyped` | FAIL |
+| C5 | `Remove-MailboxFolderPermission -Identity <typed>:\Calendar` | same | `f0deaf48fac99d28065a7baa638b969d` | same | FAIL |
+| C6 | set: null refusal dropped | same | `f6bda17f6ddd7b7b128527c26396375a` | `WithoutAValidatedMailbox_NothingIsWritten_AndNoConnectionIsBorrowed` | FAIL |
+| C7 | remove: null refusal dropped | same | `f7cd8ca68b809a18f540d570194bbbb7` | same | FAIL |
+| C8 | set: read-back skipped | same | `07b69980a79ff5c8d4289f934975644d` | `AReadBackOfADifferentMailbox_RefusesBeforeAnyWrite` | FAIL |
+| C9 | on-prem set argument typed string | same | `e6396c45c7579be05e35e1bb019d1a36` | `AnOnPremSet_SendsTheValidatedMailbox_AndWritesItsCalendar` | FAIL |
+| C10 | on-prem remove argument typed string | same | `433a099a48482949f868b49d50ca5e57` | `AnOnPremRemove_SendsTheValidatedMailbox_AndWritesItsCalendar` | FAIL |
+| C11 | on-prem set: null refusal dropped | same | `0360697f916ead5492ac73adc3fdee31` | `WithoutAValidatedMailbox_TheOnPremPathAsksForNoCredential_AndRunsNothing` | FAIL |
+| C12 | on-prem remove: null refusal dropped | same | `f46a9197d2b87b1916b9f2f398a29b9a` | same | FAIL |
+| C13 | CSV row hands the write null | same | `c42532d5d49973b007dbefffcc3eb14a` | `TheBulkLoop_WritesEachRowsOwnValidatedCalendar_AndRefusesARowWithNone` | FAIL |
+| C14 | CSV row audit drops `writtenIdentity` | same | `5d1a7f3ba04db37d4474d4659be6384d` | same | FAIL |
+| CP1 | page: single set handed null | `CalendarPermissions.razor` `52f4ddb3415520f5126a918489777a50` | `8e9397e089d974b6eb41e902a1d41cff` | `ValidatedWriteCallSiteTests.EveryPageWrite_IsBoundToItsOwnValidation` | FAIL |
+| CP2 | page: on-prem remove handed null | same | `5354cb61bb2589102940e0b84e36bb2f` | same | FAIL |
+| CP3 | page: location read by the typed string | same | `2b36a605c73fa4b318ffa5f2780b76f2` | same | FAIL |
+| CP4 | page: single-write audit drops `writtenIdentity` | same | `4ce60521af1611d4efd2494026ef6cd9` | `ValidatedWriteCallSiteTests.EveryPageWriteAudit_RecordsTheIdentityWritten` | FAIL |

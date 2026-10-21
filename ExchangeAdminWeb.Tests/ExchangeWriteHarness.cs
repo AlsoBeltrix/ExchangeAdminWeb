@@ -49,6 +49,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <summary>What the stand-in <c>Get-ADUser -Identity</c> answers, keyed by objectGUID.</summary>
     public Hashtable DirectoryObjects { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>Command name to error message: that stand-in records its call, then throws the message.</summary>
+    public Hashtable Failures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
     private int _connects;
 
     /// <summary>How many Exchange connections the pool opened - zero proves nothing was borrowed.</summary>
@@ -115,6 +118,49 @@ internal sealed class ExchangeWriteHarness : IDisposable
         Mailboxes[primary] = entry;
         foreach (var alias in aliases)
             Mailboxes[alias] = entry;
+    }
+
+    /// <summary>
+    /// A real <see cref="PermissionValidator"/> with no protection configured, asking Exchange
+    /// through <paramref name="resolver"/> - so the bulk loops bind each row through a real check.
+    /// </summary>
+    public PermissionValidator NothingProtectedValidator(IIdentityResolver resolver)
+    {
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(Dir);
+        var httpClientFactory = Substitute.For<IHttpClientFactory>();
+        httpClientFactory.CreateClient(Arg.Any<string>()).Returns(_ => new HttpClient());
+        var extLog = new ExtendedLogService(Config, env, TestConfigStore.CreateAppSettings(Dir),
+            NullLogger<ExtendedLogService>.Instance);
+        var delinea = new DelineaService(httpClientFactory, Config, NullLogger<DelineaService>.Instance, extLog, Trace);
+        var protectedPrincipals = new ProtectedPrincipalService(env, Config, ModuleConfig,
+            TestConfigStore.CreateProtectedPrincipal(Dir), delinea, NullLogger<ProtectedPrincipalService>.Instance);
+        var servicers = new ProtectedPrincipalServicerService(
+            new SectionAccessService(Config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(),
+                new SectionAccessRepository(TestConfigStore.Create(Dir))),
+            NullLogger<ProtectedPrincipalServicerService>.Instance);
+        var scopeFactory = Substitute.For<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+        var scope = Substitute.For<Microsoft.Extensions.DependencyInjection.IServiceScope>();
+        var provider = Substitute.For<IServiceProvider>();
+        scopeFactory.CreateScope().Returns(scope);
+        scope.ServiceProvider.Returns(provider);
+        provider.GetService(typeof(IIdentityResolver)).Returns(resolver);
+        return new PermissionValidator(Config, ModuleConfig, Pool, protectedPrincipals, servicers,
+            NullLogger<PermissionValidator>.Instance, scopeFactory);
+    }
+
+    /// <summary>
+    /// An Exchange resolver that knows <paramref name="typed"/> as <paramref name="mailbox"/> and
+    /// nobody else, and never matches self-grant object ids (unstubbed, both would be "" and match).
+    /// </summary>
+    public static IIdentityResolver ExchangeKnows(string typed, string primary, Guid mailbox)
+    {
+        var resolver = Substitute.For<IIdentityResolver>();
+        resolver.ResolveToObjectIdAsync(Arg.Any<string>()).Returns((string?)null);
+        resolver.ResolveRecipientAsync(Arg.Any<string>()).Returns((ResolvedRecipient?)null);
+        resolver.ResolveRecipientAsync(typed).Returns(
+            new ResolvedRecipient(primary, "ext-" + primary, "UserMailbox", ExistsOnPrem: false, ExchangeGuid: mailbox));
+        return resolver;
     }
 
     /// <summary>A validated mailbox as the protected-principal check would hand it on.</summary>
@@ -196,6 +242,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("Calls", Calls);
         rs.SessionStateProxy.SetVariable("Mailboxes", Mailboxes);
         rs.SessionStateProxy.SetVariable("DirectoryObjects", DirectoryObjects);
+        rs.SessionStateProxy.SetVariable("Failures", Failures);
         using var init = PowerShell.Create();
         init.Runspace = rs;
         init.AddScript(definitions);
@@ -213,6 +260,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
             $row = @{ '__Command' = $Command }
             foreach ($key in $Bound.Keys) { if ($key -ne 'ErrorAction') { $row[$key] = $Bound[$key] } }
             [void]$global:Calls.Add($row)
+            $failure = $global:Failures[$Command]
+            if ($failure) { throw $failure }
         }
         # Not found is a non-terminating error, as on the real cmdlets: -ErrorAction Stop makes it
         # throw, -ErrorAction Ignore swallows it.
@@ -367,6 +416,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
             $row = @{ '__Command' = $Command }
             foreach ($key in $Bound.Keys) { if ($key -ne 'ErrorAction' -and $key -ne 'Credential') { $row[$key] = $Bound[$key] } }
             [void]$global:Calls.Add($row)
+            $failure = $global:Failures[$Command]
+            if ($failure) { throw $failure }
         }
         function global:Import-Module { param($Name, $ErrorAction) }
         function global:Get-ADUser {
