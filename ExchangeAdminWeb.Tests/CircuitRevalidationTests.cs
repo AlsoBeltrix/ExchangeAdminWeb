@@ -1,0 +1,900 @@
+using System.Security.Claims;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using ExchangeAdminWeb.Authorization;
+using ExchangeAdminWeb.Modules;
+using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
+using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Components.Server;
+using Microsoft.AspNetCore.Components.Server.Circuits;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
+using NSubstitute.ExceptionExtensions;
+
+namespace ExchangeAdminWeb.Tests;
+
+/// <summary>
+/// aud-a29b: a circuit's group membership is re-derived from the directory while it is open, and
+/// a circuit whose access was removed - or can no longer be confirmed - stops working.
+/// </summary>
+/// <remarks>
+/// Every directory answer here comes from a substitute <see cref="IOperatorMembershipDirectory"/>;
+/// nothing in this file reaches Active Directory. The section-access and module-admin stores are
+/// the real services over a throwaway SQLite file, so the compared set is the one production
+/// computes rather than a list the test made up.
+/// </remarks>
+public class CircuitRevalidationTests
+{
+    private const string DomainSid = "S-1-5-21-1000-2000-3000";
+    private const string OperatorSid = DomainSid + "-1105";
+    private const string OperatorName = @"CONTOSO\operator";
+    private const string DomainUsersSid = DomainSid + "-513";
+    private const string SectionGroupSid = DomainSid + "-5001";
+    private const string ModuleAdminGroupSid = DomainSid + "-5002";
+    private const string UnconsultedGroupSid = DomainSid + "-5003";
+    private const string NamedAdminGroupSid = DomainSid + "-5004";
+    private const string LaterGrantedGroupSid = DomainSid + "-5005";
+    private const string NamedAdminGroup = @"CONTOSO\App-Admins";
+
+    // ------------------------------------------------------------------ the verdict
+
+    [Fact]
+    public async Task UnchangedMembership_StaysValid()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+
+        var valid = await h.Provider().ValidateAsync(Operator(SectionGroupSid, DomainUsersSid), "Interval", Ct);
+
+        Assert.True(valid);
+        Assert.False(h.Revocation.IsRevoked);
+        Assert.Empty(h.AuditEvents());
+    }
+
+    [Fact]
+    public async Task RemovedConsultedSid_InvalidatesTheCircuit()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+
+        var valid = await h.Provider().ValidateAsync(Operator(SectionGroupSid, DomainUsersSid), "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.MembershipChanged, h.Revocation.Reason);
+    }
+
+    [Fact]
+    public async Task AddedSid_StaysValid()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Grant("CalendarPermissions", LaterGrantedGroupSid);
+
+        // The directory now reports a consulted group the token does not carry, and an
+        // unconsulted one besides. Gaining access is not a reason to end a session.
+        h.DirectoryReturns(enabled: true, SectionGroupSid, LaterGrantedGroupSid, UnconsultedGroupSid, DomainUsersSid);
+
+        var valid = await h.Provider().ValidateAsync(Operator(SectionGroupSid, DomainUsersSid), "Interval", Ct);
+
+        Assert.True(valid);
+        Assert.False(h.Revocation.IsRevoked);
+    }
+
+    [Fact]
+    public async Task RemovedSidThatNoGateConsults_StaysValid()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+
+        var valid = await h.Provider().ValidateAsync(
+            Operator(SectionGroupSid, UnconsultedGroupSid, DomainUsersSid), "Interval", Ct);
+
+        Assert.True(valid);
+    }
+
+    [Fact]
+    public async Task DisabledAccount_InvalidatesTheCircuit()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: false, SectionGroupSid, DomainUsersSid);
+
+        var valid = await h.Provider().ValidateAsync(Operator(SectionGroupSid, DomainUsersSid), "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.AccountDisabled, h.Revocation.Reason);
+    }
+
+    [Fact]
+    public async Task ThrowingResolver_InvalidatesTheCircuit()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken)
+            .ThrowsAsync(new DirectoryUnavailableException("no domain controller answered"));
+
+        var valid = await h.Provider().ValidateAsync(Operator(SectionGroupSid), "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+    }
+
+    [Fact]
+    public async Task ResolverThatThrowsBeforeReturningATask_InvalidatesTheCircuit()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken)
+            .Throws(new InvalidOperationException("the runspace could not be opened"));
+
+        var valid = await h.Provider().ValidateAsync(Operator(SectionGroupSid), "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task ResolverThatNeverAnswers_InvalidatesWhenTheLookupTimesOut()
+    {
+        using var h = new Harness(lookupTimeout: TimeSpan.FromMilliseconds(250));
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        var never = new TaskCompletionSource<OperatorDirectoryMembership>();
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(never.Task);
+
+        var valid = await h.Provider().ValidateAsync(Operator(SectionGroupSid), "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Contains("did not answer", audit.GetProperty("error").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PrincipalWithoutAnAccountSid_InvalidatesWithoutTouchingTheDirectory()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+
+        var valid = await h.Provider().ValidateAsync(
+            Principal(primarySid: null, OperatorName, [SectionGroupSid]), "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+        _ = h.Directory.DidNotReceive().GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
+    [Fact]
+    public async Task OperatorHoldingNoConsultedGroup_IsNotLookedUp()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+
+        var valid = await h.Provider().ValidateAsync(Operator(UnconsultedGroupSid, DomainUsersSid), "Interval", Ct);
+
+        Assert.True(valid);
+        _ = h.Directory.DidNotReceive().GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
+    [Fact]
+    public async Task TheLookupIsKeyedByTheAccountSidAndRoutedByTheAccountsOwnDomain()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+
+        await h.Provider().ValidateAsync(Operator(SectionGroupSid), "Interval", Ct);
+
+        _ = h.Directory.Received(1).GetMembershipAsync(OperatorSid, "CONTOSO", Arg.Any<CancellationToken>());
+    }
+
+    // ------------------------------------------------------------------ what is consulted
+
+    [Fact]
+    public async Task NameConfiguredAdminGroup_IsComparedByItsTranslatedSid()
+    {
+        using var h = new Harness(adminGroups: [NamedAdminGroup]);
+        h.Directory.TranslateGroupName(NamedAdminGroup).Returns(NamedAdminGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+
+        var valid = await h.Provider().ValidateAsync(Operator(NamedAdminGroupSid, DomainUsersSid), "Interval", Ct);
+
+        Assert.False(valid);
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal(new[] { NamedAdminGroupSid }, RemovedSids(audit));
+    }
+
+    [Fact]
+    public async Task SidConfiguredAllowedGroup_IsConsultedWithoutTranslation()
+    {
+        using var h = new Harness(allowedGroups: [SectionGroupSid]);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+
+        var valid = await h.Provider().ValidateAsync(Operator(SectionGroupSid), "Interval", Ct);
+
+        Assert.False(valid);
+        h.Directory.DidNotReceiveWithAnyArgs().TranslateGroupName(default!);
+    }
+
+    [Fact]
+    public async Task UnmappedNameConfiguredGroup_IsSkipped()
+    {
+        using var h = new Harness(adminGroups: [NamedAdminGroup]);
+        h.Directory.TranslateGroupName(NamedAdminGroup).Returns((string?)null);
+
+        var valid = await h.Provider().ValidateAsync(Operator(NamedAdminGroupSid), "Interval", Ct);
+
+        Assert.True(valid);
+        _ = h.Directory.DidNotReceive().GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
+    [Fact]
+    public async Task NameTranslationFailure_InvalidatesTheCircuit()
+    {
+        using var h = new Harness(adminGroups: [NamedAdminGroup]);
+        h.Directory.TranslateGroupName(NamedAdminGroup)
+            .Throws(new DirectoryUnavailableException("the trust could not be reached"));
+
+        var valid = await h.Provider().ValidateAsync(Operator(NamedAdminGroupSid), "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+    }
+
+    [Fact]
+    public async Task ModuleAdminGrant_IsConsulted()
+    {
+        using var h = new Harness();
+        h.ModuleAdmins.SetModuleAdmins("Migration", [ModuleAdminGroupSid]);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+
+        var valid = await h.Provider().ValidateAsync(Operator(ModuleAdminGroupSid), "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.MembershipChanged, h.Revocation.Reason);
+    }
+
+    [Fact]
+    public void TheInventoryHoldsOnlyUsableDomainSids()
+    {
+        using var h = new Harness(adminGroups: ["S-1-5-32-544", NamedAdminGroup]);
+        h.Grant("MailboxPermissions", SectionGroupSid, @"CONTOSO\NotMigrated", "S-1-1-0");
+        h.Directory.TranslateGroupName(NamedAdminGroup).Returns("S-1-5-32-545");
+
+        var consulted = h.Inventory().GetConsultedSids();
+
+        // A name nothing migrated, a well-known SID, and a name that translates to a BUILTIN
+        // group are none of them a directory group this check can re-derive.
+        Assert.Equal(new[] { SectionGroupSid }, consulted.ToArray());
+        h.Directory.DidNotReceive().TranslateGroupName("S-1-5-32-544");
+    }
+
+    // ------------------------------------------------------------------ the audit line
+
+    [Theory]
+    [InlineData(CircuitRevocationReason.MembershipChanged)]
+    [InlineData(CircuitRevocationReason.AccountDisabled)]
+    [InlineData(CircuitRevocationReason.LookupFailed)]
+    public async Task Invalidation_WritesOneAuditLineWithItsReason(CircuitRevocationReason reason)
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        switch (reason)
+        {
+            case CircuitRevocationReason.MembershipChanged:
+                h.DirectoryReturns(enabled: true, DomainUsersSid);
+                break;
+            case CircuitRevocationReason.AccountDisabled:
+                h.DirectoryReturns(enabled: false, SectionGroupSid, DomainUsersSid);
+                break;
+            default:
+                h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken)
+                    .ThrowsAsync(new DirectoryUnavailableException("no domain controller answered"));
+                break;
+        }
+
+        var provider = h.Provider();
+        Assert.False(await provider.ValidateAsync(Operator(SectionGroupSid), "Interval", Ct));
+        Assert.False(await provider.ValidateAsync(Operator(SectionGroupSid), "Interval", Ct));
+
+        // One line per circuit, however many checks find it invalid afterwards.
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal("SessionRevalidation", audit.GetProperty("action").GetString());
+        Assert.Equal("Authentication", audit.GetProperty("category").GetString());
+        Assert.Equal("Failed", audit.GetProperty("result").GetString());
+        Assert.Equal("operator", audit.GetProperty("user").GetString());
+        Assert.Equal(OperatorName, audit.GetProperty("target").GetString());
+        Assert.Equal("192.0.2.10", audit.GetProperty("ip").GetString());
+        Assert.Equal(reason.ToString(), audit.GetProperty("reason").GetString());
+        Assert.Equal("Interval", audit.GetProperty("trigger").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(audit.GetProperty("error").GetString()));
+
+        if (reason == CircuitRevocationReason.MembershipChanged)
+        {
+            Assert.Equal(new[] { SectionGroupSid }, RemovedSids(audit));
+        }
+        else
+        {
+            Assert.False(audit.TryGetProperty("removedGroupSids", out _));
+        }
+    }
+
+    [Fact]
+    public async Task AnAuditFailure_DoesNotStopTheRevocation()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+
+        // An audit service with no sink throws from inside LogModuleAction.
+        var provider = new MembershipRevalidatingAuthenticationStateProvider(
+            NullLoggerFactory.Instance, h.Revalidator(), h.Revocation, h.Options,
+            new AuditService(null!, null!), h.ClientInfo);
+
+        Assert.False(await provider.ValidateAsync(Operator(SectionGroupSid), "Interval", Ct));
+        Assert.True(h.Revocation.IsRevoked);
+    }
+
+    [Fact]
+    public void ARevocationIsRecordedOnceAndKeepsItsFirstReason()
+    {
+        // The open check and the interval loop can both find a circuit invalid; only the first
+        // may audit, and the reason the operator is shown must not change under them.
+        var revocation = new CircuitRevocation();
+
+        Assert.True(revocation.TryRevoke(CircuitRevocationReason.AccountDisabled));
+        Assert.False(revocation.TryRevoke(CircuitRevocationReason.LookupFailed));
+        Assert.Equal(CircuitRevocationReason.AccountDisabled, revocation.Reason);
+    }
+
+    [Fact]
+    public async Task ARevokedCircuit_IsNotLookedUpAgain()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+        var provider = h.Provider();
+
+        Assert.False(await provider.ValidateAsync(Operator(SectionGroupSid), "Interval", Ct));
+        h.Directory.ClearReceivedCalls();
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+
+        Assert.False(await provider.ValidateAsync(Operator(SectionGroupSid), "Interval", Ct));
+        _ = h.Directory.DidNotReceive().GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
+    // ------------------------------------------------------------------ the circuit
+
+    [Fact(Timeout = 20000)]
+    public async Task TheFrameworkLoop_SignsTheCircuitOutWhenRevalidationFails()
+    {
+        using var h = new Harness(interval: TimeSpan.FromMilliseconds(50));
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+        using var provider = h.Provider();
+
+        var signedOut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.AuthenticationStateChanged += async task =>
+        {
+            if ((await task).User.Identity?.IsAuthenticated != true)
+                signedOut.TrySetResult();
+        };
+
+        ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
+            Task.FromResult(new AuthenticationState(Operator(SectionGroupSid))));
+
+        await signedOut.Task.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+
+        Assert.True(h.Revocation.IsRevoked);
+        Assert.False((await provider.GetAuthenticationStateAsync()).User.Identity?.IsAuthenticated);
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal("Interval", audit.GetProperty("trigger").GetString());
+    }
+
+    [Fact]
+    public async Task ARevokedCircuit_IsNeverGivenAnAuthenticatedPrincipalAgain()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+        using var provider = h.Provider();
+        var host = (IHostEnvironmentAuthenticationStateProvider)provider;
+
+        Assert.False(await provider.ValidateAsync(Operator(SectionGroupSid), "Interval", Ct));
+
+        // What a SignalR reconnect does: ComponentHub.ConnectCircuit -> SetCircuitUser hands the
+        // circuit the new connection's principal, which under Kerberos is the stale one.
+        host.SetAuthenticationState(Task.FromResult(new AuthenticationState(Operator(SectionGroupSid))));
+
+        Assert.False((await provider.GetAuthenticationStateAsync()).User.Identity?.IsAuthenticated);
+    }
+
+    [Fact]
+    public async Task AnUnrevokedCircuit_TakesTheHostPrincipal()
+    {
+        using var h = new Harness();
+        using var provider = h.Provider();
+        var principal = Operator(SectionGroupSid);
+
+        ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
+            Task.FromResult(new AuthenticationState(principal)));
+
+        Assert.Same(principal, (await provider.GetAuthenticationStateAsync()).User);
+    }
+
+    [Fact]
+    public async Task TheCircuitOpenCheck_RevokesAndSignsOut()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+        using var provider = h.Provider();
+        ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
+            Task.FromResult(new AuthenticationState(Operator(SectionGroupSid))));
+
+        await provider.CheckAtCircuitOpenAsync();
+
+        Assert.Equal(CircuitRevocationReason.MembershipChanged, h.Revocation.Reason);
+        Assert.False((await provider.GetAuthenticationStateAsync()).User.Identity?.IsAuthenticated);
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal("CircuitOpened", audit.GetProperty("trigger").GetString());
+    }
+
+    [Fact]
+    public async Task TheCircuitOpenCheck_LeavesAValidSessionAlone()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+        using var provider = h.Provider();
+        var principal = Operator(SectionGroupSid);
+        ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
+            Task.FromResult(new AuthenticationState(principal)));
+
+        await provider.CheckAtCircuitOpenAsync();
+
+        Assert.False(h.Revocation.IsRevoked);
+        Assert.Same(principal, (await provider.GetAuthenticationStateAsync()).User);
+    }
+
+    [Fact]
+    public async Task TheCircuitOpenCheck_SkipsAnUnauthenticatedCircuit()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        using var provider = h.Provider();
+        ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
+            Task.FromResult(new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()))));
+
+        await provider.CheckAtCircuitOpenAsync();
+
+        Assert.False(h.Revocation.IsRevoked);
+        _ = h.Directory.DidNotReceive().GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
+    [Fact]
+    public async Task TheCircuitOpenCheck_FailsClosedWhenThereIsNoStateToCheck()
+    {
+        using var h = new Harness();
+        using var provider = h.Provider();
+
+        // ServerAuthenticationStateProvider throws when asked before any state was set.
+        await provider.CheckAtCircuitOpenAsync();
+
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+        Assert.False((await provider.GetAuthenticationStateAsync()).User.Identity?.IsAuthenticated);
+        Assert.Equal("Unknown", Assert.Single(h.AuditEvents()).RootElement.GetProperty("target").GetString());
+    }
+
+    [Fact]
+    public async Task TheCircuitOpenCheck_StopsQuietlyOnceTheCircuitIsGone()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+        var provider = h.Provider();
+        ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
+            Task.FromResult(new AuthenticationState(Operator(SectionGroupSid))));
+
+        ((IDisposable)provider).Dispose();
+        await provider.CheckAtCircuitOpenAsync();
+
+        // A closed circuit has no session left to end, and no operator to audit against.
+        Assert.False(h.Revocation.IsRevoked);
+        Assert.Empty(h.AuditEvents());
+    }
+
+    [Fact]
+    public async Task AnUnexpectedFailureInsideTheCheck_IsALookupFailure()
+    {
+        using var h = new Harness();
+
+        var valid = await h.Provider().ValidateAsync(null!, "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+    }
+
+    [Fact]
+    public async Task ADirectoryWithNoAnswer_IsALookupFailure()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(Task.FromResult<OperatorDirectoryMembership>(null!));
+
+        var valid = await h.Provider().ValidateAsync(Operator(SectionGroupSid), "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+    }
+
+    [Fact]
+    public async Task TheGate_LeavesOpenAloneWithoutTheRevalidatingProvider()
+    {
+        using var h = new Harness();
+        var gate = new CircuitRevocationGate(
+            h.Revocation, Substitute.For<AuthenticationStateProvider>(), NullLogger<CircuitRevocationGate>.Instance);
+
+        await gate.OnCircuitOpenedAsync(null!, Ct);
+
+        Assert.True(gate.OpenCheck.IsCompletedSuccessfully);
+        Assert.False(h.Revocation.IsRevoked);
+    }
+
+    [Fact]
+    public async Task TheGate_PassesActivityThroughWhileTheCircuitIsValid()
+    {
+        using var h = new Harness();
+        using var provider = h.Provider();
+        var gate = new CircuitRevocationGate(h.Revocation, provider, NullLogger<CircuitRevocationGate>.Instance);
+
+        var ran = false;
+        await gate.CreateInboundActivityHandler(_ =>
+        {
+            ran = true;
+            return Task.CompletedTask;
+        })(null!);
+
+        Assert.True(ran);
+    }
+
+    [Fact]
+    public async Task TheGate_DropsEveryInboundActivityOnceRevoked()
+    {
+        using var h = new Harness();
+        using var provider = h.Provider();
+        var gate = new CircuitRevocationGate(h.Revocation, provider, NullLogger<CircuitRevocationGate>.Instance);
+        h.Revocation.TryRevoke(CircuitRevocationReason.MembershipChanged);
+
+        var ran = 0;
+        var handler = gate.CreateInboundActivityHandler(_ =>
+        {
+            ran++;
+            return Task.CompletedTask;
+        });
+
+        await handler(null!);
+        await handler(null!);
+
+        Assert.Equal(0, ran);
+    }
+
+    [Fact]
+    public async Task TheGate_StartsTheCircuitOpenCheck()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+        using var provider = h.Provider();
+        ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
+            Task.FromResult(new AuthenticationState(Operator(SectionGroupSid))));
+        var gate = new CircuitRevocationGate(h.Revocation, provider, NullLogger<CircuitRevocationGate>.Instance);
+
+        await gate.OnCircuitOpenedAsync(null!, Ct);
+        await gate.OpenCheck.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+
+        Assert.Equal(CircuitRevocationReason.MembershipChanged, h.Revocation.Reason);
+    }
+
+    [Fact]
+    public void TheGate_RunsAfterTheHandlersThatCaptureCircuitContext()
+    {
+        using var h = new Harness();
+        using var provider = h.Provider();
+        var gate = new CircuitRevocationGate(h.Revocation, provider, NullLogger<CircuitRevocationGate>.Instance);
+        var clientInfo = new ClientInfoCircuitHandler(
+            h.ClientInfo, Substitute.For<Microsoft.AspNetCore.Http.IHttpContextAccessor>(),
+            NullLogger<ClientInfoCircuitHandler>.Instance);
+
+        // The open check audits with the circuit's IP, which ClientInfoCircuitHandler captures in
+        // its own OnCircuitOpenedAsync. Handlers run in ascending Order.
+        Assert.True(gate.Order > clientInfo.Order);
+        Assert.True(gate.Order > new UsageSessionCircuitHandler(new UsageSession()).Order);
+    }
+
+    // ------------------------------------------------------------------ the interval
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void TheIntervalDefaultsToFiveMinutes(string? configured) =>
+        Assert.Equal(TimeSpan.FromMinutes(5), CircuitRevalidationSettings.ResolveInterval(configured));
+
+    [Theory]
+    [InlineData("00:00:30", 30)]
+    [InlineData("00:05:00", 300)]
+    [InlineData("01:00:00", 3600)]
+    public void AnIntervalWithinBoundsIsTaken(string configured, int seconds) =>
+        Assert.Equal(TimeSpan.FromSeconds(seconds), CircuitRevalidationSettings.ResolveInterval(configured));
+
+    [Theory]
+    [InlineData("00:00:29")]
+    [InlineData("00:00:05")]
+    [InlineData("00:00:00")]
+    public void TheIntervalFloorIsEnforced(string configured)
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => CircuitRevalidationSettings.ResolveInterval(configured));
+        Assert.Contains("minimum", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("01:00:01")]
+    [InlineData("5")]
+    public void TheIntervalCeilingIsEnforced(string configured)
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => CircuitRevalidationSettings.ResolveInterval(configured));
+        Assert.Contains("maximum", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnUnparseableIntervalIsRefused() =>
+        Assert.Throws<InvalidOperationException>(() => CircuitRevalidationSettings.ResolveInterval("five minutes"));
+
+    // ------------------------------------------------------------------ wiring
+
+    [Fact]
+    public void ProgramCs_RegistersTheRevalidatingProviderAndTheGate()
+    {
+        var program = Squash(File.ReadAllText(Path.Combine(RepoRoot(), "Program.cs")));
+
+        const string provider =
+            "AddScoped<Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider, MembershipRevalidatingAuthenticationStateProvider>()";
+        const string gate =
+            "AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler, CircuitRevocationGate>()";
+
+        var interactive = program.IndexOf(".AddInteractiveServerComponents()", StringComparison.Ordinal);
+        var registration = program.IndexOf(provider, StringComparison.Ordinal);
+
+        Assert.True(interactive >= 0, "AddInteractiveServerComponents() is gone from Program.cs.");
+        Assert.True(registration > interactive,
+            "The revalidating provider must be registered after AddInteractiveServerComponents(), which "
+            + "registers the framework's non-revalidating default.");
+        Assert.Contains(gate, program, StringComparison.Ordinal);
+        Assert.Matches(
+            new Regex(@"CircuitRevalidationSettings\.ResolveInterval\(\s*builder\.Configuration\[CircuitRevalidationSettings\.IntervalKey\]\s*\)"),
+            program);
+
+        // Nothing registered afterwards can take its place.
+        Assert.Single(Regex.Matches(program, @"\bAuthenticationStateProvider\s*[,>]"));
+
+        // Negotiate and the group handler are untouched.
+        Assert.Contains("AddAuthentication(NegotiateDefaults.AuthenticationScheme) .AddNegotiate()", program, StringComparison.Ordinal);
+        Assert.Contains("AddSingleton<IAuthorizationHandler, GroupAuthorizationHandler>()", program, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheContainer_ResolvesTheRevalidatingProviderOverTheFrameworkDefault()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        // What AddInteractiveServerComponents() registers, then the Program.cs registrations.
+        services.TryAddScoped<AuthenticationStateProvider, ServerAuthenticationStateProvider>();
+        services.AddSingleton(new CircuitRevalidationOptions(TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(60)));
+        services.AddSingleton(Substitute.For<IOperatorMembershipDirectory>());
+        services.AddSingleton<SectionAccessService>(_ => null!);
+        services.AddSingleton<ModuleAdminService>(_ => null!);
+        services.AddSingleton<AuditService>(_ => null!);
+        services.AddScoped<ClientInfoService>();
+        services.AddSingleton<AuthorizationGroupInventory>();
+        services.AddSingleton<CircuitMembershipRevalidator>();
+        services.AddScoped<CircuitRevocation>();
+        services.AddScoped<AuthenticationStateProvider, MembershipRevalidatingAuthenticationStateProvider>();
+        services.AddScoped<CircuitHandler, CircuitRevocationGate>();
+
+        using var root = services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true,
+        });
+        using var circuit = root.CreateScope();
+
+        Assert.IsType<MembershipRevalidatingAuthenticationStateProvider>(
+            circuit.ServiceProvider.GetRequiredService<AuthenticationStateProvider>());
+        Assert.Single(circuit.ServiceProvider.GetServices<CircuitHandler>().OfType<CircuitRevocationGate>());
+
+        // One revocation per circuit, shared by the provider that sets it and the gate that reads it.
+        using var other = root.CreateScope();
+        Assert.NotSame(
+            circuit.ServiceProvider.GetRequiredService<CircuitRevocation>(),
+            other.ServiceProvider.GetRequiredService<CircuitRevocation>());
+    }
+
+    [Fact]
+    public void TheLayout_RendersTheSessionEndedNoticeOnEveryPage()
+    {
+        var layout = File.ReadAllText(Path.Combine(RepoRoot(), "Components", "Layout", "MainLayout.razor"));
+        var notice = layout.IndexOf("<SessionEndedNotice", StringComparison.Ordinal);
+
+        Assert.True(notice >= 0, "MainLayout no longer renders <SessionEndedNotice />.");
+
+        // Outside every AuthorizeView: the layout is rendered statically, so a view's verdict is
+        // the request's, and the notice must not depend on it.
+        Assert.True(notice > layout.LastIndexOf("</AuthorizeView>", StringComparison.Ordinal),
+            "The notice must sit outside the layout's AuthorizeView blocks.");
+    }
+
+    [Fact]
+    public void TheNotice_IsAnInteractiveIslandThatReloadsInFull()
+    {
+        var notice = File.ReadAllText(Path.Combine(RepoRoot(), "Components", "Shared", "SessionEndedNotice.razor"));
+
+        // Without a render mode it renders once, statically, and can never show.
+        Assert.Contains("@rendermode InteractiveServer", notice, StringComparison.Ordinal);
+        Assert.Contains("@inject CircuitRevocation Revocation", notice, StringComparison.Ordinal);
+        Assert.Contains("[CascadingParameter]", notice, StringComparison.Ordinal);
+        Assert.Contains("Task<AuthenticationState>", notice, StringComparison.Ordinal);
+        Assert.Contains("SessionEndedMessages.For(reason)", notice, StringComparison.Ordinal);
+
+        // A full load, so the browser re-authenticates; an enhanced navigation would try to reuse
+        // the revoked circuit.
+        Assert.Matches(new Regex(@"<a [^>]*data-enhance-nav=""false""[^>]*>Reload</a>"), notice);
+        Assert.DoesNotContain("@onclick", notice, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EveryReasonHasItsOwnPlainMessage()
+    {
+        var messages = Enum.GetValues<CircuitRevocationReason>().Select(SessionEndedMessages.For).ToList();
+
+        Assert.Equal(messages.Count, messages.Distinct(StringComparer.Ordinal).Count());
+        Assert.All(messages, m => Assert.Contains("Active Directory", m, StringComparison.Ordinal));
+        Assert.Contains("Reload", SessionEndedMessages.ReloadAdvice, StringComparison.Ordinal);
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private static string AnySid => Arg.Any<string>();
+
+    private static string? AnyDomain => Arg.Any<string?>();
+
+    private static CancellationToken AnyToken => Arg.Any<CancellationToken>();
+
+    private static ClaimsPrincipal Operator(params string[] groupSids) => Principal(OperatorSid, OperatorName, groupSids);
+
+    private static ClaimsPrincipal Principal(string? primarySid, string name, IEnumerable<string> groupSids)
+    {
+        var identity = new ClaimsIdentity("Negotiate", ClaimTypes.Name, ClaimTypes.Role);
+        identity.AddClaim(new Claim(ClaimTypes.Name, name));
+        if (primarySid is not null)
+            identity.AddClaim(new Claim(ClaimTypes.PrimarySid, primarySid));
+        foreach (var sid in groupSids)
+            identity.AddClaim(new Claim(ClaimTypes.GroupSid, sid));
+        return new ClaimsPrincipal(identity);
+    }
+
+    private static string Squash(string text) => Regex.Replace(text, @"\s+", " ");
+
+    private static string[] RemovedSids(JsonElement audit) =>
+        audit.GetProperty("removedGroupSids").EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "ExchangeAdminWeb.csproj")))
+                return dir.FullName;
+
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the repository root from the test base directory.");
+    }
+
+    private sealed class Harness : IDisposable
+    {
+        private readonly TempDir _temp = new();
+
+        public Harness(
+            string[]? allowedGroups = null,
+            string[]? adminGroups = null,
+            TimeSpan? interval = null,
+            TimeSpan? lookupTimeout = null)
+        {
+            var settings = new Dictionary<string, string?>
+            {
+                ["Audit:LogRoot"] = _temp.Path,
+                ["Audit:RotationPeriod"] = "daily",
+            };
+            for (var i = 0; i < (allowedGroups?.Length ?? 0); i++)
+                settings[$"Security:AllowedGroups:{i}"] = allowedGroups![i];
+            for (var i = 0; i < (adminGroups?.Length ?? 0); i++)
+                settings[$"Security:AdminGroups:{i}"] = adminGroups![i];
+
+            var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+            var env = Substitute.For<IWebHostEnvironment>();
+            env.ContentRootPath.Returns(_temp.Path);
+
+            var store = TestConfigStore.Create(_temp.Path);
+            SectionAccess = new SectionAccessService(
+                config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(), new SectionAccessRepository(store));
+            ModuleAdmins = new ModuleAdminService(env, new ModuleAdminRepository(store), NullLogger<ModuleAdminService>.Instance);
+
+            var log = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
+            Audit = new AuditService(log, new OperationTraceService(config, log));
+            Options = new CircuitRevalidationOptions(
+                interval ?? TimeSpan.FromMinutes(5), lookupTimeout ?? TimeSpan.FromSeconds(10));
+        }
+
+        public SectionAccessService SectionAccess { get; }
+
+        public ModuleAdminService ModuleAdmins { get; }
+
+        public IOperatorMembershipDirectory Directory { get; } = Substitute.For<IOperatorMembershipDirectory>();
+
+        public AuditService Audit { get; }
+
+        public CircuitRevocation Revocation { get; } = new();
+
+        public ClientInfoService ClientInfo { get; } = new() { IpAddress = "192.0.2.10" };
+
+        public CircuitRevalidationOptions Options { get; }
+
+        public void Grant(string section, params string[] groups)
+        {
+            var all = SectionAccess.GetSectionAccess();
+            all[section] = groups;
+            SectionAccess.SaveSectionAccess(all);
+        }
+
+        public void DirectoryReturns(bool enabled, params string[] groupSids) =>
+            Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(
+                Task.FromResult(new OperatorDirectoryMembership(
+                    new HashSet<string>(groupSids, StringComparer.OrdinalIgnoreCase), enabled)));
+
+        public AuthorizationGroupInventory Inventory() => new(SectionAccess, ModuleAdmins, Directory);
+
+        public CircuitMembershipRevalidator Revalidator() => new(Directory, Inventory(), Options);
+
+        public MembershipRevalidatingAuthenticationStateProvider Provider() =>
+            new(NullLoggerFactory.Instance, Revalidator(), Revocation, Options, Audit, ClientInfo);
+
+        public JsonDocument[] AuditEvents()
+        {
+            var dir = Path.Combine(_temp.Path, "ExchangeAdminWeb");
+            if (!System.IO.Directory.Exists(dir))
+                return [];
+
+            return System.IO.Directory.GetFiles(dir, "exchangeadmin_*.jsonl")
+                .Where(f => !Path.GetFileNameWithoutExtension(f).EndsWith("_trace", StringComparison.OrdinalIgnoreCase))
+                .SelectMany(File.ReadAllLines)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => JsonDocument.Parse(line))
+                .Where(e => e.RootElement.TryGetProperty("eventType", out var type) && type.GetString() == "audit")
+                .ToArray();
+        }
+
+        public void Dispose() => _temp.Dispose();
+    }
+}

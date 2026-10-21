@@ -1,0 +1,36 @@
+@rendermode InteractiveServer
+@using ExchangeAdminWeb.Authorization
+@inject CircuitRevocation Revocation
+@inject NavigationManager Navigation
+
+@*
+    The operator-facing half of aud-a29b. When revalidation revokes this circuit, the provider
+    replaces the principal, the cascading authentication state changes, and this island re-renders
+    with the reason. Everything else on the page has stopped responding by then
+    (CircuitRevocationGate), so this is what the operator sees.
+
+    Reload is a full page load (data-enhance-nav="false"): the browser signs in again and gets a new
+    circuit, where an enhanced navigation would try to reuse this one. The fragment is dropped
+    because a link to the current URL with a fragment only scrolls.
+*@
+@if (Revocation.Reason is { } reason)
+{
+    <div class="session-ended" role="alertdialog" aria-modal="true"
+         aria-labelledby="session-ended-title" aria-describedby="session-ended-reason">
+        <div class="session-ended-card">
+            <h2 id="session-ended-title" class="h4">@SessionEndedMessages.Title</h2>
+            <p id="session-ended-reason">@SessionEndedMessages.For(reason)</p>
+            <p>@SessionEndedMessages.ReloadAdvice</p>
+            <a class="btn btn-primary" href="@ReloadTarget" data-enhance-nav="false">Reload</a>
+        </div>
+    </div>
+}
+
+@code {
+    // Not read in the markup, on purpose: subscribing to the cascading state is what re-renders this
+    // island when the provider signs the circuit out.
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthenticationState { get; set; }
+
+    private string ReloadTarget => Navigation.Uri.Split('#')[0];
+}

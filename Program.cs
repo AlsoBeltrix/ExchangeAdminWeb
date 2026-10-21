@@ -128,6 +128,35 @@ try
     builder.Services.AddRazorComponents()
         .AddInteractiveServerComponents();
 
+    // Circuit revalidation (aud-a29b; option 1 of the record, decisions 2026-10-21). The framework's
+    // provider keeps the principal a circuit opened with for its whole life, and IsInRole tests that
+    // token rather than the directory, so an operator removed from a group kept their access on any
+    // tab already open. This provider re-derives the consulted group SIDs from the directory when a
+    // circuit opens and every Authentication:RevalidationInterval, and the gate makes a revoked
+    // circuit refuse everything. Registered AFTER AddInteractiveServerComponents(), which registers
+    // the non-revalidating default. The interval is resolved here so a bad value stops startup.
+    TimeSpan revalidationInterval;
+    try
+    {
+        revalidationInterval = CircuitRevalidationSettings.ResolveInterval(
+            builder.Configuration[CircuitRevalidationSettings.IntervalKey]);
+    }
+    catch (InvalidOperationException ex)
+    {
+        Log.Fatal(ex.Message);
+        throw;
+    }
+
+    builder.Services.AddSingleton(new CircuitRevalidationOptions(
+        revalidationInterval, CircuitRevalidationSettings.LookupTimeout));
+    builder.Services.AddSingleton<IOperatorMembershipDirectory, OperatorMembershipDirectory>();
+    builder.Services.AddSingleton<AuthorizationGroupInventory>();
+    builder.Services.AddSingleton<CircuitMembershipRevalidator>();
+    builder.Services.AddScoped<CircuitRevocation>();
+    builder.Services.AddScoped<Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider,
+        MembershipRevalidatingAuthenticationStateProvider>();
+    builder.Services.AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler, CircuitRevocationGate>();
+
     builder.Services.AddHttpClient("ServiceNow")
         .ConfigureHttpClient(client =>
         {

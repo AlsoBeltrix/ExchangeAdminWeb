@@ -1,0 +1,19 @@
+.session-ended {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.session-ended-card {
+    max-width: 34rem;
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    background: var(--bs-body-bg, #fff);
+    color: var(--bs-body-color, #212529);
+    box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.35);
+}
