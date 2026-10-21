@@ -594,6 +594,62 @@ Describe 'deploy.ps1' {
         }
     }
 
+    It 'checks the live config database after a -Force deploy restarts the pool, and only warns (cdt-12)' {
+        # The upgrade path ends with a post-deploy check of the live store. -Force, the path that
+        # regenerates appsettings.json and so the one most able to point the app at a different,
+        # missing or damaged database, ended on the success banner without one.
+        $install = Get-FreshInstallBranch $s
+
+        $restarts = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.TryStatementAst] -and
+                    $null -ne $node.Finally -and
+                    @($node.Finally.FindAll({ param($n)
+                                $n -is [System.Management.Automation.Language.CommandAst] -and
+                                $n.GetCommandName() -eq 'Start-AppPoolWithRetry' }, $true)).Count -gt 0 }, $true))
+        $restarts.Count | Should -Be 1 -Because 'the branch restarts the pool in one finally'
+        $restartEnd = $restarts[0].Extent.EndOffset
+
+        $resolves = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $node.Left.VariablePath.UserPath -eq 'liveDb' }, $true))
+        $resolves.Count | Should -Be 1 -Because 'the -Force path must resolve the database it checks'
+        $resolves[0].Right.Extent.Text | Should -BeExactly 'Resolve-ConfigDbPath -PublishPath $PublishPath' -Because 'it reads the regenerated appsettings.json, the file the app opens'
+        @(Get-ConditionalAncestor $resolves[0] $install) | Should -BeNullOrEmpty -Because 'every -Force run that gets this far is checked'
+        $resolves[0].Extent.StartOffset | Should -BeGreaterThan $restartEnd -Because 'the check runs after the pool restart'
+
+        $checks = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq 'Test-SqliteConfigDbIntegrity' }, $true))
+        $checks.Count | Should -Be 1 -Because 'the -Force path must check the live store'
+        $check = $checks[0]
+        Get-NamedArgumentText $check 'DbPath' | Should -BeExactly '$liveDb'
+        Get-NamedArgumentText $check 'AppPath' | Should -BeExactly '$PublishPath' -Because 'staging is gone by then; the publish folder holds the same build'
+        $check.Extent.StartOffset | Should -BeGreaterThan $resolves[0].Extent.EndOffset
+
+        $gates = @(Get-ConditionalAncestor $check $install)
+        $gates.Count | Should -Be 1 -Because 'only its own presence test decides whether it runs'
+        $gates[0].Clauses[0].Item1.Extent.Text | Should -BeExactly 'Test-Path -LiteralPath $liveDb'
+
+        # Warn, not throw: the files are deployed and the pool is running; the verified pre-deploy
+        # backup is the rollback.
+        $try = $check.Parent
+        while ($null -ne $try -and -not ($try -is [System.Management.Automation.Language.TryStatementAst])) { $try = $try.Parent }
+        $try | Should -Not -BeNullOrEmpty
+        $try.Extent.StartOffset | Should -BeGreaterThan $gates[0].Extent.StartOffset -Because 'the try is inside the presence test'
+        $try.CatchClauses.Count | Should -Be 1
+        $try.CatchClauses[0].Body.Statements[0].Extent.Text | Should -BeLike 'Write-Warn "POST-DEPLOY CHECK: live config DB integrity check FAILED*'
+        @($try.CatchClauses[0].Body.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.ThrowStatementAst] -or
+                    ($n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-Fail') }, $true)).Count |
+            Should -Be 0 -Because 'a failed check is reported, never thrown'
+
+        $gates[0].Clauses.Count | Should -Be 2
+        $gates[0].Clauses[1].Item1.Extent.Text | Should -BeExactly '$configStorePathSetting'
+        $gates[0].Clauses[1].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Warn "POST-DEPLOY CHECK: ConfigStore:Path names*'
+        $gates[0].ElseClause.Statements[0].Extent.Text | Should -BeLike 'Write-Warn "POST-DEPLOY CHECK: no config DB at*'
+    }
+
     It 'runs a post-deploy live DB integrity check (DB is excluded from file drift by design)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,

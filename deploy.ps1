@@ -683,9 +683,11 @@ try {
 
         # Post-deploy live DB health check. The DB triplet is excluded from the file-drift inventory
         # above (it changes by design across the pool restart via WAL checkpoint + startup seeding),
-        # so verify it properly here instead: the app pool was started above, so the schema has been
-        # migrated/seeded. A missing or corrupt live DB must be flagged loudly rather than ending on
-        # the success banner. Warn (not throw) - the deploy has already happened; this surfaces a bad
+        # so verify it properly here instead. Starting the pool does not start the application - IIS
+        # does that on the first request (aud-a40) - so this verifies the database the new build is
+        # about to open, not the result of its migrations (cdt-12 corrected this comment, which said
+        # the schema had been migrated by now). A missing or corrupt live DB must be flagged loudly
+        # rather than ending on the success banner. Warn (not throw) - the deploy has already happened; this surfaces a bad
         # outcome to the operator with the verified pre-deploy backup as the rollback. The path is
         # resolved again from appsettings.json (deploy never rewrites it) so a shared database is
         # checked where it actually lives (SharedConfigDb-Plan AC6).
@@ -916,6 +918,33 @@ try {
             # Staging contains the checkout's published appsettings.json (real environment values), not
             # the generated one; clean on failure paths too.
             Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        # --- Post-deploy live DB health check (cdt-12) ---
+        # The upgrade path above has always ended with this check; -Force, the path that
+        # regenerates appsettings.json and so the one most able to point the app at a different,
+        # missing or damaged database, ended on the success banner without it. Same check, same
+        # posture: the files are deployed and the pool is running, so a failure WARNS and names the
+        # pre-deploy backup instead of throwing. Only reached on success (a throw above propagates
+        # past it). The path is resolved from the regenerated appsettings.json, which carries the
+        # kept ConfigStore:Path (cdt-8), so this checks the file the app will open; staging was
+        # removed in the finally above, so the tool runs from the publish folder, which holds the
+        # same build. Starting the pool does not start the application - IIS does that on the first
+        # request (aud-a40) - so this verifies the database the new build is about to open, not the
+        # result of its migrations. A genuine fresh install has no database yet and gets the warning
+        # that says it is created on first start.
+        $liveDb = Resolve-ConfigDbPath -PublishPath $PublishPath
+        if (Test-Path -LiteralPath $liveDb) {
+            try {
+                Test-SqliteConfigDbIntegrity -DbPath $liveDb -AppPath $PublishPath | Out-Null
+                Write-Success "Config DB verified: integrity_check passed on the live store at $liveDb"
+            } catch {
+                Write-Warn "POST-DEPLOY CHECK: live config DB integrity check FAILED: $($_.Exception.Message). The app may not function correctly - restore from the pre-deploy backup in $BackupDir and investigate."
+            }
+        } elseif ($configStorePathSetting) {
+            Write-Warn "POST-DEPLOY CHECK: ConfigStore:Path names $liveDb but it does not exist after deploy. The app will not start against a missing shared database - investigate."
+        } else {
+            Write-Warn "POST-DEPLOY CHECK: no config DB at $liveDb after deploy. If this is the first deploy of the SQLite build it will be created on first app start; otherwise investigate."
         }
     }
 } finally {
