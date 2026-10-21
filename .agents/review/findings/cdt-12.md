@@ -6,7 +6,7 @@ pre-deploy backup, when it is not. The `-Force` path has no such check, although
 that regenerates `appsettings.json` and so the one most able to leave the app pointed at a
 different, missing or damaged database (cdt-8 was exactly that). A `-Force` run ends on "Deploy
 complete (INSTALL)." with nothing having looked at the database the restarted app will open.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (ops-batch-3, 2026-10-21) raised no defect in this change
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
 **Commit**: `4c0364e` (merged)
 **Reviewer**: implementer (surfaced by the cdt-8/9/10 agent)

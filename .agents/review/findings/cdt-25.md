@@ -8,7 +8,7 @@ binaries in place, the application down and a success message. aud-a38 fixed exa
 promotion script with `Start-AppPoolVerified` (`tools/AppPoolControl.psm1`); cdt-18 brought it to the
 installer; `deploy.ps1`, which already imports the module, still assumed. cdt-16 made a THROWING
 restart its own failure; this is the restart that does not throw. Found while fixing cdt-16.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (ops-batch-3, 2026-10-21) raised no defect in this change
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
 **Commit**: `325ffee` (merged)
 **Reviewer**: implementer (found by the cdt-11..19 agent; not yet confirmed by the supervisor)

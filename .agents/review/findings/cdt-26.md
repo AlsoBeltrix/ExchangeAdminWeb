@@ -10,7 +10,7 @@ with `if ($manifest.gitDirty)`, so a manifest written while status failed passes
 manifest then carries a valid commit and the provenance check passes too. The same fail-open class
 aud-pipeline-provenance removed from the pipeline's own probes ("a failed status probe now says
 drift was NOT checked instead of looking clean"), in the writers. Found while fixing cdt-14.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (ops-batch-3, 2026-10-21) raised no defect in this change
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
 **Commit**: `23e57e5` (merged)
 **Reviewer**: implementer (found by the cdt-11..19 agent; not yet confirmed by the supervisor)

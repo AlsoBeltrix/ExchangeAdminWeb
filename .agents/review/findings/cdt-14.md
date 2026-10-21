@@ -8,7 +8,7 @@ that restarts the pool, so that throw would replace the deploy's own outcome aft
 deployed (Known Failure Class 1). `deploy.ps1` refuses to run under PowerShell 7 today (the IIS:
 drive check), so this cannot fire yet; the same pattern in `tools/deploy-pipeline.ps1` was
 already fixed with a length guard (`5e31477`).
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (ops-batch-3, 2026-10-21) raised no defect in this change
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
 **Commit**: `cafd4a5` (merged)
 **Reviewer**: implementer (surfaced by the cdt-8/9/10 agent)
