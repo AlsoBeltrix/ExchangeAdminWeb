@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography.X509Certificates;
 
 namespace ExchangeAdminWeb.Services;
@@ -45,10 +46,20 @@ public sealed class PooledRunspace
 /// "must call Connect-ExchangeOnline" pre-cmdlet signature, proving the cmdlet never ran -
 /// gates RETRY. Strictly implies <see cref="ConnectionFailure"/>. A mid-flight drop sets
 /// ConnectionFailure (discard) but NOT RetriablePrecheck (no replay).</para>
-/// Connection failures that surface as a thrown exception are classified by the orchestrator
-/// from the exception directly.
+/// <para><see cref="Failure"/>: the delegate THREW after its tracker had already classified the
+/// session (psl-4: e.g. a precheck record on the error stream, then an unrelated throw). The
+/// outcome carries that classification and the original exception, so the pool discards and
+/// takes the same eligible retry as above, and rethrows that same exception when it does not
+/// retry. Only <see cref="ConnectionFault"/> sets it, and always with ConnectionFailure.</para>
+/// Any other thrown exception is classified by the orchestrator from its own message.
 /// </summary>
-internal readonly record struct PooledOutcome<T>(T Result, bool ConnectionFailure, bool RetriablePrecheck = false);
+internal readonly record struct PooledOutcome<T>(T Result, bool ConnectionFailure, bool RetriablePrecheck = false)
+{
+    public ExceptionDispatchInfo? Failure { get; private init; }
+
+    public static PooledOutcome<T> ConnectionFault(ExceptionDispatchInfo failure, bool retriablePrecheck) =>
+        new(default!, ConnectionFailure: true, RetriablePrecheck: retriablePrecheck) { Failure = failure };
+}
 
 /// <summary>
 /// What to do with the borrowed connection when the delegate throws a NON-connection
@@ -358,9 +369,12 @@ public sealed class ExoConnectionPool : IDisposable
             {
                 // Dead/suspect session surfaced as a flagged-but-returned outcome (RunAsync
                 // swallows the throw and returns a Fail result). Always discard. Retry ONLY if
-                // the captured failure was the narrow pre-check signature.
+                // the captured failure was the narrow pre-check signature. A pooled query that
+                // threw after its tracker classified the session arrives here too (psl-4); when
+                // no retry is taken its original exception is rethrown, not a default result.
                 discard(pooled);
                 if (canRetry && outcome.RetriablePrecheck) continue;
+                outcome.Failure?.Throw();
                 return outcome.Result;
             }
 

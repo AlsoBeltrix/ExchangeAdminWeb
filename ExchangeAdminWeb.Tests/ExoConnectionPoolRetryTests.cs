@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using ExchangeAdminWeb.Services;
 
 namespace ExchangeAdminWeb.Tests;
@@ -239,6 +240,92 @@ public class ExoConnectionPoolRetryTests
         Assert.Equal(1, attempts);       // not eligible, no retry
         Assert.Equal(1, pool.Discards);
         Assert.Equal(0, pool.Returns);
+    }
+
+    // psl-4: a delegate that threw after its tracker had classified the session hands the pool a
+    // connection-fault outcome carrying the original exception. The carried exception here is a
+    // business message on purpose: the classification must come from the outcome, not the text.
+    private static PooledOutcome<string> CarriedFault(Exception ex, bool retriablePrecheck) =>
+        PooledOutcome<string>.ConnectionFault(ExceptionDispatchInfo.Capture(ex), retriablePrecheck);
+
+    [Fact]
+    public async Task EligibleOp_CarriedPrecheckFault_DiscardsAndRetriesOnFreshBorrow()
+    {
+        var pool = new FakePool();
+        var attempts = 0;
+
+        var result = await Run<string>(pool, _ =>
+        {
+            attempts++;
+            return Task.FromResult(attempts == 1
+                ? CarriedFault(BusinessError(), retriablePrecheck: true)
+                : new PooledOutcome<string>("ok", false));
+        }, allowRetry: true);
+
+        Assert.Equal("ok", result);
+        Assert.Equal(2, attempts);
+        Assert.Equal(1, pool.Discards);
+        Assert.Equal(0, pool.DiscardedIds[0]); // the suspect connection
+        Assert.Equal(1, pool.Returns);
+        Assert.Equal(1, pool.ReturnedIds[0]);  // the fresh one
+    }
+
+    [Fact]
+    public async Task EligibleOp_CarriedMidFlightFault_DiscardsAndRethrowsOriginal_NoRetry()
+    {
+        var pool = new FakePool();
+        var attempts = 0;
+        var original = BusinessError();
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => Run<string>(pool, _ =>
+        {
+            attempts++;
+            return Task.FromResult(CarriedFault(original, retriablePrecheck: false));
+        }, allowRetry: true));
+
+        Assert.Same(original, thrown);
+        Assert.Equal(1, attempts);
+        Assert.Equal(1, pool.Discards);
+        Assert.Equal(0, pool.Returns);
+    }
+
+    [Fact]
+    public async Task NonEligibleOp_CarriedPrecheckFault_DiscardsAndRethrowsOriginal_NoRetry()
+    {
+        var pool = new FakePool();
+        var attempts = 0;
+        var original = BusinessError();
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => Run<string>(pool, _ =>
+        {
+            attempts++;
+            return Task.FromResult(CarriedFault(original, retriablePrecheck: true));
+        }, allowRetry: false));
+
+        Assert.Same(original, thrown);
+        Assert.Equal(1, attempts);
+        Assert.Equal(1, pool.Discards);
+        Assert.Equal(0, pool.Returns);
+    }
+
+    [Fact]
+    public async Task EligibleOp_CarriedPrecheckFaultTwice_RethrowsSecond_NoThirdAttempt()
+    {
+        var pool = new FakePool();
+        var faults = new List<Exception>();
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => Run<string>(pool, _ =>
+        {
+            var fault = BusinessError();
+            faults.Add(fault);
+            return Task.FromResult(CarriedFault(fault, retriablePrecheck: true));
+        }, allowRetry: true));
+
+        Assert.Equal(2, faults.Count);
+        Assert.Same(faults[1], thrown);
+        Assert.Equal(2, pool.Discards);
+        Assert.Equal(0, pool.Returns);
+        Assert.Equal(pool.Borrows, pool.Returns + pool.Discards);
     }
 
     [Fact]
