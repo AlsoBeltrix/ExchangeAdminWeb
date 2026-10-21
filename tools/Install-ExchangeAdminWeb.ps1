@@ -337,7 +337,16 @@ function Write-DeploymentManifest {
 
     $gitCommit = try { (git -C $RepoRoot rev-parse HEAD 2>$null) } catch { "unknown" }
     $gitBranch = try { (git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null) } catch { "unknown" }
-    $gitDirty = try { [bool](git -C $RepoRoot status --porcelain 2>$null) } catch { $false }
+    # cdt-26: a git status that failed is unknown, not clean. Windows PowerShell 5.1 turns its stderr
+    # into an error caught here; PowerShell 7 returns nothing with a non-zero exit. The old [bool](...)
+    # read both as $false, so anything reading the manifest was told the tree was clean.
+    $gitDirty = 'unknown'
+    try {
+        $statusOutput = git -C $RepoRoot status --porcelain 2>$null
+        if ($LASTEXITCODE -eq 0) { $gitDirty = [bool]$statusOutput }
+    } catch {
+        $gitDirty = 'unknown'
+    }
 
     $manifest = [ordered]@{
         version = ($version -split '\.')[0..2] -join '.'

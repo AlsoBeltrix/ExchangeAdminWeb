@@ -1067,6 +1067,77 @@ Describe 'deploy.ps1' {
         }
     }
 
+    It 'records an unreadable git status as unknown, not as a clean tree, in both manifest writers and both shells (cdt-26)' {
+        # Both writers recorded a git status that failed as gitDirty = false, and the promotion's
+        # "built from a dirty tree" gate reads that as clean. rev-parse can succeed while status fails
+        # (a corrupt index), so the manifest then also carries a valid commit.
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt26_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        try {
+            $repos = [ordered]@{}
+            foreach ($kind in 'clean', 'dirty', 'corrupt') {
+                $repo = Join-Path $root $kind
+                New-Item -ItemType Directory -Path $repo -Force | Out-Null
+                & git -C $repo init -q 2>&1 | Out-Null
+                & git -C $repo -c user.email=probe@example.test -c user.name=probe commit -q --allow-empty -m init 2>&1 | Out-Null
+                $LASTEXITCODE | Should -Be 0 -Because 'the fixture repository needs a commit'
+                if ($kind -ne 'clean') { Set-Content -LiteralPath (Join-Path $repo 'untracked.txt') -Value 'x' -Encoding ascii }
+                if ($kind -eq 'corrupt') { [System.IO.File]::WriteAllBytes((Join-Path $repo '.git\index'), [byte[]](1..64)) }
+                $repos[$kind] = [pscustomobject]@{ Path = $repo; Head = "$(& git -C $repo rev-parse HEAD)".Trim() }
+            }
+            & git -C $repos['corrupt'].Path status --porcelain 2>&1 | Out-Null
+            $LASTEXITCODE | Should -Not -Be 0 -Because 'the corrupt-index fixture must make git status fail'
+
+            $expected = @{ clean = $false; dirty = $true; corrupt = 'unknown' }
+            $child = Join-Path $root 'writer51.ps1'
+            Set-Content -LiteralPath $child -Encoding ascii -Value @'
+param($ScriptPath, $Repo, $Out)
+$ErrorActionPreference = 'Stop'
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($ScriptPath, [ref]$null, [ref]$null)
+foreach ($name in 'Write-DeploymentManifest', 'Write-Success', 'Write-Ok', 'Write-Plan', 'Invoke-PlanOrAction') {
+    $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+    if ($fn) { . ([scriptblock]::Create($fn.Extent.Text)) }
+}
+$PlanOnly = $false
+New-Item -ItemType Directory -Path $Out -Force | Out-Null
+Write-DeploymentManifest -PublishFolder $Out -RepoRoot $Repo | Out-Null
+'@
+            foreach ($writer in 'deploy.ps1', 'tools/Install-ExchangeAdminWeb.ps1') {
+                $scriptPath = Join-Path $RepoRoot $writer
+                $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$null)
+                foreach ($name in 'Write-DeploymentManifest', 'Write-Success', 'Write-Ok', 'Write-Plan', 'Invoke-PlanOrAction') {
+                    $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+                    if ($fn) { . ([scriptblock]::Create($fn.Extent.Text)) }
+                }
+                Set-Variable -Name PlanOnly -Value $false
+                foreach ($kind in $repos.Keys) {
+                    foreach ($shell in 'pwsh', 'powershell.exe') {
+                        $out = Join-Path $root ("out-$kind-" + [guid]::NewGuid().ToString('N'))
+                        if ($shell -eq 'pwsh') {
+                            $ErrorActionPreference = 'Stop'
+                            New-Item -ItemType Directory -Path $out -Force | Out-Null
+                            Write-DeploymentManifest -PublishFolder $out -RepoRoot $repos[$kind].Path 6>$null | Out-Null
+                            $ErrorActionPreference = 'Continue'
+                        } else {
+                            & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $child -ScriptPath $scriptPath -Repo $repos[$kind].Path -Out $out 6>$null | Out-Null
+                            $LASTEXITCODE | Should -Be 0 -Because "the $writer writer must run under Windows PowerShell 5.1"
+                        }
+                        $manifest = Get-Content -LiteralPath (Join-Path $out 'deployment-manifest.json') -Raw | ConvertFrom-Json
+                        $manifest.gitDirty | Should -Be $expected[$kind] -Because "$writer under $shell, $kind repository"
+                        if ($kind -eq 'corrupt') {
+                            $manifest.gitDirty | Should -BeOfType ([string]) -Because 'unknown is not a boolean'
+                            $manifest.gitCommit | Should -BeExactly $repos[$kind].Head -Because 'the commit is still known, so only the dirty gate stood between this build and production'
+                        } else {
+                            $manifest.gitDirty | Should -BeOfType ([bool])
+                        }
+                    }
+                }
+            }
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'shortens the manifest commit only when there is one long enough to shorten (cdt-14)' {
         $fn = Find-FunctionDefinition $s 'Write-DeploymentManifest'
         $calls = @($fn.FindAll({ param($node)
