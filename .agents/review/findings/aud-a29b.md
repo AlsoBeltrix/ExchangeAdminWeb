@@ -377,7 +377,13 @@ Gates for the addition, on its final (commented) tree:
    otherwise mail once per open tab.
 7. **Compared set = every SID any gate grants through**, including module-admin grants and the
    servicer keys, not only the policy handler's sections - so revoking a servicer or module-admin
-   membership also ends the session.
+   membership also ends the session. **Changed by aud-a29d** (codex, 2026-10-21): the set read
+   from the store at each check cannot be the only one compared - a grant removed from it simply
+   vanished. Each circuit now also keeps the grants (setting and SID) it was confirmed through,
+   from the open check on, growing as later checks confirm more; one that is no longer in the
+   store ends the circuit (`GrantRemoved`) without a directory read, and its SID stays compared
+   with the directory even when a reconnect's token stops carrying it. A store that cannot be
+   read is a lookup failure, no longer an empty set.
 8. **An operator off-switch exists** (`Authentication:RevalidationEnabled`, added at the
    coordinator's request before review). Anyone who can edit `appsettings.json` and restart the
    app pool can switch revocation off. It is never silent - one startup warning, one `Disabled`

@@ -55,6 +55,13 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     private readonly ILogger _logger;
     private readonly CancellationTokenSource _disposed = new();
 
+    // The grants this circuit was confirmed through (aud-a29d): captured by the first check (the
+    // circuit-open check) and added to by every valid check after it. Only ever grows - a grant
+    // leaves this set only with the circuit - so a grant removed from the store cannot quietly drop
+    // out of what is compared.
+    private readonly object _grantsSync = new();
+    private readonly HashSet<AuthorizationGrant> _grants = new();
+
     public MembershipRevalidatingAuthenticationStateProvider(
         ILoggerFactory loggerFactory,
         CircuitMembershipRevalidator revalidator,
@@ -73,6 +80,16 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     }
 
     protected override TimeSpan RevalidationInterval => _options.Interval;
+
+    /// <summary>A copy of the grants this circuit was confirmed through.</summary>
+    internal IReadOnlySet<AuthorizationGrant> CapturedGrants
+    {
+        get
+        {
+            lock (_grantsSync)
+                return new HashSet<AuthorizationGrant>(_grants);
+        }
+    }
 
     protected override Task<bool> ValidateAuthenticationStateAsync(
         AuthenticationState authenticationState, CancellationToken cancellationToken)
@@ -106,7 +123,7 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
         MembershipRevalidationResult result;
         try
         {
-            result = await _revalidator.RevalidateAsync(user, cancellationToken).ConfigureAwait(false);
+            result = await _revalidator.RevalidateAsync(user, CapturedGrants, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -119,7 +136,14 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
         }
 
         if (result.IsValid)
+        {
+            // What this check confirmed joins what the circuit is held to; nothing is taken out, so
+            // a grant first seen now is watched from now on (aud-a29d).
+            lock (_grantsSync)
+                _grants.UnionWith(result.Grants);
+
             return true;
+        }
 
         Revoke(user, result, trigger);
         return false;

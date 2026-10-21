@@ -137,6 +137,25 @@ public class SectionAccessService
         return data;
     }
 
+    /// <summary>
+    /// The section-access map the gates are reading now, and whether section access is configured
+    /// at all (false: <see cref="GetGroupsForSection"/> answers sections that are not fail-closed with
+    /// <c>Security:AllowedGroups</c>). Returns false when the store cannot be read, in which case the
+    /// map is empty and means nothing.
+    /// </summary>
+    /// <remarks>
+    /// For circuit revalidation (aud-a29d), which must tell "nothing granted" from "could not read":
+    /// the gates read both as an empty map and deny, which is right for them; revalidation reading an
+    /// empty map would pass every circuit without a lookup.
+    /// </remarks>
+    public bool TryGetSectionAccess(out Dictionary<string, string[]> sectionAccess, out bool configured)
+    {
+        var (data, source, readable) = ReadSectionAccessReportingFailure();
+        sectionAccess = data;
+        configured = source != SectionAccessSource.None;
+        return readable;
+    }
+
     public bool IsSectionAccessConfigured()
     {
         if (_repository.IsConfigured())
@@ -165,11 +184,19 @@ public class SectionAccessService
 
     private (Dictionary<string, string[]> data, SectionAccessSource source) ReadSectionAccess()
     {
+        var (data, source, _) = ReadSectionAccessReportingFailure();
+        return (data, source);
+    }
+
+    // The one read every caller goes through. readable is false exactly when the result is the
+    // fail-closed empty map standing in for a store that could not be read.
+    private (Dictionary<string, string[]> data, SectionAccessSource source, bool readable) ReadSectionAccessReportingFailure()
+    {
         // FAIL-CLOSED: an unparseable legacy fragment still on disk keeps the store corrupt
         // (empty Fragment source - everything denied) during the upgrade window, rather than
         // falling through to the appsettings/AllowedGroups fallback.
         if (_legacyFileCorrupt)
-            return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.Fragment);
+            return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.Fragment, false);
 
         // The DB store is the "fragment" source. It is read fresh each call (the change-token
         // model makes out-of-band writes visible). Read data AND the configured flag in a single
@@ -178,11 +205,11 @@ public class SectionAccessService
         if (!_repository.TryRead(out var data, out var configured))
         {
             _logger.LogError("Section access store unreadable - failing closed");
-            return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.Fragment);
+            return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.Fragment, false);
         }
 
         if (configured)
-            return (data, SectionAccessSource.Fragment);
+            return (data, SectionAccessSource.Fragment, true);
 
         // Not configured in the DB: fall back to the legacy appsettings Security:SectionAccess.
         var legacySection = _config.GetSection("Security:SectionAccess");
@@ -190,10 +217,10 @@ public class SectionAccessService
         {
             var legacy = legacySection.Get<Dictionary<string, string[]>>();
             if (legacy != null && legacy.Count > 0)
-                return (legacy, SectionAccessSource.AppSettings);
+                return (legacy, SectionAccessSource.AppSettings, true);
         }
 
-        return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.None);
+        return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.None, true);
     }
 
     public void SaveSectionAccess(Dictionary<string, string[]> sectionAccess)

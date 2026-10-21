@@ -825,6 +825,12 @@ it against Active Directory: once when the tab connects, then every
   (section access, module admins, `Security:AllowedGroups`, `Security:AdminGroups`), compared by
   SID with the account's current group membership (`tokenGroups`), and whether the account is
   enabled. Gaining a group never ends a session.
+- **The app's own access settings are checked too.** Each open session remembers the grants it
+  was confirmed through - a group in a module's section access or module admins, or one of the
+  static groups. If an administrator removes one of them, even from one section while the group
+  keeps another, the session ends at its next check, although nothing changed in Active
+  Directory. A grant added later is remembered from the first check after it appears. If the
+  access settings cannot be read, the check fails closed and the session ends.
 - **The session ends** when one of those groups is gone, the account is disabled, or the check
   cannot be completed within 60 seconds (fail closed). The tab stops responding and shows
   "This session has ended" with a Reload link; reloading signs in again with the access the

@@ -119,12 +119,19 @@ public class ModuleAdminService
     }
 
     /// <summary>
-    /// Every group value granted module-admin rights, across every stored module. Empty when the
-    /// store cannot be read - which for authorization means no grants, the same as
-    /// <see cref="IsModuleAdmin"/> reads it.
+    /// Every module's stored grants, by module. Returns false when the store could not be read - in
+    /// which case <paramref name="grants"/> is empty and means nothing.
     /// </summary>
-    public IReadOnlyCollection<string> GetAllGrantedGroups()
-        => ReadConfig().Values.SelectMany(groups => groups ?? Array.Empty<string>()).ToArray();
+    /// <remarks>
+    /// For circuit revalidation (aud-a29d), the same distinction <see cref="TryGetUnusableGrants"/>
+    /// draws: an unreadable store must not look like a store that grants nothing.
+    /// </remarks>
+    public bool TryGetAllGrants(out IReadOnlyDictionary<string, string[]> grants)
+    {
+        var readable = TryReadConfig(out var config);
+        grants = config;
+        return readable;
+    }
 
     public void SetModuleAdmins(string moduleId, string[] groups)
     {

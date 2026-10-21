@@ -5,7 +5,8 @@ namespace ExchangeAdminWeb.Authorization;
 
 /// <summary>
 /// One revalidation verdict. <see cref="Reason"/> is null when the circuit may keep its access;
-/// <see cref="RemovedGroupSids"/> lists the held consulted groups the account is no longer in.
+/// <see cref="RemovedGroupSids"/> lists the held consulted groups the account is no longer in, or
+/// the SIDs of the grants that were removed from the app's settings.
 /// <see cref="Detail"/> is for the audit line and names no group.
 /// </summary>
 public sealed record MembershipRevalidationResult(
@@ -13,9 +14,20 @@ public sealed record MembershipRevalidationResult(
     IReadOnlyList<string> RemovedGroupSids,
     string Detail)
 {
+    private static readonly IReadOnlySet<AuthorizationGrant> NoGrants = new HashSet<AuthorizationGrant>();
+
+    /// <summary>
+    /// On a valid verdict, every grant this check confirmed: the ones it was given and the ones the
+    /// token holds now. The provider adds them to what its circuit was confirmed through (aud-a29d).
+    /// </summary>
+    public IReadOnlySet<AuthorizationGrant> Grants { get; init; } = NoGrants;
+
     public bool IsValid => Reason is null;
 
     public static MembershipRevalidationResult Valid(string detail) => new(null, Array.Empty<string>(), detail);
+
+    public static MembershipRevalidationResult Valid(string detail, IReadOnlySet<AuthorizationGrant> grants) =>
+        new(null, Array.Empty<string>(), detail) { Grants = grants };
 
     public static MembershipRevalidationResult LookupFailed(string detail) =>
         new(CircuitRevocationReason.LookupFailed, Array.Empty<string>(), detail);
@@ -36,6 +48,13 @@ public sealed record MembershipRevalidationResult(
 /// account's domain and the token a server builds differ by construction - resource-domain
 /// domain-local groups, SID history, well-known SIDs - and comparing everything would end sessions
 /// over groups no gate reads. Gaining a group never invalidates.
+/// </para>
+/// <para>
+/// The store can move as well as the directory (aud-a29d). The caller passes the grants its circuit
+/// was already confirmed through; any of them no longer in the inventory ends the circuit
+/// (<see cref="CircuitRevocationReason.GrantRemoved"/>) without a directory read, and the SIDs of
+/// the rest are compared with the directory alongside the ones the token holds now - so a captured
+/// grant stays compared even when a reconnect brings a token that no longer carries its group.
 /// </para>
 /// <para>
 /// Fail closed, every way: no usable account SID, a compared set that cannot be resolved, a
@@ -66,9 +85,11 @@ public sealed class CircuitMembershipRevalidator
         _options = options;
     }
 
-    public async Task<MembershipRevalidationResult> RevalidateAsync(ClaimsPrincipal user, CancellationToken cancellationToken)
+    public async Task<MembershipRevalidationResult> RevalidateAsync(
+        ClaimsPrincipal user, IReadOnlySet<AuthorizationGrant> captured, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(captured);
         cancellationToken.ThrowIfCancellationRequested();
 
         // The check can outlive this method - a timeout stops waiting for it, not the check - so the
@@ -79,7 +100,7 @@ public sealed class CircuitMembershipRevalidator
 
         // Off the caller's thread: the compared set reads SQLite and may translate names through
         // LSA, which can block, and the circuit-open check must not hold up a circuit's first render.
-        var check = Task.Run(() => RevalidateCoreAsync(user, lookup.Token), CancellationToken.None);
+        var check = Task.Run(() => RevalidateCoreAsync(user, captured, lookup.Token), CancellationToken.None);
         _ = check.ContinueWith(task =>
         {
             _ = task.Exception;
@@ -109,7 +130,8 @@ public sealed class CircuitMembershipRevalidator
         }
     }
 
-    private async Task<MembershipRevalidationResult> RevalidateCoreAsync(ClaimsPrincipal user, CancellationToken cancellationToken)
+    private async Task<MembershipRevalidationResult> RevalidateCoreAsync(
+        ClaimsPrincipal user, IReadOnlySet<AuthorizationGrant> captured, CancellationToken cancellationToken)
     {
         var userSid = user.FindFirst(ClaimTypes.PrimarySid)?.Value;
         if (!IsAccountSid(userSid))
@@ -118,10 +140,34 @@ public sealed class CircuitMembershipRevalidator
                 "The signed-in principal carries no usable account SID, so its access cannot be re-checked.");
         }
 
-        var consulted = _inventory.GetConsultedSids();
+        // Throws on a store that cannot be read or a name that cannot be translated, which the
+        // caller turns into LookupFailed: an unreadable store is never "nothing granted" here.
+        var inventory = _inventory.Read();
+
+        // A grant this circuit came through that the app no longer grants. The page it opened may
+        // never ask again, so the removal itself ends the circuit; the directory has nothing to add.
+        var withdrawn = captured.Where(grant => !inventory.Grants.Contains(grant)).ToList();
+        if (withdrawn.Count > 0)
+        {
+            return new MembershipRevalidationResult(
+                CircuitRevocationReason.GrantRemoved,
+                withdrawn
+                    .Select(grant => grant.Sid)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(sid => sid, StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+                $"{withdrawn.Count} grant(s) this session's access came through no longer exist in the app's access settings.");
+        }
+
+        // What is compared: the grants already captured, plus every grant the token holds now. The
+        // captured ones stay in even when this token no longer carries their group - a reconnect's
+        // token is not evidence that the circuit stopped using them.
         var tokenGroups = new HashSet<string>(GroupMembershipChecker.ExtractGroupClaims(user), StringComparer.OrdinalIgnoreCase);
-        var held = consulted
-            .Where(tokenGroups.Contains)
+        var confirmed = new HashSet<AuthorizationGrant>(captured);
+        confirmed.UnionWith(inventory.Grants.Where(grant => tokenGroups.Contains(grant.Sid)));
+        var held = confirmed
+            .Select(grant => grant.Sid)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(sid => sid, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -154,7 +200,7 @@ public sealed class CircuitMembershipRevalidator
                 $"The account is no longer in {removed.Count} group(s) this session's access was granted through.");
         }
 
-        return MembershipRevalidationResult.Valid($"The account still holds all {held.Count} consulted group(s).");
+        return MembershipRevalidationResult.Valid($"The account still holds all {held.Count} consulted group(s).", confirmed);
     }
 
     private MembershipRevalidationResult TimedOut() =>

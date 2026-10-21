@@ -14,6 +14,9 @@ public enum CircuitRevocationReason
 
     /// <summary>The check a circuit waits on when it opens never reached a verdict (aud-a29c).</summary>
     PendingCheckTimedOut,
+
+    /// <summary>A grant this circuit's access came through was removed from the app's settings (aud-a29d).</summary>
+    GrantRemoved,
 }
 
 /// <summary>
@@ -91,6 +94,9 @@ public static class SessionEndedMessages
         CircuitRevocationReason.PendingCheckTimedOut =>
             "Your access could not be confirmed against Active Directory in time when this page "
             + "connected, so this session was ended as a precaution.",
+        CircuitRevocationReason.GrantRemoved =>
+            "Your access was re-checked, and a group this session's access came from no longer has "
+            + "that access in this app's settings. The change was made in the app, not in Active Directory.",
         _ =>
             "Your access could not be re-checked against Active Directory just now, so this session "
             + "was ended as a precaution.",

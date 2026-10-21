@@ -39,6 +39,7 @@ public class CircuitRevalidationTests
     private const string UnconsultedGroupSid = DomainSid + "-5003";
     private const string NamedAdminGroupSid = DomainSid + "-5004";
     private const string LaterGrantedGroupSid = DomainSid + "-5005";
+    private const string OtherTeamSid = DomainSid + "-5006";
     private const string NamedAdminGroup = @"CONTOSO\App-Admins";
 
     // ------------------------------------------------------------------ the verdict
@@ -274,6 +275,163 @@ public class CircuitRevalidationTests
         // group are none of them a directory group this check can re-derive.
         Assert.Equal(new[] { SectionGroupSid }, consulted.ToArray());
         h.Directory.DidNotReceive().TranslateGroupName("S-1-5-32-544");
+    }
+
+    // ------------------------------------------------------------------ the grants a circuit came through (aud-a29d)
+
+    [Fact]
+    public async Task AGrantRemovedFromTheStore_RevokesTheOpenCircuitWithoutADirectoryChange()
+    {
+        using var h = new Harness();
+        h.Grant("RiskyUsers", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+        using var provider = h.Provider();
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+
+        // The administrator takes the group out of the section; the directory has not changed.
+        h.Grant("RiskyUsers");
+        h.Directory.ClearReceivedCalls();
+
+        Assert.False(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.Equal(CircuitRevocationReason.GrantRemoved, h.Revocation.Reason);
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal("GrantRemoved", audit.GetProperty("reason").GetString());
+        Assert.Equal("Interval", audit.GetProperty("trigger").GetString());
+        Assert.Equal(new[] { SectionGroupSid }, RemovedSids(audit));
+        _ = h.Directory.DidNotReceive().GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
+    [Fact]
+    public async Task RemovingAGrantTheOperatorNeverHeld_DoesNotRevoke()
+    {
+        using var h = new Harness();
+        h.Grant("RiskyUsers", SectionGroupSid);
+        h.Grant("MessageTrace", OtherTeamSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+        using var provider = h.Provider();
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+
+        h.Grant("MessageTrace");
+
+        Assert.True(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.False(h.Revocation.IsRevoked);
+    }
+
+    [Fact]
+    public async Task AGrantRemovedFromOneSection_RevokesWhileTheGroupStaysGrantedInAnother()
+    {
+        using var h = new Harness();
+        h.Grant("RiskyUsers", SectionGroupSid);
+        h.Grant("MessageTrace", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+        using var provider = h.Provider();
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+
+        // The group still reaches Message Trace; the Risky Users grant the open page may be using is gone.
+        h.Grant("RiskyUsers");
+
+        Assert.False(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.Equal(CircuitRevocationReason.GrantRemoved, h.Revocation.Reason);
+    }
+
+    [Fact]
+    public async Task AGrantAddedWhileTheCircuitIsOpen_IsCapturedSoItsRemovalIsSeen()
+    {
+        using var h = new Harness();
+        h.Grant("RiskyUsers", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, LaterGrantedGroupSid, DomainUsersSid);
+        using var provider = h.Provider();
+        var user = Operator(SectionGroupSid, LaterGrantedGroupSid, DomainUsersSid);
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+
+        h.Grant("MessageTrace", LaterGrantedGroupSid);
+        Assert.True(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.Contains(new AuthorizationGrant("SectionAccess:MessageTrace", LaterGrantedGroupSid), provider.CapturedGrants);
+
+        h.Grant("MessageTrace");
+
+        Assert.False(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.Equal(CircuitRevocationReason.GrantRemoved, h.Revocation.Reason);
+        Assert.Equal(new[] { LaterGrantedGroupSid }, RemovedSids(Assert.Single(h.AuditEvents()).RootElement));
+    }
+
+    [Fact]
+    public async Task AModuleAdminGrantRemoved_RevokesTheOpenCircuit()
+    {
+        using var h = new Harness();
+        h.ModuleAdmins.SetModuleAdmins("Migration", [ModuleAdminGroupSid]);
+        h.DirectoryReturns(enabled: true, ModuleAdminGroupSid, DomainUsersSid);
+        using var provider = h.Provider();
+        var user = Operator(ModuleAdminGroupSid, DomainUsersSid);
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+
+        h.ModuleAdmins.SetModuleAdmins("Migration", []);
+
+        Assert.False(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.Equal(CircuitRevocationReason.GrantRemoved, h.Revocation.Reason);
+    }
+
+    [Fact]
+    public async Task TheCapturedGrantsNeverShrink_AndStayComparedWhenALaterTokenStopsCarryingTheGroup()
+    {
+        using var h = new Harness();
+        h.Grant("RiskyUsers", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+        using var provider = h.Provider();
+        Assert.True(await provider.ValidateAsync(Operator(SectionGroupSid, DomainUsersSid), "CircuitOpened", Ct));
+        var captured = new AuthorizationGrant("SectionAccess:RiskyUsers", SectionGroupSid);
+
+        // A reconnect brings a token without the group. The grant the circuit came through is still
+        // compared with the directory, which here still has the account in the group.
+        var reconnected = Operator(DomainUsersSid);
+        Assert.True(await provider.ValidateAsync(reconnected, "Interval", Ct));
+        Assert.Contains(captured, provider.CapturedGrants);
+        _ = h.Directory.Received(2).GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+
+        // Now the directory says the account left the group.
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+
+        Assert.False(await provider.ValidateAsync(reconnected, "Interval", Ct));
+        Assert.Equal(CircuitRevocationReason.MembershipChanged, h.Revocation.Reason);
+        Assert.Equal(new[] { SectionGroupSid }, RemovedSids(Assert.Single(h.AuditEvents()).RootElement));
+    }
+
+    [Fact]
+    public async Task ConfiguringSectionAccessForTheFirstTime_RevokesTheCircuitsThatRodeTheAllowedGroupsFallback()
+    {
+        // Unconfigured, every section that is not fail-closed answers to Security:AllowedGroups.
+        using var h = new Harness(allowedGroups: [SectionGroupSid]);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+        using var provider = h.Provider();
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+        Assert.Contains(new AuthorizationGrant("SectionAccess:*", SectionGroupSid), provider.CapturedGrants);
+
+        h.Grant("RiskyUsers", OtherTeamSid);
+
+        Assert.False(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.Equal(CircuitRevocationReason.GrantRemoved, h.Revocation.Reason);
+    }
+
+    [Theory]
+    [InlineData("section_access")]
+    [InlineData("module_admins")]
+    public async Task AGrantStoreThatCannotBeRead_IsALookupFailure(string table)
+    {
+        using var h = new Harness();
+        h.Grant("RiskyUsers", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+
+        h.DropTable(table);
+
+        // Even a circuit with nothing captured yet: an unreadable store is not "nothing granted".
+        Assert.False(await h.Provider().ValidateAsync(user, "CircuitOpened", Ct));
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+        Assert.Contains("could not be read", Assert.Single(h.AuditEvents()).RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
     }
 
     // ------------------------------------------------------------------ the audit line
@@ -1202,10 +1360,10 @@ public class CircuitRevalidationTests
             var env = Substitute.For<IWebHostEnvironment>();
             env.ContentRootPath.Returns(_temp.Path);
 
-            var store = TestConfigStore.Create(_temp.Path);
+            Store = TestConfigStore.Create(_temp.Path);
             SectionAccess = new SectionAccessService(
-                config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(), new SectionAccessRepository(store));
-            ModuleAdmins = new ModuleAdminService(env, new ModuleAdminRepository(store), NullLogger<ModuleAdminService>.Instance);
+                config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(), new SectionAccessRepository(Store));
+            ModuleAdmins = new ModuleAdminService(env, new ModuleAdminRepository(Store), NullLogger<ModuleAdminService>.Instance);
 
             var log = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
             Audit = new AuditService(log, new OperationTraceService(config, log));
@@ -1213,9 +1371,21 @@ public class CircuitRevalidationTests
                 interval ?? TimeSpan.FromMinutes(5), lookupTimeout ?? TimeSpan.FromSeconds(10), enabled);
         }
 
+        public SqliteConfigStore Store { get; }
+
         public SectionAccessService SectionAccess { get; }
 
         public ModuleAdminService ModuleAdmins { get; }
+
+        /// <summary>Damages the store the way a clobbered or half-migrated file does: the table is gone.</summary>
+        public void DropTable(string table) =>
+            Store.Write((connection, transaction) =>
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = $"DROP TABLE {table};";
+                command.ExecuteNonQuery();
+            });
 
         public IOperatorMembershipDirectory Directory { get; } = Substitute.For<IOperatorMembershipDirectory>();
 
