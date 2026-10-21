@@ -205,7 +205,7 @@ public sealed partial class Comms10kRefusalTests
         if (changed == "ticket") SetField(page, "ticketNumber", "INC999");
         if (changed == "addresses") C5Field<List<string>>(page, "parsedEmails")[0] = "other@example.test";
         if (changed == "filename") SetField(page, "uploadedFileName", "other.csv");
-        context.Resume();
+        await context.ResumeAsync(pending);
         await pending;
 
         Assert.Equal([Address], C7ResolutionInputs(service));
@@ -284,7 +284,7 @@ public sealed partial class Comms10kRefusalTests
         finally
         {
             gate.Release();
-            if (!authAwait) context.Resume();
+            if (!authAwait) await context.ResumeAsync(pending);
             await pending;
         }
 
@@ -482,7 +482,12 @@ public sealed partial class Comms10kRefusalTests
     private sealed class C7YieldContext : SynchronizationContext
     {
         private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _queue = new();
-        public override void Post(SendOrPostCallback d, object? state) => _queue.Enqueue((d, state));
+        private readonly SemaphoreSlim _posted = new(0);
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            _queue.Enqueue((d, state));
+            _posted.Release();
+        }
         public Task Start(Func<Task> invoke)
         {
             var previous = Current;
@@ -490,12 +495,24 @@ public sealed partial class Comms10kRefusalTests
             try { return invoke(); }
             finally { SetSynchronizationContext(previous); }
         }
-        public void Resume()
+        // Runs every continuation the resumed operation posts back until it completes, including
+        // one posted from a pool thread after a real hop such as the resolver's Task.Run, as the
+        // circuit's renderer context would. Draining only what was queued at release lost that
+        // late post and left the test awaiting the operation forever (cdt-7). Each wait is
+        // bounded, so a lost continuation fails the test instead of hanging the run.
+        public async Task ResumeAsync(Task pending)
         {
-            var previous = Current;
-            SetSynchronizationContext(this);
-            try { while (_queue.TryDequeue(out var item)) item.Callback(item.State); }
-            finally { SetSynchronizationContext(previous); }
+            while (!pending.IsCompleted)
+            {
+                if (!await _posted.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken))
+                    throw new TimeoutException("The resumed operation neither completed nor posted a continuation.");
+                if (!_queue.TryDequeue(out var item))
+                    throw new InvalidOperationException("Continuation signal without a queued callback.");
+                var previous = Current;
+                SetSynchronizationContext(this);
+                try { item.Callback(item.State); }
+                finally { SetSynchronizationContext(previous); }
+            }
         }
     }
 
