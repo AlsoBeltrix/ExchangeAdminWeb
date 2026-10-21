@@ -3,7 +3,7 @@
 **Severity**: HIGH - an operator removed from a group (or disabled), whose Kerberos ticket still
 carries the old groups, gets an action window on every reload: whatever they click before the
 directory answers runs as if nothing had changed.
-**Status**: Merged to master; codex group review pending; live dev check owed
+**Status**: Closed on review - codex (a29cdef, 2026-10-21) clean, veto list upheld; live dev check owed before deploy
 **Branch**: `aud-a29cde` (worktree `agent-ad94a625885da3a95`), base `9fab2e4`
 **Commit**: `59e973e` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh over 1633ad0..0d30442, 2026-10-21
