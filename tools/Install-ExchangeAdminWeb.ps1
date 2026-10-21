@@ -593,6 +593,22 @@ function Resolve-ConfigStorePlan {
     }
 }
 
+function Assert-ConfigStorePlanDatabase {
+    # cdt-21. The app opens a configured database without creating it, so a decided key naming a
+    # missing file is an instance that cannot start. A supplied path was refused early; a kept one
+    # was caught only inside the backup step - after the host had been reconfigured, never in a plan,
+    # and not at all with -SkipConfigBackup, which then mirrored and reported success. No key needs
+    # no check: the per-instance default is created on first start.
+    param($Plan, [string]$AppSettingsPath)
+
+    if (-not $Plan.Path) { return }
+    if (Test-Path -LiteralPath $Plan.Path -PathType Leaf) { return }
+
+    $from = "the existing $AppSettingsPath"
+    if ($Plan.Source -eq 'Supplied') { $from = '-ConfigStorePath' }
+    Write-Fail "ConfigStore:Path from $from names '$($Plan.Path)' but no database exists there. The app opens a configured database without creating it, so this instance cannot start on it. Fix the key, restore the file, run tools\Move-ConfigDbToShared.ps1, or re-run with -RegenerateAppSettings -ConfigStorePath naming a database that exists. Nothing was changed."
+}
+
 function ConvertTo-InstallerComparablePath {
     # One spelling per folder (cdt-15): environment variables expanded (IIS often stores
     # %SystemDrive%\...), made absolute and normalised, trailing separators dropped. Callers
@@ -706,6 +722,8 @@ if (-not [string]::IsNullOrWhiteSpace($ConfigStorePath)) {
 # anything is changed or written. The banner, the appsettings.json write and the pre-upgrade
 # backup all read this plan; nothing re-reads ConfigStore:Path from the file this run may rewrite.
 $configStorePlan = Resolve-ConfigStorePlan -PublishPath $PublishPath -SuppliedPath $ConfigStorePath -RegenerateAppSettings $RegenerateAppSettings.IsPresent
+# cdt-21: in plan and apply mode alike, and whatever -SkipConfigBackup says.
+Assert-ConfigStorePlanDatabase -Plan $configStorePlan -AppSettingsPath $configPath
 
 Write-Host ""
 Write-Host "ExchangeAdminWeb installer" -ForegroundColor Magenta

@@ -744,3 +744,84 @@ Describe 'cdt-15: an update refuses to move an existing application to another p
         $asserts[0] | Should -BeLessThan $firstChange -Because 'it refuses before anything is changed'
     }
 }
+
+Describe 'cdt-21: a ConfigStore:Path naming a missing database is refused before anything changes' {
+    # A kept key naming a missing file was caught only inside the backup step - after the host had
+    # been reconfigured, never in a plan, and not at all with -SkipConfigBackup.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt21Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        foreach ($name in 'Write-Fail', 'Assert-ConfigStorePlanDatabase') {
+            $fn = $script:Cdt21Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            if ($null -eq $fn) { throw "the installer defines no function $name" }
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+    }
+
+    It 'refuses a key naming a missing file, says where it came from, and passes an existing file or no key' {
+        $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt21_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        try {
+            $missing = Join-Path $dir 'missing.db'
+            $present = Join-Path $dir 'present.db'
+            Set-Content -LiteralPath $present -Value 'x' -Encoding ascii
+            $err = $null
+            try { Assert-ConfigStorePlanDatabase -Plan ([pscustomobject]@{ Path = $missing; Source = 'Existing' }) -AppSettingsPath 'X:\p\appsettings.json' } catch { $err = $_ }
+            $err | Should -Not -BeNullOrEmpty -Because 'the app will not start on a configured database that is not there'
+            foreach ($text in 'from the existing X:\p\appsettings.json', "names '$missing' but no database exists there", 'Nothing was changed') { "$err" | Should -BeLike "*$text*" }
+            { Assert-ConfigStorePlanDatabase -Plan ([pscustomobject]@{ Path = $missing; Source = 'Supplied' }) -AppSettingsPath 'X:\p\appsettings.json' } | Should -Throw -ExpectedMessage '*from -ConfigStorePath*'
+            { Assert-ConfigStorePlanDatabase -Plan ([pscustomobject]@{ Path = $present; Source = 'Existing' }) -AppSettingsPath 'X:\p\appsettings.json' } | Should -Not -Throw
+            { Assert-ConfigStorePlanDatabase -Plan ([pscustomobject]@{ Path = $null; Source = 'None' }) -AppSettingsPath 'X:\p\appsettings.json' } | Should -Not -Throw -Because 'the per-instance default is created on first start'
+        } finally {
+            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'is checked right after the decision, before the banner and every change, whatever -SkipConfigBackup says (AST)' {
+        $statements = @($script:Cdt21Ast.EndBlock.Statements)
+        $decisionAt = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like '$configStorePlan = Resolve-ConfigStorePlan *') { $i } })
+        $decisionAt.Count | Should -Be 1
+        $statements[$decisionAt[0] + 1].Extent.Text | Should -BeExactly 'Assert-ConfigStorePlanDatabase -Plan $configStorePlan -AppSettingsPath $configPath' -Because 'the decided key is checked before anything uses it'
+        @($script:Cdt21Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-ConfigStorePlanDatabase' }, $true)).Count | Should -Be 1
+        $banner = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like 'Write-Host "  Config DB*') { $i } })
+        $firstChange = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like 'Invoke-PlanOrAction *' -or $statements[$i].Extent.Text -like 'Set-DirectoryAcl *') { $i } })[0]
+        ($decisionAt[0] + 1) | Should -BeLessThan $banner[0]
+        ($decisionAt[0] + 1) | Should -BeLessThan $firstChange
+    }
+
+    It 'a -PlanOnly run with -SkipConfigBackup now refuses an instance whose key names a missing file, and creates nothing (Windows PowerShell 5.1)' {
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt21_' + [guid]::NewGuid().ToString('N'))
+        $publish = Join-Path $root 'publish'
+        New-Item -ItemType Directory -Path (Join-Path $publish 'config') -Force | Out-Null
+        $missing = Join-Path $root 'shared\exchangeadmin.db'
+        Set-Content -LiteralPath (Join-Path $publish 'appsettings.json') -Encoding UTF8 -Value (@{ AllowedHosts = '*'; ConfigStore = @{ Path = $missing } } | ConvertTo-Json -Depth 5)
+        $alias = 'cdt21' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+        $snapshot = {
+            param($Root)
+            @(Get-ChildItem -LiteralPath $Root -Recurse -Force | Sort-Object FullName | ForEach-Object {
+                    if ($_.PSIsContainer) { '{0}|dir' -f $_.FullName.Substring($Root.Length) }
+                    else { '{0}|{1}|{2}' -f $_.FullName.Substring($Root.Length), $_.Length, (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
+                }) -join "`n"
+        }
+        try {
+            $before = & $snapshot $root
+            $out = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Resolve-Path $script:InstallerPath).Path `
+                -PlanOnly -NonInteractive -SkipConfigBackup -PublishPath $publish -LogRoot (Join-Path $root 'logs') `
+                -AppAlias $alias -AppPoolName $alias -AdminGroups 'CONTOSO\Exchange Admins' 2>&1
+            $exitCode = $LASTEXITCODE
+            $text = @($out | ForEach-Object { "$_" }) -join "`n"
+            $exitCode | Should -Not -Be 0 -Because 'a plan must not complete over an instance that cannot start'
+            # Windows PowerShell wraps an error at the console width, anywhere in the text; wrapping
+            # only ever inserts whitespace, so compare with all of it removed.
+            $expected = "names '$missing' but no database exists there" -replace '\s+', ''
+            ($text -replace '\s+', '') | Should -Match ([regex]::Escape($expected))
+            $text | Should -Not -Match 'Plan only\. No changes were made\.'
+            & $snapshot $root | Should -BeExactly $before -Because 'the refusal comes before anything is written'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
