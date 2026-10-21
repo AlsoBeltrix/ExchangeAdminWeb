@@ -132,6 +132,25 @@ function Write-DeploymentManifest {
     Write-Success "Deployment manifest written: v$($manifest.version) @ $($gitCommit.Substring(0, [Math]::Min(8, $gitCommit.Length)))"
 }
 
+# -Force regenerates appsettings.json from parameters, and ConfigStore:Path is the one key that must
+# survive it: it names the config database the instance opens (on a shared-database server the single
+# file dev and prod both use, decision 2026-09-04), and without it the app silently opens its own
+# config\exchangeadmin.db instead - a different authorization and settings store (cdt-8). The caller
+# passes the value exactly as Get-ConfigStorePathSetting read it from the file being replaced. With no
+# value nothing is added, so a fresh install's file is what it always was.
+function Write-AppSettingsFile {
+    param(
+        [System.Collections.IDictionary]$Settings,
+        [string]$Path,
+        [string]$ConfigStorePath
+    )
+
+    if ($ConfigStorePath) {
+        $Settings['ConfigStore'] = [ordered]@{ Path = $ConfigStorePath }
+    }
+    $Settings | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
 $ProjectRoot = $PSScriptRoot
 $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
 
@@ -679,6 +698,16 @@ try {
 
         # --- FRESH INSTALL ---
 
+        # Read before this branch changes anything. -Force over an existing deployment lands here and
+        # regenerates appsettings.json below, which must carry this key (cdt-8). A fresh install has no
+        # appsettings.json, so this is $null and nothing is carried. A file that does not parse stops the
+        # run here (ConvertFrom-Json raises a terminating error and "Stop" makes it fatal), which is the
+        # fail-closed answer: overwriting a file this script cannot read could drop the key.
+        $configStorePathSetting = Get-ConfigStorePathSetting -PublishPath $PublishPath
+        if ($configStorePathSetting) {
+            Write-Success "ConfigStore:Path in the existing appsettings.json is kept: $configStorePathSetting"
+        }
+
         # Web application
         Write-Step "Configuring web application: $ParentSite/$AppAlias"
 
@@ -819,8 +848,12 @@ try {
                 AllowedHosts = "*"
             }
 
-            $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
-            Write-Success "appsettings.json generated"
+            Write-AppSettingsFile -Settings $config -Path $configPath -ConfigStorePath $configStorePathSetting
+            if ($configStorePathSetting) {
+                Write-Success "appsettings.json generated, ConfigStore:Path kept: $configStorePathSetting"
+            } else {
+                Write-Success "appsettings.json generated"
+            }
             $deploymentReadyForManifest = $true
         } finally {
             Write-Step "Starting app pool"
@@ -829,7 +862,8 @@ try {
             if ($deploymentReadyForManifest) {
                 Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
             }
-            # Staging contains the generated appsettings.json; clean on failure paths too.
+            # Staging contains the checkout's published appsettings.json (real environment values), not
+            # the generated one; clean on failure paths too.
             Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
