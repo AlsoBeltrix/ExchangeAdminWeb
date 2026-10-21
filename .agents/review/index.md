@@ -61,9 +61,10 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [cdr-d5](findings/cdr-d5.md) | PERFORMANCE - repeated subnet parsing and filtered-list allocation | Verified on master; push pending | master | native / gpt-6-astra / max |
 | [ ] | [cdr-followup-1](findings/cdr-followup-1.md) | LOW - resolve-stage prose compares member count with address count | Recorded follow-up; not approved | - | native / gpt-6-astra / max |
 | [v] | [psl-1](findings/psl-1.md) | HIGH - failed optional Exchange command can replay in the next calendar-permission operation | Verified on master; push pending | master | native / gpt-6-astra / max |
-| [ ] | [psl-2](findings/psl-2.md) | MEDIUM - licensing failure can select an earlier row's error | Recorded follow-up; not approved | - | native / gpt-6-astra / max audit |
-| [ ] | [psl-3](findings/psl-3.md) | MEDIUM - DHCP mutation report can include stale discovery errors | Recorded follow-up; not approved | - | native / gpt-6-astra / max audit |
-| [ ] | [psl-4](findings/psl-4.md) | MEDIUM - exceptional pooled queries lose connection/precheck classification | Recorded follow-up; not approved | - | native / gpt-6-astra / max |
+| [~] | [psl-2](findings/psl-2.md) | MEDIUM - licensing failure can select an earlier row's error | Merged; codex review pending | - | native / gpt-6-astra / max audit |
+| [~] | [psl-3](findings/psl-3.md) | MEDIUM - DHCP mutation report can include stale discovery errors | Merged; codex review pending | - | native / gpt-6-astra / max audit |
+| [~] | [psl-4](findings/psl-4.md) | MEDIUM - exceptional pooled queries lose connection/precheck classification | Merged; codex review pending | - | native / gpt-6-astra / max |
+| [~] | [psl-5](findings/psl-5.md) | LOW - Self-Service Groups: after one DACL read failed, the next group's clean read was reported as denied (stale error records) | Merged; codex review pending | - | implementer |
 | [v] | [aud-a1](findings/aud-a1.md) | HIGH - module-admin grants match a same-named group in another domain | Verified | - | implementer-verified; review findings repaired |
 | [v] | [aud-a3](findings/aud-a3.md) | HIGH - the protected-group check asks the host domain, so a foreign-domain target reads as unprotected | Verified | - | implementer-verified; review findings repaired |
 | [v] | [aud-a2](findings/aud-a2.md) | HIGH - a secondary alias bypasses protected-user rules in three modules | Verified | - | implementer-verified; review findings repaired |
