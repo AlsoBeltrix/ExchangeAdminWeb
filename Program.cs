@@ -135,7 +135,9 @@ try
     // circuit opens and every Authentication:RevalidationInterval, and the gate makes a revoked
     // circuit refuse everything. Registered AFTER AddInteractiveServerComponents(), which registers
     // the non-revalidating default. The interval and the off-switch (Authentication:
-    // RevalidationEnabled) are resolved here so a bad value stops startup.
+    // RevalidationEnabled) are resolved here so a bad value stops startup - and so is a static group
+    // (Security:AllowedGroups / AdminGroups) that can grant through Windows but that revalidation
+    // cannot re-check, such as BUILTIN\Administrators, while the switch is on (aud-a29e).
     TimeSpan revalidationInterval;
     bool revalidationEnabled;
     try
@@ -144,6 +146,12 @@ try
             builder.Configuration[CircuitRevalidationSettings.IntervalKey]);
         revalidationEnabled = CircuitRevalidationSettings.ResolveEnabled(
             builder.Configuration[CircuitRevalidationSettings.EnabledKey]);
+
+        foreach (var warning in CircuitRevalidationSettings.EnsureStaticGroupsCanBeRevalidated(
+                     revalidationEnabled, allowedGroups, adminGroups, new OperatorMembershipDirectory().TranslateGroupName))
+        {
+            Log.Warning("{Warning}", warning);
+        }
     }
     catch (InvalidOperationException ex)
     {

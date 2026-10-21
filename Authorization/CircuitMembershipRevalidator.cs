@@ -57,7 +57,8 @@ public sealed record MembershipRevalidationResult(
 /// grant stays compared even when a reconnect brings a token that no longer carries its group.
 /// </para>
 /// <para>
-/// Fail closed, every way: no usable account SID, a compared set that cannot be resolved, a
+/// Fail closed, every way: no usable account SID, a compared set that cannot be resolved (a store
+/// that cannot be read included), a token carrying a static grant the directory cannot attest to, a
 /// directory that throws, answers nothing, or does not answer within
 /// <see cref="CircuitRevalidationOptions.LookupTimeout"/> - each is
 /// <see cref="CircuitRevocationReason.LookupFailed"/>. The timeout covers the whole check, name
@@ -163,6 +164,23 @@ public sealed class CircuitMembershipRevalidator
         // captured ones stay in even when this token no longer carries their group - a reconnect's
         // token is not evidence that the circuit stopped using them.
         var tokenGroups = new HashSet<string>(GroupMembershipChecker.ExtractGroupClaims(user), StringComparer.OrdinalIgnoreCase);
+
+        // A static grant the directory cannot attest to (aud-a29e). Startup refuses these while
+        // revalidation is on; one that got past cannot be confirmed for a token that carries it, so it
+        // is not skipped - it fails closed. The detail names the setting, never the group.
+        var unconfirmable = inventory.Unrevalidatable
+            .Where(grant => tokenGroups.Contains(grant.Sid))
+            .Select(grant => grant.Source)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(source => source, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (unconfirmable.Count > 0)
+        {
+            return MembershipRevalidationResult.LookupFailed(
+                "This session's access may come through a configured group that cannot be re-checked "
+                + $"against the directory ({string.Join(", ", unconfirmable)}).");
+        }
+
         var confirmed = new HashSet<AuthorizationGrant>(captured);
         confirmed.UnionWith(inventory.Grants.Where(grant => tokenGroups.Contains(grant.Sid)));
         var held = confirmed

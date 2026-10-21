@@ -383,7 +383,12 @@ Gates for the addition, on its final (commented) tree:
    from the open check on, growing as later checks confirm more; one that is no longer in the
    store ends the circuit (`GrantRemoved`) without a directory read, and its SID stays compared
    with the directory even when a reconnect's token stops carrying it. A store that cannot be
-   read is a lookup failure, no longer an empty set.
+   read is a lookup failure, no longer an empty set. **Amended by aud-a29e** (codex,
+   2026-10-21): a static group that can grant through Windows but is not a domain group
+   (`BUILTIN\Administrators`, a well-known SID) was dropped from the set silently, so a circuit
+   holding only that grant was never checked. While revalidation is on, startup now refuses such
+   an entry, naming it; one that slips past (a name that could not be translated at startup) is
+   reported by the inventory, and a circuit whose token carries it fails closed.
 8. **An operator off-switch exists** (`Authentication:RevalidationEnabled`, added at the
    coordinator's request before review). Anyone who can edit `appsettings.json` and restart the
    app pool can switch revocation off. It is never silent - one startup warning, one `Disabled`

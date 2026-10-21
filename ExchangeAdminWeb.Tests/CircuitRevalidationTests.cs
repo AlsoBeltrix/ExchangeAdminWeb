@@ -275,6 +275,125 @@ public class CircuitRevalidationTests
         // group are none of them a directory group this check can re-derive.
         Assert.Equal(new[] { SectionGroupSid }, consulted.ToArray());
         h.Directory.DidNotReceive().TranslateGroupName("S-1-5-32-544");
+
+        // The two static ones can still grant through IsInRole, so they are reported, not dropped
+        // (aud-a29e). The stored ones cannot grant at all: the gates read stored values as SIDs only.
+        Assert.Equal(
+            new[] { "S-1-5-32-544", "S-1-5-32-545" },
+            h.Inventory().Read().Unrevalidatable
+                .Where(grant => grant.Source == "Security:AdminGroups")
+                .Select(grant => grant.Sid)
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        Assert.Equal(2, h.Inventory().Read().Unrevalidatable.Count);
+    }
+
+    // ------------------------------------------------------------------ static groups that cannot be revalidated (aud-a29e)
+
+    [Theory]
+    [InlineData("Security:AdminGroups", "S-1-5-32-544", null)]
+    [InlineData("Security:AdminGroups", @"BUILTIN\Administrators", "S-1-5-32-544")]
+    [InlineData("Security:AllowedGroups", "Everyone", "S-1-1-0")]
+    [InlineData("Security:AllowedGroups", "S-1-5-11", null)]
+    [InlineData("Security:AdminGroups", DomainSid, null)]
+    public void AStaticGroupThatCannotBeRevalidated_RefusesStartupNamingTheEntry(string key, string entry, string? translatesTo)
+    {
+        string[] list = [SectionGroupSid, entry];
+        var ex = Assert.Throws<InvalidOperationException>(() => CircuitRevalidationSettings.EnsureStaticGroupsCanBeRevalidated(
+            enabled: true,
+            allowedGroups: key == "Security:AllowedGroups" ? list : [],
+            adminGroups: key == "Security:AdminGroups" ? list : [],
+            translateName: name => name == entry ? translatesTo : null));
+
+        Assert.Contains($"{key} contains '{entry}'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Use a domain group instead", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Authentication:RevalidationEnabled", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DomainStaticGroups_PassStartupValidation()
+    {
+        var translations = new Dictionary<string, string?>
+        {
+            [NamedAdminGroup] = NamedAdminGroupSid,
+            [@"CONTOSO\Helpdesk"] = DomainSid + "-5007",
+            [@"CONTOSO\NoSuchGroup"] = null,
+        };
+
+        // Domain SIDs, names that translate to domain SIDs, a name that maps to nothing and a value
+        // that is not a SID at all: the last two grant nothing, so they are not refused either.
+        var warnings = CircuitRevalidationSettings.EnsureStaticGroupsCanBeRevalidated(
+            enabled: true,
+            allowedGroups: [SectionGroupSid, @"CONTOSO\Helpdesk", "  "],
+            adminGroups: [NamedAdminGroup, @"CONTOSO\NoSuchGroup", "S-1-5-not-a-sid"],
+            translateName: name => translations[name]);
+
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void TheDisabledSwitch_SkipsStaticGroupValidation()
+    {
+        var translated = 0;
+
+        var warnings = CircuitRevalidationSettings.EnsureStaticGroupsCanBeRevalidated(
+            enabled: false,
+            allowedGroups: ["Everyone"],
+            adminGroups: [@"BUILTIN\Administrators", "S-1-5-32-544"],
+            translateName: _ =>
+            {
+                translated++;
+                return "S-1-5-32-544";
+            });
+
+        Assert.Empty(warnings);
+        Assert.Equal(0, translated);
+    }
+
+    [Fact]
+    public void AStaticNameThatCannotBeTranslatedAtStartup_IsReportedNotFatal()
+    {
+        var warnings = CircuitRevalidationSettings.EnsureStaticGroupsCanBeRevalidated(
+            enabled: true,
+            allowedGroups: [],
+            adminGroups: [NamedAdminGroup],
+            translateName: _ => throw new DirectoryUnavailableException("the trust could not be reached"));
+
+        var warning = Assert.Single(warnings);
+        Assert.Contains($"Security:AdminGroups contains '{NamedAdminGroup}'", warning, StringComparison.Ordinal);
+        Assert.Contains("could not be translated", warning, StringComparison.Ordinal);
+        Assert.Contains("fails closed", warning, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("S-1-5-32-544", null)]
+    [InlineData(NamedAdminGroup, "S-1-5-32-544")]
+    public async Task AStaticGroupThatCannotBeRevalidated_FailsClosedForATokenThatCarriesIt(string entry, string? translatesTo)
+    {
+        // What startup refuses, should it ever get past (a name that could not be translated then).
+        using var h = new Harness(adminGroups: [entry]);
+        if (translatesTo is not null)
+            h.Directory.TranslateGroupName(entry).Returns(translatesTo);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+
+        Assert.False(await h.Provider().ValidateAsync(Operator("S-1-5-32-544", DomainUsersSid), "Interval", Ct));
+
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+        var error = Assert.Single(h.AuditEvents()).RootElement.GetProperty("error").GetString();
+        Assert.Contains("Security:AdminGroups", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("App-Admins", error, StringComparison.Ordinal);
+        _ = h.Directory.DidNotReceive().GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
+    [Fact]
+    public async Task AStaticGroupThatCannotBeRevalidated_LeavesATokenWithoutItAlone()
+    {
+        using var h = new Harness(adminGroups: ["S-1-5-32-544"]);
+        h.Grant("RiskyUsers", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+
+        Assert.True(await h.Provider().ValidateAsync(Operator(SectionGroupSid, DomainUsersSid), "Interval", Ct));
+        Assert.False(h.Revocation.IsRevoked);
     }
 
     // ------------------------------------------------------------------ the grants a circuit came through (aud-a29d)
@@ -1183,6 +1302,26 @@ public class CircuitRevalidationTests
         Assert.True(built >= 0 && run > built, "Program.cs no longer builds and runs the app where expected.");
         Assert.True(report > built && report < run,
             "The disabled switch must be reported at startup: after builder.Build(), before app.Run().");
+    }
+
+    [Fact]
+    public void ProgramCs_RefusesStaticGroupsThatCannotBeRevalidatedBeforeTheAppIsBuilt()
+    {
+        var program = File.ReadAllText(Path.Combine(RepoRoot(), "Program.cs"));
+
+        var call = Regex.Match(
+            program,
+            @"CircuitRevalidationSettings\.EnsureStaticGroupsCanBeRevalidated\(\s*revalidationEnabled,\s*allowedGroups,\s*adminGroups,\s*new OperatorMembershipDirectory\(\)\.TranslateGroupName\s*\)");
+        Assert.True(call.Success, "Program.cs no longer validates the static groups for revalidation at startup.");
+
+        // Inside the block whose InvalidOperationException is logged as fatal and rethrown, after the
+        // switch is resolved, and before the app is built - so a refused configuration never serves.
+        var resolved = program.IndexOf("CircuitRevalidationSettings.ResolveEnabled(", StringComparison.Ordinal);
+        var fatal = program.IndexOf("catch (InvalidOperationException ex)", resolved, StringComparison.Ordinal);
+        var built = program.IndexOf("builder.Build()", StringComparison.Ordinal);
+        Assert.True(resolved >= 0 && call.Index > resolved && call.Index < fatal && fatal < built,
+            "The static-group check must run after the switch is resolved, inside the fatal block, before builder.Build().");
+        Assert.Contains("Log.Fatal(ex.Message);", program.Substring(fatal, 120), StringComparison.Ordinal);
     }
 
     [Fact]

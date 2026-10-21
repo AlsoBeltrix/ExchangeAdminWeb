@@ -34,9 +34,13 @@ namespace ExchangeAdminWeb.Authorization;
 /// every circuit pass without a lookup.
 /// </para>
 /// <para>
-/// Only usable domain-account SIDs come out. A well-known or BUILTIN SID is not a directory group
-/// <c>tokenGroups</c> can attest to - comparing one would end every session that holds it - and
-/// none is a valid section-access subject anyway.
+/// Only usable domain-account SIDs come out as grants. A well-known or BUILTIN SID is not a
+/// directory group <c>tokenGroups</c> can attest to - comparing one would end every session that
+/// holds it - and none is a valid section-access subject anyway. A stored one grants nothing (the
+/// gates read stored values as SIDs only). A static one can still grant, through <c>IsInRole</c>,
+/// so it is not dropped: startup refuses it while revalidation is on, and one that gets past (a
+/// name that could not be translated at startup) is reported in
+/// <see cref="AuthorizationInventory.Unrevalidatable"/>, where it fails closed (aud-a29e).
 /// </para>
 /// <para>
 /// Out: the Self-Service Groups DACL gate, which reads arbitrary groups from AD ACLs at the moment
@@ -96,17 +100,27 @@ public sealed class AuthorizationGroupInventory
                 grants.Add(new AuthorizationGrant(ModuleAdminsSource + moduleId, sid));
         }
 
-        foreach (var sid in ResolveStaticGroups(_sectionAccess.GetAllowedGroups()))
+        var unrevalidatable = new HashSet<AuthorizationGrant>();
+
+        var allowed = ResolveStaticGroups(_sectionAccess.GetAllowedGroups());
+        foreach (var sid in allowed.Usable)
         {
             grants.Add(new AuthorizationGrant(AllowedGroupsSource, sid));
             if (!configured)
                 grants.Add(new AuthorizationGrant(UnconfiguredSectionAccessSource, sid));
         }
 
-        foreach (var sid in ResolveStaticGroups(_sectionAccess.GetAdminGroups()))
+        foreach (var sid in allowed.Unrevalidatable)
+            unrevalidatable.Add(new AuthorizationGrant(AllowedGroupsSource, sid));
+
+        var admin = ResolveStaticGroups(_sectionAccess.GetAdminGroups());
+        foreach (var sid in admin.Usable)
             grants.Add(new AuthorizationGrant(AdminGroupsSource, sid));
 
-        return new AuthorizationInventory(grants);
+        foreach (var sid in admin.Unrevalidatable)
+            unrevalidatable.Add(new AuthorizationGrant(AdminGroupsSource, sid));
+
+        return new AuthorizationInventory(grants, unrevalidatable);
     }
 
     /// <summary>The distinct SIDs of <see cref="Read"/>: what the directory comparison is about.</summary>
@@ -115,11 +129,15 @@ public sealed class AuthorizationGroupInventory
     public IReadOnlySet<string> GetConsultedSids() =>
         Read().Grants.Select(grant => grant.Sid).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    // The usable domain SIDs a static list grants through: SID values as they are, names translated
-    // the way IsInRole translates them. A name that maps to nothing grants nothing and is skipped.
-    private List<string> ResolveStaticGroups(IEnumerable<string> values)
+    // The SIDs a static list grants through: SID values as they are (canonical form when padded),
+    // names translated the way IsInRole translates them. Usable domain SIDs are grants; anything else
+    // that resolves to a SID can still grant through IsInRole, so it goes to Unrevalidatable rather
+    // than out of sight (aud-a29e). A name that maps to nothing, or a SID-shaped value that does not
+    // parse, grants nothing and is skipped.
+    private (List<string> Usable, List<string> Unrevalidatable) ResolveStaticGroups(IEnumerable<string> values)
     {
-        var sids = new List<string>();
+        var usable = new List<string>();
+        var unrevalidatable = new List<string>();
         foreach (var value in values)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -127,20 +145,36 @@ public sealed class AuthorizationGroupInventory
 
             if (SectionAccessGroupIdentity.IsUsableGroupSid(value))
             {
-                sids.Add(value);
+                usable.Add(value);
                 continue;
             }
 
-            // SID-shaped but not a usable group (a well-known or BUILTIN SID): nothing to translate.
-            if (value.TrimStart().StartsWith("S-1-", StringComparison.OrdinalIgnoreCase))
+            var sid = value.TrimStart().StartsWith("S-1-", StringComparison.OrdinalIgnoreCase)
+                ? CanonicalSid(value.Trim())
+                : _directory.TranslateGroupName(value);
+
+            if (sid is null)
                 continue;
 
-            var translated = _directory.TranslateGroupName(value);
-            if (SectionAccessGroupIdentity.IsUsableGroupSid(translated))
-                sids.Add(translated!);
+            if (SectionAccessGroupIdentity.IsUsableGroupSid(sid))
+                usable.Add(sid);
+            else
+                unrevalidatable.Add(sid);
         }
 
-        return sids;
+        return (usable, unrevalidatable);
+    }
+
+    private static string? CanonicalSid(string value)
+    {
+        try
+        {
+            return new System.Security.Principal.SecurityIdentifier(value).Value;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
     }
 }
 
@@ -164,5 +198,11 @@ public sealed record AuthorizationGrant(string Source, string Sid)
         StringComparer.OrdinalIgnoreCase.GetHashCode(Sid));
 }
 
-/// <summary>What <see cref="AuthorizationGroupInventory.Read"/> found: every grant the gates grant through now.</summary>
-public sealed record AuthorizationInventory(IReadOnlySet<AuthorizationGrant> Grants);
+/// <summary>
+/// What <see cref="AuthorizationGroupInventory.Read"/> found: every grant the gates grant through
+/// now, and the static grants that can grant but that the directory cannot attest to
+/// (<see cref="Unrevalidatable"/>, aud-a29e) - a token carrying one of those cannot be confirmed.
+/// </summary>
+public sealed record AuthorizationInventory(
+    IReadOnlySet<AuthorizationGrant> Grants,
+    IReadOnlySet<AuthorizationGrant> Unrevalidatable);

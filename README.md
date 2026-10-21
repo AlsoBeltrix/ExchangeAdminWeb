@@ -821,6 +821,13 @@ it against Active Directory: once when the tab connects, then every
   silent: at startup the app logs a warning and writes one audit line (action `SessionRevalidation`,
   reason `Disabled`). Anything other than `true` or `false` stops startup. The interval is still
   validated while the switch is off.
+- **Static groups must be domain groups while revalidation is on.** An entry in
+  `Security:AllowedGroups` or `Security:AdminGroups` that is, or translates to, a built-in or
+  well-known group - for example `BUILTIN\Administrators`, `S-1-5-32-544`, `Everyone` - can grant
+  access through Windows but cannot be re-checked against Active Directory, so the app refuses to
+  start and the startup error names the entry. Replace it with a domain group, or set
+  `RevalidationEnabled` to `false`. A name that cannot be translated at startup is logged as a
+  warning instead; until it translates, every check fails closed.
 - **What is checked:** the groups the operator's sign-in carries that some access rule uses
   (section access, module admins, `Security:AllowedGroups`, `Security:AdminGroups`), compared by
   SID with the account's current group membership (`tokenGroups`), and whether the account is
