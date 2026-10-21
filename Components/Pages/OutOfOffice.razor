@@ -228,18 +228,23 @@
         isChecking = true;
         checkResult = null;
 
+        // Audit finding aud-a7c. Captured before the read: the lookup audit used to take its target
+        // from the box AFTER the await, so an edit during the read recorded a lookup of a mailbox
+        // that was never read. Nothing below may read checkEmail.
+        var mailbox = checkEmail.Trim();
+
         try
         {
             using var activity = Progress.Begin(
-                "Out of Office", $"Reading auto-reply for {checkEmail.Trim()}", ActivitySize.Unknown);
+                "Out of Office", $"Reading auto-reply for {mailbox}", ActivitySize.Unknown);
 
-            checkResult = await OofService.GetOutOfOfficeAsync(checkEmail.Trim());
+            checkResult = await OofService.GetOutOfOfficeAsync(mailbox);
             activity.Complete(checkResult.Error == null, checkResult.Error);
-            Audit.LogLookupAction(currentUser, clientIpAddress, "CheckOutOfOffice", checkEmail.Trim(), checkResult.Error == null, checkResult.Error);
+            Audit.LogLookupAction(currentUser, clientIpAddress, "CheckOutOfOffice", mailbox, checkResult.Error == null, checkResult.Error);
         }
         catch (Exception ex)
         {
-            checkResult = new OutOfOfficeResult { EmailAddress = checkEmail, State = "Unknown", Error = ex.Message };
+            checkResult = new OutOfOfficeResult { EmailAddress = mailbox, State = "Unknown", Error = ex.Message };
         }
         finally
         {

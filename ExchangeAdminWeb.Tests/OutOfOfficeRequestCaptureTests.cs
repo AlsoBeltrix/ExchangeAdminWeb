@@ -44,6 +44,7 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
 
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "eaw-oof-" + Guid.NewGuid().ToString("N"));
     private readonly IList _setCalls = ArrayList.Synchronized(new ArrayList());
+    private readonly IList _getCalls = ArrayList.Synchronized(new ArrayList());
     private readonly SemaphoreSlim _entered = new(0);
     private readonly ManualResetEventSlim _released = new(false);
     private readonly ActivityProgressService _progress = new();
@@ -131,12 +132,14 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     {
         var state = InitialSessionState.CreateDefault2();
         state.Variables.Add(new SessionStateVariableEntry("SetCalls", _setCalls, null));
+        state.Variables.Add(new SessionStateVariableEntry("GetCalls", _getCalls, null));
         state.Variables.Add(new SessionStateVariableEntry("HoldAt", holdAt, null));
         state.Variables.Add(new SessionStateVariableEntry("Entered", _entered, null));
         state.Variables.Add(new SessionStateVariableEntry("Released", _released, null));
         state.Commands.Add(new SessionStateFunctionEntry("Get-MailboxAutoReplyConfiguration", """
             [CmdletBinding()]
             param([string] $Identity)
+            [void]$GetCalls.Add($Identity)
             if ($HoldAt -eq 'read') { [void]$Entered.Release(); [void]$Released.Wait([TimeSpan]::FromSeconds(30)) }
             [pscustomobject]@{ AutoReplyState = 'Disabled'; InternalMessage = $null; ExternalMessage = $null; StartTime = $null; EndTime = $null }
             """));
@@ -215,6 +218,9 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
 
     private static Task SetOof(Page page) =>
         (Task)typeof(Page).GetMethod("SetOof", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
+
+    private static Task CheckStatus(Page page) =>
+        (Task)typeof(Page).GetMethod("CheckStatus", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
 
     private async Task PauseEditAndRelease(Page page, Task pending)
     {
@@ -328,6 +334,35 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         Assert.Equal(Mailbox, Unwrap(SingleWrite()["Identity"]));
         SingleRow(AuditRows(), "OutOfOffice_Set");
         Assert.False(GetField<bool>(page, "isSetting"));
+    }
+
+    // aud-a7c, the read path's twin of aud-a7b: the status check used to take the lookup audit's
+    // target from the box AFTER the read returned, so an edit during the read recorded a lookup of a
+    // mailbox that was never read.
+    [Fact]
+    public async Task AStatusCheck_AuditsTheMailboxItRead_NotWhatTheBoxSaysAfterwards()
+    {
+        var (page, _) = BuildPage("read");
+        SetField(page, "checkEmail", " " + Mailbox + " ");
+
+        var pending = CheckStatus(page);
+        Assert.True(await _entered.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken),
+            "The status check never reached its read - this test is stale.");
+        try
+        {
+            SetField(page, "checkEmail", "mallory@contoso.test");
+        }
+        finally
+        {
+            _released.Set();
+        }
+        await pending;
+
+        Assert.Equal(Mailbox, Unwrap(Assert.Single(_getCalls.Cast<object?>())));
+        var row = SingleRow(AuditRows(), "CheckOutOfOffice");
+        Assert.Equal(Mailbox, row.GetProperty("target").GetString());
+        Assert.Equal("Success", row.GetProperty("result").GetString());
+        Assert.False(GetField<bool>(page, "isChecking"));
     }
 
     [Theory]
