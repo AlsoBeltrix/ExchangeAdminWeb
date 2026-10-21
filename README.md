@@ -830,6 +830,11 @@ it against Active Directory: once when the tab connects, then every
   "This session has ended" with a Reload link; reloading signs in again with the access the
   operator has now. Each ended session writes one audit line (action `SessionRevalidation`,
   category `Authentication`).
+- **When a tab connects** it does not respond until that first check has answered - normally the
+  time of one directory read, at most 60 seconds. The page is shown meanwhile, but nothing on it
+  runs. If the check ends the session there, nothing in the tab was ever started: it shows the
+  app's error banner ("An unhandled error has occurred") with its Reload link instead of the
+  notice, and the audit line says why.
 - Under Kerberos a reload brings back the same group list until Windows renews its ticket, so an
   operator who keeps being signed out after their access was restored should sign out of Windows
   and back in.

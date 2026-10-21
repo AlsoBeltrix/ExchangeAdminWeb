@@ -539,8 +539,7 @@ public class CircuitRevalidationTests
     public async Task TheGate_LeavesOpenAloneWithoutTheRevalidatingProvider()
     {
         using var h = new Harness();
-        var gate = new CircuitRevocationGate(
-            h.Revocation, Substitute.For<AuthenticationStateProvider>(), NullLogger<CircuitRevocationGate>.Instance);
+        var gate = h.Gate(Substitute.For<AuthenticationStateProvider>());
 
         await gate.OnCircuitOpenedAsync(null!, Ct);
 
@@ -552,17 +551,23 @@ public class CircuitRevalidationTests
     public async Task TheGate_PassesActivityThroughWhileTheCircuitIsValid()
     {
         using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
         using var provider = h.Provider();
-        var gate = new CircuitRevocationGate(h.Revocation, provider, NullLogger<CircuitRevocationGate>.Instance);
+        SignIn(provider, Operator(UnconsultedGroupSid, DomainUsersSid));
+        var gate = h.Gate(provider);
+        await gate.OnCircuitOpenedAsync(null!, Ct);
 
-        var ran = false;
-        await gate.CreateInboundActivityHandler(_ =>
+        var ran = 0;
+        var handler = gate.CreateInboundActivityHandler(_ =>
         {
-            ran = true;
+            ran++;
             return Task.CompletedTask;
-        })(null!);
+        });
+        await handler(null!);
+        await handler(null!);
 
-        Assert.True(ran);
+        Assert.Equal(2, ran);
+        Assert.False(h.Revocation.IsRevoked);
     }
 
     [Fact]
@@ -570,7 +575,7 @@ public class CircuitRevalidationTests
     {
         using var h = new Harness();
         using var provider = h.Provider();
-        var gate = new CircuitRevocationGate(h.Revocation, provider, NullLogger<CircuitRevocationGate>.Instance);
+        var gate = h.Gate(provider);
         h.Revocation.TryRevoke(CircuitRevocationReason.MembershipChanged);
 
         var ran = 0;
@@ -595,10 +600,11 @@ public class CircuitRevalidationTests
         using var provider = h.Provider();
         ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
             Task.FromResult(new AuthenticationState(Operator(SectionGroupSid))));
-        var gate = new CircuitRevocationGate(h.Revocation, provider, NullLogger<CircuitRevocationGate>.Instance);
+        var gate = h.Gate(provider);
 
-        await gate.OnCircuitOpenedAsync(null!, Ct);
-        await gate.OpenCheck.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        // A circuit whose access the open check did not confirm is not initialized (aud-a29c).
+        await Assert.ThrowsAsync<InvalidOperationException>(() => gate.OnCircuitOpenedAsync(null!, Ct));
+        Assert.False(await gate.OpenCheck.WaitAsync(TimeSpan.FromSeconds(15), Ct));
 
         Assert.Equal(CircuitRevocationReason.MembershipChanged, h.Revocation.Reason);
     }
@@ -608,7 +614,7 @@ public class CircuitRevalidationTests
     {
         using var h = new Harness();
         using var provider = h.Provider();
-        var gate = new CircuitRevocationGate(h.Revocation, provider, NullLogger<CircuitRevocationGate>.Instance);
+        var gate = h.Gate(provider);
         var clientInfo = new ClientInfoCircuitHandler(
             h.ClientInfo, Substitute.For<Microsoft.AspNetCore.Http.IHttpContextAccessor>(),
             NullLogger<ClientInfoCircuitHandler>.Instance);
@@ -617,6 +623,221 @@ public class CircuitRevalidationTests
         // its own OnCircuitOpenedAsync. Handlers run in ascending Order.
         Assert.True(gate.Order > clientInfo.Order);
         Assert.True(gate.Order > new UsageSessionCircuitHandler(new UsageSession()).Order);
+    }
+
+    // ------------------------------------------------------------------ the pending circuit (aud-a29c)
+
+    [Fact(Timeout = 20000)]
+    public async Task ActivityBeforeTheOpenCheckCompletes_IsHeldThenPassedWhenAccessIsConfirmed()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        var (asked, answer) = h.DirectoryAnswersLater();
+        using var provider = h.Provider();
+        SignIn(provider, Operator(SectionGroupSid, DomainUsersSid));
+        var gate = h.Gate(provider);
+
+        var opened = gate.OnCircuitOpenedAsync(null!, Ct);
+        var ran = 0;
+        var activity = gate.CreateInboundActivityHandler(_ =>
+        {
+            ran++;
+            return Task.CompletedTask;
+        })(null!);
+        await asked.Task.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+
+        // The directory has not answered: the circuit's initialization and the activity both wait.
+        Assert.False(opened.IsCompleted);
+        Assert.False(activity.IsCompleted);
+        Assert.Equal(0, ran);
+
+        answer.SetResult(Membership(enabled: true, SectionGroupSid, DomainUsersSid));
+        await opened.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        await activity.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+
+        Assert.Equal(1, ran);
+        Assert.False(h.Revocation.IsRevoked);
+        Assert.Empty(h.AuditEvents());
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task ActivityBeforeTheOpenCheckCompletes_IsDroppedWhenTheCheckRevokes()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        var (asked, answer) = h.DirectoryAnswersLater();
+        using var provider = h.Provider();
+        SignIn(provider, Operator(SectionGroupSid, DomainUsersSid));
+        var gate = h.Gate(provider);
+
+        var opened = gate.OnCircuitOpenedAsync(null!, Ct);
+        var ran = 0;
+        var activity = gate.CreateInboundActivityHandler(_ =>
+        {
+            ran++;
+            return Task.CompletedTask;
+        })(null!);
+        await asked.Task.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        Assert.False(activity.IsCompleted);
+
+        answer.SetResult(Membership(enabled: true, DomainUsersSid));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => opened.WaitAsync(TimeSpan.FromSeconds(15), Ct));
+        await activity.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        Assert.Equal(0, ran);
+        Assert.Equal(CircuitRevocationReason.MembershipChanged, h.Revocation.Reason);
+        Assert.Equal("CircuitOpened", Assert.Single(h.AuditEvents()).RootElement.GetProperty("trigger").GetString());
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task ActivityThatReachesTheGateBeforeTheCircuitOpens_StartsTheCheckAndIsHeld()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        var (asked, answer) = h.DirectoryAnswersLater();
+        using var provider = h.Provider();
+        SignIn(provider, Operator(SectionGroupSid, DomainUsersSid));
+        var gate = h.Gate(provider);
+
+        // The framework rebuilds the inbound pipeline before it calls OnCircuitOpenedAsync, so an
+        // activity can get here first.
+        var ran = 0;
+        var activity = gate.CreateInboundActivityHandler(_ =>
+        {
+            ran++;
+            return Task.CompletedTask;
+        })(null!);
+        await asked.Task.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        var opened = gate.OnCircuitOpenedAsync(null!, Ct);
+
+        Assert.False(activity.IsCompleted);
+        Assert.False(opened.IsCompleted);
+        Assert.Equal(0, ran);
+
+        answer.SetResult(Membership(enabled: true, SectionGroupSid, DomainUsersSid));
+        await activity.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        await opened.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+
+        Assert.Equal(1, ran);
+        _ = h.Directory.Received(1).GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task AnOpenCheckThatTimesOut_RevokesAndDropsTheHeldActivity()
+    {
+        using var h = new Harness(lookupTimeout: TimeSpan.FromSeconds(1));
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken)
+            .Returns(new TaskCompletionSource<OperatorDirectoryMembership>().Task);
+        using var provider = h.Provider();
+        SignIn(provider, Operator(SectionGroupSid));
+        var gate = h.Gate(provider);
+
+        var ran = 0;
+        var activity = gate.CreateInboundActivityHandler(_ =>
+        {
+            ran++;
+            return Task.CompletedTask;
+        })(null!);
+        await activity.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+
+        Assert.Equal(0, ran);
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+        Assert.Contains("did not answer", Assert.Single(h.AuditEvents()).RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => gate.OnCircuitOpenedAsync(null!, Ct));
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task AnOpenCheckThatNeverFinishes_IsRevokedWhenTheHoldRunsOut()
+    {
+        using var h = new Harness(lookupTimeout: TimeSpan.FromMilliseconds(200));
+        using var provider = h.Provider();
+
+        // A state that never resolves keeps the open check from ever reaching a verdict.
+        ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
+            new TaskCompletionSource<AuthenticationState>().Task);
+        var gate = h.Gate(provider);
+
+        var ran = 0;
+        var activity = gate.CreateInboundActivityHandler(_ =>
+        {
+            ran++;
+            return Task.CompletedTask;
+        })(null!);
+        await activity.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+
+        Assert.Equal(0, ran);
+        Assert.Equal(CircuitRevocationReason.PendingCheckTimedOut, h.Revocation.Reason);
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal("PendingCheckTimedOut", audit.GetProperty("reason").GetString());
+        Assert.Equal("CircuitOpened", audit.GetProperty("trigger").GetString());
+        Assert.Equal("Unknown", audit.GetProperty("target").GetString());
+        Assert.False((await provider.GetAuthenticationStateAsync()).User.Identity?.IsAuthenticated);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => gate.OnCircuitOpenedAsync(null!, Ct));
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task ACircuitThatClosesBeforeItsOpenCheckCompletes_RunsNothingItHeld()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        var (asked, _) = h.DirectoryAnswersLater();
+        var provider = h.Provider();
+        SignIn(provider, Operator(SectionGroupSid));
+        var gate = h.Gate(provider);
+
+        var ran = 0;
+        var activity = gate.CreateInboundActivityHandler(_ =>
+        {
+            ran++;
+            return Task.CompletedTask;
+        })(null!);
+        await asked.Task.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        ((IDisposable)provider).Dispose();
+        await activity.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+
+        // Nothing to end and no one to audit, but nothing held runs either.
+        Assert.Equal(0, ran);
+        Assert.False(h.Revocation.IsRevoked);
+        Assert.Empty(h.AuditEvents());
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task TheGate_HoldsNothingWhenRevalidationIsSwitchedOff()
+    {
+        using var h = new Harness(lookupTimeout: TimeSpan.FromMilliseconds(200), enabled: false);
+        using var provider = h.Provider();
+
+        // Were the open check run at all, this state would hold it until the backstop revoked.
+        ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
+            new TaskCompletionSource<AuthenticationState>().Task);
+        var gate = h.Gate(provider);
+
+        var ran = 0;
+        var activity = gate.CreateInboundActivityHandler(_ =>
+        {
+            ran++;
+            return Task.CompletedTask;
+        })(null!);
+        await activity.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        await gate.OnCircuitOpenedAsync(null!, Ct);
+
+        Assert.Equal(1, ran);
+        Assert.False(h.Revocation.IsRevoked);
+        Assert.Empty(h.AuditEvents());
+    }
+
+    [Fact]
+    public void TheTracedCircuitPipelineIsTheOneRunning()
+    {
+        // aud-a29c's safety argument quotes the framework's circuit start-up order (handlers'
+        // OnCircuitOpenedAsync awaited before the root components are added, and those added inside
+        // the inbound-activity pipeline). It was traced against ASP.NET Core 10; a new major version
+        // must be traced again before this holds.
+        Assert.True(
+            typeof(CircuitHandler).Assembly.GetName().Version?.Major == 10,
+            "Microsoft.AspNetCore.Components.Server is no longer version 10: re-trace the circuit "
+            + "pipeline order recorded in .agents/review/findings/aud-a29c.md before trusting the gate.");
     }
 
     // ------------------------------------------------------------------ the off-switch
@@ -898,6 +1119,13 @@ public class CircuitRevalidationTests
 
     private static ClaimsPrincipal Operator(params string[] groupSids) => Principal(OperatorSid, OperatorName, groupSids);
 
+    private static void SignIn(MembershipRevalidatingAuthenticationStateProvider provider, ClaimsPrincipal user) =>
+        ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
+            Task.FromResult(new AuthenticationState(user)));
+
+    private static OperatorDirectoryMembership Membership(bool enabled, params string[] groupSids) =>
+        new(new HashSet<string>(groupSids, StringComparer.OrdinalIgnoreCase), enabled);
+
     private static ClaimsPrincipal Principal(string? primarySid, string name, IEnumerable<string> groupSids)
     {
         var identity = new ClaimsIdentity("Negotiate", ClaimTypes.Name, ClaimTypes.Role);
@@ -1010,6 +1238,25 @@ public class CircuitRevalidationTests
             Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(
                 Task.FromResult(new OperatorDirectoryMembership(
                     new HashSet<string>(groupSids, StringComparer.OrdinalIgnoreCase), enabled)));
+
+        /// <summary>
+        /// A directory that answers only when told: <c>asked</c> completes when the lookup is made,
+        /// <c>answer</c> is what it then returns.
+        /// </summary>
+        public (TaskCompletionSource Asked, TaskCompletionSource<OperatorDirectoryMembership> Answer) DirectoryAnswersLater()
+        {
+            var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var answer = new TaskCompletionSource<OperatorDirectoryMembership>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(_ =>
+            {
+                asked.TrySetResult();
+                return answer.Task;
+            });
+            return (asked, answer);
+        }
+
+        public CircuitRevocationGate Gate(AuthenticationStateProvider provider) =>
+            new(Revocation, provider, Options, NullLogger<CircuitRevocationGate>.Instance);
 
         public AuthorizationGroupInventory Inventory() => new(SectionAccess, ModuleAdmins, Directory);
 

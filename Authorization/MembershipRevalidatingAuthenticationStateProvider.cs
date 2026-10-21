@@ -15,7 +15,8 @@ namespace ExchangeAdminWeb.Authorization;
 /// circuit opened with for as long as it lives. The framework loop calls
 /// <see cref="ValidateAuthenticationStateAsync"/> every <see cref="CircuitRevalidationOptions.Interval"/>,
 /// and <see cref="CircuitRevocationGate"/> adds one check when a circuit opens, because under
-/// Kerberos a reload presents the same group SIDs as before.
+/// Kerberos a reload presents the same group SIDs as before - and holds the new circuit until that
+/// check has answered (aud-a29c).
 /// </para>
 /// <para>
 /// On an invalid verdict the order is fixed: the circuit's <see cref="CircuitRevocation"/> is set,
@@ -125,10 +126,13 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     }
 
     /// <summary>
-    /// The check run once when a circuit opens; started by <see cref="CircuitRevocationGate"/>.
-    /// Never throws. Stops quietly once the circuit is disposed - there is no session left to end.
+    /// The check run once when a circuit opens; started by <see cref="CircuitRevocationGate"/>, which
+    /// holds the circuit until this answers. True when access was confirmed, or there was nothing to
+    /// confirm (an unauthenticated circuit); false when it revoked the circuit, or the circuit closed
+    /// first. Never throws. Stops quietly once the circuit is disposed - there is no session left to
+    /// end, and nothing it held may run.
     /// </summary>
-    internal async Task CheckAtCircuitOpenAsync()
+    internal async Task<bool> CheckAtCircuitOpenAsync()
     {
         var cancellationToken = _disposed.Token;
         ClaimsPrincipal? user = null;
@@ -136,20 +140,58 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
         {
             user = (await GetAuthenticationStateAsync().ConfigureAwait(false)).User;
             if (user.Identity?.IsAuthenticated != true)
-                return;
+                return true;
 
-            if (!await ValidateAsync(user, TriggerCircuitOpened, cancellationToken).ConfigureAwait(false))
-                SetAuthenticationState(Anonymous);
+            if (await ValidateAsync(user, TriggerCircuitOpened, cancellationToken).ConfigureAwait(false))
+                return true;
+
+            SetAuthenticationState(Anonymous);
+            return false;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            return false;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "The circuit-open access check failed; ending the session");
             Revoke(user, MembershipRevalidationResult.LookupFailed($"The access check failed: {ex.Message}"), TriggerCircuitOpened);
             SetAuthenticationState(Anonymous);
+            return false;
         }
+    }
+
+    /// <summary>
+    /// The gate's backstop (aud-a29c): the open check did not answer within the gate's hold, so the
+    /// circuit's access was never confirmed. Revokes with
+    /// <see cref="CircuitRevocationReason.PendingCheckTimedOut"/>, audits once, signs the circuit out.
+    /// </summary>
+    /// <remarks>
+    /// The account is read only if the state is already there: the stuck check may be waiting on that
+    /// very state, and the audit line then names "Unknown" rather than block.
+    /// </remarks>
+    internal void RevokeUnconfirmedOpenCheck(TimeSpan waited)
+    {
+        ClaimsPrincipal? user = null;
+        try
+        {
+            var state = GetAuthenticationStateAsync();
+            if (state.IsCompletedSuccessfully)
+                user = state.Result.User;
+        }
+        catch (InvalidOperationException)
+        {
+            // No state was ever set: nothing to name.
+        }
+
+        Revoke(
+            user,
+            new MembershipRevalidationResult(
+                CircuitRevocationReason.PendingCheckTimedOut,
+                Array.Empty<string>(),
+                $"The access check that runs when a circuit opens did not finish within {waited.TotalSeconds:0.#} seconds."),
+            TriggerCircuitOpened);
+        SetAuthenticationState(Anonymous);
     }
 
     /// <summary>
