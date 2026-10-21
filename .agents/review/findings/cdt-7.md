@@ -6,9 +6,9 @@ test's own synchronization context loses the page's continuation, so
 forever without failing, and `dotnet test ExchangeAdminWeb.slnx`, the repo's required
 verification gate, never finishes on this host (about four hours on 2026-10-21; 20 of 20
 isolated runs hung at HEAD). CI passed the same day only because the race can be won there.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; closed on coder-side guard proof (test-only; MEDIUM)
 **Branch**: `worktree-agent-a95c4f0a3aad30d34`
-**Commit**: `<pending>`
+**Commit**: `4cbe057` (merged)
 **Reviewer**: implementer (surfaced by the cdt-1 agent, confirmed hanging at HEAD)
 
 ## Evidence
