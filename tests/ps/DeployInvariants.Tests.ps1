@@ -250,6 +250,62 @@ Describe 'deploy.ps1' {
         }
     }
 
+    It 'never hands a pool, or icacls, an empty identity (cdt-24)' {
+        # With -ServiceAccount omitted the existing pool's userName became the account and the pool
+        # was set to SpecificUser with it - empty for a pool that runs as ApplicationPoolIdentity or
+        # a built-in account. icacls then granted the empty name, which it resolves to
+        # BUILTIN\BUILTIN, and exited 0.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail', 'Prompt-Value', 'Prompt-SecureValue', 'SecureString-ToPlain', 'Set-AclChecked') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq '$needsPassword = $false') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq 'Write-Success "App pool configured"') { $i } })
+        $from.Count | Should -Be 1
+        $to.Count | Should -Be 1
+        $region = ($statements[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        ${function:Test-Path} = { param([Parameter(Position = 0)]$Path) $null = $Path; $true }
+        ${function:Get-ItemProperty} = { param([Parameter(Position = 0)]$Path, $Name) $null = $Path, $Name; [pscustomobject]@{ identityType = $script:cdt24Type; userName = $script:cdt24User } }
+        ${function:New-WebAppPool} = { $script:cdt24Changes.Add('New-WebAppPool') }
+        ${function:Set-ItemProperty} = { param([Parameter(Position = 0)]$Path, $Name, $Value) $null = $Path; $script:cdt24Changes.Add("$Name=$Value") }
+        ${function:icacls} = { $script:cdt24Changes.Add('icacls') }
+
+        $run = {
+            param([string]$Type, [string]$User, [string]$Account)
+            $script:cdt24Type = $Type
+            $script:cdt24User = $User
+            $script:cdt24Changes = New-Object System.Collections.Generic.List[string]
+            # Read only by the lifted region.
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name NonInteractive -Value $true
+            Set-Variable -Name ServiceAccountPassword -Value $null
+            Set-Variable -Name ServiceAccount -Value $Account
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+            [pscustomobject]@{ Thrown = $thrown; Changes = @($script:cdt24Changes); Account = $ServiceAccount }
+        }
+
+        foreach ($case in @(@('4', ''), @('ApplicationPoolIdentity', ''), @('2', ''), @('3', ''), @('SpecificUser', '  '))) {
+            $r = & $run $case[0] $case[1] '' 6>$null
+            $r.Thrown | Should -BeLike '*does not run as a specific user*Pass -ServiceAccount*' -Because "a pool reported as identityType '$($case[0])' with user '$($case[1])' must not be given an empty identity"
+            $r.Changes.Count | Should -Be 0 -Because 'the refusal comes before anything about the pool is changed'
+        }
+        foreach ($type in '3', 'SpecificUser') {
+            $r = & $run $type 'CONTOSO\svc' '' 6>$null
+            $r.Thrown | Should -BeNullOrEmpty -Because "a pool that runs as a user (identityType '$type') keeps it"
+            $r.Account | Should -BeExactly 'CONTOSO\svc'
+            $r.Changes | Should -Contain 'processModel.userName=CONTOSO\svc'
+        }
+        $stale = & $run '4' 'CONTOSO\svc' 'CONTOSO\svc' 6>$null
+        $stale.Thrown | Should -BeLike '*ServiceAccountPassword is required*' -Because 'moving a pool to a specific user is an identity change, even when a stale user name matches'
+
+        $script:cdt24Changes = New-Object System.Collections.Generic.List[string]
+        { Set-AclChecked -Path 'D:\example' -Identity '' -Rights '(OI)(CI)M' } | Should -Throw -ExpectedMessage '*empty identity*BUILTIN\BUILTIN*'
+        $script:cdt24Changes | Should -Not -Contain 'icacls' -Because 'an empty identity must never reach icacls'
+    }
+
     It 'parses without syntax errors' {
         $s.Errors | Should -BeNullOrEmpty
     }

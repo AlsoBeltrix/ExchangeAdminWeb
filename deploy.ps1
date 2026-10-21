@@ -63,6 +63,11 @@ function Write-Fail    { param($m) Write-Host "  X  $m" -ForegroundColor Red; th
 # through here so a nonzero exit becomes a terminating error (icacls returns 0 on success).
 function Set-AclChecked {
     param([string]$Path, [string]$Identity, [string]$Rights)
+    # cdt-24: the exit code alone cannot catch this one - icacls grants an empty name to
+    # BUILTIN\BUILTIN (S-1-5-32) and exits 0.
+    if ([string]::IsNullOrWhiteSpace($Identity)) {
+        Write-Fail "Refusing to grant $Rights on $Path to an empty identity: icacls resolves an empty name to BUILTIN\BUILTIN and reports success, so the grant would silently go to the wrong principal."
+    }
     & icacls $Path /grant "${Identity}:$Rights" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "icacls failed (exit $LASTEXITCODE) granting $Identity ${Rights} on $Path"
@@ -272,11 +277,23 @@ $needsPassword = $false
 $poolExists = Test-Path "IIS:\AppPools\$AppPoolName"
 
 if ($poolExists) {
-    $existingUser = (Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel).userName
+    # cdt-24: a pool that does not run as a specific user (ApplicationPoolIdentity or a built-in
+    # account) has no userName, and taking that as the account set the pool to SpecificUser with an
+    # empty name - an identity IIS cannot start - and sent the empty name to every icacls grant below.
+    # identityType is matched as text: the provider yields the number under Windows PowerShell 5.1
+    # and the name under PowerShell 7 (the cutover script records the same).
+    $existingProcessModel = Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel
+    $existingUser = $existingProcessModel.userName
+    $existingRunsAsUser = ("$($existingProcessModel.identityType)" -in @('SpecificUser', '3')) -and -not [string]::IsNullOrWhiteSpace($existingUser)
     if (-not $ServiceAccount) {
+        if (-not $existingRunsAsUser) {
+            Write-Fail "App pool $AppPoolName exists but does not run as a specific user (IIS reports identityType '$($existingProcessModel.identityType)', user name '$existingUser'), and this script configures every pool with a service account. Pass -ServiceAccount and its password to move the pool to one, or deploy this instance with tools/Install-ExchangeAdminWeb.ps1, which keeps a pool's existing identity. Nothing was deployed."
+        }
         $ServiceAccount = $existingUser
-    } elseif ($existingUser -ne $ServiceAccount) {
-        Write-Warn "App pool identity changing: $existingUser -> $ServiceAccount"
+    } elseif (-not $existingRunsAsUser -or $existingUser -ne $ServiceAccount) {
+        $currentIdentity = $existingUser
+        if (-not $existingRunsAsUser) { $currentIdentity = "identityType '$($existingProcessModel.identityType)'" }
+        Write-Warn "App pool identity changing: $currentIdentity -> $ServiceAccount"
         $needsPassword = $true
     }
 } else {
