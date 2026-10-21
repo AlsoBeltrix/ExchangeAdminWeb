@@ -796,6 +796,14 @@ Invoke-PlanOrAction "dotnet publish to staging: $stagingPath" {
     }
 }
 
+# cdt-2. Checked once, right after publish and before the backup decision, so every run
+# refuses a staging folder without a usable ExchangeAdminWeb.dll - including a fresh install
+# with no database, and a -SkipConfigBackup run. Deliberately fatal: mirroring a payload that
+# cannot run reports success over an unusable instance. The backup reuses this staging folder.
+Invoke-PlanOrAction "Confirm the published build carries the config DB tool at $(Join-Path $stagingPath 'ExchangeAdminWeb.dll')" {
+    Resolve-ConfigDbTool -AppPath $stagingPath | Out-Null
+}
+
 # A36. An upgrade mirrors new binaries over an existing instance, and those binaries may
 # run schema migrations against the config database the moment the pool starts. There was no
 # snapshot taken anywhere in this script, so a migration that went wrong had nothing to roll
@@ -841,10 +849,6 @@ Invoke-PlanOrAction "Back up the config database before upgrading (via $($config
         Write-Ok "No existing config database at $existingDb - nothing to back up."
         return
     }
-
-    # Deliberately fatal. The point of the backup is the upgrade that goes wrong, and an
-    # upgrade with no snapshot is exactly the situation this finding is about.
-    Resolve-ConfigDbTool -AppPath $stagingPath | Out-Null
 
     $backupDir = Join-Path $LogRoot "ConfigBackups"
     if (-not (Test-Path -LiteralPath $backupDir -PathType Container)) {

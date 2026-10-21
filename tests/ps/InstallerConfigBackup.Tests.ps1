@@ -49,14 +49,60 @@ Describe 'A36: the pre-upgrade config database backup' {
         $script:Installer | Should -Not -Match 'Assert-Sqlite3Available'
     }
 
-    It 'checks for an existing database before demanding the app binary' {
-        # A fresh install has nothing to back up and must not acquire a new hard dependency.
-        $presenceAt = $script:Installer.IndexOf('Test-IsSqliteConfigDbPresent')
-        $assertAt = [regex]::Match($script:Installer, 'Resolve-ConfigDbTool -AppPath \$stagingPath(?! -PlanOnly)').Index
+    It 'checks the published build for the app binary before deciding whether there is a database to back up' {
+        # cdt-2. The action-mode resolve used to sit below the "nothing to back up" return,
+        # so a fresh install with no ExchangeAdminWeb.dll in staging mirrored it anyway. The
+        # no-database path skips the backup, not the payload check.
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        @($errors).Count | Should -Be 0
 
-        $presenceAt | Should -BeGreaterThan 0
-        $assertAt | Should -BeGreaterThan 0
-        $presenceAt | Should -BeLessThan $assertAt
+        $commands = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
+        $actionResolves = @($commands | Where-Object {
+                $_.GetCommandName() -eq 'Resolve-ConfigDbTool' -and
+                $_.Extent.Text -match '-AppPath \$stagingPath' -and
+                $_.Extent.Text -notmatch '-PlanOnly'
+            })
+        $actionResolves.Count | Should -Be 1 -Because 'one action-mode resolve from staging, reused by the whole run'
+        $resolve = $actionResolves[0]
+
+        $publish = @($commands | Where-Object {
+                $_.GetCommandName() -eq 'Invoke-PlanOrAction' -and $_.Extent.Text -like '*"dotnet publish to staging*'
+            })
+        $backup = @($commands | Where-Object {
+                $_.GetCommandName() -eq 'Invoke-PlanOrAction' -and $_.Extent.Text -like '*"Back up the config database before upgrading*'
+            })
+        $skipIf = @($ast.FindAll({
+                    param($n)
+                    $n -is [System.Management.Automation.Language.IfStatementAst] -and
+                    $n.Clauses[0].Item1.Extent.Text -eq '$SkipConfigBackup'
+                }, $true))
+        $publish.Count | Should -Be 1
+        $backup.Count | Should -Be 1
+        $skipIf.Count | Should -Be 1
+
+        # After publish has finished, before the backup/skip decision begins.
+        $resolve.Extent.StartOffset | Should -BeGreaterThan $publish[0].Extent.EndOffset
+        $resolve.Extent.StartOffset | Should -BeLessThan $skipIf[0].Extent.StartOffset
+
+        # Not nested in the backup step, so neither its no-database return nor -SkipConfigBackup
+        # can bypass it.
+        $parent = $resolve.Parent
+        while ($parent) {
+            $parent | Should -Not -Be $backup[0]
+            $parent | Should -Not -Be $skipIf[0]
+            $parent = $parent.Parent
+        }
+
+        # Invariant 4: the new step is an Invoke-PlanOrAction step, so -PlanOnly runs nothing.
+        $wrapper = $resolve.Parent
+        while ($wrapper -and -not ($wrapper -is [System.Management.Automation.Language.CommandAst])) {
+            $wrapper = $wrapper.Parent
+        }
+        $wrapper | Should -Not -BeNullOrEmpty
+        $wrapper.GetCommandName() | Should -Be 'Invoke-PlanOrAction'
     }
 
     It 'prints the intended tool path in plan mode without requiring it to exist' {

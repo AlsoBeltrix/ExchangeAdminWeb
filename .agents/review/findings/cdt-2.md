@@ -4,7 +4,7 @@
 `ExchangeAdminWeb.dll` absent from staging after publish is mirrored into the publish folder
 anyway. No data is lost, but the installer cuts over an unusable payload and reports success.
 Plan AC4 names the installer explicitly.
-**Status**: Admitted; fix pending
+**Status**: Fixed on master; awaiting verdict
 **Branch**: -- (direct-to-main)
 **Commit**: `<pending>`
 **Reviewer**: codex / configured default (gpt-5.5-dzs via gateway) / xhigh / standard, over `9e7f9f9..b1577f7`, 2026-10-21
@@ -27,4 +27,27 @@ no-database branch; mutate by moving it back below the return.
 
 ## Guard proof
 
-`<pending>`
+Fix as the Approach: `tools/Install-ExchangeAdminWeb.ps1` gains one step right after the
+publish step and before the `if ($SkipConfigBackup)` backup/skip decision:
+`Invoke-PlanOrAction "Confirm the published build carries the config DB tool at ..." {
+Resolve-ConfigDbTool -AppPath $stagingPath | Out-Null }`. The redundant action-mode resolve
+inside the backup block (below the no-database `return`) is removed; `Backup-SqliteConfigDb
+-AppPath $stagingPath` still resolves the same folder internally. The plan-mode
+`$configDbToolPlan = Resolve-ConfigDbTool -AppPath $stagingPath -PlanOnly` is unchanged. The
+step also now covers a `-SkipConfigBackup` run, which previously never checked the payload.
+
+The old test "checks for an existing database before demanding the app binary" pinned the
+buggy order (presence check before the resolve) and is replaced by the guard below.
+
+| Test (`tests/ps/InstallerConfigBackup.Tests.ps1`) | Pins |
+| --- | --- |
+| `checks the published build for the app binary before deciding whether there is a database to back up` | Parses the installer AST: exactly one action-mode `Resolve-ConfigDbTool -AppPath $stagingPath` (no `-PlanOnly`); it starts after the publish `Invoke-PlanOrAction` ends and before the `if ($SkipConfigBackup)` statement; no ancestor is the backup `Invoke-PlanOrAction` or that `if`; its enclosing command is `Invoke-PlanOrAction` (Invariant 4) |
+| `treats a missing app binary as fatal, not as a warning` (existing) | Still green: an action-mode resolve from staging exists and the backup runs from staging |
+
+Mutation at the call site, on `tools/Install-ExchangeAdminWeb.ps1` (original md5
+`567A01A662F69FC775C976F6BC4E4E9C`, pre-comment), run, restored, touched, restored md5
+re-confirmed equal to the original:
+
+| Mutation | md5 after mutation | Failed |
+| --- | --- | --- |
+| New step removed; `Resolve-ConfigDbTool -AppPath $stagingPath \| Out-Null` put back below the no-database `return` (the pre-fix shape) | `334AD6A11BE0ADFF3D368CC9652204AD` | `checks the published build for the app binary before deciding whether there is a database to back up` ("Expected the actual value to be less than 36294, but got 38421": the resolve sits after the skip/backup decision) |
