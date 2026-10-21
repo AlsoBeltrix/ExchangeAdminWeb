@@ -536,13 +536,17 @@ Describe 'cdt-18: the pool restarts only after a complete mirror, confirmed, and
         $errors = $null
         $script:Cdt18Ast = [System.Management.Automation.Language.Parser]::ParseFile(
             (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
-        $script:Cdt18Statements = @($script:Cdt18Ast.EndBlock.Statements)
-        $script:Cdt18TryAt = -1
-        for ($i = 0; $i -lt $script:Cdt18Statements.Count; $i++) {
-            $st = $script:Cdt18Statements[$i]
-            if ($st -is [System.Management.Automation.Language.TryStatementAst] -and
-                $st.Body.Extent.Text -match 'Invoke-RobocopyChecked -Description "Deploy application files"') { $script:Cdt18TryAt = $i }
-        }
+        # The mirror's own try - the one whose body holds the mirror call directly - and the block
+        # around it (since cdt-23 the body of the try that removes staging, not the script's top
+        # level), so its flags before it and the restart check after it are read as its siblings.
+        $script:Cdt18Mirror = $script:Cdt18Ast.Find({
+                param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] -and
+                @($n.Body.Statements | Where-Object { $_.Extent.Text -like 'Invoke-RobocopyChecked -Description "Deploy application files"*' }).Count -gt 0
+            }, $true)
+        if ($null -eq $script:Cdt18Mirror) { throw 'the installer has no try around the mirror' }
+        $script:Cdt18Statements = @($script:Cdt18Mirror.Parent.Statements)
+        $script:Cdt18TryAt = [array]::IndexOf($script:Cdt18Statements, $script:Cdt18Mirror)
     }
 
     It 'gates the confirmed restart on a complete mirror and keeps every failure its own (AST)' {
@@ -871,5 +875,119 @@ Describe 'cdt-22: the shared database folder is granted from the decided key, no
         } finally {
             Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+}
+
+Describe 'cdt-23: a failed run removes its staging publish' {
+    # The staging publish was removed only after a successful mirror, so every failure after the
+    # publish left a full copy of the build - and any appsettings.json the source tree carries -
+    # next to the publish folder.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt23Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        $script:Cdt23Outer = @($script:Cdt23Ast.FindAll({
+                    param($n)
+                    $n -is [System.Management.Automation.Language.TryStatementAst] -and $null -ne $n.Finally -and
+                    $n.Finally.Extent.Text -match 'Remove-Item -LiteralPath \$stagingPath'
+                }, $true))
+    }
+
+    It 'covers every command from the publish to the restart check with a finally that removes staging (AST)' {
+        $script:Cdt23Outer.Count | Should -Be 1 -Because 'one try owns the staging folder'
+        $outer = $script:Cdt23Outer[0]
+        $outer.Finally.Statements.Count | Should -Be 1
+        $guard = $outer.Finally.Statements[0]
+        $guard | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+        $guard.Clauses[0].Item1.Extent.Text | Should -BeExactly '-not $PlanOnly' -Because 'a plan creates no staging'
+        $guard.Clauses[0].Item2.Statements[0].Extent.Text | Should -BeExactly 'Remove-Item -LiteralPath $stagingPath -Recurse -Force -ErrorAction SilentlyContinue'
+        @($script:Cdt23Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Remove-Item' -and $n.Extent.Text -match '\$stagingPath' }, $true)).Count |
+            Should -Be 1 -Because 'the finally is the only place staging is removed'
+
+        $commands = @($script:Cdt23Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))
+        $publish = @($commands | Where-Object { $_.GetCommandName() -eq 'Invoke-PlanOrAction' -and $_.Extent.Text -like '*"dotnet publish to staging*' })
+        $publish.Count | Should -Be 1
+        $check = $script:Cdt23Ast.Find({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -eq '$poolStartError' }, $true)
+        $check | Should -Not -BeNullOrEmpty
+        $region = @($commands | Where-Object {
+                $_.Extent.StartOffset -ge $publish[0].Extent.StartOffset -and $_.Extent.EndOffset -le $check.Extent.EndOffset
+            })
+        $uncovered = foreach ($command in $region) {
+            if (-not ($command.Extent.StartOffset -ge $outer.Body.Extent.StartOffset -and $command.Extent.EndOffset -le $outer.Body.Extent.EndOffset)) {
+                "line $($command.Extent.StartLineNumber): $($command.GetCommandName())"
+            }
+        }
+        @($uncovered) | Should -BeNullOrEmpty -Because 'a failure there would leave the staging publish behind'
+        $names = @($region | ForEach-Object { $_.GetCommandName() })
+        foreach ($name in 'Resolve-ConfigDbTool', 'Backup-SqliteConfigDb', 'Stop-AppPoolVerified', 'Invoke-RobocopyChecked', 'Start-AppPoolVerified', 'Write-DeploymentManifest') {
+            $names | Should -Contain $name -Because 'the covered region reaches from the publish to the restart'
+        }
+    }
+
+    It 'runs the real region: a failed publish, a missing db tool, a pool that will not stop and a failed mirror each leave no staging, and keep their own error' {
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Plan', 'Write-Fail', 'Invoke-PlanOrAction') {
+            $fn = $script:Cdt23Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        # Found by the publish it holds, not by its finally, so a finally that no longer removes
+        # staging still runs here - and fails on the staging assertion, not on a missing region.
+        $outer = $script:Cdt23Ast.Find({
+                param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] -and
+                @($n.Body.Statements | Where-Object { $_.Extent.Text -like 'Invoke-PlanOrAction "dotnet publish to staging*' }).Count -gt 0
+            }, $true)
+        $outer | Should -Not -BeNullOrEmpty -Because 'the publish sits in a try, so its finally can remove staging'
+        $region = $outer.Extent.Text
+        ${function:dotnet} = {
+            New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $stagingPath 'appsettings.json') -Value '{ "Secret": "from the checkout" }' -Encoding ascii
+            if ($script:cdt23Case -eq 'PublishFails') { $global:LASTEXITCODE = 1 } else { $global:LASTEXITCODE = 0 }
+        }
+        ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath; if (-not $PlanOnly -and $script:cdt23Case -eq 'ToolMissing') { throw 'The config DB tool is missing: ExchangeAdminWeb.dll not found.' }; @{ Summary = 'tool' } }
+        ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
+        ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; if ($script:cdt23Case -eq 'StopFails') { throw "App pool is still 'Started' after 60 seconds." }; 'Stopped' }
+        ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments; if ($script:cdt23Case -eq 'MirrorFails') { Write-Fail "robocopy failed with exit code 8 during: $Description" } }
+        ${function:Start-AppPoolVerified} = { param($Name) $null = $Name; 'Started' }
+        ${function:Write-DeploymentManifest} = { }
+
+        $run = {
+            param([string]$Case)
+            $script:cdt23Case = $Case
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt23_' + [guid]::NewGuid().ToString('N'))
+            $publish = Join-Path $root 'publish'
+            New-Item -ItemType Directory -Path $publish -Force | Out-Null
+            # Read only by the lifted region.
+            Set-Variable -Name PublishPath -Value $publish
+            Set-Variable -Name stagingPath -Value "$publish.staging.x"
+            Set-Variable -Name LogRoot -Value (Join-Path $root 'logs')
+            Set-Variable -Name repoRoot -Value $root
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name PlanOnly -Value $false
+            Set-Variable -Name SkipConfigBackup -Value $false
+            Set-Variable -Name configStorePlan -Value ([pscustomobject]@{ Path = $null; DbPath = (Join-Path $publish 'config\exchangeadmin.db'); Source = 'None' })
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+            $left = Test-Path -LiteralPath "$publish.staging.x"
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            [pscustomobject]@{ Thrown = $thrown; StagingLeft = $left }
+        }
+
+        $expect = [ordered]@{
+            PublishFails = 'dotnet publish failed with exit code 1*'
+            ToolMissing  = 'The config DB tool is missing*'
+            StopFails    = "App pool is still 'Started'*"
+            MirrorFails  = 'robocopy failed with exit code 8 during: Deploy application files.*staging publish*is removed when the installer exits*'
+        }
+        foreach ($case in $expect.Keys) {
+            $result = & $run $case 6>$null
+            $result.StagingLeft | Should -BeFalse -Because "a run that fails ($case) must not leave its staging publish behind"
+            $result.Thrown | Should -BeLike $expect[$case] -Because 'the failure is still the one the caller sees'
+        }
+        $clean = & $run 'Success' 6>$null
+        $clean.Thrown | Should -BeNullOrEmpty
+        $clean.StagingLeft | Should -BeFalse
     }
 }

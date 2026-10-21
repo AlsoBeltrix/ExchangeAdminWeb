@@ -959,140 +959,146 @@ Invoke-PlanOrAction "Create or update IIS web application $ParentSite/$AppAlias"
     Set-WebConfigurationProperty -Filter "system.webServer/security/authentication/anonymousAuthentication" -Name enabled -Value $false -PSPath "IIS:\" -Location $location
 }
 
-Invoke-PlanOrAction "dotnet publish to staging: $stagingPath" {
-    Push-Location $repoRoot
-    try {
-        dotnet publish -c Release -o $stagingPath --nologo
-        if ($LASTEXITCODE -ne 0) {
-            Write-Fail "dotnet publish failed with exit code $LASTEXITCODE"
-        }
-    } finally {
-        Pop-Location
-    }
-}
-
-# cdt-2. Checked once, right after publish and before the backup decision, so every run
-# refuses a staging folder without a usable ExchangeAdminWeb.dll - including a fresh install
-# with no database, and a -SkipConfigBackup run. Deliberately fatal: mirroring a payload that
-# cannot run reports success over an unusable instance. The backup reuses this staging folder.
-Invoke-PlanOrAction "Confirm the published build carries the config DB tool at $(Join-Path $stagingPath 'ExchangeAdminWeb.dll')" {
-    Resolve-ConfigDbTool -AppPath $stagingPath | Out-Null
-}
-
-# A36. An upgrade mirrors new binaries over an existing instance, and those binaries may
-# run schema migrations against the config database the moment the pool starts. There was no
-# snapshot taken anywhere in this script, so a migration that went wrong had nothing to roll
-# back to - deploy tooling elsewhere takes this backup, but this installer is the supported
-# way to upgrade a generic environment and it did not.
-#
-# Online backup (VACUUM INTO + integrity_check), so it does not matter that this runs before
-# the pool stops - and running it first means a failure here aborts BEFORE anything is
-# touched.
-# Review of A36: the skip was decided INSIDE the action block, so a dry run printed "Back
-# up the config database" and said nothing about the real run skipping it. An operator could
-# approve a plan believing a snapshot was coming. Decide before planning.
-if ($SkipConfigBackup) {
-    if ($PlanOnly) {
-        Write-Plan "SKIP the config database backup entirely (-SkipConfigBackup was passed). The real run will NOT take a snapshot, and a failed schema migration will have nothing to roll back to."
-    } else {
-        Write-Warn "-SkipConfigBackup was passed: no pre-upgrade snapshot. A failed schema migration will have nothing to roll back to."
-    }
-} else {
-
-# The backup runs the app's db mode from the build just published to staging, through the
-# .NET host in Program Files (docs/ConfigDbToolInApp-Plan.md). A plan runs before publish, so
-# it prints the paths it would use without requiring them to exist.
-$configDbToolPlan = Resolve-ConfigDbTool -AppPath $stagingPath -PlanOnly
-Invoke-PlanOrAction "Back up the config database before upgrading (via $($configDbToolPlan.Summary) backup): $($configStorePlan.DbPath)" {
-    # cdt-11: the database decided before appsettings.json was written. Re-reading the file here
-    # read it AFTER this run had rewritten it, so a dropped key sent the backup to the wrong file.
-    $existingDb = $configStorePlan.DbPath
-    $configuredDbPath = $configStorePlan.Path
-
-    if (-not (Test-IsSqliteConfigDbPresent -DbPath $existingDb)) {
-        # Review of A36: these two cases were collapsed into "nothing to back up", and only
-        # one of them is harmless.
-        #
-        # With ConfigStore:Path SET, a missing file is not a fresh install - it is a broken
-        # instance. The app refuses to start against a configured database it did not find
-        # and never creates one, which is why the ADI deployment tooling fails on exactly
-        # this condition too. Proceeding would mirror new binaries over an instance that
-        # cannot start, with no snapshot, and report success.
-        if ($configuredDbPath) {
-            Write-Fail "ConfigStore:Path names '$existingDb' but no database exists there. The app will not start against a missing configured database (it never creates one). Fix the key, restore the file, or run tools\Move-ConfigDbToShared.ps1. Nothing was deployed."
-        }
-
-        # No key and no file: a fresh install, or an instance that has never started.
-        Write-Ok "No existing config database at $existingDb - nothing to back up."
-        return
-    }
-
-    $backupDir = Join-Path $LogRoot "ConfigBackups"
-    if (-not (Test-Path -LiteralPath $backupDir -PathType Container)) {
-        New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
-    }
-
-    $backupStamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $backupFile = Backup-SqliteConfigDb -DbPath $existingDb -DestDir $backupDir -Timestamp $backupStamp -AppPath $stagingPath
-    Write-Ok "Config database backed up (verified) to $backupFile"
-}
-
-}
-
-Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped" {
-    # A35: see tools/AppPoolControl.psm1. The empty catch hid a pool that would not stop,
-    # and the robocopy below mirrors over a live application.
-    $poolState = Stop-AppPoolVerified -Name $AppPoolName
-    if ($poolState -eq 'Absent') {
-        Write-Warn "App pool $AppPoolName does not exist yet - nothing to stop."
-    }
-}
-
-# cdt-18: the pool restarts only once the mirror is complete, and only a confirmed start counts.
-# robocopy /MIR failing part-way leaves a mix of the old and new builds in the publish folder, and the
-# restart in the finally used to serve it; a start that threw there replaced the mirror failure; and
-# Start-WebAppPool returning means IIS accepted the request, not that the pool runs (A38). A failed
-# restart is recorded and reported, never thrown from the finally, and fails the run below, after the
-# manifest, when nothing else failed.
-$mirrorSucceeded = $false
-$poolStartError = $null
+# cdt-23: the staging publish holds a full copy of the build and any appsettings.json the source tree
+# carries. It used to be removed only after a successful mirror, so every failure from here on left it
+# beside the publish folder. The finally removes it on every path; -ErrorAction SilentlyContinue keeps
+# a failed removal from replacing the error that is propagating. A plan creates none.
 try {
-    Invoke-RobocopyChecked -Description "Deploy application files" -Arguments @(
-        $stagingPath, $PublishPath,
-        "/MIR",
-        "/XF", "appsettings*.json",
-        "/XD", "logs", "config",
-        "/NFL", "/NDL", "/NJH", "/NJS", "/R:2", "/W:1"
-    )
-    $mirrorSucceeded = $true
-} catch {
-    Write-Fail "$($_.Exception.Message). App pool $AppPoolName was deliberately LEFT STOPPED: $PublishPath may now hold a mix of the old and new builds, and starting it would serve that mix. The mirror does not touch the config database (the pre-upgrade backup, when one was taken, is under $(Join-Path $LogRoot 'ConfigBackups')). The published build is left in $stagingPath; fix the cause and re-run the installer, which publishes and mirrors afresh."
-} finally {
-    if ($mirrorSucceeded) {
-        # Recorded, not thrown: a throw here would replace whatever is propagating (cdt-18).
+    Invoke-PlanOrAction "dotnet publish to staging: $stagingPath" {
+        Push-Location $repoRoot
         try {
-            Invoke-PlanOrAction "Start app pool $AppPoolName and confirm it started" {
-                $null = Start-AppPoolVerified -Name $AppPoolName
-                Write-Ok "App pool $AppPoolName confirmed running"
+            dotnet publish -c Release -o $stagingPath --nologo
+            if ($LASTEXITCODE -ne 0) {
+                Write-Fail "dotnet publish failed with exit code $LASTEXITCODE"
             }
-        } catch {
-            $poolStartError = $_.Exception.Message
-            Write-Host "  X  App pool $AppPoolName did not start: $poolStartError" -ForegroundColor Red
+        } finally {
+            Pop-Location
+        }
+    }
+
+    # cdt-2. Checked once, right after publish and before the backup decision, so every run
+    # refuses a staging folder without a usable ExchangeAdminWeb.dll - including a fresh install
+    # with no database, and a -SkipConfigBackup run. Deliberately fatal: mirroring a payload that
+    # cannot run reports success over an unusable instance. The backup reuses this staging folder.
+    Invoke-PlanOrAction "Confirm the published build carries the config DB tool at $(Join-Path $stagingPath 'ExchangeAdminWeb.dll')" {
+        Resolve-ConfigDbTool -AppPath $stagingPath | Out-Null
+    }
+
+    # A36. An upgrade mirrors new binaries over an existing instance, and those binaries may
+    # run schema migrations against the config database the moment the pool starts. There was no
+    # snapshot taken anywhere in this script, so a migration that went wrong had nothing to roll
+    # back to - deploy tooling elsewhere takes this backup, but this installer is the supported
+    # way to upgrade a generic environment and it did not.
+    #
+    # Online backup (VACUUM INTO + integrity_check), so it does not matter that this runs before
+    # the pool stops - and running it first means a failure here aborts BEFORE anything is
+    # touched.
+    # Review of A36: the skip was decided INSIDE the action block, so a dry run printed "Back
+    # up the config database" and said nothing about the real run skipping it. An operator could
+    # approve a plan believing a snapshot was coming. Decide before planning.
+    if ($SkipConfigBackup) {
+        if ($PlanOnly) {
+            Write-Plan "SKIP the config database backup entirely (-SkipConfigBackup was passed). The real run will NOT take a snapshot, and a failed schema migration will have nothing to roll back to."
+        } else {
+            Write-Warn "-SkipConfigBackup was passed: no pre-upgrade snapshot. A failed schema migration will have nothing to roll back to."
         }
     } else {
-        Write-Warn "App pool $AppPoolName is NOT being restarted: the file mirror did not complete, so the pool stays stopped."
+
+    # The backup runs the app's db mode from the build just published to staging, through the
+    # .NET host in Program Files (docs/ConfigDbToolInApp-Plan.md). A plan runs before publish, so
+    # it prints the paths it would use without requiring them to exist.
+    $configDbToolPlan = Resolve-ConfigDbTool -AppPath $stagingPath -PlanOnly
+    Invoke-PlanOrAction "Back up the config database before upgrading (via $($configDbToolPlan.Summary) backup): $($configStorePlan.DbPath)" {
+        # cdt-11: the database decided before appsettings.json was written. Re-reading the file here
+        # read it AFTER this run had rewritten it, so a dropped key sent the backup to the wrong file.
+        $existingDb = $configStorePlan.DbPath
+        $configuredDbPath = $configStorePlan.Path
+
+        if (-not (Test-IsSqliteConfigDbPresent -DbPath $existingDb)) {
+            # Review of A36: these two cases were collapsed into "nothing to back up", and only
+            # one of them is harmless.
+            #
+            # With ConfigStore:Path SET, a missing file is not a fresh install - it is a broken
+            # instance. The app refuses to start against a configured database it did not find
+            # and never creates one, which is why the ADI deployment tooling fails on exactly
+            # this condition too. Proceeding would mirror new binaries over an instance that
+            # cannot start, with no snapshot, and report success.
+            if ($configuredDbPath) {
+                Write-Fail "ConfigStore:Path names '$existingDb' but no database exists there. The app will not start against a missing configured database (it never creates one). Fix the key, restore the file, or run tools\Move-ConfigDbToShared.ps1. Nothing was deployed."
+            }
+
+            # No key and no file: a fresh install, or an instance that has never started.
+            Write-Ok "No existing config database at $existingDb - nothing to back up."
+            return
+        }
+
+        $backupDir = Join-Path $LogRoot "ConfigBackups"
+        if (-not (Test-Path -LiteralPath $backupDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+        }
+
+        $backupStamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $backupFile = Backup-SqliteConfigDb -DbPath $existingDb -DestDir $backupDir -Timestamp $backupStamp -AppPath $stagingPath
+        Write-Ok "Config database backed up (verified) to $backupFile"
     }
-}
 
-if (-not $PlanOnly) {
-    Remove-Item -LiteralPath $stagingPath -Recurse -Force -ErrorAction SilentlyContinue
-}
+    }
 
-Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $repoRoot
+    Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped" {
+        # A35: see tools/AppPoolControl.psm1. The empty catch hid a pool that would not stop,
+        # and the robocopy below mirrors over a live application.
+        $poolState = Stop-AppPoolVerified -Name $AppPoolName
+        if ($poolState -eq 'Absent') {
+            Write-Warn "App pool $AppPoolName does not exist yet - nothing to stop."
+        }
+    }
 
-# The files are deployed and the application is down: a failure, not "complete" (cdt-18).
-if ($poolStartError) {
-    Write-Fail "The files are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand."
+    # cdt-18: the pool restarts only once the mirror is complete, and only a confirmed start counts.
+    # robocopy /MIR failing part-way leaves a mix of the old and new builds in the publish folder, and the
+    # restart in the finally used to serve it; a start that threw there replaced the mirror failure; and
+    # Start-WebAppPool returning means IIS accepted the request, not that the pool runs (A38). A failed
+    # restart is recorded and reported, never thrown from the finally, and fails the run below, after the
+    # manifest, when nothing else failed.
+    $mirrorSucceeded = $false
+    $poolStartError = $null
+    try {
+        Invoke-RobocopyChecked -Description "Deploy application files" -Arguments @(
+            $stagingPath, $PublishPath,
+            "/MIR",
+            "/XF", "appsettings*.json",
+            "/XD", "logs", "config",
+            "/NFL", "/NDL", "/NJH", "/NJS", "/R:2", "/W:1"
+        )
+        $mirrorSucceeded = $true
+    } catch {
+        Write-Fail "$($_.Exception.Message). App pool $AppPoolName was deliberately LEFT STOPPED: $PublishPath may now hold a mix of the old and new builds, and starting it would serve that mix. The mirror does not touch the config database (the pre-upgrade backup, when one was taken, is under $(Join-Path $LogRoot 'ConfigBackups')). The staging publish $stagingPath is removed when the installer exits; fix the cause and re-run the installer, which publishes and mirrors afresh."
+    } finally {
+        if ($mirrorSucceeded) {
+            # Recorded, not thrown: a throw here would replace whatever is propagating (cdt-18).
+            try {
+                Invoke-PlanOrAction "Start app pool $AppPoolName and confirm it started" {
+                    $null = Start-AppPoolVerified -Name $AppPoolName
+                    Write-Ok "App pool $AppPoolName confirmed running"
+                }
+            } catch {
+                $poolStartError = $_.Exception.Message
+                Write-Host "  X  App pool $AppPoolName did not start: $poolStartError" -ForegroundColor Red
+            }
+        } else {
+            Write-Warn "App pool $AppPoolName is NOT being restarted: the file mirror did not complete, so the pool stays stopped."
+        }
+    }
+
+    Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $repoRoot
+
+    # The files are deployed and the application is down: a failure, not "complete" (cdt-18).
+    if ($poolStartError) {
+        Write-Fail "The files are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand."
+    }
+} finally {
+    if (-not $PlanOnly) {
+        Remove-Item -LiteralPath $stagingPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 if ($PlanOnly) {
