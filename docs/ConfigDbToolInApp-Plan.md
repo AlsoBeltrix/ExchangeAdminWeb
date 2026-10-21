@@ -338,8 +338,8 @@ ASCII lint over tracked `.cs/.ps1/.psm1`.
 ## 8. Status log
 
 - 2026-10-21: plan written. Codex openreview returned Acceptable with changes; both
+  changes folded in (section 9).
 - 2026-10-21: S1 landed `86970a5`; codex review -> cdt-1 (MEDIUM), fixed `872f211`. S2 next.
-  changes folded in (section 9). Not started.
 
 ## 9. Review
 
