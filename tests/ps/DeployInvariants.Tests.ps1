@@ -250,6 +250,50 @@ Describe 'deploy.ps1' {
         }
     }
 
+    It 'confirms the pool is running after starting it, not only that IIS accepted the request (cdt-25)' {
+        # Start-AppPoolWithRetry returned as soon as Start-WebAppPool returned, and the script then
+        # printed "App pool started" - with the pool possibly still stopped.
+        . ([scriptblock]::Create((Find-FunctionDefinition $s 'Start-AppPoolWithRetry').Extent.Text))
+        ${function:Get-ItemProperty} = { param([Parameter(Position = 0)]$Path) $null = $Path; [pscustomobject]@{ State = $script:cdt25State } }
+        ${function:Start-WebAppPool} = {
+            param($Name, $ErrorAction)
+            $null = $Name, $ErrorAction
+            $script:cdt25Calls.Add('start')
+            if ($script:cdt25ThrowOnce -and -not $script:cdt25HasThrown) { $script:cdt25HasThrown = $true; throw 'The object identifier does not represent a valid object.' }
+        }
+        ${function:Start-AppPoolVerified} = {
+            param($Name)
+            $script:cdt25Calls.Add('verify')
+            if ($script:cdt25NeverRuns) { throw "App pool '$Name' is 'Stopped' after 60 seconds, not Started. The application is DOWN." }
+            'Started'
+        }
+        ${function:Start-Sleep} = { }
+        $run = {
+            param([string]$State, [bool]$NeverRuns, [bool]$ThrowOnce)
+            $script:cdt25State = $State
+            $script:cdt25NeverRuns = $NeverRuns
+            $script:cdt25ThrowOnce = $ThrowOnce
+            $script:cdt25HasThrown = $false
+            $script:cdt25Calls = New-Object System.Collections.Generic.List[string]
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try { Start-AppPoolWithRetry -Name 'ExamplePool' } catch { $thrown = $_.Exception.Message }
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt25Calls -join ',') }
+        }
+
+        $accepted = & $run 'Stopped' $true $false 6>$null
+        $accepted.Thrown | Should -BeLike "*is 'Stopped' after 60 seconds*" -Because 'IIS accepting the start is not the pool running (A38)'
+        $accepted.Calls | Should -BeExactly 'start,verify'
+        $normal = & $run 'Stopped' $false $false 6>$null
+        $normal.Thrown | Should -BeNullOrEmpty
+        $normal.Calls | Should -BeExactly 'start,verify'
+        $transient = & $run 'Stopped' $false $true 6>$null
+        $transient.Thrown | Should -BeNullOrEmpty -Because 'a start request that throws once is still retried'
+        $transient.Calls | Should -BeExactly 'start,start,verify'
+        $already = & $run 'Started' $false $false 6>$null
+        $already.Calls | Should -BeExactly 'verify' -Because 'a pool read as started is still confirmed'
+    }
+
     It 'never hands a pool, or icacls, an empty identity (cdt-24)' {
         # With -ServiceAccount omitted the existing pool's userName became the account and the pool
         # was set to SpecificUser with it - empty for a pool that runs as ApplicationPoolIdentity or

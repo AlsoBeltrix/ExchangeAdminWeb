@@ -79,15 +79,20 @@ function Start-AppPoolWithRetry {
     for ($i = 1; $i -le $MaxAttempts; $i++) {
         try {
             $state = (Get-ItemProperty "IIS:\AppPools\$Name").State
-            if ($state -eq 'Started') { return }
+            if ($state -eq 'Started') { break }
             Start-WebAppPool -Name $Name -ErrorAction Stop
-            return
+            break
         } catch {
             if ($i -eq $MaxAttempts) { throw }
             Write-Host "       Pool not ready, retrying in ${DelaySeconds}s ($i/$MaxAttempts)..." -ForegroundColor DarkGray
             Start-Sleep -Seconds $DelaySeconds
         }
     }
+    # cdt-25: the loop retries a start request that throws; a request that returns only means IIS
+    # accepted it, and the pool can still stay stopped (a bad identity password, a missing runtime,
+    # rapid-fail protection) while the caller prints "App pool started". Confirm it (A38); a pool that
+    # does not reach Started throws, and the caller reports that as its own failure (cdt-16).
+    $null = Start-AppPoolVerified -Name $Name
 }
 
 function Prompt-Value {
