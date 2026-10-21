@@ -240,4 +240,58 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         Assert.Equal("Failed", Text(record, "result"));
         Assert.Equal(result.Error, Text(record, "error"));
     }
+
+    // ---- failures that throw before the write (aud-a28c) ---------------------------------------
+
+    [Fact]
+    public async Task ATargetMovedSinceTheLookup_FailsAudited_InsteadOfThrowing()
+    {
+        // The DN the lookup captured no longer resolves - the account was moved or deleted - and
+        // under -ErrorAction Stop Get-ADUser -Identity THROWS for that rather than returning
+        // nothing. It escaped SaveAsync with no audit record; the Count == 0 branch written for
+        // exactly this case could not be reached.
+        var alex = _h.Ad.AddAlex();
+        var moved = AttributeEditorHarness.PrincipalFor(alex) with
+        {
+            DistinguishedName = "CN=Alex Morgan,OU=Leavers,DC=example,DC=test",
+        };
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" }, principal: moved);
+
+        Assert.False(result.Success);
+        Assert.StartsWith("Target object could not be re-read before the write:", result.Error, StringComparison.Ordinal);
+        Assert.Contains("Cannot find an object with identity", result.Error, StringComparison.Ordinal);
+        Assert.Empty(_h.Ad.Sets);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Error, Text(record, "error"));
+        Assert.Equal(alex.Upn, Text(record, "target"));
+        Assert.Equal(Ticket, Text(record, "ticket"));
+
+        // And announced, because SaveAsync announces every result it returns (aud-a26b).
+        var notice = Assert.Single(_h.Notices);
+        Assert.False(notice.Success);
+        Assert.Equal(result.Error, notice.Details["Error"]);
+    }
+
+    [Fact]
+    public async Task AHostWithoutTheDirectoryModule_FailsAudited_InsteadOfThrowing()
+    {
+        var alex = _h.Ad.AddAlex();
+        _h.Ad.ImportFailure =
+            "The specified module 'ActiveDirectory' was not loaded because no valid module file was found in any module directory.";
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        Assert.False(result.Success);
+        Assert.Contains("no valid module file was found", result.Error, StringComparison.Ordinal);
+        Assert.Empty(_h.Ad.Sets);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Error, Text(record, "error"));
+    }
 }

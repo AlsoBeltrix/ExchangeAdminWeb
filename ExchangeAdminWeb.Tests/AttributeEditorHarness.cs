@@ -397,6 +397,9 @@ internal sealed class LocalAd
     /// <summary>When set, Set-ADUser fails with this message as a terminating error.</summary>
     public string? SetFailure { get; set; }
 
+    /// <summary>When set, Import-Module fails with this message, as on a host without the module.</summary>
+    public string? ImportFailure { get; set; }
+
     public IReadOnlyList<string> Calls
     {
         get { lock (_calls) return _calls.ToList(); }
@@ -520,6 +523,11 @@ internal sealed class LocalAd
         state.Commands.Add(new SessionStateFunctionEntry("Import-Module", """
             [CmdletBinding()] param([Parameter(Position = 0)] $Name)
             $global:AttributeDirectory.Note("Import-Module|$Name")
+            if ($global:AttributeDirectory.ImportFailure) {
+                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                    [System.IO.FileNotFoundException]::new($global:AttributeDirectory.ImportFailure),
+                    'Modules_ModuleNotFound', [System.Management.Automation.ErrorCategory]::ResourceUnavailable, $Name))
+            }
             """));
 
         state.Commands.Add(new SessionStateFunctionEntry("Get-ADUser", """

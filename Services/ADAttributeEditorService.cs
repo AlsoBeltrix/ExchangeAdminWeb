@@ -863,23 +863,40 @@ public class ADAttributeEditorService
         string? servicedNote)
     {
         using var runspace = CreateDirectoryRunspace();
-        runspace.Open();
         using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
+        PSCredential credential;
+        System.Collections.ObjectModel.Collection<PSObject> reReadResult;
 
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        // aud-a28c: under -ErrorAction Stop everything before the write fails by THROWING - the
+        // module missing, a domain controller unreachable, access denied, and an object moved or
+        // deleted since the lookup, which Get-ADUser -Identity reports by throwing rather than by
+        // returning nothing. Uncaught, the attempt left no audit record. Caught here, it gets the
+        // failed record the checks below write, and a failed result SaveAsync announces.
+        try
+        {
+            runspace.Open();
+            ps.Runspace = runspace;
 
-        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ps.Commands.Clear();
 
-        ps.AddCommand("Get-ADUser")
-          .AddParameter("Identity", target.DistinguishedName)
-          .AddParameter("Properties", GetPropertiesToLoad(allowlist))
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
-        var reReadResult = ps.Invoke();
-        ps.Commands.Clear();
+            credential = CreateCredential(creds.username, creds.password, creds.domain);
+
+            ps.AddCommand("Get-ADUser")
+              .AddParameter("Identity", target.DistinguishedName)
+              .AddParameter("Properties", GetPropertiesToLoad(allowlist))
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            reReadResult = ps.Invoke();
+            ps.Commands.Clear();
+        }
+        catch (Exception ex)
+        {
+            var reReadMsg = $"Target object could not be re-read before the write: {ex.InnerException?.Message ?? ex.Message}";
+            LogAudit(target, [], performedBy, ip, ticket, false, reReadMsg);
+            return new(false, reReadMsg, null);
+        }
 
         if (reReadResult.Count == 0)
         {
