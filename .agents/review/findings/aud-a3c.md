@@ -2,9 +2,9 @@
 
 **Severity**: HIGH - a principal protected through a universal group reads as unprotected, with
 no error, wherever the target's domain controller does not carry the global catalog.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-acf74809ad7ee3f7d`
-**Commit**: `<pending>`
+**Commit**: `71e7ca9` (merged)
 
 ## Evidence
 

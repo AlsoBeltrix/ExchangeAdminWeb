@@ -2,9 +2,9 @@
 
 **Severity**: HIGH - each lets an operation proceed against a mailbox the configuration
 protects.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-acf74809ad7ee3f7d`
-**Commit**: `<pending>`
+**Commit**: `1ad872f` (merged)
 
 ## Evidence
 

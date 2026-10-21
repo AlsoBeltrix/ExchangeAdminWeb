@@ -2,9 +2,9 @@
 
 **Severity**: MEDIUM - an authorization grant can be saved that silently grants nothing, and
 the operator is told the opposite.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-acf74809ad7ee3f7d`
-**Commit**: `<pending>`
+**Commit**: `0ad4ee3` (merged)
 
 ## Evidence
 
