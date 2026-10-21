@@ -19,7 +19,8 @@
 
     Steps (each honours -PlanOnly):
       1. Assert both builds are at or above -MinimumAppVersion.
-      2. Stop both app pools (warning about any active bulk job first).
+      2. Stop both app pools and confirm IIS reports each Stopped (warning about any active
+         bulk job first). Nothing is copied until both are confirmed.
       3. Take verified backups of BOTH current databases into -BackupRoot.
       4. VACUUM INTO dev's database to -SharedDbPath and integrity-check the result.
       5. Grant both app pool identities (OI)(CI)M on the shared directory.
@@ -82,6 +83,8 @@ if ($Apply -and $PSBoundParameters.ContainsKey('PlanOnly') -and $PlanOnly) {
 
 Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'JobStateWarning.psm1') -Force
+# aud-a38e: Stop-AppPoolVerified - IIS accepting a stop request is not the pool stopped.
+Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
 
 function Write-Step { param([string]$Message) Write-Host ">>> $Message" -ForegroundColor Cyan }
 function Write-Ok { param([string]$Message) Write-Host " OK  $Message" -ForegroundColor Green }
@@ -204,14 +207,27 @@ function Get-AppPoolIdentity {
 function Stop-AppPoolChecked {
     param([string]$Name, [string]$ConfigDir, [string]$AppPath)
 
-    Invoke-PlanOrAction "Stop app pool $Name (warns about active bulk jobs first)" {
+    Invoke-PlanOrAction "Stop app pool $Name and confirm IIS reports it Stopped before any database is copied (warns about active bulk jobs first)" {
         Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath | Out-Null
-        $state = (Get-ItemProperty "IIS:\AppPools\$Name").State
-        if ($state -ne 'Stopped') {
-            Stop-WebAppPool -Name $Name -ErrorAction Stop
-            Start-Sleep -Seconds 3
+        # aud-a38e: this was a bare Stop-WebAppPool and a three-second sleep - a guess about how
+        # long a worker takes to exit - and then "stopped" was printed either way and steps 3 and
+        # 4 backed up and VACUUMed INTO dev's live database. A worker still draining could commit
+        # a write after that snapshot, into the per-instance file dev stops opening at step 6.
+        # Stop, then CONFIRM: Stop-AppPoolVerified polls IIS until the pool reports Stopped, and
+        # throws if it never does or its state cannot be read.
+        #
+        # 'Absent' neither throws nor means Stopped. It is right for a first install, where
+        # nothing is serving; here it means a wrong pool name, with the instance's real pool still
+        # up. So nothing but 'Stopped' gets past this point. A refusal throws into the cutover's
+        # catch, which restarts both pools: nothing has been copied or repointed yet.
+        $poolState = Stop-AppPoolVerified -Name $Name
+        if ($poolState -ne 'Stopped') {
+            if ($poolState -eq 'Absent') {
+                Write-Fail "App pool '$Name' does not exist. The cutover copies the databases of two running instances and must stop both first, so check -DevAppPoolName and -ProdAppPoolName. No database was copied."
+            }
+            Write-Fail "App pool '$Name' was not confirmed stopped (IIS reported '$poolState'). Refusing to copy a database its instance may still be writing. No database was copied."
         }
-        Write-Ok "App pool $Name stopped"
+        Write-Ok "App pool $Name confirmed stopped"
     }
     if ($PlanOnly) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath -PlanOnly | Out-Null }
 }
