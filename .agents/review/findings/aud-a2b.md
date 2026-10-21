@@ -216,6 +216,11 @@ ClickGate registry is keyed on); it was not done here.
   `userPrincipalName` refuses (directories disagree) in those four modules.
 - With the legacy `MailboxPermissions/ExcludedUsers` list configured, the validator refuses when
   Exchange cannot be asked - at load, or for the target. A failed load is retried after a minute.
+  An entry Exchange REJECTS rather than reporting "couldn't be found" - an identity form it does
+  not accept, or one matching several recipients - fails the whole load the same way, so every
+  Mailbox, Calendar and Out of Office validation refuses until that entry is corrected. The
+  entries on any deployment were not inspected (they are runtime data on the hosts); the warning
+  logged at load names the failure.
   Each validated target with such a list also costs one more Exchange lookup; the load costs one
   per configured entry instead of three per group member.
 - A recipient whose sync state Exchange does not report refuses everywhere the resolver is used.
