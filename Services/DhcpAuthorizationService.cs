@@ -76,42 +76,52 @@ public class DhcpAuthorizationService
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module")
-              .AddParameter("Name", "ActiveDirectory")
-              .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
-
-            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            var dc = DiscoverDomainController(ps, credential);
-            if (dc == null)
-                return new DhcpOperationResult { Success = false, Message = "Could not discover a domain controller." };
-
-            var script = ScriptBlock.Create("param($DnsName, $IPAddress) Import-Module DhcpServer -ErrorAction Stop; Add-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
-            ps.AddCommand("Invoke-Command")
-              .AddParameter("ComputerName", dc)
-              .AddParameter("Credential", credential)
-              .AddParameter("ScriptBlock", script)
-              .AddParameter("ArgumentList", new object[] { dnsName, ipAddress });
-
-            try
-            {
-                ps.Invoke();
-                if (ps.HadErrors)
-                {
-                    var errors = string.Join("; ", ps.Streams.Error.Select(e => e.ToString()));
-                    return new DhcpOperationResult { Success = false, Message = $"Failed to authorize: {errors}" };
-                }
-
-                _logger.LogInformation("DHCP server authorized: {DnsName} ({Ip}) via DC {DC}", dnsName, ipAddress, dc);
-                return new DhcpOperationResult { Success = true, Message = $"Successfully authorized DHCP server {dnsName} ({ipAddress})." };
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Add-DhcpServerInDC exception for {DnsName}/{Ip} via DC {DC}", dnsName, ipAddress, dc);
-                return new DhcpOperationResult { Success = false, Message = $"Failed to authorize: {ex.Message}" };
-            }
+            return AuthorizeServer(ps, creds.Value, dnsName, ipAddress);
         });
+    }
+
+    /// <remarks>
+    /// Internal as a TEST SEAM (psl-3): import, discovery and the change on a caller-supplied
+    /// PowerShell, so the sequence runs against local stand-in functions without a domain. The
+    /// async method above keeps the configuration and credential gates and owns the runspace.
+    /// </remarks>
+    internal DhcpOperationResult AuthorizeServer(PowerShell ps, (string username, string password, string domain) creds, string dnsName, string ipAddress)
+    {
+        ps.AddCommand("Import-Module")
+          .AddParameter("Name", "ActiveDirectory")
+          .AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        var dc = DiscoverDomainController(ps, credential);
+        if (dc == null)
+            return new DhcpOperationResult { Success = false, Message = "Could not discover a domain controller." };
+
+        var script = ScriptBlock.Create("param($DnsName, $IPAddress) Import-Module DhcpServer -ErrorAction Stop; Add-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
+        ps.AddCommand("Invoke-Command")
+          .AddParameter("ComputerName", dc)
+          .AddParameter("Credential", credential)
+          .AddParameter("ScriptBlock", script)
+          .AddParameter("ArgumentList", new object[] { dnsName, ipAddress });
+
+        try
+        {
+            ps.Invoke();
+            if (ps.HadErrors)
+            {
+                var errors = string.Join("; ", ps.Streams.Error.Select(e => e.ToString()));
+                return new DhcpOperationResult { Success = false, Message = $"Failed to authorize: {errors}" };
+            }
+
+            _logger.LogInformation("DHCP server authorized: {DnsName} ({Ip}) via DC {DC}", dnsName, ipAddress, dc);
+            return new DhcpOperationResult { Success = true, Message = $"Successfully authorized DHCP server {dnsName} ({ipAddress})." };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Add-DhcpServerInDC exception for {DnsName}/{Ip} via DC {DC}", dnsName, ipAddress, dc);
+            return new DhcpOperationResult { Success = false, Message = $"Failed to authorize: {ex.Message}" };
+        }
     }
 
     public async Task<DhcpOperationResult> DeauthorizeServerAsync(string dnsName, string ipAddress)
@@ -132,42 +142,50 @@ public class DhcpAuthorizationService
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module")
-              .AddParameter("Name", "ActiveDirectory")
-              .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
-
-            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            var dc = DiscoverDomainController(ps, credential);
-            if (dc == null)
-                return new DhcpOperationResult { Success = false, Message = "Could not discover a domain controller." };
-
-            var script = ScriptBlock.Create("param($DnsName, $IPAddress) Import-Module DhcpServer -ErrorAction Stop; Remove-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
-            ps.AddCommand("Invoke-Command")
-              .AddParameter("ComputerName", dc)
-              .AddParameter("Credential", credential)
-              .AddParameter("ScriptBlock", script)
-              .AddParameter("ArgumentList", new object[] { dnsName, ipAddress });
-
-            try
-            {
-                ps.Invoke();
-                if (ps.HadErrors)
-                {
-                    var errors = string.Join("; ", ps.Streams.Error.Select(e => e.ToString()));
-                    return new DhcpOperationResult { Success = false, Message = $"Failed to deauthorize: {errors}" };
-                }
-
-                _logger.LogInformation("DHCP server deauthorized: {DnsName} ({Ip}) via DC {DC}", dnsName, ipAddress, dc);
-                return new DhcpOperationResult { Success = true, Message = $"Successfully deauthorized DHCP server {dnsName} ({ipAddress})." };
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Remove-DhcpServerInDC exception for {DnsName}/{Ip} via DC {DC}", dnsName, ipAddress, dc);
-                return new DhcpOperationResult { Success = false, Message = $"Failed to deauthorize: {ex.Message}" };
-            }
+            return DeauthorizeServer(ps, creds.Value, dnsName, ipAddress);
         });
+    }
+
+    /// <remarks>
+    /// Internal as a TEST SEAM (psl-3); see <see cref="AuthorizeServer"/>.
+    /// </remarks>
+    internal DhcpOperationResult DeauthorizeServer(PowerShell ps, (string username, string password, string domain) creds, string dnsName, string ipAddress)
+    {
+        ps.AddCommand("Import-Module")
+          .AddParameter("Name", "ActiveDirectory")
+          .AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        var dc = DiscoverDomainController(ps, credential);
+        if (dc == null)
+            return new DhcpOperationResult { Success = false, Message = "Could not discover a domain controller." };
+
+        var script = ScriptBlock.Create("param($DnsName, $IPAddress) Import-Module DhcpServer -ErrorAction Stop; Remove-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
+        ps.AddCommand("Invoke-Command")
+          .AddParameter("ComputerName", dc)
+          .AddParameter("Credential", credential)
+          .AddParameter("ScriptBlock", script)
+          .AddParameter("ArgumentList", new object[] { dnsName, ipAddress });
+
+        try
+        {
+            ps.Invoke();
+            if (ps.HadErrors)
+            {
+                var errors = string.Join("; ", ps.Streams.Error.Select(e => e.ToString()));
+                return new DhcpOperationResult { Success = false, Message = $"Failed to deauthorize: {errors}" };
+            }
+
+            _logger.LogInformation("DHCP server deauthorized: {DnsName} ({Ip}) via DC {DC}", dnsName, ipAddress, dc);
+            return new DhcpOperationResult { Success = true, Message = $"Successfully deauthorized DHCP server {dnsName} ({ipAddress})." };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Remove-DhcpServerInDC exception for {DnsName}/{Ip} via DC {DC}", dnsName, ipAddress, dc);
+            return new DhcpOperationResult { Success = false, Message = $"Failed to deauthorize: {ex.Message}" };
+        }
     }
 
     private string? DiscoverDomainController(PowerShell ps, PSCredential credential)
@@ -194,6 +212,13 @@ public class DhcpAuthorizationService
             ps.Commands.Clear();
             _logger.LogWarning(ex, "Get-ADDomainController -Discover failed, falling back to Filter query");
         }
+        finally
+        {
+            // psl-3: Commands.Clear() leaves error records, and the change's HadErrors check is
+            // true while ANY record remains, so a discovery record (or the import's, which runs
+            // just before) failed a successful change and joined a failed change's report.
+            ps.Streams.Error.Clear();
+        }
 
         try
         {
@@ -215,6 +240,11 @@ public class DhcpAuthorizationService
         {
             ps.Commands.Clear();
             _logger.LogError(ex, "Failed to discover any domain controller");
+        }
+        finally
+        {
+            // psl-3: as above - the change after discovery must see only its own records.
+            ps.Streams.Error.Clear();
         }
 
         return null;
