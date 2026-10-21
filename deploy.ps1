@@ -459,6 +459,7 @@ try {
     # kept bulk-job records and usage telemetry in a backup nothing prunes, past the retention the pages
     # state, and a raw copy of a live WAL database is not a usable backup anyway. A new database the
     # app keeps in config\ belongs here too; the cdt-10 test reads the app's source to enforce that.
+    # The upgrade's drift inventory leaves the same databases out, from this list (cdt-13).
     $configCopyExclusions = @(
         'exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm',
         'exchangeadmin-jobs.db', 'exchangeadmin-jobs.db-wal', 'exchangeadmin-jobs.db-shm',
@@ -524,11 +525,15 @@ try {
         # extended-log-level.txt is rewritten by the app on every startup
         # (ExtendedLogService.LoadLevel -> SetLevel), so it always differs across a
         # pool restart and would false-positive the drift check.
-        # The SQLite config DB triplet (.db/-wal/-shm) changes byte-for-byte across a pool restart
-        # (WAL checkpoints, startup seeding) by design, so a size/mtime drift comparison is
-        # meaningless for it - it is verified by PRAGMA integrity_check after deploy instead (see the
-        # post-deploy DB health check). Exclude it from the file-drift inventory.
-        $driftCheckExclusions = @('extended-log-level.txt', 'exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm')
+        # The SQLite databases the app keeps in config\ - the config DB, the jobs DB and the usage DB,
+        # each with -wal/-shm - change byte-for-byte across a pool restart by design (a clean close
+        # checkpoints the WAL into the main file and deletes the sidecars; startup seeds the config DB
+        # and interrupts and prunes jobs and telemetry), so a size/mtime comparison is meaningless for
+        # them. The config DB is verified by PRAGMA integrity_check after deploy instead (see the
+        # post-deploy DB health check); the jobs and usage DBs are operational state that is never
+        # backed up (cdt-10), so a drift warning about them would point at a backup without them.
+        # The databases come from $configCopyExclusions, the one list of them (cdt-13).
+        $driftCheckExclusions = @('extended-log-level.txt') + $configCopyExclusions
         $preConfigInventory = @{}
         if (Test-Path $runtimeConfigDir) {
             Get-ChildItem $runtimeConfigDir -File |

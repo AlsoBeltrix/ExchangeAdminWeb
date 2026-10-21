@@ -594,6 +594,50 @@ Describe 'deploy.ps1' {
         }
     }
 
+    It 'leaves the same databases out of the drift inventory as out of the backup copies (cdt-13)' {
+        # The drift check compares config\ before the pool stops with config\ after it restarts. A
+        # live WAL database changes across that by design; the drift list named only the config
+        # database, so the jobs and usage databases raised false drift warnings that pointed at a
+        # backup which, since cdt-10, deliberately does not contain them.
+        $lists = @{}
+        foreach ($listName in 'configCopyExclusions', 'driftCheckExclusions') {
+            $lists[$listName] = @($s.Ast.FindAll({ param($node)
+                        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                        $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $node.Left.VariablePath.UserPath -eq $listName }, $true))
+        }
+        $copyLists = $lists['configCopyExclusions']
+        $copyLists.Count | Should -Be 1
+        $driftLists = $lists['driftCheckExclusions']
+        $driftLists.Count | Should -Be 1 -Because 'one drift list'
+        $drift = $driftLists[0]
+        $drift.Extent.StartOffset | Should -BeGreaterThan $copyLists[0].Extent.EndOffset
+
+        $references = @($drift.Right.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $node.VariablePath.UserPath -eq 'configCopyExclusions' }, $true))
+        $references.Count | Should -Be 1 -Because 'the drift list derives from the shared list, so one list owns the databases'
+
+        # The two real statements, evaluated together: the shared list plus extended-log-level.txt.
+        $evaluate = [scriptblock]::Create($copyLists[0].Extent.Text + "`n" + $drift.Extent.Text + "`n" + ',$driftCheckExclusions')
+        $driftNames = @((& $evaluate) | ForEach-Object { $_ })
+        $copyNames = @(([scriptblock]::Create($copyLists[0].Extent.Text + "`n" + ',$configCopyExclusions')).Invoke() | ForEach-Object { $_ })
+        $copyNames.Count | Should -BeGreaterOrEqual 9 -Because 'the cdt-10 test pins what the shared list holds'
+        (@($driftNames | Sort-Object -Unique) -join ',') | Should -BeExactly (@(@('extended-log-level.txt') + $copyNames | Sort-Object -Unique) -join ',') `
+            -Because 'every database the backup leaves out, each with its WAL sidecars, and the rewritten log-level file'
+
+        $inventories = @($s.Ast.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.PipelineAst] -and
+                    $node.PipelineElements.Count -ge 2 -and
+                    $node.PipelineElements[0].Extent.Text -like 'Get-ChildItem*$runtimeConfigDir*' -and
+                    $node.Extent.Text -notmatch 'Copy-Item' }, $true))
+        $inventories.Count | Should -Be 2 -Because 'the drift check inventories config\ before the stop and after the restart'
+        foreach ($inventory in $inventories) {
+            $inventory.Extent.Text | Should -Match ([regex]::Escape('Where-Object { $_.Name -notin $driftCheckExclusions }')) -Because "the inventory at line $($inventory.Extent.StartLineNumber) must filter on the drift list"
+            $inventory.Extent.StartOffset | Should -BeGreaterThan $drift.Extent.EndOffset
+        }
+    }
+
     It 'checks the live config database after a -Force deploy restarts the pool, and only warns (cdt-12)' {
         # The upgrade path ends with a post-deploy check of the live store. -Force, the path that
         # regenerates appsettings.json and so the one most able to point the app at a different,
@@ -661,8 +705,8 @@ Describe 'deploy.ps1' {
         # the pool starts - otherwise a missing/corrupt live DB ends on the success banner.
         $upgradeBlock | Should -Match 'Test-SqliteConfigDbIntegrity' `
             -Because 'the live DB needs a real post-deploy health check, not file-drift comparison'
-        $upgradeBlock | Should -Match "driftCheckExclusions = @\('extended-log-level.txt', 'exchangeadmin.db'" `
-            -Because 'the DB triplet must be excluded from the size/mtime drift inventory'
+        $upgradeBlock | Should -Match "driftCheckExclusions = @\('extended-log-level.txt'\) \+ \`$configCopyExclusions" `
+            -Because 'the DB triplets must be excluded from the size/mtime drift inventory (through the shared list since cdt-13)'
         $upgradeBlock.IndexOf('Start-AppPoolWithRetry') |
             Should -BeLessThan $upgradeBlock.IndexOf('Test-SqliteConfigDbIntegrity') `
             -Because 'the live-DB check must run after the pool restarts (post migrate/seed)'
