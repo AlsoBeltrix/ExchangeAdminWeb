@@ -9,7 +9,7 @@ and when `ConfigStore:Path` names a shared database, that file is outside `confi
 backed up at all. The new build then starts against the authorization store, and runs its schema
 migrations on it, with no verifiable rollback snapshot. With cdt-8 fixed a `-Force` run keeps
 the shared database, so it is exactly the unprotected one.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (ops-batch-1, 2026-10-21) raised no defect in this change; its three candidates are pre-existing and tracked as cdt-13, cdt-16, cdt-17
 **Branch**: `worktree-agent-a4611345a15a8c0bd`
 **Commit**: `bb8b64e` (merged)
 **Reviewer**: implementer (surfaced by the cdt-5/6 agent, confirmed by the supervisor)

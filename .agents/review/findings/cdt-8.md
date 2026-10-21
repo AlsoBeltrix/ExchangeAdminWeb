@@ -8,7 +8,7 @@ or, if there is none, a new database seeded at defaults. That is the instance's 
 and settings store - section access, protected principals, module enablement, module admins -
 silently replaced, while the other instance keeps using the shared file. Nothing errors and
 nothing says so.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (ops-batch-1, 2026-10-21) raised no defect in this change; its three candidates are pre-existing and tracked as cdt-13, cdt-16, cdt-17
 **Branch**: `worktree-agent-a4611345a15a8c0bd`
 **Commit**: `6297f1b` (merged)
 **Reviewer**: implementer (surfaced by the cdt-5/6 agent, confirmed by the supervisor)

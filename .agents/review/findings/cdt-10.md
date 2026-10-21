@@ -11,7 +11,7 @@ keeps a copy of it forever, one per deploy, and the copies are raw copies of liv
 they are not even a usable backup. Architectural Invariant 3 and both plans say these databases
 are deliberately not backed up. Nothing is lost and nothing breaks; a stated retention is
 silently false.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (ops-batch-1, 2026-10-21) raised no defect in this change; its three candidates are pre-existing and tracked as cdt-13, cdt-16, cdt-17
 **Branch**: `worktree-agent-a4611345a15a8c0bd`
 **Commit**: `90eb74e` (merged)
 **Reviewer**: implementer (found while fixing cdt-9; not yet confirmed by the supervisor)
