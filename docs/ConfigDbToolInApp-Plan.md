@@ -172,10 +172,14 @@ Which folder each caller passes (the binary that is about to run, or already run
 | `tools/promote-dev-to-prod.ps1` | `$dev` | the dev publish folder is the build being promoted |
 | `tools/Move-ConfigDbToShared.ps1` | `$DevPublishPath` | the deployed dev build |
 
-Plan mode: every caller that prints a plan line for the backup also prints the tool it
-would use (`Resolve-ConfigDbTool` runs in plan mode too; it has no side effects). A missing
-assembly in plan mode is reported, not thrown, for the installer's `-PlanOnly` before a
-first publish; in action mode it throws.
+Plan mode: every caller that prints a plan line for the backup prints the host and assembly
+path it INTENDS to use, computed from the folder it would publish to or read from, without
+requiring either file to exist (plan mode creates nothing, and a staging folder does not
+exist until publish runs). `Resolve-ConfigDbTool` therefore takes `-PlanOnly`: in plan mode
+it returns the intended paths and notes which are absent; in action mode an absent file is a
+throw. `tools/deploy-pipeline.ps1 -Dev -PlanOnly` skips `deploy.ps1` entirely today (its
+line ~85 says so) and so prints no tool path; that is pre-existing behaviour and is not
+changed by this plan. `-Prod -PlanOnly` runs promote's native dry run and does print it.
 
 Trust argument, recorded so it is not re-derived: the scripts execute code from the publish
 folder they are about to deploy or have already deployed. Anyone who can write that folder
@@ -237,8 +241,9 @@ rebuild) before trusting a result.
 ### 3.4 CI
 
 `.github/workflows/ci.yml`, `powershell` job: delete the `Install sqlite3` step; add
-`dotnet build ExchangeAdminWeb.csproj -c Release` before Pester (SDK is on
-`windows-latest`). The `SkippedCount -gt 0` gate stays. The 5.1 parse step is unchanged and
+`actions/setup-dotnet@v4` with `dotnet-version: '10.0.x'` (the `build-test` job already has
+it; the `powershell` job does not, and the runner's default SDK is not guaranteed to be 10)
+and then `dotnet build ExchangeAdminWeb.csproj -c Release` before Pester. The `SkippedCount -gt 0` gate stays. The 5.1 parse step is unchanged and
 still names `SqliteConfigBackup.psm1`.
 
 ### 3.5 Docs
@@ -273,8 +278,10 @@ still names `SqliteConfigBackup.psm1`.
 - AC5: `dotnet ExchangeAdminWeb.dll` with no arguments behaves exactly as before (the
   Program.cs tripwire plus the existing startup tests).
 - AC6: CI green on the first push, with the Pester job showing the build step and 0 skipped.
-- AC7: `-PlanOnly` on the pipeline, the installer, promote and cutover prints the resolved
-  tool path and creates nothing.
+- AC7: plan mode on the installer, promote (no `-Apply`), cutover and `deploy-pipeline.ps1
+  -Prod -PlanOnly` prints the intended host and assembly path and creates nothing, including
+  when the assembly does not exist yet. (`-Dev -PlanOnly` skips the dev deploy entirely,
+  pre-existing; not an AC7 surface.)
 
 ## 5. Slices
 
@@ -293,8 +300,9 @@ because the module's export list changes and its importers must move with it. Ga
 PSScriptAnalyzer 0 errors, `Invoke-Pester tests/ps` 0 failed 0 skipped, ASCII lint, the
 5.1 parse of `deploy.ps1` and both modules under real Windows PowerShell 5.1
 (`powershell.exe -NoProfile -Command` the parser call CI uses), `git diff --check`, mutation
-round rows 4-7, and a manual `-PlanOnly` run of `tools/deploy-pipeline.ps1 -Dev -PlanOnly`
-from an elevated shell showing the resolved tool (AC7). State what was not run.
+round rows 4-7, and a manual `tools/deploy-pipeline.ps1 -Prod -PlanOnly` from an elevated
+shell showing the intended tool path from the dev publish folder (AC7). State what was not
+run.
 
 **S3 - docs and decision.** Section 3.5 minus the installer help text (S2) and the finding
 record (S1). `git diff --check`. Update this plan's Status to Implemented with the three
@@ -329,12 +337,27 @@ ASCII lint over tracked `.cs/.ps1/.psm1`.
 
 ## 8. Status log
 
-- 2026-10-21: plan written. Not started.
+- 2026-10-21: plan written. Codex openreview returned Acceptable with changes; both
+  changes folded in (section 9). Not started.
 
 ## 9. Review
 
-Owner asked for a plan review before implementation. Dispatch and verdict recorded here
-when run.
+openreview codex (configured default model, resolved id not emitted in the `codex exec
+--json` envelope; effort xhigh; standard tier) over `45f3ca9..49e8bb0`, 2026-10-21:
+**Acceptable with changes.** Capability proof passed (read `AGENTS.md`, ran
+`git show --stat`). The reviewer independently arrived at the same approach and judged it
+better than hardening the exe lookup. Two required changes, both verified against the
+files and folded in before implementation:
+
+1. AC7 and the S2 manual check named `deploy-pipeline.ps1 -Dev -PlanOnly`, which skips
+   `deploy.ps1` and never creates staging, so no tool path could be shown without creating
+   files or faking a resolution. Fixed: plan mode prints the intended path without needing
+   the file; the manual check is `-Prod -PlanOnly`; `-Dev -PlanOnly` is named as out of AC7.
+2. The CI `powershell` job has no `setup-dotnet`; `dotnet build` there could fail before
+   Pester ran. Fixed: 3.4 adds `actions/setup-dotnet@v4` with `10.0.x`.
+
+Prompt: `.agents/review/prompt-openreview-configdbtool.md`. Verdict text:
+`.agents/review/openreview-configdbtool.last.md`.
 
 ## 10. Follow-ups logged, not authorised
 
