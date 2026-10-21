@@ -2069,18 +2069,33 @@ public static class ProgressRegistry
     };
 
     /// <remarks>
-    /// Correct as it stands and must not be "fixed": its single activity covers
-    /// OUService.GetOrganizationalUnits, the page's only remote call. Every Save* here is a write
-    /// to the configuration store.
+    /// Correct as it stands and must not be "fixed": one activity covers
+    /// OUService.GetOrganizationalUnits, and since aud-a1b a second covers the directory check the
+    /// access and module-admin saves run on the grants they add. Apart from that check, every
+    /// Save* here is a write to the configuration store.
     /// </remarks>
     private static PageEntry ModuleConfig => new()
     {
         Page = "ModuleConfig.razor",
-        Reports = [new("LoadOUsAsync", "OUService.GetOrganizationalUnits")],
+        Reports =
+        [
+            new("LoadOUsAsync", "OUService.GetOrganizationalUnits"),
+            new("ConfirmNewGroupGrantsAsync", "ADSearch.ValidateGroupSid(",
+                "aud-a1b: the access and module-admin saves now confirm every group grant they ADD "
+                + "against the directory before persisting, one ADSearch.ValidateGroupSid per new "
+                + "grant, each waiting up to 30 seconds on ADDirectorySearchService's shared runspace "
+                + "lock. The Begin sits above the Task.Run that wraps the loop, Items(count) because "
+                + "the number of new grants is known, Report raised from the worker thread as "
+                + "GlobalProgress.razor marshals. Success is false only when the directory could "
+                + "not be asked: a refused grant is a check that ran"),
+        ],
         Exempt =
         [
             new("OnParametersSetAsync", AuthPreambleOnly + ", plus " + ConfigStoreRead),
-            new("SaveCurrentTabAsync", ConfigStoreWrite),
+            new("SaveCurrentTabAsync", ConfigStoreWrite
+                + ". The access and module-admin saves first confirm the grants they ADD through "
+                + "ConfirmNewGroupGrantsAsync, which carries its own activity and Reported entry "
+                + "(aud-a1b); every other save here is the store write alone"),
             new("ReloadAsync", "reloads the page; pure navigation"),
             new("AddAccessGroup", LocalUiState + "; the save is a separate action"),
             new("RemoveAccessGroup", LocalUiState + "; the save is a separate action"),

@@ -283,6 +283,128 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory
     }
 
     /// <summary>
+    /// Whether a SID names an object in the forest, and what class it is. For authorization grants,
+    /// which store SIDs: a SID's SHAPE says nothing about whether it is a group, or anything at all
+    /// (aud-a1b).
+    /// </summary>
+    /// <remarks>
+    /// Found carries the object's class in <see cref="ADSearchResult.ObjectType"/> - "Group" for a
+    /// group, otherwise the directory's own class name - so the caller can refuse a user's SID.
+    ///
+    /// Searched through the global catalog, because a grant may name another domain's group. When
+    /// no catalog can be resolved the answer is Unavailable, NOT a local-domain search: the picker's
+    /// fail-soft fallback is right for suggestions and wrong here, where a foreign domain's group
+    /// would read as nonexistent and a correct grant would be refused as a typo.
+    ///
+    /// Runs under the app pool's ambient identity like every other validation in this service
+    /// (.agents/decisions.md 2026-07-31). Called at SAVE time only; nothing on the authorization
+    /// path reads the directory.
+    /// </remarks>
+    public DirectoryValidationResult ValidateGroupSid(string sid)
+    {
+        if (string.IsNullOrWhiteSpace(sid))
+            return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.BlankInput), null);
+
+        if (!IsAvailable)
+            return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.DirectoryUnavailable), null);
+
+        try
+        {
+            if (!_runspaceLock.Wait(TimeSpan.FromSeconds(30)))
+            {
+                _logger.LogWarning("AD validation throttle timeout for a group SID");
+                return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.ThrottleTimeout), null);
+            }
+
+            try
+            {
+                return ExecuteValidateGroupSid(sid.Trim());
+            }
+            catch
+            {
+                // A failed lookup may leave the persistent runspace in a broken state; drop it so
+                // the next call builds a fresh one.
+                _searchRunspace?.Dispose();
+                _searchRunspace = null;
+                throw;
+            }
+            finally
+            {
+                _runspaceLock.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            // Unavailable, never NotFound: the lookup did not complete.
+            _logger.LogWarning(ex, "AD validation lookup failed for a group SID");
+            return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.LookupThrew), null);
+        }
+    }
+
+    private DirectoryValidationResult ExecuteValidateGroupSid(string sid)
+    {
+        var runspace = GetOrCreateRunspace();
+
+        var catalog = ResolveGlobalCatalog(runspace);
+        if (catalog is null || catalog.StartsWith(':'))
+        {
+            _logger.LogWarning("No global catalog could be resolved, so a group SID cannot be confirmed forest-wide");
+            return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.DirectoryUnavailable), null);
+        }
+
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        // Get-ADObject, not Get-ADGroup: a user's SID must come back as a user, so the caller can
+        // say "that is not a group" instead of "no such object".
+        ps.AddCommand("Get-ADObject")
+          .AddParameter("LDAPFilter", BuildSidFilter(sid))
+          .AddParameter("Server", catalog)
+          .AddParameter("Properties", new[] { "objectClass", "objectSid", "sAMAccountName", "DistinguishedName", "Name" })
+          .AddParameter("ResultSetSize", 2)
+          .AddParameter("ErrorAction", "Stop");
+
+        var found = ps.Invoke();
+        ps.Commands.Clear();
+
+        if (ps.HadErrors)
+        {
+            var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Get-ADObject by SID failed";
+            ps.Streams.Error.Clear();
+            _logger.LogWarning("AD group-SID validation had errors: {Error}", errMsg);
+            return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.CmdletReportedErrors), null);
+        }
+
+        var rows = found.Where(o => o is not null).ToList();
+        if (rows.Count == 0)
+            return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.CompletedWithNoResults), null);
+
+        // A domain SID names exactly one object; two answers are not an answer.
+        if (rows.Count > 1)
+            return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.CmdletReportedErrors), null);
+
+        var obj = rows[0];
+        var objectClass = obj.Properties["ObjectClass"]?.Value?.ToString() ?? "";
+        var dn = obj.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
+
+        return new DirectoryValidationResult(
+            ClassifyOutcome(ValidationStep.CompletedWithResults),
+            new ADSearchResult(
+                DisplayName: obj.Properties["Name"]?.Value?.ToString() ?? "",
+                DistinguishedName: dn,
+                SamAccountName: obj.Properties["sAMAccountName"]?.Value?.ToString(),
+                UserPrincipalName: null,
+                Email: null,
+                ObjectType: string.Equals(objectClass, "group", StringComparison.OrdinalIgnoreCase) ? "Group" : objectClass,
+                ObjectSid: obj.Properties["objectSid"]?.Value?.ToString(),
+                DnsDomain: DnsDomainFromDn(dn)));
+    }
+
+    /// <summary>The forest-wide lookup of one SID. Pure so its shape is testable.</summary>
+    internal static string BuildSidFilter(string sid)
+        => $"(objectSid={ProtectedPrincipalService.EscapeLdapFilter(sid.Trim())})";
+
+    /// <summary>
     /// Why a validation attempt ended where it did. Exists so <see cref="ClassifyOutcome"/> can
     /// be a pure function: the absence/failure split is then testable on a machine that HAS a
     /// working Active Directory, which a test guarded on <c>IsAvailable</c> is not.
