@@ -232,7 +232,12 @@ public sealed class ExoConnectionPool : IDisposable
 
                 _operationTrace.Step(pooled.ConfigGeneration != currentGen ? "ExoConnectionStaleConfig" : "ExoConnectionExpired", backend: "ExchangeOnline");
                 var stale = pooled;
-                await Task.Run(() => DestroyRunspace(stale), ct);
+
+                // aud-a6d: no token here. This runspace has already left the pool, so destroying it
+                // is cleanup this borrow owes, not work it may abandon - and Task.Run handed a token
+                // that is already cancelled never runs its delegate, which stranded the connection.
+                // Cancellation still applies: the connect below honours it and throws.
+                await Task.Run(() => DestroyRunspace(stale));
             }
 
             // Connect-ExchangeOnline takes multiple seconds and runs synchronously

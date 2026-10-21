@@ -252,6 +252,76 @@ public partial class ExoConnectionPoolSharedConfigTests
         Assert.Equal(["conn-late"], Disconnected(log));
     }
 
+    /// <summary>
+    /// Holds every continuation posted to it until the test pumps, so a borrow can be stopped
+    /// between its slot wait completing and the next line of <c>BorrowAsync</c> running.
+    /// </summary>
+    private sealed class HeldContinuations : SynchronizationContext
+    {
+        private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _queue = new();
+        private readonly SemaphoreSlim _posted = new(0);
+
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            _queue.Enqueue((d, state));
+            _posted.Release();
+        }
+
+        public Task<T> Start<T>(Func<Task<T>> start)
+        {
+            var previous = Current;
+            SetSynchronizationContext(this);
+            try { return start(); }
+            finally { SetSynchronizationContext(previous); }
+        }
+
+        public async Task PumpUntil(Task task, CancellationToken ct)
+        {
+            while (!task.IsCompleted)
+            {
+                if (!await _posted.WaitAsync(TimeSpan.FromSeconds(10), ct))
+                    throw new TimeoutException("The held borrow neither completed nor posted a continuation.");
+                if (!_queue.TryDequeue(out var item))
+                    throw new InvalidOperationException("Continuation signal without a queued callback.");
+                var previous = Current;
+                SetSynchronizationContext(this);
+                try { item.Callback(item.State); }
+                finally { SetSynchronizationContext(previous); }
+            }
+        }
+    }
+
+    // aud-a6d. A pooled runspace that is stale or idle-expired is taken out of the pool and then
+    // destroyed through Task.Run - which, handed a token that is already cancelled, never runs the
+    // destroy. The window is between the slot wait completing and that line, and this holds the
+    // borrow's continuation exactly there while the runspace is aged and the token cancelled.
+    [Fact]
+    public async Task ABorrowCancelledAfterItsSlotWait_StillDisconnectsTheExpiredConnectionItTook()
+    {
+        var log = NewDisconnectLog();
+        using var pool = TeardownPool(log, null,
+            ("conn-1", "ok"), ("conn-2", "ok"), ("conn-3", "ok"), ("conn-4", "ok"), ("conn-5", "ok"));
+        var held = await BorrowMany(pool, 5);
+
+        using var cancellation = new CancellationTokenSource();
+        var context = new HeldContinuations();
+        var sixth = context.Start(() => pool.BorrowAsync(TimeSpan.FromSeconds(30), cancellation.Token));
+        Assert.False(sixth.IsCompleted, "With every slot held, the sixth borrow must be waiting for one.");
+
+        pool.Return(held[0]);
+        held[0].LastUsed = DateTime.UtcNow - TimeSpan.FromMinutes(21);
+        cancellation.Cancel();
+
+        await context.PumpUntil(sixth, TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sixth);
+        Assert.Equal(["conn-1"], Disconnected(log));
+        Assert.Equal(0, pool.AvailableCount);
+
+        foreach (var runspace in held.Skip(1))
+            pool.Return(runspace);
+    }
+
     [Fact]
     public async Task ABorrowAfterThePoolStops_IsRefusedWithoutConnecting()
     {
