@@ -56,6 +56,57 @@ BeforeAll {
             }, $true)
     }
 
+    function Get-FreshInstallBranch {
+        # The else clause of deploy.ps1's `if ($isUpgrade)` statement: the fresh-install path,
+        # which every -Force run takes too, existing deployment or not. (The `$mode = if
+        # ($isUpgrade) ...` expression is the right-hand side of an assignment, not the branch.)
+        param($Script)
+        $modeBranches = @($Script.Ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.IfStatementAst] -and
+                    $node.Clauses[0].Item1.Extent.Text -eq '$isUpgrade' -and
+                    -not ($node.Parent -is [System.Management.Automation.Language.AssignmentStatementAst])
+                }, $true))
+        if ($modeBranches.Count -ne 1) { throw "expected exactly one 'if (`$isUpgrade)' mode branch, found $($modeBranches.Count)" }
+        if ($null -eq $modeBranches[0].ElseClause) { throw 'the mode branch has no else clause' }
+        $modeBranches[0].ElseClause
+    }
+
+    function Get-ConditionalAncestor {
+        # Every if, loop, switch, catch, trap, script block or function between $Node and $Stop:
+        # the constructs that can make a statement run on some paths and not others.
+        param($Node, $Stop)
+        $types = @(
+            [System.Management.Automation.Language.IfStatementAst],
+            [System.Management.Automation.Language.LoopStatementAst],
+            [System.Management.Automation.Language.SwitchStatementAst],
+            [System.Management.Automation.Language.CatchClauseAst],
+            [System.Management.Automation.Language.TrapStatementAst],
+            [System.Management.Automation.Language.ScriptBlockExpressionAst],
+            [System.Management.Automation.Language.FunctionDefinitionAst])
+        $ancestor = $Node.Parent
+        while ($null -ne $ancestor -and -not [object]::ReferenceEquals($ancestor, $Stop)) {
+            foreach ($type in $types) {
+                if ($ancestor -is $type) { $ancestor }
+            }
+            $ancestor = $ancestor.Parent
+        }
+    }
+
+    function Get-NamedArgumentText {
+        # The source text of the argument bound to -$Name on one command, or $null.
+        param($Command, [string]$Name)
+        $elements = $Command.CommandElements
+        for ($i = 1; $i -lt $elements.Count; $i++) {
+            $element = $elements[$i]
+            if ($element -is [System.Management.Automation.Language.CommandParameterAst] -and $element.ParameterName -eq $Name) {
+                if ($null -ne $element.Argument) { return $element.Argument.Extent.Text }
+                if ($i + 1 -lt $elements.Count) { return $elements[$i + 1].Extent.Text }
+            }
+        }
+        return $null
+    }
+
     function Test-IcaclsCallsAreChecked {
         # Every icacls invocation must be guarded: the text immediately following the call
         # (up to the next ~150 chars) must reference $LASTEXITCODE. A bare "icacls ... |
@@ -368,6 +419,181 @@ Describe 'deploy.ps1' {
         }
     }
 
+    It 'reads ConfigStore:Path before -Force changes anything and writes it into the regenerated appsettings.json (cdt-8)' {
+        # -Force over an existing deployment takes the fresh-install branch, which regenerates
+        # appsettings.json from parameters. ConfigStore:Path names the config database the
+        # instance opens - on a shared-database server the one file dev and prod both use - and
+        # without it the app silently opens its own config\exchangeadmin.db instead.
+        $install = Get-FreshInstallBranch $s
+
+        $changes = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -in @('Stop-AppPoolVerified', 'robocopy') }, $true))
+        $changes.Count | Should -Be 2 -Because 'the branch stops the pool once and mirrors once'
+        $firstChange = ($changes | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Minimum).Minimum
+
+        $reads = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $node.Left.VariablePath.UserPath -eq 'configStorePathSetting' }, $true))
+        $reads.Count | Should -Be 1 -Because 'the value is read once, from the file about to be replaced'
+        $reads[0].Right.Extent.Text | Should -BeExactly 'Get-ConfigStorePathSetting -PublishPath $PublishPath'
+        @(Get-ConditionalAncestor $reads[0] $install) | Should -BeNullOrEmpty -Because 'every run down this branch must read it'
+        $reads[0].Extent.EndOffset | Should -BeLessThan $firstChange -Because 'it is read before the pool stops or anything is mirrored'
+
+        $writers = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -in @('Set-Content', 'Out-File', 'Add-Content', 'Write-AppSettingsFile') }, $true))
+        $writers.Count | Should -Be 1 -Because 'appsettings.json is written in exactly one place on this path'
+        $writers[0].GetCommandName() | Should -BeExactly 'Write-AppSettingsFile'
+        Get-NamedArgumentText $writers[0] 'Path' | Should -BeExactly '$configPath'
+        Get-NamedArgumentText $writers[0] 'ConfigStorePath' | Should -BeExactly '$configStorePathSetting' -Because 'the value read above is what the write carries'
+        $writers[0].Extent.StartOffset | Should -BeGreaterThan $reads[0].Extent.EndOffset
+    }
+
+    It 'Write-AppSettingsFile carries ConfigStore:Path exactly as read, and adds none without it (cdt-8)' {
+        # Runs the real function, lifted from deploy.ps1 by AST, against a temporary
+        # appsettings.json, and reads the result back with the same reader the deploy uses.
+        Import-Module (Join-Path $RepoRoot 'tools/SqliteConfigBackup.psm1') -Force
+        $fn = Find-FunctionDefinition $s 'Write-AppSettingsFile'
+        $fn | Should -Not -BeNullOrEmpty
+        . ([scriptblock]::Create($fn.Extent.Text))
+
+        $publish = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt8_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $publish -Force | Out-Null
+        $appsettings = Join-Path $publish 'appsettings.json'
+        try {
+            Set-Content -LiteralPath $appsettings -Encoding UTF8 -Value '{ "AllowedHosts": "old", "Legacy": 1, "ConfigStore": { "Path": "D:\\shared\\config\\exchangeadmin.db" } }'
+            $kept = Get-ConfigStorePathSetting -PublishPath $publish
+            $kept | Should -BeExactly 'D:\shared\config\exchangeadmin.db'
+            Write-AppSettingsFile -Settings ([ordered]@{ AllowedHosts = '*' }) -Path $appsettings -ConfigStorePath $kept
+            Get-ConfigStorePathSetting -PublishPath $publish | Should -BeExactly 'D:\shared\config\exchangeadmin.db'
+            $json = Get-Content -LiteralPath $appsettings -Raw | ConvertFrom-Json
+            ($json.PSObject.Properties.Name -join ',') | Should -BeExactly 'AllowedHosts,ConfigStore' -Because 'only the key is carried; the rest is regenerated'
+            ($json.ConfigStore.PSObject.Properties.Name -join ',') | Should -BeExactly 'Path'
+            $json.AllowedHosts | Should -BeExactly '*'
+
+            Set-Content -LiteralPath $appsettings -Encoding UTF8 -Value '{ "AllowedHosts": "old" }'
+            $none = Get-ConfigStorePathSetting -PublishPath $publish
+            $none | Should -BeNullOrEmpty
+            Write-AppSettingsFile -Settings ([ordered]@{ AllowedHosts = '*' }) -Path $appsettings -ConfigStorePath $none
+            ((Get-Content -LiteralPath $appsettings -Raw | ConvertFrom-Json).PSObject.Properties.Name -join ',') |
+                Should -BeExactly 'AllowedHosts' -Because 'without the key nothing is added'
+        } finally {
+            Remove-Item -LiteralPath $publish -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'takes the verified online backup on -Force, before the pool stops or anything is mirrored (cdt-9)' {
+        # Architectural Invariant 3: the config database is backed up by verified online backup,
+        # from the path the instance opens, before each deploy - never by raw file copy. -Force
+        # used to raw-copy the live config\ directory before the publish, verify nothing, and
+        # never back up a shared database at all.
+        $install = Get-FreshInstallBranch $s
+
+        $changes = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -in @('Stop-AppPoolVerified', 'robocopy') }, $true))
+        $changes.Count | Should -Be 2 -Because 'the branch stops the pool once and mirrors once'
+        $firstChange = ($changes | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Minimum).Minimum
+
+        $backups = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq 'Backup-SqliteConfigDb' }, $true))
+        $backups.Count | Should -Be 1 -Because 'the -Force path must take the verified online backup'
+        $backup = $backups[0]
+        Get-NamedArgumentText $backup 'DbPath' | Should -BeExactly '$configDbPath' -Because 'the backup must target the database the instance opens'
+        Get-NamedArgumentText $backup 'DestDir' | Should -BeExactly '$configDirBackup'
+        Get-NamedArgumentText $backup 'Timestamp' | Should -BeExactly '$timestamp'
+        Get-NamedArgumentText $backup 'AppPath' | Should -BeExactly '$StagingPath' -Because 'the tool is the build about to be deployed'
+        $backup.Extent.EndOffset | Should -BeLessThan $firstChange -Because 'the snapshot must exist before the pool stops or any file changes'
+
+        $gates = @(Get-ConditionalAncestor $backup $install)
+        $gates.Count | Should -Be 1 -Because 'the backup is gated only on -Force over an existing deployment'
+        $gates[0] | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+        $gates[0].Clauses[0].Item1.Extent.Text | Should -BeExactly '$Force -and (Test-Path $configPath)'
+
+        $resolves = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $node.Left.VariablePath.UserPath -eq 'configDbPath' }, $true))
+        $resolves.Count | Should -Be 1
+        $resolves[0].Right.Extent.Text | Should -BeExactly 'Resolve-ConfigDbPath -PublishPath $PublishPath' -Because 'a shared database lives outside config\'
+        @(Get-ConditionalAncestor $resolves[0] $install) | Should -BeNullOrEmpty
+        $resolves[0].Extent.EndOffset | Should -BeLessThan $backup.Extent.StartOffset
+
+        $refusals = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.IfStatementAst] -and
+                    $node.Clauses[0].Item1.Extent.Text -eq '$configStorePathSetting -and -not (Test-IsSqliteConfigDbPresent -DbPath $configDbPath)' }, $true))
+        $refusals.Count | Should -Be 1 -Because 'a configured path naming a missing file must stop the run, not back up nothing'
+        $refusals[0].Clauses[0].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "ConfigStore:Path*'
+        @(Get-ConditionalAncestor $refusals[0] $install) | Should -BeNullOrEmpty
+        $refusals[0].Extent.EndOffset | Should -BeLessThan $firstChange
+
+        $install.Extent.Text | Should -Match ([regex]::Escape('$configDirBackup = Join-Path $BackupDir "config.${timestamp}.pre-force.bak"'))
+
+        $copies = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.PipelineAst] -and
+                    $node.PipelineElements.Count -ge 2 -and
+                    $node.PipelineElements[0].Extent.Text -like 'Get-ChildItem*$runtimeConfigDir*' -and
+                    $node.Extent.Text -match 'Copy-Item' }, $true))
+        $copies.Count | Should -Be 1 -Because 'the rest of config\ is copied once, as the upgrade path copies it'
+        # The filter's list (which holds the live triplet) is pinned by the cdt-10 test.
+        $copies[0].Extent.Text | Should -Match ([regex]::Escape('Where-Object { $_.Name -notin $configCopyExclusions }')) `
+            -Because 'a raw copy of the live database triplet is the torn snapshot this replaces'
+        $copies[0].Extent.EndOffset | Should -BeLessThan $firstChange
+
+        $recursive = @($s.Ast.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq 'Copy-Item' -and
+                    @($node.CommandElements | Where-Object {
+                            $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -like 'r*' }).Count -gt 0 }, $true))
+        @($recursive | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Extent.Text)" }) |
+            Should -BeNullOrEmpty -Because 'no raw recursive copy of a directory may stand in for the verified backup'
+    }
+
+    It 'leaves every SQLite database the app keeps in config\ out of the config backup copies (cdt-10)' {
+        # The rest-of-config copy used to exclude only the config database triplet, so every deploy
+        # copied the live jobs and usage databases into a backup nothing prunes, keeping bulk-job
+        # records and usage telemetry past the retention the pages state, against Invariant 3.
+        $lists = @($s.Ast.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $node.Left.VariablePath.UserPath -eq 'configCopyExclusions' }, $true))
+        $lists.Count | Should -Be 1 -Because 'one list, so the upgrade and the -Force copies cannot disagree'
+        $list = $lists[0]
+        @(Get-ConditionalAncestor $list $null) | Should -BeNullOrEmpty -Because 'both paths read it'
+        $list.Extent.EndOffset | Should -BeLessThan (Get-FreshInstallBranch $s).Parent.Extent.StartOffset -Because 'it is set before the mode branch'
+        $names = @($list.Right.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object Value)
+
+        # Tripwire: the databases come from the app's own code, so a new one cannot repeat this.
+        $sources = @(& git -C $RepoRoot ls-files -- '*.cs' | Where-Object { $_ -notlike 'ExchangeAdminWeb.Tests/*' })
+        $LASTEXITCODE | Should -Be 0
+        $sources.Count | Should -BeGreaterThan 50 -Because 'the scan must actually see the app source'
+        $appDbs = @(foreach ($rel in $sources) {
+                $text = Get-Content -LiteralPath (Join-Path $RepoRoot $rel) -Raw
+                foreach ($match in [regex]::Matches($text, 'Path\.Combine\([^;]*?"config",\s*"([^"]+\.db)"\)')) { $match.Groups[1].Value }
+            }) | Sort-Object -Unique
+        foreach ($known in 'exchangeadmin.db', 'exchangeadmin-jobs.db', 'exchangeadmin-usage.db') {
+            $appDbs | Should -Contain $known -Because 'the scan must see the databases the app creates today'
+        }
+        $expected = @(foreach ($db in $appDbs) { $db; "$db-wal"; "$db-shm" }) | Sort-Object
+        (@($names | Sort-Object) -join ',') | Should -BeExactly ($expected -join ',') `
+            -Because 'exactly the databases the app keeps in config\, each with its WAL sidecars, and nothing else'
+
+        $copies = @($s.Ast.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.PipelineAst] -and
+                    $node.PipelineElements.Count -ge 2 -and
+                    $node.PipelineElements[0].Extent.Text -like 'Get-ChildItem*$runtimeConfigDir*' -and
+                    $node.Extent.Text -match 'Copy-Item' }, $true))
+        $copies.Count | Should -Be 2 -Because 'the upgrade and the -Force path each copy the rest of config\'
+        foreach ($copy in $copies) {
+            $copy.Extent.Text | Should -Match ([regex]::Escape('Where-Object { $_.Name -notin $configCopyExclusions }')) -Because "the copy at line $($copy.Extent.StartLineNumber) must filter on the list"
+            $copy.Extent.StartOffset | Should -BeGreaterThan $list.Extent.EndOffset
+        }
+    }
+
     It 'runs a post-deploy live DB integrity check (DB is excluded from file drift by design)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,
@@ -408,6 +634,8 @@ Describe 'deploy.ps1' {
 
         $upgradeBlock | Should -Not -Match 'ConvertTo-Json\s+-Depth\s+10\s+\|\s+Set-Content\s+\$configPath' `
             -Because 'upgrade deploys preserve environment-owned appsettings.json byte-for-byte except for explicit operator edits'
+        $upgradeBlock | Should -Not -Match 'Write-AppSettingsFile' `
+            -Because 'the regenerating writer belongs to the fresh-install/-Force path only (cdt-8 moved the write into it)'
         $upgradeBlock | Should -Not -Match '\.PSObject\.Properties\.Remove' `
             -Because 'obsolete appsettings keys are warned about, not silently removed by deploy'
         $upgradeBlock | Should -Not -Match 'Add-Member\s+-NotePropertyName\s+"AdminGroups"' `

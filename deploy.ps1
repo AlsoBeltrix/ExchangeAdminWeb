@@ -132,6 +132,25 @@ function Write-DeploymentManifest {
     Write-Success "Deployment manifest written: v$($manifest.version) @ $($gitCommit.Substring(0, [Math]::Min(8, $gitCommit.Length)))"
 }
 
+# -Force regenerates appsettings.json from parameters, and ConfigStore:Path is the one key that must
+# survive it: it names the config database the instance opens (on a shared-database server the single
+# file dev and prod both use, decision 2026-09-04), and without it the app silently opens its own
+# config\exchangeadmin.db instead - a different authorization and settings store (cdt-8). The caller
+# passes the value exactly as Get-ConfigStorePathSetting read it from the file being replaced. With no
+# value nothing is added, so a fresh install's file is what it always was.
+function Write-AppSettingsFile {
+    param(
+        [System.Collections.IDictionary]$Settings,
+        [string]$Path,
+        [string]$ConfigStorePath
+    )
+
+    if ($ConfigStorePath) {
+        $Settings['ConfigStore'] = [ordered]@{ Path = $ConfigStorePath }
+    }
+    $Settings | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
 $ProjectRoot = $PSScriptRoot
 $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
 
@@ -153,16 +172,15 @@ $isUpgrade = (Test-Path $configPath) -and (-not $Force)
 $BackupDir = Join-Path $LogRoot "ExchangeAdminWeb\ConfigBackups"
 if (-not (Test-Path $BackupDir)) { New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null }
 
+# -Force over an existing deployment regenerates appsettings.json, so keep a copy of it first. The
+# config database is NOT copied here: a raw copy of a live WAL database can be torn and nothing would
+# verify it, and a shared database is not under config\ at all. The verified online backup runs in the
+# fresh-install branch below, after the publish (it needs the db tool from staging) and before the pool
+# stops or anything is mirrored (cdt-9).
 if ($Force -and (Test-Path $configPath)) {
     $backupName = "appsettings.${timestamp}.pre-force.bak"
     Copy-Item $configPath (Join-Path $BackupDir $backupName)
     Write-Warn "Existing config backed up to $BackupDir\$backupName"
-    $forceConfigDir = Join-Path $PublishPath "config"
-    if (Test-Path $forceConfigDir) {
-        $forceConfigBackup = Join-Path $BackupDir "config.${timestamp}.pre-force.bak"
-        Copy-Item $forceConfigDir $forceConfigBackup -Recurse
-        Write-Warn "Existing runtime config directory backed up to $forceConfigBackup"
-    }
 }
 
 $mode = if ($isUpgrade) { "UPGRADE" } else { "INSTALL" }
@@ -435,6 +453,17 @@ try {
     # parameter and the deploy died on a binding error after IIS was already configured (cdt-5).
     $runtimeConfigDir = Join-Path $PublishPath "config"
 
+    # The files both config backup copies leave out (cdt-10). The config database is backed up
+    # separately, by the verified online backup. The jobs and usage databases are per-instance
+    # operational state that is deliberately never backed up (Architectural Invariant 3): copying them
+    # kept bulk-job records and usage telemetry in a backup nothing prunes, past the retention the pages
+    # state, and a raw copy of a live WAL database is not a usable backup anyway. A new database the
+    # app keeps in config\ belongs here too; the cdt-10 test reads the app's source to enforce that.
+    $configCopyExclusions = @(
+        'exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm',
+        'exchangeadmin-jobs.db', 'exchangeadmin-jobs.db-wal', 'exchangeadmin-jobs.db-shm',
+        'exchangeadmin-usage.db', 'exchangeadmin-usage.db-wal', 'exchangeadmin-usage.db-shm')
+
     if ($isUpgrade) {
 
         # --- UPGRADE ---
@@ -478,10 +507,11 @@ try {
         }
 
         if (Test-Path $runtimeConfigDir) {
-            # Copy the rest of config/ (everything except a per-instance live DB triplet, which is
-            # handled above when it is the configured database and is a stale leftover otherwise).
+            # Copy the rest of config/: everything except the live databases in $configCopyExclusions -
+            # the config DB triplet (backed up above when it is the configured database, a stale leftover
+            # otherwise) and the jobs and usage databases, which are never backed up (cdt-10).
             Get-ChildItem -LiteralPath $runtimeConfigDir -File |
-                Where-Object { $_.Name -notin @('exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm') } |
+                Where-Object { $_.Name -notin $configCopyExclusions } |
                 ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $configDirBackup $_.Name) -Force }
             Write-Success "Runtime config directory backed up to $configDirBackup"
         } else {
@@ -679,6 +709,56 @@ try {
 
         # --- FRESH INSTALL ---
 
+        # Read before this branch changes anything. -Force over an existing deployment lands here and
+        # regenerates appsettings.json below, which must carry this key (cdt-8). A fresh install has no
+        # appsettings.json, so this is $null and nothing is carried. A file that does not parse stops the
+        # run here (ConvertFrom-Json raises a terminating error and "Stop" makes it fatal), which is the
+        # fail-closed answer: overwriting a file this script cannot read could drop the key.
+        $configStorePathSetting = Get-ConfigStorePathSetting -PublishPath $PublishPath
+
+        # The database the instance opens: ConfigStore:Path when set (the shared file, outside config\),
+        # else config\exchangeadmin.db. A configured file that is missing stops the run here, as on an
+        # upgrade, before anything is stopped or mirrored: the regenerated appsettings.json would point
+        # the app at it and the app never creates a configured database (cdt-9). A fresh install has no
+        # key, so this cannot fire there.
+        $configDbPath = Resolve-ConfigDbPath -PublishPath $PublishPath
+        if ($configStorePathSetting -and -not (Test-IsSqliteConfigDbPresent -DbPath $configDbPath)) {
+            Write-Fail "ConfigStore:Path in $configPath names '$configDbPath' but no database exists there. The app will not start against a missing shared database (it never creates one). Fix the key, restore the file, or run tools\Move-ConfigDbToShared.ps1 to create the shared database. Nothing was deployed."
+        }
+        if ($configStorePathSetting) {
+            Write-Success "ConfigStore:Path in the existing appsettings.json is kept: $configStorePathSetting"
+        }
+
+        # Architectural Invariant 3 on -Force: the verified online backup the upgrade path takes, in the
+        # same layout - one timestamped directory holding the backup of the database the instance opens
+        # (VACUUM INTO + integrity_check; it throws and aborts the deploy on failure) and the rest of
+        # config\ minus the live databases in $configCopyExclusions. It used to be a raw recursive copy
+        # of config\, taken before the publish and verified by nothing, that could be torn and never
+        # touched a shared database (cdt-9). It sits after the publish because the tool is the build in
+        # staging, and before the IIS changes, the job check, the pool stop and the mirror. A real fresh
+        # install (no appsettings.json) has nothing to back up.
+        if ($Force -and (Test-Path $configPath)) {
+            Write-Step "Backing up the existing runtime configuration"
+            $configDirBackup = Join-Path $BackupDir "config.${timestamp}.pre-force.bak"
+            New-Item -ItemType Directory -Path $configDirBackup -Force | Out-Null
+
+            $dbBackup = Backup-SqliteConfigDb -DbPath $configDbPath -DestDir $configDirBackup -Timestamp $timestamp -AppPath $StagingPath
+            if ($dbBackup) {
+                Write-Success "Config DB ($configDbPath) backed up (verified) to $dbBackup"
+            } else {
+                Write-Warn "No config DB at $configDbPath yet -- nothing to back up (it is created on first app start)"
+            }
+
+            if (Test-Path $runtimeConfigDir) {
+                Get-ChildItem -LiteralPath $runtimeConfigDir -File |
+                    Where-Object { $_.Name -notin $configCopyExclusions } |
+                    ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $configDirBackup $_.Name) -Force }
+                Write-Success "Runtime config directory backed up to $configDirBackup"
+            } else {
+                Write-Warn "No runtime config directory at $runtimeConfigDir -- only the config DB backup was taken"
+            }
+        }
+
         # Web application
         Write-Step "Configuring web application: $ParentSite/$AppAlias"
 
@@ -819,8 +899,12 @@ try {
                 AllowedHosts = "*"
             }
 
-            $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
-            Write-Success "appsettings.json generated"
+            Write-AppSettingsFile -Settings $config -Path $configPath -ConfigStorePath $configStorePathSetting
+            if ($configStorePathSetting) {
+                Write-Success "appsettings.json generated, ConfigStore:Path kept: $configStorePathSetting"
+            } else {
+                Write-Success "appsettings.json generated"
+            }
             $deploymentReadyForManifest = $true
         } finally {
             Write-Step "Starting app pool"
@@ -829,7 +913,8 @@ try {
             if ($deploymentReadyForManifest) {
                 Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
             }
-            # Staging contains the generated appsettings.json; clean on failure paths too.
+            # Staging contains the checkout's published appsettings.json (real environment values), not
+            # the generated one; clean on failure paths too.
             Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
