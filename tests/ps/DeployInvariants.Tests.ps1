@@ -192,6 +192,48 @@ Describe 'deploy.ps1' {
         $cleaning.Count | Should -BeGreaterOrEqual 2 -Because 'both the upgrade and fresh-install paths stage a publish containing live appsettings.json'
     }
 
+    It 'removes the staging publish on every failure after it, the pre-deploy backup included (cdt-6)' {
+        # Staging holds a published appsettings.json with real environment values. Every
+        # command from the publish to the end of the mode-specific section must sit in the
+        # BODY of a try whose finally removes it - not merely in some finally that does (a
+        # throw from Start-AppPoolWithRetry inside the inner finally skips that finally's own
+        # Remove-Item).
+        $publish = $s.Ast.Find({ param($node)
+                $node -is [System.Management.Automation.Language.CommandAst] -and
+                $node.Extent.Text -like 'dotnet publish*-o $StagingPath*' }, $true)
+        $publish | Should -Not -BeNullOrEmpty
+        $endAt = $s.Text.IndexOf('# --- Final output ---')
+        $endAt | Should -BeGreaterThan $publish.Extent.StartOffset
+
+        $commands = @($s.Ast.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.Extent.StartOffset -ge $publish.Extent.StartOffset -and
+                    $node.Extent.StartOffset -lt $endAt -and
+                    $node.Extent.Text -notmatch '^Remove-Item \$StagingPath\b' }, $true))
+
+        $uncovered = foreach ($command in $commands) {
+            $covered = $false
+            $ancestor = $command.Parent
+            while ($null -ne $ancestor -and -not $covered) {
+                if ($ancestor -is [System.Management.Automation.Language.TryStatementAst] -and
+                    $null -ne $ancestor.Finally -and
+                    $ancestor.Finally.Extent.Text -match 'Remove-Item \$StagingPath' -and
+                    $command.Extent.StartOffset -ge $ancestor.Body.Extent.StartOffset -and
+                    $command.Extent.EndOffset -le $ancestor.Body.Extent.EndOffset) {
+                    $covered = $true
+                }
+                $ancestor = $ancestor.Parent
+            }
+            if (-not $covered) { "line $($command.Extent.StartLineNumber): $($command.GetCommandName())" }
+        }
+        @($uncovered) | Should -BeNullOrEmpty -Because 'a throw there would leave the staging publish behind'
+
+        $names = @($commands | ForEach-Object { $_.GetCommandName() })
+        foreach ($name in 'Resolve-ConfigDbTool', 'Backup-SqliteConfigDb', 'Assert-NoActiveBulkJobsBeforeRecycle', 'Stop-AppPoolVerified', 'Start-AppPoolWithRetry', 'Write-DeploymentManifest') {
+            $names | Should -Contain $name -Because 'the covered region must reach the pre-deploy backup and the pool restart'
+        }
+    }
+
     It 'defaults to the DEV site, never prod (incident fix #6)' {
         # Bare .\deploy.ps1 used to target the prod alias/pool/path while the
         # docs called it "the dev deploy". Prod is reached only via the promote

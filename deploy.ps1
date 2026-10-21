@@ -404,434 +404,437 @@ Write-Step "Publishing application"
 
 $StagingPath = "$PublishPath.staging.$timestamp"
 
-Push-Location $ProjectRoot
+# Staging holds a published appsettings.json with real environment values. Every failure from
+# here to the end of the mode-specific section - a failed publish, a missing app binary, the
+# pre-deploy backup refusing a corrupt or missing database, an IIS or pool-stop failure, even a
+# throw from the pool restart in the inner finally blocks - must remove it. The inner finally
+# blocks still remove it first, so the post-deploy checks run with staging already gone (cdt-6).
 try {
-    dotnet publish -c Release -o $StagingPath --nologo
-    if ($LASTEXITCODE -ne 0) { Write-Fail "dotnet publish failed (exit $LASTEXITCODE)" }
-} finally {
-    Pop-Location
-}
-
-Write-Success "Published to staging: $StagingPath"
-
-# The config DB backup, the job check and the post-deploy integrity check run the app's own
-# db mode from the build just published, through the .NET host in Program Files - never
-# sqlite3.exe and never a PATH search (docs/ConfigDbToolInApp-Plan.md). Resolve it now so a
-# staging folder without the app binary stops the deploy, naming the path, before anything is
-# backed up or mirrored. Staging holds an appsettings.json with real environment values, so
-# it is removed on this failure too.
-try {
-    $configDbTool = Resolve-ConfigDbTool -AppPath $StagingPath
-} catch {
-    Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
-    throw
-}
-Write-Success "Config DB tool: $($configDbTool.Host) $($configDbTool.Assembly) db"
-
-# --- Mode-specific deployment ---
-
-# Both paths hand this to the active-job check before the pool stops. It used to be set only
-# inside the upgrade branch, so a fresh install (or -Force) passed $null to a mandatory string
-# parameter and the deploy died on a binding error after IIS was already configured (cdt-5).
-$runtimeConfigDir = Join-Path $PublishPath "config"
-
-if ($isUpgrade) {
-
-    # --- UPGRADE ---
-
-    Write-Step "Backing up configuration"
-    $backupName = "appsettings.${timestamp}.bak"
-    Copy-Item $configPath (Join-Path $BackupDir $backupName)
-    Write-Success "Config backed up to $BackupDir\$backupName"
-
-    # The 2026-06-12 incident had no pre-deploy snapshot of config/, leaving the
-    # pre-incident enablement state unknowable. Back up the runtime config directory,
-    # retained alongside the appsettings backups.
-    #
-    # The config DB is a LIVE SQLite database - a raw recursive Copy-Item of a live WAL DB can be
-    # torn/inconsistent, producing a worthless rollback snapshot. Back the DB up via a verified
-    # online backup (VACUUM INTO + integrity_check; SqliteConfigStore-Plan Phase D), then copy
-    # any remaining non-DB config files (e.g. legacy *.imported-* archives, samples) with a plain
-    # recursive copy.
-    #
-    # WHERE THE DB IS (SharedConfigDb-Plan AC6, decision 2026-09-04): when appsettings.json names
-    # ConfigStore:Path, that file - shared by both instances on this server - is what gets backed
-    # up, not the publish folder's config\. With the key set the file MUST exist: a mistyped key
-    # or a moved file must stop the deploy here, before anything is mirrored, because the app
-    # would otherwise refuse to start (it never creates a configured database). Without the key
-    # a missing DB just means the first start has not happened yet.
-    $configStorePathSetting = Get-ConfigStorePathSetting -PublishPath $PublishPath
-    $configDbPath = Resolve-ConfigDbPath -PublishPath $PublishPath
-    if ($configStorePathSetting -and -not (Test-IsSqliteConfigDbPresent -DbPath $configDbPath)) {
-        Write-Fail "ConfigStore:Path in $configPath names '$configDbPath' but no database exists there. The app will not start against a missing shared database (it never creates one). Fix the key, restore the file, or run tools\Move-ConfigDbToShared.ps1 to create the shared database. Nothing was deployed."
-    }
-
-    $configDirBackup = Join-Path $BackupDir "config.${timestamp}.bak"
-    New-Item -ItemType Directory -Path $configDirBackup -Force | Out-Null
-
-    # Verified online backup of the live DB (throws + aborts the deploy on integrity failure).
-    $dbBackup = Backup-SqliteConfigDb -DbPath $configDbPath -DestDir $configDirBackup -Timestamp $timestamp -AppPath $StagingPath
-    if ($dbBackup) {
-        Write-Success "Config DB ($configDbPath) backed up (verified) to $dbBackup"
-    } else {
-        Write-Warn "No config DB at $configDbPath yet -- nothing to back up (it is created on first app start)"
-    }
-
-    if (Test-Path $runtimeConfigDir) {
-        # Copy the rest of config/ (everything except a per-instance live DB triplet, which is
-        # handled above when it is the configured database and is a stale leftover otherwise).
-        Get-ChildItem -LiteralPath $runtimeConfigDir -File |
-            Where-Object { $_.Name -notin @('exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm') } |
-            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $configDirBackup $_.Name) -Force }
-        Write-Success "Runtime config directory backed up to $configDirBackup"
-    } else {
-        Write-Warn "No runtime config directory at $runtimeConfigDir -- only the config DB backup was taken"
-    }
-
-    # Pre-deploy snapshot for the post-deploy drift check (incident fix #5): the
-    # 2026-06-12 incident surfaced as silent runtime-state divergence with nothing
-    # comparing before to after.
-    # extended-log-level.txt is rewritten by the app on every startup
-    # (ExtendedLogService.LoadLevel -> SetLevel), so it always differs across a
-    # pool restart and would false-positive the drift check.
-    # The SQLite config DB triplet (.db/-wal/-shm) changes byte-for-byte across a pool restart
-    # (WAL checkpoints, startup seeding) by design, so a size/mtime drift comparison is
-    # meaningless for it - it is verified by PRAGMA integrity_check after deploy instead (see the
-    # post-deploy DB health check). Exclude it from the file-drift inventory.
-    $driftCheckExclusions = @('extended-log-level.txt', 'exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm')
-    $preConfigInventory = @{}
-    if (Test-Path $runtimeConfigDir) {
-        Get-ChildItem $runtimeConfigDir -File |
-            Where-Object { $_.Name -notin $driftCheckExclusions } |
-            ForEach-Object {
-                $preConfigInventory[$_.Name] = "$($_.Length)|$($_.LastWriteTimeUtc.Ticks)"
-            }
-    }
-    $preAppSettingsKeys = @((Get-Content $configPath -Raw | ConvertFrom-Json).PSObject.Properties.Name)
-
-    Write-Step "Stopping app pool"
-    # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
-    Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir -AppPath $StagingPath | Out-Null
-    # Review of A35: confirming that $AppPoolName stopped proves nothing if the IIS
-    # application being mirrored is served by a DIFFERENT pool. A mistyped -AppPoolName
-    # creates and stops that wrong pool, and robocopy /MIR then replaces the binaries of an
-    # application still running under the real one - the exact failure A35 set out to
-    # prevent, reached by another door. Ask IIS which pool serves this app, and refuse when
-    # it is not the one about to be stopped.
-    $boundPool = try { (Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop).applicationPool } catch { $null }
-    if ($boundPool -and $boundPool -ne $AppPoolName) {
-        Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
-    }
-
-    # A35: the empty catch here swallowed every stop failure, not only the harmless
-    # already-stopped one, and the fixed sleep was a guess about how long a worker takes to
-    # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
-    # CONFIRM, and abort before mirroring if it did not stop.
-    $poolState = Stop-AppPoolVerified -Name $AppPoolName
-    if ($poolState -eq 'Absent') {
-        Write-Warn "App pool $AppPoolName does not exist - nothing to stop."
-    } else {
-        Write-Success "App pool $AppPoolName confirmed stopped"
-    }
-
-    $deploymentReadyForManifest = $false
+    Push-Location $ProjectRoot
     try {
-        Write-Step "Deploying files (robocopy /MIR)"
-        $robocopyArgs = @(
-            $StagingPath, $PublishPath,
-            '/MIR',
-            '/XF', 'appsettings*.json',
-            '/XD', 'logs', 'config',
-            '/NFL', '/NDL', '/NJH', '/NJS', '/R:2', '/W:1'
-        )
-        & robocopy @robocopyArgs
-        if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
-        Write-Success "Files deployed"
-
-        # Config reconciliation
-        Write-Step "Reconciling configuration"
-        $config = Get-Content $configPath -Raw | ConvertFrom-Json
-
-        if ($config.Migration -and (Get-Member -InputObject $config.Migration -Name "OnPremTargetDAG" -MemberType NoteProperty -ErrorAction SilentlyContinue)) {
-            $hasTargetDatabases = (Get-Member -InputObject $config.Migration -Name "OnPremTargetDatabases" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
-                                  $config.Migration.OnPremTargetDatabases -and $config.Migration.OnPremTargetDatabases.Count -gt 0
-            if (-not $hasTargetDatabases) {
-                Write-Warn "Migration:OnPremTargetDatabases is not configured. Move-back batches will fail until target databases are set in Module Config."
-            }
-            Write-Warn "Migration:OnPremTargetDAG is obsolete. Leaving appsettings.json unchanged during deploy; remove it manually after confirming Migration:OnPremTargetDatabases."
-        }
-
-        if ($config.Delinea -and (Get-Member -InputObject $config.Delinea -Name "ExchangeSecretId" -MemberType NoteProperty -ErrorAction SilentlyContinue)) {
-            Write-Warn "Delinea:ExchangeSecretId is obsolete. Leaving appsettings.json unchanged during deploy; configure DelineaSecretId separately per module."
-        }
-
-        $hasAdminGroups = $config.Security -and
-                          (Get-Member -InputObject $config.Security -Name "AdminGroups" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
-                          $config.Security.AdminGroups -and $config.Security.AdminGroups.Count -gt 0
-        if (-not $hasAdminGroups) {
-            if ($AdminGroups -and $AdminGroups.Count -gt 0) {
-                Write-Warn "Security:AdminGroups is missing or empty. Leaving appsettings.json unchanged during deploy; add AdminGroups manually."
-            } else {
-                Write-Warn "Security:AdminGroups is missing or empty -- /admin-settings page will be inaccessible until configured (see appsettings.json.sample)"
-            }
-        }
-
-        $sectionAccessFragment = Join-Path $PublishPath "config\sectionaccess.json"
-        if ((-not $config.Security -or -not (Get-Member -InputObject $config.Security -Name "SectionAccess" -MemberType NoteProperty -ErrorAction SilentlyContinue)) -and
-            -not (Test-Path $sectionAccessFragment)) {
-            Write-Warn "Section-level permissions not configured -- use per-module config pages or create config\sectionaccess.json"
-        }
-
-        $protectedPrincipals = Join-Path $PublishPath "config\protected-principals.json"
-        if (-not (Test-Path $protectedPrincipals)) {
-            Write-Warn "config\protected-principals.json not found -- protected principal rules will use defaults until configured"
-        }
-
-        $adEditableAttributes = Join-Path $PublishPath "config\ad-editable-attributes.json"
-        if (-not (Test-Path $adEditableAttributes)) {
-            Write-Warn "config\ad-editable-attributes.json not found -- AD attribute editor will use defaults until configured"
-        }
-
-        Write-Success "Configuration reconciled"
-        $deploymentReadyForManifest = $true
+        dotnet publish -c Release -o $StagingPath --nologo
+        if ($LASTEXITCODE -ne 0) { Write-Fail "dotnet publish failed (exit $LASTEXITCODE)" }
     } finally {
-        Write-Step "Starting app pool"
-        Start-AppPoolWithRetry -Name $AppPoolName
-        Write-Success "App pool started"
-        if ($deploymentReadyForManifest) {
-            Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+        Pop-Location
+    }
+
+    Write-Success "Published to staging: $StagingPath"
+
+    # The config DB backup, the job check and the post-deploy integrity check run the app's own
+    # db mode from the build just published, through the .NET host in Program Files - never
+    # sqlite3.exe and never a PATH search (docs/ConfigDbToolInApp-Plan.md). Resolve it now so a
+    # staging folder without the app binary stops the deploy, naming the path, before anything is
+    # backed up or mirrored. The enclosing finally removes staging on this failure too.
+    $configDbTool = Resolve-ConfigDbTool -AppPath $StagingPath
+    Write-Success "Config DB tool: $($configDbTool.Host) $($configDbTool.Assembly) db"
+
+    # --- Mode-specific deployment ---
+
+    # Both paths hand this to the active-job check before the pool stops. It used to be set only
+    # inside the upgrade branch, so a fresh install (or -Force) passed $null to a mandatory string
+    # parameter and the deploy died on a binding error after IIS was already configured (cdt-5).
+    $runtimeConfigDir = Join-Path $PublishPath "config"
+
+    if ($isUpgrade) {
+
+        # --- UPGRADE ---
+
+        Write-Step "Backing up configuration"
+        $backupName = "appsettings.${timestamp}.bak"
+        Copy-Item $configPath (Join-Path $BackupDir $backupName)
+        Write-Success "Config backed up to $BackupDir\$backupName"
+
+        # The 2026-06-12 incident had no pre-deploy snapshot of config/, leaving the
+        # pre-incident enablement state unknowable. Back up the runtime config directory,
+        # retained alongside the appsettings backups.
+        #
+        # The config DB is a LIVE SQLite database - a raw recursive Copy-Item of a live WAL DB can be
+        # torn/inconsistent, producing a worthless rollback snapshot. Back the DB up via a verified
+        # online backup (VACUUM INTO + integrity_check; SqliteConfigStore-Plan Phase D), then copy
+        # any remaining non-DB config files (e.g. legacy *.imported-* archives, samples) with a plain
+        # recursive copy.
+        #
+        # WHERE THE DB IS (SharedConfigDb-Plan AC6, decision 2026-09-04): when appsettings.json names
+        # ConfigStore:Path, that file - shared by both instances on this server - is what gets backed
+        # up, not the publish folder's config\. With the key set the file MUST exist: a mistyped key
+        # or a moved file must stop the deploy here, before anything is mirrored, because the app
+        # would otherwise refuse to start (it never creates a configured database). Without the key
+        # a missing DB just means the first start has not happened yet.
+        $configStorePathSetting = Get-ConfigStorePathSetting -PublishPath $PublishPath
+        $configDbPath = Resolve-ConfigDbPath -PublishPath $PublishPath
+        if ($configStorePathSetting -and -not (Test-IsSqliteConfigDbPresent -DbPath $configDbPath)) {
+            Write-Fail "ConfigStore:Path in $configPath names '$configDbPath' but no database exists there. The app will not start against a missing shared database (it never creates one). Fix the key, restore the file, or run tools\Move-ConfigDbToShared.ps1 to create the shared database. Nothing was deployed."
         }
-        # Staging contains the dev appsettings.json (real environment values).
-        # Clean it on failure paths too, not only after a successful deploy.
-        Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
-    }
 
-    # --- Post-deploy config drift check (incident fix #5) ---
-    # Only reached on success (failures above throw past this point). The pool has
-    # restarted; nothing about this deploy should have changed runtime config.
+        $configDirBackup = Join-Path $BackupDir "config.${timestamp}.bak"
+        New-Item -ItemType Directory -Path $configDirBackup -Force | Out-Null
 
-    Write-Step "Verifying runtime config integrity"
-
-    $driftFound = $false
-    $postFiles = @{}
-    if (Test-Path $runtimeConfigDir) {
-        Get-ChildItem $runtimeConfigDir -File |
-            Where-Object { $_.Name -notin $driftCheckExclusions } |
-            ForEach-Object {
-                $postFiles[$_.Name] = "$($_.Length)|$($_.LastWriteTimeUtc.Ticks)"
-            }
-    }
-    foreach ($name in $preConfigInventory.Keys) {
-        if (-not $postFiles.ContainsKey($name)) {
-            Write-Warn "POST-DEPLOY CHECK: config\$name existed before the deploy but is MISSING now"
-            $driftFound = $true
-        } elseif ($postFiles[$name] -ne $preConfigInventory[$name]) {
-            Write-Warn "POST-DEPLOY CHECK: config\$name was MODIFIED during the deploy (size or timestamp changed)"
-            $driftFound = $true
+        # Verified online backup of the live DB (throws + aborts the deploy on integrity failure).
+        $dbBackup = Backup-SqliteConfigDb -DbPath $configDbPath -DestDir $configDirBackup -Timestamp $timestamp -AppPath $StagingPath
+        if ($dbBackup) {
+            Write-Success "Config DB ($configDbPath) backed up (verified) to $dbBackup"
+        } else {
+            Write-Warn "No config DB at $configDbPath yet -- nothing to back up (it is created on first app start)"
         }
-    }
-    foreach ($name in $postFiles.Keys) {
-        if (-not $preConfigInventory.ContainsKey($name)) {
-            Write-Warn "POST-DEPLOY CHECK: config\$name APPEARED during the deploy"
-            $driftFound = $true
+
+        if (Test-Path $runtimeConfigDir) {
+            # Copy the rest of config/ (everything except a per-instance live DB triplet, which is
+            # handled above when it is the configured database and is a stale leftover otherwise).
+            Get-ChildItem -LiteralPath $runtimeConfigDir -File |
+                Where-Object { $_.Name -notin @('exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm') } |
+                ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $configDirBackup $_.Name) -Force }
+            Write-Success "Runtime config directory backed up to $configDirBackup"
+        } else {
+            Write-Warn "No runtime config directory at $runtimeConfigDir -- only the config DB backup was taken"
         }
-    }
 
-    $postAppSettingsKeys = @((Get-Content $configPath -Raw | ConvertFrom-Json).PSObject.Properties.Name)
-    $lostKeys = @($preAppSettingsKeys | Where-Object { $_ -notin $postAppSettingsKeys })
-    if ($lostKeys.Count -gt 0) {
-        Write-Warn ("POST-DEPLOY CHECK: appsettings.json LOST top-level keys: " + ($lostKeys -join ', '))
-        $driftFound = $true
-    }
+        # Pre-deploy snapshot for the post-deploy drift check (incident fix #5): the
+        # 2026-06-12 incident surfaced as silent runtime-state divergence with nothing
+        # comparing before to after.
+        # extended-log-level.txt is rewritten by the app on every startup
+        # (ExtendedLogService.LoadLevel -> SetLevel), so it always differs across a
+        # pool restart and would false-positive the drift check.
+        # The SQLite config DB triplet (.db/-wal/-shm) changes byte-for-byte across a pool restart
+        # (WAL checkpoints, startup seeding) by design, so a size/mtime drift comparison is
+        # meaningless for it - it is verified by PRAGMA integrity_check after deploy instead (see the
+        # post-deploy DB health check). Exclude it from the file-drift inventory.
+        $driftCheckExclusions = @('extended-log-level.txt', 'exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm')
+        $preConfigInventory = @{}
+        if (Test-Path $runtimeConfigDir) {
+            Get-ChildItem $runtimeConfigDir -File |
+                Where-Object { $_.Name -notin $driftCheckExclusions } |
+                ForEach-Object {
+                    $preConfigInventory[$_.Name] = "$($_.Length)|$($_.LastWriteTimeUtc.Ticks)"
+                }
+        }
+        $preAppSettingsKeys = @((Get-Content $configPath -Raw | ConvertFrom-Json).PSObject.Properties.Name)
 
-    if ($driftFound) {
-        $backupHint = if ($configDirBackup) { "$configDirBackup and " } else { "" }
-        Write-Warn "POST-DEPLOY CHECK: runtime config drifted during this deploy. Compare against ${backupHint}$BackupDir\$backupName before trusting the app, and investigate what wrote it."
-    } else {
-        Write-Success "Runtime config verified: config/ inventory and appsettings.json keys unchanged"
-    }
+        Write-Step "Stopping app pool"
+        # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir -AppPath $StagingPath | Out-Null
+        # Review of A35: confirming that $AppPoolName stopped proves nothing if the IIS
+        # application being mirrored is served by a DIFFERENT pool. A mistyped -AppPoolName
+        # creates and stops that wrong pool, and robocopy /MIR then replaces the binaries of an
+        # application still running under the real one - the exact failure A35 set out to
+        # prevent, reached by another door. Ask IIS which pool serves this app, and refuse when
+        # it is not the one about to be stopped.
+        $boundPool = try { (Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop).applicationPool } catch { $null }
+        if ($boundPool -and $boundPool -ne $AppPoolName) {
+            Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
+        }
 
-    # Post-deploy live DB health check. The DB triplet is excluded from the file-drift inventory
-    # above (it changes by design across the pool restart via WAL checkpoint + startup seeding),
-    # so verify it properly here instead: the app pool was started above, so the schema has been
-    # migrated/seeded. A missing or corrupt live DB must be flagged loudly rather than ending on
-    # the success banner. Warn (not throw) - the deploy has already happened; this surfaces a bad
-    # outcome to the operator with the verified pre-deploy backup as the rollback. The path is
-    # resolved again from appsettings.json (deploy never rewrites it) so a shared database is
-    # checked where it actually lives (SharedConfigDb-Plan AC6).
-    # The staging folder was removed in the finally above, so the tool runs from the publish
-    # folder, which now holds the same build.
-    $liveDb = Resolve-ConfigDbPath -PublishPath $PublishPath
-    if (Test-Path -LiteralPath $liveDb) {
+        # A35: the empty catch here swallowed every stop failure, not only the harmless
+        # already-stopped one, and the fixed sleep was a guess about how long a worker takes to
+        # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
+        # CONFIRM, and abort before mirroring if it did not stop.
+        $poolState = Stop-AppPoolVerified -Name $AppPoolName
+        if ($poolState -eq 'Absent') {
+            Write-Warn "App pool $AppPoolName does not exist - nothing to stop."
+        } else {
+            Write-Success "App pool $AppPoolName confirmed stopped"
+        }
+
+        $deploymentReadyForManifest = $false
         try {
-            Test-SqliteConfigDbIntegrity -DbPath $liveDb -AppPath $PublishPath | Out-Null
-            Write-Success "Config DB verified: integrity_check passed on the live store at $liveDb"
-        } catch {
-            Write-Warn "POST-DEPLOY CHECK: live config DB integrity check FAILED: $($_.Exception.Message). The app may not function correctly - restore from the pre-deploy backup in $BackupDir and investigate."
-        }
-    } elseif ($configStorePathSetting) {
-        Write-Warn "POST-DEPLOY CHECK: ConfigStore:Path names $liveDb but it does not exist after deploy. The app will not start against a missing shared database - investigate."
-    } else {
-        Write-Warn "POST-DEPLOY CHECK: no config DB at $liveDb after deploy. If this is the first deploy of the SQLite build it will be created on first app start; otherwise investigate."
-    }
+            Write-Step "Deploying files (robocopy /MIR)"
+            $robocopyArgs = @(
+                $StagingPath, $PublishPath,
+                '/MIR',
+                '/XF', 'appsettings*.json',
+                '/XD', 'logs', 'config',
+                '/NFL', '/NDL', '/NJH', '/NJS', '/R:2', '/W:1'
+            )
+            & robocopy @robocopyArgs
+            if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
+            Write-Success "Files deployed"
 
-} else {
+            # Config reconciliation
+            Write-Step "Reconciling configuration"
+            $config = Get-Content $configPath -Raw | ConvertFrom-Json
 
-    # --- FRESH INSTALL ---
+            if ($config.Migration -and (Get-Member -InputObject $config.Migration -Name "OnPremTargetDAG" -MemberType NoteProperty -ErrorAction SilentlyContinue)) {
+                $hasTargetDatabases = (Get-Member -InputObject $config.Migration -Name "OnPremTargetDatabases" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
+                                      $config.Migration.OnPremTargetDatabases -and $config.Migration.OnPremTargetDatabases.Count -gt 0
+                if (-not $hasTargetDatabases) {
+                    Write-Warn "Migration:OnPremTargetDatabases is not configured. Move-back batches will fail until target databases are set in Module Config."
+                }
+                Write-Warn "Migration:OnPremTargetDAG is obsolete. Leaving appsettings.json unchanged during deploy; remove it manually after confirming Migration:OnPremTargetDatabases."
+            }
 
-    # Web application
-    Write-Step "Configuring web application: $ParentSite/$AppAlias"
+            if ($config.Delinea -and (Get-Member -InputObject $config.Delinea -Name "ExchangeSecretId" -MemberType NoteProperty -ErrorAction SilentlyContinue)) {
+                Write-Warn "Delinea:ExchangeSecretId is obsolete. Leaving appsettings.json unchanged during deploy; configure DelineaSecretId separately per module."
+            }
 
-    if (-not (Get-Website -Name $ParentSite -ErrorAction SilentlyContinue)) {
-        Write-Fail "Parent site '$ParentSite' not found. Check -ParentSite parameter."
-    }
-
-    $existingApp = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction SilentlyContinue
-    if ($existingApp) {
-        Set-ItemProperty "IIS:\Sites\$ParentSite\$AppAlias" -Name physicalPath    -Value $PublishPath
-        Set-ItemProperty "IIS:\Sites\$ParentSite\$AppAlias" -Name applicationPool -Value $AppPoolName
-    } else {
-        if (-not (Test-Path $PublishPath)) {
-            New-Item -ItemType Directory -Path $PublishPath -Force | Out-Null
-        }
-        New-WebApplication -Name $AppAlias `
-                           -Site $ParentSite `
-                           -PhysicalPath $PublishPath `
-                           -ApplicationPool $AppPoolName | Out-Null
-    }
-
-    Set-WebConfigurationProperty `
-        -Filter "system.webServer/security/authentication/windowsAuthentication" `
-        -Name enabled -Value $true -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
-    Set-WebConfigurationProperty `
-        -Filter "system.webServer/security/authentication/windowsAuthentication" `
-        -Name useKernelMode -Value $false -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
-    Set-WebConfigurationProperty `
-        -Filter "system.webServer/security/authentication/windowsAuthentication" `
-        -Name useAppPoolCredentials -Value $true -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
-    Remove-WebConfigurationProperty `
-        -Filter "system.webServer/security/authentication/windowsAuthentication/providers" `
-        -Name "." -PSPath "IIS:\" -Location "$ParentSite/$AppAlias" `
-        -AtElement @{value="Negotiate"} -ErrorAction SilentlyContinue
-    Set-WebConfigurationProperty `
-        -Filter "system.webServer/security/authentication/anonymousAuthentication" `
-        -Name enabled -Value $false -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
-
-    Write-Success "Web application configured"
-
-    # Stop pool before file swap
-    Write-Step "Stopping app pool for file deployment"
-    # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
-    Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir -AppPath $StagingPath | Out-Null
-    # Review of A35: confirming that $AppPoolName stopped proves nothing if the IIS
-    # application being mirrored is served by a DIFFERENT pool. A mistyped -AppPoolName
-    # creates and stops that wrong pool, and robocopy /MIR then replaces the binaries of an
-    # application still running under the real one - the exact failure A35 set out to
-    # prevent, reached by another door. Ask IIS which pool serves this app, and refuse when
-    # it is not the one about to be stopped.
-    $boundPool = try { (Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop).applicationPool } catch { $null }
-    if ($boundPool -and $boundPool -ne $AppPoolName) {
-        Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
-    }
-
-    # A35: the empty catch here swallowed every stop failure, not only the harmless
-    # already-stopped one, and the fixed sleep was a guess about how long a worker takes to
-    # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
-    # CONFIRM, and abort before mirroring if it did not stop.
-    $poolState = Stop-AppPoolVerified -Name $AppPoolName
-    if ($poolState -eq 'Absent') {
-        Write-Warn "App pool $AppPoolName does not exist - nothing to stop."
-    } else {
-        Write-Success "App pool $AppPoolName confirmed stopped"
-    }
-
-    $deploymentReadyForManifest = $false
-    try {
-        # Deploy files
-        Write-Step "Deploying files (robocopy /MIR)"
-        $robocopyArgs = @(
-            $StagingPath, $PublishPath,
-            '/MIR',
-            '/XF', 'appsettings*.json',
-            '/XD', 'logs', 'config',
-            '/NFL', '/NDL', '/NJH', '/NJS', '/R:2', '/W:1'
-        )
-        & robocopy @robocopyArgs
-        if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
-        Write-Success "Files deployed"
-
-        # Generate appsettings.json
-        Write-Step "Generating appsettings.json"
-
-        $config = [ordered]@{
-            Serilog = [ordered]@{
-                MinimumLevel = [ordered]@{
-                    Default = "Information"
-                    Override = [ordered]@{
-                        "Microsoft.AspNetCore" = "Warning"
-                        "Microsoft.Hosting.Lifetime" = "Information"
-                    }
+            $hasAdminGroups = $config.Security -and
+                              (Get-Member -InputObject $config.Security -Name "AdminGroups" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
+                              $config.Security.AdminGroups -and $config.Security.AdminGroups.Count -gt 0
+            if (-not $hasAdminGroups) {
+                if ($AdminGroups -and $AdminGroups.Count -gt 0) {
+                    Write-Warn "Security:AdminGroups is missing or empty. Leaving appsettings.json unchanged during deploy; add AdminGroups manually."
+                } else {
+                    Write-Warn "Security:AdminGroups is missing or empty -- /admin-settings page will be inaccessible until configured (see appsettings.json.sample)"
                 }
             }
-            ExchangeOnline = [ordered]@{
-                AppId = $EXOAppId
-                Organization = $EXOOrganization
-                CertificateSubject = $CertSubject
+
+            $sectionAccessFragment = Join-Path $PublishPath "config\sectionaccess.json"
+            if ((-not $config.Security -or -not (Get-Member -InputObject $config.Security -Name "SectionAccess" -MemberType NoteProperty -ErrorAction SilentlyContinue)) -and
+                -not (Test-Path $sectionAccessFragment)) {
+                Write-Warn "Section-level permissions not configured -- use per-module config pages or create config\sectionaccess.json"
             }
-            OnPremExchange = [ordered]@{
-                ServerUri = $OnPremServerUri
+
+            $protectedPrincipals = Join-Path $PublishPath "config\protected-principals.json"
+            if (-not (Test-Path $protectedPrincipals)) {
+                Write-Warn "config\protected-principals.json not found -- protected principal rules will use defaults until configured"
             }
-            Delinea = [ordered]@{
-                SecretServerUrl = $DelineaUrl
-                CredentialTarget = "Delinea_Client"
+
+            $adEditableAttributes = Join-Path $PublishPath "config\ad-editable-attributes.json"
+            if (-not (Test-Path $adEditableAttributes)) {
+                Write-Warn "config\ad-editable-attributes.json not found -- AD attribute editor will use defaults until configured"
             }
-            Audit = [ordered]@{
-                LogRoot = $LogRoot
-                RotationPeriod = "daily"
+
+            Write-Success "Configuration reconciled"
+            $deploymentReadyForManifest = $true
+        } finally {
+            Write-Step "Starting app pool"
+            Start-AppPoolWithRetry -Name $AppPoolName
+            Write-Success "App pool started"
+            if ($deploymentReadyForManifest) {
+                Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
             }
-            OperationTrace = [ordered]@{
-                Enabled = $true
-            }
-            Email = [ordered]@{
-                SmtpHost = $SmtpHost
-                SmtpPort = 25
-                SmtpUseSsl = $false
-                FromAddress = "ExchangeAdmins@$($EXOOrganization -replace '\.onmicrosoft\.com$','.com')"
-                FromName = "Exchange Admins"
-                AdminNotificationEmail = $AdminEmail
-                NotifyUsersOnPermissionGrant = $false
-            }
-            Security = [ordered]@{
-                AllowedGroups = @($qualifiedGroups)
-                AdminGroups = @($qualifiedAdminGroups)
-            }
-            ServiceNow = [ordered]@{
-                Enabled = $false
-                InstanceUrl = ""
-                Username = ""
-                Password = ""
-            }
-            Application = [ordered]@{
-                PathBase = $PathBase
-                ContactEmail = $AdminEmail
-                PublicBaseUrl = $PublicBaseUrl
-            }
-            AllowedHosts = "*"
+            # Staging contains the dev appsettings.json (real environment values).
+            # Clean it on failure paths too, not only after a successful deploy.
+            Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
         }
 
-        $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
-        Write-Success "appsettings.json generated"
-        $deploymentReadyForManifest = $true
-    } finally {
-        Write-Step "Starting app pool"
-        Start-AppPoolWithRetry -Name $AppPoolName
-        Write-Success "App pool started"
-        if ($deploymentReadyForManifest) {
-            Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+        # --- Post-deploy config drift check (incident fix #5) ---
+        # Only reached on success (failures above throw past this point). The pool has
+        # restarted; nothing about this deploy should have changed runtime config.
+
+        Write-Step "Verifying runtime config integrity"
+
+        $driftFound = $false
+        $postFiles = @{}
+        if (Test-Path $runtimeConfigDir) {
+            Get-ChildItem $runtimeConfigDir -File |
+                Where-Object { $_.Name -notin $driftCheckExclusions } |
+                ForEach-Object {
+                    $postFiles[$_.Name] = "$($_.Length)|$($_.LastWriteTimeUtc.Ticks)"
+                }
         }
-        # Staging contains the generated appsettings.json; clean on failure paths too.
-        Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
+        foreach ($name in $preConfigInventory.Keys) {
+            if (-not $postFiles.ContainsKey($name)) {
+                Write-Warn "POST-DEPLOY CHECK: config\$name existed before the deploy but is MISSING now"
+                $driftFound = $true
+            } elseif ($postFiles[$name] -ne $preConfigInventory[$name]) {
+                Write-Warn "POST-DEPLOY CHECK: config\$name was MODIFIED during the deploy (size or timestamp changed)"
+                $driftFound = $true
+            }
+        }
+        foreach ($name in $postFiles.Keys) {
+            if (-not $preConfigInventory.ContainsKey($name)) {
+                Write-Warn "POST-DEPLOY CHECK: config\$name APPEARED during the deploy"
+                $driftFound = $true
+            }
+        }
+
+        $postAppSettingsKeys = @((Get-Content $configPath -Raw | ConvertFrom-Json).PSObject.Properties.Name)
+        $lostKeys = @($preAppSettingsKeys | Where-Object { $_ -notin $postAppSettingsKeys })
+        if ($lostKeys.Count -gt 0) {
+            Write-Warn ("POST-DEPLOY CHECK: appsettings.json LOST top-level keys: " + ($lostKeys -join ', '))
+            $driftFound = $true
+        }
+
+        if ($driftFound) {
+            $backupHint = if ($configDirBackup) { "$configDirBackup and " } else { "" }
+            Write-Warn "POST-DEPLOY CHECK: runtime config drifted during this deploy. Compare against ${backupHint}$BackupDir\$backupName before trusting the app, and investigate what wrote it."
+        } else {
+            Write-Success "Runtime config verified: config/ inventory and appsettings.json keys unchanged"
+        }
+
+        # Post-deploy live DB health check. The DB triplet is excluded from the file-drift inventory
+        # above (it changes by design across the pool restart via WAL checkpoint + startup seeding),
+        # so verify it properly here instead: the app pool was started above, so the schema has been
+        # migrated/seeded. A missing or corrupt live DB must be flagged loudly rather than ending on
+        # the success banner. Warn (not throw) - the deploy has already happened; this surfaces a bad
+        # outcome to the operator with the verified pre-deploy backup as the rollback. The path is
+        # resolved again from appsettings.json (deploy never rewrites it) so a shared database is
+        # checked where it actually lives (SharedConfigDb-Plan AC6).
+        # The staging folder was removed in the finally above, so the tool runs from the publish
+        # folder, which now holds the same build.
+        $liveDb = Resolve-ConfigDbPath -PublishPath $PublishPath
+        if (Test-Path -LiteralPath $liveDb) {
+            try {
+                Test-SqliteConfigDbIntegrity -DbPath $liveDb -AppPath $PublishPath | Out-Null
+                Write-Success "Config DB verified: integrity_check passed on the live store at $liveDb"
+            } catch {
+                Write-Warn "POST-DEPLOY CHECK: live config DB integrity check FAILED: $($_.Exception.Message). The app may not function correctly - restore from the pre-deploy backup in $BackupDir and investigate."
+            }
+        } elseif ($configStorePathSetting) {
+            Write-Warn "POST-DEPLOY CHECK: ConfigStore:Path names $liveDb but it does not exist after deploy. The app will not start against a missing shared database - investigate."
+        } else {
+            Write-Warn "POST-DEPLOY CHECK: no config DB at $liveDb after deploy. If this is the first deploy of the SQLite build it will be created on first app start; otherwise investigate."
+        }
+
+    } else {
+
+        # --- FRESH INSTALL ---
+
+        # Web application
+        Write-Step "Configuring web application: $ParentSite/$AppAlias"
+
+        if (-not (Get-Website -Name $ParentSite -ErrorAction SilentlyContinue)) {
+            Write-Fail "Parent site '$ParentSite' not found. Check -ParentSite parameter."
+        }
+
+        $existingApp = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction SilentlyContinue
+        if ($existingApp) {
+            Set-ItemProperty "IIS:\Sites\$ParentSite\$AppAlias" -Name physicalPath    -Value $PublishPath
+            Set-ItemProperty "IIS:\Sites\$ParentSite\$AppAlias" -Name applicationPool -Value $AppPoolName
+        } else {
+            if (-not (Test-Path $PublishPath)) {
+                New-Item -ItemType Directory -Path $PublishPath -Force | Out-Null
+            }
+            New-WebApplication -Name $AppAlias `
+                               -Site $ParentSite `
+                               -PhysicalPath $PublishPath `
+                               -ApplicationPool $AppPoolName | Out-Null
+        }
+
+        Set-WebConfigurationProperty `
+            -Filter "system.webServer/security/authentication/windowsAuthentication" `
+            -Name enabled -Value $true -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
+        Set-WebConfigurationProperty `
+            -Filter "system.webServer/security/authentication/windowsAuthentication" `
+            -Name useKernelMode -Value $false -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
+        Set-WebConfigurationProperty `
+            -Filter "system.webServer/security/authentication/windowsAuthentication" `
+            -Name useAppPoolCredentials -Value $true -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
+        Remove-WebConfigurationProperty `
+            -Filter "system.webServer/security/authentication/windowsAuthentication/providers" `
+            -Name "." -PSPath "IIS:\" -Location "$ParentSite/$AppAlias" `
+            -AtElement @{value="Negotiate"} -ErrorAction SilentlyContinue
+        Set-WebConfigurationProperty `
+            -Filter "system.webServer/security/authentication/anonymousAuthentication" `
+            -Name enabled -Value $false -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
+
+        Write-Success "Web application configured"
+
+        # Stop pool before file swap
+        Write-Step "Stopping app pool for file deployment"
+        # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir -AppPath $StagingPath | Out-Null
+        # Review of A35: confirming that $AppPoolName stopped proves nothing if the IIS
+        # application being mirrored is served by a DIFFERENT pool. A mistyped -AppPoolName
+        # creates and stops that wrong pool, and robocopy /MIR then replaces the binaries of an
+        # application still running under the real one - the exact failure A35 set out to
+        # prevent, reached by another door. Ask IIS which pool serves this app, and refuse when
+        # it is not the one about to be stopped.
+        $boundPool = try { (Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop).applicationPool } catch { $null }
+        if ($boundPool -and $boundPool -ne $AppPoolName) {
+            Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
+        }
+
+        # A35: the empty catch here swallowed every stop failure, not only the harmless
+        # already-stopped one, and the fixed sleep was a guess about how long a worker takes to
+        # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
+        # CONFIRM, and abort before mirroring if it did not stop.
+        $poolState = Stop-AppPoolVerified -Name $AppPoolName
+        if ($poolState -eq 'Absent') {
+            Write-Warn "App pool $AppPoolName does not exist - nothing to stop."
+        } else {
+            Write-Success "App pool $AppPoolName confirmed stopped"
+        }
+
+        $deploymentReadyForManifest = $false
+        try {
+            # Deploy files
+            Write-Step "Deploying files (robocopy /MIR)"
+            $robocopyArgs = @(
+                $StagingPath, $PublishPath,
+                '/MIR',
+                '/XF', 'appsettings*.json',
+                '/XD', 'logs', 'config',
+                '/NFL', '/NDL', '/NJH', '/NJS', '/R:2', '/W:1'
+            )
+            & robocopy @robocopyArgs
+            if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
+            Write-Success "Files deployed"
+
+            # Generate appsettings.json
+            Write-Step "Generating appsettings.json"
+
+            $config = [ordered]@{
+                Serilog = [ordered]@{
+                    MinimumLevel = [ordered]@{
+                        Default = "Information"
+                        Override = [ordered]@{
+                            "Microsoft.AspNetCore" = "Warning"
+                            "Microsoft.Hosting.Lifetime" = "Information"
+                        }
+                    }
+                }
+                ExchangeOnline = [ordered]@{
+                    AppId = $EXOAppId
+                    Organization = $EXOOrganization
+                    CertificateSubject = $CertSubject
+                }
+                OnPremExchange = [ordered]@{
+                    ServerUri = $OnPremServerUri
+                }
+                Delinea = [ordered]@{
+                    SecretServerUrl = $DelineaUrl
+                    CredentialTarget = "Delinea_Client"
+                }
+                Audit = [ordered]@{
+                    LogRoot = $LogRoot
+                    RotationPeriod = "daily"
+                }
+                OperationTrace = [ordered]@{
+                    Enabled = $true
+                }
+                Email = [ordered]@{
+                    SmtpHost = $SmtpHost
+                    SmtpPort = 25
+                    SmtpUseSsl = $false
+                    FromAddress = "ExchangeAdmins@$($EXOOrganization -replace '\.onmicrosoft\.com$','.com')"
+                    FromName = "Exchange Admins"
+                    AdminNotificationEmail = $AdminEmail
+                    NotifyUsersOnPermissionGrant = $false
+                }
+                Security = [ordered]@{
+                    AllowedGroups = @($qualifiedGroups)
+                    AdminGroups = @($qualifiedAdminGroups)
+                }
+                ServiceNow = [ordered]@{
+                    Enabled = $false
+                    InstanceUrl = ""
+                    Username = ""
+                    Password = ""
+                }
+                Application = [ordered]@{
+                    PathBase = $PathBase
+                    ContactEmail = $AdminEmail
+                    PublicBaseUrl = $PublicBaseUrl
+                }
+                AllowedHosts = "*"
+            }
+
+            $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
+            Write-Success "appsettings.json generated"
+            $deploymentReadyForManifest = $true
+        } finally {
+            Write-Step "Starting app pool"
+            Start-AppPoolWithRetry -Name $AppPoolName
+            Write-Success "App pool started"
+            if ($deploymentReadyForManifest) {
+                Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+            }
+            # Staging contains the generated appsettings.json; clean on failure paths too.
+            Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
+} finally {
+    Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # --- Final output ---
