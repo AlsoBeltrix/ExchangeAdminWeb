@@ -3,9 +3,9 @@
 **Severity**: HIGH - an administrator removes a group from a module's section access (or from
 its module admins) while an operator has the module open through that grant; the operator's open
 page keeps working, and its read handlers keep returning data, for as long as the tab stays open.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending; live dev check owed
 **Branch**: `aud-a29cde` (worktree `agent-ad94a625885da3a95`), base `9fab2e4`
-**Commit**: `<pending>`
+**Commit**: `80eacbf` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh over 1633ad0..0d30442, 2026-10-21
 **Parent**: [aud-a29b](aud-a29b.md)
 

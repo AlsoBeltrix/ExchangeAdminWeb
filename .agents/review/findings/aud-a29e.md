@@ -3,9 +3,9 @@
 **Severity**: MEDIUM - it needs a particular, accepted configuration shape, but what it leaves
 unrevalidated is administrative access: a circuit whose only grant is such a group is never
 re-checked, not even for a disabled account.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending; live dev check owed
 **Branch**: `aud-a29cde` (worktree `agent-ad94a625885da3a95`), base `9fab2e4`
-**Commit**: `<pending>`
+**Commit**: `fe0a9ab` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh over 1633ad0..0d30442, 2026-10-21
 **Parent**: [aud-a29b](aud-a29b.md)
 

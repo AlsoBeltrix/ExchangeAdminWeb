@@ -4,9 +4,9 @@
 SID (a name left by a halted or deferred SID migration, or a well-known SID written to the store
 directly). When there is one, it authorizes the strongest bypass in the app - acting on protected
 principals - by group NAME, and circuit revalidation never looks at it.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending; live dev check owed
 **Branch**: `aud-a29cde` (worktree `agent-ad94a625885da3a95`), base `9fab2e4`
-**Commit**: `<pending>`
+**Commit**: `9916b0e` (merged)
 **Reviewer**: implementer (found while fixing aud-a29e, 2026-10-21)
 **Parent**: [aud-a29e](aud-a29e.md), [aud-a29b](aud-a29b.md)
 
