@@ -2,10 +2,10 @@
 
 **Severity**: HIGH - unauthorized writes remain possible, and some valid grants are now
 refused.
-**Status**: Fixed on branch; awaiting merge (finding 7). Findings 1-6: Verified, fixed directly on
+**Status**: Finding 7 merged to master (`d74e66f`), codex group review pending. Findings 1-6: Verified, fixed directly on
 `master` earlier.
 **Branch**: findings 1-6 -- (direct-to-main); finding 7 `worktree-agent-acf74809ad7ee3f7d`
-**Commit**: findings 1-6 `<pending>` as recorded before; finding 7 `<pending>`
+**Commit**: findings 1-6 `<pending>` as recorded before; finding 7 `d74e66f` (merged)
 
 ## Evidence
 
