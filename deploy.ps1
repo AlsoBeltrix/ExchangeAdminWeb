@@ -63,6 +63,11 @@ function Write-Fail    { param($m) Write-Host "  X  $m" -ForegroundColor Red; th
 # through here so a nonzero exit becomes a terminating error (icacls returns 0 on success).
 function Set-AclChecked {
     param([string]$Path, [string]$Identity, [string]$Rights)
+    # cdt-24: the exit code alone cannot catch this one - icacls grants an empty name to
+    # BUILTIN\BUILTIN (S-1-5-32) and exits 0.
+    if ([string]::IsNullOrWhiteSpace($Identity)) {
+        Write-Fail "Refusing to grant $Rights on $Path to an empty identity: icacls resolves an empty name to BUILTIN\BUILTIN and reports success, so the grant would silently go to the wrong principal."
+    }
     & icacls $Path /grant "${Identity}:$Rights" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "icacls failed (exit $LASTEXITCODE) granting $Identity ${Rights} on $Path"
@@ -74,15 +79,20 @@ function Start-AppPoolWithRetry {
     for ($i = 1; $i -le $MaxAttempts; $i++) {
         try {
             $state = (Get-ItemProperty "IIS:\AppPools\$Name").State
-            if ($state -eq 'Started') { return }
+            if ($state -eq 'Started') { break }
             Start-WebAppPool -Name $Name -ErrorAction Stop
-            return
+            break
         } catch {
             if ($i -eq $MaxAttempts) { throw }
             Write-Host "       Pool not ready, retrying in ${DelaySeconds}s ($i/$MaxAttempts)..." -ForegroundColor DarkGray
             Start-Sleep -Seconds $DelaySeconds
         }
     }
+    # cdt-25: the loop retries a start request that throws; a request that returns only means IIS
+    # accepted it, and the pool can still stay stopped (a bad identity password, a missing runtime,
+    # rapid-fail protection) while the caller prints "App pool started". Confirm it (A38); a pool that
+    # does not reach Started throws, and the caller reports that as its own failure (cdt-16).
+    $null = Start-AppPoolVerified -Name $Name
 }
 
 function Prompt-Value {
@@ -102,8 +112,15 @@ function Prompt-SecureValue {
 
 function SecureString-ToPlain {
     param([securestring]$Secure)
-    [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure))
+    # cdt-27: SecureStringToBSTR copies the password into unmanaged memory as plaintext. Keep the
+    # pointer so the finally zeroes and frees that copy on every path; the old one-liner dropped it.
+    # The string returned is a managed copy, which .NET cannot zero.
+    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
+    try {
+        return [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    } finally {
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
 }
 
 function Write-DeploymentManifest {
@@ -116,7 +133,16 @@ function Write-DeploymentManifest {
 
     $gitCommit = try { (git -C $RepoRoot rev-parse HEAD 2>$null) } catch { "unknown" }
     $gitBranch = try { (git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null) } catch { "unknown" }
-    $gitDirty = try { [bool](git -C $RepoRoot status --porcelain 2>$null) } catch { $false }
+    # cdt-26: a git status that failed is unknown, not clean. Windows PowerShell 5.1 turns its stderr
+    # into an error caught here; PowerShell 7 returns nothing with a non-zero exit. The old [bool](...)
+    # read both as $false, which the promotion's "built from a dirty tree" gate takes as clean.
+    $gitDirty = 'unknown'
+    try {
+        $statusOutput = git -C $RepoRoot status --porcelain 2>$null
+        if ($LASTEXITCODE -eq 0) { $gitDirty = [bool]$statusOutput }
+    } catch {
+        $gitDirty = 'unknown'
+    }
 
     $manifest = [ordered]@{
         version   = ($version -split '\.')[0..2] -join '.'
@@ -129,7 +155,13 @@ function Write-DeploymentManifest {
 
     $manifestPath = Join-Path $PublishFolder "deployment-manifest.json"
     $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-    Write-Success "Deployment manifest written: v$($manifest.version) @ $($gitCommit.Substring(0, [Math]::Min(8, $gitCommit.Length)))"
+    # Shorten only a commit long enough to shorten (cdt-14). Windows PowerShell 5.1 turns a failed
+    # git's stderr into an error the catch above maps to "unknown"; PowerShell 7 does not, so
+    # $gitCommit is $null there, and this runs inside the finally that restarts the pool, where a
+    # throw would replace the deploy's own outcome. Same guard as tools/deploy-pipeline.ps1.
+    $shortCommit = $gitCommit
+    if ($gitCommit -and $gitCommit.Length -ge 8) { $shortCommit = $gitCommit.Substring(0, 8) }
+    Write-Success "Deployment manifest written: v$($manifest.version) @ $shortCommit"
 }
 
 # -Force regenerates appsettings.json from parameters, and ConfigStore:Path is the one key that must
@@ -266,11 +298,23 @@ $needsPassword = $false
 $poolExists = Test-Path "IIS:\AppPools\$AppPoolName"
 
 if ($poolExists) {
-    $existingUser = (Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel).userName
+    # cdt-24: a pool that does not run as a specific user (ApplicationPoolIdentity or a built-in
+    # account) has no userName, and taking that as the account set the pool to SpecificUser with an
+    # empty name - an identity IIS cannot start - and sent the empty name to every icacls grant below.
+    # identityType is matched as text: the provider yields the number under Windows PowerShell 5.1
+    # and the name under PowerShell 7 (the cutover script records the same).
+    $existingProcessModel = Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel
+    $existingUser = $existingProcessModel.userName
+    $existingRunsAsUser = ("$($existingProcessModel.identityType)" -in @('SpecificUser', '3')) -and -not [string]::IsNullOrWhiteSpace($existingUser)
     if (-not $ServiceAccount) {
+        if (-not $existingRunsAsUser) {
+            Write-Fail "App pool $AppPoolName exists but does not run as a specific user (IIS reports identityType '$($existingProcessModel.identityType)', user name '$existingUser'), and this script configures every pool with a service account. Pass -ServiceAccount and its password to move the pool to one, or deploy this instance with tools/Install-ExchangeAdminWeb.ps1, which keeps a pool's existing identity. Nothing was deployed."
+        }
         $ServiceAccount = $existingUser
-    } elseif ($existingUser -ne $ServiceAccount) {
-        Write-Warn "App pool identity changing: $existingUser -> $ServiceAccount"
+    } elseif (-not $existingRunsAsUser -or $existingUser -ne $ServiceAccount) {
+        $currentIdentity = $existingUser
+        if (-not $existingRunsAsUser) { $currentIdentity = "identityType '$($existingProcessModel.identityType)'" }
+        Write-Warn "App pool identity changing: $currentIdentity -> $ServiceAccount"
         $needsPassword = $true
     }
 } else {
@@ -459,6 +503,7 @@ try {
     # kept bulk-job records and usage telemetry in a backup nothing prunes, past the retention the pages
     # state, and a raw copy of a live WAL database is not a usable backup anyway. A new database the
     # app keeps in config\ belongs here too; the cdt-10 test reads the app's source to enforce that.
+    # The upgrade's drift inventory leaves the same databases out, from this list (cdt-13).
     $configCopyExclusions = @(
         'exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm',
         'exchangeadmin-jobs.db', 'exchangeadmin-jobs.db-wal', 'exchangeadmin-jobs.db-shm',
@@ -524,11 +569,15 @@ try {
         # extended-log-level.txt is rewritten by the app on every startup
         # (ExtendedLogService.LoadLevel -> SetLevel), so it always differs across a
         # pool restart and would false-positive the drift check.
-        # The SQLite config DB triplet (.db/-wal/-shm) changes byte-for-byte across a pool restart
-        # (WAL checkpoints, startup seeding) by design, so a size/mtime drift comparison is
-        # meaningless for it - it is verified by PRAGMA integrity_check after deploy instead (see the
-        # post-deploy DB health check). Exclude it from the file-drift inventory.
-        $driftCheckExclusions = @('extended-log-level.txt', 'exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm')
+        # The SQLite databases the app keeps in config\ - the config DB, the jobs DB and the usage DB,
+        # each with -wal/-shm - change byte-for-byte across a pool restart by design (a clean close
+        # checkpoints the WAL into the main file and deletes the sidecars; startup seeds the config DB
+        # and interrupts and prunes jobs and telemetry), so a size/mtime comparison is meaningless for
+        # them. The config DB is verified by PRAGMA integrity_check after deploy instead (see the
+        # post-deploy DB health check); the jobs and usage DBs are operational state that is never
+        # backed up (cdt-10), so a drift warning about them would point at a backup without them.
+        # The databases come from $configCopyExclusions, the one list of them (cdt-13).
+        $driftCheckExclusions = @('extended-log-level.txt') + $configCopyExclusions
         $preConfigInventory = @{}
         if (Test-Path $runtimeConfigDir) {
             Get-ChildItem $runtimeConfigDir -File |
@@ -549,7 +598,13 @@ try {
         # prevent, reached by another door. Ask IIS which pool serves this app, and refuse when
         # it is not the one about to be stopped.
         $boundPool = try { (Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop).applicationPool } catch { $null }
-        if ($boundPool -and $boundPool -ne $AppPoolName) {
+        # cdt-19: both paths configure the application and the pool above, so a binding that cannot be
+        # read, or reads as nothing, is IIS not answering - not a fresh install. Passing it would stop
+        # a pool nobody has shown serves these files; refuse it as a wrong one is refused.
+        if (-not $boundPool) {
+            Write-Fail "Cannot read which app pool serves IIS application $ParentSite/$AppAlias (the lookup failed or returned nothing), although this run configured that application above. Stopping '$AppPoolName' cannot be shown to stop what serves $PublishPath, so its files will not be replaced. Nothing was deployed."
+        }
+        if ($boundPool -ne $AppPoolName) {
             Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
         }
 
@@ -558,12 +613,21 @@ try {
         # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
         # CONFIRM, and abort before mirroring if it did not stop.
         $poolState = Stop-AppPoolVerified -Name $AppPoolName
-        if ($poolState -eq 'Absent') {
-            Write-Warn "App pool $AppPoolName does not exist - nothing to stop."
-        } else {
-            Write-Success "App pool $AppPoolName confirmed stopped"
+        # cdt-19: only a confirmed stop reaches the mirror. The pool was configured above, so 'Absent'
+        # means IIS did not find it (an unreadable configuration, a name Test-Path reads as a wildcard
+        # pattern), not that nothing is running.
+        if ($poolState -ne 'Stopped') {
+            Write-Fail "App pool $AppPoolName was reported '$poolState', not confirmed stopped, although this run configured it above. Refusing to replace the files of an application that cannot be shown to be stopped. Nothing was deployed."
         }
+        Write-Success "App pool $AppPoolName confirmed stopped"
 
+        # cdt-16: the pool restarts only once the mirror is known to be complete. robocopy /MIR failing
+        # part-way leaves a mix of the old and new builds in the publish folder, and the restart in the
+        # finally used to serve it. A restart that throws is recorded and reported, never thrown from
+        # the finally, where it would replace the error already propagating (Known Failure Class 1);
+        # the check after the finally makes it its own failure when nothing else failed.
+        $mirrorSucceeded = $false
+        $poolStartError = $null
         $deploymentReadyForManifest = $false
         try {
             Write-Step "Deploying files (robocopy /MIR)"
@@ -575,7 +639,8 @@ try {
                 '/NFL', '/NDL', '/NJH', '/NJS', '/R:2', '/W:1'
             )
             & robocopy @robocopyArgs
-            if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
+            if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE, so $PublishPath may now hold a mix of the old and new builds. App pool $AppPoolName was deliberately LEFT STOPPED: starting it would serve that mix. The mirror does not touch the config database ($(if ($dbBackup) { "verified pre-deploy backup: $dbBackup" } else { 'no pre-deploy backup was taken: there was no database yet' })). The staging publish $StagingPath is removed when this script exits, so fix the cause and re-run this deploy from $ProjectRoot; it publishes afresh and starts the pool." }
+            $mirrorSucceeded = $true
             Write-Success "Files deployed"
 
             # Config reconciliation
@@ -625,15 +690,29 @@ try {
             Write-Success "Configuration reconciled"
             $deploymentReadyForManifest = $true
         } finally {
-            Write-Step "Starting app pool"
-            Start-AppPoolWithRetry -Name $AppPoolName
-            Write-Success "App pool started"
-            if ($deploymentReadyForManifest) {
-                Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+            if ($mirrorSucceeded) {
+                Write-Step "Starting app pool"
+                # Recorded, not thrown: a throw here would replace whatever is propagating (cdt-16).
+                try {
+                    Start-AppPoolWithRetry -Name $AppPoolName
+                    Write-Success "App pool started"
+                } catch {
+                    $poolStartError = $_.Exception.Message
+                    Write-Host "  X  App pool $AppPoolName did not start: $poolStartError" -ForegroundColor Red
+                }
+                if ($deploymentReadyForManifest) {
+                    Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+                }
+            } else {
+                Write-Warn "App pool $AppPoolName is NOT being restarted: the file mirror did not complete, so the pool stays stopped."
             }
             # Staging contains the dev appsettings.json (real environment values).
             # Clean it on failure paths too, not only after a successful deploy.
             Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # Reached only when the try body succeeded: the deploy is complete and the application is down.
+        if ($poolStartError) {
+            throw "The files and configuration are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand."
         }
 
         # --- Post-deploy config drift check (incident fix #5) ---
@@ -683,9 +762,11 @@ try {
 
         # Post-deploy live DB health check. The DB triplet is excluded from the file-drift inventory
         # above (it changes by design across the pool restart via WAL checkpoint + startup seeding),
-        # so verify it properly here instead: the app pool was started above, so the schema has been
-        # migrated/seeded. A missing or corrupt live DB must be flagged loudly rather than ending on
-        # the success banner. Warn (not throw) - the deploy has already happened; this surfaces a bad
+        # so verify it properly here instead. Starting the pool does not start the application - IIS
+        # does that on the first request (aud-a40) - so this verifies the database the new build is
+        # about to open, not the result of its migrations (cdt-12 corrected this comment, which said
+        # the schema had been migrated by now). A missing or corrupt live DB must be flagged loudly
+        # rather than ending on the success banner. Warn (not throw) - the deploy has already happened; this surfaces a bad
         # outcome to the operator with the verified pre-deploy backup as the rollback. The path is
         # resolved again from appsettings.json (deploy never rewrites it) so a shared database is
         # checked where it actually lives (SharedConfigDb-Plan AC6).
@@ -810,7 +891,13 @@ try {
         # prevent, reached by another door. Ask IIS which pool serves this app, and refuse when
         # it is not the one about to be stopped.
         $boundPool = try { (Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop).applicationPool } catch { $null }
-        if ($boundPool -and $boundPool -ne $AppPoolName) {
+        # cdt-19: both paths configure the application and the pool above, so a binding that cannot be
+        # read, or reads as nothing, is IIS not answering - not a fresh install. Passing it would stop
+        # a pool nobody has shown serves these files; refuse it as a wrong one is refused.
+        if (-not $boundPool) {
+            Write-Fail "Cannot read which app pool serves IIS application $ParentSite/$AppAlias (the lookup failed or returned nothing), although this run configured that application above. Stopping '$AppPoolName' cannot be shown to stop what serves $PublishPath, so its files will not be replaced. Nothing was deployed."
+        }
+        if ($boundPool -ne $AppPoolName) {
             Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
         }
 
@@ -819,12 +906,21 @@ try {
         # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
         # CONFIRM, and abort before mirroring if it did not stop.
         $poolState = Stop-AppPoolVerified -Name $AppPoolName
-        if ($poolState -eq 'Absent') {
-            Write-Warn "App pool $AppPoolName does not exist - nothing to stop."
-        } else {
-            Write-Success "App pool $AppPoolName confirmed stopped"
+        # cdt-19: only a confirmed stop reaches the mirror. The pool was configured above, so 'Absent'
+        # means IIS did not find it (an unreadable configuration, a name Test-Path reads as a wildcard
+        # pattern), not that nothing is running.
+        if ($poolState -ne 'Stopped') {
+            Write-Fail "App pool $AppPoolName was reported '$poolState', not confirmed stopped, although this run configured it above. Refusing to replace the files of an application that cannot be shown to be stopped. Nothing was deployed."
         }
+        Write-Success "App pool $AppPoolName confirmed stopped"
 
+        # cdt-16: the pool restarts only once the mirror is known to be complete. robocopy /MIR failing
+        # part-way leaves a mix of the old and new builds in the publish folder, and the restart in the
+        # finally used to serve it. A restart that throws is recorded and reported, never thrown from
+        # the finally, where it would replace the error already propagating (Known Failure Class 1);
+        # the check after the finally makes it its own failure when nothing else failed.
+        $mirrorSucceeded = $false
+        $poolStartError = $null
         $deploymentReadyForManifest = $false
         try {
             # Deploy files
@@ -837,7 +933,8 @@ try {
                 '/NFL', '/NDL', '/NJH', '/NJS', '/R:2', '/W:1'
             )
             & robocopy @robocopyArgs
-            if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
+            if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE, so $PublishPath may now hold a mix of the old and new builds. App pool $AppPoolName was deliberately LEFT STOPPED: starting it would serve that mix. The mirror does not touch the config database ($(if ($dbBackup) { "verified pre-deploy backup: $dbBackup" } else { 'no pre-deploy backup was taken: there was no database yet' })). The staging publish $StagingPath is removed when this script exits, so fix the cause and re-run this deploy from $ProjectRoot; it publishes afresh and starts the pool." }
+            $mirrorSucceeded = $true
             Write-Success "Files deployed"
 
             # Generate appsettings.json
@@ -907,15 +1004,56 @@ try {
             }
             $deploymentReadyForManifest = $true
         } finally {
-            Write-Step "Starting app pool"
-            Start-AppPoolWithRetry -Name $AppPoolName
-            Write-Success "App pool started"
-            if ($deploymentReadyForManifest) {
-                Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+            if ($mirrorSucceeded) {
+                Write-Step "Starting app pool"
+                # Recorded, not thrown: a throw here would replace whatever is propagating (cdt-16).
+                try {
+                    Start-AppPoolWithRetry -Name $AppPoolName
+                    Write-Success "App pool started"
+                } catch {
+                    $poolStartError = $_.Exception.Message
+                    Write-Host "  X  App pool $AppPoolName did not start: $poolStartError" -ForegroundColor Red
+                }
+                if ($deploymentReadyForManifest) {
+                    Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+                }
+            } else {
+                Write-Warn "App pool $AppPoolName is NOT being restarted: the file mirror did not complete, so the pool stays stopped."
             }
             # Staging contains the checkout's published appsettings.json (real environment values), not
             # the generated one; clean on failure paths too.
             Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # Reached only when the try body succeeded: the deploy is complete and the application is down.
+        if ($poolStartError) {
+            throw "The files and configuration are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand."
+        }
+
+        # --- Post-deploy live DB health check (cdt-12) ---
+        # The upgrade path above has always ended with this check; -Force, the path that
+        # regenerates appsettings.json and so the one most able to point the app at a different,
+        # missing or damaged database, ended on the success banner without it. Same check, same
+        # posture: the files are deployed and the pool is running, so a failure WARNS and names the
+        # pre-deploy backup instead of throwing. Only reached on success (a throw above propagates
+        # past it). The path is resolved from the regenerated appsettings.json, which carries the
+        # kept ConfigStore:Path (cdt-8), so this checks the file the app will open; staging was
+        # removed in the finally above, so the tool runs from the publish folder, which holds the
+        # same build. Starting the pool does not start the application - IIS does that on the first
+        # request (aud-a40) - so this verifies the database the new build is about to open, not the
+        # result of its migrations. A genuine fresh install has no database yet and gets the warning
+        # that says it is created on first start.
+        $liveDb = Resolve-ConfigDbPath -PublishPath $PublishPath
+        if (Test-Path -LiteralPath $liveDb) {
+            try {
+                Test-SqliteConfigDbIntegrity -DbPath $liveDb -AppPath $PublishPath | Out-Null
+                Write-Success "Config DB verified: integrity_check passed on the live store at $liveDb"
+            } catch {
+                Write-Warn "POST-DEPLOY CHECK: live config DB integrity check FAILED: $($_.Exception.Message). The app may not function correctly - restore from the pre-deploy backup in $BackupDir and investigate."
+            }
+        } elseif ($configStorePathSetting) {
+            Write-Warn "POST-DEPLOY CHECK: ConfigStore:Path names $liveDb but it does not exist after deploy. The app will not start against a missing shared database - investigate."
+        } else {
+            Write-Warn "POST-DEPLOY CHECK: no config DB at $liveDb after deploy. If this is the first deploy of the SQLite build it will be created on first app start; otherwise investigate."
         }
     }
 } finally {

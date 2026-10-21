@@ -30,6 +30,9 @@
       - Keeps the app pool's existing custom identity when -ServiceAccount is omitted.
         Pass -ServiceAccount to change it, or -ResetAppPoolIdentity to move it back to
         ApplicationPoolIdentity.
+      - Updates the IIS application in place: -AppPoolName and -PublishPath must be the pool and
+        folder IIS already serves it from (both default to fixed values when omitted). A run that
+        would move an existing application is refused before anything changes.
       - Copies binaries/static files while preserving appsettings.json, config, and logs.
       - Seeds only newly missing config fragments.
 
@@ -40,7 +43,9 @@
     folder (which is still created and ACLed: the per-instance jobs database and the first-run
     seed files live there). The shared database must already exist - the installer never
     creates it; tools\Move-ConfigDbToShared.ps1 does, once, from an existing instance.
-    Without -ConfigStorePath the instance uses its own config\exchangeadmin.db as before.
+    Without -ConfigStorePath an existing instance keeps the ConfigStore:Path its appsettings.json
+    already names - also under -RegenerateAppSettings, which regenerates every other value - and
+    a new instance uses its own config\exchangeadmin.db.
 
 .EXAMPLE
     .\tools\Install-ExchangeAdminWeb.ps1
@@ -292,7 +297,10 @@ function Write-AppSettings {
         }
     }
 
-    Invoke-PlanOrAction "Write appsettings.json at $Path" {
+    # cdt-11: name a carried ConfigStore:Path, so a plan shows the key is kept.
+    $configStoreNote = ''
+    if ($Settings.ContainsKey('ConfigStore')) { $configStoreNote = " with ConfigStore:Path = $($Settings['ConfigStore']['Path'])" }
+    Invoke-PlanOrAction "Write appsettings.json at $Path$configStoreNote" {
         $dir = Split-Path -Parent $Path
         if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -329,7 +337,16 @@ function Write-DeploymentManifest {
 
     $gitCommit = try { (git -C $RepoRoot rev-parse HEAD 2>$null) } catch { "unknown" }
     $gitBranch = try { (git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null) } catch { "unknown" }
-    $gitDirty = try { [bool](git -C $RepoRoot status --porcelain 2>$null) } catch { $false }
+    # cdt-26: a git status that failed is unknown, not clean. Windows PowerShell 5.1 turns its stderr
+    # into an error caught here; PowerShell 7 returns nothing with a non-zero exit. The old [bool](...)
+    # read both as $false, so anything reading the manifest was told the tree was clean.
+    $gitDirty = 'unknown'
+    try {
+        $statusOutput = git -C $RepoRoot status --porcelain 2>$null
+        if ($LASTEXITCODE -eq 0) { $gitDirty = [bool]$statusOutput }
+    } catch {
+        $gitDirty = 'unknown'
+    }
 
     $manifest = [ordered]@{
         version = ($version -split '\.')[0..2] -join '.'
@@ -519,6 +536,139 @@ function New-AppSettingsObject {
     return $settings
 }
 
+function Resolve-ConfigStorePlan {
+    # cdt-11. Decides ONCE, before anything is written, which ConfigStore:Path this run leaves in
+    # appsettings.json - and so which config database the instance opens afterwards, which is the
+    # one the banner reports and the pre-upgrade backup snapshots. -RegenerateAppSettings used to
+    # rebuild the file from parameters alone, so an omitted -ConfigStorePath silently dropped the
+    # key naming a shared database, and the backup then re-read the rewritten file and snapshotted
+    # the stale per-instance copy instead.
+    #
+    # When this run writes the file, a supplied path wins; otherwise the existing key is carried
+    # exactly as Get-ConfigStorePathSetting reads it. A file this run keeps keeps its own key, and a
+    # supplied path it would not carry is refused (cdt-20). A file that does not parse stops the run
+    # here, before anything changes: overwriting a file the installer cannot read could drop the key.
+    param(
+        [string]$PublishPath,
+        [string]$SuppliedPath,
+        [bool]$RegenerateAppSettings
+    )
+
+    $appSettingsExists = Test-Path -LiteralPath (Join-Path $PublishPath 'appsettings.json') -PathType Leaf
+    $existingPath = Get-ConfigStorePathSetting -PublishPath $PublishPath
+    # Write-AppSettings' own rule: it writes when there is no file, or when told to regenerate.
+    $writesAppSettings = (-not $appSettingsExists) -or $RegenerateAppSettings
+
+    # cdt-20. A kept file is not rewritten, so a supplied path it does not already name would never
+    # take effect: the run used to validate it, ACL its folder and complete while the instance kept
+    # its own database - two instances believed to share settings and authorization that did not.
+    # Re-stating the key the file already names is harmless and accepted.
+    if (-not $writesAppSettings -and -not [string]::IsNullOrWhiteSpace($SuppliedPath)) {
+        $keptNames = 'no ConfigStore:Path'
+        if ($existingPath) { $keptNames = "ConfigStore:Path = $existingPath" }
+        $same = $existingPath -and [string]::Equals([System.IO.Path]::GetFullPath($existingPath).TrimEnd('\'), [System.IO.Path]::GetFullPath($SuppliedPath).TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)
+        if (-not $same) {
+            Write-Fail "-ConfigStorePath $SuppliedPath was given, but this run keeps the existing appsettings.json in $PublishPath, which names $keptNames, so the supplied path would not take effect. Re-run with -RegenerateAppSettings to write it (that regenerates the file's other values too), or without -ConfigStorePath to keep the instance as it is. Moving an existing instance onto a shared database is tools\Move-ConfigDbToShared.ps1's job. Nothing was changed."
+        }
+    }
+
+    $path = $null
+    $source = 'None'
+    if ($writesAppSettings -and -not [string]::IsNullOrWhiteSpace($SuppliedPath)) {
+        $path = $SuppliedPath
+        $source = 'Supplied'
+    } elseif ($existingPath) {
+        $path = $existingPath
+        $source = 'Existing'
+    }
+
+    # No key: the per-instance default, from the same resolver the app's rule is mirrored in.
+    if ($path) {
+        $dbPath = $path
+    } else {
+        $dbPath = Resolve-ConfigDbPath -PublishPath $PublishPath
+    }
+
+    $summary = "$dbPath (this instance only)"
+    if ($source -eq 'Supplied') { $summary = "$path (shared, from -ConfigStorePath)" }
+    if ($source -eq 'Existing') { $summary = "$path (shared, ConfigStore:Path kept from the existing appsettings.json)" }
+
+    return [pscustomobject]@{
+        Path              = $path
+        Source            = $source
+        DbPath            = $dbPath
+        WritesAppSettings = $writesAppSettings
+        Summary           = $summary
+    }
+}
+
+function Assert-ConfigStorePlanDatabase {
+    # cdt-21. The app opens a configured database without creating it, so a decided key naming a
+    # missing file is an instance that cannot start. A supplied path was refused early; a kept one
+    # was caught only inside the backup step - after the host had been reconfigured, never in a plan,
+    # and not at all with -SkipConfigBackup, which then mirrored and reported success. No key needs
+    # no check: the per-instance default is created on first start.
+    param($Plan, [string]$AppSettingsPath)
+
+    if (-not $Plan.Path) { return }
+    if (Test-Path -LiteralPath $Plan.Path -PathType Leaf) { return }
+
+    $from = "the existing $AppSettingsPath"
+    if ($Plan.Source -eq 'Supplied') { $from = '-ConfigStorePath' }
+    Write-Fail "ConfigStore:Path from $from names '$($Plan.Path)' but no database exists there. The app opens a configured database without creating it, so this instance cannot start on it. Fix the key, restore the file, run tools\Move-ConfigDbToShared.ps1, or re-run with -RegenerateAppSettings -ConfigStorePath naming a database that exists. Nothing was changed."
+}
+
+function ConvertTo-InstallerComparablePath {
+    # One spelling per folder (cdt-15): environment variables expanded (IIS often stores
+    # %SystemDrive%\...), made absolute and normalised, trailing separators dropped. Callers
+    # compare the results by equality, case-insensitively - never by prefix, because one
+    # instance's folder is easily a prefix of a sibling's.
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $expanded = [Environment]::ExpandEnvironmentVariables($Path.Trim())
+    try {
+        $full = [System.IO.Path]::GetFullPath($expanded)
+    } catch {
+        $full = $expanded
+    }
+    return $full.TrimEnd('\', '/')
+}
+
+function Assert-ApplicationTargetUnchanged {
+    # cdt-15. "Create or update IIS web application" below sets an EXISTING application's pool and
+    # folder to this run's -AppPoolName and -PublishPath, and both default to fixed values when
+    # omitted. So an update that did not repeat a customised value moved the live application: to a
+    # new pool, created with ApplicationPoolIdentity (the identity its credential store, certificate
+    # key and directory access depend on, lost - aud-a34 by another door), and/or to a new folder
+    # with no appsettings.json, which this run then generates from defaults (a fresh, empty instance
+    # at the same URL - the cdt-8 outcome). An existing application must be updated in place; moving
+    # one is an IIS change made deliberately first, not a side effect of an omitted parameter.
+    param(
+        [string]$Location,
+        [bool]$Exists,
+        [string]$ExistingPool,
+        [string]$ExistingPhysicalPath,
+        [string]$AppPoolName,
+        [string]$PublishPath
+    )
+
+    if (-not $Exists) { return }
+
+    $differences = @()
+    if (-not [string]::Equals($ExistingPool, $AppPoolName, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $differences += "app pool '$ExistingPool' (this run: -AppPoolName '$AppPoolName')"
+    }
+    $existingFolder = ConvertTo-InstallerComparablePath $ExistingPhysicalPath
+    $runFolder = ConvertTo-InstallerComparablePath $PublishPath
+    if ([string]::IsNullOrWhiteSpace($existingFolder) -or -not [string]::Equals($existingFolder, $runFolder, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $differences += "files at '$ExistingPhysicalPath' (this run: -PublishPath '$PublishPath')"
+    }
+    if ($differences.Count -gt 0) {
+        Write-Fail "IIS application $Location already exists, with $($differences -join ' and '). An update must name the pool and folder it was installed with - -AppPoolName and -PublishPath default to fixed values when omitted - or this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$ExistingPhysicalPath', or move the application in IIS first if that is intended. Nothing was changed."
+    }
+}
+
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
 $defaultPublishPath = Join-Path $env:SystemDrive "inetpub\$AppAlias"
 $defaultLogRoot = Join-Path $env:ProgramData "ExchangeAdminWeb\Logs"
@@ -557,19 +707,36 @@ $appLogDir = Join-Path $PublishPath "logs"
 $timestamp = Get-Date -Format "yyyyMMddHHmmss"
 $stagingPath = "$PublishPath.staging.$timestamp"
 
+# A36. A sibling module that names no host, domain or configuration, so importing it keeps this
+# installer standalone and environment-neutral (Architectural Invariant 1). Imported before the
+# banner because the config-store decision below reads appsettings.json through it (cdt-11).
+Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
+
 # Optional shared config database. The path must be absolute and local (SQLite locking is not
 # reliable over a network share) and the file MUST already exist: the app opens a configured
 # path without create and stops if it is missing, so the installer refuses here rather than
 # hand over an instance that cannot start. Creating the shared database from an existing
 # instance is tools\Move-ConfigDbToShared.ps1's job, run once.
-$sharedConfigDir = $null
 if (-not [string]::IsNullOrWhiteSpace($ConfigStorePath)) {
     Assert-LocalAbsoluteFilePath -Path $ConfigStorePath -Name 'ConfigStorePath'
     $ConfigStorePath = [System.IO.Path]::GetFullPath($ConfigStorePath)
     if (-not (Test-Path -LiteralPath $ConfigStorePath -PathType Leaf)) {
         Write-Fail "ConfigStorePath names $ConfigStorePath but no database exists there. The installer never creates the shared database; create it once from an existing instance with tools\Move-ConfigDbToShared.ps1, then re-run the installer."
     }
-    $sharedConfigDir = Split-Path -Parent $ConfigStorePath
+}
+
+# cdt-11. Decided here, once: after -ConfigStorePath is validated, before the banner and before
+# anything is changed or written. The banner, the appsettings.json write and the pre-upgrade
+# backup all read this plan; nothing re-reads ConfigStore:Path from the file this run may rewrite.
+$configStorePlan = Resolve-ConfigStorePlan -PublishPath $PublishPath -SuppliedPath $ConfigStorePath -RegenerateAppSettings $RegenerateAppSettings.IsPresent
+# cdt-21: in plan and apply mode alike, and whatever -SkipConfigBackup says.
+Assert-ConfigStorePlanDatabase -Plan $configStorePlan -AppSettingsPath $configPath
+# cdt-22: the shared database's folder follows the decision - the key the instance will open, kept
+# or supplied - not the parameter, so a run that keeps the key and changes the pool identity still
+# grants the new identity the folder SQLite writes -wal/-shm into.
+$sharedConfigDir = $null
+if ($configStorePlan.Path) {
+    $sharedConfigDir = Split-Path -Parent $configStorePlan.Path
 }
 
 Write-Host ""
@@ -580,7 +747,7 @@ Write-Host "  App pool    : $AppPoolName" -ForegroundColor DarkGray
 Write-Host "  Publish     : $PublishPath" -ForegroundColor DarkGray
 Write-Host "  PathBase    : $PathBase" -ForegroundColor DarkGray
 Write-Host "  Log root    : $LogRoot" -ForegroundColor DarkGray
-Write-Host "  Config DB   : $(if ($sharedConfigDir) { "$ConfigStorePath (shared)" } else { "$configDir\exchangeadmin.db (this instance only)" })" -ForegroundColor DarkGray
+Write-Host "  Config DB   : $($configStorePlan.Summary)" -ForegroundColor DarkGray
 Write-Host "  Mode        : $(if ($PlanOnly) { 'PLAN ONLY' } else { 'APPLY' })" -ForegroundColor DarkGray
 Write-Host ""
 
@@ -597,8 +764,6 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 # environment-specific deploy tooling (Architectural Invariant 1). Imported outside the
 # PlanOnly guard because the identity decision below is reported during a dry run too.
 Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
-# A36. Same reasoning as above: a sibling module that names no host or environment.
-Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 
 if ($PlanOnly) {
     Write-Plan "Import WebAdministration and verify IIS site '$ParentSite'"
@@ -618,6 +783,25 @@ if ($PlanOnly) {
         Write-Fail "IIS site '$ParentSite' was not found."
     }
 }
+
+# cdt-15. Read the application this run is about to update, before anything about the pool is
+# decided or changed, and refuse a run that would move it. Side-effect free, so a plan does it too;
+# a plan that cannot read IIS says so rather than implying the check passed.
+$existingApplication = $null
+$applicationLookupFailed = $false
+try {
+    $existingApplication = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop
+} catch {
+    $applicationLookupFailed = $true
+}
+if ($applicationLookupFailed) {
+    if ($PlanOnly) {
+        Write-Warn "This plan cannot read IIS application $ParentSite/$AppAlias, so it cannot check that the application is updated in place; a real run refuses if IIS serves it from a different folder or pool."
+    } else {
+        Write-Fail "Cannot read IIS application $ParentSite/$AppAlias, so it cannot be confirmed that this run updates it in place rather than moving it. Nothing was changed."
+    }
+}
+Assert-ApplicationTargetUnchanged -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -ExistingPool "$($existingApplication.applicationPool)" -ExistingPhysicalPath "$($existingApplication.PhysicalPath)" -AppPoolName $AppPoolName -PublishPath $PublishPath
 
 # Read it in both modes - see the plan-mode note above. Guarded because the IIS provider
 # may not exist on a machine that is only producing a plan.
@@ -739,7 +923,7 @@ Write-AppSettings -Path $configPath -Settings (New-AppSettingsObject `
     -LogPath $LogRoot `
     -SecurityAllowedGroups $allowedGroupsQualified `
     -SecurityAdminGroups $adminGroupsQualified `
-    -ConfigStorePath $ConfigStorePath)
+    -ConfigStorePath $configStorePlan.Path)
 
 # Config seeds (SQLite note): runtime config now lives in config/exchangeadmin.db, created by
 # the app on first start. These JSON seeds are written only if missing and are consumed as
@@ -784,112 +968,147 @@ Invoke-PlanOrAction "Create or update IIS web application $ParentSite/$AppAlias"
     Set-WebConfigurationProperty -Filter "system.webServer/security/authentication/anonymousAuthentication" -Name enabled -Value $false -PSPath "IIS:\" -Location $location
 }
 
-Invoke-PlanOrAction "dotnet publish to staging: $stagingPath" {
-    Push-Location $repoRoot
-    try {
-        dotnet publish -c Release -o $stagingPath --nologo
-        if ($LASTEXITCODE -ne 0) {
-            Write-Fail "dotnet publish failed with exit code $LASTEXITCODE"
-        }
-    } finally {
-        Pop-Location
-    }
-}
-
-# cdt-2. Checked once, right after publish and before the backup decision, so every run
-# refuses a staging folder without a usable ExchangeAdminWeb.dll - including a fresh install
-# with no database, and a -SkipConfigBackup run. Deliberately fatal: mirroring a payload that
-# cannot run reports success over an unusable instance. The backup reuses this staging folder.
-Invoke-PlanOrAction "Confirm the published build carries the config DB tool at $(Join-Path $stagingPath 'ExchangeAdminWeb.dll')" {
-    Resolve-ConfigDbTool -AppPath $stagingPath | Out-Null
-}
-
-# A36. An upgrade mirrors new binaries over an existing instance, and those binaries may
-# run schema migrations against the config database the moment the pool starts. There was no
-# snapshot taken anywhere in this script, so a migration that went wrong had nothing to roll
-# back to - deploy tooling elsewhere takes this backup, but this installer is the supported
-# way to upgrade a generic environment and it did not.
-#
-# Online backup (VACUUM INTO + integrity_check), so it does not matter that this runs before
-# the pool stops - and running it first means a failure here aborts BEFORE anything is
-# touched.
-# Review of A36: the skip was decided INSIDE the action block, so a dry run printed "Back
-# up the config database" and said nothing about the real run skipping it. An operator could
-# approve a plan believing a snapshot was coming. Decide before planning.
-if ($SkipConfigBackup) {
-    if ($PlanOnly) {
-        Write-Plan "SKIP the config database backup entirely (-SkipConfigBackup was passed). The real run will NOT take a snapshot, and a failed schema migration will have nothing to roll back to."
-    } else {
-        Write-Warn "-SkipConfigBackup was passed: no pre-upgrade snapshot. A failed schema migration will have nothing to roll back to."
-    }
-} else {
-
-# The backup runs the app's db mode from the build just published to staging, through the
-# .NET host in Program Files (docs/ConfigDbToolInApp-Plan.md). A plan runs before publish, so
-# it prints the paths it would use without requiring them to exist.
-$configDbToolPlan = Resolve-ConfigDbTool -AppPath $stagingPath -PlanOnly
-Invoke-PlanOrAction "Back up the config database before upgrading (via $($configDbToolPlan.Summary) backup)" {
-    $existingDb = Resolve-ConfigDbPath -PublishPath $PublishPath
-    $configuredDbPath = Get-ConfigStorePathSetting -PublishPath $PublishPath
-
-    if (-not (Test-IsSqliteConfigDbPresent -DbPath $existingDb)) {
-        # Review of A36: these two cases were collapsed into "nothing to back up", and only
-        # one of them is harmless.
-        #
-        # With ConfigStore:Path SET, a missing file is not a fresh install - it is a broken
-        # instance. The app refuses to start against a configured database it did not find
-        # and never creates one, which is why the ADI deployment tooling fails on exactly
-        # this condition too. Proceeding would mirror new binaries over an instance that
-        # cannot start, with no snapshot, and report success.
-        if ($configuredDbPath) {
-            Write-Fail "ConfigStore:Path names '$existingDb' but no database exists there. The app will not start against a missing configured database (it never creates one). Fix the key, restore the file, or run tools\Move-ConfigDbToShared.ps1. Nothing was deployed."
-        }
-
-        # No key and no file: a fresh install, or an instance that has never started.
-        Write-Ok "No existing config database at $existingDb - nothing to back up."
-        return
-    }
-
-    $backupDir = Join-Path $LogRoot "ConfigBackups"
-    if (-not (Test-Path -LiteralPath $backupDir -PathType Container)) {
-        New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
-    }
-
-    $backupStamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $backupFile = Backup-SqliteConfigDb -DbPath $existingDb -DestDir $backupDir -Timestamp $backupStamp -AppPath $stagingPath
-    Write-Ok "Config database backed up (verified) to $backupFile"
-}
-
-}
-
-Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped" {
-    # A35: see tools/AppPoolControl.psm1. The empty catch hid a pool that would not stop,
-    # and the robocopy below mirrors over a live application.
-    $poolState = Stop-AppPoolVerified -Name $AppPoolName
-    if ($poolState -eq 'Absent') {
-        Write-Warn "App pool $AppPoolName does not exist yet - nothing to stop."
-    }
-}
-
+# cdt-23: the staging publish holds a full copy of the build and any appsettings.json the source tree
+# carries. It used to be removed only after a successful mirror, so every failure from here on left it
+# beside the publish folder. The finally removes it on every path; -ErrorAction SilentlyContinue keeps
+# a failed removal from replacing the error that is propagating. A plan creates none.
 try {
-    Invoke-RobocopyChecked -Description "Deploy application files" -Arguments @(
-        $stagingPath, $PublishPath,
-        "/MIR",
-        "/XF", "appsettings*.json",
-        "/XD", "logs", "config",
-        "/NFL", "/NDL", "/NJH", "/NJS", "/R:2", "/W:1"
-    )
+    Invoke-PlanOrAction "dotnet publish to staging: $stagingPath" {
+        Push-Location $repoRoot
+        try {
+            dotnet publish -c Release -o $stagingPath --nologo
+            if ($LASTEXITCODE -ne 0) {
+                Write-Fail "dotnet publish failed with exit code $LASTEXITCODE"
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    # cdt-2. Checked once, right after publish and before the backup decision, so every run
+    # refuses a staging folder without a usable ExchangeAdminWeb.dll - including a fresh install
+    # with no database, and a -SkipConfigBackup run. Deliberately fatal: mirroring a payload that
+    # cannot run reports success over an unusable instance. The backup reuses this staging folder.
+    Invoke-PlanOrAction "Confirm the published build carries the config DB tool at $(Join-Path $stagingPath 'ExchangeAdminWeb.dll')" {
+        Resolve-ConfigDbTool -AppPath $stagingPath | Out-Null
+    }
+
+    # A36. An upgrade mirrors new binaries over an existing instance, and those binaries may
+    # run schema migrations against the config database the moment the pool starts. There was no
+    # snapshot taken anywhere in this script, so a migration that went wrong had nothing to roll
+    # back to - deploy tooling elsewhere takes this backup, but this installer is the supported
+    # way to upgrade a generic environment and it did not.
+    #
+    # Online backup (VACUUM INTO + integrity_check), so it does not matter that this runs before
+    # the pool stops - and running it first means a failure here aborts BEFORE anything is
+    # touched.
+    # Review of A36: the skip was decided INSIDE the action block, so a dry run printed "Back
+    # up the config database" and said nothing about the real run skipping it. An operator could
+    # approve a plan believing a snapshot was coming. Decide before planning.
+    if ($SkipConfigBackup) {
+        if ($PlanOnly) {
+            Write-Plan "SKIP the config database backup entirely (-SkipConfigBackup was passed). The real run will NOT take a snapshot, and a failed schema migration will have nothing to roll back to."
+        } else {
+            Write-Warn "-SkipConfigBackup was passed: no pre-upgrade snapshot. A failed schema migration will have nothing to roll back to."
+        }
+    } else {
+
+    # The backup runs the app's db mode from the build just published to staging, through the
+    # .NET host in Program Files (docs/ConfigDbToolInApp-Plan.md). A plan runs before publish, so
+    # it prints the paths it would use without requiring them to exist.
+    $configDbToolPlan = Resolve-ConfigDbTool -AppPath $stagingPath -PlanOnly
+    Invoke-PlanOrAction "Back up the config database before upgrading (via $($configDbToolPlan.Summary) backup): $($configStorePlan.DbPath)" {
+        # cdt-11: the database decided before appsettings.json was written. Re-reading the file here
+        # read it AFTER this run had rewritten it, so a dropped key sent the backup to the wrong file.
+        $existingDb = $configStorePlan.DbPath
+        $configuredDbPath = $configStorePlan.Path
+
+        if (-not (Test-IsSqliteConfigDbPresent -DbPath $existingDb)) {
+            # Review of A36: these two cases were collapsed into "nothing to back up", and only
+            # one of them is harmless.
+            #
+            # With ConfigStore:Path SET, a missing file is not a fresh install - it is a broken
+            # instance. The app refuses to start against a configured database it did not find
+            # and never creates one, which is why the ADI deployment tooling fails on exactly
+            # this condition too. Proceeding would mirror new binaries over an instance that
+            # cannot start, with no snapshot, and report success.
+            if ($configuredDbPath) {
+                Write-Fail "ConfigStore:Path names '$existingDb' but no database exists there. The app will not start against a missing configured database (it never creates one). Fix the key, restore the file, or run tools\Move-ConfigDbToShared.ps1. Nothing was deployed."
+            }
+
+            # No key and no file: a fresh install, or an instance that has never started.
+            Write-Ok "No existing config database at $existingDb - nothing to back up."
+            return
+        }
+
+        $backupDir = Join-Path $LogRoot "ConfigBackups"
+        if (-not (Test-Path -LiteralPath $backupDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+        }
+
+        $backupStamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $backupFile = Backup-SqliteConfigDb -DbPath $existingDb -DestDir $backupDir -Timestamp $backupStamp -AppPath $stagingPath
+        Write-Ok "Config database backed up (verified) to $backupFile"
+    }
+
+    }
+
+    Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped" {
+        # A35: see tools/AppPoolControl.psm1. The empty catch hid a pool that would not stop,
+        # and the robocopy below mirrors over a live application.
+        $poolState = Stop-AppPoolVerified -Name $AppPoolName
+        if ($poolState -eq 'Absent') {
+            Write-Warn "App pool $AppPoolName does not exist yet - nothing to stop."
+        }
+    }
+
+    # cdt-18: the pool restarts only once the mirror is complete, and only a confirmed start counts.
+    # robocopy /MIR failing part-way leaves a mix of the old and new builds in the publish folder, and the
+    # restart in the finally used to serve it; a start that threw there replaced the mirror failure; and
+    # Start-WebAppPool returning means IIS accepted the request, not that the pool runs (A38). A failed
+    # restart is recorded and reported, never thrown from the finally, and fails the run below, after the
+    # manifest, when nothing else failed.
+    $mirrorSucceeded = $false
+    $poolStartError = $null
+    try {
+        Invoke-RobocopyChecked -Description "Deploy application files" -Arguments @(
+            $stagingPath, $PublishPath,
+            "/MIR",
+            "/XF", "appsettings*.json",
+            "/XD", "logs", "config",
+            "/NFL", "/NDL", "/NJH", "/NJS", "/R:2", "/W:1"
+        )
+        $mirrorSucceeded = $true
+    } catch {
+        Write-Fail "$($_.Exception.Message). App pool $AppPoolName was deliberately LEFT STOPPED: $PublishPath may now hold a mix of the old and new builds, and starting it would serve that mix. The mirror does not touch the config database (the pre-upgrade backup, when one was taken, is under $(Join-Path $LogRoot 'ConfigBackups')). The staging publish $stagingPath is removed when the installer exits; fix the cause and re-run the installer, which publishes and mirrors afresh."
+    } finally {
+        if ($mirrorSucceeded) {
+            # Recorded, not thrown: a throw here would replace whatever is propagating (cdt-18).
+            try {
+                Invoke-PlanOrAction "Start app pool $AppPoolName and confirm it started" {
+                    $null = Start-AppPoolVerified -Name $AppPoolName
+                    Write-Ok "App pool $AppPoolName confirmed running"
+                }
+            } catch {
+                $poolStartError = $_.Exception.Message
+                Write-Host "  X  App pool $AppPoolName did not start: $poolStartError" -ForegroundColor Red
+            }
+        } else {
+            Write-Warn "App pool $AppPoolName is NOT being restarted: the file mirror did not complete, so the pool stays stopped."
+        }
+    }
+
+    Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $repoRoot
+
+    # The files are deployed and the application is down: a failure, not "complete" (cdt-18).
+    if ($poolStartError) {
+        Write-Fail "The files are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand."
+    }
 } finally {
-    Invoke-PlanOrAction "Start app pool $AppPoolName" {
-        Start-WebAppPool -Name $AppPoolName
+    if (-not $PlanOnly) {
+        Remove-Item -LiteralPath $stagingPath -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
-
-if (-not $PlanOnly) {
-    Remove-Item -LiteralPath $stagingPath -Recurse -Force -ErrorAction SilentlyContinue
-}
-
-Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $repoRoot
 
 if ($PlanOnly) {
     Write-Plan "Check HTTPS binding on '$ParentSite'"

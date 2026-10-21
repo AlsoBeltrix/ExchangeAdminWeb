@@ -145,15 +145,232 @@ Describe 'deploy.ps1' {
         # left present but dead.
         ([regex]::Matches($s.Text, '\$boundPool = try \{ \(Get-WebApplication')).Count |
             Should -Be 2 -Because 'the update path and the fresh-install path both mirror'
-        ([regex]::Matches($s.Text, 'if \(\$boundPool -and \$boundPool -ne \$AppPoolName\)')).Count |
+        # Since cdt-19 an unreadable binding is refused just above, so this no longer needs (and must
+        # not have) a `$boundPool -and` that lets the null case through.
+        ([regex]::Matches($s.Text, 'if \(\$boundPool -ne \$AppPoolName\)')).Count |
             Should -Be 2 -Because 'each site must refuse, not merely read the binding'
-        ([regex]::Matches($s.Text, '(?s)if \(\$boundPool -and \$boundPool -ne \$AppPoolName\) \{\s*Write-Fail')).Count |
+        ([regex]::Matches($s.Text, '(?s)if \(\$boundPool -ne \$AppPoolName\) \{\s*Write-Fail')).Count |
             Should -Be 2 -Because 'the condition must lead to a refusal, not sit there dead'
 
         # And it must come before the stop, not after it.
         $checkAt = $s.Text.IndexOf('$boundPool =')
         $stopAt = $s.Text.IndexOf('Stop-AppPoolVerified')
         $checkAt | Should -BeLessThan $stopAt
+    }
+
+    It 'refuses to stop and mirror when the binding cannot be read, and continues only on a confirmed stop (cdt-19, AST)' {
+        # Both branches configure the pool and the application before they get here, so an
+        # unreadable or empty binding, or a pool reported absent, is IIS not answering - not a
+        # fresh install. Neither may reach the mirror.
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
+            $statements = @($entry[1].Statements)
+            $lookupAt = -1; $stopAt = -1
+            for ($i = 0; $i -lt $statements.Count; $i++) {
+                if ($statements[$i].Extent.Text -like '$boundPool = try { (Get-WebApplication*') { $lookupAt = $i }
+                if ($statements[$i].Extent.Text -like '$poolState = Stop-AppPoolVerified -Name $AppPoolName') { $stopAt = $i }
+            }
+            $lookupAt | Should -BeGreaterOrEqual 0 -Because "the $($entry[0]) branch reads the binding"
+            $stopAt | Should -BeGreaterThan $lookupAt
+
+            $unknown = $statements[$lookupAt + 1]
+            $unknown | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+            $unknown.Clauses[0].Item1.Extent.Text | Should -BeExactly '-not $boundPool' -Because "an unreadable binding must stop the $($entry[0]) run"
+            $unknown.ElseClause | Should -BeNullOrEmpty
+            $unknownFail = $unknown.Clauses[0].Item2.Statements[0].Extent.Text
+            $unknownFail | Should -BeLike 'Write-Fail "*'
+            $unknownFail | Should -Match ([regex]::Escape('$ParentSite/$AppAlias')) -Because 'the refusal names the application it could not read'
+
+            $wrong = $statements[$lookupAt + 2]
+            $wrong.Clauses[0].Item1.Extent.Text | Should -BeExactly '$boundPool -ne $AppPoolName'
+            $wrong.Clauses[0].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "*'
+
+            $confirmed = $statements[$stopAt + 1]
+            $confirmed | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+            $confirmed.Clauses[0].Item1.Extent.Text | Should -BeExactly "`$poolState -ne 'Stopped'" -Because "only a confirmed stop may reach the $($entry[0]) mirror"
+            $confirmed.ElseClause | Should -BeNullOrEmpty
+            $confirmed.Clauses[0].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "*'
+        }
+        $s.Text | Should -Not -Match "poolState -eq 'Absent'" -Because 'an absent pool is no longer something to carry on past'
+    }
+
+    It 'runs each branch''s real binding-and-stop region: only the named pool, confirmed stopped, reaches the mirror (cdt-19)' {
+        foreach ($name in 'Write-Success', 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        ${function:Get-WebApplication} = {
+            $script:cdt19Calls.Add('lookup')
+            if ($script:cdt19Lookup -eq 'throws') { throw 'Cannot read configuration file due to insufficient permissions' }
+            if ($script:cdt19Lookup -eq 'nothing') { return $null }
+            [pscustomobject]@{ applicationPool = $script:cdt19Lookup }
+        }
+        ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt19Calls.Add('stop'); $script:cdt19Stop }
+
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
+            $statements = @($entry[1].Statements)
+            $from = -1; $stopAt = -1
+            for ($i = 0; $i -lt $statements.Count; $i++) {
+                if ($statements[$i].Extent.Text -like '$boundPool = *') { $from = $i }
+                if ($statements[$i].Extent.Text -like '$poolState = Stop-AppPoolVerified*') { $stopAt = $i }
+            }
+            $region = ($statements[$from..($stopAt + 1)] | ForEach-Object { $_.Extent.Text }) -join "`n"
+            $run = {
+                param([string]$Lookup, [string]$Stop)
+                $script:cdt19Calls = New-Object System.Collections.Generic.List[string]
+                $script:cdt19Lookup = $Lookup
+                $script:cdt19Stop = $Stop
+                # Read only by the lifted region.
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppPoolName -Value 'ExamplePool'
+                Set-Variable -Name PublishPath -Value 'D:\example\publish'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt19Calls -join ',') }
+            }
+
+            foreach ($lookup in 'throws', 'nothing') {
+                $r = & $run $lookup 'Stopped' 6>$null
+                $r.Calls | Should -BeExactly 'lookup' -Because "an unreadable binding ($lookup) must stop the $($entry[0]) run before any stop"
+                # Its own message: the wrong-pool refusal also fires on a null binding, but would tell
+                # the operator the application "runs under app pool ''", which is not what happened.
+                $r.Thrown | Should -BeLike '*Cannot read which app pool serves IIS application Example Site/ExampleApp*Nothing was deployed*'
+            }
+            $absent = & $run 'ExamplePool' 'Absent' 6>$null
+            $absent.Calls | Should -BeExactly 'lookup,stop'
+            $absent.Thrown | Should -BeLike "*reported 'Absent', not confirmed stopped*" -Because "an absent pool must not reach the $($entry[0]) mirror"
+            $other = & $run 'SomeOtherPool' 'Stopped' 6>$null
+            $other.Calls | Should -BeExactly 'lookup'
+            $other.Thrown | Should -BeLike "*runs under app pool 'SomeOtherPool'*"
+            $good = & $run 'ExamplePool' 'Stopped' 6>$null
+            $good.Thrown | Should -BeNullOrEmpty -Because "the named pool, confirmed stopped, is the one way through to the $($entry[0]) mirror"
+            $good.Calls | Should -BeExactly 'lookup,stop'
+        }
+    }
+
+    It 'confirms the pool is running after starting it, not only that IIS accepted the request (cdt-25)' {
+        # Start-AppPoolWithRetry returned as soon as Start-WebAppPool returned, and the script then
+        # printed "App pool started" - with the pool possibly still stopped.
+        . ([scriptblock]::Create((Find-FunctionDefinition $s 'Start-AppPoolWithRetry').Extent.Text))
+        ${function:Get-ItemProperty} = { param([Parameter(Position = 0)]$Path) $null = $Path; [pscustomobject]@{ State = $script:cdt25State } }
+        ${function:Start-WebAppPool} = {
+            param($Name, $ErrorAction)
+            $null = $Name, $ErrorAction
+            $script:cdt25Calls.Add('start')
+            if ($script:cdt25ThrowOnce -and -not $script:cdt25HasThrown) { $script:cdt25HasThrown = $true; throw 'The object identifier does not represent a valid object.' }
+        }
+        ${function:Start-AppPoolVerified} = {
+            param($Name)
+            $script:cdt25Calls.Add('verify')
+            if ($script:cdt25NeverRuns) { throw "App pool '$Name' is 'Stopped' after 60 seconds, not Started. The application is DOWN." }
+            'Started'
+        }
+        ${function:Start-Sleep} = { }
+        $run = {
+            param([string]$State, [bool]$NeverRuns, [bool]$ThrowOnce)
+            $script:cdt25State = $State
+            $script:cdt25NeverRuns = $NeverRuns
+            $script:cdt25ThrowOnce = $ThrowOnce
+            $script:cdt25HasThrown = $false
+            $script:cdt25Calls = New-Object System.Collections.Generic.List[string]
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try { Start-AppPoolWithRetry -Name 'ExamplePool' } catch { $thrown = $_.Exception.Message }
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt25Calls -join ',') }
+        }
+
+        $accepted = & $run 'Stopped' $true $false 6>$null
+        $accepted.Thrown | Should -BeLike "*is 'Stopped' after 60 seconds*" -Because 'IIS accepting the start is not the pool running (A38)'
+        $accepted.Calls | Should -BeExactly 'start,verify'
+        $normal = & $run 'Stopped' $false $false 6>$null
+        $normal.Thrown | Should -BeNullOrEmpty
+        $normal.Calls | Should -BeExactly 'start,verify'
+        $transient = & $run 'Stopped' $false $true 6>$null
+        $transient.Thrown | Should -BeNullOrEmpty -Because 'a start request that throws once is still retried'
+        $transient.Calls | Should -BeExactly 'start,start,verify'
+        $already = & $run 'Started' $false $false 6>$null
+        $already.Calls | Should -BeExactly 'verify' -Because 'a pool read as started is still confirmed'
+    }
+
+    It 'reads the password out of its SecureString and zeroes the unmanaged copy it made (cdt-27)' {
+        # SecureString-ToPlain dropped the pointer SecureStringToBSTR returned, so the plaintext stayed
+        # in unmanaged memory, never zeroed. A leak is not observable from here; the round trip is
+        # driven, and the shape that frees the pointer is pinned.
+        $fn = Find-FunctionDefinition $s 'SecureString-ToPlain'
+        $fn | Should -Not -BeNullOrEmpty
+        . ([scriptblock]::Create($fn.Extent.Text))
+        $secure = New-Object System.Security.SecureString
+        foreach ($ch in 'example-Passw0rd!'.ToCharArray()) { $secure.AppendChar($ch) }
+        SecureString-ToPlain $secure | Should -BeExactly 'example-Passw0rd!'
+
+        $keep = $fn.Find({ param($n)
+                $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $n.Right.Extent.Text -like '*SecureStringToBSTR($Secure)*' }, $true)
+        $keep | Should -Not -BeNullOrEmpty -Because 'the pointer must be kept to be freed'
+        $pointer = $keep.Left.VariablePath.UserPath
+        $try = $fn.Find({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] }, $true)
+        $try | Should -Not -BeNullOrEmpty
+        $try.Extent.StartOffset | Should -BeGreaterThan $keep.Extent.EndOffset
+        $try.Body.Extent.Text | Should -Match ('PtrToStringAuto\(\$' + $pointer + '\)')
+        $try.Finally.Extent.Text | Should -Match ('ZeroFreeBSTR\(\$' + $pointer + '\)') -Because 'the unmanaged copy is zeroed and freed on every path'
+    }
+
+    It 'never hands a pool, or icacls, an empty identity (cdt-24)' {
+        # With -ServiceAccount omitted the existing pool's userName became the account and the pool
+        # was set to SpecificUser with it - empty for a pool that runs as ApplicationPoolIdentity or
+        # a built-in account. icacls then granted the empty name, which it resolves to
+        # BUILTIN\BUILTIN, and exited 0.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail', 'Prompt-Value', 'Prompt-SecureValue', 'SecureString-ToPlain', 'Set-AclChecked') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq '$needsPassword = $false') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq 'Write-Success "App pool configured"') { $i } })
+        $from.Count | Should -Be 1
+        $to.Count | Should -Be 1
+        $region = ($statements[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        ${function:Test-Path} = { param([Parameter(Position = 0)]$Path) $null = $Path; $true }
+        ${function:Get-ItemProperty} = { param([Parameter(Position = 0)]$Path, $Name) $null = $Path, $Name; [pscustomobject]@{ identityType = $script:cdt24Type; userName = $script:cdt24User } }
+        ${function:New-WebAppPool} = { $script:cdt24Changes.Add('New-WebAppPool') }
+        ${function:Set-ItemProperty} = { param([Parameter(Position = 0)]$Path, $Name, $Value) $null = $Path; $script:cdt24Changes.Add("$Name=$Value") }
+        ${function:icacls} = { $script:cdt24Changes.Add('icacls') }
+
+        $run = {
+            param([string]$Type, [string]$User, [string]$Account)
+            $script:cdt24Type = $Type
+            $script:cdt24User = $User
+            $script:cdt24Changes = New-Object System.Collections.Generic.List[string]
+            # Read only by the lifted region.
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name NonInteractive -Value $true
+            Set-Variable -Name ServiceAccountPassword -Value $null
+            Set-Variable -Name ServiceAccount -Value $Account
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+            [pscustomobject]@{ Thrown = $thrown; Changes = @($script:cdt24Changes); Account = $ServiceAccount }
+        }
+
+        foreach ($case in @(@('4', ''), @('ApplicationPoolIdentity', ''), @('2', ''), @('3', ''), @('SpecificUser', '  '))) {
+            $r = & $run $case[0] $case[1] '' 6>$null
+            $r.Thrown | Should -BeLike '*does not run as a specific user*Pass -ServiceAccount*' -Because "a pool reported as identityType '$($case[0])' with user '$($case[1])' must not be given an empty identity"
+            $r.Changes.Count | Should -Be 0 -Because 'the refusal comes before anything about the pool is changed'
+        }
+        foreach ($type in '3', 'SpecificUser') {
+            $r = & $run $type 'CONTOSO\svc' '' 6>$null
+            $r.Thrown | Should -BeNullOrEmpty -Because "a pool that runs as a user (identityType '$type') keeps it"
+            $r.Account | Should -BeExactly 'CONTOSO\svc'
+            $r.Changes | Should -Contain 'processModel.userName=CONTOSO\svc'
+        }
+        $stale = & $run '4' 'CONTOSO\svc' 'CONTOSO\svc' 6>$null
+        $stale.Thrown | Should -BeLike '*ServiceAccountPassword is required*' -Because 'moving a pool to a specific user is an identity change, even when a stale user name matches'
+
+        $script:cdt24Changes = New-Object System.Collections.Generic.List[string]
+        { Set-AclChecked -Path 'D:\example' -Identity '' -Rights '(OI)(CI)M' } | Should -Throw -ExpectedMessage '*empty identity*BUILTIN\BUILTIN*'
+        $script:cdt24Changes | Should -Not -Contain 'icacls' -Because 'an empty identity must never reach icacls'
     }
 
     It 'parses without syntax errors' {
@@ -594,6 +811,370 @@ Describe 'deploy.ps1' {
         }
     }
 
+    It 'leaves the same databases out of the drift inventory as out of the backup copies (cdt-13)' {
+        # The drift check compares config\ before the pool stops with config\ after it restarts. A
+        # live WAL database changes across that by design; the drift list named only the config
+        # database, so the jobs and usage databases raised false drift warnings that pointed at a
+        # backup which, since cdt-10, deliberately does not contain them.
+        $lists = @{}
+        foreach ($listName in 'configCopyExclusions', 'driftCheckExclusions') {
+            $lists[$listName] = @($s.Ast.FindAll({ param($node)
+                        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                        $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $node.Left.VariablePath.UserPath -eq $listName }, $true))
+        }
+        $copyLists = $lists['configCopyExclusions']
+        $copyLists.Count | Should -Be 1
+        $driftLists = $lists['driftCheckExclusions']
+        $driftLists.Count | Should -Be 1 -Because 'one drift list'
+        $drift = $driftLists[0]
+        $drift.Extent.StartOffset | Should -BeGreaterThan $copyLists[0].Extent.EndOffset
+
+        $references = @($drift.Right.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $node.VariablePath.UserPath -eq 'configCopyExclusions' }, $true))
+        $references.Count | Should -Be 1 -Because 'the drift list derives from the shared list, so one list owns the databases'
+
+        # The two real statements, evaluated together: the shared list plus extended-log-level.txt.
+        $evaluate = [scriptblock]::Create($copyLists[0].Extent.Text + "`n" + $drift.Extent.Text + "`n" + ',$driftCheckExclusions')
+        $driftNames = @((& $evaluate) | ForEach-Object { $_ })
+        $copyNames = @(([scriptblock]::Create($copyLists[0].Extent.Text + "`n" + ',$configCopyExclusions')).Invoke() | ForEach-Object { $_ })
+        $copyNames.Count | Should -BeGreaterOrEqual 9 -Because 'the cdt-10 test pins what the shared list holds'
+        (@($driftNames | Sort-Object -Unique) -join ',') | Should -BeExactly (@(@('extended-log-level.txt') + $copyNames | Sort-Object -Unique) -join ',') `
+            -Because 'every database the backup leaves out, each with its WAL sidecars, and the rewritten log-level file'
+
+        $inventories = @($s.Ast.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.PipelineAst] -and
+                    $node.PipelineElements.Count -ge 2 -and
+                    $node.PipelineElements[0].Extent.Text -like 'Get-ChildItem*$runtimeConfigDir*' -and
+                    $node.Extent.Text -notmatch 'Copy-Item' }, $true))
+        $inventories.Count | Should -Be 2 -Because 'the drift check inventories config\ before the stop and after the restart'
+        foreach ($inventory in $inventories) {
+            $inventory.Extent.Text | Should -Match ([regex]::Escape('Where-Object { $_.Name -notin $driftCheckExclusions }')) -Because "the inventory at line $($inventory.Extent.StartLineNumber) must filter on the drift list"
+            $inventory.Extent.StartOffset | Should -BeGreaterThan $drift.Extent.EndOffset
+        }
+    }
+
+    It 'checks the live config database after a -Force deploy restarts the pool, and only warns (cdt-12)' {
+        # The upgrade path ends with a post-deploy check of the live store. -Force, the path that
+        # regenerates appsettings.json and so the one most able to point the app at a different,
+        # missing or damaged database, ended on the success banner without one.
+        $install = Get-FreshInstallBranch $s
+
+        $restarts = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.TryStatementAst] -and
+                    $null -ne $node.Finally -and
+                    @($node.Finally.FindAll({ param($n)
+                                $n -is [System.Management.Automation.Language.CommandAst] -and
+                                $n.GetCommandName() -eq 'Start-AppPoolWithRetry' }, $true)).Count -gt 0 }, $true))
+        $restarts.Count | Should -Be 1 -Because 'the branch restarts the pool in one finally'
+        $restartEnd = $restarts[0].Extent.EndOffset
+
+        $resolves = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $node.Left.VariablePath.UserPath -eq 'liveDb' }, $true))
+        $resolves.Count | Should -Be 1 -Because 'the -Force path must resolve the database it checks'
+        $resolves[0].Right.Extent.Text | Should -BeExactly 'Resolve-ConfigDbPath -PublishPath $PublishPath' -Because 'it reads the regenerated appsettings.json, the file the app opens'
+        @(Get-ConditionalAncestor $resolves[0] $install) | Should -BeNullOrEmpty -Because 'every -Force run that gets this far is checked'
+        $resolves[0].Extent.StartOffset | Should -BeGreaterThan $restartEnd -Because 'the check runs after the pool restart'
+
+        $checks = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq 'Test-SqliteConfigDbIntegrity' }, $true))
+        $checks.Count | Should -Be 1 -Because 'the -Force path must check the live store'
+        $check = $checks[0]
+        Get-NamedArgumentText $check 'DbPath' | Should -BeExactly '$liveDb'
+        Get-NamedArgumentText $check 'AppPath' | Should -BeExactly '$PublishPath' -Because 'staging is gone by then; the publish folder holds the same build'
+        $check.Extent.StartOffset | Should -BeGreaterThan $resolves[0].Extent.EndOffset
+
+        $gates = @(Get-ConditionalAncestor $check $install)
+        $gates.Count | Should -Be 1 -Because 'only its own presence test decides whether it runs'
+        $gates[0].Clauses[0].Item1.Extent.Text | Should -BeExactly 'Test-Path -LiteralPath $liveDb'
+
+        # Warn, not throw: the files are deployed and the pool is running; the verified pre-deploy
+        # backup is the rollback.
+        $try = $check.Parent
+        while ($null -ne $try -and -not ($try -is [System.Management.Automation.Language.TryStatementAst])) { $try = $try.Parent }
+        $try | Should -Not -BeNullOrEmpty
+        $try.Extent.StartOffset | Should -BeGreaterThan $gates[0].Extent.StartOffset -Because 'the try is inside the presence test'
+        $try.CatchClauses.Count | Should -Be 1
+        $try.CatchClauses[0].Body.Statements[0].Extent.Text | Should -BeLike 'Write-Warn "POST-DEPLOY CHECK: live config DB integrity check FAILED*'
+        @($try.CatchClauses[0].Body.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.ThrowStatementAst] -or
+                    ($n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-Fail') }, $true)).Count |
+            Should -Be 0 -Because 'a failed check is reported, never thrown'
+
+        $gates[0].Clauses.Count | Should -Be 2
+        $gates[0].Clauses[1].Item1.Extent.Text | Should -BeExactly '$configStorePathSetting'
+        $gates[0].Clauses[1].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Warn "POST-DEPLOY CHECK: ConfigStore:Path names*'
+        $gates[0].ElseClause.Statements[0].Extent.Text | Should -BeLike 'Write-Warn "POST-DEPLOY CHECK: no config DB at*'
+    }
+
+    It 'restarts the pool only after a complete mirror, and a failed restart never replaces the real error (cdt-16, AST)' {
+        # robocopy /MIR failing part-way leaves a mix of builds in the publish folder; the finally
+        # restarted the pool over it anyway. And a restart that threw inside the finally replaced
+        # whatever was propagating.
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        $branches = [ordered]@{ upgrade = $modeIf.Clauses[0].Item2; '-Force' = $modeIf.ElseClause }
+        foreach ($branchName in $branches.Keys) {
+            $statements = @($branches[$branchName].Statements)
+            $restartIndexes = @(for ($i = 0; $i -lt $statements.Count; $i++) {
+                    $st = $statements[$i]
+                    if ($st -is [System.Management.Automation.Language.TryStatementAst] -and $null -ne $st.Finally -and
+                        @($st.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-AppPoolWithRetry' }, $true)).Count -gt 0) { $i }
+                })
+            $restartIndexes.Count | Should -Be 1 -Because "the $branchName branch restarts the pool in one finally"
+            $restartIndex = $restartIndexes[0]
+            $restart = $statements[$restartIndex]
+
+            $flagSetters = @{}
+            foreach ($i in 0..($restartIndex - 1)) {
+                if ($statements[$i] -is [System.Management.Automation.Language.AssignmentStatementAst]) { $flagSetters[$statements[$i].Extent.Text] = $i }
+            }
+            $flagSetters.ContainsKey('$mirrorSucceeded = $false') | Should -BeTrue -Because "the $branchName branch starts with the mirror not done"
+            $flagSetters.ContainsKey('$poolStartError = $null') | Should -BeTrue
+
+            $body = @($restart.Body.Statements)
+            $robocopyAt = -1; $checkAt = -1; $setAt = -1
+            for ($i = 0; $i -lt $body.Count; $i++) {
+                if ($body[$i].Extent.Text -like '& robocopy*') { $robocopyAt = $i }
+                if ($body[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $body[$i].Clauses[0].Item1.Extent.Text -eq '$LASTEXITCODE -ge 8') { $checkAt = $i }
+                if ($body[$i].Extent.Text -eq '$mirrorSucceeded = $true') { $setAt = $i }
+            }
+            $robocopyAt | Should -BeGreaterOrEqual 0
+            $checkAt | Should -Be ($robocopyAt + 1) -Because 'the exit code is checked right after the mirror'
+            $setAt | Should -Be ($checkAt + 1) -Because 'the mirror counts as done only once its exit code has been checked'
+            @($branches[$branchName].FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Extent.Text -eq '$mirrorSucceeded = $true' }, $true)).Count | Should -Be 1
+            $failure = $body[$checkAt].Clauses[0].Item2.Statements[0]
+            $failure | Should -BeOfType ([System.Management.Automation.Language.ThrowStatementAst])
+            foreach ($fact in 'LEFT STOPPED', '$PublishPath', '$StagingPath', '$ProjectRoot', '$dbBackup') {
+                $failure.Extent.Text | Should -Match ([regex]::Escape($fact)) -Because "the mirror failure must say what state it left and what to do ($fact)"
+            }
+
+            $starts = @($restart.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-AppPoolWithRetry' }, $true))
+            $starts.Count | Should -Be 1
+            $gate = $starts[0].Parent
+            while ($null -ne $gate -and -not ($gate -is [System.Management.Automation.Language.IfStatementAst] -and $gate.Clauses[0].Item1.Extent.Text -eq '$mirrorSucceeded')) { $gate = $gate.Parent }
+            $gate | Should -Not -BeNullOrEmpty -Because "the $branchName restart must be conditional on a complete mirror"
+            ($starts[0].Extent.StartOffset -ge $gate.Clauses[0].Item2.Extent.StartOffset -and $starts[0].Extent.EndOffset -le $gate.Clauses[0].Item2.Extent.EndOffset) | Should -BeTrue -Because 'it is in the then-branch'
+            $guard = $starts[0].Parent
+            while ($null -ne $guard -and -not ($guard -is [System.Management.Automation.Language.TryStatementAst])) { $guard = $guard.Parent }
+            [object]::ReferenceEquals($guard, $restart) | Should -BeFalse -Because "the $branchName restart must have its own try inside the finally"
+            $guard.CatchClauses.Count | Should -Be 1
+            $catch = $guard.CatchClauses[0].Body
+            $catch.Extent.Text | Should -Match ([regex]::Escape('$poolStartError = $_.Exception.Message'))
+            @($catch.FindAll({ param($n)
+                        $n -is [System.Management.Automation.Language.ThrowStatementAst] -or
+                        ($n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-Fail') }, $true)).Count |
+                Should -Be 0 -Because 'a throw from the finally would replace the error that is propagating'
+
+            $after = $statements[$restartIndex + 1]
+            $after | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+            $after.Clauses[0].Item1.Extent.Text | Should -BeExactly '$poolStartError' -Because "a failed $branchName restart is its own failure once everything else succeeded"
+            $after.Clauses[0].Item2.Statements[0] | Should -BeOfType ([System.Management.Automation.Language.ThrowStatementAst])
+        }
+    }
+
+    It 'runs each branch''s real mirror-and-restart region: a failed mirror leaves the pool stopped, and the first error wins (cdt-16)' {
+        # The region - the flags, the try/finally and the check after it - is lifted from deploy.ps1
+        # by AST and run with only robocopy, the pool start and the manifest writer stubbed.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-AppSettingsFile') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        function robocopy { $script:cdt16Calls.Add('robocopy'); $global:LASTEXITCODE = $script:cdt16Exit }
+        ${function:Start-AppPoolWithRetry} = { param($Name) $null = $Name; $script:cdt16Calls.Add('start'); if ($script:cdt16StartThrows) { throw 'the pool would not start' } }
+        function Write-DeploymentManifest { $script:cdt16Calls.Add('manifest') }
+
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        $regions = [ordered]@{}
+        foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
+            $statements = @($entry[1].Statements)
+            $tryAt = @(for ($i = 0; $i -lt $statements.Count; $i++) {
+                    if ($statements[$i] -is [System.Management.Automation.Language.TryStatementAst] -and $null -ne $statements[$i].Finally -and
+                        $statements[$i].Finally.Extent.Text -match 'Start-AppPoolWithRetry') { $i }
+                })[0]
+            $from = $tryAt
+            while ($from -gt 0 -and $statements[$from - 1].Extent.Text -match '^\$(mirrorSucceeded|poolStartError|deploymentReadyForManifest) = ') { $from-- }
+            $to = $tryAt
+            if ($statements[$to + 1].Extent.Text -match '^if \(\$poolStartError\)') { $to++ }
+            $regions[$entry[0]] = ($statements[$from..$to] | ForEach-Object { $_.Extent.Text }) -join "`n"
+        }
+
+        $run = {
+            param([string]$Branch, [int]$Exit, [bool]$FailAfterMirror, [bool]$StartThrows)
+            $script:cdt16Calls = New-Object System.Collections.Generic.List[string]
+            $script:cdt16Exit = $Exit
+            $script:cdt16StartThrows = $StartThrows
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt16_' + [guid]::NewGuid().ToString('N'))
+            $StagingPath = Join-Path $root 'staging'
+            $PublishPath = Join-Path $root 'publish'
+            $ProjectRoot = Join-Path $root 'source'
+            New-Item -ItemType Directory -Path $StagingPath, $PublishPath, $ProjectRoot -Force | Out-Null
+            # Read only by the lifted region.
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name dbBackup -Value (Join-Path $root 'backup\exchangeadmin.db')
+            Set-Variable -Name configStorePathSetting -Value $null
+            $configPath = Join-Path $PublishPath 'appsettings.json'
+            if ($Branch -eq 'upgrade') {
+                $json = '{ "AllowedHosts": "*" }'
+                if ($FailAfterMirror) { $json = '{ "AllowedHosts": ' }
+                Set-Content -LiteralPath $configPath -Value $json -Encoding ascii
+            } elseif ($FailAfterMirror) {
+                $configPath = Join-Path $root 'missing-dir\appsettings.json'
+            }
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try {
+                . ([scriptblock]::Create($regions[$Branch]))
+            } catch {
+                $thrown = $_.Exception.Message
+            } finally {
+                $stagingLeft = Test-Path -LiteralPath $StagingPath
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt16Calls -join ','); StagingLeft = $stagingLeft; Staging = $StagingPath }
+        }
+
+        foreach ($branch in $regions.Keys) {
+            $failedMirror = & $run $branch 8 $false $false 6>$null
+            $failedMirror.Calls | Should -BeExactly 'robocopy' -Because "a failed $branch mirror must not restart the pool over a partial publish"
+            $failedMirror.Thrown | Should -Match 'robocopy failed with exit code 8'
+            $failedMirror.Thrown | Should -Match 'LEFT STOPPED'
+            $failedMirror.Thrown | Should -Match ([regex]::Escape($failedMirror.Staging))
+            $failedMirror.StagingLeft | Should -BeFalse
+
+            $both = & $run $branch 1 $true $true 6>$null
+            $both.Calls | Should -BeExactly 'robocopy,start'
+            $both.Thrown | Should -Not -BeNullOrEmpty
+            $both.Thrown | Should -Not -Match 'pool would not start|did not start' -Because "the $branch step that failed first must be the error the caller sees"
+
+            $restartOnly = & $run $branch 1 $false $true 6>$null
+            $restartOnly.Calls | Should -BeExactly 'robocopy,start,manifest' -Because 'the deploy is complete, so the manifest is still written'
+            $restartOnly.Thrown | Should -Match ([regex]::Escape('did not start (the pool would not start)'))
+            $restartOnly.Thrown | Should -Match 'DOWN'
+
+            $clean = & $run $branch 1 $false $false 6>$null
+            $clean.Thrown | Should -BeNullOrEmpty
+            $clean.Calls | Should -BeExactly 'robocopy,start,manifest'
+            $clean.StagingLeft | Should -BeFalse
+        }
+    }
+
+    It 'writes and reports the manifest even when git cannot answer (cdt-14)' {
+        # Under PowerShell 7 a failed git leaves $gitCommit $null (5.1 maps it to "unknown"), and
+        # the writer - which runs in the finally that restarts the pool - called Substring on it.
+        foreach ($name in 'Write-Success', 'Write-DeploymentManifest') {
+            $fn = Find-FunctionDefinition $s $name
+            $fn | Should -Not -BeNullOrEmpty
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        $publish = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt14_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $publish -Force | Out-Null
+        # deploy.ps1's own preference. Under Continue a failed method call is written and skipped,
+        # so the old line would not escape the function and this test would pass for the wrong reason.
+        $ErrorActionPreference = 'Stop'
+        try {
+            $noRepository = Join-Path $publish 'no-such-repository'
+            $said = @(Write-DeploymentManifest -PublishFolder $publish -RepoRoot $noRepository 6>&1 | ForEach-Object { "$_" })
+            ($said -join "`n") | Should -Match 'Deployment manifest written: '
+            $manifest = Get-Content -LiteralPath (Join-Path $publish 'deployment-manifest.json') -Raw | ConvertFrom-Json
+            (@($null, '', 'unknown') -contains $manifest.gitCommit) | Should -BeTrue -Because 'git could not answer, so no commit is recorded'
+
+            $head = "$(& git -C $RepoRoot rev-parse HEAD)".Trim()
+            $LASTEXITCODE | Should -Be 0
+            $said = @(Write-DeploymentManifest -PublishFolder $publish -RepoRoot $RepoRoot 6>&1 | ForEach-Object { "$_" })
+            ($said -join "`n") | Should -Match ([regex]::Escape("@ $($head.Substring(0, 8))")) -Because 'a real commit is still shortened to eight characters'
+        } finally {
+            Remove-Item -LiteralPath $publish -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'records an unreadable git status as unknown, not as a clean tree, in both manifest writers and both shells (cdt-26)' {
+        # Both writers recorded a git status that failed as gitDirty = false, and the promotion's
+        # "built from a dirty tree" gate reads that as clean. rev-parse can succeed while status fails
+        # (a corrupt index), so the manifest then also carries a valid commit.
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt26_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        try {
+            $repos = [ordered]@{}
+            foreach ($kind in 'clean', 'dirty', 'corrupt') {
+                $repo = Join-Path $root $kind
+                New-Item -ItemType Directory -Path $repo -Force | Out-Null
+                & git -C $repo init -q 2>&1 | Out-Null
+                & git -C $repo -c user.email=probe@example.test -c user.name=probe commit -q --allow-empty -m init 2>&1 | Out-Null
+                $LASTEXITCODE | Should -Be 0 -Because 'the fixture repository needs a commit'
+                if ($kind -ne 'clean') { Set-Content -LiteralPath (Join-Path $repo 'untracked.txt') -Value 'x' -Encoding ascii }
+                if ($kind -eq 'corrupt') { [System.IO.File]::WriteAllBytes((Join-Path $repo '.git\index'), [byte[]](1..64)) }
+                $repos[$kind] = [pscustomobject]@{ Path = $repo; Head = "$(& git -C $repo rev-parse HEAD)".Trim() }
+            }
+            & git -C $repos['corrupt'].Path status --porcelain 2>&1 | Out-Null
+            $LASTEXITCODE | Should -Not -Be 0 -Because 'the corrupt-index fixture must make git status fail'
+
+            $expected = @{ clean = $false; dirty = $true; corrupt = 'unknown' }
+            $child = Join-Path $root 'writer51.ps1'
+            Set-Content -LiteralPath $child -Encoding ascii -Value @'
+param($ScriptPath, $Repo, $Out)
+$ErrorActionPreference = 'Stop'
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($ScriptPath, [ref]$null, [ref]$null)
+foreach ($name in 'Write-DeploymentManifest', 'Write-Success', 'Write-Ok', 'Write-Plan', 'Invoke-PlanOrAction') {
+    $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+    if ($fn) { . ([scriptblock]::Create($fn.Extent.Text)) }
+}
+$PlanOnly = $false
+New-Item -ItemType Directory -Path $Out -Force | Out-Null
+Write-DeploymentManifest -PublishFolder $Out -RepoRoot $Repo | Out-Null
+'@
+            foreach ($writer in 'deploy.ps1', 'tools/Install-ExchangeAdminWeb.ps1') {
+                $scriptPath = Join-Path $RepoRoot $writer
+                $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$null)
+                foreach ($name in 'Write-DeploymentManifest', 'Write-Success', 'Write-Ok', 'Write-Plan', 'Invoke-PlanOrAction') {
+                    $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+                    if ($fn) { . ([scriptblock]::Create($fn.Extent.Text)) }
+                }
+                Set-Variable -Name PlanOnly -Value $false
+                foreach ($kind in $repos.Keys) {
+                    foreach ($shell in 'pwsh', 'powershell.exe') {
+                        $out = Join-Path $root ("out-$kind-" + [guid]::NewGuid().ToString('N'))
+                        if ($shell -eq 'pwsh') {
+                            $ErrorActionPreference = 'Stop'
+                            New-Item -ItemType Directory -Path $out -Force | Out-Null
+                            Write-DeploymentManifest -PublishFolder $out -RepoRoot $repos[$kind].Path 6>$null | Out-Null
+                            $ErrorActionPreference = 'Continue'
+                        } else {
+                            & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $child -ScriptPath $scriptPath -Repo $repos[$kind].Path -Out $out 6>$null | Out-Null
+                            $LASTEXITCODE | Should -Be 0 -Because "the $writer writer must run under Windows PowerShell 5.1"
+                        }
+                        $manifest = Get-Content -LiteralPath (Join-Path $out 'deployment-manifest.json') -Raw | ConvertFrom-Json
+                        $manifest.gitDirty | Should -Be $expected[$kind] -Because "$writer under $shell, $kind repository"
+                        if ($kind -eq 'corrupt') {
+                            $manifest.gitDirty | Should -BeOfType ([string]) -Because 'unknown is not a boolean'
+                            $manifest.gitCommit | Should -BeExactly $repos[$kind].Head -Because 'the commit is still known, so only the dirty gate stood between this build and production'
+                        } else {
+                            $manifest.gitDirty | Should -BeOfType ([bool])
+                        }
+                    }
+                }
+            }
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'shortens the manifest commit only when there is one long enough to shorten (cdt-14)' {
+        $fn = Find-FunctionDefinition $s 'Write-DeploymentManifest'
+        $calls = @($fn.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                    $node.Member.Extent.Text -eq 'Substring' }, $true))
+        $calls.Count | Should -Be 1 -Because 'one place shortens the commit'
+        $guard = $calls[0].Parent
+        while ($null -ne $guard -and -not ($guard -is [System.Management.Automation.Language.IfStatementAst])) { $guard = $guard.Parent }
+        $guard | Should -Not -BeNullOrEmpty -Because 'Substring on a null or short commit throws'
+        $guard.Clauses[0].Item1.Extent.Text | Should -BeExactly '$gitCommit -and $gitCommit.Length -ge 8'
+        $calls[0].Extent.StartOffset | Should -BeGreaterThan $guard.Clauses[0].Item2.Extent.StartOffset -Because 'it runs only in the then-branch'
+        $calls[0].Extent.EndOffset | Should -BeLessThan $guard.Clauses[0].Item2.Extent.EndOffset
+    }
+
     It 'runs a post-deploy live DB integrity check (DB is excluded from file drift by design)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,
@@ -605,8 +1186,8 @@ Describe 'deploy.ps1' {
         # the pool starts - otherwise a missing/corrupt live DB ends on the success banner.
         $upgradeBlock | Should -Match 'Test-SqliteConfigDbIntegrity' `
             -Because 'the live DB needs a real post-deploy health check, not file-drift comparison'
-        $upgradeBlock | Should -Match "driftCheckExclusions = @\('extended-log-level.txt', 'exchangeadmin.db'" `
-            -Because 'the DB triplet must be excluded from the size/mtime drift inventory'
+        $upgradeBlock | Should -Match "driftCheckExclusions = @\('extended-log-level.txt'\) \+ \`$configCopyExclusions" `
+            -Because 'the DB triplets must be excluded from the size/mtime drift inventory (through the shared list since cdt-13)'
         $upgradeBlock.IndexOf('Start-AppPoolWithRetry') |
             Should -BeLessThan $upgradeBlock.IndexOf('Test-SqliteConfigDbIntegrity') `
             -Because 'the live-DB check must run after the pool restarts (post migrate/seed)'
@@ -714,8 +1295,8 @@ Describe 'tools/Install-ExchangeAdminWeb.ps1' {
         $s.Text | Should -Not -Match 'New-Item[^\r\n]*\$ConfigStorePath' `
             -Because 'the installer must never create the shared database file'
         $s.Text | Should -Match 'StartsWith\(''\\\\''\)' -Because 'a UNC path must be refused'
-        $s.Text | Should -Match '-ConfigStorePath \$ConfigStorePath\)' `
-            -Because 'the generated appsettings must carry the key'
+        $s.Text | Should -Match '-ConfigStorePath \$configStorePlan\.Path\)' `
+            -Because 'the generated appsettings must carry the key (the decided one since cdt-11: supplied, else kept)'
     }
 
     It 'generated appsettings carries ConfigStore:Path only when -ConfigStorePath is given (byte-identical otherwise)' {

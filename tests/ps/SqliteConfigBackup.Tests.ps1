@@ -164,6 +164,110 @@ Describe 'SqliteConfigBackup module' {
         }
     }
 
+    Context 'cdt-17: a ConfigStore:Path the app would refuse is refused here, naming it' {
+        # The app's ConfigStorePath.Resolve refuses UNC and any value that is not fully qualified.
+        # The module used to return such a value, and every caller then tested for, backed up and
+        # checked whatever it named relative to its own current directory.
+        BeforeAll {
+            function Write-TestKey {
+                param([string]$Publish, [string]$Value)
+                $json = @{ ConfigStore = @{ Path = $Value } } | ConvertTo-Json -Depth 3
+                Set-Content -LiteralPath (Join-Path $Publish 'appsettings.json') -Encoding UTF8 -Value $json
+            }
+        }
+
+        It 'refuses <Value> (<Form>) from both readers, naming the value and the file' -TestCases @(
+            @{ Form = 'relative'; Value = 'config\exchangeadmin.db' }
+            @{ Form = 'drive-relative'; Value = 'D:exchangeadmin.db' }
+            @{ Form = 'rooted without a drive'; Value = '\config\exchangeadmin.db' }
+            @{ Form = 'UNC'; Value = '\\server\share\exchangeadmin.db' }
+            @{ Form = 'UNC with forward slashes'; Value = '//server/share/exchangeadmin.db' }
+        ) {
+            $publish = New-TempDir
+            try {
+                Write-TestKey -Publish $publish -Value $Value
+                $appsettings = Join-Path $publish 'appsettings.json'
+                foreach ($reader in 'Get-ConfigStorePathSetting', 'Resolve-ConfigDbPath') {
+                    $err = $null
+                    try { & $reader -PublishPath $publish | Out-Null } catch { $err = $_ }
+                    $err | Should -Not -BeNullOrEmpty -Because "$reader must refuse a value the app refuses at startup"
+                    "$err" | Should -BeLike "*$Value*" -Because 'the message names the value'
+                    "$err" | Should -BeLike "*$appsettings*" -Because 'and the file it came from'
+                    "$err" | Should -BeLike '*Nothing was changed*'
+                }
+            } finally {
+                Remove-Item $publish -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'accepts an absolute local path, trimmed as the app trims it' {
+            $publish = New-TempDir
+            try {
+                Write-TestKey -Publish $publish -Value '  D:\shared\config\exchangeadmin.db  '
+                Get-ConfigStorePathSetting -PublishPath $publish | Should -BeExactly 'D:\shared\config\exchangeadmin.db'
+                Resolve-ConfigDbPath -PublishPath $publish | Should -BeExactly 'D:\shared\config\exchangeadmin.db'
+            } finally {
+                Remove-Item $publish -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'refuses instead of resolving against the current directory when a matching file is there (the reproduced case)' {
+            $root = New-TempDir
+            $publish = Join-Path $root 'publish'
+            $cwd = Join-Path $root 'cwd'
+            New-Item -ItemType Directory -Path $publish, (Join-Path $cwd 'config') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $cwd 'config\exchangeadmin.db') -Value 'an unrelated database' -Encoding ascii
+            Write-TestKey -Publish $publish -Value 'config\exchangeadmin.db'
+            Push-Location $cwd
+            try {
+                Test-Path -LiteralPath 'config\exchangeadmin.db' | Should -BeTrue -Because 'the trap is set: the relative value names a real file from here'
+                { Resolve-ConfigDbPath -PublishPath $publish } | Should -Throw -ExpectedMessage '*must be an absolute local file path*config\exchangeadmin.db*'
+            } finally {
+                Pop-Location
+                Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'agrees with the installer and the cutover, and never accepts what the app refuses' {
+            # One rule in three places: the two scripts that WRITE the key validate it with their
+            # own copies, and this module validates what it READS. They must make the same call on
+            # every input, and none may accept a value the app's own rule (no UNC, fully qualified)
+            # refuses at startup.
+            $repo = Join-Path $PSScriptRoot '..\..'
+            $validators = @{}
+            foreach ($entry in @(@('installer', 'tools\Install-ExchangeAdminWeb.ps1', 'Assert-LocalAbsoluteFilePath'), @('cutover', 'tools\Move-ConfigDbToShared.ps1', 'Assert-LocalAbsolutePath'))) {
+                $tokens = $null
+                $errors = $null
+                $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path (Join-Path $repo $entry[1])).Path, [ref]$tokens, [ref]$errors)
+                $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $entry[2] }, $true)
+                $fn | Should -Not -BeNullOrEmpty -Because "$($entry[1]) defines $($entry[2])"
+                $validators[$entry[0]] = [scriptblock]::Create("function Write-Fail { param(`$Message) throw `$Message }`n" + $fn.Extent.Text + "`n" + $entry[2] + ' -Path $args[0] -Name ConfigStorePath')
+            }
+
+            $inputs = @('D:\shared\config\exchangeadmin.db', 'c:\x\y.db', 'config\exchangeadmin.db', 'D:exchangeadmin.db',
+                '\config\exchangeadmin.db', '\\server\share\x.db', '//server/share/x.db', '\\?\D:\x\y.db', 'D:/shared/x.db', '1:\x.db', 'DD:\x.db')
+            $publish = New-TempDir
+            try {
+                foreach ($value in $inputs) {
+                    Write-TestKey -Publish $publish -Value $value
+                    $moduleAccepts = $true
+                    try { Get-ConfigStorePathSetting -PublishPath $publish | Out-Null } catch { $moduleAccepts = $false }
+                    foreach ($name in $validators.Keys) {
+                        $scriptAccepts = $true
+                        try { & $validators[$name] $value } catch { $scriptAccepts = $false }
+                        $moduleAccepts | Should -Be $scriptAccepts -Because "the module and the $name must make the same call on '$value'"
+                    }
+                    if ($moduleAccepts) {
+                        $unc = $value.StartsWith('\\') -or $value.StartsWith('//')
+                        ((-not $unc) -and [System.IO.Path]::IsPathFullyQualified($value)) | Should -BeTrue -Because "the app would refuse '$value' at startup"
+                    }
+                }
+            } finally {
+                Remove-Item $publish -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'Test-IsSqliteConfigDbPresent accepts -DbPath and -ConfigDir' {
         $dir = New-TempDir
         try {
