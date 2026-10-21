@@ -95,7 +95,7 @@ public sealed partial class Comms10kRefusalTests
         finally
         {
             gate.Release();
-            if (waitAt == "yield") context.Resume();
+            if (waitAt == "yield") await context.ResumeAsync(pending);
             await pending;
         }
 
