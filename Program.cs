@@ -9,6 +9,12 @@ using Serilog;
 
 System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 
+// The ops scripts' database tool (docs/ConfigDbToolInApp-Plan.md): "db <verb>" runs and exits
+// here, before the logger and the web host exist, so it reads no config and starts nothing.
+// ConfigDbCliTests pins this position.
+if (ExchangeAdminWeb.Services.Storage.ConfigDbCli.TryRun(args, out var cliExitCode))
+    return cliExitCode;
+
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateBootstrapLogger();
@@ -465,3 +471,5 @@ finally
 {
     Log.CloseAndFlush();
 }
+
+return 0;
