@@ -5,6 +5,34 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-21 - Orchestrating implementation subagents is allowed; the prohibition is removed
+
+Owner ruling, verbatim: "remove that rule." Context: the Token Budget bullet in
+`.agents/repo-guidance.md` said "Never orchestrate an implementation subagent from a
+supervising session - that shape pays twice by construction" (from the 2026-08-27 decision
+below). The owner asked for the ConfigDbToolInApp slices to be implemented by Opus 5.5
+agents dispatched from the working session, was told the rule, asked why, and ruled it bad
+guidance.
+
+What was wrong with it: "pays twice" assumed the supervisor re-reads everything the agent
+wrote to check it. It does not. The supervisor briefs, waits, dispatches the independent
+review harness, triages its verdict and commits records; the agent's work is checked by the
+reviewer, not by the supervisor re-deriving it. A thin supervisor is cheap, and a fresh
+agent is independent eyes the single-session shape does not have. The rule had already
+needed a scoped exception (2026-10-15, Sol 6.1 / Astra), which is the usual sign a rule is
+wrong rather than exceptional.
+
+What stands: the default implementer remains Fable, one fresh session per slice, when the
+owner has not named an arrangement; codex review at full strength on every slice; no
+economising on reasoning effort; mutation proofs, verification gates and one-commit-per-slice
+are unchanged whoever implements. The supervisor still does not review its own or its
+agents' code (AGENTS.md self-review rule). Per-slice cost is still logged in
+`.agents/token-log.md`, naming the arrangement, so the comparison stays measured.
+
+Supersedes: the "orchestrator-plus-implementation-subagent shape is rejected outright"
+sentence of the 2026-08-27 decision. The 2026-10-15 scoped exception is no longer an
+exception; it stands as the arrangement for that stream.
+
 ### 2026-10-19 - Account Lockout Remediation is parked, not removed
 
 Owner ruling. The module has never been used and he considers it impractical as built. He
@@ -1656,8 +1684,9 @@ Reason: at one-slice-one-session discipline a slice estimates roughly $3 (Sonnet
 (Fable) whichever model implements - the rate difference is noise. The cost that matters
 is rework: a review-fix cycle costs another session plus owner attention and roughly eats
 the rate saving, so the strongest implementer minimizes duplicated work, which was the
-goal. The orchestrator-plus-implementation-subagent shape is rejected outright: it pays
-twice by construction (supervising context plus subagent tokens).
+goal. The orchestrator-plus-implementation-subagent shape was rejected outright here as
+paying twice by construction; that sentence is SUPERSEDED by the 2026-10-21 decision, which
+removes the prohibition.
 
 The Sonnet 5 trial is NOT scheduled. If cost pressure returns, the recorded fallback is
 D1's original assignment (Sonnet 5 at `high`/`xhigh` implements) with its revert trigger,
