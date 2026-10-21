@@ -708,14 +708,12 @@ Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 # path without create and stops if it is missing, so the installer refuses here rather than
 # hand over an instance that cannot start. Creating the shared database from an existing
 # instance is tools\Move-ConfigDbToShared.ps1's job, run once.
-$sharedConfigDir = $null
 if (-not [string]::IsNullOrWhiteSpace($ConfigStorePath)) {
     Assert-LocalAbsoluteFilePath -Path $ConfigStorePath -Name 'ConfigStorePath'
     $ConfigStorePath = [System.IO.Path]::GetFullPath($ConfigStorePath)
     if (-not (Test-Path -LiteralPath $ConfigStorePath -PathType Leaf)) {
         Write-Fail "ConfigStorePath names $ConfigStorePath but no database exists there. The installer never creates the shared database; create it once from an existing instance with tools\Move-ConfigDbToShared.ps1, then re-run the installer."
     }
-    $sharedConfigDir = Split-Path -Parent $ConfigStorePath
 }
 
 # cdt-11. Decided here, once: after -ConfigStorePath is validated, before the banner and before
@@ -724,6 +722,13 @@ if (-not [string]::IsNullOrWhiteSpace($ConfigStorePath)) {
 $configStorePlan = Resolve-ConfigStorePlan -PublishPath $PublishPath -SuppliedPath $ConfigStorePath -RegenerateAppSettings $RegenerateAppSettings.IsPresent
 # cdt-21: in plan and apply mode alike, and whatever -SkipConfigBackup says.
 Assert-ConfigStorePlanDatabase -Plan $configStorePlan -AppSettingsPath $configPath
+# cdt-22: the shared database's folder follows the decision - the key the instance will open, kept
+# or supplied - not the parameter, so a run that keeps the key and changes the pool identity still
+# grants the new identity the folder SQLite writes -wal/-shm into.
+$sharedConfigDir = $null
+if ($configStorePlan.Path) {
+    $sharedConfigDir = Split-Path -Parent $configStorePlan.Path
+}
 
 Write-Host ""
 Write-Host "ExchangeAdminWeb installer" -ForegroundColor Magenta

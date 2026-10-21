@@ -825,3 +825,51 @@ Describe 'cdt-21: a ConfigStore:Path naming a missing database is refused before
         }
     }
 }
+
+Describe 'cdt-22: the shared database folder is granted from the decided key, not only when -ConfigStorePath is re-stated' {
+    # The grant on the shared database's folder (SQLite writes -wal/-shm beside it) followed the
+    # parameter, so an update that kept the key and changed the pool identity left the new identity
+    # unable to open the database the app uses.
+
+    It 'takes the folder from the decision, after it, and nowhere else (AST)' {
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        $statements = @($ast.EndBlock.Statements)
+        $checkAt = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like 'Assert-ConfigStorePlanDatabase *') { $i } })
+        $checkAt.Count | Should -Be 1
+        $statements[$checkAt[0] + 1].Extent.Text | Should -BeExactly '$sharedConfigDir = $null'
+        $derive = $statements[$checkAt[0] + 2]
+        $derive | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+        $derive.Clauses[0].Item1.Extent.Text | Should -BeExactly '$configStorePlan.Path' -Because 'the database the instance opens, kept or supplied'
+        $derive.Clauses[0].Item2.Statements[0].Extent.Text | Should -BeExactly '$sharedConfigDir = Split-Path -Parent $configStorePlan.Path'
+        $assignments = @($ast.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $n.Left.VariablePath.UserPath -eq 'sharedConfigDir' }, $true))
+        $assignments.Count | Should -Be 2 -Because 'reset, then derived from the decision - nowhere else'
+    }
+
+    It 'a -PlanOnly run that keeps a shared key and changes the identity grants the new identity the shared folder (Windows PowerShell 5.1)' {
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt22_' + [guid]::NewGuid().ToString('N'))
+        $publish = Join-Path $root 'publish'
+        $sharedDir = Join-Path $root 'shared'
+        New-Item -ItemType Directory -Path (Join-Path $publish 'config'), $sharedDir -Force | Out-Null
+        $shared = Join-Path $sharedDir 'exchangeadmin.db'
+        Set-Content -LiteralPath $shared -Value 'placeholder' -Encoding ascii
+        Set-Content -LiteralPath (Join-Path $publish 'appsettings.json') -Encoding UTF8 -Value (@{ AllowedHosts = '*'; ConfigStore = @{ Path = $shared } } | ConvertTo-Json -Depth 5)
+        $alias = 'cdt22' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+        try {
+            $out = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Resolve-Path $script:InstallerPath).Path `
+                -PlanOnly -NonInteractive -PublishPath $publish -LogRoot (Join-Path $root 'logs') `
+                -AppAlias $alias -AppPoolName $alias -ServiceAccount 'CONTOSO\svc-new' -AdminGroups 'CONTOSO\Exchange Admins' 2>&1
+            $exitCode = $LASTEXITCODE
+            $text = @($out | ForEach-Object { "$_" }) -join "`n"
+            $exitCode | Should -Be 0 -Because $text
+            $expected = "PLAN Grant CONTOSO\svc-new (OI)(CI)M on $sharedDir" -replace '\s+', ''
+            ($text -replace '\s+', '') | Should -Match ([regex]::Escape($expected)) -Because 'the new identity must be able to open the database the app uses, without -ConfigStorePath being repeated'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
