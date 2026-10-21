@@ -236,7 +236,7 @@
                     {
                         <div class="alert alert-info mt-2">
                             <strong>@(CanReplace ? "Validated; not applied yet." : "File cannot be applied.")</strong>
-                            <strong>@resolveResult.ResolvedDns.Count</strong> of @parsedEmails.Count email(s) matched in AD.
+                            @(Comms10kAddressResolver.DescribeResolved(parsedEmails.Count - resolveResult.Rejections.Count, resolveResult.ResolvedMembers.Count)).
                             The distribution list has <strong>not</strong> changed.
                             @if (AllRejections.Count > 0)
                             {

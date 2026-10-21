@@ -709,30 +709,30 @@
                 : await MailboxService.RemoveMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs);
 
             var actionVerb = isAdd ? "Add" : "Remove";
-            var succeeded = opResult.Detail?.Split(',', StringSplitOptions.TrimEntries) ?? Array.Empty<string>();
-
+            // aud-a23b: rights come from AppliedRights, never from Detail (on a cloud grant, Detail is the OWA link).
+            var applied = opResult.AppliedRights ?? [];
             if (fullAccess)
             {
-                var faSuccess = opResult.Success || succeeded.Contains("FullAccess");
+                var faSuccess = opResult.Success || applied.Contains("FullAccess");
                 Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}FullAccess", target, user, "FullAccess",
                     faSuccess, ticket, errorDetail: faSuccess ? null : opResult.Message, extra: onPremExtra);
             }
             if (sendAs)
             {
-                var saSuccess = opResult.Success || succeeded.Contains("SendAs");
+                var saSuccess = opResult.Success || applied.Contains("SendAs");
                 Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}SendAs", target, user, "SendAs",
                     saSuccess, ticket, errorDetail: saSuccess ? null : opResult.Message, extra: onPremExtra);
             }
 
-            var isPartial = !opResult.Success && succeeded.Length > 0;
+            var isPartial = !opResult.Success && applied.Count > 0;
             await Email.SendAdminNotificationAsync(
                 currentUser, clientIpAddress, isPartial ? $"{action}_PARTIAL" : action, target, user, permType,
                 opResult.Success, ticket, opResult.Success ? null : opResult.Message);
 
-            if (opResult.Success || succeeded.Length > 0)
+            if (opResult.Success || applied.Count > 0)
             {
                 var isGrant = isAdd;
-                var notifyPerm = string.Join("+", succeeded.Length > 0 ? succeeded : new[] { permType });
+                var notifyPerm = string.Join("+", applied.Count > 0 ? applied : new[] { permType });
                 await Email.SendUserNotificationAsync(user, target, currentUser, notifyPerm, isGrant);
                 await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isGrant);
             }

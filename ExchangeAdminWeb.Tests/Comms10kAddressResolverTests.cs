@@ -279,6 +279,28 @@ public class Comms10kAddressResolverTests
         Assert.Equal(["", "   "], outcome.Rejections.Select(r => r.Address));
     }
 
+    // ---- 8. The summary names addresses and distinct members separately (cdr-followup-1). ----
+
+    [Theory]
+    [InlineData(2, 1, 0, "2 addresses resolved to 1 distinct member; 0 rejected")]
+    [InlineData(1, 1, 0, "1 address resolved to 1 distinct member; 0 rejected")]
+    [InlineData(501, 500, 0, "501 addresses resolved to 500 distinct members; 0 rejected")]
+    [InlineData(2, 2, 1, "2 addresses resolved to 2 distinct members; 1 rejected")]
+    [InlineData(0, 0, 3, "0 addresses resolved to 0 distinct members; 3 rejected")]
+    public void TheSummaryNamesAddressesAndDistinctMembersSeparately(int addresses, int members, int rejected, string expected)
+    {
+        // Two aliases of one person are two addresses and one member. The old stage message,
+        // "1 of 2 matched in AD", put the member count over the address count and read as a miss.
+        // 501/500 is the cross-batch case in Comms10kAddressIdentityTests.
+        Assert.Equal(expected, Comms10kAddressResolver.DescribeResolved(addresses, members, rejected));
+    }
+
+    [Fact]
+    public void TheSummaryOmitsTheRejectedClauseWhenNoCountIsGiven()
+    {
+        Assert.Equal("2 addresses resolved to 1 distinct member", Comms10kAddressResolver.DescribeResolved(2, 1));
+    }
+
     // ---- helpers ----
 
     private static string ReadService() =>
