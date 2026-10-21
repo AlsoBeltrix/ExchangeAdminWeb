@@ -146,6 +146,22 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
         return found.Values.ToList();
     }
 
+    public IReadOnlyList<string> FindObjectDnsBySid(string sid)
+    {
+        var dns = new List<string>();
+        foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+        {
+            ["LDAPFilter"] = ProtectedGroupMembership.GroupLookupFilter(GroupLookupKey.Sid, sid),
+            ["Server"] = GlobalCatalog(),
+        }))
+        {
+            // A row without a DN is a failed read, never a missing object.
+            dns.Add((row is null ? null : Text(row, "DistinguishedName"))
+                    ?? throw new InvalidOperationException("The directory returned an object without a readable DN."));
+        }
+        return dns;
+    }
+
     /// <summary>
     /// The forest's global catalog, <c>host:3268</c>, discovered from the host's own forest.
     /// </summary>

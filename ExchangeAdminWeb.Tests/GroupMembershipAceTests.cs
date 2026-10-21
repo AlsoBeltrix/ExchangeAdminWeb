@@ -237,4 +237,81 @@ public class GroupMembershipAceTests
 
         Assert.False(GroupMembershipAce.GrantsMemberWrite(new[] { scopedGenericWrite }, Caller, null));
     }
+
+    // ----- aud-a4b finding 7: the Denies the token cannot decide -----
+
+    [Fact]
+    public void AnUnknownDenyThatWouldRefuse_IsListed()
+    {
+        // The token grants (Contractors is not in it); if the caller were in Contractors the
+        // explicit Deny would refuse. That is the one question the directory must answer.
+        var aces = new[] { Deny(Contractors), Allow(Caller) };
+
+        Assert.Equal([Contractors], GroupMembershipAce.DenyTrusteesTheTokenCannotDecide(aces, Caller, null, null));
+    }
+
+    [Fact]
+    public void NothingIsListed_WhenTheTokenAlreadyRefuses()
+    {
+        var aces = new[] { Deny(Stranger), Allow(Contractors) };
+
+        Assert.Empty(GroupMembershipAce.DenyTrusteesTheTokenCannotDecide(aces, Caller, null, null));
+    }
+
+    [Fact]
+    public void NothingIsListed_WhenNoUnknownDenyCouldChangeTheAnswer()
+    {
+        // An explicit Allow is decided before an inherited Deny is reached.
+        var aces = new[] { Deny(Contractors, inherited: true), Allow(Caller) };
+
+        Assert.Empty(GroupMembershipAce.DenyTrusteesTheTokenCannotDecide(aces, Caller, null, null));
+    }
+
+    [Fact]
+    public void NothingIsListed_ForADenyTheTokenCarries()
+    {
+        var aces = new[] { Deny(Contractors), Allow(Caller) };
+
+        Assert.Empty(GroupMembershipAce.DenyTrusteesTheTokenCannotDecide(aces, Caller, [Contractors], null));
+        Assert.Empty(GroupMembershipAce.DenyTrusteesTheTokenCannotDecide(aces, Caller, null, [Contractors]));
+    }
+
+    [Fact]
+    public void InheritOnlyAndNonMemberWriteDenies_AreNotListed()
+    {
+        var readOnlyDeny = new GroupMembershipAce.Entry(
+            Contractors, IsDeny: true, Rights: ReadProperty, ObjectType: GroupMembershipAce.MemberAttribute,
+            IsInherited: false, InheritOnly: false);
+
+        Assert.Empty(GroupMembershipAce.DenyTrusteesTheTokenCannotDecide(
+            new[] { Deny(Contractors, inheritOnly: true), Allow(Caller) }, Caller, null, null));
+        Assert.Empty(GroupMembershipAce.DenyTrusteesTheTokenCannotDecide(
+            new[] { readOnlyDeny, Allow(Caller) }, Caller, null, null));
+    }
+
+    [Theory]
+    [InlineData("S-1-1-0")]
+    [InlineData("S-1-5-11")]
+    [InlineData("S-1-5-2")]
+    public void LogonSids_AreTheTokensToReport_NotTheDirectorys(string logonSid)
+    {
+        // Everyone, Authenticated Users, Network: membership of the logon session, which the
+        // token already carries in full. Listing them would send the directory a question it
+        // cannot answer and refuse every caller on such a DACL.
+        var aces = new[] { Deny(logonSid), Allow(Caller) };
+
+        Assert.Empty(GroupMembershipAce.DenyTrusteesTheTokenCannotDecide(aces, Caller, null, null));
+    }
+
+    [Theory]
+    [InlineData("S-1-5-32-548", true)]
+    [InlineData("S-1-5-21-1111111111-2222222222-3333333333-1200", true)]
+    [InlineData("S-1-1-0", false)]
+    [InlineData("S-1-5-11", false)]
+    [InlineData("S-1-5-18", false)]
+    [InlineData("not a sid", false)]
+    public void IsDirectoryRecordedSid_AccountSidsAndBuiltinAliasesOnly(string sid, bool expected)
+    {
+        Assert.Equal(expected, GroupMembershipAce.IsDirectoryRecordedSid(sid));
+    }
 }

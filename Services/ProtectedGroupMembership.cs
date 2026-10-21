@@ -137,6 +137,12 @@ internal interface IProtectedGroupDirectory
     IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(IReadOnlyList<string> memberDns);
 
     /// <summary>
+    /// The DNs of every object in the forest whose objectSid is <paramref name="sid"/>, of any
+    /// class, through a global catalog.
+    /// </summary>
+    IReadOnlyList<string> FindObjectDnsBySid(string sid);
+
+    /// <summary>
     /// Whether the domain-local group at <paramref name="groupDn"/>, through the nesting its own
     /// domain holds, has any of <paramref name="memberDns"/> as a member.
     /// </summary>
@@ -176,7 +182,11 @@ internal static class ProtectedGroupMembership
     /// <summary>The evaluation's answer.</summary>
     /// <param name="Matches">One <c>Group:&lt;entry&gt;</c> rule per protected group matched.</param>
     /// <param name="Incomplete">True when some part of the question could not be answered.</param>
-    internal sealed record Result(IReadOnlyList<string> Matches, bool Incomplete);
+    internal sealed record Result(IReadOnlyList<string> Matches, bool Incomplete)
+    {
+        /// <summary>The entries matched, exactly as they were passed in.</summary>
+        public IReadOnlyList<string> MatchedEntries => Matches.Select(m => m["Group:".Length..]).ToList();
+    }
 
     private sealed record Seed(string DistinguishedName, string? Sid);
 

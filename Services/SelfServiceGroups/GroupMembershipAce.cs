@@ -111,12 +111,17 @@ public static class GroupMembershipAce
     /// above already is: the live loop needs a domain controller, so nothing in it was testable,
     /// and that is where the defect sat.
     ///
-    /// <b>Deny wins over Allow regardless of ACE order.</b> A canonical DACL lists denies first,
-    /// but <c>GetAccessRules</c> makes no ordering guarantee, and guessing wrong in this
-    /// direction grants access - so every applicable entry is examined before answering. An
-    /// entry whose trustee is neither the caller nor one of their groups is not applicable and
-    /// is skipped; an entry whose rights do not convey member-write is skipped by
-    /// <see cref="ConveysMemberWrite"/>.
+    /// <b>Canonical order, not Deny-before-everything.</b> This paragraph used to say Deny wins
+    /// regardless of ACE order; aud-a4b finding 1 corrected the code to Windows' rule - explicit
+    /// before inherited, Deny before Allow within each, first decisive match wins - and the comment
+    /// in the body below describes it. An entry whose trustee is neither the caller nor one of
+    /// their groups is not applicable and is skipped; an entry whose rights do not convey
+    /// member-write is skipped by <see cref="ConveysMemberWrite"/>.
+    ///
+    /// The token this is evaluated against is the CALLER'S token as the web server received it,
+    /// which need not carry the domain-local groups of the group's own domain (aud-a4b finding 7).
+    /// <see cref="DenyTrusteesTheTokenCannotDecide"/> and <see cref="ResourceDomainDenies"/> close
+    /// that gap before this is asked the final time.
     /// </remarks>
     public static bool GrantsMemberWrite(
         IEnumerable<Entry> aces, string callerSid, IReadOnlyCollection<string>? callerGroupSids,
@@ -173,5 +178,77 @@ public static class GroupMembershipAce
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// The Deny trustees on this DACL that the caller's token cannot speak for, when one of them
+    /// could change the answer. Empty when the token alone decides.
+    /// </summary>
+    /// <remarks>
+    /// aud-a4b finding 7. The token is the web server's view of the caller. It carries the
+    /// caller's own domain's global and universal groups and the domain-local groups of the web
+    /// server's domain - not those of the target group's domain when the two differ, and not a
+    /// membership added since the caller signed in. A Deny carried by such a group is invisible to
+    /// <see cref="GrantsMemberWrite"/>, while an individual Allow still grants.
+    ///
+    /// Listed: Deny entries that apply to this object, convey member-write, and name a SID absent
+    /// from every set the caller holds - restricted to SIDs whose membership the directory records
+    /// (<see cref="IsDirectoryRecordedSid"/>). Returned only when the claims alone would GRANT and
+    /// granting would no longer hold with every listed Deny applied: anything else is already
+    /// decided, and asking the directory could only add a way to fail.
+    /// </remarks>
+    public static IReadOnlyList<string> DenyTrusteesTheTokenCannotDecide(
+        IReadOnlyCollection<Entry> aces, string callerSid, IReadOnlyCollection<string>? callerGroupSids,
+        IReadOnlyCollection<string>? denyOnlySids)
+    {
+        ArgumentNullException.ThrowIfNull(aces);
+
+        if (!GrantsMemberWrite(aces, callerSid, callerGroupSids, denyOnlySids))
+            return [];
+
+        var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(callerSid))
+            known.Add(callerSid);
+        foreach (var sid in (callerGroupSids ?? []).Concat(denyOnlySids ?? []))
+        {
+            if (!string.IsNullOrWhiteSpace(sid))
+                known.Add(sid);
+        }
+
+        var unknown = aces
+            .Where(a => a.IsDeny && !a.InheritOnly && a.Sid is not null && !known.Contains(a.Sid)
+                        && ConveysMemberWrite(a.Rights, a.ObjectType) && IsDirectoryRecordedSid(a.Sid))
+            .Select(a => a.Sid!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (unknown.Count == 0)
+            return [];
+
+        // The worst case: every one of them applies. If the caller is still granted, none of them
+        // can matter - an explicit Allow is decided before an inherited Deny is reached.
+        var worstCase = (denyOnlySids ?? []).Concat(unknown).ToList();
+        return GrantsMemberWrite(aces, callerSid, callerGroupSids, worstCase) ? [] : unknown;
+    }
+
+    /// <summary>
+    /// Whether membership of this SID is something the directory records: a domain account SID,
+    /// or a BUILTIN alias (<c>S-1-5-32-*</c>), which is a domain-local group in every domain.
+    /// Everyone, Authenticated Users, Network and the other logon SIDs belong to the logon session,
+    /// which the caller's token already reports in full.
+    /// </summary>
+    public static bool IsDirectoryRecordedSid(string sid)
+    {
+        if (sid.StartsWith("S-1-5-32-", StringComparison.OrdinalIgnoreCase))
+            return true;
+        try
+        {
+            return new System.Security.Principal.SecurityIdentifier(sid).IsAccountSid();
+        }
+        catch (ArgumentException)
+        {
+            // Not a SID at all: nothing to look up, and nothing a token could carry.
+            return false;
+        }
     }
 }

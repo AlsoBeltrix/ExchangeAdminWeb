@@ -1338,7 +1338,7 @@ public class SelfServiceGroupService
     /// group is EXCLUDED rather than shown as manageable. The per-ACE projection runs in PowerShell so
     /// this type takes no dependency on System.DirectoryServices ACL types; C# sees only primitives.
     /// </summary>
-    private static bool CallerCanManageMembers(
+    private bool CallerCanManageMembers(
         PowerShell ps, PSCredential credential, string groupDn, string callerSid,
         IReadOnlyCollection<string> callerGroupSids,
         IReadOnlyCollection<string> denyOnlySids)
@@ -1419,8 +1419,14 @@ public class SelfServiceGroupService
                 ace.Properties["InheritOnly"]?.Value is bool io && io));
         }
 
-        return GroupMembershipAce.GrantsMemberWrite(
-            entries, callerSid, callerGroupSids, denyOnlySids);
+        // aud-a4b finding 7. The token is the web server's view of the caller and need not carry
+        // the domain-local groups of THIS group's domain, so a Deny one of them carries could be
+        // skipped while an individual Allow granted. Any Deny the token cannot decide - and only
+        // when one could change the answer - is settled from the directory, in the group's own
+        // domain, under this module's credential; failure refuses.
+        return ResourceDomainDenies.CallerMayWriteMembers(
+            entries, callerSid, callerGroupSids, denyOnlySids, groupDn,
+            new PowerShellProtectedGroupDirectory(ps, credential), _logger);
     }
 
     /// <summary>
