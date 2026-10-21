@@ -11,9 +11,10 @@ namespace ExchangeAdminWeb.Services;
 /// real identity.
 /// </param>
 /// <param name="ExistsOnPrem">
-/// True when the recipient is backed by a synced on-premises directory object. False means
-/// cloud-only OR undetermined - both take the conservative branch, because a cloud-only
-/// principal cannot match on-prem group rules and must therefore never be assumed synced.
+/// True when Exchange reports the recipient as backed by a synced on-premises directory object;
+/// false when it reports it cloud-only. Never a guess: a recipient whose sync state Exchange did
+/// not report makes the lookup throw (aud-a2b hole 3). "Undetermined" used to read as false,
+/// which sent a synced recipient down the cloud-only branch and skipped its group and OU rules.
 /// </param>
 public sealed record ResolvedRecipient(
     string PrimarySmtpAddress,

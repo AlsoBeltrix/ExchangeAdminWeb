@@ -2,9 +2,10 @@
 
 **Severity**: HIGH - unauthorized writes remain possible, and some valid grants are now
 refused.
-**Status**: Verified - six of seven fixed; finding 7 carried
-**Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Status**: Fixed on branch; awaiting merge (finding 7). Findings 1-6: Verified, fixed directly on
+`master` earlier.
+**Branch**: findings 1-6 -- (direct-to-main); finding 7 `worktree-agent-acf74809ad7ee3f7d`
+**Commit**: findings 1-6 `<pending>` as recorded before; finding 7 `<pending>`
 
 ## Evidence
 
@@ -113,7 +114,7 @@ the evaluator, or if the evaluator stopped honouring individual Denies.
 | 4 | `ConveysMemberWrite` accepts the `Membership` property set GUID as covering `member` |
 | 5 | An object-scoped ACE keeps its scope whatever the mask, so `GenericWrite`/`GenericAll` against an unrelated attribute no longer conveys member-write. **The two tests that enforced the wrong assumption are rewritten, not worked around** |
 | 6 | `GroupMembershipChecker.ExtractDenyOnlyGroupClaims` is new and deliberately separate; deny-only SIDs are passed as their own set and can only make a Deny apply, never satisfy an Allow |
-| 7 | **Not fixed.** See below |
+| 7 | Fixed later, on `worktree-agent-acf74809ad7ee3f7d` - see "Plan for finding 7" and "Guard proof for finding 7" below |
 
 A projection fault now defaults to "applies, not inherited" - the shape that gets evaluated
 rather than skipped - so a missing flag cannot silently drop a Deny.
@@ -124,12 +125,109 @@ Deny ahead of everything, which is what `aud-a4` did, fails `AnExplicitAllow_Def
 
 ## Known gaps
 
-**Finding 7 stands: the web server's token is not necessarily the resource domain's token.**
-Where the target group lives in a different domain, an applicable domain-local membership can
-be absent from the Negotiate principal, so a Deny it carries is still invisible while an
-individual Allow succeeds. Closing it needs an authoritative membership read against the
-resource domain rather than a claims read - the same requirement as `aud-a3b`, and it should
-be built with it.
+**Finding 7 stood when this was written** (it is fixed below): the web server's token is not
+necessarily the resource domain's token. Where the target group lives in a different domain, an
+applicable domain-local membership can be absent from the Negotiate principal, so a Deny it
+carries is still invisible while an individual Allow succeeds. Closing it needs an
+authoritative membership read against the resource domain rather than a claims read - the same
+requirement as `aud-a3b`, and it should be built with it.
+
+## Plan for finding 7 (approved by the owner's EVERYTHING go)
+
+Owner go 2026-10-21 ("ALL the bugs ... EVERYTHING", `.agents/decisions.md` 2026-10-21), which
+approves the carried finding.
+
+**Mechanism.** When - and only when - the caller's token cannot decide the answer, read the
+caller's memberships from the directory, with `aud-a3b`'s evaluator, against the group's OWN
+domain, and let what is found make Denies apply.
+
+1. A pure step, `GroupMembershipAce.DenyTrusteesTheTokenCannotDecide`, lists the Deny trustees
+   that apply to this object, convey member-write and are absent from the caller's token -
+   restricted to SIDs whose membership the directory records (domain account SIDs and BUILTIN
+   aliases; Everyone, Authenticated Users and the other logon SIDs are the logon's own and the
+   token already reports them). It returns nothing when the claims already refuse, or when the
+   answer would still be "grant" with every one of those Denies applied - so the directory is
+   only read when it could change the outcome.
+2. `ResourceDomainDenies.ApplicableToCaller` resolves each such trustee to its group - a BUILTIN
+   alias in the target group's own domain, where that alias lives under the same SID as in every
+   other domain; an account SID forest-wide - and asks `ProtectedGroupMembership.Evaluate` whether
+   the caller (found by SID across the forest) is a member. That evaluator already asks a
+   domain-local group in its own domain, reads universal ancestry from the global catalog and
+   counts the primary group. A trustee that is not a group cannot contain the caller.
+3. Applicable trustees join the DENY-ONLY set and the DACL is evaluated again. They can make a
+   Deny apply; they never satisfy an Allow - the conservative direction, and the one the finding
+   is about. A legitimate Allow through another domain's domain-local group therefore stays
+   unhonoured, as it is today.
+4. Any read that fails, any trustee that resolves ambiguously, a caller that cannot be found, an
+   incomplete evaluation or a group DN naming no domain makes `CallerCanManageMembers` return
+   false: the group is excluded, or the write refused.
+
+Self-Service Groups' scoped exception is untouched: this is the module's own DACL gate (whether
+the caller may write the group in AD), not a Protected Group Target check, and the member
+protection check is unchanged.
+
+**Files.** `Services/SelfServiceGroups/GroupMembershipAce.cs`,
+`Services/SelfServiceGroups/ResourceDomainDenies.cs` (new), `Services/SelfServiceGroups/SelfServiceGroupService.cs`,
+`Services/ProtectedGroupMembership.cs` and `Services/PowerShellProtectedGroupDirectory.cs`
+(a forest-wide object-by-SID read; `Result.MatchedEntries`), tests in
+`ExchangeAdminWeb.Tests/GroupMembershipAceTests.cs` and a new `ResourceDomainDeniesTests.cs`, with
+the fake forest moved to a shared test file.
+
+**Mutation, at the call site.** In the composed decision, skip the resource-domain step and
+evaluate the claims alone: the finding-7 test fails. Drop the "would it change the answer"
+shortcut's worst-case evaluation: the test pinning that no read happens fails.
+
+## Guard proof for finding 7
+
+`ExchangeAdminWeb.Tests/ResourceDomainDeniesTests.cs`, driven against the shared
+`ExchangeAdminWeb.Tests/FakeForest.cs` (moved out of `ProtectedGroupMembershipTests` unchanged,
+plus a forest-wide object-by-SID read). The caller is in domain A; the group whose DACL is
+evaluated, and the domain-local group carrying the Deny, are in domain B; the caller's token is
+A's groups only.
+
+| Test | What it pins |
+| --- | --- |
+| `ADenyCarriedByTheGroupsOwnDomainLocalGroup_RefusesTheCaller` | finding 7 itself - and it asserts first that the token alone GRANTS, so the refusal is the fix's |
+| `TheSameDeny_DoesNotRefuseSomeoneOutsideTheGroup` | the opposite direction, and that the directory really was asked |
+| `ADenyTheTokenAlreadyCarries_IsDecidedWithoutTheDirectory`, `AnUnknownInheritedDenyBelowAnExplicitAllow_DoesNotNeedTheDirectory` | no read when the token decides, or when no Deny could change the answer |
+| `ADenyForAnotherAccount_DoesNotRefuse` | a non-group trustee cannot contain the caller |
+| `ABuiltinAlias_IsResolvedInTheGroupsOwnDomain` | a BUILTIN alias is the group's own domain's copy, not ambiguous and not the caller's domain's |
+| `AReadThatFails_Refuses` (5 reads), `ACallerWhoCannotBeFound_Refuses` | fail closed on every read |
+| `AMembershipFoundInTheDirectory_CanOnlyDeny_EvenWhereItsAllowIsDecidedFirst` | what is found joins the deny-only set: an explicit Allow for the same group, which canonical order reaches first, does not grant |
+| `AnAllowCarriedByTheGroupsOwnDomainLocalGroup_IsStillNotHonoured` | the conservative half, recorded below as a gap |
+| `TheServiceGate_RoutesThroughTheResourceDomainDecision` | code-view tripwire: `CallerCanManageMembers` returns the composed decision, not the token-only one |
+| `GroupMembershipAceTests`: `AnUnknownDenyThatWouldRefuse_IsListed`, `NothingIsListed_*` (3), `InheritOnlyAndNonMemberWriteDenies_AreNotListed`, `LogonSids_AreTheTokensToReport_NotTheDirectorys` (3), `IsDirectoryRecordedSid_*` (6) | the pure step that decides when the directory is needed |
+
+Mutations, each run this session; every file restored byte-identical, touched and rebuilt green:
+
+| Mutation | File md5 (before = restored) | Mutated md5 | Named test | Result |
+| --- | --- | --- | --- | --- |
+| composed decision skips the resource-domain step (call site) | `ResourceDomainDenies.cs` `085006acbe3c420ebb251f495e00b5e4` | `fff0064dd0dcac65d5e78e291df4cdc4` | `ADenyCarriedByTheGroupsOwnDomainLocalGroup_RefusesTheCaller` | FAIL |
+| `CallerCanManageMembers` returns the token-only evaluation (service call site) | `SelfServiceGroupService.cs` `08149cfae87002a218baf5a365b62631` | `bddb33e0075a61d40f56d04d91190235` | `TheServiceGate_RoutesThroughTheResourceDomainDecision` | FAIL |
+| found memberships join the GRANTING set | `ResourceDomainDenies.cs` `085006acbe3c420ebb251f495e00b5e4` | `bda7c04625ebf1fe13fd2311a859ac2d` | `AMembershipFoundInTheDirectory_CanOnlyDeny_EvenWhereItsAllowIsDecidedFirst` | FAIL |
+| drop the worst-case shortcut (helper; efficiency, not a security guard) | `GroupMembershipAce.cs` `72ee0957f6075a5fc4d6a09e42b106ec` | `44a8d53ac63abdd0555eb396520e7587` | `NothingIsListed_WhenNoUnknownDenyCouldChangeTheAnswer` | FAIL |
+
+**Finding 7's remaining gaps:**
+
+- Whether finding 7 was reachable before this fix is itself unverified. Every self-service group
+  read (`GetOwnedGroupsAsync`, `SearchManageableGroupAsync`, `ResolveGroupByGuid`, and the DACL read
+  in `CallerCanManageMembers`) omits `-Server`, so it binds to the AD module's default domain, and a
+  group elsewhere fails that read and is excluded. If the default is the web server's own domain -
+  the domain whose domain-local groups the token carries - the gap was latent, and would have
+  opened the moment those reads were routed to the group's own domain the way every other module's
+  reads have been. The fix does not depend on which: it settles the Denies against the group's own
+  domain, taken from its DN.
+- A grant that exists only through a domain-local group of another domain is still not honoured.
+  The directory is read only to make Denies apply; widening grants on that read was not needed to
+  close the finding.
+- A Deny naming a well-known logon SID (Everyone, Authenticated Users, Network, ...) is decided by
+  the token alone, on the reasoning that those memberships belong to the logon session and the
+  web logon is a network logon, as an ADUC write would be. A Deny naming a principal no longer in
+  the forest is treated as applying to nobody.
+- Self-service now reads the directory - the caller's object, its groups, the global catalog and
+  the group's own domain - only when a member-write Deny names a group the token does not carry
+  and could change the answer. When it does and any of that fails, the group is excluded or the
+  write refused. The extra reads have not been measured.
 
 All seven were source-level and specification-based when raised, and the fixes are verified
 the same way. **Nothing here has run against a real directory, and probing AD is forbidden
@@ -147,8 +245,14 @@ seven findings. It confirmed all three read callers supply `callerGroupSids` and
 ClickGate count is correct. Raw output: `.agents/review/out/aud-a4.txt` (machine-local,
 gitignored).
 
+Finding 7 implemented under the owner's 2026-10-21 go by an Opus 5.5 implementation agent on
+`worktree-agent-acf74809ad7ee3f7d`. Independent review of that fix pending.
+
 ## Closeout
 
-Pending owner approval. **`aud-a4` is net-positive but incomplete**: it closes a real bypass
-and introduces a conservative over-refusal. Whether to leave it in place while this is built,
-or revisit it, is the owner's call.
+Findings 1-6 fixed on `master` earlier. Finding 7 fixed on branch, not merged, not pushed; it
+changes Self-Service Groups' own DACL gate (module version) and adds a read to the shared
+protected-group directory seam (`IProtectedGroupDirectory.FindObjectDnsBySid`).
+
+The earlier note stands as history: **`aud-a4` was net-positive but incomplete** - it closed a
+real bypass and introduced a conservative over-refusal, which finding 1's fix removed.

@@ -1237,6 +1237,22 @@
                 return;
             }
 
+            // aud-a1b. What is saved is a SNAPSHOT taken here, and every grant in it that was not
+            // loaded is confirmed to be a group in the directory first. The Add buttons stay live
+            // while the lookup runs, so persisting the live lists afterwards would let a row added
+            // mid-lookup ride an unchecked save.
+            var snapshot = policyAliases.ToDictionary(a => a, a => accessState[a].ToArray());
+            var newGrants = snapshot
+                .SelectMany(kv => kv.Value.Except(accessBaseline.GetValueOrDefault(kv.Key) ?? new List<string>(), StringComparer.OrdinalIgnoreCase))
+                .ToList();
+            var refused = await ConfirmNewGroupGrantsAsync(newGrants);
+            if (refused is not null)
+            {
+                statusMessage = refused;
+                statusIsError = true;
+                return;
+            }
+
             var allAccess = SectionAccess.GetSectionAccess();
 
             if (allAccess.Count == 0)
@@ -1252,7 +1268,7 @@
             foreach (var alias in policyAliases)
             {
                 previousGroups[alias] = allAccess.TryGetValue(alias, out var prev) ? prev : Array.Empty<string>();
-                allAccess[alias] = accessState[alias].ToArray();
+                allAccess[alias] = snapshot[alias];
             }
             SectionAccess.SaveSectionAccess(allAccess);
             // Persisted separately from the grants, and after them: a display name is cosmetic, so
@@ -1263,7 +1279,7 @@
             foreach (var alias in policyAliases)
             {
                 var prev = previousGroups[alias];
-                var curr = accessState[alias].ToArray();
+                var curr = snapshot[alias];
                 if (!prev.SequenceEqual(curr, StringComparer.OrdinalIgnoreCase))
                 {
                     try { Audit.LogSettingsChange(currentUser, ip, alias, prev, curr); }
@@ -1271,8 +1287,10 @@
                 }
             }
 
-            dirty.ClearSection(SecAccess);
-            SnapshotAccessBaseline();
+            // The baseline is what was SAVED, so a row added during the lookup still counts as an
+            // unsaved edit rather than vanishing from the dirty count.
+            accessBaseline = snapshot.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
+            RecountAccess();
             statusMessage = "Section access saved.";
             statusIsError = false;
         }
@@ -1302,20 +1320,33 @@
                 return;
             }
 
+            // aud-a1b, the same rule as the access save: confirm every grant this save adds, and
+            // persist the snapshot that was confirmed, never the live list.
+            var snapshot = moduleAdminGroups.ToArray();
+            var refused = await ConfirmNewGroupGrantsAsync(
+                snapshot.Except(moduleAdminGroupsBaseline, StringComparer.OrdinalIgnoreCase).ToList());
+            if (refused is not null)
+            {
+                statusMessage = refused;
+                statusIsError = true;
+                return;
+            }
+
             var previous = ModuleAdmin.GetModuleAdmins(module.Id);
-            ModuleAdmin.SetModuleAdmins(module.Id, moduleAdminGroups.ToArray());
+            ModuleAdmin.SetModuleAdmins(module.Id, snapshot);
 
             try
             {
                 var ip = ClientInfo.GetIpForUser(currentUser);
-                Audit.LogSettingsChange(currentUser, ip, $"ModuleAdmins:{module.Id}", previous, moduleAdminGroups.ToArray());
+                Audit.LogSettingsChange(currentUser, ip, $"ModuleAdmins:{module.Id}", previous, snapshot);
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module admin change"); }
 
-            dirty.ClearSection(SecAdmins);
             // Re-baseline here, not merely tidy: this save does not reload the page, so a stale
-            // baseline would count the groups just persisted all over again on the next edit.
-            moduleAdminGroupsBaseline = new List<string>(moduleAdminGroups);
+            // baseline would count the groups just persisted all over again on the next edit. The
+            // baseline is what was SAVED, so a row added during the lookup stays an unsaved edit.
+            moduleAdminGroupsBaseline = new List<string>(snapshot);
+            RecountAdmins();
             statusMessage = "Module admins saved.";
             statusIsError = false;
         }
@@ -1327,6 +1358,44 @@
         finally { saving = false; }
     }
 
+    /// <summary>
+    /// Confirms that every grant a save is ADDING names a group the directory holds. Null when the
+    /// save may proceed; otherwise the refusal to show. aud-a1b.
+    /// </summary>
+    /// <remarks>
+    /// The add path tested a SID's shape only, so a pasted user SID, or one that resolves to
+    /// nothing, was saved and authorized nobody. Only the new grants are asked about: rows already
+    /// stored are not re-checked, so a directory outage never blocks saving a removal. One lookup
+    /// per new grant, each waiting up to 30 seconds on the directory service's shared runspace
+    /// lock - hence the activity, opened before the Task.Run that wraps the loop.
+    /// </remarks>
+    private async Task<string?> ConfirmNewGroupGrantsAsync(IReadOnlyList<string> newGrants)
+    {
+        if (newGrants.Count == 0)
+            return null;
+
+        using var activity = Progress.Begin(
+            "Module Config", "Confirming new groups against Active Directory", ActivitySize.Items(newGrants.Count));
+
+        var done = 0;
+        var refusals = await Task.Run(() => ExchangeAdminWeb.Authorization.GroupGrantValidation.Refusals(newGrants, sid =>
+        {
+            var answer = ADSearch.ValidateGroupSid(sid);
+            activity.Report(++done);
+            return answer;
+        }));
+
+        // A refusal is a check that RAN; only a directory that could not be asked is a failure
+        // (reviewer ruling, .agents/state.md 2026-10-08).
+        activity.Complete(
+            refusals.All(r => r.Refusal != ExchangeAdminWeb.Authorization.GroupGrantRefusal.DirectoryUnavailable),
+            refusals.Count == 0 ? "Every new group was confirmed." : "Some new groups could not be confirmed.");
+
+        return refusals.Count == 0
+            ? null
+            : ExchangeAdminWeb.Authorization.GroupGrantValidation.Message(refusals, DisplayNameFor);
+    }
+
     private string MaskIfSecret(string key, string value)
     {
         if (string.IsNullOrEmpty(value)) return "(empty)";
@@ -1336,11 +1405,12 @@
     }
 
     /// <remarks>
-    /// Only a value picked from the AD suggestion list is accepted, because only that carries a
-    /// SID. Free-typed text is refused rather than stored: this field decides who can reach a
-    /// module, and a typo here would either silently grant nothing or - before SIDs - match a
-    /// same-named group in another domain. Same rule, same reason, as the protected-principal
-    /// entry validator (docs/ProtectedPrincipalInputValidation-Plan.md).
+    /// Only a group SID is accepted here - a group picked from the AD suggestion list, or a group's
+    /// SID pasted in. Other text is refused rather than stored: this field decides who can reach a
+    /// module, and a typo would either silently grant nothing or - before SIDs - match a same-named
+    /// group in another domain. The shape is all this can check; whether the SID is a GROUP the
+    /// directory holds is confirmed when the section is saved (aud-a1b,
+    /// <see cref="ConfirmNewGroupGrantsAsync"/>).
     /// </remarks>
     private void AddAccessGroup(string alias)
     {
@@ -1350,8 +1420,7 @@
         if (!ExchangeAdminWeb.Authorization.SectionAccessGroupIdentity.IsUsableGroupSid(input))
         {
             statusMessage = ADSearch.IsAvailable
-                ? "Pick a group from the suggestion list - typed text is not accepted here, because "
-                  + "only a selected group supplies the identifier this field stores."
+                ? NotAGroupSidMessage
                 : "Active Directory is unreachable, so groups cannot be looked up. Try again later.";
             statusIsError = true;
             return;
@@ -1465,6 +1534,14 @@
     }
 
     /// <summary>
+    /// The refusal for input that is not a usable group SID. It used to say typed text is not
+    /// accepted, which was false - a pasted SID is - and now says what is true (aud-a1b).
+    /// </summary>
+    private const string NotAGroupSidMessage =
+        "That is not a group identifier. Pick a group from the suggestion list, or paste a group's "
+        + "SID; it is confirmed against Active Directory when you save.";
+
+    /// <summary>
     /// Adds a module-admin grant. The value must have the shape of a usable group SID.
     /// </summary>
     /// <remarks>
@@ -1473,13 +1550,9 @@
     /// SAM name until audit finding A1 (2026-10-16), which let a grant for one domain's group be
     /// satisfied by a member of a same-named group in another domain.
     ///
-    /// <b>What this validates is the SHAPE, not the object.</b> A canonical SID typed by hand
-    /// passes, including a user's SID or one that resolves to nothing - the validator cannot tell
-    /// those apart from a group's. Such a row grants nothing and is not reported by
-    /// <c>GetUnusableGrants</c>, which also judges shape. Raised against this slice at review and
-    /// recorded as <c>aud-a1b</c>; <see cref="AddAccessGroup"/> has exactly the same weakness, so
-    /// it is fixed for both controls together or not at all. An earlier version of this comment
-    /// claimed only a selected group is accepted, which was untrue.
+    /// What this checks is the SHAPE. Whether the SID is a group the directory holds - not a
+    /// user's SID, not one that resolves to nothing - is confirmed when the section is saved, for
+    /// both controls together (aud-a1b, <see cref="ConfirmNewGroupGrantsAsync"/>).
     /// </remarks>
     private void AddModuleAdmin()
     {
@@ -1489,8 +1562,7 @@
         if (!ExchangeAdminWeb.Authorization.SectionAccessGroupIdentity.IsUsableGroupSid(input))
         {
             statusMessage = ADSearch.IsAvailable
-                ? "Pick a group from the suggestion list - typed text is not accepted here, because "
-                  + "only a selected group supplies the identifier this field stores."
+                ? NotAGroupSidMessage
                 : "Active Directory is unreachable, so groups cannot be looked up. Try again later.";
             statusIsError = true;
             return;

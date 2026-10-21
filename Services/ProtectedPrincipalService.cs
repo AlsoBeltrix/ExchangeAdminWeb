@@ -417,7 +417,9 @@ public class ProtectedPrincipalService
 
     /// <summary>
     /// Resolves an identity through Active Directory, falling back to Exchange Online when AD
-    /// answers "no such object". This is the entry point protection gates should use.
+    /// answers "no such object". This is the entry point protection gates should use for a target
+    /// the write binds by DN or UPN; a gate whose write hands the operator's string to EXCHANGE
+    /// uses <see cref="ResolveExchangeTargetAsync"/> instead (aud-a2b).
     /// </summary>
     /// <remarks>
     /// AD alone cannot see three legitimate kinds of target: a mailbox addressed by a secondary
@@ -441,37 +443,9 @@ public class ProtectedPrincipalService
         if (status != ResolutionStatus.NotFound)
             return (principal, status);
 
-        if (_scopeFactory == null)
-        {
-            _logger.LogWarning(
-                "Cannot attempt Exchange fallback for {Identity} - no service scope factory. Failing closed.",
-                identity);
+        var (answered, recipient) = await AskExchangeAsync(identity);
+        if (!answered)
             return (null, ResolutionStatus.Unavailable);
-        }
-
-        ResolvedRecipient? recipient;
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
-            if (resolver == null)
-            {
-                _logger.LogWarning(
-                    "Cannot attempt Exchange fallback for {Identity} - no IIdentityResolver registered. Failing closed.",
-                    identity);
-                return (null, ResolutionStatus.Unavailable);
-            }
-
-            recipient = await resolver.ResolveRecipientAsync(identity);
-        }
-        catch (Exception ex)
-        {
-            // The lookup did not run. Reporting NotFound here would let an EXO outage present as
-            // an affirmative absence, and callers that allow on NotFound would un-protect the
-            // principal. Deny instead.
-            _logger.LogWarning(ex, "Exchange fallback lookup failed for {Identity} - failing closed", identity);
-            return (null, ResolutionStatus.Unavailable);
-        }
 
         if (recipient == null)
         {
@@ -498,7 +472,22 @@ public class ProtectedPrincipalService
                 _logger.LogInformation(
                     "Exchange resolved {Identity} to canonical address {Canonical} - re-resolving in AD",
                     identity, recipient.PrimarySmtpAddress);
-                return await ResolveWithStatusAsync(recipient.PrimarySmtpAddress);
+                var (canonical, canonicalStatus) = await ResolveWithStatusAsync(recipient.PrimarySmtpAddress);
+
+                // aud-a2b. Exchange says this recipient is synced and names its canonical
+                // address, and AD holds no object under it: the directories disagree, exactly as
+                // in the same-address case below. Passing AD's NotFound through was not only the
+                // wrong message - the gates that ALLOW on NotFound let the operation through.
+                if (canonicalStatus == ResolutionStatus.NotFound)
+                {
+                    _logger.LogWarning(
+                        "Exchange reports {Identity} as directory-synced with canonical address {Canonical}, "
+                        + "but Active Directory holds no object under it - directories disagree, failing closed",
+                        identity, recipient.PrimarySmtpAddress);
+                    return (null, ResolutionStatus.Unavailable);
+                }
+
+                return (canonical, canonicalStatus);
             }
 
             // Exchange says this recipient IS on-prem-backed, yet AD just missed it under the very
@@ -522,7 +511,152 @@ public class ProtectedPrincipalService
         //
         // Built from the CANONICAL address, never the typed one, so an alias-addressed cloud-only
         // principal is matched against the protected user rows by its real identity.
-        //
+        return (CloudOnlyPrincipal(identity, recipient), ResolutionStatus.Resolved);
+    }
+
+    /// <summary>
+    /// Resolves the target of an operation EXCHANGE will perform with the operator's string, the
+    /// way Exchange will resolve it, and refuses when Active Directory reads the same string as a
+    /// different object. aud-a2b hole 2.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ResolveWithExchangeFallbackAsync"/> asks AD first and stops at a Resolved answer.
+    /// A string can be the sAMAccountName of an unprotected AD account and the Exchange alias of a
+    /// protected mailbox: AD answered with the account, the check passed, and the write - which
+    /// hands the same string to Exchange - landed on the mailbox. Nothing established that the
+    /// object checked and the object written were the same object.
+    ///
+    /// Here Exchange is asked first, because it performs the write, and AD's reading of the
+    /// string must agree with it:
+    /// - synced recipient: the principal is the AD object behind its canonical address, and if AD
+    ///   reads the typed string as a DIFFERENT object (by objectGUID) the string names two
+    ///   objects - <c>Ambiguous</c>. No AD object under the canonical address is the directories
+    ///   disagreeing - <c>Unavailable</c>.
+    /// - cloud-only recipient: an AD object for the same string is a second object - <c>Ambiguous</c>.
+    /// - no recipient: an Exchange write cannot land anywhere, so AD's answer is the only object the
+    ///   string names; neither directory knowing it is <c>NotFound</c>.
+    /// - Exchange not asked, AD ambiguous or unavailable: refused, as everywhere else.
+    /// </remarks>
+    // virtual: the same test seam as ResolveWithExchangeFallbackAsync.
+    public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
+    {
+        var (answered, recipient) = await AskExchangeAsync(identity);
+        if (!answered)
+            return (null, ResolutionStatus.Unavailable);
+
+        var (adPrincipal, adStatus) = await ResolveWithStatusAsync(identity);
+        if (adStatus is ResolutionStatus.Ambiguous or ResolutionStatus.Unavailable)
+            return (null, adStatus);
+
+        if (recipient == null)
+        {
+            return adStatus == ResolutionStatus.Resolved && adPrincipal is not null
+                ? (adPrincipal, ResolutionStatus.Resolved)
+                : (null, ResolutionStatus.NotFound);
+        }
+
+        if (!recipient.ExistsOnPrem)
+        {
+            if (adStatus == ResolutionStatus.Resolved)
+            {
+                _logger.LogWarning(
+                    "{Identity} is a cloud-only recipient in Exchange but an on-premises object in Active Directory "
+                    + "- the string names two objects, failing closed",
+                    identity);
+                return (null, ResolutionStatus.Ambiguous);
+            }
+
+            return (CloudOnlyPrincipal(identity, recipient), ResolutionStatus.Resolved);
+        }
+
+        var (canonical, canonicalStatus) =
+            string.Equals(recipient.PrimarySmtpAddress, identity, StringComparison.OrdinalIgnoreCase)
+                ? (adPrincipal, adStatus)
+                : await ResolveWithStatusAsync(recipient.PrimarySmtpAddress);
+
+        if (canonicalStatus == ResolutionStatus.NotFound)
+        {
+            _logger.LogWarning(
+                "Exchange reports {Identity} as directory-synced with canonical address {Canonical}, but Active "
+                + "Directory holds no object under it - directories disagree, failing closed",
+                identity, recipient.PrimarySmtpAddress);
+            return (null, ResolutionStatus.Unavailable);
+        }
+
+        if (canonicalStatus != ResolutionStatus.Resolved || canonical is null)
+            return (null, canonicalStatus == ResolutionStatus.Resolved ? ResolutionStatus.Unavailable : canonicalStatus);
+
+        if (adStatus == ResolutionStatus.Resolved && (adPrincipal is null || !IsSameDirectoryObject(adPrincipal, canonical)))
+        {
+            _logger.LogWarning(
+                "{Identity} resolves to one object in Active Directory and Exchange will write another "
+                + "(canonical {Canonical}) - failing closed",
+                identity, recipient.PrimarySmtpAddress);
+            return (null, ResolutionStatus.Ambiguous);
+        }
+
+        return (canonical, ResolutionStatus.Resolved);
+    }
+
+    /// <summary>
+    /// The same directory object: objectGUID when both carry one, otherwise the DN. Two
+    /// principals that carry neither cannot be shown to be one object, so they are not.
+    /// </summary>
+    internal static bool IsSameDirectoryObject(ResolvedDirectoryPrincipal a, ResolvedDirectoryPrincipal b)
+    {
+        if (!string.IsNullOrWhiteSpace(a.ObjectGuid) && !string.IsNullOrWhiteSpace(b.ObjectGuid))
+            return string.Equals(a.ObjectGuid, b.ObjectGuid, StringComparison.OrdinalIgnoreCase);
+
+        return !string.IsNullOrWhiteSpace(a.DistinguishedName)
+               && string.Equals(a.DistinguishedName, b.DistinguishedName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Asks Exchange which recipient an identity is. <c>answered</c> is false when the question
+    /// could not be put - no scope, no resolver, or a lookup that threw - and the recipient is
+    /// then meaningless; a null recipient with <c>answered</c> true is Exchange's affirmative
+    /// "no such recipient".
+    /// </summary>
+    private async Task<(bool answered, ResolvedRecipient? recipient)> AskExchangeAsync(string identity)
+    {
+        if (_scopeFactory == null)
+        {
+            _logger.LogWarning(
+                "Cannot ask Exchange about {Identity} - no service scope factory. Failing closed.",
+                identity);
+            return (false, null);
+        }
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
+            if (resolver == null)
+            {
+                _logger.LogWarning(
+                    "Cannot ask Exchange about {Identity} - no IIdentityResolver registered. Failing closed.",
+                    identity);
+                return (false, null);
+            }
+
+            return (true, await resolver.ResolveRecipientAsync(identity));
+        }
+        catch (Exception ex)
+        {
+            // The lookup did not run. Reporting NotFound here would let an EXO outage present as
+            // an affirmative absence, and callers that allow on NotFound would un-protect the
+            // principal. Deny instead.
+            _logger.LogWarning(ex, "Exchange lookup failed for {Identity} - failing closed", identity);
+            return (false, null);
+        }
+    }
+
+    /// <summary>
+    /// A principal for a recipient with no on-premises object, built from its CANONICAL address
+    /// so an alias-addressed cloud-only principal is matched by its real identity.
+    /// </summary>
+    private ResolvedDirectoryPrincipal CloudOnlyPrincipal(string identity, ResolvedRecipient recipient)
+    {
         // CheckOuMatches and CheckTransitiveGroupMembership both degrade to "no match" on a null
         // DN without raising a failure, so this is logged rather than left silent: an operator
         // reading the audit trail has to be able to see which rules could not be evaluated.
@@ -532,7 +666,7 @@ public class ProtectedPrincipalService
             + "only protected user rows apply",
             identity, recipient.PrimarySmtpAddress);
 
-        var cloudOnly = new ResolvedDirectoryPrincipal(
+        return new ResolvedDirectoryPrincipal(
             Source: "ProtectedPrincipalService-EXO",
             DisplayName: recipient.PrimarySmtpAddress,
             UserPrincipalName: recipient.PrimarySmtpAddress,
@@ -541,8 +675,6 @@ public class ProtectedPrincipalService
             DistinguishedName: null,
             ObjectGuid: null,
             EntraObjectId: recipient.ExternalDirectoryObjectId);
-
-        return (cloudOnly, ResolutionStatus.Resolved);
     }
 
     private ResolvedDirectoryPrincipal? ResolveViaActiveDirectory(string identity, string username, string password, string domain)
@@ -830,7 +962,6 @@ public class ProtectedPrincipalService
         string username, string password, string domain)
     {
         var matches = new List<string>();
-        bool expansionHadErrors = false;
 
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -876,83 +1007,18 @@ public class ProtectedPrincipalService
         if (string.IsNullOrEmpty(targetDn))
             return (matches, false);
 
-        // Audit finding A3. The in-chain query below carried no -Server, so it bound to the
-        // HOST's domain regardless of where the target lives. A foreign-domain object is simply
-        // absent from that partition, so the query returned zero rows - a clean "not a member"
-        // - and Group Management treated the target as unprotected. The protection check
-        // answered a question about the wrong directory.
-        //
-        // Route it to the target's OWN domain, derived from its DN. Same rule, same helper and
-        // the same reason as findings gmn-8 and fsr-1 on the Group Management side: the object
-        // lives in its own partition, so read it there.
-        //
-        // A DN with no DC components means the owning domain cannot be determined. Group
-        // Management's convention there is to omit -Server and keep the local binding, which is
-        // right for a listing and WRONG here: this is a protection check, and an unanswerable
-        // question is not a negative answer. Fail closed instead - the caller turns
-        // expansionHadErrors with no matches into a refusal.
-        var targetServer = GroupManagementService.ServerFromDn(targetDn);
-        if (targetServer is null)
-        {
-            _logger.LogWarning(
-                "Protected-group check cannot determine the owning domain for target DN {TargetDn} - failing closed",
-                targetDn);
-            return (matches, true);
-        }
-
-        foreach (var protectedGroup in protectedGroups.Where(g => !string.IsNullOrWhiteSpace(g)))
-        {
-            try
-            {
-                var groupDn = ResolveProtectedGroupDn(ps, credential, protectedGroup);
-                if (string.IsNullOrWhiteSpace(groupDn))
-                {
-                    _logger.LogWarning("Protected group {ProtectedGroup} could not be resolved during membership check", protectedGroup);
-                    expansionHadErrors = true;
-                    continue;
-                }
-
-                // A protected group must match AS ITSELF, not only through its members:
-                // in-chain ancestry never includes self, so without this a listed group is
-                // freely nestable anywhere (owner 2026-08-11; nesting plan S1).
-                if (IsProtectedGroupItself(targetDn, groupDn))
-                {
-                    matches.Add($"Group:{protectedGroup}");
-                    continue;
-                }
-
-                var targetFilter = EscapeLdapFilter(targetDn);
-                var groupFilter = EscapeLdapFilter(groupDn);
-                // Get-ADObject, not Get-ADUser: the in-chain filter already evaluates nested
-                // membership for any object class; only the cmdlet in front of it was wrong.
-                ps.AddCommand("Get-ADObject")
-                  .AddParameter("LDAPFilter", $"(&(distinguishedName={targetFilter})(memberOf:1.2.840.113556.1.4.1941:={groupFilter}))")
-                  .AddParameter("Server", targetServer)
-                  .AddParameter("Credential", credential)
-                  .AddParameter("ErrorAction", "Stop");
-                var inChainResult = ps.Invoke();
-                ps.Commands.Clear();
-
-                if (ps.HadErrors)
-                {
-                    expansionHadErrors = true;
-                    ps.Streams.Error.Clear();
-                    continue;
-                }
-
-                if (inChainResult.Count > 0)
-                    matches.Add($"Group:{protectedGroup}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to evaluate protected group {ProtectedGroup} during transitive membership check", protectedGroup);
-                expansionHadErrors = true;
-                ps.Commands.Clear();
-                ps.Streams.Error.Clear();
-            }
-        }
-
-        return (matches, expansionHadErrors);
+        // Audit findings A3 and aud-a3b. What used to follow was one in-chain query per
+        // protected group, sent to the target's domain (A3 added the routing), reading "no rows"
+        // as "not a member". aud-a3b found three ways to get no rows while the answer is yes - a
+        // domain-local group in another domain, the primary group, and a resolver that dropped
+        // the domain half of DOMAIN\Name - so the decision now lives in a pure evaluator that
+        // asks each question of the domain holding the answer, and the runspace only performs
+        // the reads it is told to. The owning domain is still derived from the target's DN and
+        // an undeterminable one still fails closed; that rule moved into the evaluator with it.
+        var directory = new PowerShellProtectedGroupDirectory(ps, credential);
+        var outcome = ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger);
+        matches.AddRange(outcome.Matches);
+        return (matches, outcome.Incomplete);
     }
 
     /// <summary>
@@ -966,57 +1032,6 @@ public class ProtectedPrincipalService
         if (candidateDns.Count != 1 || string.IsNullOrWhiteSpace(candidateDns[0]))
             return (null, true);
         return (candidateDns[0], false);
-    }
-
-    /// <summary>
-    /// The self-match half of the Groups rule: the target IS the protected group, compared on
-    /// resolved DNs. In-chain ancestry never includes self, so without this a protected group
-    /// is protected as a container of members but not as an object being moved.
-    /// </summary>
-    internal static bool IsProtectedGroupItself(string? targetDn, string groupDn)
-        => !string.IsNullOrWhiteSpace(targetDn) &&
-           string.Equals(targetDn, groupDn, StringComparison.OrdinalIgnoreCase);
-
-    private string? ResolveProtectedGroupDn(PowerShell ps, PSCredential credential, string protectedGroup)
-    {
-        if (protectedGroup.Contains("DC=", StringComparison.OrdinalIgnoreCase) ||
-            protectedGroup.Contains("CN=", StringComparison.OrdinalIgnoreCase))
-        {
-            return protectedGroup;
-        }
-
-        var groupIdentity = protectedGroup.Contains('\\')
-            ? protectedGroup.Split('\\', 2)[1]
-            : protectedGroup;
-
-        try
-        {
-            ps.AddCommand("Get-ADGroup")
-              .AddParameter("Identity", groupIdentity)
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            var result = ps.Invoke();
-            ps.Commands.Clear();
-
-            var dn = result.FirstOrDefault()?.Properties["DistinguishedName"]?.Value?.ToString();
-            if (!string.IsNullOrWhiteSpace(dn))
-                return dn;
-        }
-        catch
-        {
-            ps.Commands.Clear();
-            ps.Streams.Error.Clear();
-        }
-
-        var escaped = EscapeLdapFilter(groupIdentity);
-        ps.AddCommand("Get-ADGroup")
-          .AddParameter("LDAPFilter", $"(|(cn={escaped})(sAMAccountName={escaped})(name={escaped}))")
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
-        var fallback = ps.Invoke();
-        ps.Commands.Clear();
-
-        return fallback.FirstOrDefault()?.Properties["DistinguishedName"]?.Value?.ToString();
     }
 
     /// <summary>

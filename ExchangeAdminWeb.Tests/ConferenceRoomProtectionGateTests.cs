@@ -42,16 +42,33 @@ public class ConferenceRoomProtectionGateTests : IDisposable
             : base(env, config, moduleConfig, repo, delinea, NullLogger<ProtectedPrincipalService>.Instance)
         { }
 
-        // The gate resolves through ResolveWithExchangeFallbackAsync (AD, then Exchange Online),
-        // so that is the seam to script. Overriding ResolveWithStatusAsync instead would let the
-        // real fallback run and fail closed, which would silently invalidate every allow case here.
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
+        /// <summary>
+        /// What the AD-first resolution would have said. aud-a2b hole 2 is the case where it says
+        /// Resolved (an unrelated account) while the Exchange-target resolution refuses.
+        /// </summary>
+        public ResolutionStatus AdFirstStatus = ResolutionStatus.Resolved;
+
+        // The gate resolves through ResolveExchangeTargetAsync (Exchange first, AD must agree)
+        // since aud-a2b, so that is the seam to script. Overriding ResolveWithStatusAsync instead
+        // would let the real resolution run and fail closed, which would silently invalidate every
+        // allow case here.
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
         {
             if (Throw) throw new InvalidOperationException("boom");
             ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved
                 ? new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, "guid", null)
                 : null;
             return Task.FromResult((p, Status));
+        }
+
+        // Scripted too, so a gate that went back to the AD-first resolution gets an answer -
+        // the wrong one - instead of failing closed for an unrelated reason.
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
+        {
+            ResolvedDirectoryPrincipal? p = AdFirstStatus == ResolutionStatus.Resolved
+                ? new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, "unrelated-guid", null)
+                : null;
+            return Task.FromResult((p, AdFirstStatus));
         }
 
         public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
@@ -174,6 +191,25 @@ public class ConferenceRoomProtectionGateTests : IDisposable
     {
         var (gate, pp) = CreateGate();
         pp.Throw = true;
+
+        var (writeInvoked, marker) = await RunAsync(gate);
+
+        Assert.False(writeInvoked);
+        Assert.StartsWith("DENIED:", marker);
+    }
+
+    [Fact]
+    public async Task AnAdMatchExchangeDoesNotAgreeWith_DoesNotStandInForTheRoom()
+    {
+        // aud-a2b hole 2. The AD-first resolution answers with an unrelated, unprotected account
+        // that shares the typed string; Exchange - which performs the room write - resolves it to
+        // a different object, so the Exchange-target resolution refuses. The gate must take the
+        // refusal: checking the AD account and then writing whatever Exchange resolves is the
+        // bypass.
+        var (gate, pp) = CreateGate();
+        pp.AdFirstStatus = ProtectedPrincipalService.ResolutionStatus.Resolved;
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.Ambiguous;
+        pp.Verdict = ProtectedPrincipalResult.NotProtected();
 
         var (writeInvoked, marker) = await RunAsync(gate);
 

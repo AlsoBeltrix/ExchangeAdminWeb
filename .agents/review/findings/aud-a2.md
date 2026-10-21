@@ -94,10 +94,12 @@ None.
 
 **This fixes which object is compared. It does not make the comparison itself complete.** The
 protected-group half of the check has its own holes, raised against `aud-a3` and recorded as
-`aud-a3b`, `aud-a3c` and `aud-a3d`: domain-local nesting across a domain boundary, primary-group
-membership being invisible to `memberOf`, and the protected-group resolver discarding the domain
-half of a stored `DOMAIN\Group` entry. An alias is now resolved correctly and then handed to a
-membership check that can still answer no when the truth is yes.
+the three holes of `aud-a3b` (an earlier draft of this sentence named them `aud-a3b`, `aud-a3c`
+and `aud-a3d`; they were filed as one record, and `aud-a3c` is now a different finding):
+domain-local nesting across a domain boundary, primary-group membership being invisible to
+`memberOf`, and the protected-group resolver discarding the domain half of a stored
+`DOMAIN\Group` entry. An alias is now resolved correctly and then handed to a membership check
+that can still answer no when the truth is yes.
 
 Resolution now happens on every validated operation in three modules, where previously an
 address-only configuration skipped it. The added directory round-trip has not been measured.

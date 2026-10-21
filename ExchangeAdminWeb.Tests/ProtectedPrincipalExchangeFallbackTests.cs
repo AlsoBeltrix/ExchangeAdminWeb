@@ -280,6 +280,24 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     }
 
     [Fact]
+    public async Task AliasReResolution_CanonicalAddressUnknownToAd_IsUnavailable_NotNotFound()
+    {
+        // aud-a2b. Exchange says the recipient is synced and names its canonical address, and AD
+        // holds no object under it: the directories disagree. Passing AD's NotFound through let
+        // the gates that allow on NotFound (Conference Rooms, Group Management) proceed against a
+        // synced recipient whose group and OU rules were never evaluated.
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("vip@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true)));
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+        service.AdReturns("vip@contoso.com", ResolutionStatus.NotFound);
+
+        var (principal, status) = await service.ResolveWithExchangeFallbackAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Unavailable, status);
+        Assert.Null(principal);
+    }
+
+    [Fact]
     public async Task CanonicalAddressDifferingOnlyByCase_IsNotTreatedAsAnAlias()
     {
         // Exchange echoes the address back in its own casing. Re-resolving would be a pointless
@@ -435,6 +453,177 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
 
         Assert.False(verdict.IsProtected);
         Assert.False(verdict.CheckFailed);
+    }
+
+    // ---- aud-a2b hole 2: ResolveExchangeTargetAsync --------------------------
+    // For a write Exchange performs with the typed string. Exchange is asked first and AD must
+    // agree with it; the object checked must be the object Exchange will write.
+
+    private static ResolvedDirectoryPrincipal AdObject(string upn, string sam, string? mail, string guid, string dn)
+        => new("ProtectedPrincipalService-AD", sam, upn, sam, mail, dn, guid, null);
+
+    private static readonly ResolvedDirectoryPrincipal UnrelatedAccount =
+        AdObject("svc-vip@contoso.com", "vip", null, "guid-unrelated", "CN=svc-vip,OU=Service,DC=contoso,DC=com");
+
+    private static readonly ResolvedDirectoryPrincipal VipMailboxUser =
+        AdObject("vip.person@contoso.com", "vperson", "vip.person@contoso.com", "guid-vip", "CN=VIP Person,OU=Execs,DC=contoso,DC=com");
+
+    [Fact]
+    public async Task ExchangeTarget_AnAdAccountSharingTheString_DoesNotStandInForTheMailbox()
+    {
+        // The finding. "vip" is the sAMAccountName of an unrelated, non-mail AD account and the
+        // Exchange alias of the protected VIP mailbox. AD alone answers with the account; the
+        // write would land on the mailbox. The two directories name different objects.
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("vip.person@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true)));
+        service.AdReturns("vip", ResolutionStatus.Resolved, UnrelatedAccount);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
+
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip");
+
+        Assert.Equal(ResolutionStatus.Ambiguous, status);
+        Assert.Null(principal);
+
+        // The AD-first resolution, for contrast, accepts the unrelated account - which is the
+        // bypass this entry point exists to close for Exchange-written targets.
+        var (adFirst, adFirstStatus) = await service.ResolveWithExchangeFallbackAsync("vip");
+        Assert.Equal(ResolutionStatus.Resolved, adFirstStatus);
+        Assert.Equal("guid-unrelated", adFirst!.ObjectGuid);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_AgreeingDirectories_ResolveToTheMailboxUser()
+    {
+        // The ordinary case: the typed UPN, AD's reading of it and the object behind Exchange's
+        // canonical address are one object.
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("vip.person@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true)));
+        service.AdReturns("vperson@corp.contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
+
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vperson@corp.contoso.com");
+
+        Assert.Equal(ResolutionStatus.Resolved, status);
+        Assert.Equal("guid-vip", principal!.ObjectGuid);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_AnAliasAdDoesNotKnow_ResolvesToTheObjectExchangeWillWrite()
+    {
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("vip.person@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true)));
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
+
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Resolved, status);
+        Assert.Equal("guid-vip", principal!.ObjectGuid);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_ACloudOnlyRecipientWithAnAdNamesake_IsAmbiguous()
+    {
+        // Exchange will write a cloud-only mailbox; AD reads the same string as an on-premises
+        // object. Two objects - checking either alone checks the wrong one half the time.
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("vip.cloud@contoso.com", "ext-cloud", "UserMailbox", ExistsOnPrem: false)));
+        service.AdReturns("vip", ResolutionStatus.Resolved, UnrelatedAccount);
+
+        var (_, status) = await service.ResolveExchangeTargetAsync("vip");
+
+        Assert.Equal(ResolutionStatus.Ambiguous, status);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_ACloudOnlyRecipient_ResolvesToItsCanonicalAddress()
+    {
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("vip.cloud@contoso.com", "ext-cloud", "UserMailbox", ExistsOnPrem: false)));
+        service.AdReturns("vip.cloud.alias@contoso.com", ResolutionStatus.NotFound);
+
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.cloud.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Resolved, status);
+        Assert.Equal("vip.cloud@contoso.com", principal!.PrimarySmtpAddress);
+        Assert.Null(principal.DistinguishedName);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_ASyncedRecipientAdHoldsNoObjectFor_IsUnavailable()
+    {
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("vip.person@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true)));
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.NotFound);
+
+        var (_, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Unavailable, status);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_ExchangeCannotBeAsked_IsUnavailable_EvenWhenAdAnswers()
+    {
+        // The AD answer alone is exactly what this entry point refuses to trust.
+        var service = CreateService(ResolverThrowing(new InvalidOperationException("Connecting to remote server failed")));
+        service.AdReturns("vip", ResolutionStatus.Resolved, UnrelatedAccount);
+
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip");
+
+        Assert.Equal(ResolutionStatus.Unavailable, status);
+        Assert.Null(principal);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_NoSuchRecipient_FallsBackToTheAdObject()
+    {
+        // An Exchange write cannot land on a recipient Exchange does not have, so what AD resolved
+        // is the only object the string names.
+        var service = CreateService(ResolverReturning(null));
+        service.AdReturns("vperson", ResolutionStatus.Resolved, VipMailboxUser);
+
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vperson");
+
+        Assert.Equal(ResolutionStatus.Resolved, status);
+        Assert.Equal("guid-vip", principal!.ObjectGuid);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_NeitherDirectory_IsNotFound()
+    {
+        var service = CreateService(ResolverReturning(null));
+        service.AdReturns("typo@contoso.com", ResolutionStatus.NotFound);
+
+        var (_, status) = await service.ResolveExchangeTargetAsync("typo@contoso.com");
+
+        Assert.Equal(ResolutionStatus.NotFound, status);
+    }
+
+    [Theory]
+    [InlineData(ResolutionStatus.Ambiguous)]
+    [InlineData(ResolutionStatus.Unavailable)]
+    public async Task ExchangeTarget_AdThatCannotAnswerCleanly_Refuses(ResolutionStatus adStatus)
+    {
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("vip.person@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true)));
+        service.AdReturns("vip", adStatus);
+
+        var (_, status) = await service.ResolveExchangeTargetAsync("vip");
+
+        Assert.Equal(adStatus, status);
+    }
+
+    [Fact]
+    public void IsSameDirectoryObject_ComparesGuidsFirst_ThenDns_AndNeverAssumes()
+    {
+        var a = AdObject("a@x", "a", null, "g1", "CN=A,DC=x");
+        Assert.True(IsSameDirectoryObject(a, a with { DistinguishedName = "CN=Moved,DC=x" }));
+        Assert.False(IsSameDirectoryObject(a, a with { ObjectGuid = "g2" }));
+        Assert.True(IsSameDirectoryObject(a with { ObjectGuid = null }, a with { ObjectGuid = null }));
+        Assert.False(IsSameDirectoryObject(
+            a with { ObjectGuid = null, DistinguishedName = null },
+            a with { ObjectGuid = null, DistinguishedName = null }));
     }
 
     // ---- the legacy entry point is untouched --------------------------------

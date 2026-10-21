@@ -166,7 +166,8 @@ public sealed class ConferenceRoomServicerTests : IDisposable
             : base(env, config, moduleConfig, repo, delinea, NullLogger<ProtectedPrincipalService>.Instance)
         { }
 
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
+        // The room gate resolves through ResolveExchangeTargetAsync since aud-a2b.
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
             => Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus)>(
                 (new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, "guid", null),
                  ResolutionStatus.Resolved));

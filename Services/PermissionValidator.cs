@@ -8,7 +8,7 @@ namespace ExchangeAdminWeb.Services;
 public class PermissionValidator
 {
     private ImmutableHashSet<string> _excludedUsers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
-    private ImmutableDictionary<string, string> _excludedObjectIds = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase);
+    private ImmutableHashSet<string> _excludedObjectIds = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<PermissionValidator> _logger;
     private readonly IConfiguration _config;
     private readonly ModuleConfigService _moduleConfig;
@@ -18,6 +18,13 @@ public class PermissionValidator
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(30);
+
+    // A load that failed is retried this soon rather than served for CacheLifetime. Failing closed
+    // is the rule; failing closed for half an hour after Exchange has recovered is not (aud-a2b).
+    internal static readonly TimeSpan FailedLoadRetry = TimeSpan.FromMinutes(1);
+
+    /// <summary>Test seam: the clock the cache lifetime is measured against.</summary>
+    internal Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
     private bool _initialized = false;
     private bool _initFailed = false;
     private DateTime _lastRefresh = DateTime.MinValue;
@@ -81,37 +88,72 @@ public class PermissionValidator
     /// <summary>Test seam: the watcher this validator consults before trusting its cache.</summary>
     internal ConfigChangeWatcher ChangeWatcher => _changeWatcher;
 
+    /// <summary>
+    /// True unless the legacy excluded-user list provably does not cover this identity. A list
+    /// that could not be loaded, or a target Exchange could not be asked about, counts as covered:
+    /// that is the fail-closed reading, and <see cref="ValidateTargetMailboxAsync"/> tells the
+    /// two apart for the operator.
+    /// </summary>
     public async Task<bool> IsUserExcludedAsync(string userIdentity)
+        => await CheckExclusionAsync(userIdentity) != ExclusionVerdict.NotExcluded;
+
+    private enum ExclusionVerdict { NotExcluded, Excluded, Unavailable }
+
+    /// <remarks>
+    /// aud-a2b hole 1. The string comparisons alone cannot see a SECONDARY address of an excluded
+    /// mailbox, so the target is also put to Exchange, which names the recipient it belongs to.
+    /// That used to be skipped whenever the load had obtained no object ids - which is exactly
+    /// what a failed load produced - and a failed target lookup fell through to "not excluded".
+    /// Both now refuse: an excluded entry or a target Exchange could not be asked about is a
+    /// question this list cannot answer, not a negative answer.
+    /// </remarks>
+    private async Task<ExclusionVerdict> CheckExclusionAsync(string userIdentity)
     {
         await EnsureInitializedAsync();
 
-        if (_excludedUsers.Contains(userIdentity))
-            return true;
+        if (_initFailed)
+            return ExclusionVerdict.Unavailable;
 
-        if (_excludedUsers.Any(excluded => IdentitiesMatch(excluded, userIdentity)))
-            return true;
+        if (_excludedUsers.Contains(userIdentity)
+            || _excludedUsers.Any(excluded => IdentitiesMatch(excluded, userIdentity)))
+            return ExclusionVerdict.Excluded;
 
-        if (_excludedObjectIds.Count > 0)
+        // Nothing is excluded, so no address of anything can be.
+        if (_excludedUsers.IsEmpty)
+            return ExclusionVerdict.NotExcluded;
+
+        ResolvedRecipient? recipient;
+        try
         {
-            try
+            using var scope = _scopeFactory.CreateScope();
+            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
+            if (resolver == null)
             {
-                using var scope = _scopeFactory.CreateScope();
-                var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
-                if (resolver != null)
-                {
-                    var targetId = await resolver.ResolveToObjectIdAsync(userIdentity);
-                    if (targetId != null && _excludedObjectIds.Values
-                            .Any(id => string.Equals(id, targetId, StringComparison.OrdinalIgnoreCase)))
-                        return true;
-                }
+                _logger.LogWarning("No identity resolver - cannot check {Identity} against the excluded-user list; failing closed", userIdentity);
+                return ExclusionVerdict.Unavailable;
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Identity resolution failed for exclusion check on {Identity}, falling back to string matching", userIdentity);
-            }
+
+            // Throws when Exchange could not answer; null only when it affirmatively has no such
+            // recipient, which leaves the string comparisons above as the whole answer.
+            recipient = await resolver.ResolveRecipientAsync(userIdentity);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Exchange could not resolve {Identity} for the excluded-user check - failing closed", userIdentity);
+            return ExclusionVerdict.Unavailable;
         }
 
-        return false;
+        if (recipient is null)
+            return ExclusionVerdict.NotExcluded;
+
+        var canonical = recipient.PrimarySmtpAddress;
+        if (_excludedUsers.Contains(canonical)
+            || _excludedUsers.Any(excluded => IdentitiesMatch(excluded, canonical))
+            || (!string.IsNullOrWhiteSpace(recipient.ExternalDirectoryObjectId)
+                && _excludedObjectIds.Contains(recipient.ExternalDirectoryObjectId)))
+            return ExclusionVerdict.Excluded;
+
+        return ExclusionVerdict.NotExcluded;
     }
 
     /// <summary>
@@ -183,7 +225,11 @@ public class PermissionValidator
 
             if (requiresFullResolution)
             {
-                var (resolved, status) = await _protectedPrincipalService.ResolveWithExchangeFallbackAsync(targetMailbox);
+                // aud-a2b hole 2. The write hands targetMailbox to EXCHANGE, so the object checked
+                // must be the one Exchange will resolve it to - asked of Exchange first, with AD
+                // required to agree. The AD-first resolution stopped at an AD match, which could be
+                // an unrelated account sharing the string with the mailbox the write then hit.
+                var (resolved, status) = await _protectedPrincipalService.ResolveExchangeTargetAsync(targetMailbox);
 
                 if (status == ProtectedPrincipalService.ResolutionStatus.Ambiguous)
                 {
@@ -195,8 +241,12 @@ public class PermissionValidator
 
                 if (status == ProtectedPrincipalService.ResolutionStatus.Unavailable)
                 {
+                    // aud-a2b diagnostics: since aud-a2 every configuration shape resolves, so the
+                    // old wording - that Group/OU/Pattern rules were configured - was false for an
+                    // address-only configuration and sent support to the wrong place.
                     _logger.LogWarning(
-                        "Blocking operation on {Target} - directory unreachable and Group/OU/Pattern rules are configured",
+                        "Blocking operation on {Target} - the directories could not establish which object it is "
+                        + "(unreachable, or Active Directory and Exchange disagree)",
                         targetMailbox);
                     return TargetValidation.Deny("Access denied: Protected-principal identity resolution is unavailable. Contact your administrator.");
                 }
@@ -299,7 +349,14 @@ public class PermissionValidator
             return TargetValidation.Deny("Access denied: Protected-user list is unavailable. Contact your administrator.");
         }
 
-        if (await IsUserExcludedAsync(targetMailbox))
+        var exclusion = await CheckExclusionAsync(targetMailbox);
+        if (exclusion == ExclusionVerdict.Unavailable)
+        {
+            _logger.LogWarning("Blocking operation on {Target} - could not establish whether the excluded-user list covers it", targetMailbox);
+            return TargetValidation.Deny("Access denied: The protected-user list could not be checked for this mailbox. Contact your administrator.");
+        }
+
+        if (exclusion == ExclusionVerdict.Excluded)
         {
             // The legacy excluded-user list. It protects the same principals by a different
             // mechanism, so a servicer grant must apply here too - otherwise whether an operator
@@ -434,7 +491,7 @@ public class PermissionValidator
     private bool CacheIsFresh()
         => _initialized
             && !_changeWatcher.HasChangedSince(_loadedToken)
-            && DateTime.UtcNow - _lastRefresh < CacheLifetime;
+            && UtcNow() - _lastRefresh < (_initFailed ? FailedLoadRetry : CacheLifetime);
 
     private async Task EnsureInitializedAsync()
     {
@@ -455,74 +512,83 @@ public class PermissionValidator
             if (_moduleConfig.HasModuleConfigFile("MailboxPermissions") && _moduleConfig.IsModuleCorrupt("MailboxPermissions"))
             {
                 _excludedUsers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
-                _excludedObjectIds = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase);
+                _excludedObjectIds = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
                 _initFailed = true;
                 _initialized = true;
-                _lastRefresh = DateTime.UtcNow;
+                _lastRefresh = UtcNow();
                 _loadedToken = token;
                 _logger.LogError("Module config file is corrupt - blocking all protected-target operations until file is fixed");
                 return;
             }
 
-            var configuredExclusions = GetConfiguredExclusions();
-            _logger.LogInformation("Initializing permission validator with {Count} configured exclusions", configuredExclusions.Length);
+            var configuredExclusions = GetConfiguredExclusions()
+                .Select(e => e.Trim())
+                .Where(e => !string.IsNullOrWhiteSpace(e))
+                .ToList();
+            _logger.LogInformation("Initializing permission validator with {Count} configured exclusions", configuredExclusions.Count);
 
             var newExcluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var entry in configuredExclusions)
             {
-                var trimmed = entry.Trim();
-                if (string.IsNullOrWhiteSpace(trimmed)) continue;
+                newExcluded.Add(entry);
 
-                newExcluded.Add(trimmed);
-
-                var members = await TryExpandGroupAsync(trimmed);
+                var members = await TryExpandGroupAsync(entry);
                 foreach (var member in members)
                 {
                     newExcluded.Add(member);
-                    _logger.LogDebug("Excluded (from group {Group}): {Member}", trimmed, member);
+                    _logger.LogDebug("Excluded (from group {Group}): {Member}", entry, member);
                 }
             }
 
-            var newObjectIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            try
+            // aud-a2b hole 1. Each configured entry is resolved through Exchange so a SECONDARY
+            // address of an excluded mailbox can be recognised later by its canonical address and
+            // object id. This used to run through a lookup that swallowed every failure, and a
+            // load that obtained nothing was accepted as complete - the target check then fell
+            // back to comparing strings, and an alias passed for up to the cache lifetime.
+            //
+            // ResolveRecipientAsync throws when Exchange could not answer, and that throw is NOT
+            // caught here: it reaches the catch below, which fails the whole load closed. Null is
+            // Exchange affirmatively having no such recipient, which leaves the entry a literal.
+            // Group members are not each sent to Exchange: the expansion already returned their
+            // primary addresses, which is what the target check compares.
+            var newObjectIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (configuredExclusions.Count > 0)
             {
                 using var scope = _scopeFactory.CreateScope();
-                var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
-                if (resolver != null)
+                var resolver = scope.ServiceProvider.GetService<IIdentityResolver>()
+                    ?? throw new InvalidOperationException(
+                        "No identity resolver is registered, so excluded users cannot be resolved.");
+
+                foreach (var entry in configuredExclusions)
                 {
-                    foreach (var user in newExcluded)
-                    {
-                        var objectId = await resolver.ResolveToObjectIdAsync(user);
-                        if (objectId != null)
-                            newObjectIds[user] = objectId;
-                    }
-                    _logger.LogInformation("Resolved {Count}/{Total} excluded identities to ObjectIds",
-                        newObjectIds.Count, newExcluded.Count);
+                    var recipient = await resolver.ResolveRecipientAsync(entry);
+                    if (recipient is null)
+                        continue;
+
+                    newExcluded.Add(recipient.PrimarySmtpAddress);
+                    if (!string.IsNullOrWhiteSpace(recipient.ExternalDirectoryObjectId))
+                        newObjectIds.Add(recipient.ExternalDirectoryObjectId);
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to resolve some excluded-user ObjectIds - string matching will be used as fallback");
             }
 
             _excludedUsers = newExcluded.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
-            _excludedObjectIds = newObjectIds.ToImmutableDictionary(StringComparer.OrdinalIgnoreCase);
+            _excludedObjectIds = newObjectIds.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
             _initFailed = false;
             _initialized = true;
-            _lastRefresh = DateTime.UtcNow;
+            _lastRefresh = UtcNow();
             _loadedToken = token;
             _logger.LogInformation("Permission validator initialized with {Total} total excluded identities", _excludedUsers.Count);
         }
         catch (Exception ex)
         {
             _excludedUsers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
-            _excludedObjectIds = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase);
+            _excludedObjectIds = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
             _initFailed = true;
             _initialized = true;
-            _lastRefresh = DateTime.UtcNow;
+            _lastRefresh = UtcNow();
             _loadedToken = token;
-            _logger.LogError(ex, "Failed to initialize permission validator - all operations on protected targets will be blocked until app pool recycle.");
+            _logger.LogError(ex, "Failed to initialize permission validator - operations on protected targets are blocked; the load is retried after {Retry}.", FailedLoadRetry);
         }
         finally
         {
