@@ -228,18 +228,23 @@
         isChecking = true;
         checkResult = null;
 
+        // Audit finding aud-a7c. Captured before the read: the lookup audit used to take its target
+        // from the box AFTER the await, so an edit during the read recorded a lookup of a mailbox
+        // that was never read. Nothing below may read checkEmail.
+        var mailbox = checkEmail.Trim();
+
         try
         {
             using var activity = Progress.Begin(
-                "Out of Office", $"Reading auto-reply for {checkEmail.Trim()}", ActivitySize.Unknown);
+                "Out of Office", $"Reading auto-reply for {mailbox}", ActivitySize.Unknown);
 
-            checkResult = await OofService.GetOutOfOfficeAsync(checkEmail.Trim());
+            checkResult = await OofService.GetOutOfOfficeAsync(mailbox);
             activity.Complete(checkResult.Error == null, checkResult.Error);
-            Audit.LogLookupAction(currentUser, clientIpAddress, "CheckOutOfOffice", checkEmail.Trim(), checkResult.Error == null, checkResult.Error);
+            Audit.LogLookupAction(currentUser, clientIpAddress, "CheckOutOfOffice", mailbox, checkResult.Error == null, checkResult.Error);
         }
         catch (Exception ex)
         {
-            checkResult = new OutOfOfficeResult { EmailAddress = checkEmail, State = "Unknown", Error = ex.Message };
+            checkResult = new OutOfOfficeResult { EmailAddress = mailbox, State = "Unknown", Error = ex.Message };
         }
         finally
         {
@@ -272,19 +277,28 @@
         if (isSetting) return;
         isSetting = true;
 
-        var target = setEmail.Trim();
+        // Audit finding aud-a7b. A7 captured the mailbox and nothing else: the state, both
+        // messages, the schedule and the ticket were still read from the bound fields at the write
+        // and again at the audit, after several awaits. An edit landing in between changed what was
+        // written, and let the audit row and the notification name a state or ticket the change was
+        // not made under. Every input is now captured here, once, before the first await, into one
+        // immutable request - the Comms-10k C7 shape - and nothing below this line may read a bound
+        // field. The service takes the request itself, so the write cannot be handed anything else.
+        var request = OutOfOfficeRequest.FromForm(
+            setEmail, oofState, internalMessage, externalMessage, startTime, endTime, ticketNumber);
+        var target = request.Mailbox;
 
         setValidationError = null;
         setResult = null;
 
-        setValidationError = ValidateOofSchedule(oofState, startTime, endTime);
+        setValidationError = ValidateOofSchedule(request.State, request.StartTime, request.EndTime);
         if (setValidationError != null)
         {
             isSetting = false;
             return;
         }
 
-        var oofLabel = oofState == "Disabled"
+        var oofLabel = request.State == "Disabled"
             ? $"Disabling auto-reply for {target}"
             : $"Setting auto-reply for {target}";
 
@@ -332,7 +346,7 @@
                 try
                 {
                     Audit.LogModuleAction(currentUser, clientIpAddress,
-                        "OutOfOffice_Denied", "OutOfOffice", target, false, ticketNumber.Trim(), protectedError);
+                        "OutOfOffice_Denied", "OutOfOffice", target, false, request.Ticket, protectedError);
                 }
                 catch (Exception ex)
                 {
@@ -350,7 +364,7 @@
                 try
                 {
                     Audit.LogModuleAction(currentUser, clientIpAddress,
-                        "OutOfOffice_Denied", "OutOfOffice", target, false, ticketNumber.Trim(), "Authorization denied (re-check)");
+                        "OutOfOffice_Denied", "OutOfOffice", target, false, request.Ticket, "Authorization denied (re-check)");
                 }
                 catch (Exception ex)
                 {
@@ -370,19 +384,14 @@
             }
             catch (Exception ex) { Logger.LogWarning(ex, "Could not retrieve current OOF state for {Target} before mutation", target); }
 
-            activity.Step(oofState == "Disabled" ? "disabling the auto-reply" : "writing the auto-reply");
-            setResult = await OofService.SetOutOfOfficeAsync(
-                target, oofState,
-                oofState != "Disabled" ? internalMessage : null,
-                oofState != "Disabled" ? externalMessage : null,
-                oofState == "Scheduled" ? startTime : null,
-                oofState == "Scheduled" ? endTime : null);
+            activity.Step(request.State == "Disabled" ? "disabling the auto-reply" : "writing the auto-reply");
+            setResult = await OofService.SetOutOfOfficeAsync(request);
 
-            var action = oofState == "Disabled" ? "OutOfOffice_Disable" : "OutOfOffice_Set";
+            var action = request.State == "Disabled" ? "OutOfOffice_Disable" : "OutOfOffice_Set";
             var extra = new Dictionary<string, object?>
             {
                 ["previousState"] = previousState,
-                ["newState"] = oofState
+                ["newState"] = request.State
             };
 
             // MERGED into the existing extra, not replacing it: this page already records state
@@ -394,7 +403,7 @@
             try
             {
                 Audit.LogModuleAction(currentUser, clientIpAddress,
-                    action, "OutOfOffice", target, setResult.Success, ticketNumber.Trim(),
+                    action, "OutOfOffice", target, setResult.Success, request.Ticket,
                     setResult.Success ? null : setResult.Message, extra);
             }
             catch (Exception ex)
@@ -408,9 +417,9 @@
             {
                 await Email.SendAdminNotificationAsync(
                     currentUser, clientIpAddress,
-                    oofState == "Disabled" ? "DisableOutOfOffice" : $"SetOutOfOffice_{oofState}",
+                    request.State == "Disabled" ? "DisableOutOfOffice" : $"SetOutOfOffice_{request.State}",
                     target, "N/A", "OutOfOffice",
-                    setResult.Success, ticketNumber.Trim(),
+                    setResult.Success, request.Ticket,
                     setResult.Success ? null : setResult.Message);
             }
             catch (Exception ex)
@@ -424,7 +433,7 @@
                 {
                     await Email.SendOofNotificationAsync(
                         target, currentUser,
-                        oofState == "Disabled" ? "disabled" : "enabled");
+                        request.State == "Disabled" ? "disabled" : "enabled");
                 }
                 catch (Exception ex)
                 {
@@ -438,9 +447,9 @@
             try
             {
                 Audit.LogModuleAction(currentUser, clientIpAddress,
-                    oofState == "Disabled" ? "OutOfOffice_Disable" : "OutOfOffice_Set",
-                    "OutOfOffice", target, false, ticketNumber.Trim(), ex.Message,
-                    new Dictionary<string, object?> { ["newState"] = oofState });
+                    request.State == "Disabled" ? "OutOfOffice_Disable" : "OutOfOffice_Set",
+                    "OutOfOffice", target, false, request.Ticket, ex.Message,
+                    new Dictionary<string, object?> { ["newState"] = request.State });
             }
             catch (Exception auditEx)
             {

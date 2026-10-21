@@ -45,8 +45,15 @@ public class OutOfOfficeService : ExchangeServiceBase
         }, allowRetry: true);
     }
 
-    public Task<PermissionResult> SetOutOfOfficeAsync(string emailAddress, string state, string? internalMessage, string? externalMessage, DateTime? startTime, DateTime? endTime)
+    /// <summary>
+    /// Writes exactly the request the page captured before its first await (aud-a7b). The
+    /// positional overload this replaced let a caller assemble the arguments from live form fields
+    /// at the moment of the write; the page was its only caller.
+    /// </summary>
+    public Task<PermissionResult> SetOutOfOfficeAsync(OutOfOfficeRequest request)
     {
+        var (emailAddress, state, internalMessage, externalMessage, startTime, endTime, _) = request;
+
         // Single-write (Set-MailboxAutoReplyConfiguration): safe to retry on a dead session.
         return RunAsync((ps, tracker) =>
         {

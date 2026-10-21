@@ -4,10 +4,10 @@ namespace ExchangeAdminWeb.Tests;
 /// Audit finding A7: Out of Office checked one mailbox and could write another.
 /// </summary>
 /// <remarks>
-/// Source scans, not behaviour. Comms-10k's C7 guards run against a real page instance through
-/// a reflection harness, but that harness is built for that page; standing one up for this
-/// method would be a larger piece of work than the fix. These pin the two properties the fix
-/// rests on, and the limit is stated on the finding rather than implied.
+/// Source scans, not behaviour. They were the only guards when A7 shipped; aud-a7b added the
+/// behavioural harness in <see cref="OutOfOfficeRequestCaptureTests"/>, which drives a real page
+/// instance through the paths it can reach. These stay because they also cover the paths that
+/// harness does not drive - the protected-principal refusal and the exception path.
 ///
 /// Every assertion reads <see cref="ProgressScan.CodeView"/>, which blanks comments and string
 /// literals. Reviewing aud-a3 showed raw-text tripwires passing against a call that had been
@@ -93,17 +93,52 @@ public class OutOfOfficeTargetCaptureTests
     }
 
     [Fact]
-    public void SetOof_CapturesTheTarget_AndNeverRereadsTheEditableField()
+    public void CheckStatus_CapturesTheMailboxBeforeTheRead_AndNeverRereadsTheBox()
+    {
+        // aud-a7c. The status check took its lookup audit's target from the box after the read
+        // returned. OutOfOfficeRequestCaptureTests drives that as behaviour; this also covers the
+        // exception path, whose result used to be built from the box as well.
+        var text = File.ReadAllText(
+            AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "OutOfOffice.razor"));
+        var start = text.IndexOf("private async Task CheckStatus()", StringComparison.Ordinal);
+        Assert.True(start >= 0, "CheckStatus not found - tripwire is stale.");
+        var end = text.IndexOf("\n    public static string? ValidateOofSchedule", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound CheckStatus - tripwire is stale.");
+        var code = ProgressScan.CodeView(text[start..end]);
+
+        const string capture = "var mailbox = checkEmail.Trim();";
+        var at = code.IndexOf(capture, StringComparison.Ordinal);
+        Assert.True(at >= 0, "CheckStatus must capture the mailbox into a local.");
+        Assert.True(code.IndexOf("await ", StringComparison.Ordinal) > at, "The capture must precede the read.");
+        Assert.DoesNotMatch(@"\bcheckEmail\b", code[(at + capture.Length)..]);
+    }
+
+    /// <summary>Every field the Set / Clear form binds, and so every one an edit can move.</summary>
+    private static readonly string[] BoundFields =
+        ["setEmail", "oofState", "internalMessage", "externalMessage", "startTime", "endTime", "ticketNumber"];
+
+    [Fact]
+    public void SetOof_CapturesEveryBoundInputOnce_BeforeTheFirstAwait_AndNeverRereadsOne()
     {
         // The guard closes the window; the capture means that even if something reopens it,
-        // this run acts on the address it validated. Re-reading setEmail anywhere after the
-        // capture is the defect itself.
+        // this run acts on what it validated. aud-a7 captured the mailbox; aud-a7b extends that to
+        // every bound input, as one request. Re-reading any of them after the capture is the
+        // defect itself. OutOfOfficeRequestCaptureTests proves the same as behaviour; this scan
+        // also covers the paths that harness does not drive.
         var code = SetOofCode();
 
-        var capture = code.IndexOf("var target = setEmail.Trim();", StringComparison.Ordinal);
-        Assert.True(capture >= 0, "SetOof must capture the target into a local.");
+        var capture = code.IndexOf("OutOfOfficeRequest.FromForm(", StringComparison.Ordinal);
+        Assert.True(capture >= 0, "SetOof must capture its inputs into one OutOfOfficeRequest.");
+        var captureEnd = code.IndexOf(';', capture);
+        Assert.True(code.IndexOf("await ", StringComparison.Ordinal) > captureEnd,
+            "The capture must precede the first await.");
 
-        var after = code[(capture + "var target = setEmail.Trim();".Length)..];
-        Assert.DoesNotContain("setEmail", after, StringComparison.Ordinal);
+        var captured = code[capture..captureEnd];
+        var after = code[(captureEnd + 1)..];
+        foreach (var field in BoundFields)
+        {
+            Assert.Matches($@"\b{field}\b", captured);
+            Assert.DoesNotMatch($@"\b{field}\b", after);
+        }
     }
 }

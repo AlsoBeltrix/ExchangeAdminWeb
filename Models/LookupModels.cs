@@ -144,3 +144,38 @@ public class OutOfOfficeResult
     public DateTime? EndTime { get; set; }
     public string? Error { get; set; }
 }
+
+/// <summary>
+/// One Out of Office change, captured from the form once, before the first await (aud-a7b).
+/// </summary>
+/// <remarks>
+/// Immutable on purpose: the write, the audit row and the notifications all read this one value,
+/// so an edit to the form while the operation is in flight cannot reach any of them.
+/// <see cref="FromForm"/> applies the page's own rules exactly once - messages only when the state
+/// is not Disabled, a schedule only when it is Scheduled, mailbox and ticket trimmed.
+/// </remarks>
+public sealed record OutOfOfficeRequest(
+    string Mailbox,
+    string State,
+    string? InternalMessage,
+    string? ExternalMessage,
+    DateTime? StartTime,
+    DateTime? EndTime,
+    string Ticket)
+{
+    public static OutOfOfficeRequest FromForm(
+        string? mailbox,
+        string state,
+        string? internalMessage,
+        string? externalMessage,
+        DateTime startTime,
+        DateTime endTime,
+        string? ticket) => new(
+            Mailbox: (mailbox ?? "").Trim(),
+            State: state,
+            InternalMessage: state != "Disabled" ? internalMessage : null,
+            ExternalMessage: state != "Disabled" ? externalMessage : null,
+            StartTime: state == "Scheduled" ? startTime : null,
+            EndTime: state == "Scheduled" ? endTime : null,
+            Ticket: (ticket ?? "").Trim());
+}
