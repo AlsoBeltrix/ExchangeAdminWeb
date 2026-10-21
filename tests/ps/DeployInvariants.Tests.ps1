@@ -84,15 +84,13 @@ BeforeAll {
             [System.Management.Automation.Language.TrapStatementAst],
             [System.Management.Automation.Language.ScriptBlockExpressionAst],
             [System.Management.Automation.Language.FunctionDefinitionAst])
-        $found = @()
         $ancestor = $Node.Parent
         while ($null -ne $ancestor -and -not [object]::ReferenceEquals($ancestor, $Stop)) {
             foreach ($type in $types) {
-                if ($ancestor -is $type) { $found += $ancestor }
+                if ($ancestor -is $type) { $ancestor }
             }
             $ancestor = $ancestor.Parent
         }
-        , $found
     }
 
     function Get-NamedArgumentText {
@@ -484,6 +482,73 @@ Describe 'deploy.ps1' {
         } finally {
             Remove-Item -LiteralPath $publish -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It 'takes the verified online backup on -Force, before the pool stops or anything is mirrored (cdt-9)' {
+        # Architectural Invariant 3: the config database is backed up by verified online backup,
+        # from the path the instance opens, before each deploy - never by raw file copy. -Force
+        # used to raw-copy the live config\ directory before the publish, verify nothing, and
+        # never back up a shared database at all.
+        $install = Get-FreshInstallBranch $s
+
+        $changes = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -in @('Stop-AppPoolVerified', 'robocopy') }, $true))
+        $changes.Count | Should -Be 2 -Because 'the branch stops the pool once and mirrors once'
+        $firstChange = ($changes | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Minimum).Minimum
+
+        $backups = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq 'Backup-SqliteConfigDb' }, $true))
+        $backups.Count | Should -Be 1 -Because 'the -Force path must take the verified online backup'
+        $backup = $backups[0]
+        Get-NamedArgumentText $backup 'DbPath' | Should -BeExactly '$configDbPath' -Because 'the backup must target the database the instance opens'
+        Get-NamedArgumentText $backup 'DestDir' | Should -BeExactly '$configDirBackup'
+        Get-NamedArgumentText $backup 'Timestamp' | Should -BeExactly '$timestamp'
+        Get-NamedArgumentText $backup 'AppPath' | Should -BeExactly '$StagingPath' -Because 'the tool is the build about to be deployed'
+        $backup.Extent.EndOffset | Should -BeLessThan $firstChange -Because 'the snapshot must exist before the pool stops or any file changes'
+
+        $gates = @(Get-ConditionalAncestor $backup $install)
+        $gates.Count | Should -Be 1 -Because 'the backup is gated only on -Force over an existing deployment'
+        $gates[0] | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+        $gates[0].Clauses[0].Item1.Extent.Text | Should -BeExactly '$Force -and (Test-Path $configPath)'
+
+        $resolves = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $node.Left.VariablePath.UserPath -eq 'configDbPath' }, $true))
+        $resolves.Count | Should -Be 1
+        $resolves[0].Right.Extent.Text | Should -BeExactly 'Resolve-ConfigDbPath -PublishPath $PublishPath' -Because 'a shared database lives outside config\'
+        @(Get-ConditionalAncestor $resolves[0] $install) | Should -BeNullOrEmpty
+        $resolves[0].Extent.EndOffset | Should -BeLessThan $backup.Extent.StartOffset
+
+        $refusals = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.IfStatementAst] -and
+                    $node.Clauses[0].Item1.Extent.Text -eq '$configStorePathSetting -and -not (Test-IsSqliteConfigDbPresent -DbPath $configDbPath)' }, $true))
+        $refusals.Count | Should -Be 1 -Because 'a configured path naming a missing file must stop the run, not back up nothing'
+        $refusals[0].Clauses[0].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "ConfigStore:Path*'
+        @(Get-ConditionalAncestor $refusals[0] $install) | Should -BeNullOrEmpty
+        $refusals[0].Extent.EndOffset | Should -BeLessThan $firstChange
+
+        $install.Extent.Text | Should -Match ([regex]::Escape('$configDirBackup = Join-Path $BackupDir "config.${timestamp}.pre-force.bak"'))
+
+        $copies = @($install.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.PipelineAst] -and
+                    $node.PipelineElements.Count -ge 2 -and
+                    $node.PipelineElements[0].Extent.Text -like 'Get-ChildItem*$runtimeConfigDir*' -and
+                    $node.Extent.Text -match 'Copy-Item' }, $true))
+        $copies.Count | Should -Be 1 -Because 'the rest of config\ is copied once, as the upgrade path copies it'
+        $copies[0].Extent.Text | Should -Match ([regex]::Escape("Where-Object { `$_.Name -notin @('exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm') }")) `
+            -Because 'a raw copy of the live database triplet is the torn snapshot this replaces'
+        $copies[0].Extent.EndOffset | Should -BeLessThan $firstChange
+
+        $recursive = @($s.Ast.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq 'Copy-Item' -and
+                    @($node.CommandElements | Where-Object {
+                            $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -like 'r*' }).Count -gt 0 }, $true))
+        @($recursive | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Extent.Text)" }) |
+            Should -BeNullOrEmpty -Because 'no raw recursive copy of a directory may stand in for the verified backup'
     }
 
     It 'runs a post-deploy live DB integrity check (DB is excluded from file drift by design)' {
