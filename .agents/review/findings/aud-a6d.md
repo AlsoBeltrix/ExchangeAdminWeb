@@ -3,9 +3,9 @@
 **Severity**: LOW - latent. No product caller passes a cancellation token to `BorrowAsync` today
 (`RunWithRetryAsync` and `RecipientAutocomplete` both call it without one), so the shipped app
 cannot reach it; but the method is public, takes a token, and is one caller away from live.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a6325a13692998ce6`
-**Commit**: `<pending>`
+**Commit**: `3e5684b` (merged)
 **Reviewer**: implementer (found while fixing `aud-a6c`; same class)
 
 ## Evidence

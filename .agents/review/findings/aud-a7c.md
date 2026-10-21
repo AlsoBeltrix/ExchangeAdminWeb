@@ -4,9 +4,9 @@
 name a mailbox other than the one that was read. Nothing is written. The box is disabled while
 the read runs (`isChecking`), so it needs the same route `aud-a7b` names: a bound value updated
 from a component event while the await is in flight.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a6325a13692998ce6`
-**Commit**: `<pending>`
+**Commit**: `b8dd5d7` (merged)
 **Reviewer**: implementer (found while fixing `aud-a7b`; same class)
 
 ## Evidence

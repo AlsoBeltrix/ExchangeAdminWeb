@@ -4,9 +4,9 @@
 messages, schedule and ticket still can. An auto-reply can be written with a body or schedule
 the operator had already moved on from, and the audit row can name a different ticket than the
 one the change was made under.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a6325a13692998ce6`
-**Commit**: `<pending>`
+**Commit**: `419ad2a` (merged)
 
 ## Evidence
 

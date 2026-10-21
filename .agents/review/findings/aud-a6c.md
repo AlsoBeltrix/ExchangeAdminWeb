@@ -2,9 +2,9 @@
 
 **Severity**: MEDIUM - connections survive the pool that owned them, and a failed disconnect
 is neither reported nor retried. Pre-existing; not introduced by the A6B work.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a6325a13692998ce6`
-**Commit**: `<pending>`
+**Commit**: `0152847` (merged)
 
 ## Evidence
 
