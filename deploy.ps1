@@ -430,6 +430,11 @@ Write-Success "Config DB tool: $($configDbTool.Host) $($configDbTool.Assembly) d
 
 # --- Mode-specific deployment ---
 
+# Both paths hand this to the active-job check before the pool stops. It used to be set only
+# inside the upgrade branch, so a fresh install (or -Force) passed $null to a mandatory string
+# parameter and the deploy died on a binding error after IIS was already configured (cdt-5).
+$runtimeConfigDir = Join-Path $PublishPath "config"
+
 if ($isUpgrade) {
 
     # --- UPGRADE ---
@@ -455,7 +460,6 @@ if ($isUpgrade) {
     # or a moved file must stop the deploy here, before anything is mirrored, because the app
     # would otherwise refuse to start (it never creates a configured database). Without the key
     # a missing DB just means the first start has not happened yet.
-    $runtimeConfigDir = Join-Path $PublishPath "config"
     $configStorePathSetting = Get-ConfigStorePathSetting -PublishPath $PublishPath
     $configDbPath = Resolve-ConfigDbPath -PublishPath $PublishPath
     if ($configStorePathSetting -and -not (Test-IsSqliteConfigDbPresent -DbPath $configDbPath)) {

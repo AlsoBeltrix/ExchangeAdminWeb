@@ -276,6 +276,56 @@ Describe 'deploy.ps1' {
         $upgradeBlock | Should -Match 'Test-SqliteConfigDbIntegrity -DbPath \$liveDb -AppPath \$PublishPath'
     }
 
+    It 'sets $runtimeConfigDir unconditionally before any use, so the fresh-install jobs check gets a path (cdt-5)' {
+        $isRuntimeConfigDir = {
+            param($node)
+            $node -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $node.VariablePath.UserPath -eq 'runtimeConfigDir'
+        }
+        $assignments = @($s.Ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $node.Left.VariablePath.UserPath -eq 'runtimeConfigDir'
+                }, $true))
+        $assignments.Count | Should -Be 1
+        $assignment = $assignments[0]
+
+        $conditional = @(
+            [System.Management.Automation.Language.IfStatementAst],
+            [System.Management.Automation.Language.LoopStatementAst],
+            [System.Management.Automation.Language.SwitchStatementAst],
+            [System.Management.Automation.Language.CatchClauseAst],
+            [System.Management.Automation.Language.TrapStatementAst],
+            [System.Management.Automation.Language.ScriptBlockExpressionAst],
+            [System.Management.Automation.Language.FunctionDefinitionAst])
+        $guarding = @()
+        $ancestor = $assignment.Parent
+        while ($null -ne $ancestor) {
+            foreach ($type in $conditional) {
+                if ($ancestor -is $type) { $guarding += "$($type.Name) at line $($ancestor.Extent.StartLineNumber)" }
+            }
+            $ancestor = $ancestor.Parent
+        }
+        $guarding | Should -BeNullOrEmpty -Because 'the assignment must run on both the upgrade and the fresh-install path'
+
+        $reads = @($s.Ast.FindAll($isRuntimeConfigDir, $true) | Where-Object { $_ -ne $assignment.Left })
+        $reads.Count | Should -BeGreaterThan 0
+        foreach ($read in $reads) {
+            $read.Extent.StartOffset | Should -BeGreaterThan $assignment.Extent.EndOffset -Because "line $($read.Extent.StartLineNumber) reads it"
+        }
+
+        $jobChecks = @($s.Ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq 'Assert-NoActiveBulkJobsBeforeRecycle'
+                }, $true))
+        $jobChecks.Count | Should -Be 2 -Because 'the upgrade and the fresh-install path both recycle'
+        foreach ($call in $jobChecks) {
+            $call.Extent.Text | Should -Match '-ConfigDir \$runtimeConfigDir\b'
+        }
+    }
+
     It 'runs a post-deploy live DB integrity check (DB is excluded from file drift by design)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,
