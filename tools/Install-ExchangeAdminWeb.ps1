@@ -45,7 +45,9 @@
     creates it; tools\Move-ConfigDbToShared.ps1 does, once, from an existing instance.
     Without -ConfigStorePath an existing instance keeps the ConfigStore:Path its appsettings.json
     already names - also under -RegenerateAppSettings, which regenerates every other value - and
-    a new instance uses its own config\exchangeadmin.db.
+    a new instance uses its own config\exchangeadmin.db. A -ConfigStorePath naming a different
+    database from the one an existing appsettings.json names is refused, -RegenerateAppSettings or
+    not: moving an instance to another config database is tools\Move-ConfigDbToShared.ps1's job.
 
 .EXAMPLE
     .\tools\Install-ExchangeAdminWeb.ps1
@@ -544,10 +546,12 @@ function Resolve-ConfigStorePlan {
     # key naming a shared database, and the backup then re-read the rewritten file and snapshotted
     # the stale per-instance copy instead.
     #
-    # When this run writes the file, a supplied path wins; otherwise the existing key is carried
-    # exactly as Get-ConfigStorePathSetting reads it. A file this run keeps keeps its own key, and a
-    # supplied path it would not carry is refused (cdt-20). A file that does not parse stops the run
-    # here, before anything changes: overwriting a file the installer cannot read could drop the key.
+    # When this run writes the file, a supplied path is written - over a file with no key to replace;
+    # a supplied path naming a different database from the existing key is refused in every mode
+    # (cdt-29). Otherwise the existing key is carried exactly as Get-ConfigStorePathSetting reads it.
+    # A file this run keeps keeps its own key, and a supplied path it would not carry is refused
+    # (cdt-20). A file that does not parse stops the run here, before anything changes: overwriting
+    # a file the installer cannot read could drop the key.
     param(
         [string]$PublishPath,
         [string]$SuppliedPath,
@@ -558,18 +562,28 @@ function Resolve-ConfigStorePlan {
     $existingPath = Get-ConfigStorePathSetting -PublishPath $PublishPath
     # Write-AppSettings' own rule: it writes when there is no file, or when told to regenerate.
     $writesAppSettings = (-not $appSettingsExists) -or $RegenerateAppSettings
+    $suppliedPathGiven = -not [string]::IsNullOrWhiteSpace($SuppliedPath)
+    $suppliedIsExisting = $suppliedPathGiven -and $existingPath -and [string]::Equals([System.IO.Path]::GetFullPath($existingPath).TrimEnd('\'), [System.IO.Path]::GetFullPath($SuppliedPath).TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)
+
+    # cdt-29. The existing key names the database this instance opens - on a shared-database server
+    # the one its sibling opens too. -RegenerateAppSettings -ConfigStorePath <another file> used to
+    # write the other file's path over it: the instance moved to a different authorization and
+    # settings store, the shared-folder grant and the pre-upgrade backup followed the new path, and
+    # nothing said so. Refused here, in plan and apply mode alike, before anything is written; the
+    # same database restated (compared as cdt-20 compares it) is fine, and no key at all is the first
+    # configuration, which takes the supplied path.
+    if ($suppliedPathGiven -and $existingPath -and -not $suppliedIsExisting) {
+        $refusal = "-ConfigStorePath $SuppliedPath was given, but the existing appsettings.json in $PublishPath names ConfigStore:Path = $existingPath, a different config database. This installer does not move an existing instance from one config database to another, with or without -RegenerateAppSettings: the instance would open a different authorization and settings store from its next start, and the pre-upgrade backup would snapshot the new database instead of the one in use. Changing the database an existing instance opens is tools\Move-ConfigDbToShared.ps1's job - the only sanctioned way. Re-run without -ConfigStorePath to keep $existingPath, or with -ConfigStorePath $existingPath. Nothing was changed."
+        if ($PlanOnly) { Write-Plan "REFUSED: $refusal" }
+        Write-Fail $refusal
+    }
 
     # cdt-20. A kept file is not rewritten, so a supplied path it does not already name would never
     # take effect: the run used to validate it, ACL its folder and complete while the instance kept
     # its own database - two instances believed to share settings and authorization that did not.
     # Re-stating the key the file already names is harmless and accepted.
-    if (-not $writesAppSettings -and -not [string]::IsNullOrWhiteSpace($SuppliedPath)) {
-        $keptNames = 'no ConfigStore:Path'
-        if ($existingPath) { $keptNames = "ConfigStore:Path = $existingPath" }
-        $same = $existingPath -and [string]::Equals([System.IO.Path]::GetFullPath($existingPath).TrimEnd('\'), [System.IO.Path]::GetFullPath($SuppliedPath).TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)
-        if (-not $same) {
-            Write-Fail "-ConfigStorePath $SuppliedPath was given, but this run keeps the existing appsettings.json in $PublishPath, which names $keptNames, so the supplied path would not take effect. Re-run with -RegenerateAppSettings to write it (that regenerates the file's other values too), or without -ConfigStorePath to keep the instance as it is. Moving an existing instance onto a shared database is tools\Move-ConfigDbToShared.ps1's job. Nothing was changed."
-        }
+    if (-not $writesAppSettings -and $suppliedPathGiven -and -not $existingPath) {
+        Write-Fail "-ConfigStorePath $SuppliedPath was given, but this run keeps the existing appsettings.json in $PublishPath, which names no ConfigStore:Path, so the supplied path would not take effect. Re-run with -RegenerateAppSettings to write it (that regenerates the file's other values too), or without -ConfigStorePath to keep the instance as it is. Moving an existing instance onto a shared database is tools\Move-ConfigDbToShared.ps1's job. Nothing was changed."
     }
 
     $path = $null

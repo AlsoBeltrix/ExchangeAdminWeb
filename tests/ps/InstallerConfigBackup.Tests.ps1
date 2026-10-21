@@ -286,7 +286,9 @@ Describe 'cdt-11: ConfigStore:Path survives -RegenerateAppSettings, and the back
     }
 
     It 'lets a supplied -ConfigStorePath win when the file is written' {
-        $t = Initialize-TestInstance -Key $script:Shared
+        # Over a file with no key to replace. A supplied path that differs from an existing key is
+        # refused since cdt-29 (its context below).
+        $t = Initialize-TestInstance
         try {
             $script:RegenerateAppSettings = $true
             $plan = Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Other -RegenerateAppSettings $true
@@ -348,9 +350,10 @@ Describe 'cdt-11: ConfigStore:Path survives -RegenerateAppSettings, and the back
             [System.IO.File]::ReadAllBytes($t.AppSettings) | Should -Be $bytes -Because 'the file is preserved byte for byte'
 
             # A supplied path is not written into a kept file. It used to be dropped silently (the
-            # kept key won); since cdt-20 it is refused - see the cdt-20 context below.
+            # kept key won); since cdt-20 it is refused, and since cdt-29 a path that differs from the
+            # key the file names is refused as a move to another database - see the contexts below.
             { Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Other -RegenerateAppSettings $false } |
-                Should -Throw -ExpectedMessage '*would not take effect*'
+                Should -Throw -ExpectedMessage '*a different config database*'
         } finally {
             Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -407,6 +410,115 @@ Describe 'cdt-11: ConfigStore:Path survives -RegenerateAppSettings, and the back
                 $plan.Path | Should -BeExactly $script:Shared -Because 'the kept file is what the instance opens'
             } finally {
                 Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context 'cdt-29: a supplied -ConfigStorePath never replaces the key an existing appsettings.json names' {
+        # -RegenerateAppSettings -ConfigStorePath B over a file naming shared database A rewrote it to
+        # name B: the instance moved to another authorization and settings store, its shared-folder
+        # grant and its pre-upgrade backup followed B, and nothing said so.
+
+        It 'refuses a different database, with or without -RegenerateAppSettings, naming both and the cutover, before anything is written' {
+            foreach ($regenerate in $true, $false) {
+                $t = Initialize-TestInstance -Key $script:Shared
+                try {
+                    $script:RegenerateAppSettings = $regenerate
+                    $bytes = [System.IO.File]::ReadAllBytes($t.AppSettings)
+                    $err = $null
+                    try { Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Other -RegenerateAppSettings $regenerate } catch { $err = $_ }
+                    $err | Should -Not -BeNullOrEmpty -Because "a different database must not replace the existing key (-RegenerateAppSettings: $regenerate)"
+                    foreach ($text in "-ConfigStorePath $($script:Other) was given", "names ConfigStore:Path = $($script:Shared), a different config database", 'with or without -RegenerateAppSettings', 'tools\Move-ConfigDbToShared.ps1', 'the only sanctioned way', "with -ConfigStorePath $($script:Shared).", 'Nothing was changed') {
+                        "$err" | Should -BeLike "*$text*"
+                    }
+                    [System.IO.File]::ReadAllBytes($t.AppSettings) | Should -Be $bytes -Because 'the refusal comes before anything is written'
+                } finally {
+                    Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        It 'accepts the existing key restated, however it is cased, and writes the same database' {
+            $t = Initialize-TestInstance -Key $script:Shared
+            try {
+                $script:RegenerateAppSettings = $true
+                $plan = Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Shared.ToUpperInvariant() -RegenerateAppSettings $true
+                [string]::Equals($plan.DbPath, $script:Shared, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue -Because 'the same file, however it is spelled'
+                Invoke-InstallerWrite -Instance $t -Plan $plan
+                [string]::Equals((Get-ConfigStorePathSetting -PublishPath $t.Publish), $script:Shared, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+            } finally {
+                Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'still takes a supplied path when there is no key to replace (the first configuration)' {
+            $keyless = Initialize-TestInstance
+            $fresh = Initialize-TestInstance -NoAppSettings
+            try {
+                $script:RegenerateAppSettings = $true
+                $plan = Resolve-ConfigStorePlan -PublishPath $keyless.Publish -SuppliedPath $script:Other -RegenerateAppSettings $true
+                $plan.Source | Should -BeExactly 'Supplied'
+                $plan.DbPath | Should -BeExactly $script:Other
+                $script:RegenerateAppSettings = $false
+                $plan = Resolve-ConfigStorePlan -PublishPath $fresh.Publish -SuppliedPath $script:Other -RegenerateAppSettings $false
+                $plan.Source | Should -BeExactly 'Supplied' -Because 'a fresh install has no key to replace'
+            } finally {
+                Remove-Item -LiteralPath $keyless.Root, $fresh.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'in plan mode prints the refusal as a PLAN line, then stops as the real run does' {
+            $t = Initialize-TestInstance -Key $script:Shared
+            $script:PlanOnly = $true
+            try {
+                $script:cdt29Err = $null
+                $said = @(& {
+                        try { Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Other -RegenerateAppSettings $true }
+                        catch { $script:cdt29Err = $_ }
+                    } 6>&1 | ForEach-Object { "$_" })
+                $script:cdt29Err | Should -Not -BeNullOrEmpty -Because 'a plan must not carry on past a refusal'
+                $lines = @($said | Where-Object { $_ -like 'PLAN REFUSED: *' })
+                $lines.Count | Should -Be 1 -Because 'the plan says the real run refuses here'
+                $lines[0] | Should -BeLike "*-ConfigStorePath $($script:Other) was given*names ConfigStore:Path = $($script:Shared), a different config database*"
+            } finally {
+                $script:PlanOnly = $false
+                Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'a -PlanOnly run naming a different database prints the refusal and creates nothing (Windows PowerShell 5.1)' {
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt29_' + [guid]::NewGuid().ToString('N'))
+            $publish = Join-Path $root 'publish'
+            New-Item -ItemType Directory -Path (Join-Path $publish 'config'), (Join-Path $root 'a'), (Join-Path $root 'b') -Force | Out-Null
+            $a = Join-Path $root 'a\exchangeadmin.db'
+            $b = Join-Path $root 'b\exchangeadmin.db'
+            Set-Content -LiteralPath $a -Value 'database A' -Encoding ascii
+            Set-Content -LiteralPath $b -Value 'database B' -Encoding ascii
+            Set-Content -LiteralPath (Join-Path $publish 'appsettings.json') -Encoding UTF8 -Value (@{ AllowedHosts = '*'; ConfigStore = @{ Path = $a } } | ConvertTo-Json -Depth 5)
+            $alias = 'cdt29' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+            $snapshot = {
+                param($Root)
+                @(Get-ChildItem -LiteralPath $Root -Recurse -Force | Sort-Object FullName | ForEach-Object {
+                        if ($_.PSIsContainer) { '{0}|dir' -f $_.FullName.Substring($Root.Length) }
+                        else { '{0}|{1}|{2}' -f $_.FullName.Substring($Root.Length), $_.Length, (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
+                    }) -join "`n"
+            }
+            try {
+                $before = & $snapshot $root
+                $out = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Resolve-Path $script:InstallerPath).Path `
+                    -PlanOnly -NonInteractive -RegenerateAppSettings -ConfigStorePath $b -PublishPath $publish -LogRoot (Join-Path $root 'logs') `
+                    -AppAlias $alias -AppPoolName $alias -AdminGroups 'CONTOSO\Exchange Admins' 2>&1
+                $exitCode = $LASTEXITCODE
+                $text = @($out | ForEach-Object { "$_" }) -join "`n"
+                $exitCode | Should -Not -Be 0 -Because 'a plan must not complete over a run that would be refused'
+                # Windows PowerShell wraps an error at the console width; compare with whitespace removed.
+                $flat = $text -replace '\s+', ''
+                $flat | Should -Match ([regex]::Escape(("PLAN REFUSED: -ConfigStorePath $b was given" -replace '\s+', '')))
+                $flat | Should -Match ([regex]::Escape(("names ConfigStore:Path = $a, a different config database" -replace '\s+', '')))
+                $text | Should -Not -Match 'Plan only\. No changes were made\.'
+                & $snapshot $root | Should -BeExactly $before -Because 'the refusal comes before anything is written'
+            } finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
