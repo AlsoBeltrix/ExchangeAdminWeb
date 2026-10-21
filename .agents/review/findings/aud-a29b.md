@@ -174,7 +174,7 @@ directory seam is an NSubstitute fake, the production read runs over a scripted 
 `ISectionAccessDirectoryCommands`, and the section-access / module-admin stores are the real
 services over a throwaway SQLite file.
 
-| Test (`CircuitRevalidationTests` unless noted) | Pins |
+| Test (`CircuitRevalidationTests`, 55 cases, unless noted) | Pins |
 | --- | --- |
 | `UnchangedMembership_StaysValid`, `AddedSid_StaysValid`, `RemovedSidThatNoGateConsults_StaysValid` | no false revocation: same groups, gained groups, or a lost group no gate reads |
 | `RemovedConsultedSid_InvalidatesTheCircuit`, `DisabledAccount_InvalidatesTheCircuit` | the two revocations the finding is about |
@@ -189,7 +189,7 @@ services over a throwaway SQLite file.
 | `TheIntervalDefaultsToFiveMinutes`, `AnIntervalWithinBoundsIsTaken`, `TheIntervalFloorIsEnforced`, `TheIntervalCeilingIsEnforced`, `AnUnparseableIntervalIsRefused` | the interval key |
 | `ProgramCs_RegistersTheRevalidatingProviderAndTheGate`, `TheContainer_ResolvesTheRevalidatingProviderOverTheFrameworkDefault` | Program.cs text tripwire; a validated container picks this provider over the framework default and gives each circuit its own revocation |
 | `TheLayout_RendersTheSessionEndedNoticeOnEveryPage`, `TheNotice_IsAnInteractiveIslandThatReloadsInFull`, `EveryReasonHasItsOwnPlainMessage` | the operator-facing notice |
-| `OperatorMembershipDirectoryTests` (14 facts/theories, 21 cases) | the production read: SID binding, partition routing, cache and its eviction, every `tokenGroups` shape, disabled, every answer that proves nothing (error, error beside a row, none, null row, two, no `Enabled`, no groups), a throwing command, a domain outside the forest, disposal, cancellation stopping the command, name translation |
+| `OperatorMembershipDirectoryTests` (13 tests, 20 cases) | the production read: SID binding, partition routing, cache and its eviction, every `tokenGroups` shape, disabled, every answer that proves nothing (error, error beside a row, none, null row, two, no `Enabled`, no groups), a throwing command, a domain outside the forest, disposal, cancellation stopping the command, name translation |
 
 Mutation at the call site of each guard, by a script that edits one line, takes the md5, rebuilds
 (`dotnet build ExchangeAdminWeb.Tests.csproj -c Release`), runs only the named test, then restores
@@ -230,7 +230,27 @@ provider `EF62CA53FCD0647EA0E8B35919A58131`, gate `92BFB40D04180B7B178C71F545F01
 | M24 | open check revokes but does not sign out (provider) | `4DE0820B35F0E344321601FCF386D340` | `TheCircuitOpenCheck_RevokesAndSignsOut` |
 | M25 | nothing-held shortcut removed (revalidator) | `36A5624B12678CFB96415211EB82EEEC` | `OperatorHoldingNoConsultedGroup_IsNotLookedUp` |
 
-GATES_PENDING
+Gates, on the final (commented) tree:
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors; no warning in any file this change
+  touches.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m`: the first run
+  passed 4424 of 4424 executed and was then aborted by the hang collector on
+  `Comms10kRefusalTests.C6ValidationWaitsKeepTheCapturedTicketVisibleAndRejectDelayedInput` - the
+  pre-existing intermittent hang recorded in `.agents/state.md` (recorded there as hanging at an
+  unmodified HEAD earlier the same day; its harness substitutes its own authentication provider,
+  so it never constructs this one). Not re-run alone here. Rerun with
+  `--filter "FullyQualifiedName!~C6ValidationWaitsKeepTheCapturedTicketVisibleAndRejectDelayedInput"`:
+  **4562 passed, 3 skipped (the known AD skips), 0 failed, 4565 total**. The same in Release, with
+  coverage collected.
+- `tools/Test-CoverageFloor.ps1` on that Release run (local, so not CI's denominator):
+  security-critical coverage 77.2% (1351 / 1749) against the 65.12% floor. New files: revalidator
+  89%, provider 97%, settings, inventory, revocation, gate and seam 100%.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: clean.
+- `git diff --check HEAD` (after staging): clean. `tools/Test-AsciiOnly.ps1`: passed.
+
+Not run: anything against a live directory (by instruction) and any browser check of the notice
+- see Known gaps.
 
 ## Known gaps
 
@@ -240,10 +260,12 @@ GATES_PENDING
   is proved only through a fake command seam. Its first real run is the dev deploy. If those
   properties do not arrive the way the fakes assume, every session holding a consulted group
   ends at its first check with `LookupFailed` - loud and fail-closed, not silent - and the
-  audit `error` says which read failed. Live check to run on dev: open a page as an operator
-  with a section-access group, wait one interval, confirm no `SessionRevalidation` line; then
-  remove that operator from the group (or disable a test account) and confirm the tab shows
-  the notice within one interval and one audit line appears.
+  audit `error` says which read failed. Nor has the notice been seen in a browser: the repo has
+  no component-rendering harness, so its markup is pinned by source tripwires only. Live check
+  to run on dev: open a page as an operator with a section-access group, wait one interval,
+  confirm no `SessionRevalidation` line; then remove that operator from the group (or disable a
+  test account) and confirm the tab shows the notice within one interval, stops responding, and
+  one audit line appears.
 - **Cross-domain and cross-forest grants fail closed.** `tokenGroups` read from the account's
   own domain does not include domain-local groups of OTHER domains, or memberships through
   foreign security principals in another forest, though the Windows token does. An operator
