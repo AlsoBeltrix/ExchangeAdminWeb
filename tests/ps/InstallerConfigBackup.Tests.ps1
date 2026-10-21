@@ -347,10 +347,10 @@ Describe 'cdt-11: ConfigStore:Path survives -RegenerateAppSettings, and the back
             Invoke-InstallerWrite -Instance $t -Plan $plan
             [System.IO.File]::ReadAllBytes($t.AppSettings) | Should -Be $bytes -Because 'the file is preserved byte for byte'
 
-            # A supplied path is not written into a kept file, so the instance still opens the
-            # file's own database - which is therefore the one the backup must snapshot.
-            $kept = Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Other -RegenerateAppSettings $false
-            $kept.DbPath | Should -BeExactly $script:Shared
+            # A supplied path is not written into a kept file. It used to be dropped silently (the
+            # kept key won); since cdt-20 it is refused - see the cdt-20 context below.
+            { Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Other -RegenerateAppSettings $false } |
+                Should -Throw -ExpectedMessage '*would not take effect*'
         } finally {
             Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -364,6 +364,50 @@ Describe 'cdt-11: ConfigStore:Path survives -RegenerateAppSettings, and the back
             [System.IO.File]::ReadAllBytes($t.AppSettings) | Should -Be $bytes
         } finally {
             Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Context 'cdt-20: a supplied -ConfigStorePath that a kept appsettings.json would not carry is refused' {
+        # Without -RegenerateAppSettings an existing appsettings.json is kept as it is, so a supplied
+        # -ConfigStorePath never reached it: the run validated it, ACLed its folder and completed,
+        # and the instance kept its own database.
+
+        It 'refuses it when the kept file names no key' {
+            $t = Initialize-TestInstance
+            try {
+                $err = $null
+                try { Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Shared -RegenerateAppSettings $false } catch { $err = $_ }
+                $err | Should -Not -BeNullOrEmpty -Because 'an instruction the run would not carry out must not pass silently'
+                foreach ($text in "-ConfigStorePath $($script:Shared) was given", 'names no ConfigStore:Path', 'would not take effect', '-RegenerateAppSettings', 'Move-ConfigDbToShared.ps1', 'Nothing was changed') {
+                    "$err" | Should -BeLike "*$text*"
+                }
+            } finally {
+                Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'refuses it when the kept file names a different key, naming both' {
+            $t = Initialize-TestInstance -Key $script:Shared
+            try {
+                $err = $null
+                try { Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Other -RegenerateAppSettings $false } catch { $err = $_ }
+                $err | Should -Not -BeNullOrEmpty
+                "$err" | Should -BeLike "*-ConfigStorePath $($script:Other) was given*"
+                "$err" | Should -BeLike "*names ConfigStore:Path = $($script:Shared),*"
+            } finally {
+                Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'accepts the key the kept file already names, however it is cased' {
+            $t = Initialize-TestInstance -Key $script:Shared
+            try {
+                $plan = Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Shared.ToUpperInvariant() -RegenerateAppSettings $false
+                $plan.Source | Should -BeExactly 'Existing'
+                $plan.Path | Should -BeExactly $script:Shared -Because 'the kept file is what the instance opens'
+            } finally {
+                Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 

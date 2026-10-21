@@ -536,9 +536,9 @@ function Resolve-ConfigStorePlan {
     # the stale per-instance copy instead.
     #
     # When this run writes the file, a supplied path wins; otherwise the existing key is carried
-    # exactly as Get-ConfigStorePathSetting reads it. A file this run keeps keeps its own key. A
-    # file that does not parse stops the run here, before anything changes: overwriting a file the
-    # installer cannot read could drop the key.
+    # exactly as Get-ConfigStorePathSetting reads it. A file this run keeps keeps its own key, and a
+    # supplied path it would not carry is refused (cdt-20). A file that does not parse stops the run
+    # here, before anything changes: overwriting a file the installer cannot read could drop the key.
     param(
         [string]$PublishPath,
         [string]$SuppliedPath,
@@ -549,6 +549,19 @@ function Resolve-ConfigStorePlan {
     $existingPath = Get-ConfigStorePathSetting -PublishPath $PublishPath
     # Write-AppSettings' own rule: it writes when there is no file, or when told to regenerate.
     $writesAppSettings = (-not $appSettingsExists) -or $RegenerateAppSettings
+
+    # cdt-20. A kept file is not rewritten, so a supplied path it does not already name would never
+    # take effect: the run used to validate it, ACL its folder and complete while the instance kept
+    # its own database - two instances believed to share settings and authorization that did not.
+    # Re-stating the key the file already names is harmless and accepted.
+    if (-not $writesAppSettings -and -not [string]::IsNullOrWhiteSpace($SuppliedPath)) {
+        $keptNames = 'no ConfigStore:Path'
+        if ($existingPath) { $keptNames = "ConfigStore:Path = $existingPath" }
+        $same = $existingPath -and [string]::Equals([System.IO.Path]::GetFullPath($existingPath).TrimEnd('\'), [System.IO.Path]::GetFullPath($SuppliedPath).TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)
+        if (-not $same) {
+            Write-Fail "-ConfigStorePath $SuppliedPath was given, but this run keeps the existing appsettings.json in $PublishPath, which names $keptNames, so the supplied path would not take effect. Re-run with -RegenerateAppSettings to write it (that regenerates the file's other values too), or without -ConfigStorePath to keep the instance as it is. Moving an existing instance onto a shared database is tools\Move-ConfigDbToShared.ps1's job. Nothing was changed."
+        }
+    }
 
     $path = $null
     $source = 'None'
