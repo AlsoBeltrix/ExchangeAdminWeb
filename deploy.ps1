@@ -453,6 +453,17 @@ try {
     # parameter and the deploy died on a binding error after IIS was already configured (cdt-5).
     $runtimeConfigDir = Join-Path $PublishPath "config"
 
+    # The files both config backup copies leave out (cdt-10). The config database is backed up
+    # separately, by the verified online backup. The jobs and usage databases are per-instance
+    # operational state that is deliberately never backed up (Architectural Invariant 3): copying them
+    # kept bulk-job records and usage telemetry in a backup nothing prunes, past the retention the pages
+    # state, and a raw copy of a live WAL database is not a usable backup anyway. A new database the
+    # app keeps in config\ belongs here too; the cdt-10 test reads the app's source to enforce that.
+    $configCopyExclusions = @(
+        'exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm',
+        'exchangeadmin-jobs.db', 'exchangeadmin-jobs.db-wal', 'exchangeadmin-jobs.db-shm',
+        'exchangeadmin-usage.db', 'exchangeadmin-usage.db-wal', 'exchangeadmin-usage.db-shm')
+
     if ($isUpgrade) {
 
         # --- UPGRADE ---
@@ -496,10 +507,11 @@ try {
         }
 
         if (Test-Path $runtimeConfigDir) {
-            # Copy the rest of config/ (everything except a per-instance live DB triplet, which is
-            # handled above when it is the configured database and is a stale leftover otherwise).
+            # Copy the rest of config/: everything except the live databases in $configCopyExclusions -
+            # the config DB triplet (backed up above when it is the configured database, a stale leftover
+            # otherwise) and the jobs and usage databases, which are never backed up (cdt-10).
             Get-ChildItem -LiteralPath $runtimeConfigDir -File |
-                Where-Object { $_.Name -notin @('exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm') } |
+                Where-Object { $_.Name -notin $configCopyExclusions } |
                 ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $configDirBackup $_.Name) -Force }
             Write-Success "Runtime config directory backed up to $configDirBackup"
         } else {
@@ -720,11 +732,11 @@ try {
         # Architectural Invariant 3 on -Force: the verified online backup the upgrade path takes, in the
         # same layout - one timestamped directory holding the backup of the database the instance opens
         # (VACUUM INTO + integrity_check; it throws and aborts the deploy on failure) and the rest of
-        # config\ minus the live database triplet. It used to be a raw recursive copy of config\, taken
-        # before the publish and verified by nothing, that could be torn and never touched a shared
-        # database (cdt-9). It sits after the publish because the tool is the build in staging, and
-        # before the IIS changes, the job check, the pool stop and the mirror. A real fresh install
-        # (no appsettings.json) has nothing to back up.
+        # config\ minus the live databases in $configCopyExclusions. It used to be a raw recursive copy
+        # of config\, taken before the publish and verified by nothing, that could be torn and never
+        # touched a shared database (cdt-9). It sits after the publish because the tool is the build in
+        # staging, and before the IIS changes, the job check, the pool stop and the mirror. A real fresh
+        # install (no appsettings.json) has nothing to back up.
         if ($Force -and (Test-Path $configPath)) {
             Write-Step "Backing up the existing runtime configuration"
             $configDirBackup = Join-Path $BackupDir "config.${timestamp}.pre-force.bak"
@@ -739,7 +751,7 @@ try {
 
             if (Test-Path $runtimeConfigDir) {
                 Get-ChildItem -LiteralPath $runtimeConfigDir -File |
-                    Where-Object { $_.Name -notin @('exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm') } |
+                    Where-Object { $_.Name -notin $configCopyExclusions } |
                     ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $configDirBackup $_.Name) -Force }
                 Write-Success "Runtime config directory backed up to $configDirBackup"
             } else {

@@ -538,7 +538,8 @@ Describe 'deploy.ps1' {
                     $node.PipelineElements[0].Extent.Text -like 'Get-ChildItem*$runtimeConfigDir*' -and
                     $node.Extent.Text -match 'Copy-Item' }, $true))
         $copies.Count | Should -Be 1 -Because 'the rest of config\ is copied once, as the upgrade path copies it'
-        $copies[0].Extent.Text | Should -Match ([regex]::Escape("Where-Object { `$_.Name -notin @('exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm') }")) `
+        # The filter's list (which holds the live triplet) is pinned by the cdt-10 test.
+        $copies[0].Extent.Text | Should -Match ([regex]::Escape('Where-Object { $_.Name -notin $configCopyExclusions }')) `
             -Because 'a raw copy of the live database triplet is the torn snapshot this replaces'
         $copies[0].Extent.EndOffset | Should -BeLessThan $firstChange
 
@@ -549,6 +550,48 @@ Describe 'deploy.ps1' {
                             $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -like 'r*' }).Count -gt 0 }, $true))
         @($recursive | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Extent.Text)" }) |
             Should -BeNullOrEmpty -Because 'no raw recursive copy of a directory may stand in for the verified backup'
+    }
+
+    It 'leaves every SQLite database the app keeps in config\ out of the config backup copies (cdt-10)' {
+        # The rest-of-config copy used to exclude only the config database triplet, so every deploy
+        # copied the live jobs and usage databases into a backup nothing prunes, keeping bulk-job
+        # records and usage telemetry past the retention the pages state, against Invariant 3.
+        $lists = @($s.Ast.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $node.Left.VariablePath.UserPath -eq 'configCopyExclusions' }, $true))
+        $lists.Count | Should -Be 1 -Because 'one list, so the upgrade and the -Force copies cannot disagree'
+        $list = $lists[0]
+        @(Get-ConditionalAncestor $list $null) | Should -BeNullOrEmpty -Because 'both paths read it'
+        $list.Extent.EndOffset | Should -BeLessThan (Get-FreshInstallBranch $s).Parent.Extent.StartOffset -Because 'it is set before the mode branch'
+        $names = @($list.Right.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object Value)
+
+        # Tripwire: the databases come from the app's own code, so a new one cannot repeat this.
+        $sources = @(& git -C $RepoRoot ls-files -- '*.cs' | Where-Object { $_ -notlike 'ExchangeAdminWeb.Tests/*' })
+        $LASTEXITCODE | Should -Be 0
+        $sources.Count | Should -BeGreaterThan 50 -Because 'the scan must actually see the app source'
+        $appDbs = @(foreach ($rel in $sources) {
+                $text = Get-Content -LiteralPath (Join-Path $RepoRoot $rel) -Raw
+                foreach ($match in [regex]::Matches($text, 'Path\.Combine\([^;]*?"config",\s*"([^"]+\.db)"\)')) { $match.Groups[1].Value }
+            }) | Sort-Object -Unique
+        foreach ($known in 'exchangeadmin.db', 'exchangeadmin-jobs.db', 'exchangeadmin-usage.db') {
+            $appDbs | Should -Contain $known -Because 'the scan must see the databases the app creates today'
+        }
+        $expected = @(foreach ($db in $appDbs) { $db; "$db-wal"; "$db-shm" }) | Sort-Object
+        (@($names | Sort-Object) -join ',') | Should -BeExactly ($expected -join ',') `
+            -Because 'exactly the databases the app keeps in config\, each with its WAL sidecars, and nothing else'
+
+        $copies = @($s.Ast.FindAll({ param($node)
+                    $node -is [System.Management.Automation.Language.PipelineAst] -and
+                    $node.PipelineElements.Count -ge 2 -and
+                    $node.PipelineElements[0].Extent.Text -like 'Get-ChildItem*$runtimeConfigDir*' -and
+                    $node.Extent.Text -match 'Copy-Item' }, $true))
+        $copies.Count | Should -Be 2 -Because 'the upgrade and the -Force path each copy the rest of config\'
+        foreach ($copy in $copies) {
+            $copy.Extent.Text | Should -Match ([regex]::Escape('Where-Object { $_.Name -notin $configCopyExclusions }')) -Because "the copy at line $($copy.Extent.StartLineNumber) must filter on the list"
+            $copy.Extent.StartOffset | Should -BeGreaterThan $list.Extent.EndOffset
+        }
     }
 
     It 'runs a post-deploy live DB integrity check (DB is excluded from file drift by design)' {
