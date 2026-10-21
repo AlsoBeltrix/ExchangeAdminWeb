@@ -560,7 +560,13 @@ try {
         # prevent, reached by another door. Ask IIS which pool serves this app, and refuse when
         # it is not the one about to be stopped.
         $boundPool = try { (Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop).applicationPool } catch { $null }
-        if ($boundPool -and $boundPool -ne $AppPoolName) {
+        # cdt-19: both paths configure the application and the pool above, so a binding that cannot be
+        # read, or reads as nothing, is IIS not answering - not a fresh install. Passing it would stop
+        # a pool nobody has shown serves these files; refuse it as a wrong one is refused.
+        if (-not $boundPool) {
+            Write-Fail "Cannot read which app pool serves IIS application $ParentSite/$AppAlias (the lookup failed or returned nothing), although this run configured that application above. Stopping '$AppPoolName' cannot be shown to stop what serves $PublishPath, so its files will not be replaced. Nothing was deployed."
+        }
+        if ($boundPool -ne $AppPoolName) {
             Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
         }
 
@@ -569,11 +575,13 @@ try {
         # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
         # CONFIRM, and abort before mirroring if it did not stop.
         $poolState = Stop-AppPoolVerified -Name $AppPoolName
-        if ($poolState -eq 'Absent') {
-            Write-Warn "App pool $AppPoolName does not exist - nothing to stop."
-        } else {
-            Write-Success "App pool $AppPoolName confirmed stopped"
+        # cdt-19: only a confirmed stop reaches the mirror. The pool was configured above, so 'Absent'
+        # means IIS did not find it (an unreadable configuration, a name Test-Path reads as a wildcard
+        # pattern), not that nothing is running.
+        if ($poolState -ne 'Stopped') {
+            Write-Fail "App pool $AppPoolName was reported '$poolState', not confirmed stopped, although this run configured it above. Refusing to replace the files of an application that cannot be shown to be stopped. Nothing was deployed."
         }
+        Write-Success "App pool $AppPoolName confirmed stopped"
 
         # cdt-16: the pool restarts only once the mirror is known to be complete. robocopy /MIR failing
         # part-way leaves a mix of the old and new builds in the publish folder, and the restart in the
@@ -845,7 +853,13 @@ try {
         # prevent, reached by another door. Ask IIS which pool serves this app, and refuse when
         # it is not the one about to be stopped.
         $boundPool = try { (Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop).applicationPool } catch { $null }
-        if ($boundPool -and $boundPool -ne $AppPoolName) {
+        # cdt-19: both paths configure the application and the pool above, so a binding that cannot be
+        # read, or reads as nothing, is IIS not answering - not a fresh install. Passing it would stop
+        # a pool nobody has shown serves these files; refuse it as a wrong one is refused.
+        if (-not $boundPool) {
+            Write-Fail "Cannot read which app pool serves IIS application $ParentSite/$AppAlias (the lookup failed or returned nothing), although this run configured that application above. Stopping '$AppPoolName' cannot be shown to stop what serves $PublishPath, so its files will not be replaced. Nothing was deployed."
+        }
+        if ($boundPool -ne $AppPoolName) {
             Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
         }
 
@@ -854,11 +868,13 @@ try {
         # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
         # CONFIRM, and abort before mirroring if it did not stop.
         $poolState = Stop-AppPoolVerified -Name $AppPoolName
-        if ($poolState -eq 'Absent') {
-            Write-Warn "App pool $AppPoolName does not exist - nothing to stop."
-        } else {
-            Write-Success "App pool $AppPoolName confirmed stopped"
+        # cdt-19: only a confirmed stop reaches the mirror. The pool was configured above, so 'Absent'
+        # means IIS did not find it (an unreadable configuration, a name Test-Path reads as a wildcard
+        # pattern), not that nothing is running.
+        if ($poolState -ne 'Stopped') {
+            Write-Fail "App pool $AppPoolName was reported '$poolState', not confirmed stopped, although this run configured it above. Refusing to replace the files of an application that cannot be shown to be stopped. Nothing was deployed."
         }
+        Write-Success "App pool $AppPoolName confirmed stopped"
 
         # cdt-16: the pool restarts only once the mirror is known to be complete. robocopy /MIR failing
         # part-way leaves a mix of the old and new builds in the publish folder, and the restart in the

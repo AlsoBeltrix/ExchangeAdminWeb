@@ -145,15 +145,109 @@ Describe 'deploy.ps1' {
         # left present but dead.
         ([regex]::Matches($s.Text, '\$boundPool = try \{ \(Get-WebApplication')).Count |
             Should -Be 2 -Because 'the update path and the fresh-install path both mirror'
-        ([regex]::Matches($s.Text, 'if \(\$boundPool -and \$boundPool -ne \$AppPoolName\)')).Count |
+        # Since cdt-19 an unreadable binding is refused just above, so this no longer needs (and must
+        # not have) a `$boundPool -and` that lets the null case through.
+        ([regex]::Matches($s.Text, 'if \(\$boundPool -ne \$AppPoolName\)')).Count |
             Should -Be 2 -Because 'each site must refuse, not merely read the binding'
-        ([regex]::Matches($s.Text, '(?s)if \(\$boundPool -and \$boundPool -ne \$AppPoolName\) \{\s*Write-Fail')).Count |
+        ([regex]::Matches($s.Text, '(?s)if \(\$boundPool -ne \$AppPoolName\) \{\s*Write-Fail')).Count |
             Should -Be 2 -Because 'the condition must lead to a refusal, not sit there dead'
 
         # And it must come before the stop, not after it.
         $checkAt = $s.Text.IndexOf('$boundPool =')
         $stopAt = $s.Text.IndexOf('Stop-AppPoolVerified')
         $checkAt | Should -BeLessThan $stopAt
+    }
+
+    It 'refuses to stop and mirror when the binding cannot be read, and continues only on a confirmed stop (cdt-19, AST)' {
+        # Both branches configure the pool and the application before they get here, so an
+        # unreadable or empty binding, or a pool reported absent, is IIS not answering - not a
+        # fresh install. Neither may reach the mirror.
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
+            $statements = @($entry[1].Statements)
+            $lookupAt = -1; $stopAt = -1
+            for ($i = 0; $i -lt $statements.Count; $i++) {
+                if ($statements[$i].Extent.Text -like '$boundPool = try { (Get-WebApplication*') { $lookupAt = $i }
+                if ($statements[$i].Extent.Text -like '$poolState = Stop-AppPoolVerified -Name $AppPoolName') { $stopAt = $i }
+            }
+            $lookupAt | Should -BeGreaterOrEqual 0 -Because "the $($entry[0]) branch reads the binding"
+            $stopAt | Should -BeGreaterThan $lookupAt
+
+            $unknown = $statements[$lookupAt + 1]
+            $unknown | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+            $unknown.Clauses[0].Item1.Extent.Text | Should -BeExactly '-not $boundPool' -Because "an unreadable binding must stop the $($entry[0]) run"
+            $unknown.ElseClause | Should -BeNullOrEmpty
+            $unknownFail = $unknown.Clauses[0].Item2.Statements[0].Extent.Text
+            $unknownFail | Should -BeLike 'Write-Fail "*'
+            $unknownFail | Should -Match ([regex]::Escape('$ParentSite/$AppAlias')) -Because 'the refusal names the application it could not read'
+
+            $wrong = $statements[$lookupAt + 2]
+            $wrong.Clauses[0].Item1.Extent.Text | Should -BeExactly '$boundPool -ne $AppPoolName'
+            $wrong.Clauses[0].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "*'
+
+            $confirmed = $statements[$stopAt + 1]
+            $confirmed | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+            $confirmed.Clauses[0].Item1.Extent.Text | Should -BeExactly "`$poolState -ne 'Stopped'" -Because "only a confirmed stop may reach the $($entry[0]) mirror"
+            $confirmed.ElseClause | Should -BeNullOrEmpty
+            $confirmed.Clauses[0].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "*'
+        }
+        $s.Text | Should -Not -Match "poolState -eq 'Absent'" -Because 'an absent pool is no longer something to carry on past'
+    }
+
+    It 'runs each branch''s real binding-and-stop region: only the named pool, confirmed stopped, reaches the mirror (cdt-19)' {
+        foreach ($name in 'Write-Success', 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        ${function:Get-WebApplication} = {
+            $script:cdt19Calls.Add('lookup')
+            if ($script:cdt19Lookup -eq 'throws') { throw 'Cannot read configuration file due to insufficient permissions' }
+            if ($script:cdt19Lookup -eq 'nothing') { return $null }
+            [pscustomobject]@{ applicationPool = $script:cdt19Lookup }
+        }
+        ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt19Calls.Add('stop'); $script:cdt19Stop }
+
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
+            $statements = @($entry[1].Statements)
+            $from = -1; $stopAt = -1
+            for ($i = 0; $i -lt $statements.Count; $i++) {
+                if ($statements[$i].Extent.Text -like '$boundPool = *') { $from = $i }
+                if ($statements[$i].Extent.Text -like '$poolState = Stop-AppPoolVerified*') { $stopAt = $i }
+            }
+            $region = ($statements[$from..($stopAt + 1)] | ForEach-Object { $_.Extent.Text }) -join "`n"
+            $run = {
+                param([string]$Lookup, [string]$Stop)
+                $script:cdt19Calls = New-Object System.Collections.Generic.List[string]
+                $script:cdt19Lookup = $Lookup
+                $script:cdt19Stop = $Stop
+                # Read only by the lifted region.
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppPoolName -Value 'ExamplePool'
+                Set-Variable -Name PublishPath -Value 'D:\example\publish'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt19Calls -join ',') }
+            }
+
+            foreach ($lookup in 'throws', 'nothing') {
+                $r = & $run $lookup 'Stopped' 6>$null
+                $r.Calls | Should -BeExactly 'lookup' -Because "an unreadable binding ($lookup) must stop the $($entry[0]) run before any stop"
+                # Its own message: the wrong-pool refusal also fires on a null binding, but would tell
+                # the operator the application "runs under app pool ''", which is not what happened.
+                $r.Thrown | Should -BeLike '*Cannot read which app pool serves IIS application Example Site/ExampleApp*Nothing was deployed*'
+            }
+            $absent = & $run 'ExamplePool' 'Absent' 6>$null
+            $absent.Calls | Should -BeExactly 'lookup,stop'
+            $absent.Thrown | Should -BeLike "*reported 'Absent', not confirmed stopped*" -Because "an absent pool must not reach the $($entry[0]) mirror"
+            $other = & $run 'SomeOtherPool' 'Stopped' 6>$null
+            $other.Calls | Should -BeExactly 'lookup'
+            $other.Thrown | Should -BeLike "*runs under app pool 'SomeOtherPool'*"
+            $good = & $run 'ExamplePool' 'Stopped' 6>$null
+            $good.Thrown | Should -BeNullOrEmpty -Because "the named pool, confirmed stopped, is the one way through to the $($entry[0]) mirror"
+            $good.Calls | Should -BeExactly 'lookup,stop'
+        }
     }
 
     It 'parses without syntax errors' {
