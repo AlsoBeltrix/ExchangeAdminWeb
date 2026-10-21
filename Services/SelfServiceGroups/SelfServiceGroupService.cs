@@ -1378,6 +1378,9 @@ public class SelfServiceGroupService
         catch
         {
             ps.Commands.Clear();
+            // psl-5: GetOwnedGroupsAsync reuses this PowerShell for the next group, and HadErrors
+            // below is true while ANY record remains, so a kept record hid that next group too.
+            ps.Streams.Error.Clear();
             return false;
         }
         finally
