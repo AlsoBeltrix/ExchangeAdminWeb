@@ -6,9 +6,9 @@ the repo's `appsettings.json`, which the script's own comments call "real enviro
 It accumulates one folder per failed run and is cleaned by nobody. The cleanup the script
 promises on failure paths ("Clean it on failure paths too") covered only failures inside the
 mirror try.
-**Status**: Fixed on master; awaiting verdict
+**Status**: Closed on coder-side guard proof (no reviewer verification round below CRITICAL, decisions 2026-08-31)
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `2f6e629`
 **Reviewer**: implementer (surfaced by the S2 agent, confirmed by the supervisor)
 
 ## Evidence

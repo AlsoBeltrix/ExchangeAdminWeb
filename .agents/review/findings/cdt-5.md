@@ -6,9 +6,9 @@ application and authentication have already been configured, and before the pool
 any file is mirrored. Nothing is lost or half-mirrored, but the install path cannot complete
 and leaves an IIS application pointing at an empty or stale publish folder. Upgrades are
 unaffected. Present since `5183603` (the bulk-job warning).
-**Status**: Fixed on master; awaiting verdict
+**Status**: Closed on coder-side guard proof (no reviewer verification round below CRITICAL, decisions 2026-08-31)
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `426e137`
 **Reviewer**: implementer (surfaced by the S2 agent, confirmed by the supervisor)
 
 ## Evidence
