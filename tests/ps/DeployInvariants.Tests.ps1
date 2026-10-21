@@ -294,6 +294,29 @@ Describe 'deploy.ps1' {
         $already.Calls | Should -BeExactly 'verify' -Because 'a pool read as started is still confirmed'
     }
 
+    It 'reads the password out of its SecureString and zeroes the unmanaged copy it made (cdt-27)' {
+        # SecureString-ToPlain dropped the pointer SecureStringToBSTR returned, so the plaintext stayed
+        # in unmanaged memory, never zeroed. A leak is not observable from here; the round trip is
+        # driven, and the shape that frees the pointer is pinned.
+        $fn = Find-FunctionDefinition $s 'SecureString-ToPlain'
+        $fn | Should -Not -BeNullOrEmpty
+        . ([scriptblock]::Create($fn.Extent.Text))
+        $secure = New-Object System.Security.SecureString
+        foreach ($ch in 'example-Passw0rd!'.ToCharArray()) { $secure.AppendChar($ch) }
+        SecureString-ToPlain $secure | Should -BeExactly 'example-Passw0rd!'
+
+        $keep = $fn.Find({ param($n)
+                $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $n.Right.Extent.Text -like '*SecureStringToBSTR($Secure)*' }, $true)
+        $keep | Should -Not -BeNullOrEmpty -Because 'the pointer must be kept to be freed'
+        $pointer = $keep.Left.VariablePath.UserPath
+        $try = $fn.Find({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] }, $true)
+        $try | Should -Not -BeNullOrEmpty
+        $try.Extent.StartOffset | Should -BeGreaterThan $keep.Extent.EndOffset
+        $try.Body.Extent.Text | Should -Match ('PtrToStringAuto\(\$' + $pointer + '\)')
+        $try.Finally.Extent.Text | Should -Match ('ZeroFreeBSTR\(\$' + $pointer + '\)') -Because 'the unmanaged copy is zeroed and freed on every path'
+    }
+
     It 'never hands a pool, or icacls, an empty identity (cdt-24)' {
         # With -ServiceAccount omitted the existing pool's userName became the account and the pool
         # was set to SpecificUser with it - empty for a pool that runs as ApplicationPoolIdentity or

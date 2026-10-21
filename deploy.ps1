@@ -112,8 +112,15 @@ function Prompt-SecureValue {
 
 function SecureString-ToPlain {
     param([securestring]$Secure)
-    [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure))
+    # cdt-27: SecureStringToBSTR copies the password into unmanaged memory as plaintext. Keep the
+    # pointer so the finally zeroes and frees that copy on every path; the old one-liner dropped it.
+    # The string returned is a managed copy, which .NET cannot zero.
+    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
+    try {
+        return [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    } finally {
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
 }
 
 function Write-DeploymentManifest {
