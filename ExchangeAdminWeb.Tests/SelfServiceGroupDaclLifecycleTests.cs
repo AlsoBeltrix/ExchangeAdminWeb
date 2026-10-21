@@ -3,6 +3,7 @@ using System.Management.Automation.Runspaces;
 using System.Reflection;
 using System.Security;
 using ExchangeAdminWeb.Services.SelfServiceGroups;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -92,9 +93,14 @@ public sealed class SelfServiceGroupDaclLifecycleTests : IDisposable
         Assert.Empty(_ps.Streams.Error);
     }
 
+    // aud-a4b finding 7 made the method an instance member (it logs through the service), so the
+    // test constructs a service whose only live dependency is the logger; nothing else is touched.
+    private readonly SelfServiceGroupService _service = new(
+        null!, null!, null!, NullLogger<SelfServiceGroupService>.Instance);
+
     private bool CanManage(string groupDn) =>
         (bool)typeof(SelfServiceGroupService)
-            .GetMethod("CallerCanManageMembers", BindingFlags.NonPublic | BindingFlags.Static)!
-            .Invoke(null, [_ps, new PSCredential("svc-groups", new SecureString()), groupDn, CallerSid,
+            .GetMethod("CallerCanManageMembers", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(_service, [_ps, new PSCredential("svc-groups", new SecureString()), groupDn, CallerSid,
                 Array.Empty<string>(), Array.Empty<string>()])!;
 }
