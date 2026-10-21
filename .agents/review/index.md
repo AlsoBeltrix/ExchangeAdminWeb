@@ -123,8 +123,23 @@ Legend: `[ ]` open - `[~]` in progress - `[v]` verified/awaiting merge -
 | [v] | [cdt-8](findings/cdt-8.md) | HIGH - deploy -Force regenerated appsettings.json without ConfigStore:Path, silently repointing a shared-DB instance at an empty per-instance store | Closed; reviewed clean | - | implementer |
 | [v] | [cdt-9](findings/cdt-9.md) | HIGH - deploy -Force took no verified backup; it raw-copied a live WAL database (4 KB main file, all rows in the -wal) | Closed; reviewed clean | - | implementer |
 | [v] | [cdt-10](findings/cdt-10.md) | MEDIUM - config backups copied the jobs and usage databases, keeping job payloads and usage data past their stated retention | Closed; reviewed clean | - | implementer |
-| [ ] | cdt-16 | HIGH, pre-existing - a failed robocopy mirror still restarts the pool on a partial publish, and a restart throw in the finally masks the mirror failure | Admitted (codex ops-batch-1); fix in progress | - | codex / gpt-5.5-dzs / xhigh |
-| [ ] | cdt-17 | MEDIUM, pre-existing - an invalid ConfigStore:Path (relative, drive-relative, UNC) passes the backup gate and backs up the wrong file while the app refuses it at start | Admitted (codex ops-batch-1); fix in progress | - | codex / gpt-5.5-dzs / xhigh |
+| [~] | [cdt-16](findings/cdt-16.md) | HIGH, pre-existing - a failed robocopy mirror still restarts the pool on a partial publish, and a restart throw in the finally masks the mirror failure | Merged; codex review pending | - | codex / gpt-5.5-dzs / xhigh |
+| [~] | [cdt-17](findings/cdt-17.md) | MEDIUM, pre-existing - an invalid ConfigStore:Path (relative, drive-relative, UNC) passes the backup gate and backs up the wrong file while the app refuses it at start | Merged; codex review pending | - | codex / gpt-5.5-dzs / xhigh |
+| [~] | [cdt-11](findings/cdt-11.md) | HIGH - installer -RegenerateAppSettings dropped ConfigStore:Path and backed up the stale per-instance DB | Merged; codex review pending | - | implementer |
+| [~] | [cdt-12](findings/cdt-12.md) | MEDIUM - deploy -Force had no post-deploy live-DB integrity check | Merged; codex review pending | - | implementer |
+| [~] | [cdt-13](findings/cdt-13.md) | LOW - drift check inventoried the jobs and usage DB triplets | Merged; codex review pending | - | implementer |
+| [~] | [cdt-14](findings/cdt-14.md) | LOW, latent - manifest Substring on a null commit (PS7 only) | Merged; codex review pending | - | implementer |
+| [~] | [cdt-15](findings/cdt-15.md) | MEDIUM - installer update could move an existing application to another pool or folder | Merged; codex review pending | - | implementer |
+| [~] | [cdt-18](findings/cdt-18.md) | HIGH - installer restarted the pool after a failed mirror and a restart throw masked the real error | Merged; codex review pending | - | implementer |
+| [~] | [cdt-19](findings/cdt-19.md) | MEDIUM - deploy binding check passed on a failed lookup and accepted an Absent pool before the mirror | Merged; codex review pending | - | implementer |
+| [~] | [cdt-20](findings/cdt-20.md) | MEDIUM - installer silently ignored a -ConfigStorePath a kept appsettings.json would not carry | Merged; codex review pending | - | implementer |
+| [~] | [cdt-21](findings/cdt-21.md) | MEDIUM - installer did not refuse a ConfigStore:Path naming a missing DB in plan mode or with -SkipConfigBackup | Merged; codex review pending | - | implementer |
+| [~] | [cdt-22](findings/cdt-22.md) | MEDIUM - shared DB folder ACL granted only when -ConfigStorePath was passed again | Merged; codex review pending | - | implementer |
+| [~] | [cdt-23](findings/cdt-23.md) | LOW - installer left its staging publish behind on failure | Merged; codex review pending | - | implementer |
+| [~] | [cdt-24](findings/cdt-24.md) | MEDIUM - a non-user pool identity became an empty name; icacls granted BUILTINBUILTIN and exited 0 | Merged; codex review pending | - | implementer |
+| [~] | [cdt-25](findings/cdt-25.md) | MEDIUM - deploy restart confirmed only that IIS accepted the request | Merged; codex review pending | - | implementer |
+| [~] | [cdt-26](findings/cdt-26.md) | MEDIUM - a failed git status was recorded as a clean tree in the manifest | Merged; codex review pending | - | implementer |
+| [~] | [cdt-27](findings/cdt-27.md) | LOW - SecureString-ToPlain leaked the unmanaged password copy | Merged; codex review pending | - | implementer |
 | [v] | [aud-a28](findings/aud-a28.md) | MEDIUM - fifteen refusal paths across emergency disable and attribute edit returned before recording anything, so a blocked attempt left no durable audit | Verified and fixed; review pending | - | implementer |
 | [ ] | [aud-a28b](findings/aud-a28b.md) | MEDIUM - SaveAsync has no behavioural coverage; a version that refused every call passed the full suite | Recorded follow-up; not approved | - | implementer |
 | [v] | [aud-a30](findings/aud-a30.md) | MEDIUM as deployed, HIGH if enabled - a ticket number reached ServiceNow's query grammar, and the row that came back was never checked against the one requested | Verified and fixed; review pending | - | implementer |

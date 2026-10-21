@@ -8,9 +8,9 @@ while the run reports the robocopy failure. Separately, when the restart itself 
 `finally`, its exception REPLACES the one propagating (Known Failure Class 1), so a failed
 reconciliation or `appsettings.json` generation surfaces only as a pool error, and the manifest
 is never written. From the codex review of the cdt-8..10 batch (its finding 1).
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
-**Commit**: `<pending>`
+**Commit**: `02aea82` (merged)
 **Reviewer**: implementer (codex review of the cdt-8..10 batch, admitted by the supervisor)
 
 ## Evidence

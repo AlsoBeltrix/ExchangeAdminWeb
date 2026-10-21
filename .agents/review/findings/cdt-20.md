@@ -10,9 +10,9 @@ two instances do not share settings or authorization, and a change saved on one 
 grant removed, a protected principal added) silently does not apply to the other. Before cdt-11
 the banner even claimed the shared database; since cdt-11 it states the truth, but nothing stops
 or warns. Found while fixing cdt-11 (recorded there as a separate defect).
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
-**Commit**: `<pending>`
+**Commit**: `cbf52a8` (merged)
 **Reviewer**: implementer (found by the cdt-11..19 agent; not yet confirmed by the supervisor)
 
 ## Evidence

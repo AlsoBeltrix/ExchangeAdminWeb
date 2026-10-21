@@ -10,9 +10,9 @@ in neither case: `-PlanOnly` completes and even plans a backup of the missing fi
 already unable to start before the run, so nothing is lost - but the run changes the host and claims
 success, which is the outcome the A36 review added the refusal to prevent. A supplied
 `-ConfigStorePath` is checked early; only a kept one is not. Found while fixing cdt-11.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
-**Commit**: `<pending>`
+**Commit**: `cd5ad65` (merged)
 **Reviewer**: implementer (found by the cdt-11..19 agent; not yet confirmed by the supervisor)
 
 ## Evidence

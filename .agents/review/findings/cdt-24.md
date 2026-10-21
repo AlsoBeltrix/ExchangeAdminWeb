@@ -15,9 +15,9 @@ covered. Reachable whenever `deploy.ps1` targets a pool that was not created wit
 account - for example one the generic installer created with ApplicationPoolIdentity - and, under
 Architectural Invariant 7, "the pools here always run as a service account" is not a safety
 argument. Found while fixing cdt-19.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
-**Commit**: `<pending>`
+**Commit**: `5b7d3ac` (merged)
 **Reviewer**: implementer (found by the cdt-11..19 agent; not yet confirmed by the supervisor)
 
 ## Evidence

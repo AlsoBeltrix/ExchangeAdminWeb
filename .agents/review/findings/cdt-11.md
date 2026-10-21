@@ -11,9 +11,9 @@ instance keeps the shared file. The pre-upgrade backup (A36) re-reads `appsettin
 that write, so it snapshots the stale per-instance file (or reports "nothing to back up") and
 the shared database the operator believes is protected is not backed up at all. The same class
 as cdt-8 (deploy.ps1 -Force), in the installer.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
-**Commit**: `<pending>`
+**Commit**: `5784583` (merged)
 **Reviewer**: implementer (surfaced by the cdt-8/9/10 agent)
 
 ## Evidence

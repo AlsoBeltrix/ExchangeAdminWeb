@@ -8,9 +8,9 @@ the key is kept from `appsettings.json` - so when that update also changes the p
 the publish folder, `logs\` and `config\` but not the directory of the database the app opens. The
 app then cannot open or write its configured database, and the run has ended "Install/update
 complete.". Found while fixing cdt-11.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
-**Commit**: `<pending>`
+**Commit**: `9bcb293` (merged)
 **Reviewer**: implementer (found by the cdt-11..19 agent; not yet confirmed by the supervisor)
 
 ## Evidence

@@ -9,9 +9,9 @@ the files. Neither state is expected at that point - both branches configure the
 application earlier in the same run - so both mean the run cannot show that what serves the folder
 has stopped, and it proceeds anyway. Found by the promote agent in this batch's files; admitted by
 the supervisor.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
-**Commit**: `<pending>`
+**Commit**: `80bdd65` (merged)
 **Reviewer**: implementer (found by the promote agent, admitted by the supervisor)
 
 ## Evidence

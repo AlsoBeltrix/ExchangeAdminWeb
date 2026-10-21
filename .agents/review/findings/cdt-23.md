@@ -8,9 +8,9 @@ build (on the order of 100 MB) per failed run, each with a new timestamp, and wi
 `appsettings.json` the source tree carries, which `dotnet publish` copies (the checkout's own file,
 when one exists, can hold real values). The installer twin of cdt-6 in the ADI deploy script.
 Found while fixing cdt-18.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
-**Commit**: `<pending>`
+**Commit**: `f92d0e8` (merged)
 **Reviewer**: implementer (found by the cdt-11..19 agent; not yet confirmed by the supervisor)
 
 ## Evidence

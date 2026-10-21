@@ -11,9 +11,9 @@ warnings per database, ending in "runtime config drifted during this deploy. Com
 A false operational alarm pointing at a comparison the operator cannot make; nothing is lost.
 Found by cdt-10 (reported, not changed) and by the codex review of the cdt-8..10 batch (its
 finding 3).
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
-**Commit**: `<pending>`
+**Commit**: `61b5916` (merged)
 **Reviewer**: implementer (surfaced by the cdt-8/9/10 agent)
 
 ## Evidence

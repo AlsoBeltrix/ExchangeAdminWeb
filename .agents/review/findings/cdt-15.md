@@ -12,9 +12,9 @@ directory access and shared database hang off), and/or to a new folder, where th
 with generated defaults and an empty per-instance config database (the cdt-8 outcome - no
 protected principals, no section access). The old pool and folder are left as they were, unserved.
 Nothing errors; the run ends "Install/update complete." Found while fixing cdt-11 and cdt-18.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
-**Commit**: `<pending>`
+**Commit**: `480d290` (merged)
 **Reviewer**: implementer (found by the cdt-11..19 agent; not yet confirmed by the supervisor)
 
 ## Evidence

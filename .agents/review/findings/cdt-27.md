@@ -7,9 +7,9 @@ the process ends - in any crash or memory dump of it - for no purpose. The docum
 `ZeroFreeBSTR` the pointer in a `finally`, which the installer's own copy of this helper
 (`ConvertTo-PlainText`) already does. The managed string handed to `Set-ItemProperty` is a copy .NET
 cannot zero; this fix does not and cannot remove that one. Found while fixing cdt-24.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
-**Commit**: `<pending>`
+**Commit**: `e04ae9e` (merged)
 **Reviewer**: implementer (found by the cdt-11..19 agent; not yet confirmed by the supervisor)
 
 ## Evidence
