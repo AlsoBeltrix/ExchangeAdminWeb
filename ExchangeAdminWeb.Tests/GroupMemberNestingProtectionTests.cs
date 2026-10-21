@@ -9,9 +9,11 @@ namespace ExchangeAdminWeb.Tests;
 /// must see GROUP targets. Get-ADUser answered a group DN with zero rows and no error, which
 /// the check recorded as "no match" - a silent allow in a fail-closed service.
 ///
-/// The check runs a real PowerShell runspace, so behaviour tests cover the two extracted pure
-/// rules (SelectFallbackDn, IsProtectedGroupItself) and source tripwires pin how the method
-/// wires them - the repo's established pattern where no harness can execute the code path.
+/// The check runs a real PowerShell runspace, so behaviour tests cover the extracted pure rule
+/// (SelectFallbackDn) and source tripwires pin how the method wires it - the repo's established
+/// pattern where no harness can execute the code path. Since aud-a3b the membership decision
+/// itself, including the self-match and the owning-domain rule, is a pure evaluator with its own
+/// behaviour tests in ProtectedGroupMembershipTests.
 /// </summary>
 public class GroupMemberNestingProtectionTests
 {
@@ -60,37 +62,12 @@ public class GroupMemberNestingProtectionTests
         Assert.Null(dn);
     }
 
-    // ----- IsProtectedGroupItself: the DN self-match half of the Groups rule -----
-
-    [Fact]
-    public void IsProtectedGroupItself_SameDn_CaseInsensitive_Matches()
-    {
-        Assert.True(ProtectedPrincipalService.IsProtectedGroupItself(
-            "cn=domain admins,cn=users,dc=analog,dc=com",
-            "CN=Domain Admins,CN=Users,DC=analog,DC=com"));
-    }
-
-    [Fact]
-    public void IsProtectedGroupItself_DifferentDn_DoesNotMatch()
-    {
-        Assert.False(ProtectedPrincipalService.IsProtectedGroupItself(
-            "CN=Helpdesk,CN=Users,DC=analog,DC=com",
-            "CN=Domain Admins,CN=Users,DC=analog,DC=com"));
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void IsProtectedGroupItself_MissingTargetDn_DoesNotMatch(string? targetDn)
-    {
-        Assert.False(ProtectedPrincipalService.IsProtectedGroupItself(
-            targetDn, "CN=Domain Admins,CN=Users,DC=analog,DC=com"));
-    }
-
     // ----- Source tripwires: how CheckTransitiveGroupMembership wires the rules -----
     // No test in this repo can execute the runspace, so these pin the call shapes the
-    // behaviour tests above rely on being reachable.
+    // behaviour tests above rely on being reachable. The membership decision itself - the
+    // owning-domain rule A3 added, the self-match, and everything aud-a3b changed - is a pure
+    // evaluator since aud-a3b, so it is pinned by behaviour in ProtectedGroupMembershipTests
+    // rather than by the shape of this method.
 
     private static string TransitiveCheckBody()
     {
@@ -105,88 +82,16 @@ public class GroupMemberNestingProtectionTests
         return text[start..end];
     }
 
-    /// <summary>
-    /// The same body with comments and string literals blanked, offsets preserved.
-    /// </summary>
-    /// <remarks>
-    /// Review of aud-a3 showed the raw-text tripwires passing against broken code: commenting
-    /// out <c>.AddParameter("Server", targetServer)</c> left the text in place and satisfied
-    /// them. That is the prog-6/prog-8 class, and <see cref="ProgressScan.CodeView"/> is the
-    /// repo's existing answer to it. Assertions whose needle IS a string literal must still read
-    /// the raw body - the code view blanks those - so the two views are used deliberately, not
-    /// interchangeably.
-    /// </remarks>
-    private static string TransitiveCheckCode() => ProgressScan.CodeView(TransitiveCheckBody());
-
     [Fact]
-    public void TransitiveCheck_AsksTheTargetsOwnDomain_NotTheHosts()
+    public void TransitiveCheck_UsesClassAgnosticCmdlet_ForTheFallbackLookup()
     {
-        // Audit finding A3. The in-chain query carried no -Server, so it bound to the host's
-        // domain. A foreign-domain target is absent from that partition, so the query returned
-        // zero rows - a clean "not a member" - and the target read as unprotected. Same class,
-        // same helper and same reason as gmn-8 and fsr-1 on the Group Management side.
-        // CODE VIEW, not raw: commenting the call out left the text in place and satisfied the
-        // first version of this test. Review finding against aud-a3.
-        var code = TransitiveCheckCode();
-
-        // The owning domain is derived from the target's DN...
-        Assert.Contains("GroupManagementService.ServerFromDn(targetDn)", code, StringComparison.Ordinal);
-
-        // ...and the in-chain query is routed there. The filter text is a string literal, which
-        // the code view blanks, so the region is bounded on code landmarks instead.
-        var raw = TransitiveCheckBody();
-        var inChainRaw = raw.IndexOf("memberOf:1.2.840.113556.1.4.1941", StringComparison.Ordinal);
-        Assert.True(inChainRaw >= 0, "In-chain membership filter not found - tripwire is stale.");
-
-        // CodeView preserves offsets, so the raw index addresses the same place in both views.
-        var invoke = code.IndexOf("ps.Invoke()", inChainRaw, StringComparison.Ordinal);
-        Assert.True(invoke > inChainRaw, "Could not bound the in-chain call - update the tripwire.");
-
-        // The identifier survives the blanking; "Server" does not. Asserting on the identifier
-        // is what proves a LIVE parameter rather than a commented-out one.
-        Assert.Contains("targetServer)", code[inChainRaw..invoke], StringComparison.Ordinal);
-        Assert.Contains("AddParameter(\"Server\", targetServer)", raw, StringComparison.Ordinal);
-
-        // A match is still only declared on a positive row count - a mutation to "< 0" would
-        // make every query report membership, or none.
-        Assert.Contains("inChainResult.Count > 0", code, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void TransitiveCheck_FailsClosed_WhenTheOwningDomainCannotBeDetermined()
-    {
-        // ServerFromDn returns null for a DN with no DC components. Group Management's rule
-        // there is to omit -Server and keep the local binding, which is correct for a listing
-        // and wrong for a protection check: an unanswerable question is not a negative answer.
-        // This must return expansionHadErrors=true, which the caller turns into a refusal.
-        var code = TransitiveCheckCode();
-
-        var derive = code.IndexOf("GroupManagementService.ServerFromDn(targetDn)", StringComparison.Ordinal);
-        Assert.True(derive >= 0, "Owning-domain derivation not found - tripwire is stale.");
-
-        var loop = code.IndexOf("foreach (var protectedGroup", derive, StringComparison.Ordinal);
-        Assert.True(loop > derive,
-            "The owning domain must be resolved BEFORE the protected-group loop, so one unresolvable "
-            + "target fails the whole check closed rather than per group.");
-
-        // Between deriving it and entering the loop, a null must return the fail-closed tuple.
-        var guard = code[derive..loop];
-        Assert.Contains("targetServer is null", guard, StringComparison.Ordinal);
-        Assert.Contains("return (matches, true)", guard, StringComparison.Ordinal);
-
-        // And must not ALSO return the fail-OPEN one. Review showed that inserting
-        // "if (targetServer is null) return (matches, false);" ahead of the real guard left
-        // every assertion above satisfied while reversing the behaviour.
-        Assert.DoesNotContain("return (matches, false)", guard, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void TransitiveCheck_UsesClassAgnosticCmdlet_ForBothDirectoryCalls()
-    {
+        // The target read moved into PowerShellProtectedGroupDirectory.ReadTarget, which has its
+        // own class-agnostic tripwire; the sAMAccountName fallback is the one directory call left
+        // in this method.
         var body = TransitiveCheckBody();
 
         var adObjectCalls = Regex.Matches(body, Regex.Escape("AddCommand(\"Get-ADObject\")")).Count;
-        Assert.Equal(2, adObjectCalls);
+        Assert.Equal(1, adObjectCalls);
         Assert.DoesNotContain("AddCommand(\"Get-ADUser\")", body, StringComparison.Ordinal);
     }
 
@@ -194,12 +99,6 @@ public class GroupMemberNestingProtectionTests
     public void TransitiveCheck_RoutesFallbackResolution_ThroughExactlyOneRule()
     {
         Assert.Contains("SelectFallbackDn(", TransitiveCheckBody(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void TransitiveCheck_AppliesTheSelfMatch_InsideTheGroupLoop()
-    {
-        Assert.Contains("IsProtectedGroupItself(targetDn, groupDn)", TransitiveCheckBody(), StringComparison.Ordinal);
     }
 
     // ----- S2: the self-service membership read must see group members -----

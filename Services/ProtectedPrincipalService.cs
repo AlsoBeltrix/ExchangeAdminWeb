@@ -830,7 +830,6 @@ public class ProtectedPrincipalService
         string username, string password, string domain)
     {
         var matches = new List<string>();
-        bool expansionHadErrors = false;
 
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -876,83 +875,18 @@ public class ProtectedPrincipalService
         if (string.IsNullOrEmpty(targetDn))
             return (matches, false);
 
-        // Audit finding A3. The in-chain query below carried no -Server, so it bound to the
-        // HOST's domain regardless of where the target lives. A foreign-domain object is simply
-        // absent from that partition, so the query returned zero rows - a clean "not a member"
-        // - and Group Management treated the target as unprotected. The protection check
-        // answered a question about the wrong directory.
-        //
-        // Route it to the target's OWN domain, derived from its DN. Same rule, same helper and
-        // the same reason as findings gmn-8 and fsr-1 on the Group Management side: the object
-        // lives in its own partition, so read it there.
-        //
-        // A DN with no DC components means the owning domain cannot be determined. Group
-        // Management's convention there is to omit -Server and keep the local binding, which is
-        // right for a listing and WRONG here: this is a protection check, and an unanswerable
-        // question is not a negative answer. Fail closed instead - the caller turns
-        // expansionHadErrors with no matches into a refusal.
-        var targetServer = GroupManagementService.ServerFromDn(targetDn);
-        if (targetServer is null)
-        {
-            _logger.LogWarning(
-                "Protected-group check cannot determine the owning domain for target DN {TargetDn} - failing closed",
-                targetDn);
-            return (matches, true);
-        }
-
-        foreach (var protectedGroup in protectedGroups.Where(g => !string.IsNullOrWhiteSpace(g)))
-        {
-            try
-            {
-                var groupDn = ResolveProtectedGroupDn(ps, credential, protectedGroup);
-                if (string.IsNullOrWhiteSpace(groupDn))
-                {
-                    _logger.LogWarning("Protected group {ProtectedGroup} could not be resolved during membership check", protectedGroup);
-                    expansionHadErrors = true;
-                    continue;
-                }
-
-                // A protected group must match AS ITSELF, not only through its members:
-                // in-chain ancestry never includes self, so without this a listed group is
-                // freely nestable anywhere (owner 2026-08-11; nesting plan S1).
-                if (IsProtectedGroupItself(targetDn, groupDn))
-                {
-                    matches.Add($"Group:{protectedGroup}");
-                    continue;
-                }
-
-                var targetFilter = EscapeLdapFilter(targetDn);
-                var groupFilter = EscapeLdapFilter(groupDn);
-                // Get-ADObject, not Get-ADUser: the in-chain filter already evaluates nested
-                // membership for any object class; only the cmdlet in front of it was wrong.
-                ps.AddCommand("Get-ADObject")
-                  .AddParameter("LDAPFilter", $"(&(distinguishedName={targetFilter})(memberOf:1.2.840.113556.1.4.1941:={groupFilter}))")
-                  .AddParameter("Server", targetServer)
-                  .AddParameter("Credential", credential)
-                  .AddParameter("ErrorAction", "Stop");
-                var inChainResult = ps.Invoke();
-                ps.Commands.Clear();
-
-                if (ps.HadErrors)
-                {
-                    expansionHadErrors = true;
-                    ps.Streams.Error.Clear();
-                    continue;
-                }
-
-                if (inChainResult.Count > 0)
-                    matches.Add($"Group:{protectedGroup}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to evaluate protected group {ProtectedGroup} during transitive membership check", protectedGroup);
-                expansionHadErrors = true;
-                ps.Commands.Clear();
-                ps.Streams.Error.Clear();
-            }
-        }
-
-        return (matches, expansionHadErrors);
+        // Audit findings A3 and aud-a3b. What used to follow was one in-chain query per
+        // protected group, sent to the target's domain (A3 added the routing), reading "no rows"
+        // as "not a member". aud-a3b found three ways to get no rows while the answer is yes - a
+        // domain-local group in another domain, the primary group, and a resolver that dropped
+        // the domain half of DOMAIN\Name - so the decision now lives in a pure evaluator that
+        // asks each question of the domain holding the answer, and the runspace only performs
+        // the reads it is told to. The owning domain is still derived from the target's DN and
+        // an undeterminable one still fails closed; that rule moved into the evaluator with it.
+        var directory = new PowerShellProtectedGroupDirectory(ps, credential);
+        var outcome = ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger);
+        matches.AddRange(outcome.Matches);
+        return (matches, outcome.Incomplete);
     }
 
     /// <summary>
@@ -966,57 +900,6 @@ public class ProtectedPrincipalService
         if (candidateDns.Count != 1 || string.IsNullOrWhiteSpace(candidateDns[0]))
             return (null, true);
         return (candidateDns[0], false);
-    }
-
-    /// <summary>
-    /// The self-match half of the Groups rule: the target IS the protected group, compared on
-    /// resolved DNs. In-chain ancestry never includes self, so without this a protected group
-    /// is protected as a container of members but not as an object being moved.
-    /// </summary>
-    internal static bool IsProtectedGroupItself(string? targetDn, string groupDn)
-        => !string.IsNullOrWhiteSpace(targetDn) &&
-           string.Equals(targetDn, groupDn, StringComparison.OrdinalIgnoreCase);
-
-    private string? ResolveProtectedGroupDn(PowerShell ps, PSCredential credential, string protectedGroup)
-    {
-        if (protectedGroup.Contains("DC=", StringComparison.OrdinalIgnoreCase) ||
-            protectedGroup.Contains("CN=", StringComparison.OrdinalIgnoreCase))
-        {
-            return protectedGroup;
-        }
-
-        var groupIdentity = protectedGroup.Contains('\\')
-            ? protectedGroup.Split('\\', 2)[1]
-            : protectedGroup;
-
-        try
-        {
-            ps.AddCommand("Get-ADGroup")
-              .AddParameter("Identity", groupIdentity)
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            var result = ps.Invoke();
-            ps.Commands.Clear();
-
-            var dn = result.FirstOrDefault()?.Properties["DistinguishedName"]?.Value?.ToString();
-            if (!string.IsNullOrWhiteSpace(dn))
-                return dn;
-        }
-        catch
-        {
-            ps.Commands.Clear();
-            ps.Streams.Error.Clear();
-        }
-
-        var escaped = EscapeLdapFilter(groupIdentity);
-        ps.AddCommand("Get-ADGroup")
-          .AddParameter("LDAPFilter", $"(|(cn={escaped})(sAMAccountName={escaped})(name={escaped}))")
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
-        var fallback = ps.Invoke();
-        ps.Commands.Clear();
-
-        return fallback.FirstOrDefault()?.Properties["DistinguishedName"]?.Value?.ToString();
     }
 
     /// <summary>
