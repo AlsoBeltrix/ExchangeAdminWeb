@@ -450,10 +450,17 @@ Describe 'cdt-11: ConfigStore:Path survives -RegenerateAppSettings, and the back
         $logs = Join-Path $t.Root 'logs'
         # A name no IIS pool or application on the machine running this can already have.
         $alias = 'cdt11' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+        # Paths and file contents, not timestamps: a directory's write time, read back by enumeration,
+        # lagged the file just created in it by one clock tick often enough to fail this test (2 of
+        # 10 runs alone). A plan that creates, deletes or changes anything still changes this.
         $snapshot = {
             param($Root)
-            @(Get-ChildItem -LiteralPath $Root -Recurse -Force | ForEach-Object {
-                    '{0}|{1}|{2}' -f $_.FullName.Substring($Root.Length), $(if ($_.PSIsContainer) { 'dir' } else { $_.Length }), $_.LastWriteTimeUtc.Ticks
+            @(Get-ChildItem -LiteralPath $Root -Recurse -Force | Sort-Object FullName | ForEach-Object {
+                    if ($_.PSIsContainer) {
+                        '{0}|dir' -f $_.FullName.Substring($Root.Length)
+                    } else {
+                        '{0}|{1}|{2}' -f $_.FullName.Substring($Root.Length), $_.Length, (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+                    }
                 }) -join "`n"
         }
         try {

@@ -224,3 +224,23 @@ restored file re-run green (114 passed). Post-comment md5 `DAD27ACBC5C01A60DA610
 
 Not covered by a test: the banner and plan lines in apply mode (the same strings; an apply run
 needs elevation and IIS), and the wording of the help text.
+
+## Correction: the `-PlanOnly` test was flaky (found while proving cdt-15; fixed in its own commit)
+
+The `-PlanOnly` test's "creates nothing" assertion compared a snapshot of the temporary tree that
+included every DIRECTORY's `LastWriteTimeUtc`. Run alone it failed 2 of 10 and 1 of 12 times: the
+`shared` directory's write time read back one clock tick (15.6 ms) later after the plan than
+before it, although the plan touched nothing there - the directory's time, as enumeration reports
+it, lagged the file the test had just created in it. The table above, "the temporary tree is
+unchanged (paths, sizes, timestamps)", described that flaky check.
+
+The snapshot now records every path, and for files their length and SHA-256, sorted - no timestamps.
+That still fails on anything a plan could do to the tree (create, delete or rewrite), and no longer
+on the file system's own bookkeeping. Proof, in `tests/ps/InstallerConfigBackup.Tests.ps1`: the
+test alone passed 25 of 25 runs after the change, and 15 of 15 again with the hash switched from
+MD5 to SHA-256 (the analyzer flags MD5); and with the installer's `appsettings.json`
+backup copy made to run in `-PlanOnly` (its PLAN line kept, so every other assertion of the test
+still passes - installer md5 `C0CB19CC5BB12694D342607C5FFDD4D9`, restored to
+`314823863614C2CCA08D7B173E2F2D21`), the test failed on the snapshot itself ("Expected strings to
+be the same, because a plan creates and changes nothing ... \publish\appsettings.json.bak..."). Test
+file md5 after the change `4233A067305DB19F507242B12385681D` (LF).
