@@ -5,9 +5,9 @@
 application. Narrower here: after `aud-a38b` a mistyped pool name is refused (an absent prod
 pool is an error), so only a correctly spelled name of a different, existing pool gets
 through.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a4a7066146993eb49`
-**Commit**: `<pending>`
+**Commit**: `bafac35` (merged)
 **Reviewer**: implementer (found while fixing `aud-a38b`; the supervisor asked for the check)
 
 ## Evidence
