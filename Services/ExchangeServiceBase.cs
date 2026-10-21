@@ -325,6 +325,44 @@ public abstract class ExchangeServiceBase
         return mbx?.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? mailbox;
     }
 
+    /// <summary>
+    /// Reads the validated mailbox back by its GUID and refuses unless Exchange returns exactly
+    /// that mailbox (aud-a2d). Returns its primary SMTP address, for messages only - never as an
+    /// identity to write with.
+    /// </summary>
+    /// <remarks>
+    /// The read the writes already made before writing, now checking what it gets. It used to take
+    /// the operator's string and return whatever Exchange resolved it to, which the calendar paths
+    /// then built their folder identity from. Exchange documents "GUID" as a mailbox identity
+    /// without saying which GUID; comparing the ExchangeGuid it returns with the one the check
+    /// proved means a GUID read some other way - or any other surprise in resolution - refuses
+    /// before a write instead of landing on another mailbox.
+    /// </remarks>
+    protected static string BindValidatedMailbox(PowerShell ps, ConnectionErrorTracker tracker, ValidatedMailbox mailbox)
+    {
+        ps.AddCommand("Get-Mailbox")
+          .AddParameter("Identity", mailbox.Identity)
+          .AddParameter("ErrorAction", "Stop");
+        var found = Invoke(ps, tracker);
+
+        if (found.Count != 1)
+        {
+            throw new InvalidOperationException(
+                $"Exchange returned {found.Count} mailboxes for the validated mailbox {mailbox.Identity} - nothing was written.");
+        }
+
+        var exchangeGuid = ExchangeIdentityResolver.ReadExchangeGuid(found[0]);
+        if (exchangeGuid != mailbox.ExchangeGuid)
+        {
+            throw new InvalidOperationException(
+                $"Exchange resolved the validated mailbox {mailbox.Identity} to a different mailbox "
+                + $"({exchangeGuid?.ToString("D") ?? "no mailbox GUID"}) - nothing was written.");
+        }
+
+        var primary = found[0].Properties["PrimarySmtpAddress"]?.Value?.ToString();
+        return string.IsNullOrWhiteSpace(primary) ? mailbox.Identity : primary;
+    }
+
     protected static void ValidateRecipient(PowerShell ps, string identity)
     {
         ps.AddCommand("Get-Recipient")
@@ -339,7 +377,9 @@ public abstract class ExchangeServiceBase
     // On-Prem connection
     // -------------------------------------------------------------------------
 
-    protected void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+    // virtual: a test seam so the on-prem writes can be driven against an in-process runspace
+    // (aud-a2d) - the override defines the remote session and the cmdlets locally. No behaviour change.
+    protected virtual void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
     {
         var fullUsername = username.Contains('\\') || username.Contains('@')
             ? username
@@ -392,7 +432,8 @@ public abstract class ExchangeServiceBase
         throw new InvalidOperationException($"Failed to connect to on-prem Exchange at {_onPremServerUri} after {maxRetries} attempts");
     }
 
-    protected async Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
+    // virtual: the same test seam as ConnectOnPrem (aud-a2d). No behaviour change.
+    protected virtual async Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
     {
         if (_moduleCredentials is null || string.IsNullOrWhiteSpace(_moduleId))
         {
@@ -497,6 +538,14 @@ public abstract class ExchangeServiceBase
 
         return await GetOnPremMailboxLocationAsync(identity) ?? "Unknown";
     }
+
+    /// <summary>
+    /// Where the validated mailbox lives, asked by its GUID so the location decides the path for
+    /// the mailbox that will be written, not for whatever the typed string resolves to (aud-a2d).
+    /// No mailbox is "Unknown", which every caller refuses.
+    /// </summary>
+    public Task<string> GetMailboxLocationAsync(ValidatedMailbox? mailbox) =>
+        mailbox is null ? Task.FromResult("Unknown") : GetMailboxLocationAsync(mailbox.Identity);
 
     protected async Task<bool> HasCloudMailboxAsync(string identity)
     {

@@ -165,3 +165,104 @@ rebuilt green.
 
 **Commits.** Shared plumbing + Mailbox Permissions; Calendar Permissions; Out of Office;
 Conference Rooms. Gates before each.
+
+## Approach (as implemented)
+
+### Shared plumbing
+
+- `Services/ValidatedMailbox.cs` as planned. `WithWrittenIdentity` records `writtenIdentity`
+  always and `writtenDirectoryObject` only when the caller says its operation wrote Active
+  Directory by that object (Conference Rooms) - an Exchange-only write records only what it wrote.
+- `PermissionValidator`: `TargetValidation` is a record with a private constructor and three
+  factories; `Allow` and `Serviced` require a mailbox, `Deny` carries none. Every allowing exit -
+  the central check serviced, the typed-literal check serviced, the legacy list serviced, and the
+  plain allow - goes through one `BindWriteTargetAsync`: central check ran, so the mailbox is its
+  resolved principal's (and if the legacy list also asked Exchange and got a different mailbox,
+  refused); no central check, so the recipient the legacy list put to Exchange, or one lookup when
+  it did not ask; nothing usable, refused (`NoMailboxMessage`; Exchange not answering, "could not
+  be identified"). `CheckExclusionAsync` now returns the recipient it looked up; the lookup itself
+  is one shared `LookUpRecipientAsync`. Protected and failed verdicts return before the binding, so
+  they keep their messages and warnings.
+- `ExchangeServiceBase.BindValidatedMailbox`: `Get-Mailbox -Identity <GUID>`, exactly one result,
+  its `ExchangeGuid` (parsed by the same `ExchangeIdentityResolver.ReadExchangeGuid`, now
+  `internal`) equal to the validated one, else it throws before any write. Returns the primary
+  address for messages. `ValidateMailbox(string)` - the read by the typed string - is removed with
+  its last caller (Calendar commit). `GetMailboxLocationAsync(ValidatedMailbox?)`; null is "Unknown".
+  `ConnectOnPrem` and `GetModuleCredentialsAsync` are `virtual`, no behaviour change.
+
+### Mailbox Permissions
+
+- Cloud grant/revoke: null refused before a connection is borrowed; read-back by GUID; the four
+  cmdlets take `mailbox.Identity`. `targetMailbox` remains for the result and the OWA link only.
+- On-prem: null refused before a credential is requested. `Add-/Remove-MailboxPermission` take the
+  GUID; Send As is `Get-Mailbox -Identity <GUID> -ErrorAction Stop | Add-ADPermission ...` (and
+  `Remove-ADPermission`), one pipeline, the same shape `OnPremRecipientExists` already sends through
+  the restricted endpoint. `Add-ADPermission` documents `-Identity` as a DN or unique name only.
+- CSV: each row hands its own `targetValidation.Mailbox`; the row audit adds `writtenIdentity`.
+- Page: the location read, the single grant/revoke and the on-prem pair all take their own
+  validation's mailbox; both audit sites add `writtenIdentity`. Line count unchanged (808), so no
+  ClickGate entry moved.
+
+## Guard proof
+
+| Test | What it pins |
+| --- | --- |
+| `MailboxPermissionWriteIdentityTests.AGrant_WritesTheValidatedMailbox_NotTheStringTyped` | the read-back and both grant cmdlets take the GUID; the typed alias, which Exchange resolves to a different (protected) mailbox, reaches no cmdlet |
+| `ARevoke_WritesTheValidatedMailbox_NotTheStringTyped` | the same for both revoke cmdlets |
+| `WithoutAValidatedMailbox_NothingIsWritten_AndNoConnectionIsBorrowed` (grant, revoke) | null refuses with `ValidatedMailbox.Refusal`, no cmdlet runs, no connection opened |
+| `AReadBackOfADifferentMailbox_RefusesBeforeAnyWrite` | Exchange answering the GUID with another mailbox stops the write |
+| `AnOnPremGrant_SendsTheValidatedMailbox_AndBindsSendAsToTheMailboxItNames`, `AnOnPremRevoke_...` | both remote scripts get the GUID; Send As binds to the object `Get-Mailbox` returned for it |
+| `WithoutAValidatedMailbox_TheOnPremPathAsksForNoCredential_AndRunsNothing` (grant, revoke) | the on-prem refusal comes before the credential |
+| `TheBulkLoop_WritesEachRowsOwnValidatedMailbox_AndRefusesARowWithNone` | a CSV row writes its own mailbox and records `writtenIdentity` with `target` typed; a row with no mailbox is denied and audited as `BulkAdd_ExcludedTarget` |
+| `PermissionValidatorTests.TheAllowCarriesTheMailboxTheCheckResolved_NotTheStringTyped` | the allow carries the resolved principal's GUID and proven objectGUID |
+| `AResolvedTargetWithNoMailbox_IsRefused_RatherThanWrittenByItsName` | the no-recipient branch is denied, not allowed |
+| `AProtectedTargetWithNoMailbox_IsStillRefusedAsProtected` | binding runs after the protection verdict |
+| `AServicedAllow_CarriesTheMailbox_AndWithoutOneIsRefused` (2) | the serviced allow is bound too |
+| `NothingConfigured_TheTargetIsStillBoundToTheMailboxExchangeNames`, `NothingConfigured_ATargetWithNoMailbox_IsRefused` (2), `NothingConfigured_ExchangeCannotBeAsked_IsRefused` | no protection configured still binds through one Exchange lookup, and refuses without a mailbox or an answer |
+| `LegacyList_TheAllowCarriesTheMailboxTheListChecked_AskingExchangeOnce` | the legacy list's own recipient is the identity; Exchange is not asked twice |
+| `CentralAndLegacyLookupsNamingDifferentMailboxes_AreRefused` (2) | two checks naming two mailboxes refuse; one mailbox twice is allowed |
+| `ValidatedWriteCallSiteTests` | each page write takes its own validation's mailbox; each audit site records the identity (source-level, see Known gaps) |
+
+**Existing tests changed** (fixtures only, as aud-a2c did): `PermissionValidatorTests` allow cases
+give their target a mailbox GUID - `ValidateTargetMailbox_ExclusionExchangeDoesNotKnow_KeepsLiteralMatch`,
+`LegacyList_AnUnrelatedMailbox_IsAllowed`, `LegacyList_AFailedLoad_...`, `ValidateTargetMailbox_EmptyExclusions_AllowsOperations`,
+`ValidateTargetMailbox_AppsettingsOnlyExclusion_IsNotProtected`, `ValidateTargetMailbox_InitSucceeds_WhenExchangeKnowsNoEntry`,
+`AddressOnlyConfig_AllowsAnUnprotectedTarget`, and the scripted default principal; their assertions
+are unchanged. `OutOfOfficeRequestCaptureTests`' validator now has a resolver (it asks Exchange for
+the mailbox even with nothing protected).
+
+**Mutations, round 1** (shared plumbing + Mailbox Permissions). Each applied by
+`mutlib.py` only if the old text occurs exactly once and the md5 changes; test project rebuilt;
+the named test run; the file restored from the saved bytes and touched; md5 re-checked. Every
+restored md5 equals "before"; final rebuild and every named test green. Files as committed.
+
+| # | Mutation | File, md5 before (= restored) | md5 mutated | Named test | Result |
+| --- | --- | --- | --- | --- | --- |
+| MP1 | `Add-MailboxPermission -Identity` typed string | `MailboxPermissionService.cs` `627e11937f4d352afbbac0b1f234cafb` | `458a624c540c809fc6e637d504cf31b2` | `AGrant_WritesTheValidatedMailbox_NotTheStringTyped` | FAIL |
+| MP2 | `Add-RecipientPermission -Identity` typed string | same | `27c0e6fbb7c0465346c70a2570ef5a7f` | same | FAIL |
+| MP3 | `Remove-MailboxPermission -Identity` typed string | same | `6116dc7539811140dfada5b17a16fb68` | `ARevoke_WritesTheValidatedMailbox_NotTheStringTyped` | FAIL |
+| MP4 | `Remove-RecipientPermission -Identity` typed string | same | `cef136df9172ec0508b5cf522351c4cd` | same | FAIL |
+| MP5 | read-back goes back to `ValidateMailbox(typed)` | same | `69c7b5b3ae5e3656ad9ec67dc8923404` | `AReadBackOfADifferentMailbox_RefusesBeforeAnyWrite` | FAIL |
+| MP6 | grant: null refusal dropped | same | `20a4c2790d30fc1b1f907dec2be307eb` | `WithoutAValidatedMailbox_NothingIsWritten_AndNoConnectionIsBorrowed` | FAIL |
+| MP7 | revoke: null refusal dropped | same | `3f657acf82a3c91255cf8958b42c03d6` | same | FAIL |
+| MP8 | on-prem FullAccess grant argument typed string | same | `5ecb0a36899bef6c61f6912c734f4dfa` | `AnOnPremGrant_SendsTheValidatedMailbox_AndBindsSendAsToTheMailboxItNames` | FAIL |
+| MP9 | on-prem Send As grant argument typed string | same | `88bf0152e40a58ba4aa6b2c1fb9f8cce` | same | FAIL |
+| MP9b | on-prem Send As back to `Add-ADPermission -Identity <string>` | same | `dbd300424c12b969187d1f451233e61e` | same | FAIL |
+| MP10 | on-prem FullAccess revoke argument typed string | same | `cef1db2946b0dbbb1502b9557a1f2c4e` | `AnOnPremRevoke_SendsTheValidatedMailbox_AndBindsSendAsToTheMailboxItNames` | FAIL |
+| MP11 | on-prem Send As revoke argument typed string | same | `6aaad9560a9366887d72ff5ec8edec66` | same | FAIL |
+| MP12 | on-prem grant: null refusal dropped | same | `21bfd17e90f865de3386f618636c9ee3` | `WithoutAValidatedMailbox_TheOnPremPathAsksForNoCredential_AndRunsNothing` | FAIL |
+| MP13 | on-prem revoke: null refusal dropped | same | `b75ce16b270134c649022ab006e43972` | same | FAIL |
+| MP14 | CSV row hands the write null instead of its mailbox | same | `81099f737350d65a8437018ed266025a` | `TheBulkLoop_WritesEachRowsOwnValidatedMailbox_AndRefusesARowWithNone` | FAIL |
+| MP15 | CSV row audit drops `writtenIdentity` | same | `e774f88de59920ad7b324e6577423628` | same | FAIL |
+| MB1 | read-back stops comparing the ExchangeGuid | `ExchangeServiceBase.cs` `3a2fe91ea9673f8202861ae81594488b` | `d96551ca1d78d82ee57e9ea1d82e2a33` | `AReadBackOfADifferentMailbox_RefusesBeforeAnyWrite` | FAIL |
+| V1 | validator: no-mailbox refusal dropped | `PermissionValidator.cs` `8e28690f2adc523a18a25d868c9237ab` | `48aeb107122d1d6d6bd932f20c2925eb` | `AResolvedTargetWithNoMailbox_IsRefused_RatherThanWrittenByItsName` | FAIL |
+| V2 | validator: central/legacy disagreement allowed | same | `b515ddf5c92891dbe8e8c148020b6221` | `CentralAndLegacyLookupsNamingDifferentMailboxes_AreRefused` | FAIL |
+| V3 | validator: binds to a fresh lookup of the string, not the resolved principal | same | `c0cf5064a08540083875de3649ae0eb4` | `TheAllowCarriesTheMailboxTheCheckResolved_NotTheStringTyped` | FAIL |
+| V4 | validator: legacy path asks Exchange a second time | same | `6f9a40fef9a44efc71dc37fee6aa12a2` | `LegacyList_TheAllowCarriesTheMailboxTheListChecked_AskingExchangeOnce` | FAIL |
+| P1 | page: single grant handed null | `MailboxPermissions.razor` `322eac0eaf4bf507d5a97715353e7c25` | `deca13674b95ca2250f122bb360d819d` | `ValidatedWriteCallSiteTests.EveryPageWrite_IsBoundToItsOwnValidation` | FAIL |
+| P2 | page: on-prem grant handed null | same | `ba84f08cfb51fee1fa224e652288474f` | same | FAIL |
+| P3 | page: location read by the typed string | same | `b8d21ab61740102dfd3d99152f04e71b` | same | FAIL |
+
+A page cannot be mutated to pass the typed string to a write at all: no write method takes a
+string identity any more, so that mutation does not compile. P3 is the one page call that still
+can, because the string overload of the location read remains for read-only callers.

@@ -21,8 +21,16 @@ public class MailboxPermissionService : ExchangeServiceBase
     public MailboxPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MailboxPermissionService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "MailboxPermissions", operationTrace) { }
 
-    public Task<PermissionResult> AddMailboxPermissionsAsync(string targetMailbox, string user, bool fullAccess, bool sendAs, bool autoMapping)
+    /// <param name="targetMailbox">The operator's input, for messages and the result only.</param>
+    /// <param name="mailbox">
+    /// The mailbox the protected-principal check validated (aud-a2d) - the only identity written.
+    /// Null refuses before a connection is borrowed; the typed string is never written.
+    /// </param>
+    public Task<PermissionResult> AddMailboxPermissionsAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs, bool autoMapping)
     {
+        if (mailbox is null)
+            return Task.FromResult(PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox)));
+
         // Each right is granted in its own try/catch and the successes/failures are
         // aggregated, mirroring the on-prem methods below. The previous RunAsync shape
         // reported the whole operation as a single Fail if SendAs threw after FullAccess
@@ -34,7 +42,7 @@ public class MailboxPermissionService : ExchangeServiceBase
         {
             try
             {
-                ValidateMailbox(ps, targetMailbox);
+                BindValidatedMailbox(ps, tracker, mailbox);
                 ValidateRecipient(ps, user);
             }
             catch (Exception ex)
@@ -49,7 +57,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                 outcomes.Add(TryRight("FullAccess", () =>
                 {
                     ps.AddCommand("Add-MailboxPermission")
-                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("Identity", mailbox.Identity)
                       .AddParameter("User", user)
                       .AddParameter("AccessRights", "FullAccess")
                       .AddParameter("AutoMapping", autoMapping)
@@ -63,7 +71,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                 outcomes.Add(TryRight("SendAs", () =>
                 {
                     ps.AddCommand("Add-RecipientPermission")
-                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("Identity", mailbox.Identity)
                       .AddParameter("Trustee", user)
                       .AddParameter("AccessRights", "SendAs")
                       .AddParameter("Confirm", false);
@@ -75,15 +83,19 @@ public class MailboxPermissionService : ExchangeServiceBase
         });
     }
 
-    public Task<PermissionResult> RemoveMailboxPermissionsAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
+    /// <param name="mailbox">As on <see cref="AddMailboxPermissionsAsync"/>: null refuses.</param>
+    public Task<PermissionResult> RemoveMailboxPermissionsAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs)
     {
+        if (mailbox is null)
+            return Task.FromResult(PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox)));
+
         // Per-right try/catch with aggregation - see AddMailboxPermissionsAsync for why
         // the previous single-Fail RunAsync shape lost partial-success information.
         return RunPooledQueryAsync((ps, tracker) =>
         {
             try
             {
-                ValidateMailbox(ps, targetMailbox);
+                BindValidatedMailbox(ps, tracker, mailbox);
                 ValidateRecipient(ps, user);
             }
             catch (Exception ex)
@@ -98,7 +110,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                 outcomes.Add(TryRight("FullAccess", () =>
                 {
                     ps.AddCommand("Remove-MailboxPermission")
-                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("Identity", mailbox.Identity)
                       .AddParameter("User", user)
                       .AddParameter("AccessRights", "FullAccess")
                       .AddParameter("Confirm", false);
@@ -111,7 +123,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                 outcomes.Add(TryRight("SendAs", () =>
                 {
                     ps.AddCommand("Remove-RecipientPermission")
-                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("Identity", mailbox.Identity)
                       .AddParameter("Trustee", user)
                       .AddParameter("AccessRights", "SendAs")
                       .AddParameter("Confirm", false);
@@ -281,19 +293,22 @@ public class MailboxPermissionService : ExchangeServiceBase
                     }
                 }
 
+                // aud-a2d: this ROW's validated mailbox, never row.Target - the row is written to the
+                // mailbox its own check resolved.
                 var result = isAdd
-                    ? await AddMailboxPermissionsAsync(row.Target, row.User, fullAccess, sendAs, autoMap)
-                    : await RemoveMailboxPermissionsAsync(row.Target, row.User, fullAccess, sendAs);
+                    ? await AddMailboxPermissionsAsync(row.Target, targetValidation.Mailbox, row.User, fullAccess, sendAs, autoMap)
+                    : await RemoveMailboxPermissionsAsync(row.Target, targetValidation.Mailbox, row.User, fullAccess, sendAs);
 
                 var action = $"Bulk{(isAdd ? "Add" : "Remove")}_{permType}";
                 // Per row, because servicing is decided per row: a batch can mix serviced and
                 // ordinary targets. The note rides extra - a serviced row SUCCEEDS, and errorDetail
                 // is written as null on success, so the record of who permitted it would vanish.
+                // The identity written rides beside it; `target` stays the row as typed.
                 audit.LogMailboxPermission(
                     currentUser, ipAddress, action, row.Target, row.User, permType,
                     result.Success, ticketNumber, isAdd && fullAccess ? autoMap : null,
                     errorDetail: result.Success ? null : result.Message,
-                    extra: ProtectedPrincipalServicing.Extra(servicedNote));
+                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), targetValidation.Mailbox));
 
                 // Audit finding A24. The row was audited and the operator's administrators got
                 // a summary; the trustee and the mailbox owner got nothing. AppliedRights rather
@@ -355,8 +370,23 @@ public class MailboxPermissionService : ExchangeServiceBase
         };
     }
 
-    public async Task<PermissionResult> AddMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
+    /// <summary>
+    /// The on-premises grant, bound to the validated mailbox's GUID (aud-a2d). Null refuses before a
+    /// credential is requested.
+    /// </summary>
+    /// <remarks>
+    /// Send As goes through <c>Add-ADPermission</c>, whose <c>-Identity</c> Microsoft documents as a
+    /// DN or a unique name only - not a GUID. So the GUID is resolved by <c>Get-Mailbox</c> (a
+    /// mailbox identity, which a GUID is) and the mailbox object is piped in, binding the
+    /// permission to that object rather than to any string. One pipeline, so the remote endpoint's
+    /// restricted language mode can still run it - the same shape <c>OnPremRecipientExists</c>
+    /// uses. That the pipeline binds there is an assumption recorded in aud-a2d.
+    /// </remarks>
+    public async Task<PermissionResult> AddMailboxPermissionsOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs)
     {
+        if (mailbox is null)
+            return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
+
         var creds = await GetModuleCredentialsAsync("on-prem mailbox permission operation");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
@@ -385,7 +415,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                         ps.AddCommand("Invoke-Command")
                           .AddParameter("Session", session)
                           .AddParameter("ScriptBlock", script)
-                          .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                          .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
                         Invoke(ps);
                     }));
                 }
@@ -394,11 +424,11 @@ public class MailboxPermissionService : ExchangeServiceBase
                 {
                     outcomes.Add(TryRightOnPrem(ps, "SendAs", () =>
                     {
-                        var script = ScriptBlock.Create("param($Identity, $Trustee) Add-ADPermission -Identity $Identity -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
+                        var script = ScriptBlock.Create("param($Identity, $Trustee) Get-Mailbox -Identity $Identity -ErrorAction Stop | Add-ADPermission -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
                         ps.AddCommand("Invoke-Command")
                           .AddParameter("Session", session)
                           .AddParameter("ScriptBlock", script)
-                          .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                          .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
                         Invoke(ps);
                     }));
                 }
@@ -418,8 +448,12 @@ public class MailboxPermissionService : ExchangeServiceBase
         }), _onPremThrottle);
     }
 
-    public async Task<PermissionResult> RemoveMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
+    /// <summary>The on-premises revoke; bound exactly as <see cref="AddMailboxPermissionsOnPremAsync"/>.</summary>
+    public async Task<PermissionResult> RemoveMailboxPermissionsOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs)
     {
+        if (mailbox is null)
+            return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
+
         var creds = await GetModuleCredentialsAsync("on-prem mailbox permission operation");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
@@ -448,7 +482,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                         ps.AddCommand("Invoke-Command")
                           .AddParameter("Session", session)
                           .AddParameter("ScriptBlock", script)
-                          .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                          .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
                         Invoke(ps);
                     }));
                 }
@@ -457,11 +491,11 @@ public class MailboxPermissionService : ExchangeServiceBase
                 {
                     outcomes.Add(TryRightOnPrem(ps, "SendAs", () =>
                     {
-                        var script = ScriptBlock.Create("param($Identity, $Trustee) Remove-ADPermission -Identity $Identity -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
+                        var script = ScriptBlock.Create("param($Identity, $Trustee) Get-Mailbox -Identity $Identity -ErrorAction Stop | Remove-ADPermission -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
                         ps.AddCommand("Invoke-Command")
                           .AddParameter("Session", session)
                           .AddParameter("ScriptBlock", script)
-                          .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                          .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
                         Invoke(ps);
                     }));
                 }

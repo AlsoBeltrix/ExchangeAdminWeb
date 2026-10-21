@@ -95,9 +95,16 @@ public class PermissionValidator
     /// two apart for the operator.
     /// </summary>
     public async Task<bool> IsUserExcludedAsync(string userIdentity)
-        => await CheckExclusionAsync(userIdentity) != ExclusionVerdict.NotExcluded;
+        => (await CheckExclusionAsync(userIdentity)).Verdict != ExclusionVerdict.NotExcluded;
 
     private enum ExclusionVerdict { NotExcluded, Excluded, Unavailable }
+
+    /// <summary>
+    /// The legacy list's verdict, and the recipient it put to Exchange when it asked
+    /// (<paramref name="LookedUp"/>) - null then meaning Exchange has no such recipient. aud-a2d
+    /// binds the write to that recipient rather than asking Exchange a second time.
+    /// </summary>
+    private readonly record struct ExclusionCheck(ExclusionVerdict Verdict, bool LookedUp, ResolvedRecipient? Recipient);
 
     /// <remarks>
     /// aud-a2b hole 1. The string comparisons alone cannot see a SECONDARY address of an excluded
@@ -107,70 +114,107 @@ public class PermissionValidator
     /// Both now refuse: an excluded entry or a target Exchange could not be asked about is a
     /// question this list cannot answer, not a negative answer.
     /// </remarks>
-    private async Task<ExclusionVerdict> CheckExclusionAsync(string userIdentity)
+    private async Task<ExclusionCheck> CheckExclusionAsync(string userIdentity)
     {
         await EnsureInitializedAsync();
 
         if (_initFailed)
-            return ExclusionVerdict.Unavailable;
+            return new(ExclusionVerdict.Unavailable, false, null);
 
         if (_excludedUsers.Contains(userIdentity)
             || _excludedUsers.Any(excluded => IdentitiesMatch(excluded, userIdentity)))
-            return ExclusionVerdict.Excluded;
+            return new(ExclusionVerdict.Excluded, false, null);
 
         // Nothing is excluded, so no address of anything can be.
         if (_excludedUsers.IsEmpty)
-            return ExclusionVerdict.NotExcluded;
+            return new(ExclusionVerdict.NotExcluded, false, null);
 
-        ResolvedRecipient? recipient;
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
-            if (resolver == null)
-            {
-                _logger.LogWarning("No identity resolver - cannot check {Identity} against the excluded-user list; failing closed", userIdentity);
-                return ExclusionVerdict.Unavailable;
-            }
-
-            // Throws when Exchange could not answer; null only when it affirmatively has no such
-            // recipient, which leaves the string comparisons above as the whole answer.
-            recipient = await resolver.ResolveRecipientAsync(userIdentity);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Exchange could not resolve {Identity} for the excluded-user check - failing closed", userIdentity);
-            return ExclusionVerdict.Unavailable;
-        }
+        // Throws when Exchange could not answer; null only when it affirmatively has no such
+        // recipient, which leaves the string comparisons above as the whole answer.
+        var (answered, recipient) = await LookUpRecipientAsync(userIdentity, "the excluded-user check");
+        if (!answered)
+            return new(ExclusionVerdict.Unavailable, false, null);
 
         if (recipient is null)
-            return ExclusionVerdict.NotExcluded;
+            return new(ExclusionVerdict.NotExcluded, true, null);
 
         var canonical = recipient.PrimarySmtpAddress;
         if (_excludedUsers.Contains(canonical)
             || _excludedUsers.Any(excluded => IdentitiesMatch(excluded, canonical))
             || (!string.IsNullOrWhiteSpace(recipient.ExternalDirectoryObjectId)
                 && _excludedObjectIds.Contains(recipient.ExternalDirectoryObjectId)))
-            return ExclusionVerdict.Excluded;
+            return new(ExclusionVerdict.Excluded, true, recipient);
 
-        return ExclusionVerdict.NotExcluded;
+        return new(ExclusionVerdict.NotExcluded, true, recipient);
     }
 
     /// <summary>
-    /// The protected-principal verdict for a target: an error message to refuse with, or null to
-    /// proceed - plus the servicer note when an authorised operator overrode a refusal.
+    /// Puts <paramref name="identity"/> to Exchange. <c>answered</c> is false when the question
+    /// could not be put - no resolver, or a lookup that threw - and the recipient is then
+    /// meaningless; a null recipient with <c>answered</c> true is Exchange's "no such recipient".
+    /// </summary>
+    private async Task<(bool answered, ResolvedRecipient? recipient)> LookUpRecipientAsync(string identity, string purpose)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
+            if (resolver == null)
+            {
+                _logger.LogWarning("No identity resolver - cannot put {Identity} to Exchange for {Purpose}; failing closed", identity, purpose);
+                return (false, null);
+            }
+
+            return (true, await resolver.ResolveRecipientAsync(identity));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Exchange could not resolve {Identity} for {Purpose} - failing closed", identity, purpose);
+            return (false, null);
+        }
+    }
+
+    /// <summary>
+    /// The protected-principal verdict for a target: an error message to refuse with, or the
+    /// mailbox the write must be bound to - plus the servicer note when an authorised operator
+    /// overrode a refusal.
     /// </summary>
     /// <remarks>
     /// A record rather than a bare string so a caller cannot take the allow and drop the reason.
     /// <see cref="ServicedNote"/> is non-null only when the target WAS protected and this operator
     /// is an authorised servicer, and it must reach the audit event's <c>extra</c> - the action
     /// succeeds, so the error channel would discard it.
+    ///
+    /// aud-a2d. <see cref="Mailbox"/> is the identity the check validated, and the only identity a
+    /// write may use: the typed string is the operator's question, this is the answer. There is no
+    /// public constructor, so an allow cannot be built without a mailbox - every allow carries one
+    /// and every refusal carries none.
     /// </remarks>
-    public sealed record TargetValidation(string? Error, string? ServicedNote)
+    public sealed record TargetValidation
     {
-        public static readonly TargetValidation Ok = new(null, null);
-        public static TargetValidation Deny(string error) => new(error, null);
-        public static TargetValidation Serviced(string note) => new(null, note);
+        private TargetValidation(string? error, string? servicedNote, ValidatedMailbox? mailbox)
+        {
+            Error = error;
+            ServicedNote = servicedNote;
+            Mailbox = mailbox;
+        }
+
+        /// <summary>The refusal to show the operator and audit, or null to proceed.</summary>
+        public string? Error { get; }
+
+        /// <summary>Set only when an authorised servicer overrode a protected-principal refusal.</summary>
+        public string? ServicedNote { get; }
+
+        /// <summary>The mailbox the write is bound to. Non-null exactly when <see cref="Error"/> is null.</summary>
+        public ValidatedMailbox? Mailbox { get; }
+
+        public static TargetValidation Allow(ValidatedMailbox mailbox) =>
+            new(null, null, mailbox ?? throw new ArgumentNullException(nameof(mailbox)));
+
+        public static TargetValidation Deny(string error) => new(error, null, null);
+
+        public static TargetValidation Serviced(string note, ValidatedMailbox mailbox) =>
+            new(null, note, mailbox ?? throw new ArgumentNullException(nameof(mailbox)));
     }
 
     /// <summary>
@@ -192,6 +236,11 @@ public class PermissionValidator
         System.Security.Claims.ClaimsPrincipal? actingUser,
         string? moduleId)
     {
+        // aud-a2d. The mailbox the central check resolved, when it resolved one: the write is bound
+        // to it, so it is kept rather than re-derived from the string at the end.
+        var centralResolved = false;
+        ValidatedMailbox? centralMailbox = null;
+
         if (_protectedPrincipalService.HasCentralConfig)
         {
             var (cfg, _, loadError) = _protectedPrincipalService.LoadEffectiveConfig();
@@ -263,6 +312,8 @@ public class PermissionValidator
                 }
 
                 principal = resolved!;
+                centralResolved = true;
+                centralMailbox = ValidatedMailbox.From(resolved);
             }
             else
             {
@@ -290,7 +341,7 @@ public class PermissionValidator
                 // Out of Office.
                 var note = ServicerNote(actingUser, moduleId, result.MatchedRules);
                 if (note is not null)
-                    return TargetValidation.Serviced(note);
+                    return await BindWriteTargetAsync(targetMailbox, note, centralResolved, centralMailbox, legacy: default);
 
                 _logger.LogWarning("Attempted operation on protected principal: {Target} (rules: {Rules})", targetMailbox, string.Join(", ", result.MatchedRules));
                 return TargetValidation.Deny($"Access denied: {targetMailbox} is protected and cannot be modified through this interface.");
@@ -331,7 +382,7 @@ public class PermissionValidator
                 {
                     var typedNote = ServicerNote(actingUser, moduleId, typedResult.MatchedRules);
                     if (typedNote is not null)
-                        return TargetValidation.Serviced(typedNote);
+                        return await BindWriteTargetAsync(targetMailbox, typedNote, centralResolved, centralMailbox, legacy: default);
 
                     _logger.LogWarning(
                         "Attempted operation on protected principal by the address typed: {Target} (rules: {Rules})",
@@ -350,13 +401,13 @@ public class PermissionValidator
         }
 
         var exclusion = await CheckExclusionAsync(targetMailbox);
-        if (exclusion == ExclusionVerdict.Unavailable)
+        if (exclusion.Verdict == ExclusionVerdict.Unavailable)
         {
             _logger.LogWarning("Blocking operation on {Target} - could not establish whether the excluded-user list covers it", targetMailbox);
             return TargetValidation.Deny("Access denied: The protected-user list could not be checked for this mailbox. Contact your administrator.");
         }
 
-        if (exclusion == ExclusionVerdict.Excluded)
+        if (exclusion.Verdict == ExclusionVerdict.Excluded)
         {
             // The legacy excluded-user list. It protects the same principals by a different
             // mechanism, so a servicer grant must apply here too - otherwise whether an operator
@@ -364,14 +415,88 @@ public class PermissionValidator
             // invisible from the UI and impossible to reason about.
             var note = ServicerNote(actingUser, moduleId, [$"excluded-user list: {targetMailbox}"]);
             if (note is not null)
-                return TargetValidation.Serviced(note);
+                return await BindWriteTargetAsync(targetMailbox, note, centralResolved, centralMailbox, exclusion);
 
             _logger.LogWarning("Attempted operation on excluded user: {Target}", targetMailbox);
             return TargetValidation.Deny($"Access denied: {targetMailbox} is protected and cannot be modified through this interface.");
         }
 
-        return TargetValidation.Ok;
+        return await BindWriteTargetAsync(targetMailbox, servicedNote: null, centralResolved, centralMailbox, exclusion);
     }
+
+    /// <summary>
+    /// Turns a verdict that allows into an allow bound to the mailbox the check validated, or a
+    /// refusal when there is no such mailbox (aud-a2d).
+    /// </summary>
+    /// <remarks>
+    /// Every write used to hand the operator's string back to Exchange to be resolved again, so
+    /// the object checked and the object written could differ. The write now takes the identity
+    /// returned here, and there is no allow without one:
+    /// - central check ran: the mailbox it resolved. When the legacy list also asked Exchange and
+    ///   was answered with a different mailbox, the check looked at two objects - refused.
+    /// - no central check: the recipient the legacy list put to Exchange, or - when the list did
+    ///   not ask (nothing configured, or a match by string) - one Exchange lookup now.
+    /// - no mailbox GUID on what was found (no recipient; a contact, group or mail user without a
+    ///   mailbox), or Exchange not answering: refused. The write would have handed the string to
+    ///   Exchange and let it decide; that is what this removes.
+    /// Protected and failed verdicts never reach here, so they keep their own messages.
+    /// </remarks>
+    private async Task<TargetValidation> BindWriteTargetAsync(
+        string targetMailbox,
+        string? servicedNote,
+        bool centralResolved,
+        ValidatedMailbox? centralMailbox,
+        ExclusionCheck legacy)
+    {
+        ValidatedMailbox? mailbox;
+        if (centralResolved)
+        {
+            mailbox = centralMailbox;
+            if (mailbox is not null && legacy.LookedUp
+                && ValidatedMailbox.From(legacy.Recipient)?.ExchangeGuid != mailbox.ExchangeGuid)
+            {
+                _logger.LogWarning(
+                    "Blocking operation on {Target} - the protected-principal check resolved mailbox {Mailbox} and the "
+                    + "excluded-user list was answered with a different one; failing closed",
+                    targetMailbox, mailbox.Identity);
+                return TargetValidation.Deny(
+                    $"Access denied: '{targetMailbox}' resolved to two different mailboxes while it was being checked. "
+                    + "Try again, and contact your administrator if this persists.");
+            }
+        }
+        else
+        {
+            var recipient = legacy.Recipient;
+            if (!legacy.LookedUp)
+            {
+                var (answered, found) = await LookUpRecipientAsync(targetMailbox, "binding the write to a mailbox");
+                if (!answered)
+                {
+                    _logger.LogWarning("Blocking operation on {Target} - Exchange could not say which mailbox it is", targetMailbox);
+                    return TargetValidation.Deny(
+                        "Access denied: The target mailbox could not be identified in Exchange Online. Contact your administrator.");
+                }
+                recipient = found;
+            }
+            mailbox = ValidatedMailbox.From(recipient);
+        }
+
+        if (mailbox is null)
+        {
+            _logger.LogWarning(
+                "Blocking operation on {Target} - Exchange reports no mailbox for it, so the write has nothing to be bound to",
+                targetMailbox);
+            return TargetValidation.Deny(NoMailboxMessage(targetMailbox));
+        }
+
+        return servicedNote is null
+            ? TargetValidation.Allow(mailbox)
+            : TargetValidation.Serviced(servicedNote, mailbox);
+    }
+
+    /// <summary>The refusal for a target with no mailbox the write could be bound to.</summary>
+    internal static string NoMailboxMessage(string targetMailbox) =>
+        $"Access denied: Exchange Online reports no mailbox for '{targetMailbox}', so the change cannot be bound to one. Check the address.";
 
     /// <summary>
     /// True when the operator's typed value is already one of the resolved principal's

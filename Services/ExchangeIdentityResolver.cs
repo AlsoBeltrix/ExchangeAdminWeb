@@ -122,8 +122,10 @@ public class ExchangeIdentityResolver : ExchangeServiceBase, IIdentityResolver
     /// <c>ProtectedPrincipalService.ResolveExchangeTargetAsync</c> needs one - where its absence
     /// refuses (aud-a2c). All zeros is Exchange's way of saying "none", so it is read as null;
     /// passing it through would send a search for a zero GUID into Active Directory.
+    /// Shared with <see cref="ExchangeServiceBase"/>'s read-back of a validated mailbox (aud-a2d),
+    /// so the GUID a write is checked against is parsed exactly as the GUID the check proved.
     /// </summary>
-    private static Guid? ReadExchangeGuid(PSObject recipient)
+    internal static Guid? ReadExchangeGuid(PSObject recipient)
     {
         var value = recipient.Properties["ExchangeGuid"]?.Value;
         if (value is PSObject wrapped)

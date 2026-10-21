@@ -41,6 +41,8 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     private const string ExternalText = "Away until Friday (external)";
     private static readonly DateTime Start = new(2026, 11, 2, 9, 0, 0);
     private static readonly DateTime End = new(2026, 11, 6, 17, 0, 0);
+    private static readonly Guid AliceGuid = Guid.Parse("3c3c3c3c-0000-4000-8000-00000000a11c");
+    private static readonly Guid MalloryGuid = Guid.Parse("3c3c3c3c-0000-4000-8000-0000000ba11d");
 
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "eaw-oof-" + Guid.NewGuid().ToString("N"));
     private readonly IList _setCalls = ArrayList.Synchronized(new ArrayList());
@@ -173,10 +175,20 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
             new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, new ModuleCatalog(),
                 new SectionAccessRepository(TestConfigStore.Create(_dir))),
             Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+        // Nothing is protected, but since aud-a2d the validator still asks Exchange which mailbox the
+        // target is, so the write can be bound to it. Each address names its own mailbox.
+        var resolver = Substitute.For<IIdentityResolver>();
+        resolver.ResolveRecipientAsync(Arg.Any<string>()).Returns((ResolvedRecipient?)null);
+        resolver.ResolveRecipientAsync(Mailbox)
+            .Returns(new ResolvedRecipient(Mailbox, "ext-alice", "UserMailbox", ExistsOnPrem: false, ExchangeGuid: AliceGuid));
+        resolver.ResolveRecipientAsync("mallory@contoso.test")
+            .Returns(new ResolvedRecipient("mallory@contoso.test", "ext-mallory", "UserMailbox", ExistsOnPrem: false, ExchangeGuid: MalloryGuid));
         var scopeFactory = Substitute.For<IServiceScopeFactory>();
         var scope = Substitute.For<IServiceScope>();
+        var provider = Substitute.For<IServiceProvider>();
         scopeFactory.CreateScope().Returns(scope);
-        scope.ServiceProvider.Returns(Substitute.For<IServiceProvider>());
+        scope.ServiceProvider.Returns(provider);
+        provider.GetService(typeof(IIdentityResolver)).Returns(resolver);
         return new PermissionValidator(config, moduleConfig, _pool!, protectedPrincipals, servicers,
             Substitute.For<ILogger<PermissionValidator>>(), scopeFactory);
     }
