@@ -24,6 +24,7 @@ Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 # Shared warning about active bulk jobs before an app-pool recycle (BulkJobRunner-Plan).
 Import-Module (Join-Path $PSScriptRoot 'JobStateWarning.psm1') -Force
 # A38: Start-AppPoolVerified - IIS accepting a start request is not the pool running.
+# aud-a38b: Stop-AppPoolVerified - and accepting a stop request is not the pool stopped.
 Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
 
 function Write-Step { param([string]$Message) Write-Host ">>> $Message" -ForegroundColor Cyan }
@@ -221,7 +222,7 @@ function Stop-AppPoolChecked {
     )
 
     if (-not $Apply) {
-        Write-Plan "Stop-WebAppPool -Name $Name"
+        Write-Plan "Stop-AppPoolVerified -Name $Name (refuse to promote unless IIS confirms it Stopped)"
         if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath -PlanOnly | Out-Null }
         return
     }
@@ -229,8 +230,22 @@ function Stop-AppPoolChecked {
     Write-Step "Stopping prod app pool: $Name"
     # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
     if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath | Out-Null }
-    Stop-WebAppPool -Name $Name -ErrorAction Stop
-    Start-Sleep -Seconds 3
+    # aud-a38b: this was a bare Stop-WebAppPool and a three-second sleep - a guess about how
+    # long a worker takes to exit - and then robocopy /MIR replaced the files of the live prod
+    # application whether or not it had. Stop, then CONFIRM: Stop-AppPoolVerified polls IIS
+    # until the pool reports Stopped, and throws if it never does or its state cannot be read.
+    #
+    # The one result that neither throws nor means Stopped is 'Absent'. That is right for a
+    # first install, where nothing is serving yet; it is wrong here, where the prod application
+    # about to be replaced must exist. So nothing but 'Stopped' gets past this point.
+    $poolState = Stop-AppPoolVerified -Name $Name
+    if ($poolState -ne 'Stopped') {
+        if ($poolState -eq 'Absent') {
+            Write-Fail "Prod app pool '$Name' does not exist. Prod must exist to be promoted to: a promotion replaces the files of the running prod application, so check -ProdAppPoolName. Nothing was promoted; prod is unchanged."
+        }
+        Write-Fail "Prod app pool '$Name' was not confirmed stopped (IIS reported '$poolState'). Refusing to mirror over it. Nothing was promoted; prod is unchanged."
+    }
+    Write-Ok "Prod app pool $Name confirmed stopped"
 }
 
 function Start-AppPoolChecked {
@@ -336,6 +351,10 @@ if ($Apply) {
     Write-Plan "Verified online backup of the config DB at $prodConfigDbPath (if present) into $backup via $($configDbToolPlan.Summary) backup"
 }
 
+# aud-a38b: outside the try below, on purpose. A pool that cannot be confirmed stopped throws
+# here and ends the script before anything is mirrored over prod. Inside the try, the catch
+# would answer that refusal with a rollback - robocopy /MIR of the backup over the very
+# application that would not stop.
 Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config") -AppPath $dev
 
 $promotionFailed = $false

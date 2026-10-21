@@ -138,6 +138,11 @@ Describe 'A35 call sites' {
             $text = Get-Content (Join-Path $repo $file) -Raw
             $text | Should -Not -Match 'try \{ Stop-WebAppPool[^}]*\} catch \{\}'
         }
+
+        # aud-a38b: the promotion's copy had a different shape - no empty catch, just a bare
+        # call and a fixed sleep - so the pattern above could never have caught it.
+        $promote = Get-Content (Join-Path $repo 'tools\promote-dev-to-prod.ps1') -Raw
+        $promote | Should -Not -Match '(?m)^\s*Stop-WebAppPool\b'
     }
 
     It 'calls the verified stop in both deploy paths and in the installer' {
@@ -371,5 +376,193 @@ Describe 'A38: the promotion restart cannot erase the promotion verdict' {
     It 'confirms the pool is running rather than announcing it' {
         $script:Promote | Should -Match 'Start-AppPoolVerified -Name \$Name'
         $script:Promote | Should -Not -Match '(?m)^\s*Start-WebAppPool -Name \$Name\s*$'
+    }
+}
+
+Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring over it' {
+
+    # The promotion stopped prod with a bare Stop-WebAppPool and a three-second sleep, then
+    # mirrored dev over the live prod folder. aud-a35 replaced that pattern in deploy.ps1 and
+    # the installer, and aud-a38 replaced the START half of this script. These pin the STOP half.
+
+    BeforeAll {
+        $promotePath = (Resolve-Path (Join-Path $PSScriptRoot '..\..\tools\promote-dev-to-prod.ps1')).Path
+        $tokens = $null
+        $parseErrors = $null
+        $script:PromoteAst = [System.Management.Automation.Language.Parser]::ParseFile($promotePath, [ref]$tokens, [ref]$parseErrors)
+        $script:PromoteText = Get-Content -LiteralPath $promotePath -Raw
+
+        function Get-PromoteFunction {
+            param([string]$FunctionName)
+            $script:PromoteAst.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+                }, $true) | Where-Object Name -EQ $FunctionName | Select-Object -First 1
+        }
+
+        function Get-PromoteCommand {
+            param([string]$CommandName)
+            @($script:PromoteAst.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.CommandAst]
+                    }, $true) | Where-Object { $_.GetCommandName() -eq $CommandName })
+        }
+
+        # The script runs its promotion at the top level, so it cannot be dot-sourced. Its stop
+        # step, and the helpers that step calls, are lifted out of the file unchanged and
+        # defined here, so the tests below drive the code that ships.
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Fail', 'Stop-AppPoolChecked') {
+            . ([scriptblock]::Create((Get-PromoteFunction $name).Extent.Text))
+        }
+
+        # Stand-ins, each recording what it was asked to do. Stop-WebAppPool is among them so
+        # that no run of this suite - a mutation that pastes the bare call back included - can
+        # reach the real IIS cmdlet on a machine that has IIS.
+        $script:promoteEvents = [System.Collections.Generic.List[string]]::new()
+        function Write-Plan { param([string]$Message) $script:promoteEvents.Add("plan: $Message") }
+        function Assert-NoActiveBulkJobsBeforeRecycle {
+            param([string]$ConfigDir, [string]$AppPath, [switch]$PlanOnly)
+            $script:promoteEvents.Add("jobs: $ConfigDir $AppPath PlanOnly=$([bool]$PlanOnly)")
+            # An active job: the check warns, and must not stop the promotion.
+            [pscustomobject]@{ JobId = 'job-1'; Status = 'Running' }
+        }
+        function Stop-WebAppPool { param([string]$Name) $script:promoteEvents.Add("bare Stop-WebAppPool: $Name") }
+
+        # The module's own injection points, reached through the real Stop-AppPoolVerified that
+        # the lifted stop step calls. $PSDefaultParameterValues is read from the caller's scope,
+        # so each test sets it locally and nothing leaks between tests.
+        #
+        # A script block VALUE in $PSDefaultParameterValues is evaluated to produce the default,
+        # so each probe is handed over wrapped in a block that returns it. The first draft passed
+        # the probes bare: the binding failed with only a warning, the real IIS probe ran instead,
+        # and two of the tests below still passed. Each test therefore also proves that its own
+        # probe was the one consulted.
+        function New-PoolProbe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '',
+                Justification = 'Exists and State are used inside GetNewClosure blocks; the analyzer cannot see into them')]
+            param([scriptblock]$Exists, [scriptblock]$State, [int]$TimeoutSeconds = 60)
+            @{
+                'Stop-AppPoolVerified:ExistsProbe'    = { $Exists }.GetNewClosure()
+                'Stop-AppPoolVerified:StopAction'     = { { param($PoolName) $script:promoteEvents.Add("verified stop: $PoolName") } }
+                'Stop-AppPoolVerified:StateProbe'     = { $State }.GetNewClosure()
+                'Stop-AppPoolVerified:Sleep'          = { { } }
+                'Stop-AppPoolVerified:TimeoutSeconds' = $TimeoutSeconds
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:promoteEvents.Clear()
+    }
+
+    Context 'the stop step, driven through the module''s injectable probes' {
+
+        It 'stops the pool it was given, through the verified stop, when IIS confirms Stopped' {
+            # The lifted functions read the script-level -Apply switch.
+            Set-Variable -Name Apply -Value $true
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev'
+
+            $script:promoteEvents | Should -Contain 'verified stop: aud-a38b-prod'
+            $script:promoteEvents | Should -Not -Contain 'bare Stop-WebAppPool: aud-a38b-prod'
+        }
+
+        It 'refuses an absent prod pool, because prod must exist to be promoted to' {
+            # Stop-AppPoolVerified reports Absent without throwing - right for a first install,
+            # wrong here: a promotion replaces a prod application that must already exist.
+            Set-Variable -Name Apply -Value $true
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $script:promoteEvents.Add('exists probe'); $false } -State { 'Started' }
+
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' } |
+                Should -Throw -ExpectedMessage "*'aud-a38b-prod' does not exist*must exist to be promoted to*"
+            $script:promoteEvents | Should -Contain 'exists probe'
+        }
+
+        It 'lets a pool that will not stop end the promotion before the mirror' {
+            # THE FINDING. The old shape slept three seconds and carried on regardless.
+            Set-Variable -Name Apply -Value $true
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Started' } -TimeoutSeconds 0
+
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' } |
+                Should -Throw -ExpectedMessage "*'aud-a38b-prod' is still 'Started'*Refusing to deploy over a running application*"
+            $script:promoteEvents | Should -Contain 'verified stop: aud-a38b-prod'
+        }
+
+        It 'warns about active bulk jobs before the stop, and does not let them block it' {
+            Set-Variable -Name Apply -Value $true
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev'
+
+            $jobs = $script:promoteEvents.IndexOf('jobs: X:\prod\config X:\dev PlanOnly=False')
+            $stop = $script:promoteEvents.IndexOf('verified stop: aud-a38b-prod')
+            $jobs | Should -BeGreaterOrEqual 0
+            $stop | Should -BeGreaterThan $jobs
+        }
+
+        It 'in a dry run prints the plan and touches no pool' {
+            Set-Variable -Name Apply -Value $false
+            $PSDefaultParameterValues = New-PoolProbe `
+                -Exists { $script:promoteEvents.Add('exists probe'); $true } `
+                -State { $script:promoteEvents.Add('state probe'); 'Stopped' }
+
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev'
+
+            $script:promoteEvents | Should -Not -Contain 'exists probe'
+            $script:promoteEvents | Should -Not -Contain 'state probe'
+            $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
+            $script:promoteEvents | Should -Contain 'jobs: X:\prod\config X:\dev PlanOnly=True'
+            @($script:promoteEvents | Where-Object { $_ -like 'plan: Stop-AppPoolVerified -Name aud-a38b-prod*' }).Count | Should -Be 1
+        }
+    }
+
+    Context 'the call site' {
+
+        It 'imports AppPoolControl from beside the script' {
+            $script:PromoteText | Should -Match '(?m)^Import-Module \(Join-Path \$PSScriptRoot ''AppPoolControl\.psm1''\) -Force'
+        }
+
+        It 'calls Stop-WebAppPool nowhere in the promotion' {
+            @(Get-PromoteCommand 'Stop-WebAppPool').Count | Should -Be 0
+        }
+
+        It 'stops the pool through Stop-AppPoolVerified, once, inside the stop step' {
+            $verified = @(Get-PromoteCommand 'Stop-AppPoolVerified')
+            $verified.Count | Should -Be 1
+            $verified[0].Extent.Text | Should -Be 'Stop-AppPoolVerified -Name $Name'
+
+            $stopStep = Get-PromoteFunction 'Stop-AppPoolChecked'
+            $verified[0].Extent.StartOffset | Should -BeGreaterThan $stopStep.Extent.StartOffset
+            $verified[0].Extent.EndOffset | Should -BeLessThan $stopStep.Extent.EndOffset
+        }
+
+        It 'stops the prod pool at the top level, before any robocopy writes into prod' {
+            $stops = @(Get-PromoteCommand 'Stop-AppPoolChecked')
+            $stops.Count | Should -Be 1
+            $stop = $stops[0]
+            $stop.Extent.Text | Should -Match '^Stop-AppPoolChecked -Name \$ProdAppPoolName '
+
+            # A direct statement of the script body: nothing - no try, no if - stands between its
+            # throw and the end of the script, so a refusal cannot fall through to the mirror.
+            [object]::ReferenceEquals($stop.Parent.Parent, $script:PromoteAst.EndBlock) | Should -BeTrue
+
+            # Every robocopy whose DESTINATION is prod: the promotion mirror and the rollback.
+            # The backup copy reads from prod and is meant to run while prod is still serving.
+            $intoProd = @(
+                foreach ($copy in Get-PromoteCommand 'robocopy') {
+                    if ($copy.CommandElements.Count -ge 3 -and $copy.CommandElements[2].Extent.Text -eq '$prod') { $copy }
+                }
+                foreach ($copy in Get-PromoteCommand 'Invoke-RobocopyChecked') {
+                    $arguments = $copy.Find({ param($node) $node -is [System.Management.Automation.Language.ArrayLiteralAst] }, $true)
+                    if ($arguments -and $arguments.Elements.Count -ge 2 -and $arguments.Elements[1].Extent.Text -eq '$prod') { $copy }
+                }
+            )
+            $intoProd.Count | Should -Be 2 -Because 'the promotion mirror and the rollback both write into prod'
+            foreach ($copy in $intoProd) {
+                $copy.Extent.StartOffset | Should -BeGreaterThan $stop.Extent.EndOffset `
+                    -Because "line $($copy.Extent.StartLineNumber) writes into prod"
+            }
+        }
     }
 }
