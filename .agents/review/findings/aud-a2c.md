@@ -3,9 +3,9 @@
 **Severity**: HIGH - a stable, non-racy way to modify a protected mailbox through every
 Exchange-written module (Mailbox Permissions, Calendar Permissions, Out of Office, Conference
 Rooms).
-**Status**: Fixed on branch; awaiting merge
+**Status**: On master (applied by the supervisor from the agent's verified patch; its worktree had forked from the remote tip and lacked a2b); codex review pending; dev check owed
 **Branch**: `worktree-agent-a8c8880451a1663f0`, on master `b82de603`
-**Commit**: `<pending>`
+**Commit**: `7f1a0e6e`
 
 ## Evidence
 
