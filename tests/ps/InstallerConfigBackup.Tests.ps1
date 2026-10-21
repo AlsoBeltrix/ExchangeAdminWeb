@@ -474,3 +474,140 @@ Describe 'cdt-11: ConfigStore:Path survives -RegenerateAppSettings, and the back
         }
     }
 }
+
+Describe 'cdt-18: the pool restarts only after a complete mirror, confirmed, and a failed restart never hides the real error' {
+    # The mirror ran in a try whose finally called Start-WebAppPool unconditionally: a mirror that
+    # failed part-way was followed by a restart over a mix of builds, a start that threw replaced the
+    # mirror failure, and a start IIS accepted but never completed went unnoticed.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt18Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        $script:Cdt18Statements = @($script:Cdt18Ast.EndBlock.Statements)
+        $script:Cdt18TryAt = -1
+        for ($i = 0; $i -lt $script:Cdt18Statements.Count; $i++) {
+            $st = $script:Cdt18Statements[$i]
+            if ($st -is [System.Management.Automation.Language.TryStatementAst] -and
+                $st.Body.Extent.Text -match 'Invoke-RobocopyChecked -Description "Deploy application files"') { $script:Cdt18TryAt = $i }
+        }
+    }
+
+    It 'gates the confirmed restart on a complete mirror and keeps every failure its own (AST)' {
+        $statements = $script:Cdt18Statements
+        $script:Cdt18TryAt | Should -BeGreaterThan 1 -Because 'the mirror runs in a try at script level'
+        $mirror = $statements[$script:Cdt18TryAt]
+
+        $statements[$script:Cdt18TryAt - 2].Extent.Text | Should -BeExactly '$mirrorSucceeded = $false'
+        $statements[$script:Cdt18TryAt - 1].Extent.Text | Should -BeExactly '$poolStartError = $null'
+
+        $body = @($mirror.Body.Statements)
+        $body.Count | Should -Be 2
+        $body[0].Extent.Text | Should -BeLike 'Invoke-RobocopyChecked -Description "Deploy application files"*'
+        $body[1].Extent.Text | Should -BeExactly '$mirrorSucceeded = $true' -Because 'the mirror counts as done only once the checked runner has returned'
+        @($script:Cdt18Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Extent.Text -eq '$mirrorSucceeded = $true' }, $true)).Count | Should -Be 1
+
+        $mirror.CatchClauses.Count | Should -Be 1
+        $failure = $mirror.CatchClauses[0].Body.Statements[0].Extent.Text
+        $failure | Should -BeLike 'Write-Fail "$($_.Exception.Message)*' -Because 'the original failure leads the message'
+        foreach ($fact in 'LEFT STOPPED', '$PublishPath', '$stagingPath', 'ConfigBackups') {
+            $failure | Should -Match ([regex]::Escape($fact)) -Because "a failed mirror must say what it left and what to do ($fact)"
+        }
+
+        $starts = @($mirror.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-AppPoolVerified' }, $true))
+        $starts.Count | Should -Be 1 -Because 'the restart is confirmed, not assumed (A38)'
+        @($script:Cdt18Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-WebAppPool' }, $true)).Count |
+            Should -Be 0 -Because 'an unconfirmed start reported a down application as installed'
+        $chain = @()
+        $node = $starts[0].Parent
+        while ($null -ne $node -and -not [object]::ReferenceEquals($node, $mirror)) { $chain += $node; $node = $node.Parent }
+        $gate = @($chain | Where-Object { $_ -is [System.Management.Automation.Language.IfStatementAst] })
+        $gate.Count | Should -Be 1
+        $gate[0].Clauses[0].Item1.Extent.Text | Should -BeExactly '$mirrorSucceeded' -Because 'no restart over a partial publish'
+        ($starts[0].Extent.StartOffset -ge $gate[0].Clauses[0].Item2.Extent.StartOffset -and $starts[0].Extent.EndOffset -le $gate[0].Clauses[0].Item2.Extent.EndOffset) | Should -BeTrue
+        $plan = @($chain | Where-Object { $_ -is [System.Management.Automation.Language.CommandAst] -and $_.GetCommandName() -eq 'Invoke-PlanOrAction' })
+        $plan.Count | Should -Be 1 -Because 'the restart is still a plan step (Invariant 4)'
+        $guards = @($chain | Where-Object { $_ -is [System.Management.Automation.Language.TryStatementAst] })
+        $guards.Count | Should -Be 1 -Because 'the restart has its own try inside the finally'
+        $guards[0].CatchClauses.Count | Should -Be 1
+        $catch = $guards[0].CatchClauses[0].Body
+        $catch.Extent.Text | Should -Match ([regex]::Escape('$poolStartError = $_.Exception.Message'))
+        @($catch.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.ThrowStatementAst] -or
+                    ($n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-Fail') }, $true)).Count |
+            Should -Be 0 -Because 'a throw from the finally would replace the error that is propagating'
+
+        $checks = @(for ($j = $script:Cdt18TryAt + 1; $j -lt $statements.Count; $j++) {
+                if ($statements[$j] -is [System.Management.Automation.Language.IfStatementAst] -and $statements[$j].Clauses[0].Item1.Extent.Text -eq '$poolStartError') { $statements[$j] }
+            })
+        $checks.Count | Should -Be 1 -Because 'a failed restart is its own failure once the files are deployed'
+        $checks[0].Clauses[0].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "The files are deployed, but app pool*'
+        $done = $script:Cdt18Ast.Extent.Text.IndexOf('Write-Ok "Install/update complete."')
+        $done | Should -BeGreaterThan $checks[0].Extent.EndOffset -Because 'the check comes before the success banner'
+    }
+
+    It 'runs the real region: a failed mirror never starts the pool, and an unconfirmed start fails the run (behavioural)' {
+        foreach ($name in 'Write-Ok', 'Write-Warn', 'Write-Plan', 'Write-Fail', 'Invoke-PlanOrAction') {
+            $fn = $script:Cdt18Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        $statements = $script:Cdt18Statements
+        $from = $script:Cdt18TryAt
+        while ($from -gt 0 -and $statements[$from - 1].Extent.Text -match '^\$(mirrorSucceeded|poolStartError) = ') { $from-- }
+        $to = $script:Cdt18TryAt
+        for ($j = $script:Cdt18TryAt + 1; $j -lt $statements.Count; $j++) {
+            if ($statements[$j].Extent.Text -match '^if \(\$poolStartError\)') { $to = $j; break }
+        }
+        $region = ($statements[$from..$to] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments; $script:cdt18Calls.Add('robocopy'); if ($script:cdt18MirrorFails) { Write-Fail "robocopy failed with exit code 8 during: $Description" } }
+        ${function:Start-AppPoolVerified} = { param($Name) $script:cdt18Calls.Add('start'); if ($script:cdt18StartFails) { throw "App pool '$Name' is 'Stopped' after 60 seconds, not Started. The application is DOWN." }; 'Started' }
+        ${function:Start-WebAppPool} = { param($Name) $null = $Name; $script:cdt18Calls.Add('unverified-start') }
+        function Write-DeploymentManifest { $script:cdt18Calls.Add('manifest') }
+
+        $run = {
+            param([bool]$MirrorFails, [bool]$StartFails, [bool]$Plan)
+            $script:cdt18Calls = New-Object System.Collections.Generic.List[string]
+            $script:cdt18MirrorFails = $MirrorFails
+            $script:cdt18StartFails = $StartFails
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt18_' + [guid]::NewGuid().ToString('N'))
+            # Read only by the lifted region.
+            Set-Variable -Name stagingPath -Value (Join-Path $root 'publish.staging.x')
+            Set-Variable -Name PublishPath -Value (Join-Path $root 'publish')
+            Set-Variable -Name LogRoot -Value (Join-Path $root 'logs')
+            Set-Variable -Name repoRoot -Value (Join-Path $root 'source')
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name PlanOnly -Value $Plan
+            New-Item -ItemType Directory -Path (Join-Path $root 'publish.staging.x'), (Join-Path $root 'publish') -Force | Out-Null
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try {
+                . ([scriptblock]::Create($region))
+            } catch {
+                $thrown = $_.Exception.Message
+            } finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt18Calls -join ',') }
+        }
+
+        foreach ($startFails in $false, $true) {
+            $failed = & $run $true $startFails $false 6>$null
+            $failed.Calls | Should -BeExactly 'robocopy' -Because 'a failed mirror must not restart the pool over a partial publish'
+            $failed.Thrown | Should -BeLike 'robocopy failed with exit code 8 during: Deploy application files.*LEFT STOPPED*' -Because 'the mirror failure is the error, and it says what to do'
+        }
+
+        $down = & $run $false $true $false 6>$null
+        $down.Calls | Should -BeExactly 'robocopy,start,manifest' -Because 'the deploy is complete, so the manifest is still written'
+        $down.Thrown | Should -BeLike "The files are deployed, but app pool ExamplePool did not start (App pool 'ExamplePool' is 'Stopped'*DOWN*"
+
+        $clean = & $run $false $false $false 6>$null
+        $clean.Thrown | Should -BeNullOrEmpty
+        $clean.Calls | Should -BeExactly 'robocopy,start,manifest'
+
+        $planned = & $run $false $false $true 6>$null
+        $planned.Thrown | Should -BeNullOrEmpty
+        $planned.Calls | Should -Not -Match 'start' -Because '-PlanOnly prints the restart and runs nothing'
+    }
+}

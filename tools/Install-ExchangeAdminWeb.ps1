@@ -939,6 +939,14 @@ Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped" {
     }
 }
 
+# cdt-18: the pool restarts only once the mirror is complete, and only a confirmed start counts.
+# robocopy /MIR failing part-way leaves a mix of the old and new builds in the publish folder, and the
+# restart in the finally used to serve it; a start that threw there replaced the mirror failure; and
+# Start-WebAppPool returning means IIS accepted the request, not that the pool runs (A38). A failed
+# restart is recorded and reported, never thrown from the finally, and fails the run below, after the
+# manifest, when nothing else failed.
+$mirrorSucceeded = $false
+$poolStartError = $null
 try {
     Invoke-RobocopyChecked -Description "Deploy application files" -Arguments @(
         $stagingPath, $PublishPath,
@@ -947,9 +955,23 @@ try {
         "/XD", "logs", "config",
         "/NFL", "/NDL", "/NJH", "/NJS", "/R:2", "/W:1"
     )
+    $mirrorSucceeded = $true
+} catch {
+    Write-Fail "$($_.Exception.Message). App pool $AppPoolName was deliberately LEFT STOPPED: $PublishPath may now hold a mix of the old and new builds, and starting it would serve that mix. The mirror does not touch the config database (the pre-upgrade backup, when one was taken, is under $(Join-Path $LogRoot 'ConfigBackups')). The published build is left in $stagingPath; fix the cause and re-run the installer, which publishes and mirrors afresh."
 } finally {
-    Invoke-PlanOrAction "Start app pool $AppPoolName" {
-        Start-WebAppPool -Name $AppPoolName
+    if ($mirrorSucceeded) {
+        # Recorded, not thrown: a throw here would replace whatever is propagating (cdt-18).
+        try {
+            Invoke-PlanOrAction "Start app pool $AppPoolName and confirm it started" {
+                $null = Start-AppPoolVerified -Name $AppPoolName
+                Write-Ok "App pool $AppPoolName confirmed running"
+            }
+        } catch {
+            $poolStartError = $_.Exception.Message
+            Write-Host "  X  App pool $AppPoolName did not start: $poolStartError" -ForegroundColor Red
+        }
+    } else {
+        Write-Warn "App pool $AppPoolName is NOT being restarted: the file mirror did not complete, so the pool stays stopped."
     }
 }
 
@@ -958,6 +980,11 @@ if (-not $PlanOnly) {
 }
 
 Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $repoRoot
+
+# The files are deployed and the application is down: a failure, not "complete" (cdt-18).
+if ($poolStartError) {
+    Write-Fail "The files are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand."
+}
 
 if ($PlanOnly) {
     Write-Plan "Check HTTPS binding on '$ParentSite'"
