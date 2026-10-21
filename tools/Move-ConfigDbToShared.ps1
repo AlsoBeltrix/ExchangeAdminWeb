@@ -235,22 +235,15 @@ function Stop-AppPoolChecked {
 function Start-AppPoolChecked {
     param([string]$Name)
 
-    Invoke-PlanOrAction "Start app pool $Name" {
-        $started = $false
-        for ($i = 1; $i -le 5; $i++) {
-            try {
-                $state = (Get-ItemProperty "IIS:\AppPools\$Name").State
-                if ($state -eq 'Started') { $started = $true; break }
-                Start-WebAppPool -Name $Name -ErrorAction Stop
-                $started = $true
-                break
-            } catch {
-                if ($i -eq 5) { throw }
-                Start-Sleep -Seconds 3
-            }
-        }
-        if (-not $started) { Write-Fail "App pool $Name did not start." }
-        Write-Ok "App pool $Name started"
+    Invoke-PlanOrAction "Start app pool $Name and confirm IIS reports it Started" {
+        # aud-a38f: this set "started" the moment Start-WebAppPool returned - IIS accepting the
+        # request - and printed it. A bad identity password, a missing runtime or rapid-fail
+        # protection leaves the pool stopped with no exception, so the failure path's restart
+        # ("so the outage ends here") could report a pool up that never came back. CONFIRM it:
+        # Start-AppPoolVerified polls IIS until the pool reports Started, and throws otherwise -
+        # including for a pool that does not exist, which on this side is an error (aud-a38).
+        $null = Start-AppPoolVerified -Name $Name
+        Write-Ok "App pool $Name confirmed started"
     }
 }
 

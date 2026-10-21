@@ -77,7 +77,7 @@ Describe 'Move-ConfigDbToShared.ps1 plan mode' {
             $out | Should -Match 'PLAN Set ConfigStore:Path = .* in .*Dev\\appsettings\.json'
             $out | Should -Match 'PLAN Set ConfigStore:Path = .* in .*Prod\\appsettings\.json'
             $out | Should -Match 'PLAN Start app pool ExchangeAdminWebDev'
-            $out | Should -Match '(?m)^PLAN Start app pool ExchangeAdminWeb\s*$'
+            $out | Should -Match '(?m)^PLAN Start app pool ExchangeAdminWeb and confirm IIS reports it Started\s*$'
             # A40: the step warms the instance before reading the log, and says so.
             $out | Should -Match "PLAN Warm Dev on localhost, then verify it logged 'Config store schema ready'"
             $out | Should -Match "PLAN Warm Prod on localhost, then verify it logged 'Config store schema ready'"
@@ -912,6 +912,141 @@ Describe 'aud-a38e: the cutover confirms each pool stopped before copying its da
                 $copy.Extent.StartOffset | Should -BeGreaterThan $stops[1].Extent.EndOffset `
                     -Because "line $($copy.Extent.StartLineNumber) copies a database"
             }
+        }
+    }
+}
+
+Describe 'aud-a38f: the cutover confirms each pool started before saying so' {
+
+    # Start-AppPoolChecked set "started" the moment Start-WebAppPool returned - IIS accepting the
+    # request - and printed it. Step 7 and the failure path's restart both rely on it, and the
+    # failure path has nothing after it to notice a pool that never came back.
+
+    BeforeAll {
+        $tokens = $null
+        $parseErrors = $null
+        $script:StartAst = [System.Management.Automation.Language.Parser]::ParseFile($script:ScriptPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        function Get-StartFunction {
+            param([string]$FunctionName)
+            $script:StartAst.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+                }, $true) | Where-Object Name -EQ $FunctionName | Select-Object -First 1
+        }
+
+        function Get-StartCommand {
+            param([string]$CommandName)
+            @($script:StartAst.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.CommandAst]
+                    }, $true) | Where-Object { $_.GetCommandName() -eq $CommandName })
+        }
+
+        # Lifted unchanged, as in the aud-a38e block, with the real Start-AppPoolVerified below.
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Fail', 'Invoke-PlanOrAction', 'Start-AppPoolChecked') {
+            . ([scriptblock]::Create((Get-StartFunction $name).Extent.Text))
+        }
+        Import-Module (Join-Path $PSScriptRoot '..' '..' 'tools' 'AppPoolControl.psm1') -Force
+
+        # Recording stand-ins; none of them reaches IIS, the pre-fix start pasted back included.
+        $script:startEvents = [System.Collections.Generic.List[string]]::new()
+        function Write-Plan { param([string]$Message) $script:startEvents.Add("plan: $Message") }
+        function Start-WebAppPool { param([string]$Name) $script:startEvents.Add("bare Start-WebAppPool: $Name") }
+        Mock Get-ItemProperty { $script:startEvents.Add("Get-ItemProperty: $Path"); [pscustomobject]@{ State = 'Stopped' } }
+
+        # As in the aud-a38e block: each probe wrapped in a block that returns it.
+        function New-StartProbe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '',
+                Justification = 'Exists and State are used inside GetNewClosure blocks; the analyzer cannot see into them')]
+            param([scriptblock]$Exists, [scriptblock]$State, [int]$TimeoutSeconds = 60)
+            @{
+                'Start-AppPoolVerified:ExistsProbe'    = { $Exists }.GetNewClosure()
+                'Start-AppPoolVerified:StartAction'    = { { param($PoolName) $script:startEvents.Add("verified start: $PoolName") } }
+                'Start-AppPoolVerified:StateProbe'     = { $State }.GetNewClosure()
+                'Start-AppPoolVerified:Sleep'          = { { } }
+                'Start-AppPoolVerified:TimeoutSeconds' = $TimeoutSeconds
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:startEvents.Clear()
+    }
+
+    Context 'the start step, driven through the module''s injectable probes' {
+
+        It 'starts the pool through the verified start and reports it only when IIS confirms Started' {
+            Set-Variable -Name PlanOnly -Value $false
+            $PSDefaultParameterValues = New-StartProbe -Exists { $script:startEvents.Add('exists probe'); $true } -State { 'Started' }
+
+            Start-AppPoolChecked -Name 'aud-a38f-prod'
+
+            $script:startEvents | Should -Contain 'exists probe'
+            $script:startEvents | Should -Contain 'verified start: aud-a38f-prod'
+            $script:startEvents | Should -Not -Contain 'bare Start-WebAppPool: aud-a38f-prod'
+        }
+
+        It 'refuses a pool that IIS leaves stopped after accepting the start' {
+            # THE FINDING. The old shape counted the accepted request as a running pool.
+            Set-Variable -Name PlanOnly -Value $false
+            $PSDefaultParameterValues = New-StartProbe -Exists { $true } -State { $script:startEvents.Add('state probe'); 'Stopped' } -TimeoutSeconds 0
+
+            { Start-AppPoolChecked -Name 'aud-a38f-prod' } |
+                Should -Throw -ExpectedMessage "*'aud-a38f-prod' is 'Stopped' after 0 seconds, not Started*"
+            $script:startEvents | Should -Contain 'verified start: aud-a38f-prod'
+            $script:startEvents | Should -Contain 'state probe'
+        }
+
+        It 'refuses an absent pool, which cannot be started' {
+            Set-Variable -Name PlanOnly -Value $false
+            $PSDefaultParameterValues = New-StartProbe -Exists { $script:startEvents.Add('exists probe'); $false } -State { 'Started' }
+
+            { Start-AppPoolChecked -Name 'aud-a38f-prod' } |
+                Should -Throw -ExpectedMessage "*'aud-a38f-prod' does not exist*"
+            $script:startEvents | Should -Contain 'exists probe'
+            $script:startEvents | Should -Not -Contain 'verified start: aud-a38f-prod'
+        }
+
+        It 'in plan mode prints one plan line and touches no pool' {
+            Set-Variable -Name PlanOnly -Value $true
+            $PSDefaultParameterValues = New-StartProbe `
+                -Exists { $script:startEvents.Add('exists probe'); $true } `
+                -State { $script:startEvents.Add('state probe'); 'Started' }
+
+            Start-AppPoolChecked -Name 'aud-a38f-prod'
+
+            $script:startEvents | Should -Not -Contain 'exists probe'
+            $script:startEvents | Should -Not -Contain 'state probe'
+            @($script:startEvents | Where-Object { $_ -like 'verified start:*' -or $_ -like 'bare Start-WebAppPool:*' -or $_ -like 'Get-ItemProperty:*' }).Count | Should -Be 0
+            @($script:startEvents | Where-Object { $_ -eq 'plan: Start app pool aud-a38f-prod and confirm IIS reports it Started' }).Count | Should -Be 1
+        }
+    }
+
+    Context 'the call sites' {
+
+        It 'calls Start-WebAppPool nowhere in the cutover' {
+            # The restore instructions and the restart warning NAME it in printed text, which is a
+            # string, not a call.
+            @(Get-StartCommand 'Start-WebAppPool').Count | Should -Be 0
+        }
+
+        It 'starts through Start-AppPoolVerified once, inside the action plan mode never runs' {
+            $verified = @(Get-StartCommand 'Start-AppPoolVerified')
+            $verified.Count | Should -Be 1
+            $verified[0].Extent.Text | Should -Be 'Start-AppPoolVerified -Name $Name'
+
+            $startStep = Get-StartFunction 'Start-AppPoolChecked'
+            $plan = @($startStep.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Invoke-PlanOrAction'
+                    }, $true))
+            $plan.Count | Should -Be 1
+            $action = @($plan[0].CommandElements | Where-Object { $_ -is [System.Management.Automation.Language.ScriptBlockExpressionAst] })
+            $action.Count | Should -Be 1
+            $verified[0].Extent.StartOffset | Should -BeGreaterThan $action[0].Extent.StartOffset
+            $verified[0].Extent.EndOffset | Should -BeLessThan $action[0].Extent.EndOffset
         }
     }
 }
