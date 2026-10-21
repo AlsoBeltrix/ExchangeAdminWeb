@@ -24,6 +24,8 @@ Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 # Shared warning about active bulk jobs before an app-pool recycle (BulkJobRunner-Plan).
 Import-Module (Join-Path $PSScriptRoot 'JobStateWarning.psm1') -Force
 # A38: Start-AppPoolVerified - IIS accepting a start request is not the pool running.
+# aud-a38b: Stop-AppPoolVerified - and accepting a stop request is not the pool stopped.
+# aud-a38c: Assert-AppPoolServesPath - and a stopped pool is not necessarily the one serving prod.
 Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
 
 function Write-Step { param([string]$Message) Write-Host ">>> $Message" -ForegroundColor Cyan }
@@ -217,11 +219,13 @@ function Stop-AppPoolChecked {
     param(
         [string]$Name,
         [string]$ConfigDir,
-        [string]$AppPath
+        [string]$AppPath,
+        [string]$PublishPath
     )
 
     if (-not $Apply) {
-        Write-Plan "Stop-WebAppPool -Name $Name"
+        Write-Plan "Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath (refuse unless IIS serves that folder from this pool and no other)"
+        Write-Plan "Stop-AppPoolVerified -Name $Name (refuse to promote unless IIS confirms it Stopped)"
         if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath -PlanOnly | Out-Null }
         return
     }
@@ -229,8 +233,27 @@ function Stop-AppPoolChecked {
     Write-Step "Stopping prod app pool: $Name"
     # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
     if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath | Out-Null }
-    Stop-WebAppPool -Name $Name -ErrorAction Stop
-    Start-Sleep -Seconds 3
+    # aud-a38c: before stopping anything, ask IIS which pools serve the folder about to be
+    # replaced. Confirming that the NAMED pool stopped proves nothing when prod runs under a
+    # different one - a wrong but existing -ProdAppPoolName would be stopped, confirmed and
+    # mirrored past. deploy.ps1 makes the same check, keyed on its site and alias.
+    $null = Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath
+    # aud-a38b: this was a bare Stop-WebAppPool and a three-second sleep - a guess about how
+    # long a worker takes to exit - and then robocopy /MIR replaced the files of the live prod
+    # application whether or not it had. Stop, then CONFIRM: Stop-AppPoolVerified polls IIS
+    # until the pool reports Stopped, and throws if it never does or its state cannot be read.
+    #
+    # The one result that neither throws nor means Stopped is 'Absent'. That is right for a
+    # first install, where nothing is serving yet; it is wrong here, where the prod application
+    # about to be replaced must exist. So nothing but 'Stopped' gets past this point.
+    $poolState = Stop-AppPoolVerified -Name $Name
+    if ($poolState -ne 'Stopped') {
+        if ($poolState -eq 'Absent') {
+            Write-Fail "Prod app pool '$Name' does not exist. Prod must exist to be promoted to: a promotion replaces the files of the running prod application, so check -ProdAppPoolName. Nothing was promoted; prod is unchanged."
+        }
+        Write-Fail "Prod app pool '$Name' was not confirmed stopped (IIS reported '$poolState'). Refusing to mirror over it. Nothing was promoted; prod is unchanged."
+    }
+    Write-Ok "Prod app pool $Name confirmed stopped"
 }
 
 function Start-AppPoolChecked {
@@ -289,9 +312,17 @@ if (-not $Apply) {
 if ($Apply) {
     if (-not (Test-IsAdministrator)) { throw "Run this script from an elevated PowerShell session when using -Apply." }
     Import-Module WebAdministration -ErrorAction Stop
+    # aud-a38d: under PowerShell 7 WebAdministration loads through the compatibility session
+    # WITHOUT its IIS: drive, and the pool helpers' Test-Path IIS:\AppPools\... then reads every
+    # pool as absent - the verified stop refuses a pool that exists, the verified start reports
+    # prod down. Checking that the module loaded would not catch it: it does load. deploy.ps1
+    # refuses here for the same reason, and so does this, before any work is done.
+    if (-not (Get-PSDrive -Name IIS -ErrorAction SilentlyContinue)) {
+        Write-Fail "The IIS: drive is unavailable after importing WebAdministration, so no app pool can be seen - every one would read as absent. Run this script in Windows PowerShell 5.1 on the IIS server; the WebAdministration provider does not load under PowerShell 7. Prod was not touched."
+    }
     Assert-BackupFreeSpace -SourcePath $prod -BackupRootPath $backupRootResolved
 } else {
-    Write-Plan "Import-Module WebAdministration"
+    Write-Plan "Import-Module WebAdministration, and refuse unless its IIS: drive is available (Windows PowerShell 5.1)"
     Write-Plan "Check free space in $backupRootResolved for prod backup"
 }
 
@@ -336,7 +367,11 @@ if ($Apply) {
     Write-Plan "Verified online backup of the config DB at $prodConfigDbPath (if present) into $backup via $($configDbToolPlan.Summary) backup"
 }
 
-Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config") -AppPath $dev
+# aud-a38b: outside the try below, on purpose. A pool that cannot be confirmed stopped throws
+# here and ends the script before anything is mirrored over prod. Inside the try, the catch
+# would answer that refusal with a rollback - robocopy /MIR of the backup over the very
+# application that would not stop.
+Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config") -AppPath $dev -PublishPath $prod
 
 $promotionFailed = $false
 $rolledBack = $false
