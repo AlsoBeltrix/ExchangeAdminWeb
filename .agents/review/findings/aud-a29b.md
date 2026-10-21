@@ -3,7 +3,7 @@
 **Severity**: HIGH - an operator removed from an allowed AD group keeps every permission they
 had, on every page, for as long as their browser tab is open. `aud-a29` closed the
 administrative half of this on one page; this is the rest.
-**Status**: Merged to master (`cb3be91`, `702f66f`, `0d30442`); codex review pending; live dev check owed
+**Status**: Merged to master (`cb3be91`, `702f66f`, `0d30442`); codex review 2026-10-21 raised three findings, admitted as aud-a29c (HIGH), aud-a29d (HIGH), aud-a29e (MEDIUM) - fix in progress; live dev check owed
 **Branch**: `worktree-agent-aede3a8e8d3e038a3`
 **Commit**: `cb3be91` fix, `0d30442` off-switch (merged)
 
