@@ -4,9 +4,9 @@
 `ExchangeAdminWeb.dll` absent from staging after publish is mirrored into the publish folder
 anyway. No data is lost, but the installer cuts over an unusable payload and reports success.
 Plan AC4 names the installer explicitly.
-**Status**: Fixed on master; awaiting verdict
+**Status**: Closed on coder-side guard proof (no reviewer verification round below CRITICAL, decisions 2026-08-31)
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `96af3aa`
 **Reviewer**: codex / configured default (gpt-5.5-dzs via gateway) / xhigh / standard, over `9e7f9f9..b1577f7`, 2026-10-21
 
 ## Evidence

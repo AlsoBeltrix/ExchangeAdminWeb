@@ -3,9 +3,9 @@
 **Severity**: LOW. Test reliability only. Two tests pick "any DLL in `$PSHOME` whose file
 version is below 2.34" as a stand-in for a pre-db-mode app; a runner image whose PowerShell
 folder has no such DLL fails the test for a reason unrelated to the resolver.
-**Status**: Fixed on master; awaiting verdict
+**Status**: Closed on coder-side guard proof (no reviewer verification round below CRITICAL, decisions 2026-08-31)
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `5d6cee6`
 **Reviewer**: codex / configured default (gpt-5.5-dzs via gateway) / xhigh / standard, over `9e7f9f9..b1577f7`, 2026-10-21
 
 ## Evidence
