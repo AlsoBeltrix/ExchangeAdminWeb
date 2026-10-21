@@ -207,14 +207,24 @@ public class LicensingUpdatesService
 
     private List<LicensePreviewRow> ResolveUsers(List<string> identities, string licenseType, (string username, string password, string domain) creds)
     {
-        var rows = new List<LicensePreviewRow>();
-
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
         using var runspace = RunspaceFactory.CreateRunspace(iss);
         runspace.Open();
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
+
+        return ResolveUsers(ps, identities, licenseType, creds);
+    }
+
+    /// <remarks>
+    /// Internal as a TEST SEAM (psl-2): the resolve sequence on a caller-supplied PowerShell, so it
+    /// runs against local stand-in functions without a directory. The overload above owns the
+    /// runspace.
+    /// </remarks>
+    internal List<LicensePreviewRow> ResolveUsers(PowerShell ps, List<string> identities, string licenseType, (string username, string password, string domain) creds)
+    {
+        var rows = new List<LicensePreviewRow>();
 
         ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
         ps.Invoke();
@@ -268,6 +278,12 @@ public class LicensingUpdatesService
                 rows.Add(new(identity, null, null, licenseType, ex.Message));
                 _logger.LogWarning(ex, "Failed to resolve {Identity} for licensing preview", identity);
             }
+            finally
+            {
+                // psl-2: Commands.Clear() leaves error records behind. Nothing reads the stream
+                // here, so this also drops the module import's; no row inherits another's records.
+                ps.Streams.Error.Clear();
+            }
         }
 
         return rows;
@@ -279,8 +295,6 @@ public class LicensingUpdatesService
         Dictionary<string, ProtectedPrincipalResult> protectionResults,
         Dictionary<string, string> servicedNotes)
     {
-        var results = new List<LicenseApplyRow>();
-
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
         using var runspace = RunspaceFactory.CreateRunspace(iss);
@@ -288,9 +302,28 @@ public class LicensingUpdatesService
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
 
+        return ApplyChanges(ps, rows, licenseType, creds, protectionResults, servicedNotes);
+    }
+
+    /// <remarks>
+    /// Internal as a TEST SEAM (psl-2): the apply sequence on a caller-supplied PowerShell, so it
+    /// runs against local stand-in functions without a directory. The overload above owns the
+    /// runspace; the protection results and servicer notes are decided before either is called.
+    /// </remarks>
+    internal List<LicenseApplyRow> ApplyChanges(
+        PowerShell ps, List<LicensePreviewRow> rows, string licenseType,
+        (string username, string password, string domain) creds,
+        Dictionary<string, ProtectedPrincipalResult> protectionResults,
+        Dictionary<string, string> servicedNotes)
+    {
+        var results = new List<LicenseApplyRow>();
+
         ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
         ps.Invoke();
         ps.Commands.Clear();
+        // psl-2: HadErrors after a later invocation is true while ANY record remains, so a record
+        // the import left would fail the first row's clean write. Nothing consumes it.
+        ps.Streams.Error.Clear();
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
 
@@ -370,6 +403,13 @@ public class LicensingUpdatesService
                 ps.Commands.Clear();
                 results.Add(new(row.InputIdentity, principal.UserPrincipalName, "Error", row.CurrentValue, null, ex.Message));
                 _logger.LogWarning(ex, "Failed to apply license for {Identity}", row.InputIdentity);
+            }
+            finally
+            {
+                // psl-2: this row's consumers (the catch's ex.Message, the HadErrors branch) have
+                // run. Drop its records so the next row's HadErrors and first record are its own:
+                // a retained one named the wrong row and failed a later row's clean write.
+                ps.Streams.Error.Clear();
             }
         }
 

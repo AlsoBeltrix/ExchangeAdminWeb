@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Runtime.ExceptionServices;
 using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services;
@@ -112,8 +113,22 @@ public abstract class ExchangeServiceBase
         return _exoPool.RunWithRetryAsync(pooled => Task.Run(() =>
         {
             var tracker = new ConnectionErrorTracker();
-            var result = query(pooled.PowerShell, tracker);
-            return new PooledOutcome<T>(result, tracker.HasConnectionError, tracker.HasRetriablePrecheckError);
+            try
+            {
+                var result = query(pooled.PowerShell, tracker);
+                return new PooledOutcome<T>(result, tracker.HasConnectionError, tracker.HasRetriablePrecheckError);
+            }
+            catch (Exception ex) when (tracker.HasConnectionError)
+            {
+                // psl-4: a helper classified this session from its error stream before the query
+                // threw something unrelated. The pool reads only a thrown message, so it would
+                // return the suspect connection and skip an eligible precheck retry. Hand it the
+                // tracker's classification with the original exception instead; the throw's own
+                // precheck signature still counts, as on the thrown path. With no tracker
+                // evidence the exception propagates unchanged and its message is classified.
+                return PooledOutcome<T>.ConnectionFault(ExceptionDispatchInfo.Capture(ex),
+                    tracker.HasRetriablePrecheckError || ExoConnectionPool.IsRetriablePrecheckError(ex));
+            }
         }), allowRetry, PoolFailurePolicy.Return);
     }
 
