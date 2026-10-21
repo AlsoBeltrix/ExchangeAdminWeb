@@ -254,3 +254,100 @@ function Start-AppPoolVerified {
 }
 
 Export-ModuleMember -Function Start-AppPoolVerified
+
+function ConvertTo-ComparablePhysicalPath {
+    # One spelling per folder: environment variables expanded, made absolute and normalised
+    # (slashes, dot segments), trailing separators dropped. The caller compares the result
+    # ordinal and case-insensitive, and by equality - never by prefix. Not exported.
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $expanded = [Environment]::ExpandEnvironmentVariables($Path.Trim())
+    try {
+        $full = [System.IO.Path]::GetFullPath($expanded)
+    } catch {
+        $full = $expanded
+    }
+    return $full.TrimEnd('\', '/')
+}
+
+function Assert-AppPoolServesPath {
+    <#
+    .SYNOPSIS
+        Refuses unless the app pool about to be stopped is the pool IIS serves a folder from.
+
+    .DESCRIPTION
+        aud-a38c, after the independent review of A35. Stop-AppPoolVerified proves that the
+        pool it was NAMED has stopped. That proves nothing about a folder served by a
+        different pool: a wrong but existing pool name stops that pool, the stop is truthfully
+        confirmed, and robocopy /MIR then replaces the files of an application still running
+        under the real one.
+
+        So, before the stop, ask IIS for every site root and application, keep those whose
+        files are at the folder, and refuse unless there is at least one and every one of them
+        runs under the named pool. An answer that cannot be read, or that has nothing at the
+        folder, is a refusal as well: if nothing can be shown to serve the folder, stopping the
+        named pool cannot be shown to stop what runs from it. The refusal lists what IIS
+        reported, so a folder that IIS spells differently is visible in the message itself.
+
+        Folders compare by equality after normalisation, never by prefix - one instance's
+        folder is easily a prefix of a sibling's.
+
+    .OUTPUTS
+        The entries that serve the folder (Location, ApplicationPool, PhysicalPath) when all
+        of them run under the named pool. Throws otherwise.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PhysicalPath,
+
+        # Every site root and application IIS knows. Get-WebApplication's PhysicalPath is the
+        # script property WebAdministration's own type data defines (the root virtual
+        # directory's physicalPath); Get-Website exposes the root's physicalPath and
+        # applicationPool. Under this module's strict mode a missing property throws, and the
+        # throw is a refusal below, not a pass.
+        [scriptblock]$ApplicationsProbe = {
+            foreach ($site in @(Get-Website)) {
+                [pscustomobject]@{ Location = "$($site.name)/"; ApplicationPool = $site.applicationPool; PhysicalPath = $site.physicalPath }
+                foreach ($app in @(Get-WebApplication -Site $site.name)) {
+                    [pscustomobject]@{ Location = "$($site.name)$($app.path)"; ApplicationPool = $app.applicationPool; PhysicalPath = $app.PhysicalPath }
+                }
+            }
+        }
+    )
+
+    $target = ConvertTo-ComparablePhysicalPath $PhysicalPath
+
+    try {
+        $applications = @(& $ApplicationsProbe)
+    } catch {
+        throw "Cannot read the IIS sites and applications, so it cannot be confirmed that app pool '$Name' is what serves '$PhysicalPath': $($_.Exception.Message)"
+    }
+
+    $serving = @($applications | Where-Object {
+            [string]::Equals((ConvertTo-ComparablePhysicalPath $_.PhysicalPath), $target, [System.StringComparison]::OrdinalIgnoreCase)
+        })
+
+    if ($serving.Count -eq 0) {
+        if ($applications.Count -eq 0) {
+            $reported = 'IIS reported no sites or applications at all'
+        } else {
+            $reported = "IIS reported $($applications.Count): " + (@($applications | Select-Object -First 10 | ForEach-Object { "$($_.Location) at '$($_.PhysicalPath)' under '$($_.ApplicationPool)'" }) -join '; ')
+        }
+        throw "No IIS site or application has its files at '$PhysicalPath', so it cannot be confirmed that stopping app pool '$Name' stops what runs from them. $reported. Refusing to replace files that may still be served."
+    }
+
+    $elsewhere = @($serving | Where-Object { -not [string]::Equals([string]$_.ApplicationPool, $Name, [System.StringComparison]::OrdinalIgnoreCase) })
+    if ($elsewhere.Count -gt 0) {
+        $named = @($elsewhere | ForEach-Object { "$($_.Location) runs under '$($_.ApplicationPool)'" }) -join '; '
+        throw "The files at '$PhysicalPath' are served by an app pool other than '$Name': $named. Stopping '$Name' would leave that application running while its files are replaced. Name the pool that serves them, or fix the binding."
+    }
+
+    return $serving
+}
+
+Export-ModuleMember -Function Assert-AppPoolServesPath

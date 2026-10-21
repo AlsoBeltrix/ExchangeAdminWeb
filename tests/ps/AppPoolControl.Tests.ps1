@@ -439,9 +439,19 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
         # probe was the one consulted.
         function New-PoolProbe {
             [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '',
-                Justification = 'Exists and State are used inside GetNewClosure blocks; the analyzer cannot see into them')]
-            param([scriptblock]$Exists, [scriptblock]$State, [int]$TimeoutSeconds = 60)
+                Justification = 'Exists, State and Serving are used inside GetNewClosure blocks; the analyzer cannot see into them')]
+            param(
+                [scriptblock]$Exists,
+                [scriptblock]$State,
+                [int]$TimeoutSeconds = 60,
+                # aud-a38c: what IIS reports serving the prod folder. By default, the prod pool alone.
+                [scriptblock]$Serving = {
+                    $script:promoteEvents.Add('applications probe')
+                    [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = 'X:\prod' }
+                }
+            )
             @{
+                'Assert-AppPoolServesPath:ApplicationsProbe' = { $Serving }.GetNewClosure()
                 'Stop-AppPoolVerified:ExistsProbe'    = { $Exists }.GetNewClosure()
                 'Stop-AppPoolVerified:StopAction'     = { { param($PoolName) $script:promoteEvents.Add("verified stop: $PoolName") } }
                 'Stop-AppPoolVerified:StateProbe'     = { $State }.GetNewClosure()
@@ -462,7 +472,7 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             Set-Variable -Name Apply -Value $true
             $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
 
-            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev'
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
 
             $script:promoteEvents | Should -Contain 'verified stop: aud-a38b-prod'
             $script:promoteEvents | Should -Not -Contain 'bare Stop-WebAppPool: aud-a38b-prod'
@@ -474,7 +484,7 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             Set-Variable -Name Apply -Value $true
             $PSDefaultParameterValues = New-PoolProbe -Exists { $script:promoteEvents.Add('exists probe'); $false } -State { 'Started' }
 
-            { Stop-AppPoolChecked -Name 'aud-a38b-prod' } |
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' -PublishPath 'X:\prod' } |
                 Should -Throw -ExpectedMessage "*'aud-a38b-prod' does not exist*must exist to be promoted to*"
             $script:promoteEvents | Should -Contain 'exists probe'
         }
@@ -484,7 +494,7 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             Set-Variable -Name Apply -Value $true
             $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Started' } -TimeoutSeconds 0
 
-            { Stop-AppPoolChecked -Name 'aud-a38b-prod' } |
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' -PublishPath 'X:\prod' } |
                 Should -Throw -ExpectedMessage "*'aud-a38b-prod' is still 'Started'*Refusing to deploy over a running application*"
             $script:promoteEvents | Should -Contain 'verified stop: aud-a38b-prod'
         }
@@ -493,7 +503,7 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             Set-Variable -Name Apply -Value $true
             $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
 
-            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev'
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
 
             $jobs = $script:promoteEvents.IndexOf('jobs: X:\prod\config X:\dev PlanOnly=False')
             $stop = $script:promoteEvents.IndexOf('verified stop: aud-a38b-prod')
@@ -507,13 +517,77 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
                 -Exists { $script:promoteEvents.Add('exists probe'); $true } `
                 -State { $script:promoteEvents.Add('state probe'); 'Stopped' }
 
-            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev'
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
 
             $script:promoteEvents | Should -Not -Contain 'exists probe'
             $script:promoteEvents | Should -Not -Contain 'state probe'
             $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
             $script:promoteEvents | Should -Contain 'jobs: X:\prod\config X:\dev PlanOnly=True'
             @($script:promoteEvents | Where-Object { $_ -like 'plan: Stop-AppPoolVerified -Name aud-a38b-prod*' }).Count | Should -Be 1
+        }
+    }
+
+    Context 'aud-a38c: the pool it stops is the pool that serves prod' {
+
+        # Confirming that the NAMED pool stopped proves nothing when prod's folder is served by
+        # a different one. The review of aud-a35 found this in deploy.ps1; the promotion had no
+        # check at all.
+
+        It 'refuses a prod folder served by another pool, before stopping anything' {
+            # THE FINDING: a correctly spelled but wrong pool name was stopped, confirmed
+            # stopped, and the mirror ran over prod still serving under its real pool.
+            Set-Variable -Name Apply -Value $true
+            $PSDefaultParameterValues = New-PoolProbe `
+                -Exists { $script:promoteEvents.Add('exists probe'); $true } `
+                -State { 'Stopped' } `
+                -Serving {
+                    $script:promoteEvents.Add('applications probe')
+                    [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38c-real-prod'; PhysicalPath = 'X:\prod' }
+                }
+
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' -PublishPath 'X:\prod' } |
+                Should -Throw -ExpectedMessage "*'X:\prod'*Web/prod runs under 'aud-a38c-real-prod'*Stopping 'aud-a38b-prod' would leave that application running*"
+            $script:promoteEvents | Should -Contain 'applications probe'
+            $script:promoteEvents | Should -Not -Contain 'exists probe'
+            $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
+        }
+
+        It 'asks IIS after the jobs warning and before the stop' {
+            Set-Variable -Name Apply -Value $true
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $script:promoteEvents.Add('exists probe'); $true } -State { 'Stopped' }
+
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
+
+            $jobs = $script:promoteEvents.IndexOf('jobs: X:\prod\config X:\dev PlanOnly=False')
+            $binding = $script:promoteEvents.IndexOf('applications probe')
+            $exists = $script:promoteEvents.IndexOf('exists probe')
+            $jobs | Should -BeGreaterOrEqual 0
+            $binding | Should -BeGreaterThan $jobs
+            $exists | Should -BeGreaterThan $binding
+        }
+
+        It 'in a dry run prints the check and reads nothing from IIS' {
+            Set-Variable -Name Apply -Value $false
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
+
+            $script:promoteEvents | Should -Not -Contain 'applications probe'
+            @($script:promoteEvents | Where-Object { $_ -like 'plan: Assert-AppPoolServesPath -Name aud-a38b-prod -PhysicalPath X:\prod *' }).Count | Should -Be 1
+        }
+
+        It 'checks the folder the mirror replaces, inside the stop step, before the stop' {
+            $checks = @(Get-PromoteCommand 'Assert-AppPoolServesPath')
+            $checks.Count | Should -Be 1
+            $checks[0].Extent.Text | Should -Be 'Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath'
+
+            $stopStep = Get-PromoteFunction 'Stop-AppPoolChecked'
+            $verified = @(Get-PromoteCommand 'Stop-AppPoolVerified')[0]
+            $checks[0].Extent.StartOffset | Should -BeGreaterThan $stopStep.Extent.StartOffset
+            $checks[0].Extent.EndOffset | Should -BeLessThan $verified.Extent.StartOffset
+
+            # ... and the folder it is handed is the one the mirror writes into.
+            @(Get-PromoteCommand 'Stop-AppPoolChecked')[0].Extent.Text | Should -Match '-PublishPath \$prod$'
         }
     }
 
@@ -564,5 +638,103 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
                     -Because "line $($copy.Extent.StartLineNumber) writes into prod"
             }
         }
+    }
+}
+
+Describe 'Assert-AppPoolServesPath' {
+
+    # aud-a38c. Before a pool is stopped and a folder mirrored over, ask IIS which pools serve
+    # that folder. Driven through -ApplicationsProbe; the default reads Get-Website and
+    # Get-WebApplication.
+
+    BeforeAll {
+        function Get-IisEntry {
+            param([string]$Location, [string]$ApplicationPool, [string]$PhysicalPath)
+            [pscustomobject]@{ Location = $Location; ApplicationPool = $ApplicationPool; PhysicalPath = $PhysicalPath }
+        }
+    }
+
+    It 'passes, and returns what serves the folder, when the named pool alone serves it' {
+        $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/' -ApplicationPool 'DefaultAppPool' -PhysicalPath 'D:\sites'
+                Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+            })
+
+        $result.Count | Should -Be 1
+        $result[0].Location | Should -Be 'Web/App'
+    }
+
+    It 'refuses when the folder is served by a different pool, and says which and where' {
+        # THE FINDING.
+        {
+            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/App' -ApplicationPool 'RealPool' -PhysicalPath 'D:\sites\App'
+            }
+        } | Should -Throw -ExpectedMessage "*'D:\sites\App'*Web/App runs under 'RealPool'*Stopping 'ProdPool' would leave that application running*"
+    }
+
+    It 'refuses when any one of several applications on the folder runs under another pool' {
+        {
+            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                Get-IisEntry -Location 'Other/App' -ApplicationPool 'OtherPool' -PhysicalPath 'D:\sites\App'
+            }
+        } | Should -Throw -ExpectedMessage "*Other/App runs under 'OtherPool'*"
+    }
+
+    It 'recognises the same folder however IIS spells it' {
+        # Case, forward slashes, a trailing separator, a dot segment, an environment variable.
+        $env:AUD_A38C_ROOT = 'D:\sites'
+        try {
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                    Get-IisEntry -Location 'A/' -ApplicationPool 'ProdPool' -PhysicalPath 'd:/SITES/app/'
+                    Get-IisEntry -Location 'B/' -ApplicationPool 'ProdPool' -PhysicalPath '%AUD_A38C_ROOT%\App'
+                    Get-IisEntry -Location 'C/' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\.\App\'
+                })
+        } finally {
+            Remove-Item -Path Env:\AUD_A38C_ROOT -ErrorAction SilentlyContinue
+        }
+
+        $result.Count | Should -Be 3
+    }
+
+    It 'does not mistake a sibling folder that shares a prefix for the folder' {
+        # ...\AppDev starts with ...\App. A prefix test reads the sibling's pool as serving this
+        # folder - refusing a correct promotion here, accepting a wrong one in the next test.
+        $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/AppDev' -ApplicationPool 'DevPool' -PhysicalPath 'D:\sites\AppDev'
+                Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+            })
+
+        $result.Count | Should -Be 1
+        $result[0].Location | Should -Be 'Web/App'
+    }
+
+    It 'fails closed when nothing in IIS serves the folder, and lists what IIS reported' {
+        # deploy.ps1's check lets an empty answer through. Here, if nothing can be shown to
+        # serve the folder, stopping the named pool cannot be shown to stop what runs from it.
+        {
+            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/AppDev' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\AppDev'
+            }
+        } | Should -Throw -ExpectedMessage "*No IIS site or application has its files at 'D:\sites\App'*IIS reported 1: Web/AppDev at 'D:\sites\AppDev' under 'ProdPool'*"
+    }
+
+    It 'fails closed when IIS reports nothing at all' {
+        { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe { } } |
+            Should -Throw -ExpectedMessage '*IIS reported no sites or applications at all*'
+    }
+
+    It 'fails closed when IIS cannot be read, and says why' {
+        { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe { throw 'Cannot read configuration file' } } |
+            Should -Throw -ExpectedMessage "*Cannot read the IIS sites and applications*'ProdPool'*Cannot read configuration file*"
+    }
+
+    It 'compares pool names without regard to case, as deploy.ps1''s check does' {
+        $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/App' -ApplicationPool 'PRODPOOL' -PhysicalPath 'D:\sites\App'
+            })
+
+        $result.Count | Should -Be 1
     }
 }
