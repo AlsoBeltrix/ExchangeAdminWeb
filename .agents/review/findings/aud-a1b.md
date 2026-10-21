@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM - an authorization grant can be saved that silently grants nothing, and
 the operator is told the opposite.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (authz-batch, 2026-10-21) raised no defect in this change
 **Branch**: `worktree-agent-acf74809ad7ee3f7d`
 **Commit**: `0ad4ee3` (merged)
 

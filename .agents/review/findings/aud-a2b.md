@@ -2,7 +2,7 @@
 
 **Severity**: HIGH - each lets an operation proceed against a mailbox the configuration
 protects.
-**Status**: Merged to master; codex group review pending
+**Status**: Merged to master; codex group review 2026-10-21 raised one HIGH, admitted as aud-a2c (AD bound by canonical SMTP, not an immutable id) - fix in progress; the write-by-typed-string gap is aud-a2d
 **Branch**: `worktree-agent-acf74809ad7ee3f7d`
 **Commit**: `1ad872f` (merged)
 

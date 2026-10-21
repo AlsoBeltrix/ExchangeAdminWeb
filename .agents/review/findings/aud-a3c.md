@@ -2,7 +2,7 @@
 
 **Severity**: HIGH - a principal protected through a universal group reads as unprotected, with
 no error, wherever the target's domain controller does not carry the global catalog.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (authz-batch, 2026-10-21) raised no defect in this change
 **Branch**: `worktree-agent-acf74809ad7ee3f7d`
 **Commit**: `71e7ca9` (merged)
 

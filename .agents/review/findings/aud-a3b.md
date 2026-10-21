@@ -2,7 +2,7 @@
 
 **Severity**: HIGH - each one lets a genuinely protected principal read as unprotected, with no
 error and no sign anything went wrong.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (authz-batch, 2026-10-21) raised no defect in this change
 **Branch**: `worktree-agent-acf74809ad7ee3f7d`
 **Commit**: `ef0664e` (merged)
 
