@@ -150,6 +150,55 @@ public sealed class ProtectedPrincipalServicerAdminUiTests : IDisposable
         Assert.Null(decision.ServicerGroup);
     }
 
+    // ---- aud-a29f: the servicer gate reads the store as SIDs, like every other gate over it -----
+
+    private const string ServicerSid = "S-1-5-21-1000-2000-3000-4001";
+
+    [Theory]
+    [InlineData(@"CONTOSO\Exec-Support", ClaimTypes.Role)]
+    [InlineData("S-1-1-0", ClaimTypes.GroupSid)]
+    [InlineData("S-1-5-32-544", ClaimTypes.GroupSid)]
+    public void AServicerValueThatIsNotAUsableGroupSid_DoesNotAuthorizeServicing(string stored, string claimType)
+    {
+        // A name a halted SID migration left in the store, Everyone, BUILTIN\Administrators.
+        var servicers = ServicersOver(stored);
+        var user = PrincipalMatching(claimType, stored);
+        Assert.True(user.IsInRole(stored), "The principal must match the stored value through IsInRole, or this proves nothing.");
+
+        var decision = servicers.Evaluate(user, "BlockedSenders");
+
+        Assert.False(decision.Allowed);
+        Assert.Null(decision.ServicerGroup);
+    }
+
+    [Fact]
+    public void AServicerValueThatIsAUsableGroupSid_StillAuthorizesServicing()
+    {
+        var servicers = ServicersOver(@"CONTOSO\Exec-Support", ServicerSid);
+
+        var decision = servicers.Evaluate(PrincipalMatching(ClaimTypes.GroupSid, ServicerSid), "BlockedSenders");
+
+        Assert.True(decision.Allowed);
+        Assert.Equal(ServicerSid, decision.ServicerGroup);
+    }
+
+    private ProtectedPrincipalServicerService ServicersOver(params string[] servicerValues)
+    {
+        var service = CreateSectionAccessOverEmptyStore(allowedGroups: []);
+        service.SaveSectionAccess(new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            [ProtectedPrincipalServicerService.SectionKeyFor("BlockedSenders")] = servicerValues,
+        });
+        return new ProtectedPrincipalServicerService(service, NullLogger<ProtectedPrincipalServicerService>.Instance);
+    }
+
+    // A principal whose IsInRole reads claimType: a role claim for a name, as a role claim could
+    // carry one; the group-SID claim for a SID, as a Windows identity carries its groups.
+    private static ClaimsPrincipal PrincipalMatching(string claimType, string value) =>
+        new(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Name, @"CONTOSO\operator"), new Claim(claimType, value)],
+            "TestAuth", ClaimTypes.Name, claimType));
+
     private SectionAccessService CreateSectionAccessOverEmptyStore(string[] allowedGroups)
     {
         Directory.CreateDirectory(_tempDir);

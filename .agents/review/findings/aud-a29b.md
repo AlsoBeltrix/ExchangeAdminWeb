@@ -341,7 +341,11 @@ Gates for the addition, on its final (commented) tree:
   outage can be ridden out with the off-switch, on the same terms.
 - **A stale Kerberos ticket survives a reload.** The check on connect stops the new circuit
   within the lookup's time, but the server-rendered page itself still renders with the stale
-  token, and anything it shows is shown.
+  token, and anything it shows is shown. **Narrowed by aud-a29c:** the new circuit now waits for
+  that check - nothing in it initializes, renders or responds to a click until the directory has
+  answered, and a circuit the check does not confirm is never initialized. The server-rendered
+  page is unchanged: it runs no event handler (there is no circuit), but its initialization runs
+  and its output is shown.
 - **Not consulted:** the Self-Service Groups DACL gate's groups (arbitrary groups read from AD
   ACLs), and the off-circuit bulk-job snapshot (already documented as not observing mid-job
   revocation in `GroupMembershipChecker`).
@@ -357,7 +361,10 @@ Gates for the addition, on its final (commented) tree:
    not checked.
 2. **A check on circuit open**, not only every interval: one directory read per page load that
    opens a circuit. Without it, under Kerberos, a removed operator gets a fresh interval per
-   reload.
+   reload. **Changed by aud-a29c** (codex, 2026-10-21): the check no longer runs in the
+   background - the circuit is held until it answers (at most the 60 s lookup timeout; a stuck
+   check is revoked as `PendingCheckTimedOut` after twice that), and a circuit it does not confirm
+   is never initialized, so it shows the error banner rather than the notice.
 3. **The circuit is made unusable, not only signed out:** every inbound activity is dropped and
    a reconnect cannot restore the principal. The framework's sign-out alone does nothing visible
    on this app's pages and is undone by a reconnect.
@@ -370,7 +377,18 @@ Gates for the addition, on its final (commented) tree:
    otherwise mail once per open tab.
 7. **Compared set = every SID any gate grants through**, including module-admin grants and the
    servicer keys, not only the policy handler's sections - so revoking a servicer or module-admin
-   membership also ends the session.
+   membership also ends the session. **Changed by aud-a29d** (codex, 2026-10-21): the set read
+   from the store at each check cannot be the only one compared - a grant removed from it simply
+   vanished. Each circuit now also keeps the grants (setting and SID) it was confirmed through,
+   from the open check on, growing as later checks confirm more; one that is no longer in the
+   store ends the circuit (`GrantRemoved`) without a directory read, and its SID stays compared
+   with the directory even when a reconnect's token stops carrying it. A store that cannot be
+   read is a lookup failure, no longer an empty set. **Amended by aud-a29e** (codex,
+   2026-10-21): a static group that can grant through Windows but is not a domain group
+   (`BUILTIN\Administrators`, a well-known SID) was dropped from the set silently, so a circuit
+   holding only that grant was never checked. While revalidation is on, startup now refuses such
+   an entry, naming it; one that slips past (a name that could not be translated at startup) is
+   reported by the inventory, and a circuit whose token carries it fails closed.
 8. **An operator off-switch exists** (`Authentication:RevalidationEnabled`, added at the
    coordinator's request before review). Anyone who can edit `appsettings.json` and restart the
    app pool can switch revocation off. It is never silent - one startup warning, one `Disabled`

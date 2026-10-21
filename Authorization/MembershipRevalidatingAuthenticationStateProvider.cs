@@ -15,7 +15,8 @@ namespace ExchangeAdminWeb.Authorization;
 /// circuit opened with for as long as it lives. The framework loop calls
 /// <see cref="ValidateAuthenticationStateAsync"/> every <see cref="CircuitRevalidationOptions.Interval"/>,
 /// and <see cref="CircuitRevocationGate"/> adds one check when a circuit opens, because under
-/// Kerberos a reload presents the same group SIDs as before.
+/// Kerberos a reload presents the same group SIDs as before - and holds the new circuit until that
+/// check has answered (aud-a29c).
 /// </para>
 /// <para>
 /// On an invalid verdict the order is fixed: the circuit's <see cref="CircuitRevocation"/> is set,
@@ -54,6 +55,13 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     private readonly ILogger _logger;
     private readonly CancellationTokenSource _disposed = new();
 
+    // The grants this circuit was confirmed through (aud-a29d): captured by the first check (the
+    // circuit-open check) and added to by every valid check after it. Only ever grows - a grant
+    // leaves this set only with the circuit - so a grant removed from the store cannot quietly drop
+    // out of what is compared.
+    private readonly object _grantsSync = new();
+    private readonly HashSet<AuthorizationGrant> _grants = new();
+
     public MembershipRevalidatingAuthenticationStateProvider(
         ILoggerFactory loggerFactory,
         CircuitMembershipRevalidator revalidator,
@@ -72,6 +80,16 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     }
 
     protected override TimeSpan RevalidationInterval => _options.Interval;
+
+    /// <summary>A copy of the grants this circuit was confirmed through.</summary>
+    internal IReadOnlySet<AuthorizationGrant> CapturedGrants
+    {
+        get
+        {
+            lock (_grantsSync)
+                return new HashSet<AuthorizationGrant>(_grants);
+        }
+    }
 
     protected override Task<bool> ValidateAuthenticationStateAsync(
         AuthenticationState authenticationState, CancellationToken cancellationToken)
@@ -105,7 +123,7 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
         MembershipRevalidationResult result;
         try
         {
-            result = await _revalidator.RevalidateAsync(user, cancellationToken).ConfigureAwait(false);
+            result = await _revalidator.RevalidateAsync(user, CapturedGrants, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -118,17 +136,27 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
         }
 
         if (result.IsValid)
+        {
+            // What this check confirmed joins what the circuit is held to; nothing is taken out, so
+            // a grant first seen now is watched from now on (aud-a29d).
+            lock (_grantsSync)
+                _grants.UnionWith(result.Grants);
+
             return true;
+        }
 
         Revoke(user, result, trigger);
         return false;
     }
 
     /// <summary>
-    /// The check run once when a circuit opens; started by <see cref="CircuitRevocationGate"/>.
-    /// Never throws. Stops quietly once the circuit is disposed - there is no session left to end.
+    /// The check run once when a circuit opens; started by <see cref="CircuitRevocationGate"/>, which
+    /// holds the circuit until this answers. True when access was confirmed, or there was nothing to
+    /// confirm (an unauthenticated circuit); false when it revoked the circuit, or the circuit closed
+    /// first. Never throws. Stops quietly once the circuit is disposed - there is no session left to
+    /// end, and nothing it held may run.
     /// </summary>
-    internal async Task CheckAtCircuitOpenAsync()
+    internal async Task<bool> CheckAtCircuitOpenAsync()
     {
         var cancellationToken = _disposed.Token;
         ClaimsPrincipal? user = null;
@@ -136,20 +164,58 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
         {
             user = (await GetAuthenticationStateAsync().ConfigureAwait(false)).User;
             if (user.Identity?.IsAuthenticated != true)
-                return;
+                return true;
 
-            if (!await ValidateAsync(user, TriggerCircuitOpened, cancellationToken).ConfigureAwait(false))
-                SetAuthenticationState(Anonymous);
+            if (await ValidateAsync(user, TriggerCircuitOpened, cancellationToken).ConfigureAwait(false))
+                return true;
+
+            SetAuthenticationState(Anonymous);
+            return false;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            return false;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "The circuit-open access check failed; ending the session");
             Revoke(user, MembershipRevalidationResult.LookupFailed($"The access check failed: {ex.Message}"), TriggerCircuitOpened);
             SetAuthenticationState(Anonymous);
+            return false;
         }
+    }
+
+    /// <summary>
+    /// The gate's backstop (aud-a29c): the open check did not answer within the gate's hold, so the
+    /// circuit's access was never confirmed. Revokes with
+    /// <see cref="CircuitRevocationReason.PendingCheckTimedOut"/>, audits once, signs the circuit out.
+    /// </summary>
+    /// <remarks>
+    /// The account is read only if the state is already there: the stuck check may be waiting on that
+    /// very state, and the audit line then names "Unknown" rather than block.
+    /// </remarks>
+    internal void RevokeUnconfirmedOpenCheck(TimeSpan waited)
+    {
+        ClaimsPrincipal? user = null;
+        try
+        {
+            var state = GetAuthenticationStateAsync();
+            if (state.IsCompletedSuccessfully)
+                user = state.Result.User;
+        }
+        catch (InvalidOperationException)
+        {
+            // No state was ever set: nothing to name.
+        }
+
+        Revoke(
+            user,
+            new MembershipRevalidationResult(
+                CircuitRevocationReason.PendingCheckTimedOut,
+                Array.Empty<string>(),
+                $"The access check that runs when a circuit opens did not finish within {waited.TotalSeconds:0.#} seconds."),
+            TriggerCircuitOpened);
+        SetAuthenticationState(Anonymous);
     }
 
     /// <summary>

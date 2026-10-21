@@ -821,15 +821,33 @@ it against Active Directory: once when the tab connects, then every
   silent: at startup the app logs a warning and writes one audit line (action `SessionRevalidation`,
   reason `Disabled`). Anything other than `true` or `false` stops startup. The interval is still
   validated while the switch is off.
+- **Static groups must be domain groups while revalidation is on.** An entry in
+  `Security:AllowedGroups` or `Security:AdminGroups` that is, or translates to, a built-in or
+  well-known group - for example `BUILTIN\Administrators`, `S-1-5-32-544`, `Everyone` - can grant
+  access through Windows but cannot be re-checked against Active Directory, so the app refuses to
+  start and the startup error names the entry. Replace it with a domain group, or set
+  `RevalidationEnabled` to `false`. A name that cannot be translated at startup is logged as a
+  warning instead; until it translates, every check fails closed.
 - **What is checked:** the groups the operator's sign-in carries that some access rule uses
   (section access, module admins, `Security:AllowedGroups`, `Security:AdminGroups`), compared by
   SID with the account's current group membership (`tokenGroups`), and whether the account is
   enabled. Gaining a group never ends a session.
+- **The app's own access settings are checked too.** Each open session remembers the grants it
+  was confirmed through - a group in a module's section access or module admins, or one of the
+  static groups. If an administrator removes one of them, even from one section while the group
+  keeps another, the session ends at its next check, although nothing changed in Active
+  Directory. A grant added later is remembered from the first check after it appears. If the
+  access settings cannot be read, the check fails closed and the session ends.
 - **The session ends** when one of those groups is gone, the account is disabled, or the check
   cannot be completed within 60 seconds (fail closed). The tab stops responding and shows
   "This session has ended" with a Reload link; reloading signs in again with the access the
   operator has now. Each ended session writes one audit line (action `SessionRevalidation`,
   category `Authentication`).
+- **When a tab connects** it does not respond until that first check has answered - normally the
+  time of one directory read, at most 60 seconds. The page is shown meanwhile, but nothing on it
+  runs. If the check ends the session there, nothing in the tab was ever started: it shows the
+  app's error banner ("An unhandled error has occurred") with its Reload link instead of the
+  notice, and the audit line says why.
 - Under Kerberos a reload brings back the same group list until Windows renews its ticket, so an
   operator who keeps being signed out after their access was restored should sign out of Windows
   and back in.
