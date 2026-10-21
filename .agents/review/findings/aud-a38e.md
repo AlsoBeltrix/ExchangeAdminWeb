@@ -4,9 +4,9 @@
 that stops pools and was covered by neither: the shared-config cutover. Narrower in effect -
 the cutover runs once, and what is lost is a write committed while a worker drains, not a
 mixed build - but the loss is silent and lands in a file the run itself declares abandoned.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a6bb7956d82362f14`
-**Commit**: `<pending>`
+**Commit**: `faead5b` (merged)
 **Reviewer**: implementer (surfaced by the `aud-a38b` agent)
 
 ## Evidence

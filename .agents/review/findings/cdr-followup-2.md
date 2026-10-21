@@ -2,9 +2,9 @@
 
 **Severity**: LOW. The `cdr-followup-1` wording defect, at the two other places the same
 resolve is summarised to an operator. No count is wrong; the pairing of them is.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a6bb7956d82362f14`
-**Commit**: `<pending>`
+**Commit**: `e03e7c8` (merged)
 **Reviewer**: implementer (found while fixing `cdr-followup-1`)
 **Module**: Comms-10k
 

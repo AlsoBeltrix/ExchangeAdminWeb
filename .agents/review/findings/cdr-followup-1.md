@@ -1,9 +1,9 @@
 # cdr-followup-1 - resolve-stage prose mixes address and member counts
 
-Status: Fixed on branch; awaiting merge. (Was: open follow-up; outside the approved twenty
+Status: Merged to master; codex group review pending. (Was: open follow-up; outside the approved twenty
 findings and shared replay repair.)
 Branch: `worktree-agent-a6bb7956d82362f14`
-Commit: `<pending>`
+Commit: `f2cfc6c` (merged)
 Severity: LOW / P3. Native `/root/review_c11`, `gpt-6-astra` at max, 2026-10-15.
 Module: Comms-10k.
 Evidence head: `b0c535ee8d09f06405236200fda2e5dd177183d8`. The formatter is unchanged

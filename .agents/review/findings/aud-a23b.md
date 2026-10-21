@@ -2,9 +2,9 @@
 
 **Severity**: LOW. Correct today. It is a convention with one remaining consumer and a sharp
 edge that `aud-a23` had to route around.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a6bb7956d82362f14`
-**Commit**: `<pending>`
+**Commit**: `edafb75` (merged)
 **Reviewer**: implementer (filed by the `aud-a23` implementer)
 
 ## Evidence

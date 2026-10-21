@@ -1,12 +1,12 @@
-# aud-a38f: the cutover reports a pool started that IIS only agreed to start
+# aud-a38h (committed as aud-a38f in `3dd3ca5`; renamed because codex independently assigned aud-a38f to the nested-IIS finding): the cutover reports a pool started that IIS only agreed to start
 
 **Severity**: MEDIUM. The `aud-a38` defect - "IIS accepting a start request is not the pool
 running" - in the cutover, and its worst case is on the failure path: a cutover that changed
 nothing restarts both pools "so the outage ends here", and says it did, whether or not either
 pool came back.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a6bb7956d82362f14`
-**Commit**: `<pending>`
+**Commit**: `3dd3ca5` (merged)
 **Reviewer**: implementer (found while fixing `aud-a38e`)
 
 ## Evidence
