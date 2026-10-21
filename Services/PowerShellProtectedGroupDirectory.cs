@@ -125,14 +125,25 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
         return false;
     }
 
-    public bool AnyIsInChainOf(IReadOnlyList<string> candidateDns, string groupDn, string server)
+    public IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(IReadOnlyList<string> memberDns)
     {
-        var rows = Run("Get-ADObject", new Dictionary<string, object>
+        // The global catalog holds every universal group's member links, for every domain of the
+        // forest - the one place that is true whichever DC answers for the target (aud-a3c).
+        var catalog = GlobalCatalog();
+        var found = new Dictionary<string, DirectoryGroup>(StringComparer.OrdinalIgnoreCase);
+        foreach (var batch in ProtectedGroupMembership.Batches(memberDns))
         {
-            ["LDAPFilter"] = ProtectedGroupMembership.AnyInChainOfFilter(candidateDns, groupDn),
-            ["Server"] = server,
-        });
-        return rows.Count > 0;
+            foreach (var group in ToGroups(Run("Get-ADGroup", new Dictionary<string, object>
+            {
+                ["LDAPFilter"] = ProtectedGroupMembership.UniversalContainsAnyFilter(batch),
+                ["Server"] = catalog,
+                ["Properties"] = GroupProperties,
+            })))
+            {
+                found[group.Sid] = group;
+            }
+        }
+        return found.Values.ToList();
     }
 
     /// <summary>

@@ -292,18 +292,77 @@ public class ProtectedGroupMembershipTests
         Assert.Contains($"GroupsContainingAny {DomainA}", forest.Calls);
     }
 
+    // ----- aud-a3c: universal groups are read from the global catalog -----
+
+    private const string ExecutivesB = "CN=Executives,OU=Groups,DC=b,DC=example";
+
     [Fact]
-    public void AUniversalGroupOfAnotherDomain_StillGetsThePreviousQuery()
+    public void UniversalGroupOfAnotherDomain_ProtectsThroughAGlobalGroup()
     {
-        // No coverage the old check had may be lost. What that query can and cannot see is
-        // aud-a3c, not this finding.
+        // aud-a3c. The universal group's link to A\Staff lives in B and in the global catalog,
+        // not in A. The previous query asked A, so it saw this only when A's DC happened to be a
+        // GC - which the fake's DCs are not.
         var forest = Forest();
-        const string universal = "CN=Everyone Important,OU=Groups,DC=b,DC=example";
-        forest.Group(universal, $"{SidB}-3030", DirectoryGroupScope.Universal, "Everyone Important", StaffA);
+        forest.Group(ExecutivesB, $"{SidB}-3030", DirectoryGroupScope.Universal, "Executives", StaffA);
 
-        Evaluate(forest, Tess, universal);
+        var result = Evaluate(forest, Tess, ExecutivesB);
 
-        Assert.Contains($"AnyIsInChainOf {DomainA}", forest.Calls);
+        Assert.Equal(["Group:" + ExecutivesB], result.Matches);
+        Assert.False(result.Incomplete);
+        Assert.Contains("UniversalGroupsContainingAny forest", forest.Calls);
+    }
+
+    [Fact]
+    public void UniversalGroupOfAnotherDomain_DoesNotProtectSomeoneOutsideIt()
+    {
+        var forest = Forest();
+        forest.Group(ExecutivesB, $"{SidB}-3030", DirectoryGroupScope.Universal, "Executives", StaffA);
+
+        var result = Evaluate(forest, Uma, ExecutivesB);
+
+        Assert.Empty(result.Matches);
+        Assert.False(result.Incomplete);
+    }
+
+    [Fact]
+    public void DomainLocalGroup_ReachedOnlyThroughAUniversalGroupOfAnotherDomain_Protects()
+    {
+        // A\Admins Local (domain-local, A) contains B\Executives (universal) contains A\Staff
+        // contains Tess. A holds the first link, the GC the second: neither domain's data alone
+        // completes the chain, so the domain-local query must start from the universal ancestor.
+        var forest = Forest();
+        const string adminsLocal = "CN=Admins Local,OU=Groups,DC=a,DC=example";
+        forest.Group(ExecutivesB, $"{SidB}-3030", DirectoryGroupScope.Universal, "Executives", StaffA);
+        forest.Group(adminsLocal, $"{SidA}-2030", DirectoryGroupScope.DomainLocal, "Admins Local", ExecutivesB);
+
+        var result = Evaluate(forest, Tess, adminsLocal);
+
+        Assert.Equal(["Group:" + adminsLocal], result.Matches);
+        Assert.False(result.Incomplete);
+    }
+
+    [Fact]
+    public void UniversalGroupsNestedInUniversalGroups_AreFollowed()
+    {
+        var forest = Forest();
+        const string board = "CN=Board,OU=Groups,DC=a,DC=example";
+        forest.Group(ExecutivesB, $"{SidB}-3030", DirectoryGroupScope.Universal, "Executives", StaffA);
+        forest.Group(board, $"{SidA}-2031", DirectoryGroupScope.Universal, "Board", ExecutivesB);
+
+        Assert.Single(Evaluate(forest, Tess, board).Matches);
+    }
+
+    [Fact]
+    public void AFailedGlobalCatalogRead_FailsClosed()
+    {
+        var forest = Forest();
+        forest.Group(ExecutivesB, $"{SidB}-3030", DirectoryGroupScope.Universal, "Executives", StaffA);
+        forest.FailOn = "UniversalGroupsContainingAny";
+
+        var result = Evaluate(forest, Tess, ExecutivesB);
+
+        Assert.Empty(result.Matches);
+        Assert.True(result.Incomplete);
     }
 
     // ----- Fail closed on every read -----
@@ -443,12 +502,13 @@ public class ProtectedGroupMembershipTests
     }
 
     [Fact]
-    public void AnyInChainOfFilter_KeepsThePreviousQueriesDirection()
+    public void UniversalContainsAnyFilter_IsLimitedToUniversalGroups()
     {
-        // Subject = the candidates, match = their memberOf chain - the previous check's shape.
+        // The GC also holds its own domain's non-universal groups in full; the result is limited
+        // to universal groups because that is the only scope the GC is complete for forest-wide.
         Assert.Equal(
-            "(&(|(distinguishedName=CN=T,DC=a)(distinguishedName=CN=P,DC=a))(memberOf:1.2.840.113556.1.4.1941:=CN=G,DC=b))",
-            ProtectedGroupMembership.AnyInChainOfFilter(["CN=T,DC=a", "CN=P,DC=a"], "CN=G,DC=b"));
+            "(&(groupType:1.2.840.113556.1.4.803:=8)(|(member:1.2.840.113556.1.4.1941:=CN=A,DC=a)))",
+            ProtectedGroupMembership.UniversalContainsAnyFilter(["CN=A,DC=a"]));
     }
 
     [Fact]
@@ -514,8 +574,8 @@ public class ProtectedGroupMembershipTests
     [InlineData("public DirectoryTarget ReadTarget(", "public string ResolveDomainServer(", "= server,")]
     [InlineData("public IReadOnlyList<DirectoryGroup> FindGroups(", "public IReadOnlyList<DirectoryGroup> GroupsContainingAny(", "= target,")]
     [InlineData("public IReadOnlyList<DirectoryGroup> GroupsContainingAny(", "public bool DomainLocalGroupContainsAny(", "= server,")]
-    [InlineData("public bool DomainLocalGroupContainsAny(", "public bool AnyIsInChainOf(", "= server,")]
-    [InlineData("public bool AnyIsInChainOf(", "private string GlobalCatalog(", "= server,")]
+    [InlineData("public bool DomainLocalGroupContainsAny(", "public IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(", "= server,")]
+    [InlineData("public IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(", "private string GlobalCatalog(", "= catalog,")]
     public void EveryRead_CarriesTheServerItWasGiven(string signature, string next, string serverAssignment)
     {
         var body = MethodBody(DirectoryCode(), signature, next);
@@ -531,6 +591,12 @@ public class ProtectedGroupMembershipTests
             "public IReadOnlyList<DirectoryGroup> FindGroups(", "public IReadOnlyList<DirectoryGroup> GroupsContainingAny(");
 
         Assert.Contains("var target = server ?? GlobalCatalog();", body, StringComparison.Ordinal);
+
+        // aud-a3c: the universal ancestry is only complete on a global catalog.
+        var universal = MethodBody(DirectoryCode(),
+            "public IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(", "private string GlobalCatalog(");
+        Assert.Contains("var catalog = GlobalCatalog();", universal, StringComparison.Ordinal);
+        Assert.Contains("ProtectedGroupMembership.UniversalContainsAnyFilter(batch)", universal, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -698,11 +764,28 @@ public class ProtectedGroupMembershipTests
             return false;
         }
 
-        public bool AnyIsInChainOf(IReadOnlyList<string> candidateDns, string groupDn, string server)
+        public IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(IReadOnlyList<string> memberDns)
         {
-            Record($"AnyIsInChainOf {server}", nameof(AnyIsInChainOf));
-            var ancestors = GroupsContainingAny(candidateDns, server);
-            return ancestors.Any(a => string.Equals(a.DistinguishedName, groupDn, StringComparison.OrdinalIgnoreCase));
+            // The global catalog: every universal group's links, in every domain, and no other
+            // group's.
+            Record("UniversalGroupsContainingAny forest", nameof(UniversalGroupsContainingAny));
+            var reached = new HashSet<string>(memberDns, StringComparer.OrdinalIgnoreCase);
+            var found = new List<Entry>();
+            bool grew;
+            do
+            {
+                grew = false;
+                foreach (var g in GroupsIn(null).Where(g => g.Scope == DirectoryGroupScope.Universal && !reached.Contains(g.Dn)))
+                {
+                    if (_members[g.Dn].Any(reached.Contains))
+                    {
+                        reached.Add(g.Dn);
+                        found.Add(g);
+                        grew = true;
+                    }
+                }
+            } while (grew);
+            return found.Select(AsGroup).ToList();
         }
     }
 }

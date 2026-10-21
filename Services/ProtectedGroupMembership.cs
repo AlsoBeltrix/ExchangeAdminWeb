@@ -131,16 +131,16 @@ internal interface IProtectedGroupDirectory
     IReadOnlyList<DirectoryGroup> GroupsContainingAny(IReadOnlyList<string> memberDns, string server);
 
     /// <summary>
+    /// Every UNIVERSAL group in the forest whose member chain, as a global catalog holds it,
+    /// reaches any of <paramref name="memberDns"/>.
+    /// </summary>
+    IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(IReadOnlyList<string> memberDns);
+
+    /// <summary>
     /// Whether the domain-local group at <paramref name="groupDn"/>, through the nesting its own
     /// domain holds, has any of <paramref name="memberDns"/> as a member.
     /// </summary>
     bool DomainLocalGroupContainsAny(string groupDn, IReadOnlyList<string> memberDns, string server);
-
-    /// <summary>
-    /// The pre-existing check: whether any of <paramref name="candidateDns"/> has
-    /// <paramref name="groupDn"/> in its memberOf chain, as <paramref name="server"/> holds it.
-    /// </summary>
-    bool AnyIsInChainOf(IReadOnlyList<string> candidateDns, string groupDn, string server);
 }
 
 /// <summary>
@@ -162,6 +162,10 @@ internal interface IProtectedGroupDirectory
 /// 3. The resolver threw away the domain half of <c>DOMAIN\Name</c> and passed a DN through
 ///    without reading it. Entries are now bound to exactly one group by SID, in the domain they
 ///    name.
+///
+/// And one the record did not list, aud-a3c: a universal group's member links are on its own
+/// domain's DCs and the global catalogs, so the target's domain sees them only when the DC that
+/// answered happens to be a GC. Universal ancestry is read from the global catalog.
 ///
 /// Fail closed throughout: a read that fails, a lookup that matches nothing or more than one
 /// object, a domain that cannot be determined - each marks the answer incomplete, and the caller
@@ -199,7 +203,7 @@ internal static class ProtectedGroupMembership
         }
 
         List<Seed>? seeds;
-        IReadOnlyList<DirectoryGroup> ancestors;
+        List<DirectoryGroup> ancestors;
         try
         {
             seeds = ReadSeeds(targetDn, targetServer, directory, logger);
@@ -207,7 +211,19 @@ internal static class ProtectedGroupMembership
                 return new(matches, true);
 
             ancestors = directory.GroupsContainingAny(
-                seeds.Select(s => s.DistinguishedName).ToList(), targetServer);
+                seeds.Select(s => s.DistinguishedName).ToList(), targetServer).ToList();
+
+            // aud-a3c. A universal group's member links are held by its own domain and by every
+            // global catalog - by the target's DC only if that DC happens to be a GC. So the
+            // universal ancestry is read from the GC, starting from everything the target's
+            // domain already reported. Universal groups nest only inside universal and
+            // domain-local groups, so after this every universal ancestor is known, and the
+            // domain-local query below starts from them too.
+            ancestors.AddRange(directory.UniversalGroupsContainingAny(
+                seeds.Select(s => s.DistinguishedName)
+                    .Concat(ancestors.Select(a => a.DistinguishedName))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()));
         }
         catch (Exception ex)
         {
@@ -228,7 +244,6 @@ internal static class ProtectedGroupMembership
             .Concat(ancestors.Select(a => a.DistinguishedName))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var seedDns = seeds.Select(s => s.DistinguishedName).ToList();
 
         var incomplete = false;
         foreach (var raw in entries)
@@ -262,26 +277,17 @@ internal static class ProtectedGroupMembership
                     continue;
                 }
 
-                if (group.Scope == DirectoryGroupScope.DomainLocal)
-                {
-                    // Hole 1. Asked in the GROUP's domain, never the target's: that is the only
-                    // place its member links exist.
-                    if (directory.DomainLocalGroupContainsAny(group.DistinguishedName, memberDns, groupServer))
-                        matches.Add($"Group:{raw}");
-                    continue;
-                }
-
-                // A global group of another domain cannot contain the target, and a group of the
-                // target's own domain that is not among the ancestors is not linked to it. What
-                // is left is a universal group of another domain, which keeps the query the
-                // previous check ran (now with the primary group added) so no coverage it had is
-                // lost. That query's own blind spot is aud-a3c.
-                if (group.Scope == DirectoryGroupScope.Universal
-                    && !string.Equals(groupServer, targetServer, StringComparison.OrdinalIgnoreCase)
-                    && directory.AnyIsInChainOf(seedDns, group.DistinguishedName, targetServer))
+                // Hole 1. A domain-local group is asked in the GROUP's domain, never the target's:
+                // that is the only place its member links exist.
+                if (group.Scope == DirectoryGroupScope.DomainLocal
+                    && directory.DomainLocalGroupContainsAny(group.DistinguishedName, memberDns, groupServer))
                 {
                     matches.Add($"Group:{raw}");
                 }
+
+                // Anything else not among the ancestors does not contain the target: every
+                // universal ancestor came from the global catalog (aud-a3c), every global one
+                // from the target's own domain - the only domain whose global groups can hold it.
             }
             catch (Exception ex)
             {
@@ -455,10 +461,14 @@ internal static class ProtectedGroupMembership
     internal static string GroupContainsAnyFilter(string groupDn, IEnumerable<string> memberDns)
         => $"(&{ExactDnFilter(groupDn)}{ContainsAnyFilter(memberDns)})";
 
-    /// <summary>Any of the candidates whose memberOf chain reaches the group.</summary>
-    internal static string AnyInChainOfFilter(IEnumerable<string> candidateDns, string groupDn)
-        => "(&(|" + string.Concat(candidateDns.Select(ExactDnFilter)) + ")"
-           + $"(memberOf:{InChainRule}:={ProtectedPrincipalService.EscapeLdapFilter(groupDn)}))";
+    internal const string BitAndRule = "1.2.840.113556.1.4.803";
+
+    /// <summary><c>ADS_GROUP_TYPE_UNIVERSAL_GROUP</c>.</summary>
+    internal const int UniversalGroupTypeFlag = 0x8;
+
+    /// <summary>Universal groups whose member chain reaches any of the DNs.</summary>
+    internal static string UniversalContainsAnyFilter(IEnumerable<string> memberDns)
+        => $"(&(groupType:{BitAndRule}:={UniversalGroupTypeFlag}){ContainsAnyFilter(memberDns)})";
 
     /// <summary>The attribute filter for a group lookup.</summary>
     internal static string GroupLookupFilter(GroupLookupKey key, string value)
