@@ -191,6 +191,64 @@ public class ConfigDbMaintenanceTests
     }
 
     [Fact]
+    public void Backup_WhenDestinationAppearsAfterPrecheck_ThrowsAndLeavesItUntouched()
+    {
+        // cdt-1: a second run passes the precheck, then the first run's snapshot lands at dest.
+        // The second run must fail without deleting or replacing that snapshot.
+        using var temp = new TempDir();
+        var source = temp.DbPath;
+        var dest = Path.Combine(temp.Path, "backup.db");
+        CreateSmallDatabase(source);
+        var otherRunsBytes = Encoding.ASCII.GetBytes("another run's verified snapshot");
+
+        Assert.Throws<ConfigDbMaintenanceException>(() =>
+            ConfigDbMaintenance.Backup(source, dest, d => File.WriteAllBytes(d, otherRunsBytes)));
+
+        Assert.True(File.Exists(dest), "the file another run wrote must survive");
+        Assert.Equal(otherRunsBytes, File.ReadAllBytes(dest));
+        Assert.Empty(TempLeftovers(temp.Path));
+    }
+
+    [Fact]
+    public void Backup_OfCorruptSource_LeavesNoTempFile()
+    {
+        using var temp = new TempDir();
+        var source = temp.DbPath;
+        var dest = Path.Combine(temp.Path, "backup.db");
+        ConfigDbTestFiles.CreateCorrupt(source);
+
+        Assert.ThrowsAny<Exception>(() => ConfigDbMaintenance.Backup(source, dest));
+
+        Assert.Empty(TempLeftovers(temp.Path));
+        Assert.False(File.Exists(dest));
+    }
+
+    [Fact]
+    public void Backup_OnSuccess_AddsOnlyTheDestination()
+    {
+        using var temp = new TempDir();
+        var source = temp.DbPath;
+        var dest = Path.Combine(temp.Path, "backup.db");
+        CreateSmallDatabase(source);
+        var before = Directory.GetFileSystemEntries(temp.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        ConfigDbMaintenance.Backup(source, dest);
+
+        var added = Directory.GetFileSystemEntries(temp.Path).Where(p => !before.Contains(p)).ToList();
+        Assert.Equal([Path.GetFullPath(dest)], added);
+    }
+
+    private static void CreateSmallDatabase(string path)
+    {
+        using var connection = ConfigDbTestFiles.Open(path);
+        ConfigDbTestFiles.Exec(connection, "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);");
+        ConfigDbTestFiles.Exec(connection, "INSERT INTO t (v) VALUES ('a');");
+    }
+
+    private static string[] TempLeftovers(string directory) =>
+        Directory.GetFileSystemEntries(directory, "*.tmp-*");
+
+    [Fact]
     public void Backup_WhenSourceMissing_Throws()
     {
         using var temp = new TempDir();

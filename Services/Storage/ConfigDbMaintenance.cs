@@ -43,10 +43,17 @@ public static class ConfigDbMaintenance
     /// <summary>
     /// Writes a consistent copy of <paramref name="sourcePath"/> to <paramref name="destPath"/> with
     /// <c>VACUUM INTO</c> and integrity-checks the copy. Returns the full destination path. Throws on
-    /// any failure, and on a failure after the copy started no file is left at the destination: a
-    /// file there must only ever mean a verified snapshot.
+    /// any failure, and a failed call never leaves or removes a file at the destination: a file
+    /// there must only ever mean a verified snapshot.
     /// </summary>
-    public static string Backup(string sourcePath, string destPath)
+    public static string Backup(string sourcePath, string destPath) =>
+        Backup(sourcePath, destPath, afterPrecheck: null);
+
+    /// <summary>
+    /// Test seam: <paramref name="afterPrecheck"/> runs with the full destination path between
+    /// the existence precheck and the copy, so a racing run can be simulated deterministically.
+    /// </summary>
+    internal static string Backup(string sourcePath, string destPath, Action<string>? afterPrecheck)
     {
         var source = Path.GetFullPath(sourcePath);
         var dest = Path.GetFullPath(destPath);
@@ -62,6 +69,13 @@ public static class ConfigDbMaintenance
                 throw new ConfigDbMaintenanceException($"Destination already exists, refusing to overwrite: {existing}");
         }
 
+        afterPrecheck?.Invoke(dest);
+
+        // The precheck alone cannot stop a second run racing past it (cdt-1). So the copy is
+        // written to a temp name only this call knows, verified there, then moved onto dest
+        // without overwrite. Failure cleanup deletes only that temp, never dest: a file at dest
+        // was either moved there by this call on success or belongs to someone else.
+        var temp = dest + ".tmp-" + Guid.NewGuid().ToString("N");
         try
         {
             // Read-only, so closing this connection can never checkpoint a live WAL into the
@@ -69,22 +83,33 @@ public static class ConfigDbMaintenance
             using (var connection = OpenReadOnly(source))
             {
                 using var vacuum = connection.CreateCommand();
-                vacuum.CommandText = "VACUUM INTO '" + dest.Replace("'", "''", StringComparison.Ordinal) + "';";
+                vacuum.CommandText = "VACUUM INTO '" + temp.Replace("'", "''", StringComparison.Ordinal) + "';";
                 vacuum.ExecuteNonQuery();
             }
 
-            var integrity = RunIntegrityCheck(dest);
+            var integrity = RunIntegrityCheck(temp);
             if (!IsOk(integrity))
             {
                 throw new ConfigDbMaintenanceException(
                     $"Backup copy failed integrity check: {Summarize(integrity)}. The source at {source} may be corrupt.");
             }
 
+            // Never overwrite: if dest appeared since the precheck it is another run's file.
+            try
+            {
+                File.Move(temp, dest, overwrite: false);
+            }
+            catch (IOException ex) when (File.Exists(dest) || Directory.Exists(dest))
+            {
+                throw new ConfigDbMaintenanceException(
+                    $"Destination appeared during backup, left untouched: {dest}", ex);
+            }
+
             return dest;
         }
         catch
         {
-            DeletePartial(dest);
+            DeletePartial(temp);
             throw;
         }
     }
@@ -201,9 +226,9 @@ public static class ConfigDbMaintenance
     private static string[] SidecarSet(string dest) =>
         [dest, dest + "-journal", dest + "-wal", dest + "-shm"];
 
-    private static void DeletePartial(string dest)
+    private static void DeletePartial(string temp)
     {
-        foreach (var path in SidecarSet(dest))
+        foreach (var path in SidecarSet(temp))
         {
             try
             {

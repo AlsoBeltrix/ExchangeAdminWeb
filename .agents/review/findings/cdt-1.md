@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM. Needs two `db backup` runs racing on one destination, but the file at
 the destination is the deploy's only rollback snapshot and S2's PowerShell will trust exit 0.
-**Status**: Admitted; fix pending
+**Status**: Fixed on master; awaiting verdict
 **Branch**: -- (direct-to-main)
 **Commit**: `<pending>`
 **Reviewer**: codex / configured default (gpt-5.5-dzs via gateway; id not emitted in envelope) / xhigh / standard, over `6960b09..86970a5`, 2026-10-21
@@ -29,4 +29,24 @@ appeared" and leave it. Same shape `Copy-SqliteDbFile` already uses on the Power
 
 ## Guard proof
 
-`<pending>`
+Fix as the Approach: `Backup` copies to `<dest>.tmp-<guid>`, integrity-checks the temp, then
+`File.Move(temp, dest, overwrite: false)`; a move that fails because dest exists throws
+`ConfigDbMaintenanceException` ("Destination appeared during backup, left untouched"). The
+catch deletes only the temp and its sidecars. Precheck kept. Test seam: internal overload
+`Backup(source, dest, Action<string>? afterPrecheck)`, run between precheck and copy.
+
+| Test (`ExchangeAdminWeb.Tests/ConfigDbMaintenanceTests.cs`) | Pins |
+| --- | --- |
+| `Backup_WhenDestinationAppearsAfterPrecheck_ThrowsAndLeavesItUntouched` | Hook writes known bytes to dest after the precheck; Backup throws; dest still has those exact bytes; no `*.tmp-*` left |
+| `Backup_OfCorruptSource_LeavesNoTempFile` | Integrity failure leaves no `*.tmp-*` and no dest |
+| `Backup_OnSuccess_AddsOnlyTheDestination` | A good backup adds exactly dest to the directory, nothing else |
+
+Mutations at the call site, each applied to `Services/Storage/ConfigDbMaintenance.cs`
+(original md5 `AD1D01EB3824D588F846A918B002C77F`, pre-comment), rebuilt, run, restored,
+touched, restored md5 re-confirmed equal to the original:
+
+| Mutation | md5 after mutation | Failed |
+| --- | --- | --- |
+| M1: catch `DeletePartial(temp)` -> `DeletePartial(dest)` (old behaviour) | `7559CA913999E30B2CF0A7CE09A42D1E` | race test; corrupt-source no-temp test |
+| M2: `overwrite: false` -> `overwrite: true` | `F3D3B03A73CA31C69185DB5673297543` | race test |
+| M3: catch `DeletePartial(temp)` removed | `1C4B3625B78F9BFE8E0EA8CF8D18464B` | corrupt-source no-temp test; race test |
