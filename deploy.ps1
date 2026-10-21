@@ -575,6 +575,13 @@ try {
             Write-Success "App pool $AppPoolName confirmed stopped"
         }
 
+        # cdt-16: the pool restarts only once the mirror is known to be complete. robocopy /MIR failing
+        # part-way leaves a mix of the old and new builds in the publish folder, and the restart in the
+        # finally used to serve it. A restart that throws is recorded and reported, never thrown from
+        # the finally, where it would replace the error already propagating (Known Failure Class 1);
+        # the check after the finally makes it its own failure when nothing else failed.
+        $mirrorSucceeded = $false
+        $poolStartError = $null
         $deploymentReadyForManifest = $false
         try {
             Write-Step "Deploying files (robocopy /MIR)"
@@ -586,7 +593,8 @@ try {
                 '/NFL', '/NDL', '/NJH', '/NJS', '/R:2', '/W:1'
             )
             & robocopy @robocopyArgs
-            if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
+            if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE, so $PublishPath may now hold a mix of the old and new builds. App pool $AppPoolName was deliberately LEFT STOPPED: starting it would serve that mix. The mirror does not touch the config database ($(if ($dbBackup) { "verified pre-deploy backup: $dbBackup" } else { 'no pre-deploy backup was taken: there was no database yet' })). The staging publish $StagingPath is removed when this script exits, so fix the cause and re-run this deploy from $ProjectRoot; it publishes afresh and starts the pool." }
+            $mirrorSucceeded = $true
             Write-Success "Files deployed"
 
             # Config reconciliation
@@ -636,15 +644,29 @@ try {
             Write-Success "Configuration reconciled"
             $deploymentReadyForManifest = $true
         } finally {
-            Write-Step "Starting app pool"
-            Start-AppPoolWithRetry -Name $AppPoolName
-            Write-Success "App pool started"
-            if ($deploymentReadyForManifest) {
-                Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+            if ($mirrorSucceeded) {
+                Write-Step "Starting app pool"
+                # Recorded, not thrown: a throw here would replace whatever is propagating (cdt-16).
+                try {
+                    Start-AppPoolWithRetry -Name $AppPoolName
+                    Write-Success "App pool started"
+                } catch {
+                    $poolStartError = $_.Exception.Message
+                    Write-Host "  X  App pool $AppPoolName did not start: $poolStartError" -ForegroundColor Red
+                }
+                if ($deploymentReadyForManifest) {
+                    Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+                }
+            } else {
+                Write-Warn "App pool $AppPoolName is NOT being restarted: the file mirror did not complete, so the pool stays stopped."
             }
             # Staging contains the dev appsettings.json (real environment values).
             # Clean it on failure paths too, not only after a successful deploy.
             Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # Reached only when the try body succeeded: the deploy is complete and the application is down.
+        if ($poolStartError) {
+            throw "The files and configuration are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand."
         }
 
         # --- Post-deploy config drift check (incident fix #5) ---
@@ -838,6 +860,13 @@ try {
             Write-Success "App pool $AppPoolName confirmed stopped"
         }
 
+        # cdt-16: the pool restarts only once the mirror is known to be complete. robocopy /MIR failing
+        # part-way leaves a mix of the old and new builds in the publish folder, and the restart in the
+        # finally used to serve it. A restart that throws is recorded and reported, never thrown from
+        # the finally, where it would replace the error already propagating (Known Failure Class 1);
+        # the check after the finally makes it its own failure when nothing else failed.
+        $mirrorSucceeded = $false
+        $poolStartError = $null
         $deploymentReadyForManifest = $false
         try {
             # Deploy files
@@ -850,7 +879,8 @@ try {
                 '/NFL', '/NDL', '/NJH', '/NJS', '/R:2', '/W:1'
             )
             & robocopy @robocopyArgs
-            if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
+            if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE, so $PublishPath may now hold a mix of the old and new builds. App pool $AppPoolName was deliberately LEFT STOPPED: starting it would serve that mix. The mirror does not touch the config database ($(if ($dbBackup) { "verified pre-deploy backup: $dbBackup" } else { 'no pre-deploy backup was taken: there was no database yet' })). The staging publish $StagingPath is removed when this script exits, so fix the cause and re-run this deploy from $ProjectRoot; it publishes afresh and starts the pool." }
+            $mirrorSucceeded = $true
             Write-Success "Files deployed"
 
             # Generate appsettings.json
@@ -920,15 +950,29 @@ try {
             }
             $deploymentReadyForManifest = $true
         } finally {
-            Write-Step "Starting app pool"
-            Start-AppPoolWithRetry -Name $AppPoolName
-            Write-Success "App pool started"
-            if ($deploymentReadyForManifest) {
-                Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+            if ($mirrorSucceeded) {
+                Write-Step "Starting app pool"
+                # Recorded, not thrown: a throw here would replace whatever is propagating (cdt-16).
+                try {
+                    Start-AppPoolWithRetry -Name $AppPoolName
+                    Write-Success "App pool started"
+                } catch {
+                    $poolStartError = $_.Exception.Message
+                    Write-Host "  X  App pool $AppPoolName did not start: $poolStartError" -ForegroundColor Red
+                }
+                if ($deploymentReadyForManifest) {
+                    Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+                }
+            } else {
+                Write-Warn "App pool $AppPoolName is NOT being restarted: the file mirror did not complete, so the pool stays stopped."
             }
             # Staging contains the checkout's published appsettings.json (real environment values), not
             # the generated one; clean on failure paths too.
             Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # Reached only when the try body succeeded: the deploy is complete and the application is down.
+        if ($poolStartError) {
+            throw "The files and configuration are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand."
         }
 
         # --- Post-deploy live DB health check (cdt-12) ---

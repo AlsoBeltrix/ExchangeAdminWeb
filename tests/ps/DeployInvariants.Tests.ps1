@@ -694,6 +694,156 @@ Describe 'deploy.ps1' {
         $gates[0].ElseClause.Statements[0].Extent.Text | Should -BeLike 'Write-Warn "POST-DEPLOY CHECK: no config DB at*'
     }
 
+    It 'restarts the pool only after a complete mirror, and a failed restart never replaces the real error (cdt-16, AST)' {
+        # robocopy /MIR failing part-way leaves a mix of builds in the publish folder; the finally
+        # restarted the pool over it anyway. And a restart that threw inside the finally replaced
+        # whatever was propagating.
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        $branches = [ordered]@{ upgrade = $modeIf.Clauses[0].Item2; '-Force' = $modeIf.ElseClause }
+        foreach ($branchName in $branches.Keys) {
+            $statements = @($branches[$branchName].Statements)
+            $restartIndexes = @(for ($i = 0; $i -lt $statements.Count; $i++) {
+                    $st = $statements[$i]
+                    if ($st -is [System.Management.Automation.Language.TryStatementAst] -and $null -ne $st.Finally -and
+                        @($st.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-AppPoolWithRetry' }, $true)).Count -gt 0) { $i }
+                })
+            $restartIndexes.Count | Should -Be 1 -Because "the $branchName branch restarts the pool in one finally"
+            $restartIndex = $restartIndexes[0]
+            $restart = $statements[$restartIndex]
+
+            $flagSetters = @{}
+            foreach ($i in 0..($restartIndex - 1)) {
+                if ($statements[$i] -is [System.Management.Automation.Language.AssignmentStatementAst]) { $flagSetters[$statements[$i].Extent.Text] = $i }
+            }
+            $flagSetters.ContainsKey('$mirrorSucceeded = $false') | Should -BeTrue -Because "the $branchName branch starts with the mirror not done"
+            $flagSetters.ContainsKey('$poolStartError = $null') | Should -BeTrue
+
+            $body = @($restart.Body.Statements)
+            $robocopyAt = -1; $checkAt = -1; $setAt = -1
+            for ($i = 0; $i -lt $body.Count; $i++) {
+                if ($body[$i].Extent.Text -like '& robocopy*') { $robocopyAt = $i }
+                if ($body[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $body[$i].Clauses[0].Item1.Extent.Text -eq '$LASTEXITCODE -ge 8') { $checkAt = $i }
+                if ($body[$i].Extent.Text -eq '$mirrorSucceeded = $true') { $setAt = $i }
+            }
+            $robocopyAt | Should -BeGreaterOrEqual 0
+            $checkAt | Should -Be ($robocopyAt + 1) -Because 'the exit code is checked right after the mirror'
+            $setAt | Should -Be ($checkAt + 1) -Because 'the mirror counts as done only once its exit code has been checked'
+            @($branches[$branchName].FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Extent.Text -eq '$mirrorSucceeded = $true' }, $true)).Count | Should -Be 1
+            $failure = $body[$checkAt].Clauses[0].Item2.Statements[0]
+            $failure | Should -BeOfType ([System.Management.Automation.Language.ThrowStatementAst])
+            foreach ($fact in 'LEFT STOPPED', '$PublishPath', '$StagingPath', '$ProjectRoot', '$dbBackup') {
+                $failure.Extent.Text | Should -Match ([regex]::Escape($fact)) -Because "the mirror failure must say what state it left and what to do ($fact)"
+            }
+
+            $starts = @($restart.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-AppPoolWithRetry' }, $true))
+            $starts.Count | Should -Be 1
+            $gate = $starts[0].Parent
+            while ($null -ne $gate -and -not ($gate -is [System.Management.Automation.Language.IfStatementAst] -and $gate.Clauses[0].Item1.Extent.Text -eq '$mirrorSucceeded')) { $gate = $gate.Parent }
+            $gate | Should -Not -BeNullOrEmpty -Because "the $branchName restart must be conditional on a complete mirror"
+            ($starts[0].Extent.StartOffset -ge $gate.Clauses[0].Item2.Extent.StartOffset -and $starts[0].Extent.EndOffset -le $gate.Clauses[0].Item2.Extent.EndOffset) | Should -BeTrue -Because 'it is in the then-branch'
+            $guard = $starts[0].Parent
+            while ($null -ne $guard -and -not ($guard -is [System.Management.Automation.Language.TryStatementAst])) { $guard = $guard.Parent }
+            [object]::ReferenceEquals($guard, $restart) | Should -BeFalse -Because "the $branchName restart must have its own try inside the finally"
+            $guard.CatchClauses.Count | Should -Be 1
+            $catch = $guard.CatchClauses[0].Body
+            $catch.Extent.Text | Should -Match ([regex]::Escape('$poolStartError = $_.Exception.Message'))
+            @($catch.FindAll({ param($n)
+                        $n -is [System.Management.Automation.Language.ThrowStatementAst] -or
+                        ($n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-Fail') }, $true)).Count |
+                Should -Be 0 -Because 'a throw from the finally would replace the error that is propagating'
+
+            $after = $statements[$restartIndex + 1]
+            $after | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+            $after.Clauses[0].Item1.Extent.Text | Should -BeExactly '$poolStartError' -Because "a failed $branchName restart is its own failure once everything else succeeded"
+            $after.Clauses[0].Item2.Statements[0] | Should -BeOfType ([System.Management.Automation.Language.ThrowStatementAst])
+        }
+    }
+
+    It 'runs each branch''s real mirror-and-restart region: a failed mirror leaves the pool stopped, and the first error wins (cdt-16)' {
+        # The region - the flags, the try/finally and the check after it - is lifted from deploy.ps1
+        # by AST and run with only robocopy, the pool start and the manifest writer stubbed.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-AppSettingsFile') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        function robocopy { $script:cdt16Calls.Add('robocopy'); $global:LASTEXITCODE = $script:cdt16Exit }
+        ${function:Start-AppPoolWithRetry} = { param($Name) $null = $Name; $script:cdt16Calls.Add('start'); if ($script:cdt16StartThrows) { throw 'the pool would not start' } }
+        function Write-DeploymentManifest { $script:cdt16Calls.Add('manifest') }
+
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        $regions = [ordered]@{}
+        foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
+            $statements = @($entry[1].Statements)
+            $tryAt = @(for ($i = 0; $i -lt $statements.Count; $i++) {
+                    if ($statements[$i] -is [System.Management.Automation.Language.TryStatementAst] -and $null -ne $statements[$i].Finally -and
+                        $statements[$i].Finally.Extent.Text -match 'Start-AppPoolWithRetry') { $i }
+                })[0]
+            $from = $tryAt
+            while ($from -gt 0 -and $statements[$from - 1].Extent.Text -match '^\$(mirrorSucceeded|poolStartError|deploymentReadyForManifest) = ') { $from-- }
+            $to = $tryAt
+            if ($statements[$to + 1].Extent.Text -match '^if \(\$poolStartError\)') { $to++ }
+            $regions[$entry[0]] = ($statements[$from..$to] | ForEach-Object { $_.Extent.Text }) -join "`n"
+        }
+
+        $run = {
+            param([string]$Branch, [int]$Exit, [bool]$FailAfterMirror, [bool]$StartThrows)
+            $script:cdt16Calls = New-Object System.Collections.Generic.List[string]
+            $script:cdt16Exit = $Exit
+            $script:cdt16StartThrows = $StartThrows
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt16_' + [guid]::NewGuid().ToString('N'))
+            $StagingPath = Join-Path $root 'staging'
+            $PublishPath = Join-Path $root 'publish'
+            $ProjectRoot = Join-Path $root 'source'
+            New-Item -ItemType Directory -Path $StagingPath, $PublishPath, $ProjectRoot -Force | Out-Null
+            # Read only by the lifted region.
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name dbBackup -Value (Join-Path $root 'backup\exchangeadmin.db')
+            Set-Variable -Name configStorePathSetting -Value $null
+            $configPath = Join-Path $PublishPath 'appsettings.json'
+            if ($Branch -eq 'upgrade') {
+                $json = '{ "AllowedHosts": "*" }'
+                if ($FailAfterMirror) { $json = '{ "AllowedHosts": ' }
+                Set-Content -LiteralPath $configPath -Value $json -Encoding ascii
+            } elseif ($FailAfterMirror) {
+                $configPath = Join-Path $root 'missing-dir\appsettings.json'
+            }
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try {
+                . ([scriptblock]::Create($regions[$Branch]))
+            } catch {
+                $thrown = $_.Exception.Message
+            } finally {
+                $stagingLeft = Test-Path -LiteralPath $StagingPath
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt16Calls -join ','); StagingLeft = $stagingLeft; Staging = $StagingPath }
+        }
+
+        foreach ($branch in $regions.Keys) {
+            $failedMirror = & $run $branch 8 $false $false 6>$null
+            $failedMirror.Calls | Should -BeExactly 'robocopy' -Because "a failed $branch mirror must not restart the pool over a partial publish"
+            $failedMirror.Thrown | Should -Match 'robocopy failed with exit code 8'
+            $failedMirror.Thrown | Should -Match 'LEFT STOPPED'
+            $failedMirror.Thrown | Should -Match ([regex]::Escape($failedMirror.Staging))
+            $failedMirror.StagingLeft | Should -BeFalse
+
+            $both = & $run $branch 1 $true $true 6>$null
+            $both.Calls | Should -BeExactly 'robocopy,start'
+            $both.Thrown | Should -Not -BeNullOrEmpty
+            $both.Thrown | Should -Not -Match 'pool would not start|did not start' -Because "the $branch step that failed first must be the error the caller sees"
+
+            $restartOnly = & $run $branch 1 $false $true 6>$null
+            $restartOnly.Calls | Should -BeExactly 'robocopy,start,manifest' -Because 'the deploy is complete, so the manifest is still written'
+            $restartOnly.Thrown | Should -Match ([regex]::Escape('did not start (the pool would not start)'))
+            $restartOnly.Thrown | Should -Match 'DOWN'
+
+            $clean = & $run $branch 1 $false $false 6>$null
+            $clean.Thrown | Should -BeNullOrEmpty
+            $clean.Calls | Should -BeExactly 'robocopy,start,manifest'
+            $clean.StagingLeft | Should -BeFalse
+        }
+    }
+
     It 'writes and reports the manifest even when git cannot answer (cdt-14)' {
         # Under PowerShell 7 a failed git leaves $gitCommit $null (5.1 maps it to "unknown"), and
         # the writer - which runs in the finally that restarts the pool - called Substring on it.
