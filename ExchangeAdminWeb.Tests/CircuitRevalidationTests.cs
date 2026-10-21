@@ -263,6 +263,19 @@ public class CircuitRevalidationTests
     }
 
     [Fact]
+    public async Task AServicerGrant_IsConsultedLikeAnyOther()
+    {
+        // The protected-principal servicer gate reads these as SIDs only (aud-a29f), so what it
+        // honours is exactly what is compared here.
+        using var h = new Harness();
+        h.Grant(ProtectedPrincipalServicerService.SectionKeyFor("BlockedSenders"), SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+
+        Assert.False(await h.Provider().ValidateAsync(Operator(SectionGroupSid, DomainUsersSid), "Interval", Ct));
+        Assert.Equal(CircuitRevocationReason.MembershipChanged, h.Revocation.Reason);
+    }
+
+    [Fact]
     public void TheInventoryHoldsOnlyUsableDomainSids()
     {
         using var h = new Harness(adminGroups: ["S-1-5-32-544", NamedAdminGroup]);

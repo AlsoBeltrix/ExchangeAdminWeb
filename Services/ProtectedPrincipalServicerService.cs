@@ -89,9 +89,10 @@ public class ProtectedPrincipalServicerService
     /// <paramref name="moduleId"/>.
     /// </summary>
     /// <remarks>
-    /// Fail-closed throughout. No configured group, no principal, an unreadable store, or any
-    /// exception all deny - a servicer capability that defaults on is worse than none, because the
-    /// protection it overrides is the app's strongest control.
+    /// Fail-closed throughout. No configured group, no principal, an unreadable store, a stored
+    /// value that is not a usable group SID, or any exception all deny - a servicer capability that
+    /// defaults on is worse than none, because the protection it overrides is the app's strongest
+    /// control.
     /// </remarks>
     public ServicerDecision Evaluate(ClaimsPrincipal? user, string moduleId)
     {
@@ -108,11 +109,22 @@ public class ProtectedPrincipalServicerService
             if (groups is null || groups.Length == 0)
                 return ServicerDecision.Deny();
 
-            foreach (var group in groups)
+            // SIDs only, the way every other gate over this store reads it (review finding sid-1).
+            // IsInRole resolves NAMES as well as SIDs, so a name a halted SID migration left here
+            // would authorize servicing by name - both same-named groups in two domains - and a
+            // well-known SID such as S-1-1-0 would make every operator a servicer. Neither is a
+            // group circuit revalidation can compare either, so a servicer authorized through one
+            // was never re-checked (aud-a29f). Skipped values deny, like an empty key.
+            var usable = GroupMembershipChecker.UsableSidsOnly(groups);
+            if (usable.Count < groups.Length)
             {
-                if (string.IsNullOrWhiteSpace(group))
-                    continue;
+                _logger.LogWarning(
+                    "Servicer key for {Module}: {Skipped} of {Total} configured value(s) are not usable group SIDs and were ignored",
+                    moduleId, groups.Length - usable.Count, groups.Length);
+            }
 
+            foreach (var group in usable)
+            {
                 // IsInRole against a stored SID, matching how every other section-access check
                 // compares. The Windows token carries group SIDs, so this needs no directory call.
                 if (user.IsInRole(group))
