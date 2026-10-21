@@ -619,6 +619,99 @@ public class CircuitRevalidationTests
         Assert.True(gate.Order > new UsageSessionCircuitHandler(new UsageSession()).Order);
     }
 
+    // ------------------------------------------------------------------ the off-switch
+
+    [Fact]
+    public async Task DisabledRevalidation_NeverLooksUpAndNeverRevokes()
+    {
+        using var h = new Harness(enabled: false);
+        h.Grant("MailboxPermissions", SectionGroupSid);
+
+        // Enabled, this answer would revoke the circuit at once.
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+        using var provider = h.Provider();
+        var principal = Operator(SectionGroupSid);
+        ((IHostEnvironmentAuthenticationStateProvider)provider).SetAuthenticationState(
+            Task.FromResult(new AuthenticationState(principal)));
+
+        Assert.True(await provider.ValidateAsync(principal, "Interval", Ct));
+        await provider.CheckAtCircuitOpenAsync();
+
+        Assert.False(h.Revocation.IsRevoked);
+        Assert.Same(principal, (await provider.GetAuthenticationStateAsync()).User);
+        _ = h.Directory.DidNotReceive().GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+        h.Directory.DidNotReceiveWithAnyArgs().TranslateGroupName(default!);
+        Assert.Empty(h.AuditEvents());
+    }
+
+    [Fact]
+    public void DisabledRevalidation_IsReportedAtStartupWithOneWarningAndOneAuditLine()
+    {
+        using var h = new Harness(enabled: false);
+        var log = new WarningLog();
+
+        Assert.True(MembershipRevalidatingAuthenticationStateProvider.ReportIfDisabled(h.Options, h.Audit, log));
+
+        var warning = Assert.Single(log.Warnings);
+        Assert.Contains("revalidation is disabled by configuration", warning, StringComparison.Ordinal);
+        Assert.Contains("Authentication:RevalidationEnabled", warning, StringComparison.Ordinal);
+
+        // The audit trail shows the gap, in the same action as the revocations it stands in for.
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal("SessionRevalidation", audit.GetProperty("action").GetString());
+        Assert.Equal("Authentication", audit.GetProperty("category").GetString());
+        Assert.Equal("Disabled", audit.GetProperty("reason").GetString());
+        Assert.Equal("Startup", audit.GetProperty("trigger").GetString());
+        Assert.Equal("Failed", audit.GetProperty("result").GetString());
+        Assert.Equal("Authentication:RevalidationEnabled", audit.GetProperty("target").GetString());
+        Assert.Equal("System", audit.GetProperty("user").GetString());
+        Assert.Contains("disabled by configuration", audit.GetProperty("error").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnabledRevalidation_ReportsNothingAtStartup()
+    {
+        using var h = new Harness();
+        var log = new WarningLog();
+
+        Assert.False(MembershipRevalidatingAuthenticationStateProvider.ReportIfDisabled(h.Options, h.Audit, log));
+
+        Assert.Empty(log.Warnings);
+        Assert.Empty(h.AuditEvents());
+    }
+
+    [Fact]
+    public void RevalidationIsOnUnlessSaidOtherwise() =>
+        Assert.True(new CircuitRevalidationOptions(TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(60)).Enabled);
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void TheOffSwitchDefaultsToOn(string? configured) =>
+        Assert.True(CircuitRevalidationSettings.ResolveEnabled(configured));
+
+    [Theory]
+    [InlineData("false", false)]
+    [InlineData("False", false)]
+    [InlineData("FALSE", false)]
+    [InlineData("true", true)]
+    [InlineData(" True ", true)]
+    public void TheOffSwitchReadsTrueAndFalse(string configured, bool expected) =>
+        Assert.Equal(expected, CircuitRevalidationSettings.ResolveEnabled(configured));
+
+    [Theory]
+    [InlineData("no")]
+    [InlineData("0")]
+    [InlineData("off")]
+    public void AnUnreadableOffSwitchIsRefused(string configured)
+    {
+        // Refused rather than guessed: either guess is wrong for someone, and the safe one (on)
+        // would silently ignore an operator who meant to switch it off during an incident.
+        var ex = Assert.Throws<InvalidOperationException>(() => CircuitRevalidationSettings.ResolveEnabled(configured));
+        Assert.Contains("Authentication:RevalidationEnabled", ex.Message, StringComparison.Ordinal);
+    }
+
     // ------------------------------------------------------------------ the interval
 
     [Theory]
@@ -688,6 +781,29 @@ public class CircuitRevalidationTests
         // Negotiate and the group handler are untouched.
         Assert.Contains("AddAuthentication(NegotiateDefaults.AuthenticationScheme) .AddNegotiate()", program, StringComparison.Ordinal);
         Assert.Contains("AddSingleton<IAuthorizationHandler, GroupAuthorizationHandler>()", program, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ProgramCs_ResolvesTheOffSwitchAndReportsItAtStartup()
+    {
+        var program = File.ReadAllText(Path.Combine(RepoRoot(), "Program.cs"));
+
+        Assert.Matches(
+            new Regex(@"revalidationEnabled\s*=\s*CircuitRevalidationSettings\.ResolveEnabled\(\s*builder\.Configuration\[CircuitRevalidationSettings\.EnabledKey\]\s*\)"),
+            program);
+        Assert.Matches(
+            new Regex(@"new CircuitRevalidationOptions\(\s*revalidationInterval,\s*CircuitRevalidationSettings\.LookupTimeout,\s*revalidationEnabled\s*\)"),
+            program);
+
+        // Reported once the app is built - the audit service exists only then - and before it
+        // serves anything, so the gap is on record before the first request it affects.
+        var built = program.IndexOf("builder.Build()", StringComparison.Ordinal);
+        var report = program.IndexOf("MembershipRevalidatingAuthenticationStateProvider.ReportIfDisabled(", StringComparison.Ordinal);
+        var run = program.IndexOf("app.Run()", StringComparison.Ordinal);
+
+        Assert.True(built >= 0 && run > built, "Program.cs no longer builds and runs the app where expected.");
+        Assert.True(report > built && report < run,
+            "The disabled switch must be reported at startup: after builder.Build(), before app.Run().");
     }
 
     [Fact]
@@ -812,6 +928,27 @@ public class CircuitRevalidationTests
         throw new DirectoryNotFoundException("Could not locate the repository root from the test base directory.");
     }
 
+    /// <summary>Records warning texts, so an assertion can say which warning fired and how often.</summary>
+    private sealed class WarningLog : Microsoft.Extensions.Logging.ILogger
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning)
+                Warnings.Add(formatter(state, exception));
+        }
+    }
+
     private sealed class Harness : IDisposable
     {
         private readonly TempDir _temp = new();
@@ -820,7 +957,8 @@ public class CircuitRevalidationTests
             string[]? allowedGroups = null,
             string[]? adminGroups = null,
             TimeSpan? interval = null,
-            TimeSpan? lookupTimeout = null)
+            TimeSpan? lookupTimeout = null,
+            bool enabled = true)
         {
             var settings = new Dictionary<string, string?>
             {
@@ -844,7 +982,7 @@ public class CircuitRevalidationTests
             var log = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
             Audit = new AuditService(log, new OperationTraceService(config, log));
             Options = new CircuitRevalidationOptions(
-                interval ?? TimeSpan.FromMinutes(5), lookupTimeout ?? TimeSpan.FromSeconds(10));
+                interval ?? TimeSpan.FromMinutes(5), lookupTimeout ?? TimeSpan.FromSeconds(10), enabled);
         }
 
         public SectionAccessService SectionAccess { get; }

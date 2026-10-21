@@ -134,12 +134,16 @@ try
     // tab already open. This provider re-derives the consulted group SIDs from the directory when a
     // circuit opens and every Authentication:RevalidationInterval, and the gate makes a revoked
     // circuit refuse everything. Registered AFTER AddInteractiveServerComponents(), which registers
-    // the non-revalidating default. The interval is resolved here so a bad value stops startup.
+    // the non-revalidating default. The interval and the off-switch (Authentication:
+    // RevalidationEnabled) are resolved here so a bad value stops startup.
     TimeSpan revalidationInterval;
+    bool revalidationEnabled;
     try
     {
         revalidationInterval = CircuitRevalidationSettings.ResolveInterval(
             builder.Configuration[CircuitRevalidationSettings.IntervalKey]);
+        revalidationEnabled = CircuitRevalidationSettings.ResolveEnabled(
+            builder.Configuration[CircuitRevalidationSettings.EnabledKey]);
     }
     catch (InvalidOperationException ex)
     {
@@ -148,7 +152,7 @@ try
     }
 
     builder.Services.AddSingleton(new CircuitRevalidationOptions(
-        revalidationInterval, CircuitRevalidationSettings.LookupTimeout));
+        revalidationInterval, CircuitRevalidationSettings.LookupTimeout, revalidationEnabled));
     builder.Services.AddSingleton<IOperatorMembershipDirectory, OperatorMembershipDirectory>();
     builder.Services.AddSingleton<AuthorizationGroupInventory>();
     builder.Services.AddSingleton<CircuitMembershipRevalidator>();
@@ -395,6 +399,14 @@ try
         var sectionAccessSids = app.Services.GetRequiredService<SectionAccessSidMigration>();
         var sidMigrationStatus = sectionAccessSids.Run();
         Log.Information("Section-access SID migration: {Status}", sidMigrationStatus);
+
+        // Circuit revalidation's off-switch (aud-a29b, Authentication:RevalidationEnabled). When it
+        // is off, say so here - one warning and one audit line - before anything is served, so the
+        // period in which no session could be ended is on record. Nothing is written when it is on.
+        var revalidationOptions = app.Services.GetRequiredService<CircuitRevalidationOptions>();
+        var revalidationAudit = app.Services.GetRequiredService<AuditService>();
+        var revalidationLog = app.Services.GetRequiredService<ILogger<MembershipRevalidatingAuthenticationStateProvider>>();
+        MembershipRevalidatingAuthenticationStateProvider.ReportIfDisabled(revalidationOptions, revalidationAudit, revalidationLog);
 
         // One-time repair of the renamed Graph credential key (DelineaSecretId ->
         // GraphDelineaSecretId): moves any value stranded under the old key for Graph modules so

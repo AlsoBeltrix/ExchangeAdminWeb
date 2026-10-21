@@ -23,11 +23,22 @@ namespace ExchangeAdminWeb.Authorization;
 /// behind other circuits' reads included, and a directory that cannot answer in a minute cannot
 /// confirm access - which ends the session (fail closed).
 /// </para>
+/// <para>
+/// <see cref="EnabledKey"/> is the operator's off-switch, added so that a revocation the check gets
+/// wrong - a directory answer arriving in a shape the code did not expect, or an operator whose
+/// access rides a group the read cannot see - can be stopped by configuration and a restart rather
+/// than a code change. Off is never silent: startup logs a warning and writes an audit line (see
+/// <see cref="MembershipRevalidatingAuthenticationStateProvider.ReportIfDisabled"/>). The interval
+/// is still validated when the switch is off, so turning it back on cannot surprise anyone.
+/// </para>
 /// </remarks>
 public static class CircuitRevalidationSettings
 {
     /// <summary>The configuration key; a <see cref="TimeSpan"/> written hh:mm:ss.</summary>
     public const string IntervalKey = "Authentication:RevalidationInterval";
+
+    /// <summary>The off-switch key; true or false, true when absent.</summary>
+    public const string EnabledKey = "Authentication:RevalidationEnabled";
 
     public static readonly TimeSpan DefaultInterval = TimeSpan.FromMinutes(5);
 
@@ -66,11 +77,33 @@ public static class CircuitRevalidationSettings
 
         return interval;
     }
+
+    /// <summary>Whether revalidation runs: true unless <paramref name="configured"/> says false.</summary>
+    /// <remarks>
+    /// Anything other than true or false is refused at startup rather than guessed. Guessing "on"
+    /// would silently ignore an operator who meant to switch it off during an incident; guessing
+    /// "off" would silently drop revocation for everyone.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The value is neither true nor false.</exception>
+    public static bool ResolveEnabled(string? configured)
+    {
+        if (string.IsNullOrWhiteSpace(configured))
+            return true;
+
+        if (!bool.TryParse(configured.Trim(), out var enabled))
+        {
+            throw new InvalidOperationException(
+                $"{EnabledKey} is '{configured}', which is not true or false.");
+        }
+
+        return enabled;
+    }
 }
 
 /// <summary>
 /// The resolved settings, built once at startup. A record rather than the static values so tests
 /// can run the real loop on a short interval; the bounds are enforced where configuration is read,
-/// by <see cref="CircuitRevalidationSettings.ResolveInterval"/>.
+/// by <see cref="CircuitRevalidationSettings.ResolveInterval"/>. <see cref="Enabled"/> defaults to
+/// true so nothing that builds options without it can switch revocation off by omission.
 /// </summary>
-public sealed record CircuitRevalidationOptions(TimeSpan Interval, TimeSpan LookupTimeout);
+public sealed record CircuitRevalidationOptions(TimeSpan Interval, TimeSpan LookupTimeout, bool Enabled = true);

@@ -38,6 +38,10 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     internal const string AuditCategory = "Authentication";
     internal const string TriggerInterval = "Interval";
     internal const string TriggerCircuitOpened = "CircuitOpened";
+    internal const string TriggerStartup = "Startup";
+    internal const string ReasonDisabled = "Disabled";
+    internal const string SystemActor = "System";
+    internal const string SystemAddress = "localhost";
 
     private static readonly Task<AuthenticationState> Anonymous =
         Task.FromResult(new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity())));
@@ -89,6 +93,12 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     /// </remarks>
     internal async Task<bool> ValidateAsync(ClaimsPrincipal user, string trigger, CancellationToken cancellationToken)
     {
+        // The operator's off-switch. The one place both the interval loop and the open check pass
+        // through, so off means no directory read and no revocation on either path. Startup has
+        // already logged and audited that it is off (ReportIfDisabled).
+        if (!_options.Enabled)
+            return true;
+
         if (_revocation.IsRevoked)
             return false;
 
@@ -140,6 +150,48 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
             Revoke(user, MembershipRevalidationResult.LookupFailed($"The access check failed: {ex.Message}"), TriggerCircuitOpened);
             SetAuthenticationState(Anonymous);
         }
+    }
+
+    /// <summary>
+    /// When the off-switch is set, says so once at startup: one warning line and one audit line.
+    /// True when it reported.
+    /// </summary>
+    /// <remarks>
+    /// Revocation that is switched off must not look like revocation that found nothing. The audit
+    /// line uses this provider's own action and category with reason <c>Disabled</c>, so anyone
+    /// reading the trail for ended sessions also finds the period in which none could be ended. It
+    /// is filed Failed so its explanation is kept; the actor is <c>System</c>, as no operator caused
+    /// it. An audit failure is logged and does not stop startup.
+    /// </remarks>
+    internal static bool ReportIfDisabled(CircuitRevalidationOptions options, AuditService audit, ILogger logger)
+    {
+        if (options.Enabled)
+            return false;
+
+        logger.LogWarning(
+            "Revocation revalidation is disabled by configuration ({Key} = false): an operator removed "
+            + "from an AD group, or disabled, keeps their access on any tab already open until it is reloaded",
+            CircuitRevalidationSettings.EnabledKey);
+
+        try
+        {
+            audit.LogModuleAction(
+                SystemActor, SystemAddress, AuditAction, AuditCategory, CircuitRevalidationSettings.EnabledKey,
+                success: false,
+                errorDetail: "Revocation revalidation is disabled by configuration. An operator removed from "
+                    + "an AD group, or disabled, keeps their access on any tab already open until it is reloaded.",
+                extra: new Dictionary<string, object?>
+                {
+                    ["reason"] = ReasonDisabled,
+                    ["trigger"] = TriggerStartup,
+                });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Audit failed for the disabled revocation revalidation");
+        }
+
+        return true;
     }
 
     protected override void Dispose(bool disposing)

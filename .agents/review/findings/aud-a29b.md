@@ -62,8 +62,10 @@ whenever they next reload. What it costs: one directory read per open tab every 
 plus one each time a tab connects. Biggest risk: it fails closed - if the directory cannot be
 read, every open tab ends within one interval, and an operator whose access the directory read
 cannot see (an account outside this forest, or a grant through a domain-local group in a domain
-other than their own) is signed out at every check. Approving it authorises this change to how
-every page authenticates; it changes nothing about who is allowed what.
+other than their own) is signed out at every check. If that happens, the check can be switched
+off in configuration and the app restarted - no code change - and switching it off is always
+logged and audited (added before review). Approving it authorises this change to how every page
+authenticates; it changes nothing about who is allowed what.
 
 **Design.**
 
@@ -143,6 +145,18 @@ A server-rendered page load under a stale Kerberos ticket still renders; the cir
 checked on open. Account expiry and lockout are not checked (lockout would let a password spray
 end an operator's session).
 
+**Addition before review (coordinator, 2026-10-21): an operator off-switch.** Known gaps 1 and 2
+mean a wrong assumption about what PowerShell returns, or an operator whose access rides a
+domain-local group from another domain, ends every affected session at its first check - and
+without a switch the only remedy would be a code change. `Authentication:RevalidationEnabled`
+(true or false; true when absent; anything else refuses startup). When false, the provider stays
+registered but `ValidateAsync` returns valid before any lookup, so neither the interval loop nor
+the open check reads the directory or revokes. Startup then logs one warning ("Revocation
+revalidation is disabled by configuration ...") and writes one audit line: action
+`SessionRevalidation`, category `Authentication`, reason `Disabled`, trigger `Startup`, actor
+`System`, address `localhost`, target the key, result Failed (so its explanation is kept). The
+interval is still validated while the switch is off.
+
 ## Files changed
 
 - `Authorization/CircuitRevalidationSettings.cs` (new) - the key, default, bounds, lookup timeout.
@@ -162,6 +176,11 @@ end an operator's session).
 - `appsettings.json.sample`, `README.md` - the `Authentication:RevalidationInterval` key.
 - `ExchangeAdminWeb.Tests/CircuitRevalidationTests.cs`,
   `ExchangeAdminWeb.Tests/OperatorMembershipDirectoryTests.cs` (new).
+- Off-switch addition (its own commit): `CircuitRevalidationSettings.cs` (`EnabledKey`,
+  `ResolveEnabled`, `CircuitRevalidationOptions.Enabled`),
+  `MembershipRevalidatingAuthenticationStateProvider.cs` (the switch in `ValidateAsync`,
+  `ReportIfDisabled`), `Program.cs` (resolve the key; report at startup), `appsettings.json.sample`,
+  `README.md`, `CircuitRevalidationTests.cs`.
 
 Not touched, on purpose: `ExchangeAdminWeb.csproj` (the base version bump is the supervisor's
 at merge - this is a base-app change), `Modules/ModuleCatalog.cs`, any page under
@@ -252,6 +271,44 @@ Gates, on the final (commented) tree:
 Not run: anything against a live directory (by instruction) and any browser check of the notice
 - see Known gaps.
 
+### Guard proof for the off-switch addition
+
+| Test (`CircuitRevalidationTests`) | Pins |
+| --- | --- |
+| `DisabledRevalidation_NeverLooksUpAndNeverRevokes` | off: with a directory answer that would revoke, the interval path and the open check both stay valid; no membership read, no name translation, no revocation, no audit line, principal unchanged |
+| `DisabledRevalidation_IsReportedAtStartupWithOneWarningAndOneAuditLine` | off: exactly one warning naming the key, exactly one audit line with every field (action, category, reason `Disabled`, trigger `Startup`, result, target, actor, detail) |
+| `EnabledRevalidation_ReportsNothingAtStartup` | on: no warning, no audit line |
+| `RevalidationIsOnUnlessSaidOtherwise` | options built without the flag are on |
+| `TheOffSwitchDefaultsToOn` (3), `TheOffSwitchReadsTrueAndFalse` (5), `AnUnreadableOffSwitchIsRefused` (3) | the key: absent or blank is on; true/false in any case; anything else refuses startup |
+| `ProgramCs_ResolvesTheOffSwitchAndReportsItAtStartup` | Program.cs resolves the key, passes it into the options, and reports after `builder.Build()` and before `app.Run()` |
+
+"Enabled is unchanged": every pre-existing test in both classes still passes with the switch on.
+
+Same mutation script and procedure as above; restored md5-equal each time; the restored tree
+rebuilt and both classes passed 91/91. Pre-comment originals: provider
+`FB6BD81F213C9D741D9E47189C86CB86`, `Program.cs` `A90590BE7B3EA97B2D859D9F94FAB85D`, settings
+`61ACD8DE94E5AF41BB0576ADF0783A64`.
+
+| # | Mutation (file) | md5 mutated | Named test that failed |
+| --- | --- | --- | --- |
+| M26 | the switch made inert: `if (!_options.Enabled && false)` (provider) | `2B8033A97B819C073EDAE8DDD0687CBE` | `DisabledRevalidation_NeverLooksUpAndNeverRevokes` |
+| M27 | the startup report call removed (`Program.cs`) | `8A6F1202697FB9C93684CF3E55642CFD` | `ProgramCs_ResolvesTheOffSwitchAndReportsItAtStartup` |
+| M28 | an absent key reads as off (settings) | `870F2414E035A2FEE539F3D468064C58` | `TheOffSwitchDefaultsToOn` (all 3 cases) |
+| M29 | options default to off (settings) | `CF4FA8B8A7FA3402F638E67D27A4A93A` | `RevalidationIsOnUnlessSaidOtherwise` |
+
+M27 is a source tripwire and proves only that the call is present and placed; that the call
+reports is proved by `DisabledRevalidation_IsReportedAtStartupWithOneWarningAndOneAuditLine`.
+
+Gates for the addition, on its final (commented) tree:
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors; no warning in a touched file.
+- `CircuitRevalidationTests` 71 passed (55 before + 16), `OperatorMembershipDirectoryTests` 20
+  passed, both Program.cs tripwires passed.
+- Full suite, `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` with the
+  C6 theory excluded as before: **4578 passed, 3 skipped (known AD skips), 0 failed, 4581 total**.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: clean.
+- `git diff --check HEAD` (after staging): clean. `tools/Test-AsciiOnly.ps1`: passed.
+
 ## Known gaps
 
 - **Not run against a live directory.** By instruction nothing here probed AD, so the
@@ -265,7 +322,9 @@ Not run: anything against a live directory (by instruction) and any browser chec
   to run on dev: open a page as an operator with a section-access group, wait one interval,
   confirm no `SessionRevalidation` line; then remove that operator from the group (or disable a
   test account) and confirm the tab shows the notice within one interval, stops responding, and
-  one audit line appears.
+  one audit line appears. **Mitigation:** set `Authentication:RevalidationEnabled` to `false` and
+  restart - configuration, not a code change. Revocation is then off for everyone (the finding is
+  open again) until it is set back; the startup warning and the `Disabled` audit line record it.
 - **Cross-domain and cross-forest grants fail closed.** `tokenGroups` read from the account's
   own domain does not include domain-local groups of OTHER domains, or memberships through
   foreign security principals in another forest, though the Windows token does. An operator
@@ -273,9 +332,13 @@ Not run: anything against a live directory (by instruction) and any browser chec
   cannot be routed at all (no `CN=Partitions` entry) and is signed out at every check too. The
   alternative that sees exactly what the token sees is an S4U logon (`new WindowsIdentity(upn)`)
   - a different mechanism from the one this record was briefed to use, so not taken.
+  **Mitigation:** the same off-switch. It is all-or-nothing - there is no per-operator exemption -
+  so it trades the affected operators' availability for everyone's revocation until the grant is
+  moved to a group the read can see.
 - **Availability now depends on the directory read.** An ADWS or domain-controller outage ends
   every open session that holds a consulted group within one interval, and every new one when it
-  connects. That is the fail-closed rule asked for; there is no retry before revoking.
+  connects. That is the fail-closed rule asked for; there is no retry before revoking. A long
+  outage can be ridden out with the off-switch, on the same terms.
 - **A stale Kerberos ticket survives a reload.** The check on connect stops the new circuit
   within the lookup's time, but the server-rendered page itself still renders with the stale
   token, and anything it shows is shown.
@@ -308,6 +371,13 @@ Not run: anything against a live directory (by instruction) and any browser chec
 7. **Compared set = every SID any gate grants through**, including module-admin grants and the
    servicer keys, not only the policy handler's sections - so revoking a servicer or module-admin
    membership also ends the session.
+8. **An operator off-switch exists** (`Authentication:RevalidationEnabled`, added at the
+   coordinator's request before review). Anyone who can edit `appsettings.json` and restart the
+   app pool can switch revocation off. It is never silent - one startup warning, one `Disabled`
+   audit line - but nothing stops it either, and while it is off this finding is open again. Its
+   value is the remedy for gaps 1 and 2 without a code change. Choices inside it: an unreadable
+   value refuses startup; the interval is still validated while it is off; the audit line is filed
+   Failed with actor `System` and address `localhost`.
 
 ## Reviewer comments
 
@@ -316,6 +386,7 @@ Source: codex-commercial / `gpt-6-astra` / max, 2026-10-19, finding 1 of the bat
 
 ## Closeout
 
-Fixed on branch `worktree-agent-aede3a8e8d3e038a3` under the owner's 2026-10-21 go (option 1).
-Pending: codex review of the commit, merge to `master` by the supervisor with the base version
+Fixed on branch `worktree-agent-aede3a8e8d3e038a3` under the owner's 2026-10-21 go (option 1):
+the fix `cb3be91`, its record `702f66f`, then the off-switch addition in its own commit.
+Pending: codex review of the commits, merge to `master` by the supervisor with the base version
 bump and the index row, then the live dev check in Known gaps.

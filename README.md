@@ -808,12 +808,19 @@ it against Active Directory: once when the tab connects, then every
 
 ```json
 "Authentication": {
-  "RevalidationInterval": "00:05:00"
+  "RevalidationInterval": "00:05:00",
+  "RevalidationEnabled": true
 }
 ```
 
 - **Default** `00:05:00` when the key is absent. The app refuses to start on a value that is not
   a time span, is below `00:00:30`, or is above `01:00:00` - a bare `5` is read as five days.
+- **Off-switch:** `RevalidationEnabled` is `true` when absent. Setting it to `false` (and
+  restarting) stops every re-check and every revocation - removed or disabled operators keep their
+  open tabs until they reload - so use it only while a wrong revocation is being fixed. It is never
+  silent: at startup the app logs a warning and writes one audit line (action `SessionRevalidation`,
+  reason `Disabled`). Anything other than `true` or `false` stops startup. The interval is still
+  validated while the switch is off.
 - **What is checked:** the groups the operator's sign-in carries that some access rule uses
   (section access, module admins, `Security:AllowedGroups`, `Security:AdminGroups`), compared by
   SID with the account's current group membership (`tokenGroups`), and whether the account is
