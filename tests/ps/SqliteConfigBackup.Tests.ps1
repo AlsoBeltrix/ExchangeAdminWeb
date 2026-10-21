@@ -228,11 +228,19 @@ Describe 'SqliteConfigBackup module' {
             }
         }
 
-        It 'agrees with the installer and the cutover, and never accepts what the app refuses' {
-            # One rule in three places: the two scripts that WRITE the key validate it with their
-            # own copies, and this module validates what it READS. They must make the same call on
-            # every input, and none may accept a value the app's own rule (no UNC, fully qualified)
-            # refuses at startup.
+        It 'accepts what the app accepts, refuses what it refuses, and reads back whatever the installer and the cutover write (cdt-17, cdt-30)' {
+            # One rule in three places: the app's ConfigStorePath.Resolve decides what an instance
+            # opens, this module mirrors it for what the scripts READ, and the two scripts that WRITE
+            # the key keep a stricter copy of their own (X:\ only). The app's rule is the one in the
+            # build: Resolve is loaded from the built ExchangeAdminWeb.dll and called, so a change
+            # there that the module does not follow fails here (cdt-30). It used to compare the module
+            # with the writers only, which refused D:/... that the app accepts.
+            $asm = [System.Reflection.Assembly]::LoadFrom((Join-Path $script:AppPath 'ExchangeAdminWeb.dll'))
+            $resolve = $asm.GetType('ExchangeAdminWeb.Services.Storage.ConfigStorePath', $true).GetMethod('Resolve')
+            $appAccepts = {
+                param([string]$Value)
+                try { $null = $resolve.Invoke($null, @($Value, 'C:\content-root')); $true } catch { $false }
+            }
             $repo = Join-Path $PSScriptRoot '..\..'
             $validators = @{}
             foreach ($entry in @(@('installer', 'tools\Install-ExchangeAdminWeb.ps1', 'Assert-LocalAbsoluteFilePath'), @('cutover', 'tools\Move-ConfigDbToShared.ps1', 'Assert-LocalAbsolutePath'))) {
@@ -244,26 +252,111 @@ Describe 'SqliteConfigBackup module' {
                 $validators[$entry[0]] = [scriptblock]::Create("function Write-Fail { param(`$Message) throw `$Message }`n" + $fn.Extent.Text + "`n" + $entry[2] + ' -Path $args[0] -Name ConfigStorePath')
             }
 
-            $inputs = @('D:\shared\config\exchangeadmin.db', 'c:\x\y.db', 'config\exchangeadmin.db', 'D:exchangeadmin.db',
-                '\config\exchangeadmin.db', '\\server\share\x.db', '//server/share/x.db', '\\?\D:\x\y.db', 'D:/shared/x.db', '1:\x.db', 'DD:\x.db')
+            $inputs = @('D:\shared\config\exchangeadmin.db', 'c:\x\y.db', 'D:/shared/x.db', 'D:\shared/x.db', ' D:/x.db ', 'z:/a',
+                'config\exchangeadmin.db', 'D:exchangeadmin.db', 'D:', '\config\exchangeadmin.db', '/config/exchangeadmin.db',
+                '\\server\share\x.db', '//server/share/x.db', '\\?\D:\x\y.db', '\\.\D:\x.db', '1:\x.db', 'DD:\x.db', ':\x.db', 'x')
+            # The app accepts these today and lets a network database through in two of them: Windows
+            # reads any two leading separators as a UNC path, and \??\UNC\ is the NT namespace's form
+            # of one, while the app refuses only \\ and //. The module refuses all four on purpose.
+            $stricter = @('\/server/share/x.db', '/\server\share\x.db', '\??\D:\x.db', '\??\UNC\server\share\x.db')
+            $kelvin = [string][char]0x212A + ':\x.db'
             $publish = New-TempDir
             try {
-                foreach ($value in $inputs) {
+                foreach ($value in @($inputs) + @($stricter) + @($kelvin)) {
                     Write-TestKey -Publish $publish -Value $value
                     $moduleAccepts = $true
                     try { Get-ConfigStorePathSetting -PublishPath $publish | Out-Null } catch { $moduleAccepts = $false }
-                    foreach ($name in $validators.Keys) {
-                        $scriptAccepts = $true
-                        try { & $validators[$name] $value } catch { $scriptAccepts = $false }
-                        $moduleAccepts | Should -Be $scriptAccepts -Because "the module and the $name must make the same call on '$value'"
+                    $app = & $appAccepts $value
+                    if ($stricter -contains $value) {
+                        $app | Should -BeTrue -Because "the app accepts '$value' today; if it stops, this list and the module's comment are stale"
+                        $moduleAccepts | Should -BeFalse -Because "'$value' can name a network share or a device the scripts do not read"
+                    } else {
+                        $moduleAccepts | Should -Be $app -Because "the module and the app must make the same call on '$value'"
                     }
-                    if ($moduleAccepts) {
-                        $unc = $value.StartsWith('\\') -or $value.StartsWith('//')
-                        ((-not $unc) -and [System.IO.Path]::IsPathFullyQualified($value)) | Should -BeTrue -Because "the app would refuse '$value' at startup"
+                    # The writers' own drive test is case-insensitive too, but neither can write the
+                    # Kelvin-sign value: no such drive exists, so it is never a key on disk.
+                    if ($value -ne $kelvin) {
+                        foreach ($name in $validators.Keys) {
+                            $scriptAccepts = $true
+                            try { & $validators[$name] $value } catch { $scriptAccepts = $false }
+                            if ($scriptAccepts) { $moduleAccepts | Should -BeTrue -Because "what the $name writes ('$value') must read back" }
+                        }
                     }
                 }
             } finally {
                 Remove-Item $publish -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        Context 'cdt-30: the app''s drive form with either separator, read back as one spelling' {
+            # The module took the writers' X:\ rule, so a D:/... key the app accepts stopped every
+            # deploy and upgrade, while its case-insensitive drive test passed a letter the app refuses.
+
+            It 'accepts <Value> (<Form>) from both readers and returns it with backslashes' -TestCases @(
+                @{ Form = 'forward slashes'; Value = 'D:/inetpub/ExchangeAdminWebShared/config/exchangeadmin.db'; Expect = 'D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db' }
+                @{ Form = 'backslashes'; Value = 'D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db'; Expect = 'D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db' }
+                @{ Form = 'mixed'; Value = 'D:\shared/config/exchangeadmin.db'; Expect = 'D:\shared\config\exchangeadmin.db' }
+                @{ Form = 'blank-padded, lower-case drive'; Value = '  d:/x/exchangeadmin.db  '; Expect = 'd:\x\exchangeadmin.db' }
+            ) {
+                $publish = New-TempDir
+                try {
+                    Write-TestKey -Publish $publish -Value $Value
+                    foreach ($reader in 'Get-ConfigStorePathSetting', 'Resolve-ConfigDbPath') {
+                        & $reader -PublishPath $publish | Should -BeExactly $Expect -Because "$reader returns the file the app opens, in one spelling"
+                    }
+                } finally {
+                    Remove-Item $publish -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+
+            It 'refuses <Form> from both readers, saying why and naming the value and the file' -TestCases @(
+                @{ Form = 'a UNC path'; Value = '\\server\share'; Says = 'not a network share' }
+                @{ Form = 'a UNC path with forward slashes'; Value = '//server/share/x.db'; Says = 'not a network share' }
+                @{ Form = 'a UNC path with mixed separators (the app misses it)'; Value = '\/server/share/x.db'; Says = 'not a network share' }
+                @{ Form = 'a UNC path with mixed separators the other way (the app misses it)'; Value = '/\server\share\x.db'; Says = 'not a network share' }
+                @{ Form = 'a drive-relative path'; Value = 'D:foo'; Says = 'must be an absolute local file path' }
+                @{ Form = 'a drive alone'; Value = 'D:'; Says = 'must be an absolute local file path' }
+                @{ Form = 'a relative path'; Value = 'foo\bar'; Says = 'must be an absolute local file path' }
+                @{ Form = 'a rooted path without a drive'; Value = '/foo/bar'; Says = 'must be an absolute local file path' }
+                @{ Form = 'an NT-namespace path (the app accepts it)'; Value = '\??\D:\x.db'; Says = 'must be an absolute local file path' }
+                @{ Form = 'an NT-namespace UNC path (the app accepts it)'; Value = '\??\UNC\server\share\x.db'; Says = 'must be an absolute local file path' }
+                @{ Form = 'a non-ASCII drive letter (U+212A KELVIN SIGN, which a case-insensitive match folds onto k)'; Value = ([string][char]0x212A + ':\x.db'); Says = 'must be an absolute local file path' }
+            ) {
+                $publish = New-TempDir
+                try {
+                    Write-TestKey -Publish $publish -Value $Value
+                    $appsettings = Join-Path $publish 'appsettings.json'
+                    foreach ($reader in 'Get-ConfigStorePathSetting', 'Resolve-ConfigDbPath') {
+                        $err = $null
+                        try { & $reader -PublishPath $publish | Out-Null } catch { $err = $_ }
+                        $err | Should -Not -BeNullOrEmpty -Because "$reader must refuse $Form"
+                        "$err".Contains($Says) | Should -BeTrue -Because "the refusal says why ($Says): $err"
+                        "$err".Contains($Value) | Should -BeTrue -Because 'the message names the value as written'
+                        "$err".Contains($appsettings) | Should -BeTrue -Because 'and the file it came from'
+                        "$err".Contains('Nothing was changed') | Should -BeTrue
+                    }
+                } finally {
+                    Remove-Item $publish -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+
+            It 'finds, and backs up with the real tool, the database a forward-slash key names' {
+                $root = New-TempDir
+                try {
+                    $publish = Join-Path $root 'publish'
+                    $shared = Join-Path $root 'shared'
+                    New-Item -ItemType Directory -Path $publish, $shared -Force | Out-Null
+                    $db = New-ValidDb -Dir $shared
+                    Write-TestKey -Publish $publish -Value $db.Replace('\', '/')
+                    $resolved = Resolve-ConfigDbPath -PublishPath $publish
+                    $resolved | Should -BeExactly $db -Because 'the key names this file, spelled the way the scripts compare it'
+                    Test-IsSqliteConfigDbPresent -DbPath $resolved | Should -BeTrue
+                    $backup = Backup-SqliteConfigDb -DbPath $resolved -DestDir (Join-Path $root 'backup') -Timestamp 'cdt30' -AppPath $script:AppPath
+                    $backup | Should -Not -BeNullOrEmpty -Because 'a deploy can take its verified backup again'
+                    Test-SqliteConfigDbIntegrity -DbPath $backup -AppPath $script:AppPath | Should -BeTrue
+                } finally {
+                    Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+                }
             }
         }
     }

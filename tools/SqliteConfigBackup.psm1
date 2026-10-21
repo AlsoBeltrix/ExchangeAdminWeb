@@ -163,7 +163,9 @@ function Assert-ConfigDbToolSucceeded {
     Strict-mode safe: never dereferences a property that is not there.
 
     A set value must be an absolute local path (cdt-17): anything else THROWS, naming the value and
-    the file, so no caller tests for, backs up or checks a file the app would never open.
+    the file, so no caller tests for, backs up or checks a file the app would never open. An
+    accepted value comes back with its forward slashes turned into backslashes (cdt-30), so every
+    caller tests for, backs up and compares one spelling of the file the app opens.
 #>
 function Get-ConfigStorePathSetting {
     [CmdletBinding()]
@@ -187,26 +189,34 @@ function Get-ConfigStorePathSetting {
     if ([string]::IsNullOrWhiteSpace($value)) { return $null }
     $value = $value.Trim()
     Assert-ConfigStorePathValue -Value $value -AppSettingsPath $appsettings
-    return $value
+    return $value.Replace('/', '\')
 }
 
 function Assert-ConfigStorePathValue {
-    # Private (cdt-17). The app's ConfigStorePath.Resolve refuses a UNC path and any path that is
-    # not fully qualified - relative, drive-relative (D:file.db) or rooted without a drive - so it
+    # Private (cdt-17, cdt-30). The app's ConfigStorePath.Resolve refuses a UNC path and any path that
+    # is not fully qualified - relative, drive-relative (D:file.db) or rooted without a drive - so it
     # will not start on one. This module used to return such a value, and every caller then tested
     # for, backed up and checked whatever it named relative to its own current directory: a
-    # verified backup of the wrong file, then an outage. Same rule and wording as the two scripts
-    # that write the key (the installer's -ConfigStorePath check and the cutover's -SharedDbPath
-    # check), which accept only X:\ - stricter than the app for X:/, a form no tool writes.
-    # [IO.Path]::IsPathFullyQualified does not exist on .NET Framework (Windows PowerShell 5.1),
-    # hence the explicit drive test.
+    # verified backup of the wrong file, then an outage.
+    #
+    # TRIPWIRE: this mirrors Services/Storage/ConfigStorePath.cs (Resolve). Change one, change the
+    # other - tests/ps/SqliteConfigBackup.Tests.ps1 calls the built app's Resolve to hold them
+    # together. Mirrored: the trim, and the drive form - an ASCII letter (the app's IsValidDriveChar),
+    # a colon, then \ or / - matched case-SENSITIVELY, because a case-insensitive match folds the
+    # Kelvin sign (U+212A) onto k, a letter the app refuses. Stricter than the app, on purpose: any
+    # two leading separators are refused as a network share (Windows reads \/ and /\ as UNC too; the
+    # app refuses only \\ and //), and the app's other fully qualified forms, \? and /? (\??\UNC\
+    # names a share as well), fail the drive test; no tool writes either. The two writers' own checks
+    # (the installer's -ConfigStorePath, the cutover's -SharedDbPath) accept only X:\, which this reads
+    # back. [IO.Path]::IsPathFullyQualified does not exist on .NET Framework (Windows PowerShell 5.1),
+    # hence the explicit tests.
     param([string]$Value, [string]$AppSettingsPath)
 
-    if ($Value.StartsWith('\\') -or $Value.StartsWith('//')) {
-        throw "ConfigStore:Path in $AppSettingsPath must be a local path, not a network share: $Value. The app refuses this value at startup; fix the key in that file. Nothing was changed."
+    if ($Value -match '^[\\/][\\/]') {
+        throw "ConfigStore:Path in $AppSettingsPath must be a local path, not a network share: $Value. SQLite's locking is not reliable over a network share; fix the key in that file. Nothing was changed."
     }
-    if ($Value -notmatch '^[A-Za-z]:\\') {
-        throw "ConfigStore:Path in $AppSettingsPath must be an absolute local file path (drive letter, colon, backslash - for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db): $Value. The app refuses this value at startup; fix the key in that file. Nothing was changed."
+    if ($Value -cnotmatch '^[A-Za-z]:[\\/]') {
+        throw "ConfigStore:Path in $AppSettingsPath must be an absolute local file path (a drive letter, a colon, then \ or / - for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db): $Value. The app refuses a relative or drive-relative path at startup, and these scripts read only the drive-letter form; fix the key in that file. Nothing was changed."
     }
 }
 

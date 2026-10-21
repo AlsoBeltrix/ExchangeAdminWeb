@@ -35,6 +35,13 @@ public static class ConfigStorePath
 
         var value = configured.Trim();
 
+        // TRIPWIRE (cdt-30): tools/SqliteConfigBackup.psm1 (Assert-ConfigStorePathValue) applies this
+        // rule to the value the deploy, promotion, cutover and installer scripts read before they
+        // back up or check the database, so they act on the file this method accepts. Change one,
+        // change the other; tests/ps/SqliteConfigBackup.Tests.ps1 calls this method from the build to
+        // hold them together. The scripts are deliberately stricter in two places: they refuse any two
+        // leading separators as UNC (Windows also reads \/ and /\ as UNC, which this check misses),
+        // and every fully qualified form that is not a drive letter (\??\..., which can name a share).
         if (value.StartsWith(@"\\", StringComparison.Ordinal) || value.StartsWith("//", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
