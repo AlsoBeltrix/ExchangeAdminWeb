@@ -80,8 +80,12 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
     /// Verified against live AD 2026-08-03: <c>Enterprise Admins</c> queried without a server
     /// returns zero matches, because it lives in <c>winroot.analog.com</c> - so dropping the
     /// domain half would turn a real cross-domain grant into an unresolvable row.
+    ///
+    /// Internal rather than private because circuit revalidation routes an operator's account
+    /// read to that account's own domain the same way (<see cref="OperatorMembershipDirectory"/>,
+    /// aud-a29b). One mapping rule, not two.
     /// </remarks>
-    private static string ResolveDomainServer(ISectionAccessDirectoryCommands commands, string netBiosDomain)
+    internal static string ResolveDomainServer(ISectionAccessDirectoryCommands commands, string netBiosDomain)
     {
         var rootDseResult = commands.Invoke("Get-ADRootDSE", new Dictionary<string, object?>
         {

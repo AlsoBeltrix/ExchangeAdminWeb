@@ -128,6 +128,39 @@ try
     builder.Services.AddRazorComponents()
         .AddInteractiveServerComponents();
 
+    // Circuit revalidation (aud-a29b; option 1 of the record, decisions 2026-10-21). The framework's
+    // provider keeps the principal a circuit opened with for its whole life, and IsInRole tests that
+    // token rather than the directory, so an operator removed from a group kept their access on any
+    // tab already open. This provider re-derives the consulted group SIDs from the directory when a
+    // circuit opens and every Authentication:RevalidationInterval, and the gate makes a revoked
+    // circuit refuse everything. Registered AFTER AddInteractiveServerComponents(), which registers
+    // the non-revalidating default. The interval and the off-switch (Authentication:
+    // RevalidationEnabled) are resolved here so a bad value stops startup.
+    TimeSpan revalidationInterval;
+    bool revalidationEnabled;
+    try
+    {
+        revalidationInterval = CircuitRevalidationSettings.ResolveInterval(
+            builder.Configuration[CircuitRevalidationSettings.IntervalKey]);
+        revalidationEnabled = CircuitRevalidationSettings.ResolveEnabled(
+            builder.Configuration[CircuitRevalidationSettings.EnabledKey]);
+    }
+    catch (InvalidOperationException ex)
+    {
+        Log.Fatal(ex.Message);
+        throw;
+    }
+
+    builder.Services.AddSingleton(new CircuitRevalidationOptions(
+        revalidationInterval, CircuitRevalidationSettings.LookupTimeout, revalidationEnabled));
+    builder.Services.AddSingleton<IOperatorMembershipDirectory, OperatorMembershipDirectory>();
+    builder.Services.AddSingleton<AuthorizationGroupInventory>();
+    builder.Services.AddSingleton<CircuitMembershipRevalidator>();
+    builder.Services.AddScoped<CircuitRevocation>();
+    builder.Services.AddScoped<Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider,
+        MembershipRevalidatingAuthenticationStateProvider>();
+    builder.Services.AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler, CircuitRevocationGate>();
+
     builder.Services.AddHttpClient("ServiceNow")
         .ConfigureHttpClient(client =>
         {
@@ -366,6 +399,14 @@ try
         var sectionAccessSids = app.Services.GetRequiredService<SectionAccessSidMigration>();
         var sidMigrationStatus = sectionAccessSids.Run();
         Log.Information("Section-access SID migration: {Status}", sidMigrationStatus);
+
+        // Circuit revalidation's off-switch (aud-a29b, Authentication:RevalidationEnabled). When it
+        // is off, say so here - one warning and one audit line - before anything is served, so the
+        // period in which no session could be ended is on record. Nothing is written when it is on.
+        var revalidationOptions = app.Services.GetRequiredService<CircuitRevalidationOptions>();
+        var revalidationAudit = app.Services.GetRequiredService<AuditService>();
+        var revalidationLog = app.Services.GetRequiredService<ILogger<MembershipRevalidatingAuthenticationStateProvider>>();
+        MembershipRevalidatingAuthenticationStateProvider.ReportIfDisabled(revalidationOptions, revalidationAudit, revalidationLog);
 
         // One-time repair of the renamed Graph credential key (DelineaSecretId ->
         // GraphDelineaSecretId): moves any value stranded under the old key for Graph modules so

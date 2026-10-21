@@ -800,6 +800,40 @@ Each application feature is independently gated by AD group membership via its s
 - NavMenu links and Home page cards are hidden for unauthorized sections
 - Section access is managed per-module via `/module-config/{ModuleId}` (collapsible tree in sidebar)
 
+### Session Revalidation
+
+An open tab keeps its Windows sign-in for as long as it stays connected, so the app re-checks
+it against Active Directory: once when the tab connects, then every
+`Authentication:RevalidationInterval` (aud-a29b).
+
+```json
+"Authentication": {
+  "RevalidationInterval": "00:05:00",
+  "RevalidationEnabled": true
+}
+```
+
+- **Default** `00:05:00` when the key is absent. The app refuses to start on a value that is not
+  a time span, is below `00:00:30`, or is above `01:00:00` - a bare `5` is read as five days.
+- **Off-switch:** `RevalidationEnabled` is `true` when absent. Setting it to `false` (and
+  restarting) stops every re-check and every revocation - removed or disabled operators keep their
+  open tabs until they reload - so use it only while a wrong revocation is being fixed. It is never
+  silent: at startup the app logs a warning and writes one audit line (action `SessionRevalidation`,
+  reason `Disabled`). Anything other than `true` or `false` stops startup. The interval is still
+  validated while the switch is off.
+- **What is checked:** the groups the operator's sign-in carries that some access rule uses
+  (section access, module admins, `Security:AllowedGroups`, `Security:AdminGroups`), compared by
+  SID with the account's current group membership (`tokenGroups`), and whether the account is
+  enabled. Gaining a group never ends a session.
+- **The session ends** when one of those groups is gone, the account is disabled, or the check
+  cannot be completed within 60 seconds (fail closed). The tab stops responding and shows
+  "This session has ended" with a Reload link; reloading signs in again with the access the
+  operator has now. Each ended session writes one audit line (action `SessionRevalidation`,
+  category `Authentication`).
+- Under Kerberos a reload brings back the same group list until Windows renews its ticket, so an
+  operator who keeps being signed out after their access was restored should sign out of Windows
+  and back in.
+
 ### Protected Users / Excluded Users
 
 Prevent modifications to specific mailboxes. Configure via **Module Config** page under **Mailbox Permissions** → `Excluded Users` field (comma-separated). Applies to both mailbox and calendar permission operations:

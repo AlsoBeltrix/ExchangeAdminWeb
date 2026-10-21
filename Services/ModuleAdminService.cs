@@ -118,6 +118,14 @@ public class ModuleAdminService
         return config.TryGetValue(moduleId, out var groups) ? groups : Array.Empty<string>();
     }
 
+    /// <summary>
+    /// Every group value granted module-admin rights, across every stored module. Empty when the
+    /// store cannot be read - which for authorization means no grants, the same as
+    /// <see cref="IsModuleAdmin"/> reads it.
+    /// </summary>
+    public IReadOnlyCollection<string> GetAllGrantedGroups()
+        => ReadConfig().Values.SelectMany(groups => groups ?? Array.Empty<string>()).ToArray();
+
     public void SetModuleAdmins(string moduleId, string[] groups)
     {
         lock (_writeLock)

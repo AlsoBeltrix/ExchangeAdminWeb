@@ -86,5 +86,10 @@
     "PathBase": "/ExchangeAdminWeb",
     "ContactEmail": "exchangeadmin@yourcompany.com"
   },
+  "_AuthenticationNote": "RevalidationInterval is how often an open tab's access is re-checked against Active Directory (also once when the tab connects). hh:mm:ss; default 00:05:00 when absent; the app refuses to start below 00:00:30 or above 01:00:00. RevalidationEnabled (true when absent) is the emergency off-switch: false stops every re-check and revocation until it is set back, and the app logs a warning and writes an audit line at startup saying so. Use it only while a wrong revocation is being fixed. See README 'Session Revalidation'.",
+  "Authentication": {
+    "RevalidationInterval": "00:05:00",
+    "RevalidationEnabled": true
+  },
   "AllowedHosts": "*"
 }

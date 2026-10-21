@@ -55,6 +55,13 @@
     </AuthorizeView>
 </div>
 
+@*
+    Shown when revalidation ends this circuit's session (aud-a29b). Outside every AuthorizeView on
+    purpose: this layout renders statically, so a view's verdict is the request's, and the notice
+    must not depend on it. An interactive island like the others in this layout.
+*@
+<SessionEndedNotice />
+
 <div id="blazor-error-ui">
     An unhandled error has occurred.
     <a href="" class="reload">Reload</a>
