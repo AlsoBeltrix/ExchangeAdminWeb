@@ -608,6 +608,13 @@ try {
             Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
         }
 
+        # cdt-28: the checks above are about one IIS node, $ParentSite/$AppAlias. Another site or
+        # application with its files in $PublishPath under a different pool would keep serving them
+        # while the mirror replaces them (and this branch never points the alias at $PublishPath).
+        # Ask IIS for every node serving the folder, as the promotion script does: the module throws
+        # unless there is one and each runs under $AppPoolName, and nothing here catches it.
+        $null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath
+
         # A35: the empty catch here swallowed every stop failure, not only the harmless
         # already-stopped one, and the fixed sleep was a guess about how long a worker takes to
         # exit. robocopy /MIR then replaced the binaries of a RUNNING application. Stop and then
@@ -900,6 +907,13 @@ try {
         if ($boundPool -ne $AppPoolName) {
             Write-Fail "IIS application $ParentSite/$AppAlias runs under app pool '$boundPool', not '$AppPoolName'. Stopping '$AppPoolName' would leave the running application untouched while its files are replaced. Re-run with -AppPoolName '$boundPool', or fix the binding. Nothing was deployed."
         }
+
+        # cdt-28: the checks above are about one IIS node, $ParentSite/$AppAlias. Another site or
+        # application with its files in $PublishPath under a different pool would keep serving them
+        # while the mirror replaces them. Ask IIS for every node serving the folder, as the promotion
+        # script does: the module throws unless there is one and each runs under $AppPoolName, and
+        # nothing here catches it.
+        $null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath
 
         # A35: the empty catch here swallowed every stop failure, not only the harmless
         # already-stopped one, and the fixed sleep was a guess about how long a worker takes to

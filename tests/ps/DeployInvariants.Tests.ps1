@@ -205,6 +205,9 @@ Describe 'deploy.ps1' {
             [pscustomobject]@{ applicationPool = $script:cdt19Lookup }
         }
         ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt19Calls.Add('stop'); $script:cdt19Stop }
+        # Since cdt-28 the region also asks IIS which nodes serve the folder; that check has its own
+        # test below, so here it passes and records nothing.
+        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath) $null = $Name, $PhysicalPath }
 
         $modeIf = (Get-FreshInstallBranch $s).Parent
         foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
@@ -247,6 +250,93 @@ Describe 'deploy.ps1' {
             $good = & $run 'ExamplePool' 'Stopped' 6>$null
             $good.Thrown | Should -BeNullOrEmpty -Because "the named pool, confirmed stopped, is the one way through to the $($entry[0]) mirror"
             $good.Calls | Should -BeExactly 'lookup,stop'
+        }
+    }
+
+    It 'asks IIS for every site and application serving the folder right before each verified stop, and nothing catches its refusal (cdt-28, AST)' {
+        # The alias checks are about one IIS node, $ParentSite/$AppAlias. Another site or application
+        # with its files in $PublishPath under a different pool kept serving them while the mirror
+        # replaced them; Assert-AppPoolServesPath (aud-a38c) is the promotion script's answer.
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
+            $statements = @($entry[1].Statements)
+            $lookupAt = -1; $stopAt = -1
+            for ($i = 0; $i -lt $statements.Count; $i++) {
+                if ($statements[$i].Extent.Text -like '$boundPool = try { (Get-WebApplication*') { $lookupAt = $i }
+                if ($statements[$i].Extent.Text -like '$poolState = Stop-AppPoolVerified -Name $AppPoolName') { $stopAt = $i }
+            }
+            $lookupAt | Should -BeGreaterOrEqual 0 -Because "the $($entry[0]) branch reads the alias binding"
+            $stopAt | Should -BeGreaterThan $lookupAt
+            # A statement of the branch itself, so nothing conditional or catching sits around it.
+            $statements[$stopAt - 1].Extent.Text | Should -BeExactly '$null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath' -Because "the folder the $($entry[0]) mirror replaces is checked right before the stop, not only the alias"
+            ($stopAt - 1) | Should -BeGreaterThan ($lookupAt + 2) -Because 'the alias checks still run first; they catch a different mistake, with their own message'
+        }
+        $calls = @($s.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-AppPoolServesPath' }, $true))
+        $calls.Count | Should -Be 2 -Because 'one per branch, and nowhere else'
+        foreach ($call in $calls) {
+            $ancestor = $call.Parent
+            while ($null -ne $ancestor) {
+                if ($ancestor -is [System.Management.Automation.Language.TryStatementAst]) {
+                    $ancestor.CatchClauses.Count | Should -Be 0 -Because "a catch around line $($call.Extent.StartLineNumber) could swallow the refusal and let the stop and the mirror run"
+                }
+                $ancestor = $ancestor.Parent
+            }
+        }
+    }
+
+    It 'runs each branch''s real region: a folder also served by another pool is refused before anything is stopped (cdt-28)' {
+        foreach ($name in 'Write-Success', 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        ${function:Get-WebApplication} = { $script:cdt28Calls.Add('lookup'); [pscustomobject]@{ applicationPool = $script:cdt28AliasPool } }
+        ${function:Assert-AppPoolServesPath} = {
+            param($Name, $PhysicalPath)
+            $script:cdt28Calls.Add("serves($Name|$PhysicalPath)")
+            if ($script:cdt28ServedElsewhere) {
+                throw "The files at '$PhysicalPath' are served by an app pool other than '$Name': Other Site/Copy runs under 'OtherPool'. Stopping '$Name' would leave that application running while its files are replaced. Name the pool that serves them, or fix the binding."
+            }
+            [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = $Name; PhysicalPath = $PhysicalPath }
+        }
+        ${function:Stop-AppPoolVerified} = { param($Name) $script:cdt28Calls.Add("stop($Name)"); 'Stopped' }
+
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
+            $statements = @($entry[1].Statements)
+            $from = -1; $stopAt = -1
+            for ($i = 0; $i -lt $statements.Count; $i++) {
+                if ($statements[$i].Extent.Text -like '$boundPool = *') { $from = $i }
+                if ($statements[$i].Extent.Text -like '$poolState = Stop-AppPoolVerified*') { $stopAt = $i }
+            }
+            $region = ($statements[$from..($stopAt + 1)] | ForEach-Object { $_.Extent.Text }) -join "`n"
+            $run = {
+                param([string]$AliasPool, [bool]$ServedElsewhere)
+                $script:cdt28Calls = New-Object System.Collections.Generic.List[string]
+                $script:cdt28AliasPool = $AliasPool
+                $script:cdt28ServedElsewhere = $ServedElsewhere
+                # Read only by the lifted region.
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppPoolName -Value 'ExamplePool'
+                Set-Variable -Name PublishPath -Value 'D:\example\publish'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                $output = @()
+                try { $output = @(. ([scriptblock]::Create($region))) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt28Calls -join ','); Output = $output }
+            }
+
+            $elsewhere = & $run 'ExamplePool' $true 6>$null
+            $elsewhere.Calls | Should -BeExactly 'lookup,serves(ExamplePool|D:\example\publish)' -Because "a folder another pool also serves must stop the $($entry[0]) run before any pool is stopped"
+            $elsewhere.Thrown | Should -BeLike "*served by an app pool other than 'ExamplePool'*" -Because 'the refusal is the module''s own, unchanged'
+
+            $aliasElsewhere = & $run 'SomeOtherPool' $false 6>$null
+            $aliasElsewhere.Calls | Should -BeExactly 'lookup' -Because 'the alias check still runs first'
+            $aliasElsewhere.Thrown | Should -BeLike "*runs under app pool 'SomeOtherPool'*"
+
+            $good = & $run 'ExamplePool' $false 6>$null
+            $good.Thrown | Should -BeNullOrEmpty
+            $good.Calls | Should -BeExactly 'lookup,serves(ExamplePool|D:\example\publish),stop(ExamplePool)' -Because "only a folder served by the named pool alone reaches the $($entry[0]) stop"
+            @($good.Output).Count | Should -Be 0 -Because 'what the check returns is discarded, not written to the deploy''s output'
         }
     }
 
