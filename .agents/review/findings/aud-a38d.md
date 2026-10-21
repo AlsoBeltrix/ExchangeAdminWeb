@@ -5,7 +5,7 @@ applied promotion run from PowerShell 7 stops prod, mirrors dev over it, and the
 start it: prod is down, and the message blames a pool that "does not exist". After `aud-a38b`
 the same run refuses before anything changes - safe, but with the same wrong explanation.
 Loud either way; only reachable from PowerShell 7.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (services-batch-2, 2026-10-21) raised no defect in this change
 **Branch**: `worktree-agent-a4a7066146993eb49`
 **Commit**: `7f469d1` (merged)
 **Reviewer**: implementer (found while fixing `aud-a38b`)

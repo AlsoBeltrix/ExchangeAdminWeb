@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM. The same defect class as `aud-a35`, in the third script that finding
 did not cover. (The 2026-10-20 codex review of `aud-a38` restated it as HIGH.)
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (services-batch-2, 2026-10-21) raised no defect in this change
 **Branch**: `worktree-agent-a4a7066146993eb49`
 **Commit**: `25e7187` (merged)
 **Reviewer**: implementer

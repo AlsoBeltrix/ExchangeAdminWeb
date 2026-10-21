@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM - connections survive the pool that owned them, and a failed disconnect
 is neither reported nor retried. Pre-existing; not introduced by the A6B work.
-**Status**: Merged to master; codex group review pending
+**Status**: Merged to master; codex services-batch-2 raised a follow-on, admitted as aud-a6e (queued borrow connects after stop) - fix in progress
 **Branch**: `worktree-agent-a6325a13692998ce6`
 **Commit**: `0152847` (merged)
 
