@@ -19,8 +19,22 @@ entry is closed, independently reviewed, and its review findings remediated.
 0 failed; Pester 255 passed / 0 failed / 0 skipped; PSScriptAnalyzer 0 errors; ASCII lint and
 `dotnet format` clean.
 
-**NEXT ACTION (2026-10-21): S1 of `docs/ConfigDbToolInApp-Plan.md` landed (app `db` mode,
-version `2.34.0`, unreviewed); review S1, then implement S2.** The finding now has an
+**NEXT ACTION (2026-10-21): implement S2 of `docs/ConfigDbToolInApp-Plan.md`.** S1 landed
+(`86970a5`, app `db` mode, version `2.34.0`), codex-reviewed: one MEDIUM finding, `cdt-1`
+(a racing backup run could delete the other run's verified snapshot), fixed via temp-file
+then no-overwrite move in `872f211`, closed on coder-side guard proof. Implementation
+arrangement for this stream, owner 2026-10-21: Opus 5.5 agents dispatched from the
+supervising session (`.agents/decisions.md` 2026-10-21), codex reviews each slice.
+
+**Candidate finding, NOT admitted, surfaced while verifying cdt-1:**
+`Comms10kRefusalTests.C6ValidationWaitsKeepTheCapturedTicketVisibleAndRejectDelayedInput`
+(a 3-case theory) hung the full `dotnet test` run for about four hours on this machine on
+2026-10-21, hung again when run alone, and hung at unmodified HEAD with the cdt-1 edits
+stashed - so it is pre-existing and intermittent (it passed in the same session's baseline
+run and in CI on `7ce74ff`). Hang dumps under `ExchangeAdminWeb.Tests/TestResults/` (ignored).
+Nothing was changed. Needs an owner go to investigate as its own finding.
+
+The finding now has an
 Approved plan (owner: "okay, plan it, then review the plan"; plan committed `49e8bb0`, codex
 openreview Acceptable-with-changes, both changes folded in). The fix is to remove
 `sqlite3.exe` from the deploy host entirely: the app gains a `db` command-line mode (backup,

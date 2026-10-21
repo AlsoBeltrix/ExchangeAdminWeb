@@ -2,9 +2,9 @@
 
 **Severity**: MEDIUM. Needs two `db backup` runs racing on one destination, but the file at
 the destination is the deploy's only rollback snapshot and S2's PowerShell will trust exit 0.
-**Status**: Fixed on master; awaiting verdict
+**Status**: Closed on coder-side guard proof (MEDIUM; no reviewer verification round per decisions 2026-08-31)
 **Branch**: -- (direct-to-main)
-**Commit**: `<pending>`
+**Commit**: `872f211`
 **Reviewer**: codex / configured default (gpt-5.5-dzs via gateway; id not emitted in envelope) / xhigh / standard, over `6960b09..86970a5`, 2026-10-21
 
 ## Evidence

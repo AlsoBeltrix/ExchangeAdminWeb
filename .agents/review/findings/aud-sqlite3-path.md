@@ -3,7 +3,7 @@
 **Severity**: HIGH. A privilege-escalation path on the deploy host, measured, not inferred.
 **Status**: S1 landed, S2/S3 pending (`docs/ConfigDbToolInApp-Plan.md`)
 **Branch**: -- (direct-to-main)
-**Commit**: S1 `<pending>`
+**Commit**: S1 `86970a5`; cdt-1 follow-up `872f211`
 
 ## Evidence
 
