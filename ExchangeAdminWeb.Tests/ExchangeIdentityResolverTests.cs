@@ -29,13 +29,15 @@ public class ExchangeIdentityResolverTests
         string? externalId = "ext-1",
         string? recipientType = "UserMailbox",
         object? isDirSynced = null,
-        bool omitIsDirSynced = false)
+        bool omitIsDirSynced = false,
+        object? exchangeGuid = null)
     {
         var o = new PSObject();
         if (primarySmtp != null) o.Properties.Add(new PSNoteProperty("PrimarySmtpAddress", primarySmtp));
         if (externalId != null) o.Properties.Add(new PSNoteProperty("ExternalDirectoryObjectId", externalId));
         if (recipientType != null) o.Properties.Add(new PSNoteProperty("RecipientType", recipientType));
         if (!omitIsDirSynced) o.Properties.Add(new PSNoteProperty("IsDirSynced", isDirSynced ?? false));
+        if (exchangeGuid != null) o.Properties.Add(new PSNoteProperty("ExchangeGuid", exchangeGuid));
         return o;
     }
 
@@ -176,5 +178,50 @@ public class ExchangeIdentityResolverTests
     {
         Assert.Throws<InvalidOperationException>(() => ExchangeIdentityResolver.MapRecipient(
             Results(Recipient(isDirSynced: "sometimes")), "user@contoso.com"));
+    }
+
+    // ---- ExchangeGuid (aud-a2c) ----------------------------------------------
+    // The mailbox GUID is what a synced mailbox's AD object must prove it holds. Dropping it here
+    // would refuse every synced target; letting all zeros through would search AD for a zero GUID.
+    // Neither absence nor garbage may fail the lookup - groups and contacts have no mailbox GUID.
+
+    [Fact]
+    public void MapRecipient_CarriesTheMailboxGuid()
+    {
+        var mailboxGuid = Guid.Parse("6f1d7c9e-2b4a-4e0f-9a3d-5c8b1e7f2a40");
+
+        var typed = ExchangeIdentityResolver.MapRecipient(
+            Results(Recipient(isDirSynced: true, exchangeGuid: mailboxGuid)), "vip@contoso.com");
+        var asString = ExchangeIdentityResolver.MapRecipient(
+            Results(Recipient(isDirSynced: true, exchangeGuid: "6F1D7C9E-2B4A-4E0F-9A3D-5C8B1E7F2A40")), "vip@contoso.com");
+        var wrapped = ExchangeIdentityResolver.MapRecipient(
+            Results(Recipient(isDirSynced: true, exchangeGuid: new PSObject(mailboxGuid))), "vip@contoso.com");
+
+        Assert.Equal(mailboxGuid, typed!.ExchangeGuid);
+        Assert.Equal(mailboxGuid, asString!.ExchangeGuid);
+        Assert.Equal(mailboxGuid, wrapped!.ExchangeGuid);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    [InlineData("not-a-guid")]
+    [InlineData("")]
+    public void MapRecipient_NoUsableMailboxGuid_IsNull_NotAFailedLookup(string? value)
+    {
+        var result = ExchangeIdentityResolver.MapRecipient(
+            Results(Recipient(isDirSynced: true, exchangeGuid: value)), "group@contoso.com");
+
+        Assert.NotNull(result);
+        Assert.Null(result.ExchangeGuid);
+    }
+
+    [Fact]
+    public void MapRecipient_AnAllZeroMailboxGuidObject_IsNull()
+    {
+        var result = ExchangeIdentityResolver.MapRecipient(
+            Results(Recipient(isDirSynced: true, exchangeGuid: Guid.Empty)), "group@contoso.com");
+
+        Assert.Null(result!.ExchangeGuid);
     }
 }

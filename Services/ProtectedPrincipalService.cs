@@ -7,6 +7,14 @@ using ExchangeAdminWeb.Services.Storage;
 
 namespace ExchangeAdminWeb.Services;
 
+/// <param name="ExchangeGuid">
+/// The mailbox GUID Exchange will write, when one was established; null otherwise. Set by
+/// <see cref="ProtectedPrincipalService.ResolveExchangeTargetAsync"/> only: for a synced mailbox,
+/// the GUID its Active Directory object was shown to hold in <c>msExchMailboxGuid</c> (aud-a2c);
+/// for a cloud-only recipient, Exchange's own. It is not compared against protection rows - it
+/// identifies the mailbox, so that a write can be bound to the mailbox that was checked rather
+/// than to the string the operator typed (aud-a2d).
+/// </param>
 public sealed record ResolvedDirectoryPrincipal(
     string Source,
     string DisplayName,
@@ -15,7 +23,15 @@ public sealed record ResolvedDirectoryPrincipal(
     string? PrimarySmtpAddress,
     string? DistinguishedName,
     string? ObjectGuid,
-    string? EntraObjectId);
+    string? EntraObjectId,
+    Guid? ExchangeGuid = null);
+
+/// <summary>
+/// One Active Directory object returned by the mailbox GUID lookup
+/// (<see cref="ProtectedPrincipalService.FindMailboxGuidHoldersAsync"/>), with the
+/// <c>msExchMailboxGuid</c> AD returned for it - null when absent or unreadable.
+/// </summary>
+public sealed record MailboxGuidHolder(string? ObjectGuid, string? DistinguishedName, Guid? MailboxGuid);
 
 public sealed record ProtectedPrincipalResult(
     bool IsProtected,
@@ -531,7 +547,10 @@ public class ProtectedPrincipalService
     /// - synced recipient: the principal is the AD object behind its canonical address, and if AD
     ///   reads the typed string as a DIFFERENT object (by objectGUID) the string names two
     ///   objects - <c>Ambiguous</c>. No AD object under the canonical address is the directories
-    ///   disagreeing - <c>Unavailable</c>.
+    ///   disagreeing - <c>Unavailable</c>. That object must then prove it owns the mailbox: it has
+    ///   to be the only AD object whose <c>msExchMailboxGuid</c> is the recipient's ExchangeGuid
+    ///   (aud-a2c, <see cref="SelectMailboxBacking"/>). An address alone is not proof - it can sit
+    ///   in <c>mail</c> or <c>userPrincipalName</c> on an account that has no mailbox at all.
     /// - cloud-only recipient: an AD object for the same string is a second object - <c>Ambiguous</c>.
     /// - no recipient: an Exchange write cannot land anywhere, so AD's answer is the only object the
     ///   string names; neither directory knowing it is <c>NotFound</c>.
@@ -595,7 +614,236 @@ public class ProtectedPrincipalService
             return (null, ResolutionStatus.Ambiguous);
         }
 
-        return (canonical, ResolutionStatus.Resolved);
+        // aud-a2c. Everything above compares AD with AD: its reading of the typed string against
+        // its reading of the canonical address. Neither reading is tied to the mailbox Exchange
+        // resolved, and the address lookup matches mail and userPrincipalName, which a non-recipient
+        // account can carry - an admin's second account pointed at the owner's address, or any
+        // account in the searched domain when the mailbox's own object lives in another. Checked
+        // here, that account stood in for the mailbox and Exchange wrote the mailbox.
+        return await ProveMailboxBackingAsync(identity, recipient, canonical);
+    }
+
+    /// <summary>
+    /// Accepts <paramref name="canonical"/> - AD's object under the recipient's canonical address -
+    /// only when Active Directory shows it owns the mailbox Exchange resolved, by the mailbox GUID
+    /// both directories carry (aud-a2c). Every way of not knowing refuses; nothing here can turn an
+    /// earlier refusal into an answer, because it runs only on a principal a2b already accepted.
+    /// </summary>
+    private async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ProveMailboxBackingAsync(
+        string identity, ResolvedRecipient recipient, ResolvedDirectoryPrincipal canonical)
+    {
+        if (recipient.ExchangeGuid is not Guid exchangeGuid)
+        {
+            _logger.LogWarning(
+                "Exchange reports no mailbox GUID for {Identity} (canonical {Canonical}) - the Active Directory object "
+                + "under that address cannot be shown to own the mailbox, failing closed",
+                identity, recipient.PrimarySmtpAddress);
+            return (null, ResolutionStatus.Unavailable);
+        }
+
+        var (answered, holders) = await FindMailboxGuidHoldersAsync(exchangeGuid);
+        if (!answered)
+            return (null, ResolutionStatus.Unavailable);
+
+        var (proven, status, refusal) = SelectMailboxBacking(exchangeGuid, canonical, holders);
+        if (status != ResolutionStatus.Resolved)
+        {
+            _logger.LogWarning(
+                "{Identity} (canonical {Canonical}, mailbox GUID {MailboxGuid}): {Refusal} - failing closed",
+                identity, recipient.PrimarySmtpAddress, exchangeGuid, refusal);
+        }
+
+        return (proven, status);
+    }
+
+    /// <summary>
+    /// The aud-a2c decision, pure so every outcome is testable without a directory.
+    /// <paramref name="canonical"/> is accepted only when it is the one and only object in
+    /// <paramref name="found"/> that holds <paramref name="exchangeGuid"/>, compared by objectGUID.
+    /// </summary>
+    /// <remarks>
+    /// - An object returned WITHOUT the GUID is not a holder, whatever the lookup that produced it:
+    ///   the proof is the GUID, never the fact that a query returned the object.
+    /// - No holder is <c>Unavailable</c>: nothing in AD shows which object owns the mailbox (a remote
+    ///   mailbox whose ExchangeGuid was never stamped on-premises, or a mailbox object outside the
+    ///   searched domain). It is never read as "not protected".
+    /// - Two holders is <c>Ambiguous</c>, even when one of them is the canonical object: a copied
+    ///   GUID is how a forged stand-in would look, and the real owner still holding it is how it is
+    ///   seen.
+    /// - One holder that is not the canonical object is <c>Ambiguous</c>: the address names one
+    ///   object and the mailbox is another. This is the case the finding describes.
+    /// - The comparison needs objectGUID on both sides - an identifier no attribute edit can give
+    ///   another object. Without it there is nothing to compare, so <c>Unavailable</c>.
+    /// </remarks>
+    internal static (ResolvedDirectoryPrincipal? principal, ResolutionStatus status, string? refusal) SelectMailboxBacking(
+        Guid exchangeGuid, ResolvedDirectoryPrincipal canonical, IReadOnlyList<MailboxGuidHolder> found)
+    {
+        var holders = found.Where(h => h.MailboxGuid == exchangeGuid).ToList();
+
+        if (holders.Count == 0)
+        {
+            return (null, ResolutionStatus.Unavailable,
+                "no Active Directory object holds this mailbox GUID in msExchMailboxGuid (a remote mailbox whose "
+                + "ExchangeGuid was never stamped on-premises, or an object outside the searched domain)");
+        }
+
+        if (holders.Count > 1)
+            return (null, ResolutionStatus.Ambiguous, $"{holders.Count} Active Directory objects hold this mailbox GUID");
+
+        var holder = holders[0];
+        if (string.IsNullOrWhiteSpace(holder.ObjectGuid) || string.IsNullOrWhiteSpace(canonical.ObjectGuid))
+        {
+            return (null, ResolutionStatus.Unavailable,
+                "the mailbox GUID holder or the object under the canonical address has no objectGUID to compare");
+        }
+
+        if (!string.Equals(holder.ObjectGuid, canonical.ObjectGuid, StringComparison.OrdinalIgnoreCase))
+        {
+            return (null, ResolutionStatus.Ambiguous,
+                $"the object under the canonical address ({canonical.DistinguishedName}) is not the object that "
+                + $"holds this mailbox GUID ({holder.DistinguishedName})");
+        }
+
+        return (canonical with { ExchangeGuid = exchangeGuid }, ResolutionStatus.Resolved, null);
+    }
+
+    /// <summary>
+    /// Every Active Directory object whose <c>msExchMailboxGuid</c> is <paramref name="mailboxGuid"/>.
+    /// <c>answered</c> is false when the lookup could not run - credential, throttle, any error,
+    /// including a schema with no Exchange attributes - and the list is then meaningless.
+    /// </summary>
+    /// <remarks>
+    /// <c>Get-ADObject</c>, not <c>Get-ADUser</c>: a second holder of any object class has to be
+    /// seen for <see cref="SelectMailboxBacking"/> to call it ambiguous. Same credential, throttle and
+    /// fail-closed handling as <see cref="ResolveWithStatusAsync"/>, and the same scope: the default
+    /// domain, so a holder elsewhere in the forest is not seen (the miss refuses; it cannot admit).
+    /// </remarks>
+    // virtual: test seam, the same shape as ResolveWithStatusAsync.
+    public virtual async Task<(bool answered, IReadOnlyList<MailboxGuidHolder> holders)> FindMailboxGuidHoldersAsync(Guid mailboxGuid)
+    {
+        if (DateTime.UtcNow - _lastCredentialFailure < CredentialFailureTtl)
+        {
+            _logger.LogDebug("Skipping the mailbox GUID lookup - credential recently failed");
+            return (false, []);
+        }
+
+        var secretId = GetDirectoryReadSecretId();
+        if (secretId == null)
+        {
+            _logger.LogDebug("Cannot look up a mailbox GUID - directory-read credential not configured");
+            return (false, []);
+        }
+
+        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
+        if (creds == null)
+        {
+            _lastCredentialFailure = DateTime.UtcNow;
+            _logger.LogWarning("Failed to retrieve directory-read credential for the mailbox GUID lookup");
+            return (false, []);
+        }
+
+        try
+        {
+            if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+            {
+                _logger.LogWarning("AD throttle timeout during the mailbox GUID lookup for {MailboxGuid}", mailboxGuid);
+                return (false, []);
+            }
+
+            try
+            {
+                var holders = await Task.Run(() => FindMailboxGuidHoldersViaActiveDirectory(
+                    mailboxGuid, creds.Value.username, creds.Value.password, creds.Value.domain));
+                return (true, holders);
+            }
+            finally
+            {
+                _adThrottle.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Mailbox GUID lookup failed for {MailboxGuid}", mailboxGuid);
+            return (false, []);
+        }
+    }
+
+    private static IReadOnlyList<MailboxGuidHolder> FindMailboxGuidHoldersViaActiveDirectory(
+        Guid mailboxGuid, string username, string password, string domain)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+        ps.Streams.Error.Clear();
+
+        ps.AddCommand("Get-ADObject")
+          .AddParameter("LDAPFilter", BuildMailboxGuidFilter(mailboxGuid))
+          .AddParameter("Properties", new[] { "DistinguishedName", "ObjectGUID", "msExchMailboxGuid" })
+          .AddParameter("Credential", CreateCredential(username, password, domain))
+          .AddParameter("ErrorAction", "Stop");
+        var objects = ps.Invoke();
+        ps.Commands.Clear();
+
+        // Completeness matters here, not just success: a search that dropped a second holder would
+        // read as a unique one. Any error recorded alongside the results fails the lookup.
+        if (ps.Streams.Error.Count > 0)
+            throw new InvalidOperationException($"The mailbox GUID lookup reported {ps.Streams.Error.Count} error(s).");
+
+        return objects
+            .Where(o => o != null)
+            .Select(o => new MailboxGuidHolder(
+                ObjectGuid: o.Properties["ObjectGUID"]?.Value?.ToString(),
+                DistinguishedName: o.Properties["DistinguishedName"]?.Value?.ToString(),
+                MailboxGuid: ParseMailboxGuid(o.Properties["msExchMailboxGuid"]?.Value)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Reads <c>msExchMailboxGuid</c> as AD returns it - a 16-byte octet string in the Windows GUID
+    /// layout (Data1, Data2 and Data3 little-endian), which is the layout <see cref="Guid(byte[])"/>
+    /// reads. Wrapped, single-element and already-parsed forms are accepted; anything else, and all
+    /// zeros, is null - which <see cref="SelectMailboxBacking"/> treats as "not a holder".
+    /// </summary>
+    internal static Guid? ParseMailboxGuid(object? value)
+    {
+        switch (value)
+        {
+            case PSObject wrapped:
+                return ParseMailboxGuid(wrapped.BaseObject);
+            case byte[] bytes:
+                return bytes.Length == 16 ? NonEmpty(new Guid(bytes)) : null;
+            case Guid g:
+                return NonEmpty(g);
+            case string s:
+                return Guid.TryParse(s, out var parsed) ? NonEmpty(parsed) : null;
+            case System.Collections.IList { Count: 1 } single:
+                return ParseMailboxGuid(single[0]);
+            default:
+                return null;
+        }
+
+        static Guid? NonEmpty(Guid g) => g == Guid.Empty ? null : g;
+    }
+
+    /// <summary>
+    /// The LDAP equality filter for a binary attribute: every byte escaped as <c>\hh</c>, in the
+    /// order AD stores them (<see cref="Guid.ToByteArray"/>). Matching the GUID's text form would
+    /// match nothing - which would refuse every synced mailbox rather than admit one, but is still
+    /// wrong.
+    /// </summary>
+    internal static string BuildMailboxGuidFilter(Guid mailboxGuid)
+    {
+        var sb = new System.Text.StringBuilder("(msExchMailboxGuid=", 19 + 48 + 1);
+        foreach (var b in mailboxGuid.ToByteArray())
+            sb.Append('\\').Append(b.ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
+        return sb.Append(')').ToString();
     }
 
     /// <summary>
@@ -674,7 +922,10 @@ public class ProtectedPrincipalService
             PrimarySmtpAddress: recipient.PrimarySmtpAddress,
             DistinguishedName: null,
             ObjectGuid: null,
-            EntraObjectId: recipient.ExternalDirectoryObjectId);
+            EntraObjectId: recipient.ExternalDirectoryObjectId,
+            // Exchange's own mailbox GUID: there is no AD object to agree with, so this is simply the
+            // identity of the mailbox Exchange will write, carried for aud-a2d.
+            ExchangeGuid: recipient.ExchangeGuid);
     }
 
     private ResolvedDirectoryPrincipal? ResolveViaActiveDirectory(string identity, string username, string password, string domain)

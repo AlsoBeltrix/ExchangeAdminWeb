@@ -16,11 +16,19 @@ namespace ExchangeAdminWeb.Services;
 /// not report makes the lookup throw (aud-a2b hole 3). "Undetermined" used to read as false,
 /// which sent a synced recipient down the cloud-only branch and skipped its group and OU rules.
 /// </param>
+/// <param name="ExchangeGuid">
+/// The mailbox GUID Exchange reports, or null when it reports none (groups, contacts and mail
+/// users without a mailbox report all zeros, which is read as none). For a synced mailbox this is
+/// the value its on-premises object holds in <c>msExchMailboxGuid</c>, and it is what the
+/// protected-principal check requires that object to prove before it is accepted (aud-a2c). An
+/// address can be carried by any AD object; this cannot be, by accident.
+/// </param>
 public sealed record ResolvedRecipient(
     string PrimarySmtpAddress,
     string? ExternalDirectoryObjectId,
     string? RecipientType,
-    bool ExistsOnPrem);
+    bool ExistsOnPrem,
+    Guid? ExchangeGuid = null);
 
 public interface IIdentityResolver
 {

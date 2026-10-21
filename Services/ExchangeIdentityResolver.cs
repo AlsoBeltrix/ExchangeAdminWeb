@@ -111,7 +111,32 @@ public class ExchangeIdentityResolver : ExchangeServiceBase, IIdentityResolver
             PrimarySmtpAddress: primary.Trim(),
             ExternalDirectoryObjectId: recipient.Properties["ExternalDirectoryObjectId"]?.Value?.ToString(),
             RecipientType: recipient.Properties["RecipientType"]?.Value?.ToString(),
-            ExistsOnPrem: synced);
+            ExistsOnPrem: synced,
+            ExchangeGuid: ReadExchangeGuid(recipient));
+    }
+
+    /// <summary>
+    /// Exchange's mailbox GUID, or null when the recipient has none. Unlike
+    /// <see cref="IsDirSynced"/>, null does not fail the lookup: a group or a contact legitimately
+    /// has no mailbox GUID, and only the synced-mailbox branch of
+    /// <c>ProtectedPrincipalService.ResolveExchangeTargetAsync</c> needs one - where its absence
+    /// refuses (aud-a2c). All zeros is Exchange's way of saying "none", so it is read as null;
+    /// passing it through would send a search for a zero GUID into Active Directory.
+    /// </summary>
+    private static Guid? ReadExchangeGuid(PSObject recipient)
+    {
+        var value = recipient.Properties["ExchangeGuid"]?.Value;
+        if (value is PSObject wrapped)
+            value = wrapped.BaseObject;
+
+        Guid? parsed = value switch
+        {
+            Guid g => g,
+            string s when Guid.TryParse(s, out var p) => p,
+            _ => null
+        };
+
+        return parsed == Guid.Empty ? null : parsed;
     }
 
     /// <summary>

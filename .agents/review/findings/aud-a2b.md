@@ -197,6 +197,14 @@ write itself to the checked object's immutable id would close that window too, b
 changing every write call in three pages and their bulk paths (and the page line counts the
 ClickGate registry is keyed on); it was not done here.
 
+**Corrected by `aud-a2c` (2026-10-21): the paragraph above overstates what the agreement
+proves.** The objectGUID comparison is between AD's reading of the typed string and AD's reading
+of the canonical address - two AD readings, neither tied to the mailbox Exchange resolved. An
+account with no mailbox that carries the address in `mail` or `userPrincipalName` passed it, and
+that is a stable bypass, not a race between check and write. Since `aud-a2c` the object behind
+the canonical address must also be the only AD object holding the recipient's `ExchangeGuid` in
+`msExchMailboxGuid`; see [aud-a2c.md](aud-a2c.md). Binding the write is still `aud-a2d`.
+
 **Residuals left on purpose, recorded so nobody reads them as covered:**
 
 - A recipient Exchange Online does not have (an unsynced on-premises mailbox) is checked as AD
@@ -206,6 +214,15 @@ ClickGate registry is keyed on); it was not done here.
 - Blocked Senders and Migration keep the AD-first resolution: both key on an SMTP address, which
   cannot be a sAMAccountName, so hole 2's collision cannot arise there; an address that is one
   object's UPN and another's mail is already `Ambiguous` in AD.
+  **The last clause does not hold (found while fixing `aud-a2c`).** It is `Ambiguous` only when
+  AD sees both objects. When the mailbox's own object does not carry the address in `mail` or
+  `userPrincipalName` within the searched domain - the lookup has no `-Server`, so a mailbox
+  object in another domain of the forest is never seen - a namesake carrying it is AD's only
+  match and resolves. Migration then hands the address to `New-MigrationBatch`
+  (`Services/MigrationService.cs:450-455`) and Blocked Senders to `Remove-BlockedSenderAddress`
+  (`Services/BlockedSenderService.cs:56-57`), so both can check the namesake while Exchange acts
+  on the mailbox. Same class as `aud-a2c`, on the AD-first entry point. **Candidate finding,
+  reported for admission; not fixed in `aud-a2c`** (one finding per commit).
 
 **Operator-visible changes, all in the refusing direction:**
 
@@ -214,6 +231,10 @@ ClickGate registry is keyed on); it was not done here.
   proceed without it.
 - A synced recipient whose AD object does not carry its Exchange primary address in `mail` or
   `userPrincipalName` refuses (directories disagree) in those four modules.
+- Since `aud-a2c`, a synced mailbox in those four modules also refuses unless exactly one AD
+  object holds Exchange's `ExchangeGuid` in `msExchMailboxGuid` and it is the object under the
+  canonical address. Who that refuses - notably remote mailboxes whose ExchangeGuid was never
+  stamped on-premises - is in [aud-a2c.md](aud-a2c.md).
 - With the legacy `MailboxPermissions/ExcludedUsers` list configured, the validator refuses when
   Exchange cannot be asked - at load, or for the target. A failed load is retried after a minute.
   An entry Exchange REJECTS rather than reporting "couldn't be found" - an identity form it does
