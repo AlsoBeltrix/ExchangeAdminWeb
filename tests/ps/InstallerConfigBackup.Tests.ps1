@@ -611,3 +611,85 @@ Describe 'cdt-18: the pool restarts only after a complete mirror, confirmed, and
         $planned.Calls | Should -Not -Match 'start' -Because '-PlanOnly prints the restart and runs nothing'
     }
 }
+
+Describe 'cdt-15: an update refuses to move an existing application to another pool or folder' {
+    # "Create or update IIS web application" set an EXISTING application's pool and folder to this
+    # run's -AppPoolName and -PublishPath, which default to fixed values when omitted: an update
+    # without them moved the live application to a new pool (new identity) and/or a new folder (a
+    # fresh, default-config instance).
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt15Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        foreach ($name in 'Write-Fail', 'ConvertTo-InstallerComparablePath', 'Assert-ApplicationTargetUnchanged') {
+            $fn = $script:Cdt15Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            if ($null -eq $fn) { throw "the installer defines no function $name" }
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+    }
+
+    It 'passes a fresh install and an in-place update, however IIS spells the folder' {
+        { Assert-ApplicationTargetUnchanged -Location 'Site/App' -Exists $false -ExistingPool '' -ExistingPhysicalPath '' -AppPoolName 'Pool' -PublishPath 'D:\apps\App' } | Should -Not -Throw
+        foreach ($spelling in 'D:\apps\App', 'd:\APPS\app', 'D:\apps\App\', 'D:/apps/App', 'D:\apps\x\..\App') {
+            { Assert-ApplicationTargetUnchanged -Location 'Site/App' -Exists $true -ExistingPool 'pool' -ExistingPhysicalPath $spelling -AppPoolName 'Pool' -PublishPath 'D:\apps\App' } |
+                Should -Not -Throw -Because "'$spelling' is the same folder, and pool names compare case-insensitively"
+        }
+        $env:CDT15_ROOT = 'D:\apps'
+        try {
+            { Assert-ApplicationTargetUnchanged -Location 'Site/App' -Exists $true -ExistingPool 'Pool' -ExistingPhysicalPath '%CDT15_ROOT%\App' -AppPoolName 'Pool' -PublishPath 'D:\apps\App' } |
+                Should -Not -Throw -Because 'IIS often stores the folder with an environment variable'
+        } finally {
+            Remove-Item Env:\CDT15_ROOT -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses <Case>, naming what IIS reports and what to re-run with' -TestCases @(
+        @{ Case = 'a different pool'; Pool = 'PortalPool'; Folder = 'D:\apps\App'; Expect = @("app pool 'PortalPool'", "-AppPoolName 'Pool'") }
+        @{ Case = 'a different folder'; Pool = 'Pool'; Folder = 'D:\apps\Portal'; Expect = @("files at 'D:\apps\Portal'", "-PublishPath 'D:\apps\App'") }
+        @{ Case = 'both'; Pool = 'PortalPool'; Folder = 'D:\apps\Portal'; Expect = @("app pool 'PortalPool'", "files at 'D:\apps\Portal'") }
+        @{ Case = 'a folder that only starts with the run''s'; Pool = 'Pool'; Folder = 'D:\apps\AppOther'; Expect = @("files at 'D:\apps\AppOther'") }
+        @{ Case = 'an existing application with no folder'; Pool = 'Pool'; Folder = ''; Expect = @("files at ''") }
+    ) {
+        $err = $null
+        try { Assert-ApplicationTargetUnchanged -Location 'Site/App' -Exists $true -ExistingPool $Pool -ExistingPhysicalPath $Folder -AppPoolName 'Pool' -PublishPath 'D:\apps\App' } catch { $err = $_ }
+        $err | Should -Not -BeNullOrEmpty -Because "an update must not move the live application ($Case)"
+        foreach ($text in $Expect) { "$err" | Should -BeLike "*$text*" }
+        "$err" | Should -BeLike "*Re-run with -AppPoolName '$Pool' -PublishPath '$Folder'*"
+        "$err" | Should -BeLike '*Nothing was changed*'
+    }
+
+    It 'reads the application and asserts once, at script level, before anything changes (AST)' {
+        $ast = $script:Cdt15Ast
+        $statements = @($ast.EndBlock.Statements)
+        $find = { param($test) for ($i = 0; $i -lt $statements.Count; $i++) { if (& $test $statements[$i]) { $i } } }
+
+        $reads = @(& $find { param($st) $st -is [System.Management.Automation.Language.TryStatementAst] -and $st.Body.Extent.Text -match ([regex]::Escape('$existingApplication = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop')) })
+        $reads.Count | Should -Be 1 -Because 'the application is read once, at script level'
+        $asserts = @(& $find { param($st) $st.Extent.Text -like 'Assert-ApplicationTargetUnchanged *' })
+        $asserts.Count | Should -Be 1
+        $assert = $statements[$asserts[0]].PipelineElements[0]
+        foreach ($pair in @(@('Location', '"$ParentSite/$AppAlias"'), @('Exists', '($null -ne $existingApplication)'), @('ExistingPool', '"$($existingApplication.applicationPool)"'), @('ExistingPhysicalPath', '"$($existingApplication.PhysicalPath)"'), @('AppPoolName', '$AppPoolName'), @('PublishPath', '$PublishPath'))) {
+            $element = @($assert.CommandElements)
+            $value = $null
+            for ($k = 1; $k -lt $element.Count; $k++) {
+                if ($element[$k] -is [System.Management.Automation.Language.CommandParameterAst] -and $element[$k].ParameterName -eq $pair[0]) { $value = $element[$k + 1].Extent.Text }
+            }
+            $value | Should -BeExactly $pair[1] -Because "-$($pair[0]) carries what IIS reported or what this run would set"
+        }
+        $refusal = @(& $find { param($st) $st -is [System.Management.Automation.Language.IfStatementAst] -and $st.Clauses[0].Item1.Extent.Text -eq '$applicationLookupFailed' })
+        $refusal.Count | Should -Be 1
+        $statements[$refusal[0]].Extent.Text | Should -Match '(?s)if \(\$PlanOnly\) \{\s*Write-Warn.*\} else \{\s*Write-Fail' -Because 'an unreadable application warns a plan and refuses a real run'
+
+        $import = @(& $find { param($st) $st -is [System.Management.Automation.Language.IfStatementAst] -and $st.Extent.Text -match 'Import-Module WebAdministration' })
+        $import.Count | Should -Be 1
+        $import[0] | Should -BeLessThan $reads[0] -Because 'the module and the site come first'
+        $reads[0] | Should -BeLessThan $refusal[0]
+        $refusal[0] | Should -BeLessThan $asserts[0]
+        $identity = @(& $find { param($st) $st.Extent.Text -like '$identityPlan = Resolve-AppPoolIdentityPlan*' })
+        $asserts[0] | Should -BeLessThan $identity[0] -Because 'nothing about the pool is decided before the target is known to be the existing one'
+        $firstChange = @(& $find { param($st) $st.Extent.Text -like 'Invoke-PlanOrAction *' -or $st.Extent.Text -like 'Set-DirectoryAcl *' })[0]
+        $asserts[0] | Should -BeLessThan $firstChange -Because 'it refuses before anything is changed'
+    }
+}

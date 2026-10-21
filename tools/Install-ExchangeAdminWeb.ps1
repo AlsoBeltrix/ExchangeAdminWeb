@@ -30,6 +30,9 @@
       - Keeps the app pool's existing custom identity when -ServiceAccount is omitted.
         Pass -ServiceAccount to change it, or -ResetAppPoolIdentity to move it back to
         ApplicationPoolIdentity.
+      - Updates the IIS application in place: -AppPoolName and -PublishPath must be the pool and
+        folder IIS already serves it from (both default to fixed values when omitted). A run that
+        would move an existing application is refused before anything changes.
       - Copies binaries/static files while preserving appsettings.json, config, and logs.
       - Seeds only newly missing config fragments.
 
@@ -577,6 +580,57 @@ function Resolve-ConfigStorePlan {
     }
 }
 
+function ConvertTo-InstallerComparablePath {
+    # One spelling per folder (cdt-15): environment variables expanded (IIS often stores
+    # %SystemDrive%\...), made absolute and normalised, trailing separators dropped. Callers
+    # compare the results by equality, case-insensitively - never by prefix, because one
+    # instance's folder is easily a prefix of a sibling's.
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $expanded = [Environment]::ExpandEnvironmentVariables($Path.Trim())
+    try {
+        $full = [System.IO.Path]::GetFullPath($expanded)
+    } catch {
+        $full = $expanded
+    }
+    return $full.TrimEnd('\', '/')
+}
+
+function Assert-ApplicationTargetUnchanged {
+    # cdt-15. "Create or update IIS web application" below sets an EXISTING application's pool and
+    # folder to this run's -AppPoolName and -PublishPath, and both default to fixed values when
+    # omitted. So an update that did not repeat a customised value moved the live application: to a
+    # new pool, created with ApplicationPoolIdentity (the identity its credential store, certificate
+    # key and directory access depend on, lost - aud-a34 by another door), and/or to a new folder
+    # with no appsettings.json, which this run then generates from defaults (a fresh, empty instance
+    # at the same URL - the cdt-8 outcome). An existing application must be updated in place; moving
+    # one is an IIS change made deliberately first, not a side effect of an omitted parameter.
+    param(
+        [string]$Location,
+        [bool]$Exists,
+        [string]$ExistingPool,
+        [string]$ExistingPhysicalPath,
+        [string]$AppPoolName,
+        [string]$PublishPath
+    )
+
+    if (-not $Exists) { return }
+
+    $differences = @()
+    if (-not [string]::Equals($ExistingPool, $AppPoolName, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $differences += "app pool '$ExistingPool' (this run: -AppPoolName '$AppPoolName')"
+    }
+    $existingFolder = ConvertTo-InstallerComparablePath $ExistingPhysicalPath
+    $runFolder = ConvertTo-InstallerComparablePath $PublishPath
+    if ([string]::IsNullOrWhiteSpace($existingFolder) -or -not [string]::Equals($existingFolder, $runFolder, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $differences += "files at '$ExistingPhysicalPath' (this run: -PublishPath '$PublishPath')"
+    }
+    if ($differences.Count -gt 0) {
+        Write-Fail "IIS application $Location already exists, with $($differences -join ' and '). An update must name the pool and folder it was installed with - -AppPoolName and -PublishPath default to fixed values when omitted - or this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$ExistingPhysicalPath', or move the application in IIS first if that is intended. Nothing was changed."
+    }
+}
+
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
 $defaultPublishPath = Join-Path $env:SystemDrive "inetpub\$AppAlias"
 $defaultLogRoot = Join-Path $env:ProgramData "ExchangeAdminWeb\Logs"
@@ -684,6 +738,25 @@ if ($PlanOnly) {
         Write-Fail "IIS site '$ParentSite' was not found."
     }
 }
+
+# cdt-15. Read the application this run is about to update, before anything about the pool is
+# decided or changed, and refuse a run that would move it. Side-effect free, so a plan does it too;
+# a plan that cannot read IIS says so rather than implying the check passed.
+$existingApplication = $null
+$applicationLookupFailed = $false
+try {
+    $existingApplication = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop
+} catch {
+    $applicationLookupFailed = $true
+}
+if ($applicationLookupFailed) {
+    if ($PlanOnly) {
+        Write-Warn "This plan cannot read IIS application $ParentSite/$AppAlias, so it cannot check that the application is updated in place; a real run refuses if IIS serves it from a different folder or pool."
+    } else {
+        Write-Fail "Cannot read IIS application $ParentSite/$AppAlias, so it cannot be confirmed that this run updates it in place rather than moving it. Nothing was changed."
+    }
+}
+Assert-ApplicationTargetUnchanged -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -ExistingPool "$($existingApplication.applicationPool)" -ExistingPhysicalPath "$($existingApplication.PhysicalPath)" -AppPoolName $AppPoolName -PublishPath $PublishPath
 
 # Read it in both modes - see the plan-mode note above. Guarded because the IIS provider
 # may not exist on a machine that is only producing a plan.
