@@ -149,11 +149,15 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         // executable state; descriptive DN changes cannot retarget the later member write.
         _resolvedMembers = resolve.ResolvedMembers.ToArray();
 
+        // cdr-followup-1: addresses and distinct members are named separately. Two aliases of one
+        // person are two addresses and one member, and "1 of 2 matched in AD" read as a miss. A
+        // rejection has already refused above, so every uploaded address is one that resolved.
         return new BulkJobRowOutcome
         {
             Target = target,
             Status = BulkJobRowStatus.Success,
-            Message = $"{_resolvedMembers.Count:N0} of {payload.Emails.Count:N0} matched in AD",
+            Message = Comms10kAddressResolver.DescribeResolved(
+                payload.Emails.Count - resolve.Rejections.Count, _resolvedMembers.Count, resolve.Rejections.Count),
         };
     }
 

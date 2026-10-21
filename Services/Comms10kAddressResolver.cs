@@ -258,6 +258,33 @@ public static class Comms10kAddressResolver
     }
 
     /// <summary>
+    /// The one-line summary of a resolution, naming its two quantities separately:
+    /// "2 addresses resolved to 1 distinct member; 0 rejected".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Review follow-up cdr-followup-1. The two counts differ by design - <see cref="Resolve"/>
+    /// writes a person once however many of their addresses were uploaded - and the resolve
+    /// stage's old message put one over the other: two aliases of one person read "1 of 2 matched
+    /// in AD", which tells whoever reads it that an address missed when none did.
+    /// </para>
+    /// <para>
+    /// <paramref name="resolvedAddresses"/> counts input addresses that resolved. Every input is
+    /// exactly one of resolved or rejected, so that is the input count less the rejections.
+    /// <paramref name="distinctMembers"/> counts people. The rejected clause appears only when a
+    /// count is given: a caller that lists its rejections elsewhere leaves it out rather than show
+    /// two different "rejected" numbers.
+    /// </para>
+    /// </remarks>
+    public static string DescribeResolved(int resolvedAddresses, int distinctMembers, int? rejected = null)
+    {
+        var addresses = resolvedAddresses == 1 ? "address" : "addresses";
+        var members = distinctMembers == 1 ? "member" : "members";
+        var summary = $"{resolvedAddresses:N0} {addresses} resolved to {distinctMembers:N0} distinct {members}";
+        return rejected is { } count ? $"{summary}; {count:N0} rejected" : summary;
+    }
+
+    /// <summary>
     /// Indexes every returned address key, including keys changed between batch queries. Only
     /// distinct GUIDs count as matches; the first row for that address/GUID supplies its DN.
     /// </summary>
