@@ -1,7 +1,7 @@
 # aud-sqlite3-path: an elevated deploy runs a user-writable, unsigned sqlite3.exe found on PATH
 
 **Severity**: HIGH. A privilege-escalation path on the deploy host, measured, not inferred.
-**Status**: S1 landed, S2/S3 pending (`docs/ConfigDbToolInApp-Plan.md`)
+**Status**: S1 landed, S2 landed (scripts use the app's db mode; no script runs sqlite3.exe), S3 pending (`docs/ConfigDbToolInApp-Plan.md`)
 **Branch**: -- (direct-to-main)
 **Commit**: S1 `86970a5`; cdt-1 follow-up `872f211`
 
@@ -105,12 +105,54 @@ md5 matched, file touched, rebuilt; final restored build 31/31 green):
 
 Plan rows 4-7 (resolver, module throw, skip gate, jobs Pester) belong to S2.
 
+### S2 - the scripts use it
+
+`tools/SqliteConfigBackup.psm1` gains `Resolve-ConfigDbTool -AppPath [-PlanOnly]` (host from
+`$env:ProgramFiles\dotnet\dotnet.exe`, assembly from the folder given; action mode throws
+naming a missing file or an app older than 2.34.0) and loses `Get-Sqlite3Path` /
+`Assert-Sqlite3Available`. Backup, copy and integrity check run `db backup` / `db check` and
+trust the exit code only. `tools/JobStateWarning.psm1` runs `db active-jobs`; every failure,
+including a missing or too-old tool, stays a warning. Callers: `deploy.ps1` (staging for the
+backup and job check, resolved right after publish; the publish folder for the post-deploy
+check, because staging is gone by then), the installer (staging), promote (dev), cutover
+(dev). Pester drives the built app (`tests/ps/Get-BuiltApp.ps1`); no suite skips; CI builds
+the app instead of installing sqlite3. Pester 271 passed / 0 failed / 0 skipped (was 255) with
+no sqlite3 on PATH.
+
+Mutation round (each: applied at the call site, md5 changed, named test failed, restored, md5
+matched the original, file touched, named test green):
+
+| Mutation | md5 before -> mutated | Failed |
+| --- | --- | --- |
+| Plan row 4: resolver uses `Get-Command dotnet` | `7EEC462E -> 63E874E3` | `resolves the .NET host from Program Files, never from PATH` |
+| Plan row 5: Backup's throw replaced by `Write-Warning` | `7EEC462E -> F5F394F2` | `THROWS (aborts) when the source DB is corrupt, and leaves no backup file` |
+| Plan row 5: integrity throw replaced by `Write-Warning` | `7EEC462E -> 21213952` | `integrity helper passes on a good DB and throws on a corrupt one`; cutover `fails naming the path when the shared file is not a sound database (scdi-3)` |
+| Plan row 6: one `-Skip:` reintroduced | `5415573B -> 663810EF` | full suite `SkippedCount` 1 (what the CI gate fails on) |
+| Plan row 7: `active-jobs` filter drops `Queued` (C#, rebuilt) | `44BB8146 -> DD86A99A` | Pester `detects Running and Queued jobs but not terminal ones, with every column parsed`; xUnit `ActiveJobs_ReturnsRunningAndQueuedOnlyInSubmissionOrderAsFivePipeColumns` |
+| CI build step disabled | `97FA06E7 -> E3E2705F` | `builds the app before running Pester` |
+| CI `setup-dotnet` removed from the powershell job | `97FA06E7 -> 697A4005` | `installs the .NET 10 SDK in the powershell job before building` |
+| `Get-Command sqlite3` added to a tools script | `ACB4CDA2 -> 784BEF8A` | `no tracked ops script resolves sqlite3 with Get-Command` |
+| installer's fatal resolve made `-PlanOnly` | `5E1479A2 -> 35F258AC` | `treats a missing app binary as fatal, not as a warning` |
+| deploy backup run from `$PublishPath` instead of staging | `31BCBE2A -> 50D51520` | `runs the db tool from the binary it is about to deploy, resolved before anything changes` |
+| resolver returns without the action-mode throw | `7EEC462E -> D7E045C2` | `throws naming the missing assembly in action mode` |
+| resolver version floor removed | `7EEC462E -> C06806C1` | `refuses an app binary older than the db mode, before running it` |
+| jobs version floor removed | `23C9BE2B -> 1CD4EA64` | `warns and returns nothing, without running it, when the app binary predates the db mode` |
+| jobs read failure throws instead of warning | `46FB5300 -> BB9937F6` | `warns and returns nothing, never throws, when the jobs DB is unreadable` |
+
+Plan risk 4 corrected in S2: an app older than the db mode would not exit 1. Its Program.cs
+passes the arguments to the web host builder, whose command-line configuration skips bare
+words, so it would try to start the app (inferred from the provider's behaviour; an old build
+was not run). Both modules therefore check the assembly's file version (>= 2.34.0) before
+running it; the exit-1 message is kept for any other usage error.
+
 ## Known gaps
 
-- Until S2 lands, every deploy still runs the per-user `sqlite3.exe`. The finding is open.
 - The per-user binary on the deploy host should be removed once S2 is deployed; owner's host
   action (plan section 10).
+- The first elevated dev deploy after S2 is the only end-to-end proof that a deploy no longer
+  touches `sqlite3.exe`; `tools/deploy-pipeline.ps1 -Prod -PlanOnly` (AC7) is also the
+  owner's. Neither was run in S2.
 
 ## Closeout
 
-S1 on `master`. Independent review not yet run.
+S1 and S2 on `master`. Independent review of S2 not yet run.

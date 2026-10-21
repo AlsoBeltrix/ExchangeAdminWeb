@@ -202,10 +202,10 @@ function Get-AppPoolIdentity {
 }
 
 function Stop-AppPoolChecked {
-    param([string]$Name, [string]$ConfigDir)
+    param([string]$Name, [string]$ConfigDir, [string]$AppPath)
 
     Invoke-PlanOrAction "Stop app pool $Name (warns about active bulk jobs first)" {
-        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir | Out-Null
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath | Out-Null
         $state = (Get-ItemProperty "IIS:\AppPools\$Name").State
         if ($state -ne 'Stopped') {
             Stop-WebAppPool -Name $Name -ErrorAction Stop
@@ -213,7 +213,7 @@ function Stop-AppPoolChecked {
         }
         Write-Ok "App pool $Name stopped"
     }
-    if ($PlanOnly) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -PlanOnly | Out-Null }
+    if ($PlanOnly) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath -PlanOnly | Out-Null }
 }
 
 function Start-AppPoolChecked {
@@ -514,8 +514,8 @@ function Write-RestoreInstructions {
     Write-Host "To return to two databases (run elevated, both pools stopped):" -ForegroundColor Yellow
     Write-Host "  Stop-WebAppPool -Name $DevAppPoolName; Stop-WebAppPool -Name $ProdAppPoolName" -ForegroundColor DarkGray
     Write-Host "  Import-Module '$PSScriptRoot\SqliteConfigBackup.psm1'" -ForegroundColor DarkGray
-    Write-Host "  Copy-SqliteDbFile -SourceDbPath '$SharedDbPath' -DestDbPath '$DevDb'    # or -SourceDbPath '$DevBackup'" -ForegroundColor DarkGray
-    Write-Host "  Copy-SqliteDbFile -SourceDbPath '$SharedDbPath' -DestDbPath '$ProdDb'   # or -SourceDbPath '$ProdBackup'" -ForegroundColor DarkGray
+    Write-Host "  Copy-SqliteDbFile -SourceDbPath '$SharedDbPath' -DestDbPath '$DevDb' -AppPath '$DevPublishPath'    # or -SourceDbPath '$DevBackup'" -ForegroundColor DarkGray
+    Write-Host "  Copy-SqliteDbFile -SourceDbPath '$SharedDbPath' -DestDbPath '$ProdDb' -AppPath '$DevPublishPath'   # or -SourceDbPath '$ProdBackup'" -ForegroundColor DarkGray
     Write-Host "  Copy-Item '$DevAppSettings.$Suffix' '$DevAppSettings' -Force    # removes ConfigStore:Path" -ForegroundColor DarkGray
     Write-Host "  Copy-Item '$ProdAppSettings.$Suffix' '$ProdAppSettings' -Force  # removes ConfigStore:Path" -ForegroundColor DarkGray
     Write-Host "  Start-WebAppPool -Name $DevAppPoolName; Start-WebAppPool -Name $ProdAppPoolName" -ForegroundColor DarkGray
@@ -536,7 +536,7 @@ function Assert-SharedDbUsable {
         $problem = "no file exists there"
     } else {
         try {
-            Test-SqliteConfigDbIntegrity -DbPath $Path | Out-Null
+            Test-SqliteConfigDbIntegrity -DbPath $Path -AppPath $DevPublishPath | Out-Null
         } catch {
             $problem = "it failed PRAGMA integrity_check: $($_.Exception.Message)"
         }
@@ -554,7 +554,7 @@ function Assert-SharedDbUsable {
 
     Write-Host ""
     Write-Host "  X  Both instances name $Path in ConfigStore:Path but $problem. Both app pools will refuse to start on it (the configured path is opened without create)." -ForegroundColor Red
-    Write-Host "     Restore the shared file from the newest verified backup under $BackupRoot (Copy-SqliteDbFile -SourceDbPath <backup> -DestDbPath '$Path'), or return both instances to two databases:" -ForegroundColor Yellow
+    Write-Host "     Restore the shared file from the newest verified backup under $BackupRoot (Copy-SqliteDbFile -SourceDbPath <backup> -DestDbPath '$Path' -AppPath '$DevPublishPath'), or return both instances to two databases:" -ForegroundColor Yellow
     Write-RestoreInstructions -DevDb (Join-Path $DevConfigDir 'exchangeadmin.db') -ProdDb (Join-Path $ProdConfigDir 'exchangeadmin.db') `
         -DevBackup $(if ($devBackup) { $devBackup.FullName } else { Join-Path $BackupRoot 'cutover.<timestamp>\dev.exchangeadmin.<timestamp>.db' }) `
         -ProdBackup $(if ($prodBackup) { $prodBackup.FullName } else { Join-Path $BackupRoot 'cutover.<timestamp>\prod.exchangeadmin.<timestamp>.db' }) `
@@ -608,6 +608,9 @@ $backupDir = Join-Path $BackupRoot "cutover.$timestamp"
 $devBackupFile = Join-Path $backupDir "dev.exchangeadmin.$timestamp.db"
 $prodBackupFile = Join-Path $backupDir "prod.exchangeadmin.$timestamp.db"
 $appsettingsBackupSuffix = "pre-shared.$timestamp.bak"
+# Every backup, copy and integrity check here runs the app's db mode from the deployed dev
+# build, through the .NET host in Program Files (docs/ConfigDbToolInApp-Plan.md).
+$configDbToolPlan = Resolve-ConfigDbTool -AppPath $DevPublishPath -PlanOnly
 
 Write-Host ""
 Write-Host "ExchangeAdminWeb shared config database cutover" -ForegroundColor Magenta
@@ -685,7 +688,7 @@ if ($PlanOnly) {
         Write-Fail "Run this script from an elevated PowerShell session when using -Apply."
     }
     Import-Module WebAdministration -ErrorAction Stop
-    Assert-Sqlite3Available | Out-Null
+    Resolve-ConfigDbTool -AppPath $DevPublishPath | Out-Null
 
     $poolIdentities = @(
         (Get-AppPoolIdentity -Name $DevAppPoolName),
@@ -702,20 +705,20 @@ $appsettingsTouched = @()
 $startedAt = Get-Date
 try {
     # Step 2 - stop both pools.
-    Stop-AppPoolChecked -Name $DevAppPoolName -ConfigDir $devConfigDir
-    Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir $prodConfigDir
+    Stop-AppPoolChecked -Name $DevAppPoolName -ConfigDir $devConfigDir -AppPath $DevPublishPath
+    Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir $prodConfigDir -AppPath $DevPublishPath
 
     # Step 3 - verified backups of BOTH current databases.
-    Invoke-PlanOrAction "Verified backup of dev DB $devDb to $devBackupFile" {
+    Invoke-PlanOrAction "Verified backup of dev DB $devDb to $devBackupFile via $($configDbToolPlan.Summary) backup" {
         New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
-        $b = Backup-SqliteConfigDb -DbPath $devDb -DestDir $backupDir -Timestamp "dev.$timestamp"
+        $b = Backup-SqliteConfigDb -DbPath $devDb -DestDir $backupDir -Timestamp "dev.$timestamp" -AppPath $DevPublishPath
         if (-not $b) { Write-Fail "Dev database vanished at $devDb" }
         Move-Item -LiteralPath $b -Destination $devBackupFile -Force
         Write-Ok "Dev DB backed up (verified) to $devBackupFile"
     }
-    Invoke-PlanOrAction "Verified backup of prod DB $prodDb to $prodBackupFile (skipped if prod has no DB yet)" {
+    Invoke-PlanOrAction "Verified backup of prod DB $prodDb to $prodBackupFile (skipped if prod has no DB yet) via $($configDbToolPlan.Summary) backup" {
         if (Test-Path -LiteralPath $prodDb -PathType Leaf) {
-            $b = Backup-SqliteConfigDb -DbPath $prodDb -DestDir $backupDir -Timestamp "prod.$timestamp"
+            $b = Backup-SqliteConfigDb -DbPath $prodDb -DestDir $backupDir -Timestamp "prod.$timestamp" -AppPath $DevPublishPath
             Move-Item -LiteralPath $b -Destination $prodBackupFile -Force
             Write-Ok "Prod DB backed up (verified) to $prodBackupFile"
         } else {
@@ -724,9 +727,9 @@ try {
     }
 
     # Step 4 - dev's database becomes the shared one.
-    Invoke-PlanOrAction "VACUUM INTO dev DB $devDb -> $SharedDbPath, then PRAGMA integrity_check" {
-        Copy-SqliteDbFile -SourceDbPath $devDb -DestDbPath $SharedDbPath | Out-Null
-        Test-SqliteConfigDbIntegrity -DbPath $SharedDbPath | Out-Null
+    Invoke-PlanOrAction "VACUUM INTO dev DB $devDb -> $SharedDbPath, then PRAGMA integrity_check, via $($configDbToolPlan.Summary) backup" {
+        Copy-SqliteDbFile -SourceDbPath $devDb -DestDbPath $SharedDbPath -AppPath $DevPublishPath | Out-Null
+        Test-SqliteConfigDbIntegrity -DbPath $SharedDbPath -AppPath $DevPublishPath | Out-Null
         Write-Ok "Shared database written and verified at $SharedDbPath"
     }
     if (-not $PlanOnly) { $sharedWritten = $true }

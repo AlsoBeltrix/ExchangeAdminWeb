@@ -8,8 +8,8 @@ database to run. Extracting it into a function purely so a test could call it wo
 ordering question - which is the actual finding - out of the place the ordering has to hold.
 
 So what is pinned here is ORDER and FATALITY, read from the source. The backup mechanism
-itself is already covered behaviourally by SqliteConfigBackup.Tests.ps1 against a real
-sqlite3 and a real database; this suite does not re-test it.
+itself is already covered behaviourally by SqliteConfigBackup.Tests.ps1 against the real
+built app and a real database; this suite does not re-test it.
 #>
 
 Set-StrictMode -Version Latest
@@ -39,19 +39,30 @@ Describe 'A36: the pre-upgrade config database backup' {
         $backupAt | Should -BeLessThan $stopAt
     }
 
-    It 'treats a missing sqlite3 as fatal, not as a warning' {
+    It 'treats a missing app binary as fatal, not as a warning' {
         # The whole point of the backup is the upgrade that goes wrong. Warning and
-        # proceeding would reproduce the finding with extra output.
-        $script:Installer | Should -Match 'Assert-Sqlite3Available'
+        # proceeding would reproduce the finding with extra output. The action-mode resolve
+        # (no -PlanOnly) is the one that throws naming the missing file; the backup then runs
+        # the tool from the same staging folder.
+        $script:Installer | Should -Match 'Resolve-ConfigDbTool -AppPath \$stagingPath(?! -PlanOnly)'
+        $script:Installer | Should -Match 'Backup-SqliteConfigDb -DbPath \$existingDb -DestDir \$backupDir -Timestamp \$backupStamp -AppPath \$stagingPath'
+        $script:Installer | Should -Not -Match 'Assert-Sqlite3Available'
     }
 
-    It 'checks for an existing database before demanding sqlite3' {
+    It 'checks for an existing database before demanding the app binary' {
         # A fresh install has nothing to back up and must not acquire a new hard dependency.
         $presenceAt = $script:Installer.IndexOf('Test-IsSqliteConfigDbPresent')
-        $assertAt = $script:Installer.IndexOf('Assert-Sqlite3Available')
+        $assertAt = [regex]::Match($script:Installer, 'Resolve-ConfigDbTool -AppPath \$stagingPath(?! -PlanOnly)').Index
 
         $presenceAt | Should -BeGreaterThan 0
+        $assertAt | Should -BeGreaterThan 0
         $presenceAt | Should -BeLessThan $assertAt
+    }
+
+    It 'prints the intended tool path in plan mode without requiring it to exist' {
+        # AC7: plan mode runs before publish, so the staging folder does not exist yet.
+        $script:Installer | Should -Match '\$configDbToolPlan = Resolve-ConfigDbTool -AppPath \$stagingPath -PlanOnly'
+        $script:Installer | Should -Match 'Invoke-PlanOrAction "Back up the config database before upgrading \(via \$\(\$configDbToolPlan\.Summary\)'
     }
 
     It 'resolves the database the way the app does, honouring ConfigStore:Path' {
@@ -108,7 +119,7 @@ Describe 'A36: the pre-upgrade config database backup' {
 
     It 'supports -PlanOnly like every other step' {
         # Architectural Invariant 4.
-        $script:Installer | Should -Match 'Invoke-PlanOrAction "Back up the config database before upgrading"'
+        $script:Installer | Should -Match 'Invoke-PlanOrAction "Back up the config database before upgrading[ "]'
     }
 }
 

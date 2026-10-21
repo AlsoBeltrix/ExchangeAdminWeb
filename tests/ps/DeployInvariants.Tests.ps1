@@ -261,6 +261,21 @@ Describe 'deploy.ps1' {
         $upgradeBlock | Should -Not -Match 'Join-Path \$PublishPath "config\\exchangeadmin\.db"'
     }
 
+    It 'runs the db tool from the binary it is about to deploy, resolved before anything changes (ConfigDbToolInApp-Plan S2)' {
+        # AC4: a staging folder without the app binary stops the deploy, naming the path,
+        # before any backup or mirror. The backup and the job check run that same binary.
+        $resolveAt = $s.Text.IndexOf('Resolve-ConfigDbTool -AppPath $StagingPath')
+        $resolveAt | Should -BeGreaterThan $s.Text.IndexOf('dotnet publish -c Release -o $StagingPath')
+        $resolveAt | Should -BeLessThan $s.Text.IndexOf('# --- Mode-specific deployment ---')
+
+        $upgradeBlock = [regex]::Match($s.Text, '(?s)# --- UPGRADE ---.*?# --- FRESH INSTALL ---').Value
+        $upgradeBlock | Should -Match 'Backup-SqliteConfigDb -DbPath \$configDbPath -DestDir \$configDirBackup -Timestamp \$timestamp -AppPath \$StagingPath'
+        $upgradeBlock | Should -Match 'Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir \$runtimeConfigDir -AppPath \$StagingPath'
+        # Staging is removed in the finally that restarts the pool, so the post-deploy check
+        # runs the same binary from where it now lives.
+        $upgradeBlock | Should -Match 'Test-SqliteConfigDbIntegrity -DbPath \$liveDb -AppPath \$PublishPath'
+    }
+
     It 'runs a post-deploy live DB integrity check (DB is excluded from file drift by design)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,
@@ -731,24 +746,40 @@ Describe 'tools/New-ExchangeAdminWebGraphApps.ps1' {
 Describe 'CI gates' {
     # Lower-priority Wave 4 items: the SQLite-dependent tests were silently skipping in CI
     # because nothing installed sqlite3, and every CI step ran under pwsh so Architectural
-    # Invariant 6 - the 5.1-readable scripts - was never exercised anywhere.
-    BeforeAll { $script:ci = Get-Content (Join-Path $RepoRoot '.github/workflows/ci.yml') -Raw }
+    # Invariant 6 - the 5.1-readable scripts - was never exercised anywhere. Since
+    # ConfigDbToolInApp-Plan S2 the suites drive the built app instead of sqlite3.
+    BeforeAll {
+        $script:ci = Get-Content (Join-Path $RepoRoot '.github/workflows/ci.yml') -Raw
+        $psJobAt = $script:ci.IndexOf("`n  powershell:")
+        $script:psJob = if ($psJobAt -ge 0) { $script:ci.Substring($psJobAt) } else { '' }
+    }
 
-    It 'installs sqlite3 before running Pester' {
-        # The COMMAND, not the step name: a step renamed to "Install sqlite3-disabled"
-        # still contains "Install sqlite3" as a substring and slipped past the first
-        # version of this guard.
-        $sqliteAt = $script:ci.IndexOf('choco install sqlite')
-        $pesterAt = $script:ci.IndexOf('- name: Pester')
+    It 'builds the app before running Pester' {
+        # The COMMAND, not the step name, for the same reason the sqlite3 guard pinned
+        # its command: a renamed or disabled step can keep a matching name.
+        $buildAt = $script:psJob.IndexOf('run: dotnet build ExchangeAdminWeb.csproj -c Release')
+        $pesterAt = $script:psJob.IndexOf('- name: Pester')
 
-        $sqliteAt | Should -BeGreaterThan 0
-        $sqliteAt | Should -BeLessThan $pesterAt
-        $script:ci | Should -Match 'the backup tests would silently skip'
+        $buildAt | Should -BeGreaterThan 0 -Because 'the powershell job must build the app the suites run'
+        $pesterAt | Should -BeGreaterThan 0
+        $buildAt | Should -BeLessThan $pesterAt
+    }
+
+    It 'installs the .NET 10 SDK in the powershell job before building' {
+        # The runner's default SDK is not guaranteed to be 10 (ConfigDbToolInApp-Plan 3.4).
+        $setupAt = $script:psJob.IndexOf('- uses: actions/setup-dotnet@v4')
+        $setupAt | Should -BeGreaterThan 0
+        $script:psJob.Substring($setupAt) | Should -Match "^- uses: actions/setup-dotnet@v4\s+with:\s+dotnet-version: '10\.0\.x'"
+        $setupAt | Should -BeLessThan $script:psJob.IndexOf('run: dotnet build ExchangeAdminWeb.csproj -c Release')
+    }
+
+    It 'no longer installs sqlite3' {
+        $script:ci | Should -Not -Match 'choco install sqlite'
     }
 
     It 'fails the build when a test skips in CI' {
-        # The -Skip gate exists so a developer without sqlite3 is not blocked. In CI it
-        # would hide exactly the tests the job is there to run, so a skip is a failure.
+        # No suite skips by design. A skip that creeps back would hide exactly the tests
+        # the job is there to run, so a skip is a failure.
         $script:ci | Should -Match '\$result\.SkippedCount -gt 0'
     }
 
@@ -757,8 +788,34 @@ Describe 'CI gates' {
         $script:ci | Should -Match 'shell: powershell'
         $script:ci | Should -Match 'PSVersion\.Major -ne 5'
 
-        foreach ($f in @('deploy.ps1', 'tools/SqliteConfigBackup.psm1', 'tools/AppPoolControl.psm1')) {
+        foreach ($f in @('deploy.ps1', 'tools/SqliteConfigBackup.psm1', 'tools/JobStateWarning.psm1', 'tools/AppPoolControl.psm1')) {
             $script:ci | Should -Match ([regex]::Escape($f))
+        }
+    }
+}
+
+Describe 'No sqlite3 on the deploy path (aud-sqlite3-path, ConfigDbToolInApp-Plan S2)' {
+
+    It 'no tracked ops script resolves sqlite3 with Get-Command' {
+        # The finding: an elevated deploy ran whatever sqlite3.exe PATH resolved to first,
+        # and on the deploy host that was a user-writable, unsigned copy.
+        $tracked = @(& git -C $RepoRoot ls-files -- 'tools/*.ps1' 'tools/*.psm1' '*.ps1' '*.psm1')
+        $LASTEXITCODE | Should -Be 0
+        $scripts = @($tracked | Where-Object { $_ -notmatch '/' -or $_ -like 'tools/*' })
+        $scripts.Count | Should -BeGreaterThan 5 -Because 'the scan must actually see the ops scripts'
+
+        $hits = foreach ($rel in $scripts) {
+            $text = Get-Content -LiteralPath (Join-Path $RepoRoot $rel) -Raw
+            if ($text -match '(?i)Get-Command\s+sqlite3') { $rel }
+        }
+        @($hits).Count | Should -Be 0 -Because ("these scripts still search PATH for sqlite3: " + (@($hits) -join ', '))
+    }
+
+    It 'resolves the .NET host from Program Files, never from PATH' {
+        foreach ($rel in 'tools/SqliteConfigBackup.psm1', 'tools/JobStateWarning.psm1') {
+            $text = Get-Content -LiteralPath (Join-Path $RepoRoot $rel) -Raw
+            $text | Should -Match ([regex]::Escape('$env:ProgramFiles')) -Because "$rel must build the host path from Program Files"
+            $text | Should -Not -Match '(?i)Get-Command\s+dotnet' -Because "$rel must not search PATH for the host"
         }
     }
 }

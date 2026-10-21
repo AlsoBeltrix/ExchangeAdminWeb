@@ -17,6 +17,8 @@ $ErrorActionPreference = "Stop"
 # Shared SQLite config-DB backup / integrity helpers (SqliteConfigStore-Plan Phase D). The
 # config database itself is SHARED by dev and prod and is never copied by promotion
 # (SharedConfigDb-Plan, decision 2026-09-04) - this script backs it up and otherwise leaves it.
+# The backup and the job check run the app's db mode from the dev publish folder - the build
+# being promoted - through the .NET host in Program Files (docs/ConfigDbToolInApp-Plan.md).
 Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 
 # Shared warning about active bulk jobs before an app-pool recycle (BulkJobRunner-Plan).
@@ -214,18 +216,19 @@ function Set-AppsettingsPathBase {
 function Stop-AppPoolChecked {
     param(
         [string]$Name,
-        [string]$ConfigDir
+        [string]$ConfigDir,
+        [string]$AppPath
     )
 
     if (-not $Apply) {
         Write-Plan "Stop-WebAppPool -Name $Name"
-        if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -PlanOnly | Out-Null }
+        if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath -PlanOnly | Out-Null }
         return
     }
 
     Write-Step "Stopping prod app pool: $Name"
     # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
-    if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir | Out-Null }
+    if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath | Out-Null }
     Stop-WebAppPool -Name $Name -ErrorAction Stop
     Start-Sleep -Seconds 3
 }
@@ -326,13 +329,14 @@ if ($prodConfigStorePathSetting -and -not (Test-IsSqliteConfigDbPresent -DbPath 
     Write-Fail "Prod's ConfigStore:Path names '$prodConfigDbPath' but no database exists there. Prod will not start against a missing shared database (the app never creates one). Fix the key or restore the file before promoting. Nothing was changed."
 }
 if ($Apply) {
-    $prodDbBackup = Backup-SqliteConfigDb -DbPath $prodConfigDbPath -DestDir $backup -Timestamp $timestamp
+    $prodDbBackup = Backup-SqliteConfigDb -DbPath $prodConfigDbPath -DestDir $backup -Timestamp $timestamp -AppPath $dev
     if ($prodDbBackup) { Write-Ok "Config DB ($prodConfigDbPath) backed up (verified) to $prodDbBackup" }
 } else {
-    Write-Plan "Verified online backup of the config DB at $prodConfigDbPath (if present) into $backup"
+    $configDbToolPlan = Resolve-ConfigDbTool -AppPath $dev -PlanOnly
+    Write-Plan "Verified online backup of the config DB at $prodConfigDbPath (if present) into $backup via $($configDbToolPlan.Summary) backup"
 }
 
-Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config")
+Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config") -AppPath $dev
 
 $promotionFailed = $false
 $rolledBack = $false

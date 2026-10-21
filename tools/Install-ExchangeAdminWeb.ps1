@@ -24,7 +24,8 @@
     Update:
       - Builds the app from the current source tree.
       - Takes a verified backup of an existing config database into <LogRoot>\ConfigBackups
-        before mirroring new binaries. Requires sqlite3.exe on PATH; pass -SkipConfigBackup
+        before mirroring new binaries. The backup runs the freshly built app's own db mode
+        through <ProgramFiles>\dotnet\dotnet.exe (no sqlite3.exe needed); pass -SkipConfigBackup
         to upgrade without a snapshot.
       - Keeps the app pool's existing custom identity when -ServiceAccount is omitted.
         Pass -ServiceAccount to change it, or -ResetAppPoolIdentity to move it back to
@@ -815,7 +816,11 @@ if ($SkipConfigBackup) {
     }
 } else {
 
-Invoke-PlanOrAction "Back up the config database before upgrading" {
+# The backup runs the app's db mode from the build just published to staging, through the
+# .NET host in Program Files (docs/ConfigDbToolInApp-Plan.md). A plan runs before publish, so
+# it prints the paths it would use without requiring them to exist.
+$configDbToolPlan = Resolve-ConfigDbTool -AppPath $stagingPath -PlanOnly
+Invoke-PlanOrAction "Back up the config database before upgrading (via $($configDbToolPlan.Summary) backup)" {
     $existingDb = Resolve-ConfigDbPath -PublishPath $PublishPath
     $configuredDbPath = Get-ConfigStorePathSetting -PublishPath $PublishPath
 
@@ -839,7 +844,7 @@ Invoke-PlanOrAction "Back up the config database before upgrading" {
 
     # Deliberately fatal. The point of the backup is the upgrade that goes wrong, and an
     # upgrade with no snapshot is exactly the situation this finding is about.
-    Assert-Sqlite3Available
+    Resolve-ConfigDbTool -AppPath $stagingPath | Out-Null
 
     $backupDir = Join-Path $LogRoot "ConfigBackups"
     if (-not (Test-Path -LiteralPath $backupDir -PathType Container)) {
@@ -847,7 +852,7 @@ Invoke-PlanOrAction "Back up the config database before upgrading" {
     }
 
     $backupStamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $backupFile = Backup-SqliteConfigDb -DbPath $existingDb -DestDir $backupDir -Timestamp $backupStamp
+    $backupFile = Backup-SqliteConfigDb -DbPath $existingDb -DestDir $backupDir -Timestamp $backupStamp -AppPath $stagingPath
     Write-Ok "Config database backed up (verified) to $backupFile"
 }
 

@@ -9,17 +9,10 @@ directory. A versioned system DLL stands in for ExchangeAdminWeb.dll so the buil
 prints every step and must change nothing, and the refusals happen before any step runs.
 #>
 
-# Resolved at DISCOVERY time (before BeforeAll) so -Skip can use it; same fallback as
-# SqliteConfigBackup.Tests.ps1. Only the integrity rows need sqlite3.exe.
-if (-not (Get-Command sqlite3 -ErrorAction SilentlyContinue)) {
-    $candidate = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages\SQLite.SQLite_Microsoft.Winget.Source_8wekyb3d8bbwe'
-    if (Test-Path -LiteralPath (Join-Path $candidate 'sqlite3.exe')) {
-        $env:PATH = "$candidate;$env:PATH"
-    }
-}
-$HasSqlite = [bool](Get-Command sqlite3 -ErrorAction SilentlyContinue)
-
 BeforeAll {
+    . (Join-Path $PSScriptRoot 'Get-BuiltApp.ps1')
+    $script:AppPath = Get-BuiltApp
+
     $script:ScriptPath = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' 'tools' 'Move-ConfigDbToShared.ps1')).Path
 
     # Any DLL with a real file version; copied under the app's name so step 1 can read it.
@@ -205,8 +198,15 @@ Describe 'Move-ConfigDbToShared.ps1 plan mode' {
     # a missing file stops both pools at their next start. Plan mode is the default and must fail
     # the same way.
     Context 'both instances already name the shared path' {
+        # The integrity rows run the real db tool from DevPublishPath, so dev is a runnable copy
+        # of the built app here, made once for the context.
+        BeforeAll {
+            $script:AppCopy = Copy-BuiltApp -AppPath $script:AppPath -Destination (Join-Path ([System.IO.Path]::GetTempPath()) ("mcds_app_" + [guid]::NewGuid().ToString('N')))
+        }
+        AfterAll { Remove-Item -LiteralPath $script:AppCopy -Recurse -Force -ErrorAction SilentlyContinue }
         BeforeEach {
             $script:fake = New-FakeInstances
+            $script:fake.Dev = $script:AppCopy
             $escaped = $script:fake.Shared -replace '\\', '\\'
             foreach ($p in $script:fake.Dev, $script:fake.Prod) {
                 Set-Content -LiteralPath (Join-Path $p 'appsettings.json') -Encoding UTF8 -Value "{ `"ConfigStore`": { `"Path`": `"$escaped`" } }"
@@ -227,7 +227,7 @@ Describe 'Move-ConfigDbToShared.ps1 plan mode' {
             Test-Path -LiteralPath $fake.Shared | Should -BeFalse
         }
 
-        It 'fails naming the path when the shared file is not a sound database (scdi-3)' -Skip:(-not $HasSqlite) {
+        It 'fails naming the path when the shared file is not a sound database (scdi-3)' {
             New-Item -ItemType Directory -Path (Split-Path -Parent $fake.Shared) -Force | Out-Null
             [System.IO.File]::WriteAllText($fake.Shared, 'this is not a sqlite database')
             $err = $null
@@ -236,11 +236,12 @@ Describe 'Move-ConfigDbToShared.ps1 plan mode' {
             $err | Should -Not -BeNullOrEmpty
             "$err" | Should -BeLike "*$($fake.Shared)*"
             "$err" | Should -Match 'integrity_check'
+            "$err" | Should -Match 'db tool exit 2' -Because 'the real db tool ran and judged the file, not a missing or crashed tool'
         }
 
-        It 'reports nothing to do only when the shared file exists and passes integrity_check' -Skip:(-not $HasSqlite) {
+        It 'reports nothing to do only when the shared file exists and passes integrity_check' {
             New-Item -ItemType Directory -Path (Split-Path -Parent $fake.Shared) -Force | Out-Null
-            & sqlite3 $fake.Shared "CREATE TABLE t(x); INSERT INTO t VALUES (1);"
+            New-TestDb -AppPath $script:AppPath -Path $fake.Shared -Sql 'CREATE TABLE t(x); INSERT INTO t VALUES (1);' | Out-Null
             $out = & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $fake.Shared -PlanOnly -MinimumAppVersion '1.0' *>&1 | Out-String
             $out | Should -Match 'passes PRAGMA integrity_check - nothing to do'
         }

@@ -14,11 +14,20 @@
     <PublishPath>\config\exchangeadmin.db. Resolve-ConfigDbPath does that lookup; every
     function here takes an explicit -DbPath so callers never re-derive it.
 
-    DEPENDENCY: sqlite3.exe must be on PATH (declared in docs/AdminModuleDeveloperGuide.md /
-    deployment docs - install via `winget install SQLite.SQLite`). Backups use a true online
-    backup ('VACUUM INTO') followed by 'PRAGMA integrity_check', which works even while the app
-    is running. If sqlite3.exe is absent the backup THROWS rather than silently degrading to an
+    THE TOOL (docs/ConfigDbToolInApp-Plan.md, finding aud-sqlite3-path): the backup, the
+    integrity check and the copy run the app's own command-line mode,
+    `<ProgramFiles>\dotnet\dotnet.exe <AppPath>\ExchangeAdminWeb.dll db <verb>`. The .NET host
+    is taken from Program Files, which only administrators can write, and never searched for
+    on PATH; the assembly is the build the caller is about to deploy or already runs, so no
+    new principal can put code in this path. sqlite3.exe is not used: an elevated deploy used
+    to run whatever sqlite3.exe PATH resolved to first, and on the deploy host that was a
+    user-writable, unsigned copy. Backups are still a true online backup ('VACUUM INTO')
+    followed by 'PRAGMA integrity_check', done inside the app, which works while the app is
+    running. If the tool is missing the backup THROWS rather than silently degrading to an
     unverified file copy - a deploy must not proceed without a verifiable rollback snapshot.
+
+    Exit codes are the only success signal trusted here: 0 ok, 1 usage (an app that does not
+    know the verb), 2 failure, anything else a crash. stdout is read only after exit 0.
 
     On an integrity-check FAILURE the function THROWS (owner decision 2026-06-18: abort the
     deploy rather than continue over a corrupt store with a worthless rollback snapshot).
@@ -29,18 +38,118 @@
 
 Set-StrictMode -Version Latest
 
-function Get-Sqlite3Path {
-    $cmd = Get-Command sqlite3 -CommandType Application -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    return $null
+# The first app version with the db command-line mode (ConfigDbToolInApp-Plan S1).
+$script:ConfigDbToolMinimumVersion = [version]'2.34.0'
+
+<#
+.SYNOPSIS
+    The .NET host and app assembly that run the config DB tool for one app folder.
+.PARAMETER AppPath
+    The folder holding ExchangeAdminWeb.dll: the staging folder a deploy is about to mirror, or
+    the publish folder of the build already running.
+.PARAMETER PlanOnly
+    Return the intended paths without requiring them to exist (a plan runs before publish, so
+    the staging folder is not there yet). Missing lists what is absent; Summary is a printable
+    line that says so.
+.OUTPUTS
+    A hashtable: Host, Assembly, Missing, Summary. In action mode a missing file, or an app too
+    old to have the db mode, is a throw naming it.
+#>
+function Resolve-ConfigDbTool {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$AppPath,
+        [switch]$PlanOnly
+    )
+
+    $programFiles = $env:ProgramFiles
+    if ([string]::IsNullOrWhiteSpace($programFiles)) {
+        throw "The ProgramFiles environment variable is not set, so the .NET host cannot be located. Nothing was changed."
+    }
+
+    # Program Files only, never PATH: the PATH search is the finding this replaces.
+    $dotnetHost = Join-Path (Join-Path $programFiles 'dotnet') 'dotnet.exe'
+    $assembly = Join-Path $AppPath 'ExchangeAdminWeb.dll'
+
+    $missing = @()
+    if (-not (Test-Path -LiteralPath $dotnetHost -PathType Leaf)) { $missing += $dotnetHost }
+    if (-not (Test-Path -LiteralPath $assembly -PathType Leaf)) { $missing += $assembly }
+
+    $summary = "$dotnetHost $assembly db"
+    if ($missing.Count -gt 0) { $summary += " (not present yet: $($missing -join ', '))" }
+
+    $tool = @{
+        Host     = $dotnetHost
+        Assembly = $assembly
+        Missing  = $missing
+        Summary  = $summary
+    }
+
+    if ($PlanOnly) { return $tool }
+
+    if ($missing.Count -gt 0) {
+        throw "The config DB tool is missing: $($missing -join ' and ') not found. The backup runs the app's own db mode through the .NET host in Program Files; nothing else is searched. Nothing was changed."
+    }
+
+    # Checked BEFORE anything runs. An app that predates the db mode does not answer
+    # "db backup ..." with a usage error: its Program.cs hands the arguments to the web host
+    # builder, whose command-line configuration skips bare words, so it would try to start the
+    # app instead of failing (inferred from the provider's behaviour; an old build was not run).
+    # The file version is read without executing anything.
+    $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($assembly)
+    $version = New-Object System.Version -ArgumentList $info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart
+    if ($version -lt $script:ConfigDbToolMinimumVersion) {
+        throw "The app at $assembly is version $version, older than the backup tool (db mode needs $($script:ConfigDbToolMinimumVersion) or later): the deployed app is older than the backup tool; deploy dev first. Nothing was changed."
+    }
+
+    return $tool
 }
 
-function Assert-Sqlite3Available {
-    $sqlite3 = Get-Sqlite3Path
-    if (-not $sqlite3) {
-        throw "sqlite3.exe is not on PATH. It is a required deployment dependency for the SQLite config store (see deployment docs). Install it with: winget install SQLite.SQLite"
+function Invoke-ConfigDbTool {
+    # Private. Runs one db verb and returns its exit code with stdout and stderr split.
+    param(
+        [Parameter(Mandatory)][hashtable]$Tool,
+        [Parameter(Mandatory)][string[]]$Arguments
+    )
+
+    # Local to this function. Under Windows PowerShell 5.1 with the callers' "Stop", the first
+    # stderr line of a native command redirected with 2>&1 becomes a terminating error and the
+    # exit code is lost. The exit code is the contract, so read it first and decide after.
+    $ErrorActionPreference = 'Continue'
+    $stdout = @()
+    $stderr = @()
+    $output = & $Tool.Host $Tool.Assembly 'db' @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+    foreach ($line in @($output)) {
+        if ($line -is [System.Management.Automation.ErrorRecord]) {
+            $stderr += [string]$line.Exception.Message
+        } elseif ($null -ne $line) {
+            $stdout += [string]$line
+        }
     }
-    return $sqlite3
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        StdOut   = $stdout
+        StdErr   = $stderr
+    }
+}
+
+function Assert-ConfigDbToolSucceeded {
+    # Private. Exit 0 returns; every other code throws. Exit 1 is the CLI's usage error, which
+    # from a script means the app does not know the verb it was given.
+    param(
+        [Parameter(Mandatory)]$Result,
+        [Parameter(Mandatory)][hashtable]$Tool,
+        [Parameter(Mandatory)][string]$FailureMessage
+    )
+
+    $detail = (@($Result.StdErr) + @($Result.StdOut)) -join ' '
+    if ($Result.ExitCode -eq 0) { return }
+    if ($Result.ExitCode -eq 1) {
+        throw "The app at $($Tool.Assembly) did not accept the db command (exit 1): the deployed app is older than the backup tool; deploy dev first. Tool output: $detail"
+    }
+    throw "$FailureMessage (db tool exit $($Result.ExitCode)): $detail"
 }
 
 <#
@@ -129,7 +238,8 @@ function Backup-SqliteConfigDb {
         [string]$ConfigDir,
         [string]$DbPath,
         [Parameter(Mandatory)][string]$DestDir,
-        [Parameter(Mandatory)][string]$Timestamp
+        [Parameter(Mandatory)][string]$Timestamp,
+        [Parameter(Mandatory)][string]$AppPath
     )
 
     $dbPath = Resolve-DbPathArgument -DbPath $DbPath -ConfigDir $ConfigDir
@@ -137,7 +247,7 @@ function Backup-SqliteConfigDb {
         return $null
     }
 
-    $sqlite3 = Assert-Sqlite3Available
+    $tool = Resolve-ConfigDbTool -AppPath $AppPath
 
     if (-not (Test-Path -LiteralPath $DestDir)) {
         New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
@@ -145,22 +255,8 @@ function Backup-SqliteConfigDb {
 
     $backupPath = Join-Path $DestDir "exchangeadmin.${Timestamp}.db"
 
-    # Online backup: VACUUM INTO writes a fresh, consistent, defragmented copy even while the
-    # source is in use. Single-quote the path for SQLite and double any embedded quotes.
-    $escaped = $backupPath -replace "'", "''"
-    & $sqlite3 $dbPath "VACUUM INTO '$escaped'"
-    if ($LASTEXITCODE -ne 0) {
-        throw "sqlite3 VACUUM INTO failed (exit $LASTEXITCODE) backing up $dbPath"
-    }
-
-    $integrity = (& $sqlite3 $backupPath 'PRAGMA integrity_check;') 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "sqlite3 integrity_check failed to run (exit $LASTEXITCODE) on $backupPath"
-    }
-    if ("$integrity".Trim() -ne 'ok') {
-        throw "Config DB integrity check FAILED: '$integrity'. Aborting before any changes - the live config DB at $dbPath may be corrupt. Investigate before deploying."
-    }
-
+    $result = Invoke-ConfigDbTool -Tool $tool -Arguments @('backup', '--source', $dbPath, '--dest', $backupPath)
+    Assert-ConfigDbToolSucceeded -Result $result -Tool $tool -FailureMessage "Config DB backup FAILED for $dbPath. Aborting before any changes - the live config DB may be corrupt or unreadable. Investigate before deploying"
     return $backupPath
 }
 
@@ -190,14 +286,15 @@ function Copy-SqliteDbFile {
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]$SourceDbPath,
-        [Parameter(Mandatory)][string]$DestDbPath
+        [Parameter(Mandatory)][string]$DestDbPath,
+        [Parameter(Mandatory)][string]$AppPath
     )
 
     if (-not (Test-Path -LiteralPath $SourceDbPath -PathType Leaf)) {
         throw "Source database not found at $SourceDbPath - cannot copy it to $DestDbPath."
     }
 
-    $sqlite3 = Assert-Sqlite3Available
+    $tool = Resolve-ConfigDbTool -AppPath $AppPath
 
     $destDir = Split-Path -Parent $DestDbPath
 
@@ -223,19 +320,8 @@ function Copy-SqliteDbFile {
 
     $tmpDb = Join-Path $destDir ("exchangeadmin.copy.{0}.db" -f ([guid]::NewGuid().ToString('N')))
     try {
-        $escaped = $tmpDb -replace "'", "''"
-        & $sqlite3 $SourceDbPath "VACUUM INTO '$escaped'"
-        if ($LASTEXITCODE -ne 0) {
-            throw "sqlite3 VACUUM INTO failed (exit $LASTEXITCODE) copying $SourceDbPath"
-        }
-
-        $integrity = (& $sqlite3 $tmpDb 'PRAGMA integrity_check;') 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "sqlite3 integrity_check failed to run (exit $LASTEXITCODE) on the copy"
-        }
-        if ("$integrity".Trim() -ne 'ok') {
-            throw "Copied database failed integrity check: '$integrity'. Destination NOT changed."
-        }
+        $result = Invoke-ConfigDbTool -Tool $tool -Arguments @('backup', '--source', $SourceDbPath, '--dest', $tmpDb)
+        Assert-ConfigDbToolSucceeded -Result $result -Tool $tool -FailureMessage "Copying $SourceDbPath failed (the copy did not pass integrity_check or could not be written). Destination NOT changed"
 
         foreach ($suffix in '-wal', '-shm') {
             $side = "$DestDbPath$suffix"
@@ -253,25 +339,23 @@ function Copy-SqliteDbFile {
 
 <#
 .SYNOPSIS
-    Runs PRAGMA integrity_check against a DB; throws on a definitive fail or if sqlite3 missing.
+    Runs PRAGMA integrity_check against a DB through the app's db mode; throws on a fail.
 #>
 function Test-SqliteConfigDbIntegrity {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$DbPath)
+    param(
+        [Parameter(Mandatory)][string]$DbPath,
+        [Parameter(Mandatory)][string]$AppPath
+    )
 
     if (-not (Test-Path -LiteralPath $DbPath -PathType Leaf)) {
         throw "Config DB not found at $DbPath"
     }
 
-    $sqlite3 = Assert-Sqlite3Available
-    $result = (& $sqlite3 $DbPath 'PRAGMA integrity_check;') 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "sqlite3 integrity_check failed to run (exit $LASTEXITCODE) on $DbPath"
-    }
-    if ("$result".Trim() -ne 'ok') {
-        throw "Config DB integrity check FAILED on ${DbPath}: '$result'"
-    }
+    $tool = Resolve-ConfigDbTool -AppPath $AppPath
+    $result = Invoke-ConfigDbTool -Tool $tool -Arguments @('check', $DbPath)
+    Assert-ConfigDbToolSucceeded -Result $result -Tool $tool -FailureMessage "Config DB integrity check FAILED on $DbPath (PRAGMA integrity_check)"
     return $true
 }
 
-Export-ModuleMember -Function Get-Sqlite3Path, Assert-Sqlite3Available, Get-ConfigStorePathSetting, Resolve-ConfigDbPath, Test-IsSqliteConfigDbPresent, Backup-SqliteConfigDb, Copy-SqliteDbFile, Test-SqliteConfigDbIntegrity
+Export-ModuleMember -Function Resolve-ConfigDbTool, Get-ConfigStorePathSetting, Resolve-ConfigDbPath, Test-IsSqliteConfigDbPresent, Backup-SqliteConfigDb, Copy-SqliteDbFile, Test-SqliteConfigDbIntegrity

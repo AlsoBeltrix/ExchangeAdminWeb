@@ -38,6 +38,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
       - name: ASCII lint
         shell: pwsh
         run: ./tools/Test-AsciiOnly.ps1
@@ -51,22 +54,12 @@ jobs:
             Write-Error "PSScriptAnalyzer found errors."
             exit 1
           }
-      # Lower-priority Wave 4 item: "require the SQLite-dependent CI tests to actually run".
-      # Every backup test is gated on -Skip:(-not $HasSqlite), and nothing installed
-      # sqlite3, so the logic that protects the config database across every deploy and
-      # cutover had ZERO coverage here - the suite reported green by skipping it.
-      - name: Install sqlite3
+      # The backup suites drive the real app binary (its db mode, docs/ConfigDbToolInApp-Plan.md),
+      # so the app is built before Pester. Nothing here installs sqlite3: the scripts no longer
+      # use it, and the suites must not either.
+      - name: Build the app for the Pester suites
         shell: pwsh
-        run: |
-          choco install sqlite --no-progress -y
-          $sqlite = Get-Command sqlite3 -ErrorAction SilentlyContinue
-          if (-not $sqlite) {
-            # Chocolatey puts the shim on PATH for later steps, but not this one.
-            $env:PATH = "C:\ProgramData\chocolatey\bin;$env:PATH"
-            $sqlite = Get-Command sqlite3 -ErrorAction SilentlyContinue
-          }
-          if (-not $sqlite) { Write-Error "sqlite3 was not installed; the backup tests would silently skip."; exit 1 }
-          sqlite3 -version
+        run: dotnet build ExchangeAdminWeb.csproj -c Release
 
       - name: Pester
         shell: pwsh
@@ -75,13 +68,24 @@ jobs:
             Write-Error "tests/ps is missing - the Pester invariant suite is required."
             exit 1
           }
-          Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.5 -SkipPublisherCheck
+          # Retried: a truncated Gallery download ("End of Central Directory record could not be
+          # found") failed this step once with nothing wrong in the repo.
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.5 -SkipPublisherCheck -ErrorAction Stop
+              break
+            } catch {
+              if ($attempt -eq 3) { throw }
+              Write-Warning "Install-Module Pester failed (attempt $attempt of 3): $($_.Exception.Message). Retrying."
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
           $result = Invoke-Pester tests/ps -CI -PassThru
 
-          # The skip gate exists so a developer without sqlite3 is not blocked. In CI it
-          # would hide exactly the tests this job is here to run, so a skip is a failure.
+          # No suite skips by design any more. A skip that creeps back would hide exactly the
+          # tests this job is here to run, so in CI a skip is a failure.
           if ($result.SkippedCount -gt 0) {
-            Write-Error "$($result.SkippedCount) Pester test(s) skipped in CI. The SQLite-dependent tests must run here."
+            Write-Error "$($result.SkippedCount) Pester test(s) skipped in CI. Every Pester test must run here."
             $result.Skipped | ForEach-Object { Write-Host "  skipped: $($_.ExpandedName)" }
             exit 1
           }

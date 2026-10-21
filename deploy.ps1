@@ -414,6 +414,20 @@ try {
 
 Write-Success "Published to staging: $StagingPath"
 
+# The config DB backup, the job check and the post-deploy integrity check run the app's own
+# db mode from the build just published, through the .NET host in Program Files - never
+# sqlite3.exe and never a PATH search (docs/ConfigDbToolInApp-Plan.md). Resolve it now so a
+# staging folder without the app binary stops the deploy, naming the path, before anything is
+# backed up or mirrored. Staging holds an appsettings.json with real environment values, so
+# it is removed on this failure too.
+try {
+    $configDbTool = Resolve-ConfigDbTool -AppPath $StagingPath
+} catch {
+    Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
+    throw
+}
+Write-Success "Config DB tool: $($configDbTool.Host) $($configDbTool.Assembly) db"
+
 # --- Mode-specific deployment ---
 
 if ($isUpgrade) {
@@ -452,7 +466,7 @@ if ($isUpgrade) {
     New-Item -ItemType Directory -Path $configDirBackup -Force | Out-Null
 
     # Verified online backup of the live DB (throws + aborts the deploy on integrity failure).
-    $dbBackup = Backup-SqliteConfigDb -DbPath $configDbPath -DestDir $configDirBackup -Timestamp $timestamp
+    $dbBackup = Backup-SqliteConfigDb -DbPath $configDbPath -DestDir $configDirBackup -Timestamp $timestamp -AppPath $StagingPath
     if ($dbBackup) {
         Write-Success "Config DB ($configDbPath) backed up (verified) to $dbBackup"
     } else {
@@ -493,7 +507,7 @@ if ($isUpgrade) {
 
     Write-Step "Stopping app pool"
     # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
-    Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir | Out-Null
+    Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir -AppPath $StagingPath | Out-Null
     # Review of A35: confirming that $AppPoolName stopped proves nothing if the IIS
     # application being mirrored is served by a DIFFERENT pool. A mistyped -AppPoolName
     # creates and stops that wrong pool, and robocopy /MIR then replaces the binaries of an
@@ -641,10 +655,12 @@ if ($isUpgrade) {
     # outcome to the operator with the verified pre-deploy backup as the rollback. The path is
     # resolved again from appsettings.json (deploy never rewrites it) so a shared database is
     # checked where it actually lives (SharedConfigDb-Plan AC6).
+    # The staging folder was removed in the finally above, so the tool runs from the publish
+    # folder, which now holds the same build.
     $liveDb = Resolve-ConfigDbPath -PublishPath $PublishPath
     if (Test-Path -LiteralPath $liveDb) {
         try {
-            Test-SqliteConfigDbIntegrity -DbPath $liveDb | Out-Null
+            Test-SqliteConfigDbIntegrity -DbPath $liveDb -AppPath $PublishPath | Out-Null
             Write-Success "Config DB verified: integrity_check passed on the live store at $liveDb"
         } catch {
             Write-Warn "POST-DEPLOY CHECK: live config DB integrity check FAILED: $($_.Exception.Message). The app may not function correctly - restore from the pre-deploy backup in $BackupDir and investigate."
@@ -702,7 +718,7 @@ if ($isUpgrade) {
     # Stop pool before file swap
     Write-Step "Stopping app pool for file deployment"
     # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
-    Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir | Out-Null
+    Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir -AppPath $StagingPath | Out-Null
     # Review of A35: confirming that $AppPoolName stopped proves nothing if the IIS
     # application being mirrored is served by a DIFFERENT pool. A mistyped -AppPoolName
     # creates and stops that wrong pool, and robocopy /MIR then replaces the binaries of an
