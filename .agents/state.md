@@ -30,14 +30,14 @@ Opus 5.5 agents dispatched from the supervising session; codex reviews.
 | # | Item | State |
 | --- | --- | --- |
 | 1 | ConfigDbToolInApp S1 `86970a5` + cdt-1 `872f211`; S2 `b1577f7` + cdt-2 `96af3aa`, cdt-4 `5d6cee6` (cdt-3 declined) | done, pushed |
-| 2 | cdt-5 / cdt-6: deploy.ps1 fresh-install unset `$runtimeConfigDir`; staging left behind on backup failure | agent running |
-| 3 | `Comms10kRefusalTests` C6 theory intermittent hang (pre-existing; hang dumps under `ExchangeAdminWeb.Tests/TestResults/`) | queued |
-| 4 | aud-a38b: promote still assumes its pool stopped | queued |
-| 5 | aud-a3b, aud-a2b, aud-a4b finding 7, aud-a1b: protected-principal and self-service gate holes (HIGH) | queued |
-| 6 | aud-a29b (take option 1, the revalidating authentication state provider - the record's own "framework answer"; the owner's EVERYTHING covers the choice, flagged for veto), aud-a33b, aud-a33c | queued |
-| 7 | aud-a6c, aud-a7b, psl-2, psl-3, psl-4 | queued |
-| 8 | aud-a26b, aud-a28b, aud-a23b, cdr-followup-1 | queued |
-| 9 | ConfigDbToolInApp S3 docs + decision; close aud-sqlite3-path | queued |
+| 2 | cdt-5 / cdt-6 (`426e137`, `2f6e629`); then cdt-8/9/10 (-Force path; merged `27f8167`), codex ops-batch-1 clean on them, raised cdt-16/17 (admitted); cdt-11..14, 16..19 (installer + deploy follow-ups) | agent running on 11-19 |
+| 3 | cdt-7: the C7 yield-hold test context drained once; fixed `4cbe057`, merged `035f0af`; full suite now runs unfiltered (4749/0/3 at `6afacaf`) | done |
+| 4 | aud-a38b + a38c + a38d (promote: verified stop, serving-pool check, IIS: drive) merged `7c587e2`; a38e (cutover bare stop) in the item-8 agent | merged; codex review pending |
+| 5 | aud-a3b, a3c (new), a2b, a4b-7, a1b merged `e996416`; codex authz-batch clean on four, raised aud-a2c HIGH (AD bound by SMTP address) - agent fixing; aud-a2d (write by immutable id) queued behind a7b | merged; a2c in progress |
+| 6 | aud-a29b merged `b60a507` with off-switch `Authentication:RevalidationEnabled`; codex raised a29c/d/e (two HIGH, one MEDIUM) - agent fixing; aud-a33b/a33c agent still running | in progress |
+| 7 | psl-4, psl-2, psl-3, psl-5 (new) merged `66bdb90`, codex review pending; psl-6 (attribute editor search-base flag) in the item-8 agent; aud-a6c/a7b agent running | partly merged |
+| 8 | aud-a26b, a28b, psl-6 (one agent); aud-a23b, cdr-followup-1, a38e (another) | agents running |
+| 9 | ConfigDbToolInApp S3 docs + decision; close aud-sqlite3-path; final consolidated version bump (base + modules touched today); push after every group is codex-clean | queued - last |
 
 Constitution still applies inside the go: authorization changes get a short written plan
 section inside their finding record (approach, files, tests) before code; one finding per
