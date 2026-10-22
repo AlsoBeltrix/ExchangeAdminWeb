@@ -78,19 +78,31 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <summary>The objectGUID of the one group the stand-in <c>Get-ADGroup</c> search returns unless a test changes it.</summary>
     public const string DefaultDirectoryGroupGuid = "99999999-9999-9999-9999-999999999999";
 
-    /// <summary>The objectGUIDs the stand-in <c>Get-ADGroup</c> returns for any filter: one group unless a test changes it.</summary>
+    /// <summary>
+    /// The objectGUIDs of the stand-in directory's groups: one unless a test changes it. A
+    /// <c>Get-ADGroup</c> search returns every one of them in a domain the call reaches, whatever the
+    /// filter (aud-a2j: <see cref="DirectoryGroupDomains"/> places each).
+    /// </summary>
     public IList DirectoryGroupGuids { get; } = ArrayList.Synchronized(new ArrayList { DefaultDirectoryGroupGuid });
 
     /// <summary>
-    /// The stand-in directory's one domain, as the DC part of a DN. Its groups live in it; to the stand-in
-    /// <c>Get-ADGroupMember</c> a member DN outside it is a member in another domain (aud-a2i).
+    /// The stand-in forest's default domain, as the DC part of a DN: the one a directory call reaches
+    /// with no <c>-Server</c>, and where a group lives unless <see cref="DirectoryGroupDomains"/> says
+    /// otherwise. To the stand-in <c>Get-ADGroupMember</c> a member DN outside it is a member in another
+    /// domain (aud-a2i).
     /// </summary>
     public const string DirectoryDomainDn = "DC=contoso,DC=test";
 
+    /// <summary>
+    /// aud-a2j. The forest's other domain - the a2i fixtures' "another domain". A group placed in it is
+    /// reached only through the global catalog or by this domain's own DNS name, <c>fabrikam.test</c>.
+    /// </summary>
     public const string OtherDirectoryDomainDn = "DC=fabrikam,DC=test";
 
+    /// <summary>aud-a2j. Every domain of the stand-in forest, by DN: what a domain's DNS name in <c>-Server</c> is matched against.</summary>
     public IList DirectoryDomains { get; } = ArrayList.Synchronized(new ArrayList { DirectoryDomainDn, OtherDirectoryDomainDn });
 
+    /// <summary>aud-a2j. The domain DN a group's objectGUID lives in; a group not named here is in <see cref="DirectoryDomainDn"/>.</summary>
     public Hashtable DirectoryGroupDomains { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>A stand-in group's DN from its objectGUID and its domain: what the stand-in <c>Get-ADGroup</c> reports as DistinguishedName.</summary>
@@ -99,13 +111,21 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <summary>The DN of the stand-in group whose objectGUID is <paramref name="objectGuid"/>, in the default domain.</summary>
     public static string DirectoryGroupDn(string objectGuid) => DirectoryGroupDn(objectGuid, DirectoryDomainDn);
 
+    /// <summary>The DN of the stand-in group whose objectGUID is <paramref name="objectGuid"/>, in <paramref name="domainDn"/>.</summary>
     public static string DirectoryGroupDn(string objectGuid, string domainDn) =>
         string.Format(System.Globalization.CultureInfo.InvariantCulture, DirectoryGroupDnFormat, objectGuid, domainDn);
 
+    /// <summary>aud-a2j. The host the stand-in <c>Get-ADForest</c> reports as its global catalog unless a test changes <see cref="GlobalCatalogs"/>.</summary>
     public const string GlobalCatalogHost = "gc01.contoso.test";
 
+    /// <summary>aud-a2j. The <c>-Server</c> that reaches every domain of the stand-in forest: the catalog host on port 3268.</summary>
     public const string GlobalCatalogEndpoint = GlobalCatalogHost + ":3268";
 
+    /// <summary>
+    /// aud-a2j. What the stand-in <c>Get-ADForest</c> reports as <c>GlobalCatalogs</c>: one host unless
+    /// a test clears it (no catalog) or adds a blank one - the empty host that once produced the bare
+    /// <c>:3268</c>. <c>Failures['Get-ADForest']</c> fails the read itself.
+    /// </summary>
     public IList GlobalCatalogs { get; } = ArrayList.Synchronized(new ArrayList { GlobalCatalogHost });
 
     /// <summary>
@@ -122,6 +142,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// </summary>
     public Hashtable DirectoryGroupReadBack { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// aud-a2j. The same, for a read that asks for the <c>member</c> attribute only - the membership
+    /// read - and taken before <see cref="DirectoryGroupReadBack"/>. Since the re-read of the group in
+    /// its own domain comes first, this is how a test reaches the membership read's own objectGUID
+    /// check: the group answers as itself to the re-read and as another object to the read after it.
+    /// </summary>
     public Hashtable DirectoryGroupMemberReadBack { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
@@ -260,6 +286,10 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public static object? Bound(Hashtable call, string parameter) =>
         call[parameter] is PSObject wrapped ? wrapped.BaseObject : call[parameter];
 
+    /// <summary>
+    /// aud-a2j. The member DN a <c>Set-ADGroup -Add @{ member = ... }</c> call added - how the on-prem
+    /// room-list add now writes - or null when the call added none.
+    /// </summary>
     public static string? AddedMember(Hashtable call) =>
         Bound(call, "Add") is IDictionary add && add["member"] is { } member
             ? (member is PSObject wrapped ? wrapped.BaseObject : member).ToString()
@@ -553,16 +583,18 @@ internal sealed class ExchangeWriteHarness : IDisposable
             [CmdletBinding()] param($Identity, $Replace, $Credential)
             Write-StandInCall 'Set-ADUser' $PSBoundParameters
         }
-        # aud-a2i. A search answers with every group in DirectoryGroupGuids, by objectGUID and DN. A read by
-        # -Identity (a DN or an objectGUID) answers with that group - as another object when
-        # DirectoryGroupReadBack names the identity - and with its member attribute when -Properties asks for
-        # it; Failures['Get-ADGroup -Identity'] fails that read alone. Its errors are Write-Error then
-        # return, so they stay errors under any -ErrorAction.
+        # aud-a2j. The forest: what it reports as its global catalogs (GlobalCatalogs);
+        # Failures['Get-ADForest'] fails the read.
         function global:Get-ADForest {
             [CmdletBinding()] param($Credential, $Server)
             Write-StandInCall 'Get-ADForest' $PSBoundParameters
             [pscustomobject]@{ GlobalCatalogs = [string[]]@($global:GlobalCatalogs) }
         }
+        # aud-a2j. What a directory call reaches, by its -Server, as with the real cmdlets: none, the default
+        # domain; a leading ':' - a bare ':3268' - the default domain as well, because the real cmdlet
+        # ACCEPTS that and quietly answers from the local domain (the ADDirectorySearchService incident);
+        # '<catalog>:3268', every domain of the forest; a domain's DNS name, that domain; anything else,
+        # nothing ($null - the caller's "Unable to contact the server").
         function global:Get-StandInDomainName([string] $DomainDn) {
             (@($DomainDn -split ',') | ForEach-Object { $_.Trim() -replace '^DC=', '' }) -join '.'
         }
@@ -583,6 +615,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if ($Reach -eq 'default') { return $DomainDn -eq $global:DirectoryDomainDn }
             return $DomainDn -eq "$Reach"
         }
+        # A group's domain (DirectoryGroupDomains, else the default one) and its DN there; and the groups a
+        # reach sees.
         function global:Get-StandInGroupDomain([string] $Guid) {
             $domain = $global:DirectoryGroupDomains[$Guid]
             if ($domain) { return "$domain" }
@@ -592,6 +626,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
         function global:Find-StandInGroups($Reach) {
             foreach ($g in @($global:DirectoryGroupGuids)) { if (Test-StandInReaches $Reach (Get-StandInGroupDomain "$g")) { "$g" } }
         }
+        # aud-a2i, aud-a2j. A search answers with every group the call reaches, by objectGUID and DN. A read
+        # by -Identity (a DN or an objectGUID) answers with that group when the call reaches it - as another
+        # object when DirectoryGroupReadBack names the identity, or, for a read of the member attribute,
+        # DirectoryGroupMemberReadBack - and with its member attribute when -Properties asks for it;
+        # Failures['Get-ADGroup -Identity'] fails every read by identity. Its errors are Write-Error then
+        # return, so they stay errors under any -ErrorAction.
         function global:Get-ADGroup {
             [CmdletBinding()] param($Filter, $Identity, $Properties, $Server, $Credential)
             Write-StandInCall 'Get-ADGroup' $PSBoundParameters
@@ -615,6 +655,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if ($memberRead) { $row['member'] = [string[]]@($global:DirectoryGroupMembers) }
             New-Object psobject -Property $row
         }
+        # aud-a2j. The on-prem room-list add's write. Its group must be one the call reaches - routed to the
+        # group's own domain - and a write sent to the catalog is refused, as the read-only catalog refuses it.
         function global:Set-ADGroup {
             [CmdletBinding()] param($Identity, $Add, $Server, $Credential)
             Write-StandInCall 'Set-ADGroup' $PSBoundParameters
@@ -643,6 +685,11 @@ internal sealed class ExchangeWriteHarness : IDisposable
                 [pscustomobject]@{ DistinguishedName = "$dn"; ObjectGUID = $(if ($object.Count -eq 1) { $object[0]['ObjectGUID'] }) }
             }
         }
+        # aud-a2j. The real cmdlet resolves its group and every -Members value on the one domain the call
+        # reaches - the group's own when routed there - so a member from another domain is not found ("Cannot
+        # find an object with identity ... under: ...", Group Management's live dev failure of 2026-09-03),
+        # and without -Server neither is a group outside the default domain. The stand-in refuses both. No
+        # production code calls it now; it is here so a restored call fails for the reason it fails live.
         function global:Add-ADGroupMember {
             [CmdletBinding()] param($Identity, $Members, $Server, $Credential)
             Write-StandInCall 'Add-ADGroupMember' $PSBoundParameters

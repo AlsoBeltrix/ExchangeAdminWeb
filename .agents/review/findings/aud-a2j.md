@@ -5,7 +5,7 @@ room-list add refuses every valid synced list whose group lives in another domai
 rests on the forest's shape (Architectural Invariant 7).
 **Status**: Fixed on branch, not merged; approved under the owner's 2026-10-21 "EVERYTHING" go; dev acceptance owed
 **Branch**: `worktree-agent-a0b52fcc43c6766da`
-**Commit**: -
+**Commit**: `7d863547` (fix and tests); plan `618f33c9`; comments in the commit after the fix
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (batch-6, `prompt-batch-6.md`, 2026-10-22)
 
 ## Evidence
@@ -233,6 +233,18 @@ cases (A2), as its M3 always did. Its "the group answers as another object" case
 `DirectoryGroupMemberReadBack`, so the re-read passes and the membership read's check is what refuses
 (A10).
 
+**Comments after the round.** The round ran on `7d863547`, the fix without its explanatory comments;
+they were written afterwards. `scratchpad/a2j-gc/comment_only.py` over `git diff --unified=0
+7d863547` checks that every changed line is blank, `//` or `///`, or a PowerShell `#` line in the
+harness's stand-in script: service `5c25ef5ee32634edcf593a2782725a96` ->
+`4de21d801a49265f0868fa299d3f5d9d` (62 changed lines, 0 code); harness
+`b3b055903db1f4b43749eb542e85d91f` -> `9b0d8a85354f0bc58bec945f2e56a981` (63, 0);
+`ConferenceRoomRoomListPreflightTests.cs` `467180b750a8a7b934442c24d5fee93d` ->
+`64424c1b7036e60a6fcf650d401ad595` (55, 0); `ConferenceRoomWriteIdentityTests.cs`
+`e22bdba27c0559f47e42f7fb8089faed` -> `bc554509f28d023e73d8ae0c40ed26ac` (2, 0);
+`ConferenceRoomDirectoryAuditTests.cs` unchanged (`ca06a2e86982470f795c1242d7148237`). The gates in
+the Closeout ran on the final files.
+
 ## Known gaps
 
 - *Assumption, the repo's measured idiom, not re-probed (no directory call was made):* a
@@ -284,3 +296,33 @@ synced room on a synced list in the default domain, now exercises the catalog se
 `Set-ADGroup` write on the common path.
 
 **Page:** unchanged; no `ClickGateRegistry` entry moved.
+
+## Reviewer comments
+
+Implemented under the owner's 2026-10-21 go by an Opus 5.5 implementation agent on
+`worktree-agent-a0b52fcc43c6766da`. Independent review pending.
+
+For the reviewer, one change beyond the brief's list: the on-prem write's form, `Add-ADGroupMember`
+to `Set-ADGroup -Add @{ member = ... }` (the Plan's third bullet carries the reason). It changes the
+write on a path whose dev acceptance is still owed (aud-a2f's check (1)); the write-members right it
+needs is the same.
+
+## Closeout
+
+Fixed on branch, not merged, not pushed: the plan `618f33c9`, the fix and tests `7d863547`, then the
+comments and this closeout. A module-scoped behaviour change: the Conference Rooms module version
+bump is due at merge. No shared code changed (`GroupManagementService` is reused, not modified) and the
+harness change is test-only, so no base app bump from this finding.
+
+Gates, run on the final files:
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release` (`--no-incremental`): 0 errors, 61 warnings - the
+  baseline count at `68c97ede` - none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m`: 5005 passed, 0 failed,
+  3 skipped (the known AD skips), 5008 total, 6 m 47 s; nothing hung, no Sequence file generated.
+  That is aud-a2i's 4994 plus the 14 new cases here.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: clean.
+- `git diff --check HEAD`: clean.
+- `tools/Test-AsciiOnly.ps1` after `git add`: clean.
+
+PSScriptAnalyzer and Pester were not run: no `.ps1` or `.psm1` changed.

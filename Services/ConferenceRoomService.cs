@@ -1551,12 +1551,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // needs anything further. A list synchronized from on-premises takes the room only on-prem
     // (AddToRoomListViaAdAsync below), so everything that add needs and can be checked without
     // writing - a proven AD object, the AD credential, that object readable by its objectGUID,
-    // exactly one on-prem group for the list, and whether the room is already in it (aud-a2i) - is
-    // checked here, and its absence refuses the row while nothing has been written. A list whose
-    // sync state Exchange did not report is refused too: whether the row can complete is then
-    // unknown, and the old order found out by writing.
-    // Returns the refusal, or null. (A genuine Add-ADGroupMember failure after a passing preflight -
-    // missing write-members delegation, say - remains the inherent two-system residual.)
+    // exactly one on-prem group for the list in the whole forest (aud-a2j), and whether the room is
+    // already in it (aud-a2i) - is checked here, and its absence refuses the row while nothing has
+    // been written. A list whose sync state Exchange did not report is refused too: whether the row
+    // can complete is then unknown, and the old order found out by writing.
+    // Returns the refusal, or null. (A genuine failure of the membership write after a passing
+    // preflight - missing write-members delegation, say - remains the inherent two-system residual.)
     // roomPrimary is the address Exchange returned for the validated room: the membership test's key.
     private async Task<string?> PreflightRoomListAsync(ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list)
     {
@@ -1605,6 +1605,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 if (roomError != null)
                     return roomError;
 
+                // The resolver's refusals are shared with the add, which meets them after the writes,
+                // so here, as for the membership read below, the preflight says nothing was written.
                 var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, list.Name, credential);
                 if (groupError != null)
                     return $"{groupError} Nothing was written.";
@@ -1630,9 +1632,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // ("out of the current user's write scope ... being synchronized from your on-premises
     // organization"), so membership must be written on-prem and then syncs up (~30 min) - the
     // same shape as the Set-ADUser City/State/Country handling. Returns (null, the room's
-    // objectGUID) once Add-ADGroupMember has succeeded, (null, null) for the already-a-member
+    // objectGUID) once the membership write has succeeded, (null, null) for the already-a-member
     // no-op - nothing was written - and (a failure message, null) otherwise (aud-a2g). See
-    // docs/ConferenceRooms-OnPremRoomListAdd-Plan.md.
+    // docs/ConferenceRooms-OnPremRoomListAdd-Plan.md, and aud-a2j for the form of the write.
     //
     // aud-a2d. The member added is the AD object the protection gate proved owns the room's
     // mailbox, by objectGUID - not a userPrincipalName match of the typed string.
@@ -1683,7 +1685,17 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 if (alreadyMember)
                     return (null, null);
 
-                // Add by GUID on both sides (immutable identity), not by name/UPN.
+                // aud-a2j. The room goes on the group's own member attribute, written on the group's
+                // domain - the form both group modules write (GroupManagementService.
+                // BuildMemberAttributeWrite). Not Add-ADGroupMember: with no -Server it cannot find a
+                // group outside the default domain, and routed to the group's domain it resolves
+                // -Members there as well, where a room from another domain does not exist ("Cannot find
+                // an object with identity ... under: ...", Group Management's live dev failure of
+                // 2026-09-03). Left as it was, the preflight would pass a group the forest search found
+                // in another domain and this write would fail after Set-Place - the partial aud-a2f
+                // exists to prevent. The group by the objectGUID its own domain answered with; the room
+                // by the DN of its proven object, the DN the membership read above compared, never null
+                // here - that read refuses a room read without one. Not by a name or a UPN.
                 ps.AddCommand("Set-ADGroup")
                   .AddParameter("Identity", groupGuid)
                   .AddParameter("Add", GroupManagementService.BuildMemberAttributeWrite(roomDn!))
@@ -1743,6 +1755,17 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // target the wrong group. Shared by the room-list preflight and the add (aud-a2f), so they
     // resolve the same group. Also reports the group's DN, by which its membership is read
     // (aud-a2i). Assumes the ActiveDirectory module is already imported.
+    //
+    // aud-a2j. Searched in the forest's global catalog, not in one domain. Without -Server,
+    // Get-ADGroup is answered by a domain controller of the domain the cmdlet binds to by default
+    // and sees only that domain's groups, so a room list synced from a group in any other domain of
+    // the forest came back "No on-prem AD group found" and a legitimate row was refused. The
+    // catalog widens what can match, and the exactly-one rule holds across all of it: a name that
+    // matches a group in each of two domains refuses. No catalog refuses too, before any write -
+    // never a fallback to one domain, which is the shape this replaced. The one match is re-read
+    // in its own domain (ReadAdGroupInItsDomain), and that read's objectGUID and DN are what the
+    // membership read and the write use, so the preflight and the add resolve the same object the
+    // same way.
     private static (string? error, string? objectGuid, string? distinguishedName) ResolveAdGroupGuid(PowerShell ps, string roomListName, PSCredential credential)
     {
         var (catalog, catalogError) = ResolveForestGlobalCatalog(ps, credential);
@@ -1772,6 +1795,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         return ReadAdGroupInItsDomain(ps, roomListName, objectGuid, found[0].Properties["DistinguishedName"]?.Value?.ToString(), credential);
     }
 
+    // aud-a2j. The group the catalog search found, read again by its DN on a domain controller of
+    // the domain that DN names - the domain that holds the group, where its membership is read and
+    // the write goes. A global catalog holds a partial, read-only copy of every domain and can lag
+    // behind it: the group must be there under that DN as the same object (objectGUID), or the row
+    // is refused rather than written to a group the catalog remembered. A DN that names no domain
+    // cannot be routed, and refuses. GroupManagementService.ResolveMemberForWrite makes the same
+    // re-read for the same reason. Assumes the ActiveDirectory module is already imported.
     private static (string? error, string? objectGuid, string? distinguishedName) ReadAdGroupInItsDomain(
         PowerShell ps, string roomListName, string objectGuid, string? distinguishedName, PSCredential credential)
     {
@@ -1797,6 +1827,16 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         return (null, readGuid, readDn);
     }
 
+    // aud-a2j. The forest's global catalog as "host:3268", discovered from the forest the module
+    // credential signs in to - never named or configured (Architectural Invariant 7). Lifted from
+    // PowerShellProtectedGroupDirectory.GlobalCatalog, whose fail-closed shape this needs, rather
+    // than shared with GroupManagementService.ResolveSearchGlobalCatalog, which caches in a static
+    // and falls back to the local domain: a degraded group picker beats a broken one, but a
+    // membership write that searched one domain is this finding. AddScript with the projection
+    // inside PowerShell, not AddCommand and a property read: GlobalCatalogs read off the returned
+    // object comes back empty in a fresh runspace (measured; ADDirectorySearchService.
+    // ResolveGlobalCatalog). Not cached - each preflight and add opens its own runspace. Returns
+    // the endpoint, or null and the reason.
     private static (string? endpoint, string? error) ResolveForestGlobalCatalog(PowerShell ps, PSCredential credential)
     {
         try
@@ -1819,6 +1859,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
     }
 
+    // "host:3268" for a real host, null for none - never a bare ":3268". A failed host lookup once
+    // produced exactly that string, and Get-ADGroup ACCEPTS it and quietly answers from the local
+    // domain: the one-domain search this replaces, back without a sound (the incident is recorded at
+    // ADDirectorySearchService.ResolveGlobalCatalog). Pure, so the rule is unit-tested.
     internal static string? GlobalCatalogEndpoint(string? host) =>
         string.IsNullOrWhiteSpace(host) ? null : $"{host.Trim()}:3268";
 
