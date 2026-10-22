@@ -7,9 +7,9 @@ branch that cannot fire under `-ErrorAction Stop` (it fails closed, so the harm 
 Separately, `AddToRoomListAsync` still builds "Membership was written on-prem ..." for the no-op and
 the confirmed-present rows; the caller replaces success messages today, so it is unused, but wrong if
 ever shown.
-**Status**: Fixed on branch, not merged, not pushed; independent review pending (batched with aud-a2o); dev acceptance owed
+**Status**: Merged to master (`28ffde25`); closed on guard proof; codex review pending (batched with aud-a2o); dev acceptance owed
 **Branch**: `worktree-agent-a88f21a61c9cda81b`
-**Commit**: plan `8ce77ddf`; the fix, tests, comments and this record in the commit after it
+**Commit**: `0bbd302f` (fix, tests, comments, record); plan `8ce77ddf`; merged `28ffde25`
 **Reviewer**: implementer (surfaced by the aud-a2o agent, 2026-10-22, candidates 1 and 2 of its hand-back)
 
 ## Evidence
