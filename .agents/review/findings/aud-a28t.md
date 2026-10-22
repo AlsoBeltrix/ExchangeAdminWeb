@@ -8,9 +8,9 @@ members are unprotected for the 30-minute cache. (2) `GetPreventSelfGrant` reads
 same fail-open read and, on failure, falls back to appsettings `Security:PreventSelfGrant`; the
 Constitution allows that fallback only when the module config is ABSENT, so a host whose appsettings
 says false allows self-grants while the store is unreadable.
-**Status**: Fixed on its branch, not merged; guard proof below; approved under the owner's 2026-10-21 "EVERYTHING" go
+**Status**: Merged `18c62ce9`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-acba5cd6b0762c5bf`
-**Commit**: plan `b18df623`; the fix and comments commits follow it on the branch
+**Commit**: `53516af0` (fix, tests, record); plan `b18df623`; comments `9b4bf0e6`; merged `18c62ce9`
 **Reviewer**: implementer (surfaced by the aud-a28s agent, 2026-10-22, candidates 1 and 2 of its hand-back)
 
 ## Evidence
