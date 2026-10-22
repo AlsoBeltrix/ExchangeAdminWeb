@@ -389,6 +389,17 @@ public class AuditService
         WriteAuditEvent(evt);
     }
 
+    /// <summary>
+    /// A settings save that was refused or failed, filed as <see cref="LogSettingsChange"/> files a
+    /// successful one - same action, category and section - so an admin reading a section's changes
+    /// sees the attempts that did not land beside them (aud-a28f).
+    /// </summary>
+    /// <remarks>
+    /// LogSettingsChange can only say Success, so a settings save that ended any other way could not
+    /// be recorded at all. <paramref name="errorDetail"/> is what the admin was shown. A refusal
+    /// passes aud-a28's <c>refusedAt</c> and <c>mutationAttempted</c> through
+    /// <paramref name="extra"/>; a failed write passes neither, because it may have been tried.
+    /// </remarks>
     public void LogSettingsChangeFailed(
         string performedBy,
         string ipAddress,
@@ -412,6 +423,9 @@ public class AuditService
         WriteAuditEvent(evt);
     }
 
+    // Shared by LogSettingsChange and LogSettingsChangeFailed, so a refusal can never be filed apart
+    // from the changes it would have made. "UpdateSectionAccess" is the historical action name for
+    // every settings change, not only section access; renaming it would split the log in two.
     private const string SettingsChangeAction = "UpdateSectionAccess";
     private const string SettingsChangeCategory = "AdminSettings";
 

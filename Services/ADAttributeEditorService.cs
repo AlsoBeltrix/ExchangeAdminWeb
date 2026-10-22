@@ -40,8 +40,23 @@ public sealed record AttributeSaveResult(
     string? Error,
     List<AttributeChange>? AppliedChanges);
 
+/// <summary>
+/// How one allowlist save from the Module Configuration page ended (aud-a28f). Whatever it says, the
+/// attempt has already been audited.
+/// </summary>
+/// <param name="Success">The allowlist was written.</param>
+/// <param name="Error">What to show the admin when it was not.</param>
+/// <param name="StoreCorrupt">
+/// The refusal was a corrupt store. The page needs to know, not just to say so: it shows the corrupt
+/// banner and disables the table, because any save from it would replace what the store holds.
+/// </param>
 public sealed record AllowlistSaveResult(bool Success, string? Error, bool StoreCorrupt = false);
 
+/// <summary>
+/// One field of a kept allowlist row that a save changed, as the settings-change record lists it
+/// (aud-a28f). Values are text - a flag as true/false, a number in invariant digits - and null for
+/// none, so every field reads the same way in the Admin Event Log.
+/// </summary>
 internal sealed record AllowlistFieldChange(string Attribute, string Field, string? Old, string? New);
 
 /// <summary>
@@ -217,6 +232,10 @@ public class ADAttributeEditorService
     /// </summary>
     private List<EditableAttribute>? LoadAllowlistFromDisk() => LoadAllowlistFromDisk(out _);
 
+    /// <param name="storedRows">
+    /// The rows exactly as the store holds them - including any the returned list drops, such as a
+    /// denylisted name - so a save can say what it replaced (aud-a28f). Empty when the read failed.
+    /// </param>
     private List<EditableAttribute>? LoadAllowlistFromDisk(out List<AttributeRow> storedRows)
     {
         storedRows = [];
@@ -319,10 +338,12 @@ public class ADAttributeEditorService
     {
         // aud-a28e. A pattern that does not compile is refused where the allowlist is saved, before
         // the store is touched, rather than found by the first operator to save that attribute. It
-        // throws, so no caller can carry on as if the save happened. ValidateProposedValues keeps its
-        // own catch: a pattern already stored, imported from the legacy file or edited into the
-        // database never passes through here, and a timeout depends on the value being checked, so
-        // it cannot be judged here.
+        // throws, so no caller can carry on as if the save happened. The Module Configuration page's
+        // save refuses such a pattern itself, as an audited refusal, before it calls this
+        // (SaveAllowlistAndAudit, aud-a28f); this throw is the backstop for any other caller.
+        // ValidateProposedValues keeps its own catch: a pattern already stored - edited into the
+        // database, or imported before the legacy import checked patterns (aud-a26e) - never passes
+        // through here, and a timeout depends on the value being checked, so it cannot be judged here.
         foreach (var attribute in attributes)
         {
             var problem = DescribeUncompilablePattern(attribute);
@@ -334,8 +355,27 @@ public class ADAttributeEditorService
         InvalidateAllowlistCache();
     }
 
+    /// <summary>
+    /// The section every allowlist save record is filed under, whether the save succeeded or not, so
+    /// an admin looking for the allowlist's changes finds the refused and failed attempts beside them.
+    /// </summary>
     internal const string AllowlistAuditSection = "ADAttributeEditor:Allowlist";
 
+    /// <summary>
+    /// The Module Configuration page's allowlist save, after the page's own authorisation re-check:
+    /// re-checks the store, refuses what must not be written, writes, and leaves exactly one audit
+    /// record however it ends (aud-a28f).
+    /// </summary>
+    /// <remarks>
+    /// The save used to run in the page. Its refusals and its catch wrote no record, and its one
+    /// record - on success - passed an empty list as the previous allowlist, so every save read as
+    /// adding every attribute and removing none. It lives here so every one of those paths can be
+    /// driven by a test; the page keeps only the re-check, which needs the principal and the policies.
+    ///
+    /// It does not throw. Every outcome is recorded here and returned, which is what lets the page's
+    /// catch write the one record for an attempt that failed before reaching this method without
+    /// risking a second.
+    /// </remarks>
     public AllowlistSaveResult SaveAllowlistAndAudit(List<EditableAttribute> attributes, string performedBy, string ip)
     {
         List<AttributeRow> stored;
@@ -343,6 +383,14 @@ public class ADAttributeEditorService
         List<AllowlistFieldChange> changed;
         try
         {
+            // One fresh read is both the corruption re-check and the "before" the record needs. The
+            // re-check is the authoritative gate - the page's disabled buttons are UI only, and the
+            // store may have become corrupt since the page loaded - and saving over a corrupt store
+            // would discard whatever it holds, so it fails closed. It must be this read, not
+            // GetAllowlist: the cache can serve a stale-but-valid list for up to its TTL after the
+            // store became corrupt, which would let the gate pass and the save replace the store.
+            // The raw rows are the "before" because they are what the write replaces, rows the load
+            // drops included.
             if (LoadAllowlistFromDisk(out stored) == null)
             {
                 const string corrupt = "Allowlist store is corrupt; refusing to save over it. Fix or restore config/ad-editable-attributes.json, then reload this page.";
@@ -358,6 +406,9 @@ public class ADAttributeEditorService
                 return new(false, refused);
             }
 
+            // Checked here, before SaveAllowlist, so an uncompilable pattern is recorded as what it
+            // is - a refusal, nothing tried - rather than reaching SaveAllowlist's throw and the
+            // catch below, which records a failed write.
             var uncompilable = attributes.Select(DescribeUncompilablePattern).FirstOrDefault(p => p is not null);
             if (uncompilable is not null)
             {
@@ -365,18 +416,25 @@ public class ADAttributeEditorService
                 return new(false, uncompilable);
             }
 
+            // Everything the success record says is worked out before the write, so a throw here is
+            // a failure with nothing written, never a completed write reported as failed.
             written = RowsAsWritten(attributes);
             changed = DescribeChangedRows(stored, written);
             SaveAllowlist(attributes);
         }
         catch (Exception ex)
         {
+            // No refusedAt and no mutationAttempted: the write may have been tried, and a failure
+            // record must not claim otherwise.
             var failed = $"Failed to save: {ex.Message}";
             _logger.LogError(ex, "Allowlist save failed");
             LogAllowlistSaveFailed(performedBy, ip, failed);
             return new(false, failed);
         }
 
+        // Outside the try that covers the write, and in its own: the allowlist has been saved, and an
+        // audit failure must not make a completed save look failed (Constitution, Auditing). Written
+        // even when nothing differs, so every attempt leaves a record.
         try
         {
             _audit.LogSettingsChange(
@@ -395,10 +453,24 @@ public class ADAttributeEditorService
         return new(true, null);
     }
 
+    /// <summary>
+    /// Records an allowlist save refused before anything was written (aud-a28f): aud-a28's
+    /// <c>refusedAt</c> names the step, and <c>mutationAttempted</c> false is what tells it apart
+    /// from a failed write.
+    /// </summary>
+    /// <remarks>
+    /// Public because the Module Configuration page writes one of these itself, for its
+    /// authorisation re-check. Never throws: an audit sink that fails is logged, and must not turn
+    /// a refusal into an exception or put a second record behind it.
+    /// </remarks>
     public void LogAllowlistSaveRefused(string performedBy, string ip, string refusedAt, string reason) =>
         WriteAllowlistSaveFailure(performedBy, ip, reason,
             new Dictionary<string, object?> { ["refusedAt"] = refusedAt, ["mutationAttempted"] = false });
 
+    /// <summary>
+    /// Records an allowlist save that failed with an exception (aud-a28f). Public and non-throwing
+    /// for the same reasons as <see cref="LogAllowlistSaveRefused"/>: the page's catch writes one.
+    /// </summary>
     public void LogAllowlistSaveFailed(string performedBy, string ip, string reason) =>
         WriteAllowlistSaveFailure(performedBy, ip, reason, null);
 
@@ -414,6 +486,12 @@ public class ADAttributeEditorService
         }
     }
 
+    /// <summary>
+    /// The rows a save of <paramref name="attributes"/> leaves in the store, so the record describes
+    /// the store rather than the request. The repository's insert skips a blank name and upserts a
+    /// repeated one (names compare case-insensitively): the first spelling stays, the later row's
+    /// values win.
+    /// </summary>
     private static List<AttributeRow> RowsAsWritten(List<EditableAttribute> attributes) =>
         attributes
             .Where(a => !string.IsNullOrWhiteSpace(a.Name))
@@ -422,6 +500,11 @@ public class ADAttributeEditorService
             .Select(g => g.Last() with { Name = g.First().Name })
             .ToList();
 
+    /// <summary>
+    /// Every field that differs on a row present both before and after. Rows only on one side are
+    /// not here: the settings-change record already names them under <c>added</c> and
+    /// <c>removed</c>.
+    /// </summary>
     private static List<AllowlistFieldChange> DescribeChangedRows(List<AttributeRow> before, List<AttributeRow> after)
     {
         var changed = new List<AllowlistFieldChange>();
@@ -447,6 +530,9 @@ public class ADAttributeEditorService
 
     private static void AddIfChanged(List<AllowlistFieldChange> changed, string attribute, string field, string? old, string? now)
     {
+        // Empty and absent are one value, "none": the store can hold an unset value as empty text,
+        // and reads some NULL columns back that way, while the page sends null - the same nothing,
+        // which must not be recorded as a change.
         old = string.IsNullOrEmpty(old) ? null : old;
         now = string.IsNullOrEmpty(now) ? null : now;
         if (!string.Equals(old, now, StringComparison.Ordinal))
@@ -461,11 +547,22 @@ public class ADAttributeEditorService
     /// Why <paramref name="attribute"/>'s pattern does not compile, naming the attribute; null when
     /// it has no pattern or the pattern compiles.
     /// </summary>
+    /// <remarks>
+    /// The allowlist-save wording, shared by SaveAllowlist's throw and the page save's audited
+    /// refusal so the two cannot drift. It names the attribute and says an administrator must correct
+    /// the pattern: the page shows the pattern as typed and never guesses at or repairs one
+    /// (aud-a26e), so the fix is the admin's to make.
+    /// </remarks>
     private static string? DescribeUncompilablePattern(EditableAttribute attribute) =>
         DescribeUncompilablePattern(attribute.Name, attribute.Label, attribute.Pattern) is { } problem
             ? $"{problem} The allowlist was not saved: an administrator must correct the pattern."
             : null;
 
+    /// <summary>
+    /// The core of the check, for a row that is not yet an <see cref="EditableAttribute"/> - the
+    /// legacy import's (aud-a26e) - and for the save wording above. Compiled with the options and
+    /// timeout the validation-time match uses, so what passes here is what that match will use.
+    /// </summary>
     private static string? DescribeUncompilablePattern(string name, string label, string? pattern)
     {
         if (string.IsNullOrEmpty(pattern))
@@ -562,6 +659,15 @@ public class ADAttributeEditorService
                         .Select(a => DescribeUncompilablePattern(a.Name, a.Label, a.Pattern))
                         .FirstOrDefault(p => p is not null) is { } uncompilable)
                     {
+                        // aud-a26e. The import stores rows straight through the repository, so it
+                        // used to skip the compile check the allowlist save makes (aud-a28e), and a
+                        // bad pattern was found only by the first operator to save that attribute.
+                        // Refused like the file's other validation failures: the whole file or none
+                        // of it, the file left for an administrator to correct, the allowlist failing
+                        // closed meanwhile. Every row is checked, not just the ones ValidateRows
+                        // keeps, because the import stores them all. The log is the only place this
+                        // can name the attribute: the import runs as the service is constructed, with
+                        // no page to tell, and repeats on each construction until the file is fixed.
                         _logger.LogError(
                             "Legacy ad-editable-attributes.json was not imported: {Problem} It is left in place, and the allowlist fails closed until an administrator corrects the pattern.",
                             uncompilable);

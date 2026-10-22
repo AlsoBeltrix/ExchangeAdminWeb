@@ -1654,6 +1654,10 @@
         dirty.Increment(SecAttrs);
         allowlistAttributes[idx].MaxLength = int.TryParse(e.Value?.ToString(), out var v) && v > 0 ? v : null;
     }
+    // aud-a26e. The pattern used to have no input at all, so an admin could neither see nor correct
+    // it. Kept exactly as typed - not trimmed, because a space in a regular expression matches a
+    // space - and an empty box is no pattern. Nothing here judges it: a pattern that does not compile
+    // is refused when the allowlist is saved, naming the attribute, and the admin corrects it.
     private void UpdateAttrPattern(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Pattern = e.Value?.ToString() is { Length: > 0 } typed ? typed : null; dirty.Increment(SecAttrs); }
     private void UpdateAttrChoices(int idx, ChangeEventArgs e)
     {
@@ -1670,6 +1674,11 @@
         allowlistSaved = false;
         await Task.Yield();
 
+        // aud-a28f. Every attempt leaves exactly one audit record. This page keeps only the
+        // authorisation re-check - it needs the principal and the policies - and records that refusal
+        // itself. Everything after it is SaveAllowlistAndAudit, which re-checks the store, records
+        // each outcome and returns it without throwing, so the catch below is reached only from the
+        // re-check and writes the one record for that attempt. The page writes no other record.
         var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {

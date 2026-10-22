@@ -170,5 +170,8 @@ rendered: no live circuit was run. No coder self-review verdict is claimed.
   does with a pattern is driven.
 - A pattern that compiles but is catastrophically slow still passes the save and the import; only
   the validation-time catch (aud-a28e) refuses it, because a timeout depends on the value.
-- The legacy import runs once per process start, from the constructor, so the only place its refusal
-  names the attribute is the application log; the page shows its generic corrupt-store banner.
+- The legacy import runs from the service's constructor - the service is scoped, so on each
+  construction while the file is still there and the store is unconfigured - and the only place its
+  refusal names the attribute is the application log (once per construction); the page shows its
+  generic corrupt-store banner. (Corrected in the comments commit: an earlier line here said "once
+  per process start".)
