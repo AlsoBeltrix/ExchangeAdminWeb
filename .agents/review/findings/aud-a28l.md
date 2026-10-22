@@ -99,6 +99,85 @@ Files: `Services/IUndoableModule.cs`, `Services/ADAttributeEditorUndoService.cs`
 `ExchangeAdminWeb.Tests/EventLogUndoRefusalTests.cs` (new), `AllowlistConcurrentSaveTests.cs`,
 `ADAttributeEditorServiceTests.cs`, `ADAttributeEditorPatternTests.cs`, this record.
 
+## Fix
+
+`Services/IUndoableModule.cs`: `LogUndoRefused(auditEvent, performedBy, ip, ticket, refusedAt,
+reason)` - an undo the caller refused before calling ExecuteUndoAsync, recorded as the module's own
+refused-undo record; never throws.
+
+`Services/ADAttributeEditorUndoService.cs`: `LogUndoRefused` calls the existing `LogUndoAudit` with
+`refusedAt` - aud-a28d's record (`ADAttributeEditor_Undo`, Failed, the reason as `error`,
+`originalOperationId`, the event's changed attributes with their values reversed, `refusedAt`,
+`mutationAttempted: false`), target `(none)` when the event names none - inside a catch that logs an
+audit failure.
+
+`Components/Pages/AdminEventLog.razor`, ExecuteUndo: the authorization refusal calls
+`handler.LogUndoRefused(undoTargetEvent.RawFields, userName, clientIp, undoTicket.Trim(),
+"Authorization", undoError)` directly above its return; `userName` and `clientIp` are read before the
+re-check instead of after it. Net zero lines (1466 before and after); the page is NotYetConverted in
+ClickGateRegistry, so there is no line key to move.
+
+`Services/ADAttributeEditorService.cs`: `SaveAllowlist` removed, with aud-a28e's throw; the
+pattern-wording remark no longer names it.
+
+Tests: new `ExchangeAdminWeb.Tests/EventLogUndoRefusalTests.cs` (3 cases: the refusal under either
+policy; the helper with no audit writer); `AllowlistConcurrentSaveTests` (the two tripwires);
+`ADAttributeEditorServiceTests` (three moved - two save through SaveAllowlistAndAudit with the version
+their load returned, the denylisted row is planted through the repository) and
+`ADAttributeEditorPatternTests` (two moved to SaveAllowlistAndAudit).
+
+Caller-visible change, by design: an undo the event log refuses for authorization now leaves one
+`ADAttributeEditor_Undo` record, Failed, `refusedAt: Authorization`. The message the operator sees, the
+absence of a notice and the edit's Undo button are unchanged. Nothing in the app called SaveAllowlist.
+
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: M1 below is the page's refusal as it was (moving `userName` and
+`clientIp` above the re-check changes no value), and M2 puts the removed method back exactly.
+
+Session-local driver (`mutate.ps1`, session scratchpad `a28l-a26g-a26i-work`, copied from the
+a28g/h/a26f/a28i round): exact bytes saved, one literal replacement that must match exactly once,
+Release build with `0 Error(s)` required, filter
+`FullyQualifiedName~EventLogUndoRefusalTests|FullyQualifiedName~ADAttributeEditorUndoRefusalTests|FullyQualifiedName~AllowlistConcurrentSaveTests|FullyQualifiedName~AllowlistSaveAuditTests|FullyQualifiedName~ADAttributeEditorPatternTests|FullyQualifiedName~ADAttributeEditorServiceTests|FullyQualifiedName~ReversedOperationsTests|FullyQualifiedName~PageAuthorizationRecheckTests|FullyQualifiedName~UndoNotificationTests|FullyQualifiedName~PageProtectionGateServicingTests`
+(153 tests), exact bytes restored in `finally`, MD5 re-checked, mtime advanced so MSBuild rebuilds
+(log `a28l-mutations.log`). Every mutant built with 0 errors; each restore matched its original MD5.
+After the round, a rebuild on the restored bytes and the filter: 153/153 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| M1 the page's `handler.LogUndoRefused(...)` deleted | `AdminEventLog.razor`, `5E39AE7D8BCEBA8FA6992C34141DD0E0` | `0D4ECABFA139000BF13C2083F84041F3` | `AnUndoRefusedForAuthorization_LeavesOneRefusalRecord_AndTheEditKeepsItsUndo`, both policies (no record) |
+| M2 `SaveAllowlist` restored, public, as at `374718b3` | `ADAttributeEditorService.cs`, `1E356AF53434EFE7A1E4C68AEAC046F2` | `8896263BAF23ACFE537386C86FDDC378` | `TheServicesOnlyAllowlistWriter_IsTheSaveThatChecksTheLoadedVersion`, `NoProductionCode_ReplacesTheStoredAllowlist_OutsideTheSaveThatChecksTheLoadedVersion` |
+| extra E1 the helper's catch removed | `ADAttributeEditorUndoService.cs`, `151479F88A4D6F52F3D5866020B93F7C` | `AA537784221A62F9B22A51228E3EC3E8` | `ARefusalWhoseRecordCannotBeWritten_IsLogged_NotThrown` |
+
+Unchanged through the round: `Services/IUndoableModule.cs` `CAC44BBC08F98BB9CB2C2A9564C7D4A6`;
+`EventLogUndoRefusalTests.cs` `520E6FBE6CF751D76D33864AB0AF7E69`, `AllowlistConcurrentSaveTests.cs`
+`888B21B023F5E2562CB70C8DA2DFAA43`, `ADAttributeEditorServiceTests.cs` `CBC98E9EE1620532F99438D92AA0143B`,
+`ADAttributeEditorPatternTests.cs` `1FB285965930C30D081403CEA88A6CD5`. The code comments are written after
+the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,278 passed / 3 skipped (the three known AD skips) / 0 failed, 5,281 total,
+  5m12s; nothing hung, no Sequence file. Baseline at `374718b3`: 5,273 / 3 / 0, 5,276 total; the five
+  new cases are this record's.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` with the files staged: exit 0.
+
+No PowerShell source, AD module, directory, Delinea, SMTP, push or deployment. The page was not
+rendered in a browser and no live circuit was run. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- Two exits of ExecuteUndo still leave no record, and neither is this finding: "No undo handler
+  available for this event." (no module claims the event, so there is no undo record to write), and
+  the page's catch (an exception before ExecuteUndoAsync - the authorization or level calls - is
+  logged and shown, the aud-a28g catch class). Named as candidates in the hand-back.
+- The refusal is audited, not announced (aud-a28d's known gap: whether a refused undo should notify
+  administrators is an owner decision).
+- ExecuteUndo is driven through the compiled page by reflection on a do-nothing renderer, not through a
+  rendered circuit: the Confirm Undo button's own gating is not exercised.
+- `AttributeEditorRepository.SaveAllowlist` stays public: the tests seed the store with it. No
+  production code calls it, and the source tripwire refuses one that does.

@@ -979,6 +979,8 @@
             }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var userName = authState.User.Identity?.Name ?? "unknown";
+            var clientIp = ClientInfo.IpAddress;
 
             // Re-check authorization immediately before the write: hasUndoPermission
             // is evaluated at render and only hides UI, which is not security. A
@@ -989,11 +991,9 @@
             if (!pageAuth.Succeeded || !undoAuth.Succeeded)
             {
                 undoError = "Authorization denied.";
+                handler.LogUndoRefused(undoTargetEvent.RawFields, userName, clientIp, undoTicket.Trim(), "Authorization", undoError);
                 return;
             }
-
-            var userName = authState.User.Identity?.Name ?? "unknown";
-            var clientIp = ClientInfo.IpAddress;
 
             var fields = new Dictionary<string, object?>(undoTargetEvent.RawFields, StringComparer.OrdinalIgnoreCase);
             if (handler.ModuleId == "ADAttributeEditor")

@@ -33,4 +33,10 @@ public interface IUndoableModule
     /// </param>
     Task<UndoPreview> PreviewUndoAsync(Dictionary<string, object?> auditEvent, System.Security.Claims.ClaimsPrincipal? actingUser);
     Task<UndoResult> ExecuteUndoAsync(Dictionary<string, object?> auditEvent, string performedBy, string ip, string ticket, System.Security.Claims.ClaimsPrincipal? actingUser);
+
+    /// <summary>
+    /// Records an undo of <paramref name="auditEvent"/> that the caller refused before calling
+    /// <see cref="ExecuteUndoAsync"/>, as this module's own refused-undo record (aud-a28l). Never throws.
+    /// </summary>
+    void LogUndoRefused(Dictionary<string, object?> auditEvent, string performedBy, string ip, string ticket, string refusedAt, string reason);
 }

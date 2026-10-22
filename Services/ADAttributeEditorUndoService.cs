@@ -343,6 +343,23 @@ public class ADAttributeEditorUndoService : IUndoableModule
         }
     }
 
+    public void LogUndoRefused(
+        Dictionary<string, object?> auditEvent, string performedBy, string ip, string ticket, string refusedAt, string reason)
+    {
+        try
+        {
+            var target = GetString(auditEvent, "target");
+            LogUndoAudit(
+                performedBy, ip, string.IsNullOrWhiteSpace(target) ? "(none)" : target,
+                GetStringArray(auditEvent, "changedAttributes"), auditEvent, GetString(auditEvent, "operationId"),
+                ticket, false, reason, servicedNote: null, refusedAt: refusedAt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audit failed for an undo refused before it ran");
+        }
+    }
+
     /// <summary>
     /// Tells administrators that an attempt to REVERSE an attribute change threw.
     /// </summary>

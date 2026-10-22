@@ -424,7 +424,7 @@ public class ADAttributeEditorServiceTests : IDisposable
     // --- Allowlist Cache Invalidation ---
 
     [Fact]
-    public void SaveAllowlist_InvalidatesCache_SubsequentGetReturnsUpdated()
+    public void SaveAllowlistAndAudit_InvalidatesCache_SubsequentGetReturnsUpdated()
     {
         WriteAllowlistConfig(new
         {
@@ -448,7 +448,8 @@ public class ADAttributeEditorServiceTests : IDisposable
             new("department", "Department", "Choice", new[] { "IT", "HR" }, true, false, null, null),
             new("title", "Job Title", "String", null, false, true, 100, null)
         };
-        service.SaveAllowlist(newAttrs);
+        var saved = service.SaveAllowlistAndAudit(newAttrs, service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9");
+        Assert.True(saved.Success, saved.Error);
 
         // Subsequent get should reflect the new data
         var second = service.GetAllowlist();
@@ -474,7 +475,7 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Single(first!);
         Assert.Same(first, service.GetAllowlist());
 
-        // Out-of-band write directly to the store (bypassing SaveAllowlist), adding a second row.
+        // Out-of-band write directly to the store (bypassing the service), adding a second row.
         new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore!).SaveAllowlist(new[]
         {
             new ExchangeAdminWeb.Services.Storage.AttributeRow("extensionAttribute1", "Extension 1", "String", null, false, true, null, null, 1),
@@ -791,10 +792,10 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Equal("department", allowlist[0].Name);
     }
 
-    // --- SaveAllowlist Atomic Write ---
+    // --- SaveAllowlistAndAudit Atomic Write ---
 
     [Fact]
-    public void SaveAllowlist_PersistsAndReadsBack()
+    public void SaveAllowlistAndAudit_PersistsAndReadsBack()
     {
         var service = CreateService();
         var attrs = new List<EditableAttribute>
@@ -803,7 +804,8 @@ public class ADAttributeEditorServiceTests : IDisposable
             new("department", "Department", "Choice", new[] { "IT", "HR" }, true, false, null, null)
         };
 
-        service.SaveAllowlist(attrs);
+        var saved = service.SaveAllowlistAndAudit(attrs, service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9");
+        Assert.True(saved.Success, saved.Error);
         service.InvalidateAllowlistCache();
 
         var loaded = service.GetAllowlist();
@@ -817,21 +819,18 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Equal(256, ext.MaxLength);
     }
 
-    // --- SaveAllowlist Strips Denylisted Entries on Re-read ---
+    // --- A Denylisted Row in the Store Is Stripped on Re-read ---
 
     [Fact]
-    public void SaveAllowlist_ThenGetAllowlist_DenylistedNotReturned()
+    public void ADenylistedRowInTheStore_IsNotReturnedByGetAllowlist()
     {
         var service = CreateService();
 
-        // SaveAllowlist does not itself enforce the denylist on write,
-        // but GetAllowlist will strip denylisted on load
-        var attrs = new List<EditableAttribute>
-        {
-            new("extensionAttribute1", "Extension 1", "String", null, false, true, null, null),
-            new("memberOf", "Member Of", "String", null, false, true, null, null)
-        };
-        service.SaveAllowlist(attrs);
+        // The audited save refuses a denylisted name (AllowlistSaveAuditTests), so only a write that
+        // goes round it - a database edit - can store one; GetAllowlist strips it on load.
+        SeedAllowlist(
+            new ExchangeAdminWeb.Services.Storage.AttributeRow("extensionAttribute1", "Extension 1", "String", null, false, true, null, null, 1),
+            new ExchangeAdminWeb.Services.Storage.AttributeRow("memberOf", "Member Of", "String", null, false, true, null, null, 1));
 
         var loaded = service.GetAllowlist();
         Assert.NotNull(loaded);
