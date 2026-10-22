@@ -1303,6 +1303,8 @@ public class ProtectedPrincipalService
     public DirectoryReadSecretSetting DescribeDirectoryReadSecret(string? stored) =>
         new(stored ?? "", PositiveId(stored) is null ? PositiveId(_config["Security:ProtectedPrincipalDirectoryReadSecretId"]) : null);
 
+    public static bool IsSecretId(string? value) => PositiveId(value) is not null;
+
     private static int? PositiveId(string? value) =>
         int.TryParse(value, out var id) && id > 0 ? id : null;
 

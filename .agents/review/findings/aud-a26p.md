@@ -9,8 +9,8 @@ Save bar does not appear. (4) Test infrastructure: two test classes opening Powe
 the same moment can hit PowerShell's start-up race ("An item with the same key has already been
 added. Key: Alias"), seen once in `ADAttributeEditorSaveTests` during a filtered run - a flaky
 failure source for the full suite.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
+**Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
+**Branch**: `worktree-agent-a992f9d6471a07501`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a28p/a26n agent, 2026-10-22, candidates 1, 3, 4 and 6 of its hand-back; its candidate 5, a connection change on one instance not draining the other's pool, is the scdi-1 design - each borrow compares the config generation - and is not admitted)
 
@@ -95,6 +95,107 @@ once through `AttributeEditorHarness`'s directory session both open and run. Mut
 accepted for the Secret ID again; (3) the fallback marking dropped; (4) the count case-insensitive again; (5) the
 guard's assembly registration removed.
 
+## Executed reproduction - 2026-10-22
+
+Branch `worktree-agent-a992f9d6471a07501` on aud-a28r (`dbcac40f`), the fix's tests and `PowerShellStartup.cs` in place and the
+three production files as they were at `dbcac40f` swapped in (`git show`, each `git hash-object` equal to its blob:
+AdminSettings `A14C80B2B968A6501BAA61EE476C7A10`, ExchangeOnlineConfig `6F1EFF3C09CF05D149CAC53720A19A7D`,
+ProtectedPrincipalService `07895376985514AF4E80FCEE4EF8614C`), build 0 errors: `SettingsFieldTests` and
+`PowerShellStartupTests` 10 failed / 5 passed. Every Secret ID that is not a whole number above zero was stored (`"12a"`,
+`"secret 4242"`, `"0"`, `"-5"`, `"42.5"`, `"99999999999"`, each where `"777"` was expected), and the pasted-password case
+saved with two success records where one refusal was expected; neither Exchange Online case found a caption; the pattern
+added back in other casing left the page clean (`IsDirty` false). The five that passed are the three save controls, the
+Exchange Online control (no caption either way) and the race pin, whose guard was in place. Every file was restored to its
+MD5 and touched.
+
+The race itself was not reproduced: with the guard's registration removed, 12 cold test-host runs of twelve first sessions
+opened at once (the harness's directory session, `CreateDefault`, `CreateDefault2`) were clean, as were about sixty cold
+processes of 8 to 16 first sessions outside the suite (`CreateDefault`, `CreateDefault2`, `RunspaceFactory.CreateRunspace()`,
+`PowerShell.Create()`, started together or staggered up to 400 ms) against Microsoft.PowerShell.SDK 7.6.1. PowerShell's
+source at that tag (read for this record, not run) keys no shared static dictionary by provider name: its per-assembly
+caches are keyed by assembly, and a dictionary keyed `Alias` is each session's own, unlocked provider table, filled while
+that runspace binds - and a bind runs its steps in parallel. Which of these the race was is not established. So the guard
+rests on what was observed - the one failure was two classes' first sessions, and no full run has shown it - not on a
+reproduced cause (Known gaps).
+
+## Fix
+
+`Services/ProtectedPrincipalService.cs`: `IsSecretId(value)`, the lookups' own `PositiveId` rule as a public test.
+
+`Components/Pages/AdminSettings.razor`: `SaveProtectedPrincipals`, after the `!ppLoaded` refusal and before the secret's store
+checks: a changed, non-blank Secret ID that `IsSecretId` rejects refuses the save through `LogSettingsSaveRefused`
+(`Validation`, under `ProtectedPrincipals`), the message naming the field and what it takes and not repeating the text - a
+field that takes an ID is where a pasted password lands. `EntryDelta` takes `Except` under `StringComparer.Ordinal`.
+
+`Components/Pages/ExchangeOnlineConfig.razor`: `exoFallback`, filled by `FallbackCaptions` from the one load read - per key
+with no row, the configured appsettings value, or for the certificate with no appsettings entry the built-in
+`CN=EXO-Automation`; a blank appsettings value supplies nothing, as the runtime reads it - and rendered under each field. A
+key the save writes or finds already applied leaves `exoFallback`. The setting names and the built-in default are named once
+(`AppIdSetting`, `OrganizationSetting`, `CertificateSubjectSetting`, `BuiltInCertificateSubject`) for the load and the
+captions.
+
+`ExchangeAdminWeb.Tests/PowerShellStartup.cs`: the xUnit v3 assembly fixture (`[assembly: AssemblyFixture(...)]`); its
+construction opens a `CreateDefault` and a `CreateDefault2` runspace and runs `1` in each, up to three attempts, never
+throwing, and sets `Started`.
+
+Tests: new `ExchangeAdminWeb.Tests/SettingsFieldTests.cs` (14 cases) and `ExchangeAdminWeb.Tests/PowerShellStartupTests.cs`
+(1). Departures from the plan, none in what is decided: the Exchange Online control covers an appsettings value set blank for
+the certificate (the runtime takes it over the built-in default, so nothing is marked); a case beyond it pins that a refused
+Secret ID is not repeated in the record or the message; and `AttributeEditorHarness.cs` is untouched, as planned - the pin
+builds sessions from its directory session state.
+
+Caller-visible change, by design: on Admin Settings, a changed Secret ID that is not a whole number above zero is refused,
+naming the field, with nothing saved; an entry removed and added back in other casing shows as unsaved and saves as typed. On
+Exchange Online Config, a field whose value the database does not hold says where it comes from. The suite starts PowerShell
+once before any test.
+
 ## Guard proof
 
-Pending.
+Same driver as aud-a28r, filter
+`FullyQualifiedName~SettingsFieldTests|FullyQualifiedName~PowerShellStartupTests|FullyQualifiedName~SettingsWholeProtectedSaveTests|FullyQualifiedName~SettingsConnectionAndSecretSaveTests|FullyQualifiedName~SettingsSaveStoreCheckTests|FullyQualifiedName~SettingsSaveAuditTests|FullyQualifiedName~SettingsNoOpAndUnreadableSecretTests|FullyQualifiedName~SettingsPerRowSaveTests|FullyQualifiedName~ProtectedPrincipalServiceTests|FullyQualifiedName~ModuleConfigServiceTests|FullyQualifiedName~AdminPageDirtyStateTests|FullyQualifiedName~ProgressRegistryTests|FullyQualifiedName~WholeStoreWriterTripwireTests|FullyQualifiedName~ProtectedGroupWriteTargetTests|FullyQualifiedName~SettingsConcurrentSaveTests|FullyQualifiedName~SettingsStoreTextTests|FullyQualifiedName~ADAttributeEditorSaveTests|FullyQualifiedName~ClickGateTests|FullyQualifiedName~GlobalProgressWiringTests`
+(729 tests). Fixed-file MD5s: `Components/Pages/AdminSettings.razor` `9D69AE6C73295B9CE471380D31ED92FE`,
+`Components/Pages/ExchangeOnlineConfig.razor` `3022C478173090001893C3B4A1F09496`, `ExchangeAdminWeb.Tests/PowerShellStartup.cs`
+`49A0046607D070A3E71B7634295ECC9E`; every mutant built with 0 errors and every file was restored to its MD5. After the round,
+the restored tree rebuilt and the same filter: 729/729 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| 2 | `AdminSettings.SaveProtectedPrincipals`: any text accepted for the Secret ID again (`if (false && secretChanged && ...)`) | `1A2A0028D562B0DA9FAC421C40852C90` | `AdminSettings_ASecretIdThatIsNotAWholeNumberAboveZero_IsRefused_NamingTheField_AndNothingIsWritten`, all six (`"-5"`, `"99999999999"`, ... stored where `"777"` was expected), `AdminSettings_ARefusedSecretId_IsNotRepeatedInTheRecord` (the save went through) |
+| 3 | `ExchangeOnlineConfig.LoadExoConfig`: the fallback marking dropped (`exoFallback = new(StringComparer.OrdinalIgnoreCase)` in place of `FallbackCaptions(...)`) | `2F62D530311AC75807A2FEC27EA8D4D7` | `ExchangeOnlineConfig_AFieldWithNoRow_IsMarkedWithTheFallbackThatSuppliesIt`, `ExchangeOnlineConfig_SavingAMarkedField_StoresIt_AndOnlyThatFieldLosesItsMark` (no caption rendered) |
+| 4 | `AdminSettings.EntryDelta`: the count case-insensitive again (`StringComparer.OrdinalIgnoreCase` on both sides) | `893C8D4125159D6B53989B2F46D9B675` | `AdminSettings_AnEntryAddedBackInOtherCasing_CountsAsTwoChanges_AndIsSavedAsTyped` (`IsDirty` false) |
+| 5 | `PowerShellStartup.cs`: the guard's assembly registration removed (the `[assembly: AssemblyFixture(...)]` line commented out) | `C0FE313C333291ED35285D96698B84CA` | `PowerShellStartupTests.PowerShellIsStartedBeforeAnyTest_AndTwoSessionsOpenedAtOnceThroughTheHarness_BothStart` ("PowerShell was not started before the tests ran") |
+| E2 | extra, `ExchangeOnlineConfig.SaveExoConfig`: a saved key keeps its caption (`exoFallback.Remove(key)` dropped) | `27A0DA51A4D72D8CFD56050BE52C7E33` | `ExchangeOnlineConfig_SavingAMarkedField_StoresIt_AndOnlyThatFieldLosesItsMark` (the built-in caption still rendered) |
+| E3 | extra, `ExchangeOnlineConfig.AddFallbackCaption`: the built-in default marked though appsettings blanks it (`else if (builtIn is not null)`) | `A4356FDE840A2A7DAB98BA8CA08D0F8E` | `ExchangeOnlineConfig_AStoredFieldAndFieldsNothingSupplies_AreNotMarked` |
+| E4 | extra, `AdminSettings.SaveProtectedPrincipals`: a blank Secret ID refused too (`secretId.Length > 0 &&` dropped) | `194C0E1ECD39329C5E248F20418C25E0` | `AdminSettings_AWholeNumberSecretIdOrABlankOne_IsSaved(entered: "")`, `SettingsConnectionAndSecretSaveTests.AdminSettings_ClearingTheSecretWithAFallbackConfigured_IsThenShownAsNotSetInTheDatabase` (`"777"` kept, `""` expected) |
+
+Mutation 5 fails the pin on its first assertion, deterministically; its second half - two sessions opened at once through
+the harness, both started - passes with or without the guard, because the race could not be produced on demand (Executed
+reproduction). The pin holds that the start runs before any test, not that the race is gone.
+
+The code comments are written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors; 61 warnings, all pre-existing, none in a touched file (the
+  pin's first draft drew xUnit1031 for a blocking wait and was made async before this tree).
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,639 passed / 3 skipped (the three known AD skips) / 0 failed, 5,642 total, 5m34s. No hang. (After aud-a28r, `dbcac40f`:
+  5,624 / 3 / 0.)
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No directory, Exchange Online, Delinea, SMTP, push or deployment. PowerShell sessions are opened, locally: the start-up
+guard's two and the pin's two, over the harness's stand-in directory functions with module autoloading off; the connection
+save drains a pool that holds no session. The pages were not rendered in a browser. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- The start-up guard rests on the one failure seen - two classes' first sessions, in a filtered run - and on no full run
+  showing it; the cause was not reproduced. If the race can come from one runspace's own parallel bind at any time, a start
+  before the tests narrows it and does not end it, and a collection would not end it either.
+- Production starts PowerShell the same way on its first sessions; nothing in the app opens one first (candidate, not in
+  scope).
+- The Secret ID rule is the lookups' `int.TryParse`, so `+42` and `0042` are accepted and stored as typed; they read as 42.
+- An Exchange Online field shown from a fallback and edited is captioned with the fallback until it is saved; the caption is
+  about where the stored state stands, not about the text being typed.
+- `ChangedEntries`, which names the admin's entries in an already-applied record, still compares ignoring case (plan item 3).

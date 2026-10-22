@@ -491,8 +491,8 @@
 
     /// <summary>Additions plus removals between a working list and the one that was loaded.</summary>
     private static int EntryDelta(List<string> current, List<string> loaded) =>
-        current.Except(loaded, StringComparer.OrdinalIgnoreCase).Count()
-        + loaded.Except(current, StringComparer.OrdinalIgnoreCase).Count();
+        current.Except(loaded, StringComparer.Ordinal).Count()
+        + loaded.Except(current, StringComparer.Ordinal).Count();
 
     /// <summary>
     /// One change if the directory-read secret id differs from what was loaded, otherwise none.
@@ -1131,6 +1131,14 @@
             // save would replace - and the store as it is now (aud-a28j).
             var secretId = ppDirectoryReadSecretId.Trim();
             var secretChanged = SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline) > 0;
+            if (secretChanged && secretId.Length > 0 && !ProtectedPrincipalService.IsSecretId(secretId))
+            {
+                statusMessage = "Refusing to save: the Directory Read Credential (Delinea Secret ID) must be the ID of a secret in Secret Server - a whole number greater than zero - or empty to clear it. Nothing was changed.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Validation", statusMessage);
+                return;
+            }
+
             if (secretChanged && ppSecretUnreadable)
             {
                 statusMessage = "Refusing to save: the directory-read credential (Delinea Secret ID) could not be read when this page loaded, so the value it holds is not the stored one and saving it would overwrite a value never shown. Nothing was changed. Reload the page once the problem is fixed. "

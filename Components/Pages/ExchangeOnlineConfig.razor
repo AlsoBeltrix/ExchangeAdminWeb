@@ -99,15 +99,27 @@
                 <div class="col-md-4">
                     <label class="form-label fw-semibold">App Registration ID (GUID)</label>
                     <input type="text" class="form-control form-control-sm" @bind="exoAppId" @bind:event="oninput" placeholder="00000000-0000-0000-0000-000000000000" />
+                    @if (exoFallback.GetValueOrDefault(ExoConnectionPool.ConfigAppIdKey) is { } appIdFallback)
+                    {
+                        <small class="text-muted d-block">@appIdFallback</small>
+                    }
                 </div>
                 <div class="col-md-4">
                     <label class="form-label fw-semibold">Organization</label>
                     <input type="text" class="form-control form-control-sm" @bind="exoOrganization" @bind:event="oninput" placeholder="contoso.onmicrosoft.com" />
+                    @if (exoFallback.GetValueOrDefault(ExoConnectionPool.ConfigOrganizationKey) is { } organizationFallback)
+                    {
+                        <small class="text-muted d-block">@organizationFallback</small>
+                    }
                 </div>
                 <div class="col-md-4">
                     <label class="form-label fw-semibold">Certificate Subject</label>
                     <CertificatePicker @bind-Value="exoCertSubject" />
                     <small class="text-muted">DN of the certificate in the local machine store.</small>
+                    @if (exoFallback.GetValueOrDefault(ExoConnectionPool.ConfigCertSubjectKey) is { } certificateFallback)
+                    {
+                        <small class="text-muted d-block">@certificateFallback</small>
+                    }
                 </div>
             </div>
         </div>
@@ -178,6 +190,7 @@
     // absent key as empty), from the one read that filled the fields.
     private Dictionary<string, string> exoShown = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string> exoStored = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> exoFallback = new(StringComparer.OrdinalIgnoreCase);
     private List<AdminModuleDescriptor> dependentModules = new();
 
     protected override async Task OnInitializedAsync()
@@ -232,11 +245,12 @@
             var appId = stored.GetValueOrDefault(ExoConnectionPool.ConfigAppIdKey);
             var org = stored.GetValueOrDefault(ExoConnectionPool.ConfigOrganizationKey);
             var cert = stored.GetValueOrDefault(ExoConnectionPool.ConfigCertSubjectKey);
-            exoAppId = appId ?? Config["ExchangeOnline:AppId"] ?? "";
-            exoOrganization = org ?? Config["ExchangeOnline:Organization"] ?? "";
-            exoCertSubject = cert ?? Config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
+            exoAppId = appId ?? Config[AppIdSetting] ?? "";
+            exoOrganization = org ?? Config[OrganizationSetting] ?? "";
+            exoCertSubject = cert ?? Config[CertificateSubjectSetting] ?? BuiltInCertificateSubject;
             exoShown = ConnectionFields(exoAppId, exoOrganization, exoCertSubject);
             exoStored = ConnectionFields(appId ?? "", org ?? "", cert ?? "");
+            exoFallback = FallbackCaptions(appId, org, cert);
             exoConfigLoaded = true;
         }
         catch (Exception ex)
@@ -508,6 +522,7 @@
                 {
                     exoShown[key] = wanted[key];
                     exoStored[key] = wanted[key];
+                    exoFallback.Remove(key);
                 }
             }
 
@@ -570,6 +585,32 @@
     private string EnablementRefusal() =>
         "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
         + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
+
+    private const string AppIdSetting = "ExchangeOnline:AppId";
+    private const string OrganizationSetting = "ExchangeOnline:Organization";
+    private const string CertificateSubjectSetting = "ExchangeOnline:CertificateSubject";
+    private const string BuiltInCertificateSubject = "CN=EXO-Automation";
+
+    private Dictionary<string, string> FallbackCaptions(string? appId, string? organization, string? certificateSubject)
+    {
+        var captions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        AddFallbackCaption(captions, ExoConnectionPool.ConfigAppIdKey, appId, AppIdSetting, builtIn: null);
+        AddFallbackCaption(captions, ExoConnectionPool.ConfigOrganizationKey, organization, OrganizationSetting, builtIn: null);
+        AddFallbackCaption(captions, ExoConnectionPool.ConfigCertSubjectKey, certificateSubject, CertificateSubjectSetting, BuiltInCertificateSubject);
+        return captions;
+    }
+
+    private void AddFallbackCaption(Dictionary<string, string> captions, string key, string? stored, string setting, string? builtIn)
+    {
+        if (stored is not null)
+            return;
+
+        var configured = Config[setting];
+        if (!string.IsNullOrWhiteSpace(configured))
+            captions[key] = $"Not set in the database; the configured fallback applies: {configured} ({setting} in appsettings.json).";
+        else if (configured is null && builtIn is not null)
+            captions[key] = $"Not set in the database; the built-in default applies: {builtIn}.";
+    }
 
     /// <summary>The three connection values keyed by their config keys.</summary>
     private static Dictionary<string, string> ConnectionFields(string appId, string organization, string certificateSubject) =>
