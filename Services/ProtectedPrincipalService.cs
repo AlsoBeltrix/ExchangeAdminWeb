@@ -1303,6 +1303,11 @@ public class ProtectedPrincipalService
     public DirectoryReadSecretSetting DescribeDirectoryReadSecret(string? stored) =>
         new(stored ?? "", PositiveId(stored) is null ? PositiveId(_config["Security:ProtectedPrincipalDirectoryReadSecretId"]) : null);
 
+    /// <summary>
+    /// Whether a value would give the lookups a Secret ID: the rule <see cref="GetDirectoryReadSecretId"/> applies
+    /// (aud-a26p). The admin page refuses a changed value this rejects, so nothing is stored that the lookups would pass
+    /// over for the fallback - which is how a typo used to show itself, as a lookup failing later.
+    /// </summary>
     public static bool IsSecretId(string? value) => PositiveId(value) is not null;
 
     private static int? PositiveId(string? value) =>
@@ -1330,6 +1335,12 @@ public class ProtectedPrincipalService
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = loaded },
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = wanted });
 
+    /// <summary>
+    /// The decision <see cref="SaveDirectoryReadSecretId(string, string)"/> makes, under the same lock, writing nothing
+    /// (aud-a28r). The admin page runs it before it writes the protection rules: the rules and the secret are two stores,
+    /// so a secret changed elsewhere since the page loaded is caught before the rules land, refusing the whole save,
+    /// rather than refused after them with the rules already saved.
+    /// </summary>
     public ModuleConfigSaveOutcome CompareDirectoryReadSecretId(string loaded, string wanted) =>
         _moduleConfig.CompareChangedValues(
             ProtectedPrincipalsModuleKey,

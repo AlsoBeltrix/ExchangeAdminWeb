@@ -190,6 +190,10 @@
     // absent key as empty), from the one read that filled the fields.
     private Dictionary<string, string> exoShown = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string> exoStored = new(StringComparer.OrdinalIgnoreCase);
+    // aud-a26p. The caption under each field whose key has no row in the store: the value shown there is the appsettings
+    // fallback or the built-in default the runtime falls back to, not a stored one, and nothing said so - so a store
+    // holding some keys while the runtime fell back for the others looked fully configured. Admin Settings marks its
+    // directory-read secret the same way (aud-a26n).
     private Dictionary<string, string> exoFallback = new(StringComparer.OrdinalIgnoreCase);
     private List<AdminModuleDescriptor> dependentModules = new();
 
@@ -522,6 +526,7 @@
                 {
                     exoShown[key] = wanted[key];
                     exoStored[key] = wanted[key];
+                    // Written or already applied: the store holds the key now, so no fallback supplies it.
                     exoFallback.Remove(key);
                 }
             }
@@ -586,11 +591,21 @@
         "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
         + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
 
+    // Each named once, for the load that reads it and the caption that names it.
     private const string AppIdSetting = "ExchangeOnline:AppId";
     private const string OrganizationSetting = "ExchangeOnline:Organization";
     private const string CertificateSubjectSetting = "ExchangeOnline:CertificateSubject";
     private const string BuiltInCertificateSubject = "CN=EXO-Automation";
 
+    /// <summary>
+    /// The captions for the keys the store holds no row for, given what the one load read for each (null: no row).
+    /// </summary>
+    /// <remarks>
+    /// The runtime's rule, ExoConnectionPool.GetExoConfig: a key with no row falls back to its appsettings value, and the
+    /// certificate to the built-in default when appsettings has no entry; a stored value, even an empty one, does not
+    /// fall back. A blank appsettings value supplies nothing, so nothing is marked - the field is blank and so is the
+    /// runtime's value.
+    /// </remarks>
     private Dictionary<string, string> FallbackCaptions(string? appId, string? organization, string? certificateSubject)
     {
         var captions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

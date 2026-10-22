@@ -490,6 +490,10 @@
     }
 
     /// <summary>Additions plus removals between a working list and the one that was loaded.</summary>
+    /// <remarks>
+    /// Compared ordinal (aud-a26p): the save writes the lists as they are, so an entry removed and added back in other
+    /// casing changes what is stored. Counted ignoring case, that edit showed "No unsaved changes" and no leave warning.
+    /// </remarks>
     private static int EntryDelta(List<string> current, List<string> loaded) =>
         current.Except(loaded, StringComparer.Ordinal).Count()
         + loaded.Except(current, StringComparer.Ordinal).Count();
@@ -1131,6 +1135,12 @@
             // save would replace - and the store as it is now (aud-a28j).
             var secretId = ppDirectoryReadSecretId.Trim();
             var secretChanged = SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline) > 0;
+
+            // aud-a26p. A changed Secret ID the lookups would not read is refused before anything is written: stored, it
+            // sent every lookup to the appsettings fallback or to no credential, and the typo showed only as a lookup
+            // failing later. The rule is the lookups' own (IsSecretId); blank stays allowed - it clears the stored id. The
+            // message names the field and never repeats its text: a field that takes an ID is where a pasted password
+            // lands, and the refusal is recorded.
             if (secretChanged && secretId.Length > 0 && !ProtectedPrincipalService.IsSecretId(secretId))
             {
                 statusMessage = "Refusing to save: the Directory Read Credential (Delinea Secret ID) must be the ID of a secret in Secret Server - a whole number greater than zero - or empty to clear it. Nothing was changed.";
@@ -1157,6 +1167,13 @@
                 return;
             }
 
+            // aud-a28r. The secret's compare runs here, before the rules are written, and a conflict refuses the whole save.
+            // It used to run only inside the secret's own write, after the rules had landed, so a secret changed elsewhere
+            // left half of the one change the admin confirmed saved. Not one write for both: the rules and the secret are
+            // two repositories, each opening its own transaction, and neither can join the other's. This compare holds the
+            // secret's write lock and writes nothing. The secret's write below compares again, so a change landing between
+            // the two - during this save's rules write - is still refused rather than overwritten; the rules are then saved
+            // and both halves are recorded.
             if (secretChanged)
             {
                 var secretCheck = ProtectedPrincipalService.CompareDirectoryReadSecretId(ppDirectoryReadSecretIdBaseline, secretId);
@@ -1293,7 +1310,9 @@
             // aud-a26n. Decided under the write lock against the value this page loaded (its baseline): written only
             // while the row still holds what the field showed, so a change made elsewhere since is refused rather than
             // overwritten, and one made the same way is already applied. The rules were written first (aud-a28j), so a
-            // refusal here is the secret's alone: recorded under its own section, the message saying the rules saved.
+            // refusal here is the secret's alone: recorded under its own section, the message saying the rules saved. Since
+            // aud-a28r a change made before the save is refused, whole, by the compare ahead of the rules; one refused here
+            // landed during this save.
             var outcome = ProtectedPrincipalService.SaveDirectoryReadSecretId(ppDirectoryReadSecretIdBaseline, secretId);
             if (outcome.Status is ModuleConfigSaveStatus.StoreCorrupt or ModuleConfigSaveStatus.ConcurrentChange)
             {
