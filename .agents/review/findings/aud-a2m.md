@@ -7,7 +7,7 @@ read. Two Exchange recipients answering to one name would make the add ambiguous
 other one; Exchange refuses an ambiguous identity, so the likely symptom is a failed row, not a
 wrong write, but the aud-a2b/a2d binding rule (write to the object you validated, by an immutable
 identity) does not yet cover the list itself.
-**Status**: Merged to master (`5c116ce4`); closed on guard proof; codex review pending; dev acceptance owed
+**Status**: Merged to master (`5c116ce4`); closed on guard proof; codex clean; dev acceptance owed
 **Branch**: `worktree-agent-a76a90b485c4fa8ce`
 **Commit**: `8441f609` (fix, tests, comments, record); plan `bd961140`; merged `5c116ce4`
 **Reviewer**: implementer (surfaced by the aud-a2k/a2l agent, 2026-10-22, candidate 2 of its hand-back)

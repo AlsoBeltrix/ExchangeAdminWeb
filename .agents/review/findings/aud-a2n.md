@@ -5,7 +5,7 @@
 after Exchange metadata committed (no wrong write; a re-run says "already a member"). The outer
 catch's log line "Add-ADGroupMember on-prem room-list write failed" names a cmdlet the code has
 not used since aud-a2j, which misleads whoever reads the log.
-**Status**: Merged to master (`5c116ce4`); closed on guard proof; codex review pending; dev acceptance owed; the live AD error-code probe is an owner item
+**Status**: Merged to master (`5c116ce4`); closed on guard proof; codex clean; dev acceptance owed; the live AD error-code probe is an owner item
 **Branch**: `worktree-agent-a76a90b485c4fa8ce`
 **Commit**: `e223e131` (fix, tests, comments, record); plan `bd961140`; merged `5c116ce4`
 **Reviewer**: implementer (surfaced by the aud-a2k/a2l agent, 2026-10-22, candidates 1 and 3 of its hand-back)
