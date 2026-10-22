@@ -5,8 +5,8 @@ in `PermissionValidator`'s corrupt-branch log, where no page is involved. (2) `C
 `Audit:LogRoot` is still one shared directory under the temp directory, and the per-validator test
 directories aud-a26q introduced are never deleted (pre-existing shape; not a database, so the
 aud-a26q tripwire does not cover it).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
+**Status**: Plan written; in progress
+**Branch**: `worktree-agent-a4c579a99f70ca768`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a28t/a26q agent, 2026-10-22, candidates 4 and 5 of its hand-back)
 
@@ -24,6 +24,54 @@ corrupt-branch log); `ExchangeAdminWeb.Tests/PermissionValidatorTests.cs` `Creat
   it (an `IDisposable` fixture or a per-test `try/finally`); the aud-a26q source scan gains "no
   `Audit:LogRoot` directly under the temp directory".
 - Mutations at the call site: the reload clause back in the service log; the shared root again.
+
+## Plan (approved by the owner's EVERYTHING go)
+
+Owner go 2026-10-21 ("fix all the bugs ... EVERYTHING", `.agents/decisions.md` 2026-10-21). Branch
+`worktree-agent-a4c579a99f70ca768` from master `18530b58`: one fix commit `fix(settings-text): ... (aud-a26t)`, third of
+three, after aud-a28y (the same `PermissionValidator.cs`) and aud-a28x (whose unreadable message it also moves), and the
+comments-only commit after it. Behaviour: two log lines and one refusal message of shared services (base app version,
+the bump aud-a28y and aud-a28x already need); the rest is tests.
+
+Evidence re-read at `18530b58`:
+- `SettingsStoreText.DatabaseRemedy` 16-17 ends "then reload this page"; every text in the class is built on it
+  (`Enablement`, `SectionAccess`, `ModuleConfig`, `ModuleAdmins`, `ProtectedPrincipals`), and the admin pages render and
+  refuse with them (AdminSettings, ExchangeOnlineConfig, ModuleConfig). The only callers that are not a page are in
+  `PermissionValidator`: the corrupt-branch log (673-674, aud-a26q) and the unreadable self-grant setting's log (88-89,
+  aud-a28t), both `SettingsStoreText.ModuleConfig("MailboxPermissions")` in a service's log line, where no page is
+  involved. aud-a28x adds a third: the pool's unreadable message, a service's exception that is logged and shown by
+  whichever module borrowed, a background job included.
+- `PermissionValidatorTests.CreateValidator` 43-126: `Audit:LogRoot` is `%TEMP%\eaw-test-logs` (58), one directory every
+  validator and every run shares - the `ExtendedLogService` each validator builds creates `ExchangeAdminWeb` under it
+  (`ExtendedLogService` constructor). The per-validator `testDir` (51), `NewStore`'s directory (130-135) and
+  `CreateValidatorWithScriptedResolution`'s `testDir` (606) are created and never deleted, and the `ExtendedLogService`
+  and `ExoConnectionPool` each helper builds are never disposed. The class is not `IDisposable`.
+- `SharedTempDatabaseTripwireTests` (aud-a26q) refuses a source naming the temp directory itself or a config database
+  directly in it; `Path.Combine(Path.GetTempPath(), "eaw-test-logs")` passes it. No other test source sets
+  `Audit:LogRoot` from the temp directory (every other one is the test's own directory variable).
+
+1. **A service's remedy.** `SettingsStoreText` gains `ServiceDatabaseRemedy` - the same fix without "then reload this
+   page" - and `ServiceModuleConfig(moduleId)` on it. `DatabaseRemedy` and every page text keep their exact wording; the
+   two remedies are built from one shared clause so they cannot drift apart. The three service callers - the validator's
+   two log lines and the pool's unreadable message - use the service text.
+2. **Every directory a validator test makes is its own and is deleted.** `PermissionValidatorTests` becomes
+   `IDisposable`. Its three helpers (instance methods now) make each directory through one helper that registers it, put
+   `Audit:LogRoot` under the validator's own directory, and register the `ExtendedLogService` and `ExoConnectionPool`
+   they build. `Dispose` disposes those, clears the SQLite connection pool for each directory's database (the
+   `AttributeEditorHarness` shape) and deletes the directories.
+3. **Tripwire.** `SharedTempDatabaseTripwireTests` gains a rule: no test source sets `Audit:LogRoot` from the temp
+   directory (`GetTempPath()` in the value) - a log root is a directory the test made and deletes.
+
+Tests: `PermissionValidatorExclusionsReadTests.AStoreThatCannotBeRead_LogsTheRowsAndTheirFix_NotAFile` asserts the service
+text and no "reload this page"; `PermissionValidatorConfigReadTests` gains the unreadable self-grant setting logging one
+error with the service text and no reload clause; `ExoConnectionPoolConfigReadTests` (aud-a28x) asserts the same of the
+pool's message; new `ExchangeAdminWeb.Tests/StoreTextSurfaceTests.cs` pins that the page text is unchanged and that the
+service text is that text without its reload clause; `PermissionValidatorTests` gains a case that builds a validator
+through each helper, finds its logs under its own directory, disposes the class and finds every directory gone; the
+tripwire's new rule. Mutations at the call site: (1) the reload clause back in the corrupt-branch log
+(`SettingsStoreText.ModuleConfig` there again); (2) the shared root again (`Path.Combine(Path.GetTempPath(),
+"eaw-test-logs")` in `CreateValidator`). Extras: (E1) `Dispose` deletes nothing; (E2) the self-grant setting's log back
+on the page text; (E3) the pool's message back on the page text.
 
 ## Guard proof
 
