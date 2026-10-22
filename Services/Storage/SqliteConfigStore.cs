@@ -30,7 +30,13 @@ public sealed class SqliteConfigStore : IConfigStore
     {
         ArgumentNullException.ThrowIfNull(write);
         using var connection = _factory.Open();
-        using var transaction = connection.BeginTransaction();
+
+        // BEGIN IMMEDIATE: the write lock is taken here, before the callback reads anything, so a
+        // callback may read, decide and write with no other writer - the other instance on the
+        // shared database included - committing in between (aud-a33b, aud-a33c). This provider's
+        // parameterless BeginTransaction() already does the same (aud-a33 review); it is spelled
+        // out because repositories now rely on it, and SqliteConfigStoreTests pins it.
+        using var transaction = connection.BeginTransaction(deferred: false);
 
         var result = write(connection, transaction);
         ConfigChangeToken.Bump(connection, transaction);

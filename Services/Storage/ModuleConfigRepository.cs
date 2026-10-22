@@ -120,26 +120,44 @@ public sealed class ModuleConfigRepository
     /// value to <paramref name="toKey"/> when the latter is absent/empty, then removes the
     /// stale <paramref name="fromKey"/> row. If <paramref name="toKey"/> already has a non-empty
     /// value it wins (no overwrite) and the dead <paramref name="fromKey"/> row is simply deleted.
-    /// Returns true only if a row was actually written or deleted (so a no-op bumps no change
-    /// token). Used by the Graph credential key rename (DelineaSecretId -> GraphDelineaSecretId);
-    /// see docs/GraphSecretKeyMigration-Plan.md.
+    /// Returns true only if a row was actually written or deleted. Used by the Graph credential
+    /// key rename (DelineaSecretId -> GraphDelineaSecretId); see docs/GraphSecretKeyMigration-Plan.md.
     /// </summary>
+    /// <remarks>
+    /// <para><b>Decided under the write lock, from the rows as they are then (aud-a33c).</b> Dev and
+    /// prod share this database. This used to decide whether to copy from a read made before its
+    /// write transaction opened and then upsert unconditionally, so a value the other instance
+    /// saved in between - an administrator setting the Graph secret, or rotating it after that
+    /// instance's own remap - was overwritten with the stale old one. The store's write
+    /// transaction takes the lock at BEGIN, so the read inside it cannot be overtaken before the
+    /// write; that is what makes the upsert conditional on the destination the decision saw.
+    /// There is deliberately no second, SQL-level condition: it would mask this one.</para>
+    ///
+    /// <para><b>No-op cost.</b> A module with nothing stranded - every module on every start once
+    /// the rename is repaired - is answered by the unlocked read and opens no write transaction,
+    /// so it neither waits on another writer nor bumps the change token. If the old row is gone
+    /// only by the time the lock is held, this returns false and the transaction carries nothing
+    /// but the token bump every store write carries.</para>
+    /// </remarks>
     public bool RemapKey(string moduleId, string fromKey, string toKey)
     {
-        // Read first so a module with nothing to remap never opens a write transaction.
-        var current = GetModule(moduleId);
-        var hasFrom = current.TryGetValue(fromKey, out var fromValue) && !string.IsNullOrWhiteSpace(fromValue);
-        var hasTo = current.TryGetValue(toKey, out var toValue) && !string.IsNullOrWhiteSpace(toValue);
-        var fromRowPresent = current.ContainsKey(fromKey);
-
-        if (!fromRowPresent)
+        // Fast path only: nothing read here reaches the write below.
+        var unlocked = GetModule(moduleId);
+        if (!unlocked.ContainsKey(fromKey))
             return false; // nothing stranded under the old key
-
-        var copyValue = !hasTo && hasFrom; // move only when the new key has no usable value
 
         return _store.Write((connection, transaction) =>
         {
-            if (copyValue)
+            // Re-read through the transaction: the decision is made from these rows, never from
+            // the unlocked read above, which the other instance may have overtaken.
+            var current = ReadModule(connection, moduleId, transaction);
+            if (!current.TryGetValue(fromKey, out var fromValue))
+                return false; // another writer moved or removed it after the unlocked read
+
+            var hasFrom = !string.IsNullOrWhiteSpace(fromValue);
+            var hasTo = current.TryGetValue(toKey, out var toValue) && !string.IsNullOrWhiteSpace(toValue);
+
+            if (hasFrom && !hasTo) // move only when the new key has no usable value
             {
                 using var insert = connection.CreateCommand();
                 insert.Transaction = transaction;
@@ -197,9 +215,14 @@ public sealed class ModuleConfigRepository
         }
     }
 
-    private static Dictionary<string, string> ReadModule(SqliteConnection connection, string moduleId)
+    // The transaction is named when reading inside a write, as every command in these
+    // repositories names it. Convention, not a provider requirement: with the assignment
+    // removed the remap tests still pass (checked for aud-a33c).
+    private static Dictionary<string, string> ReadModule(SqliteConnection connection, string moduleId,
+        SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT config_key, config_value FROM module_config WHERE module_id = $id;";
         command.Parameters.AddWithValue("$id", moduleId);
 

@@ -1,4 +1,5 @@
 using ExchangeAdminWeb.Services.Storage;
+using Microsoft.Data.Sqlite;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -136,5 +137,54 @@ public class SqliteConfigStoreTests
             });
             Assert.Equal("ok", value);
         });
+    }
+
+    [Fact]
+    public void Write_HoldsTheWriteLockBeforeTheCallbackReads()
+    {
+        // aud-a33b and aud-a33c decide inside the write callback from what it reads there. That is
+        // safe only if no other writer - the other instance on the shared database included - can
+        // commit between the callback's first read and its writes, which needs the write lock taken
+        // at BEGIN (IMMEDIATE) rather than at the first write (DEFERRED). Here another connection
+        // tries to start a write while the callback has not yet touched the database.
+        using var temp = new TempDir();
+        var store = CreateStore(temp);
+
+        var otherWriterWasRefused = store.Write((connection, transaction) =>
+        {
+            using var other = new SqliteConnection(
+                new SqliteConnectionStringBuilder { DataSource = temp.DbPath }.ToString());
+            other.Open();
+
+            // Two commands, not one. With "PRAGMA busy_timeout = 0; BEGIN IMMEDIATE;" as a single
+            // command this provider did not surface the BEGIN's SQLITE_BUSY: the call returned
+            // normally with no transaction open, and the ROLLBACK below then failed instead.
+            using (var noWait = other.CreateCommand())
+            {
+                noWait.CommandText = "PRAGMA busy_timeout = 0;";
+                noWait.ExecuteNonQuery();
+            }
+
+            using var begin = other.CreateCommand();
+            begin.CommandText = "BEGIN IMMEDIATE;";
+            begin.CommandTimeout = 1;
+            try
+            {
+                begin.ExecuteNonQuery();
+            }
+            catch (SqliteException ex) when (ex.SqliteErrorCode == 5)
+            {
+                return true;
+            }
+
+            using var rollback = other.CreateCommand();
+            rollback.CommandText = "ROLLBACK;";
+            rollback.ExecuteNonQuery();
+            return false;
+        });
+
+        Assert.True(otherWriterWasRefused,
+            "Another connection began a write inside the store's write transaction: the transaction "
+            + "is DEFERRED, so what a callback reads can be overtaken before it writes.");
     }
 }
