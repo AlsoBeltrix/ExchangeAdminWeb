@@ -243,7 +243,9 @@ named tests green.
 - a cloud-only room with a Building whose list is synchronized from on-premises is refused before
   Set-Place - it used to be written and reported partial on every run;
 - a synced room on a synced list with no AD credential, an unreadable AD object, or no (or several)
-  on-prem groups for the list is refused before Set-Place - partial before;
+  on-prem groups for the list is refused before Set-Place - partial before - unless it is already a
+  member of that list, when nothing on-prem is needed and the row is written as before (the repair
+  below);
 - a building row on an existing list whose sync state Exchange does not report is refused (new);
 - a cloud list that refuses the add as on-prem-mastered is no longer added to an on-prem group of the
   same name; the refusal is surfaced (still partial);
@@ -259,6 +261,71 @@ Place metadata unchanged; (3) a room on a cloud list - the cloud add, unchanged.
 
 **Page:** unchanged (1758 lines); no `ClickGateRegistry` entry moved.
 
+## Repair before review: a room already on its synced list needs nothing on-prem
+
+Found by the implementer after the fix commit, before any review: the fix introduced a regression.
+
+**Evidence** (at `f7a364ec`, `Services/ConferenceRoomService.cs`). The preflight demands the
+on-prem add's prerequisites for every synced list:
+
+```
+1545        if (!list.TakesOnPremFallback)
+1546            return null;
+1548        if (room.DirectoryObjectGuid is not { } roomGuid)
+1551        var creds = await GetModuleCredentialsAsync($"Add-ADGroupMember preflight for {roomEmail}");
+1552        if (creds is null)
+1553            return $"On-prem AD credential is not configured for Conference Rooms ...
+```
+
+but the add writes nothing at all for a room already on the list:
+
+```
+646            var alreadyMember = members.Any(m =>
+649            if (!alreadyMember)
+661                result.Steps.Add(new RoomOperationStep { Stage = $"Already in '{roomListName}'", Success = true });
+```
+
+**Predicted observable failure.** A Room Finder re-run (Building/Capacity only) for a synced room
+already on its synced list, with the AD credential unset, the AD object unreadable or the list's
+on-prem group ambiguous: at `86300ae6` it succeeded - nothing on-prem was touched - and after the fix
+it is refused before Set-Place.
+
+**Plan.** In the synced-list branch of the preflight, before any AD check, ask Exchange whether the
+room is already a member, with the add's own test - the primary address Exchange returned for the
+validated room, never the typed string (aud-a2d) - factored into one `IsListMember` so the preflight
+and the add cannot disagree. A member needs nothing on-prem: the preflight passes and the add is the
+no-op it always was. Not a member: unchanged. Read-only, before any write.
+
+**Test:** `ASyncedRoom_AlreadyOnItsSyncedRoomList_NeedsNothingOnPrem` - synced list, the room among
+its members, no credential configured, typed by a different string than its primary address: the
+row succeeds, writes exactly Set-Place and the timezone pair, and asks for no credential.
+**Mutations:** the membership check deleted; compared with the typed string; always "a member".
+
+**As implemented.** `IsListMember(members, roomPrimary)` is the one membership test; the add's
+already-member check calls it (same comparison as before, moved, not changed). `IsOnRoomListAsync`
+reads `Get-DistributionGroupMember` for the list in a pooled read-only query and asks it.
+`PreflightRoomListAsync` takes `roomPrimary` (`roomInfo.Email`, the address the validated read
+returned) and, for a synced list, returns null for a member before any AD check or credential
+request. A failed membership read returns no members, so it falls through to the AD checks - the
+stricter path.
+
+**Proof.** Service file before (= restored) `104e8b5b60546277c57d77aed26e681a`, the file as
+committed (`scratchpad/a2fg/round_repair.py`, same runner):
+
+| # | Mutation | md5 mutated | Named test | Result |
+| --- | --- | --- | --- | --- |
+| revert | the service file back to `f7a364ec` (before the repair) | `c807ad832294ac3f3ae782413163b315` | `ASyncedRoom_AlreadyOnItsSyncedRoomList_NeedsNothingOnPrem` | FAIL |
+| RP1 | the membership check deleted | `fcb5e3807f3b7fd2a6f0f15471efcc53` | same | FAIL |
+| RP2 | membership compared with the typed string | `7d551d2d0c5d368b09438f9e7b4d18d0` | same | FAIL |
+| RP3 | every room read as already a member | `210db25f73b5eed2881aa0a8a2fc2baf` | `ACloudOnlyRoom_ForARoomListSyncedFromOnPremises_IsRefusedBeforeAnyWrite` | FAIL |
+| RP4 | the add's own membership test compared with the typed string (the shared helper's other caller) | `44b1fb3adb6570e7028be37a6a2a3d51` | `ConferenceRoomWriteIdentityTests.ARoomAlreadyOnTheList_ByItsValidatedAddress_IsNotAddedAgain` | FAIL |
+
+Every restored md5 equal to "before"; final rebuild and the three named tests green.
+
+**Residual added:** membership read in the preflight and again in the add. A room taken off its
+synced list in between, with Active Directory unprovable, reaches the on-prem add after the writes
+and fails there - partial, the inherent two-system shape; nothing is written to a wrong object.
+
 ## Reviewer comments
 
 Implemented under the owner's 2026-10-21 go by an Opus 5.5 implementation agent on
@@ -266,5 +333,6 @@ Implemented under the owner's 2026-10-21 go by an Opus 5.5 implementation agent 
 
 ## Closeout
 
-Fixed on branch, not merged, not pushed. Module-scoped behaviour change: the Conference Rooms module
-version bump is due at merge; no shared code changed, so no base app bump.
+Fixed on branch, not merged, not pushed - in two commits, the fix and the repair above (found before
+any review; history is not rewritten). Module-scoped behaviour change: the Conference Rooms module
+version bump is due at merge; no shared code changed by this finding, so no base app bump from it.

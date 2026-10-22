@@ -118,6 +118,25 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     }
 
     [Fact]
+    public async Task ASyncedRoom_AlreadyOnItsSyncedRoomList_NeedsNothingOnPrem()
+    {
+        // The repair. A re-run for a room already on its synced list: the add writes nothing, so the
+        // row needs no AD credential, object or group and must not be refused for lacking them - it
+        // succeeded before the preflight existed. Typed by a string that is not its address, so the
+        // membership test can pass only on the address Exchange returned for the validated room.
+        _h.ListSyncState[List] = true;
+        _h.ListMembers.Add(Typed);
+        var service = new Service(_h) { NoCredential = true };
+
+        var result = await service.SetRoomMetadataAndListAsync(
+            "Room One", Room(), "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(["Set-Place", "Set-MailboxRegionalConfiguration", "Set-MailboxCalendarConfiguration"], _h.Writes);
+        Assert.Equal(0, service.CredentialRequests);
+    }
+
+    [Fact]
     public async Task ARoomListThatDoesNotSayWhetherItIsSynced_IsRefusedBeforeAnyWrite()
     {
         _h.ListSyncState[List] = null;

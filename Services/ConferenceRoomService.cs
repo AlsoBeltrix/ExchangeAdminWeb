@@ -476,7 +476,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (!string.IsNullOrWhiteSpace(building))
         {
             roomList = await ResolveRoomListTargetAsync(building);
-            var listPreflightError = await PreflightRoomListAsync(room, roomEmail, roomList);
+            var listPreflightError = await PreflightRoomListAsync(room, roomInfo.Email, roomEmail, roomList);
             if (listPreflightError != null)
             {
                 result.Success = false;
@@ -641,10 +641,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
               .AddParameter("Identity", roomListName)
               .AddParameter("ErrorAction", "SilentlyContinue");
             var members = InvokeOptional(ps, tracker);
-            // Compared with the address Exchange returned for the validated room, not the typed
-            // string: an alias typed for a room already on the list used to read as "not a member".
-            var alreadyMember = members.Any(m =>
-                string.Equals(m.Properties["PrimarySmtpAddress"]?.Value?.ToString(), roomPrimary, StringComparison.OrdinalIgnoreCase));
+            var alreadyMember = IsListMember(members, roomPrimary);
 
             if (!alreadyMember)
             {
@@ -730,6 +727,24 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         result.Message = BuildRoomListAddedMessage(roomListName, viaOnPrem: false);
         return result;
     }
+
+    // Whether a room list's members include the room. Compared with the address Exchange returned
+    // for the validated room, not the typed string (aud-a2d): an alias typed for a room already on
+    // the list used to read as "not a member". The add and the room-list preflight both ask this,
+    // so they cannot disagree about whether the add will write anything (aud-a2f).
+    private static bool IsListMember(IEnumerable<PSObject> members, string roomPrimary) =>
+        members.Any(m =>
+            string.Equals(m.Properties["PrimarySmtpAddress"]?.Value?.ToString(), roomPrimary, StringComparison.OrdinalIgnoreCase));
+
+    // aud-a2f. Whether the room is already on the list, read before any write. Read-only: safe to retry.
+    private Task<bool> IsOnRoomListAsync(string roomListName, string roomPrimary) =>
+        RunPooledQueryAsync((ps, tracker) =>
+        {
+            ps.AddCommand("Get-DistributionGroupMember")
+              .AddParameter("Identity", roomListName)
+              .AddParameter("ErrorAction", "SilentlyContinue");
+            return IsListMember(InvokeOptional(ps, tracker), roomPrimary);
+        }, allowRetry: true);
 
     // -------------------------------------------------------------------------
     // Room Type - full 6-type implementation matching PS script
@@ -1534,7 +1549,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // too: whether the row can complete is then unknown, and the old order found out by writing.
     // Returns the refusal, or null. (A genuine Add-ADGroupMember failure after a passing preflight -
     // missing write-members delegation, say - remains the inherent two-system residual.)
-    private async Task<string?> PreflightRoomListAsync(ValidatedMailbox room, string roomEmail, RoomListTarget list)
+    // roomPrimary is the address Exchange returned for the validated room: the membership test's key.
+    private async Task<string?> PreflightRoomListAsync(ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list)
     {
         if (!list.Exists)
             return null;
@@ -1543,6 +1559,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             return $"Exchange did not report whether room list '{list.Name}' is synchronized from on-premises, so it cannot be established before writing that the room can be added to it. Nothing was written.";
 
         if (!list.TakesOnPremFallback)
+            return null;
+
+        // Already on the list, the add writes nothing - it finds the room among the members, by the
+        // same test - so nothing on-prem is needed or asked for. Without this, a synced room re-run on
+        // its synced list was refused whenever Active Directory could not be proven: a row that, before
+        // this preflight existed, completed without touching the list at all.
+        if (await IsOnRoomListAsync(list.Name, roomPrimary))
             return null;
 
         if (room.DirectoryObjectGuid is not { } roomGuid)
