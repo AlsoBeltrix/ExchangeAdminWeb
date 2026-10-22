@@ -8,7 +8,7 @@ corrupt ... until file is fixed", though there has been no file since the SQLite
 class). (3) `.agents/decisions.md` (2026-07-28) and `docs/RetireExcludedUsersAppsettingsFallback-Plan.md`
 still name `GetConfiguredExclusions`, renamed by aud-a28s; historical text, but a pointer to the
 rename keeps a reader from searching for a method that no longer exists.
-**Status**: Merged `18c62ce9`; closed on guard proof; codex review pending
+**Status**: Complete; merged `18c62ce9`; codex perm-batch-3 clean
 **Branch**: `worktree-agent-acba5cd6b0762c5bf`
 **Commit**: `a7767f0b` (fix, tests, pointers, record); plan `b18df623`; comments `9b4bf0e6`; merged `18c62ce9`
 **Reviewer**: implementer (surfaced by the aud-a28s agent, 2026-10-22, candidates 3, 5 and 6 of its hand-back)
