@@ -659,8 +659,9 @@ https://admin.exchange.microsoft.com/#/migration";
                         // type came back as null and the batch showed no start, no completion, no
                         // schedule - as if none were set. Which types the Exchange Online module hands
                         // back is an unverified assumption; one this app cannot read is kept and named.
-                        // An absent creation time is still MinValue, as it always read here.
-                        var createdDateTime = ReportedTime.Read(batchObj.Properties["CreationDateTime"]?.Value) ?? ReportedTime.Of(DateTime.MinValue);
+                        // aud-a23e: an absent creation time is null - none - not MinValue, which the page
+                        // showed as the year 0001 and sorted first.
+                        var createdDateTime = ReportedTime.Read(batchObj.Properties["CreationDateTime"]?.Value);
                         var startDateTime = ReportedTime.Read(batchObj.Properties["StartDateTime"]?.Value);
                         var completedDateTime = ReportedTime.Read(batchObj.Properties["CompletionDateTime"]?.Value);
                         var targetEndpoint = batchObj.Properties["TargetEndpoint"]?.Value?.ToString();

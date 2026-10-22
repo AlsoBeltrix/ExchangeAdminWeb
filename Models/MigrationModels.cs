@@ -59,13 +59,14 @@ public class MigrationBatchInfo
 
     /// <summary>
     /// aud-a23d. When Exchange says the batch was created, as reported - one it cannot read is kept as
-    /// such and shown as the marker, and sorts after every readable time.
+    /// such and shown as the marker, and sorts after every readable time. aud-a23e: null when none was
+    /// reported, shown as "(not reported)", an empty CSV cell, and sorted as none.
     /// </summary>
     /// <remarks>
-    /// Not nullable, and <see cref="DateTime.MinValue"/> when none was reported, because that is what an
-    /// absent value always read as here; this finding changes what an unreadable one does, not that.
+    /// aud-a23e. It defaulted to <see cref="DateTime.MinValue"/>, which the page showed as a creation in the
+    /// year 0001 and an ascending sort put first: a date nobody reported, shown as a fact.
     /// </remarks>
-    public ReportedTime CreatedDateTime { get; set; } = ReportedTime.Of(DateTime.MinValue);
+    public ReportedTime? CreatedDateTime { get; set; }
 
     /// <summary>
     /// aud-a23d. When the batch started, as reported; null only when nothing was reported. A start this

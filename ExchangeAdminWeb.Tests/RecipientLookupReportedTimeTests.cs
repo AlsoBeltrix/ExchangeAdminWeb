@@ -12,6 +12,8 @@ using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.JSInterop;
 using NSubstitute;
 using Page = ExchangeAdminWeb.Components.Pages.RecipientLookup;
 
@@ -34,6 +36,9 @@ public sealed class RecipientLookupReportedTimeTests : IDisposable
     // Created late in the UTC day, so a reading that kept the +05:30 wall clock would show the next day.
     private static readonly DateTime CreatedUtc = new(2026, 10, 1, 20, 15, 0, DateTimeKind.Utc);
     private static readonly DateTime LogonUtc = new(2026, 10, 30, 13, 0, 0, DateTimeKind.Utc);
+
+    // aud-a23e. After the US clocks go back (2026-11-01), so New York's offset differs from CreatedUtc's.
+    private static readonly DateTime LogonAfterDstEndUtc = new(2026, 11, 6, 14, 0, 0, DateTimeKind.Utc);
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "recipient-times-" + Guid.NewGuid().ToString("N"));
     private readonly Hashtable _read = Hashtable.Synchronized(new Hashtable { ["WhenCreated"] = null, ["LastLogonTime"] = null });
@@ -109,13 +114,40 @@ public sealed class RecipientLookupReportedTimeTests : IDisposable
         return new RecipientLookupService(_pool, null!, Substitute.For<ILogger<RecipientLookupService>>(), config, null!, trace);
     }
 
+    /// <summary>The browser, as far as the page asks it anything: its time zone, or a failure to give one.</summary>
+    private sealed class Browser(string? zone) : IJSRuntime
+    {
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) =>
+            InvokeAsync<TValue>(identifier, CancellationToken.None, args);
+
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args) =>
+            identifier == "getBrowserTimeZone" && zone is not null
+                ? ValueTask.FromResult((TValue)(object)zone)
+                : ValueTask.FromException<TValue>(new JSException($"{identifier} could not answer"));
+    }
+
+    /// <summary>
+    /// aud-a23e. The page showing the lookup's result after asking a browser that answers <paramref name="zone"/>
+    /// (null: the call fails) for its time zone, through the page's own first-render read.
+    /// </summary>
+    private async Task<string> LookedUp(string? zone)
+    {
+        var page = new Page();
+        const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+        typeof(Page).GetProperty("JS", members)!.SetValue(page, new Browser(zone));
+        typeof(Page).GetProperty("Logger", members)!.SetValue(page, NullLogger<Page>.Instance);
+        await (Task)typeof(Page).GetMethod("ReadBrowserZoneAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [])!;
+        return await LookedUp(page);
+    }
+
     /// <summary>The page showing the lookup's result: its rendered text, in the invariant culture.</summary>
-    private async Task<string> LookedUp()
+    private Task<string> LookedUp() => LookedUp(new Page());
+
+    private async Task<string> LookedUp(Page page)
     {
         var result = await CreateService().GetRecipientInfoAsync(Mailbox);
         Assert.Null(result.Error);
 
-        var page = new Page();
         typeof(Page).GetField("result", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, result);
         var culture = CultureInfo.CurrentCulture;
         CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
@@ -147,9 +179,9 @@ public sealed class RecipientLookupReportedTimeTests : IDisposable
     // ---- the guards -------------------------------------------------------------------------
 
     // aud-a23d, the finding: a DateTimeOffset or a wrapped value showed as "N/A". Each is read as its
-    // instant and shown as the Kind-Utc DateTime of that instant is, which the page prints as read - so
-    // these literals are the UTC clock, and the creation time, late in the UTC day, would read as the
-    // next day had the +05:30 wall clock been kept. The Kind-Utc DateTime is the control.
+    // instant and shown as the Kind-Utc DateTime of that instant is - with no browser zone known, in UTC,
+    // labelled UTC (aud-a23e) - so the creation time, late in the UTC day, would read as the next day had the
+    // +05:30 wall clock been kept. The Kind-Utc DateTime is the control.
     [Theory]
     [InlineData("DateTimeOffset")]
     [InlineData("PSObject wrapping a DateTimeOffset")]
@@ -162,9 +194,51 @@ public sealed class RecipientLookupReportedTimeTests : IDisposable
 
         var text = await LookedUp();
 
-        Assert.Contains("Created</td>2026-10-01", text, StringComparison.Ordinal);
-        Assert.Contains("Last Logon</td>2026-10-30 13:00", text, StringComparison.Ordinal);
+        Assert.Contains("Created</td>2026-10-01 20:15 (UTC, UTC+00:00)", text, StringComparison.Ordinal);
+        Assert.Contains("Last Logon</td>2026-10-30 13:00 (UTC, UTC+00:00)", text, StringComparison.Ordinal);
         Assert.DoesNotContain("N/A", text.Split("Mailbox Size")[0], StringComparison.Ordinal);
+    }
+
+    // aud-a23e, the finding: both times were printed as read, so a Kind-Local and a Kind-Utc value of one instant
+    // showed two clocks, and neither said whose. With the browser's zone known, each is shown in it, the zone
+    // named, with that zone's offset at that instant - New York's differs across the clocks going back.
+    [Theory]
+    [InlineData("America/New_York", false, "2026-10-01 16:15 (America/New_York, UTC-04:00)", "2026-11-06 09:00 (America/New_York, UTC-05:00)")]
+    [InlineData("America/New_York", true, "2026-10-01 16:15 (America/New_York, UTC-04:00)", "2026-11-06 09:00 (America/New_York, UTC-05:00)")]
+    [InlineData("Asia/Kolkata", false, "2026-10-02 01:45 (Asia/Kolkata, UTC+05:30)", "2026-11-06 19:30 (Asia/Kolkata, UTC+05:30)")]
+    [InlineData("Asia/Kolkata", true, "2026-10-02 01:45 (Asia/Kolkata, UTC+05:30)", "2026-11-06 19:30 (Asia/Kolkata, UTC+05:30)")]
+    public async Task WithTheBrowsersZone_BothTimesAreShownInIt_WithTheZoneAndItsOffset(string zone, bool kindLocal, string created, string logon)
+    {
+        _read["WhenCreated"] = kindLocal ? CreatedUtc.ToLocalTime() : CreatedUtc;
+        _read["LastLogonTime"] = kindLocal ? LogonAfterDstEndUtc.ToLocalTime() : LogonAfterDstEndUtc;
+
+        var text = await LookedUp(zone);
+
+        Assert.Contains($"Created</td>{created}", text, StringComparison.Ordinal);
+        Assert.Contains($"Last Logon</td>{logon}", text, StringComparison.Ordinal);
+    }
+
+    // aud-a23e. Without the browser's zone - the call fails, the answer is blank, or this server cannot resolve
+    // it - the instant is still known, so each time is shown in UTC and labelled UTC: never a guessed zone, and
+    // never an unlabelled clock.
+    [Theory]
+    [InlineData("the call fails")]
+    [InlineData("a blank answer")]
+    [InlineData("an id this server cannot resolve")]
+    public async Task WithoutTheBrowsersZone_BothTimesAreShownInUtc_AndSaySo(string answer)
+    {
+        _read["WhenCreated"] = CreatedUtc;
+        _read["LastLogonTime"] = LogonUtc;
+
+        var text = await LookedUp(answer switch
+        {
+            "the call fails" => null,
+            "a blank answer" => " ",
+            _ => "Mars/Olympus_Mons",
+        });
+
+        Assert.Contains("Created</td>2026-10-01 20:15 (UTC, UTC+00:00)", text, StringComparison.Ordinal);
+        Assert.Contains("Last Logon</td>2026-10-30 13:00 (UTC, UTC+00:00)", text, StringComparison.Ordinal);
     }
 
     // aud-a23d. What cannot be read as a time is the aud-a7i marker, with its type and its text - not "N/A",

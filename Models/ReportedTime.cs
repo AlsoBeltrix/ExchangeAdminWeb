@@ -73,8 +73,9 @@ public sealed record ReportedTime
     public static ReportedTime Of(DateTime time) => new(time, null, null);
 
     /// <summary>
-    /// aud-a23d. The first key of any sort by a reported time: 0 for a time (then ordered by
-    /// <see cref="Time"/>), 1 for one this app cannot read, 2 for none reported - in both directions.
+    /// aud-a23d. The first key of any sort by a reported time: 0 for a time (then ordered as
+    /// <see cref="Order"/> orders them), 1 for one this app cannot read, 2 for none reported - in both
+    /// directions.
     /// </summary>
     /// <remarks>
     /// An unreadable time has no place among the times - read as none it would hide among the mailboxes
@@ -82,6 +83,43 @@ public sealed record ReportedTime
     /// time, as unknown, and before none, because Exchange did report something for it.
     /// </remarks>
     public static int SortGroup(ReportedTime? reported) => reported is null ? 2 : reported.Time is null ? 1 : 0;
+
+    /// <summary>
+    /// aud-a23e. The one ordering of reported times: <see cref="SortGroup"/> first, in both directions; among
+    /// the times, those that name an instant compared as instants, then those of Kind Unspecified ordered by
+    /// their clocks - each in the direction asked. Unreadable and none keep list order among themselves.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DateTime"/> compares ticks and ignores Kind, so a Local and a Utc value were ordered by their
+    /// clocks, which differ by the server's offset for the same moment. Utc and Local each name an instant
+    /// (Local through this server's zone), so both convert to UTC first. Unspecified names none: placed among
+    /// the instants it would be read as some zone's clock, which is the guess aud-a7f refused to print, so
+    /// such times stand apart, after the instants and before an unreadable one.
+    /// </remarks>
+    public static IComparer<ReportedTime?> Order(bool ascending) => ascending ? AscendingOrder : DescendingOrder;
+
+    private static readonly IComparer<ReportedTime?> AscendingOrder = Comparer<ReportedTime?>.Create((x, y) => Compare(x, y, 1));
+    private static readonly IComparer<ReportedTime?> DescendingOrder = Comparer<ReportedTime?>.Create((x, y) => Compare(x, y, -1));
+
+    // The direction applies only within a kind of time; the groups and the instants-before-Unspecified split
+    // hold either way, so neither end of a list ever shows an unknown as the earliest or the latest.
+    private static int Compare(ReportedTime? x, ReportedTime? y, int direction)
+    {
+        var byGroup = SortGroup(x).CompareTo(SortGroup(y));
+        if (byGroup != 0)
+            return byGroup;
+        if (x?.Time is not { } a || y?.Time is not { } b)
+            return 0;
+
+        var aNamesNoInstant = a.Kind == DateTimeKind.Unspecified;
+        var bNamesNoInstant = b.Kind == DateTimeKind.Unspecified;
+        if (aNamesNoInstant != bNamesNoInstant)
+            return aNamesNoInstant ? 1 : -1;
+
+        var aKey = aNamesNoInstant ? a : a.ToUniversalTime();
+        var bKey = bNamesNoInstant ? b : b.ToUniversalTime();
+        return direction * aKey.CompareTo(bKey);
+    }
 
     /// <summary>
     /// The one reader for a reported time: null when nothing was reported. A <c>PSObject</c> is read as

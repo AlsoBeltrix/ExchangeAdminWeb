@@ -50,11 +50,10 @@ public class MigrationCsvTests
         var lines = csv.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(l => l.TrimEnd('\r')).ToArray();
 
-        // The date format includes a comma, so CsvHelper's WriteField quotes the cell -
-        // that is correct CSV output (AC1), not a formatting bug.
-        var expectedCreated = created.ToLocalTime().ToString("MMM dd, yyyy HH:mm");
+        // aud-a23e: the time in UTC, labelled UTC. The label includes a comma, so CsvHelper's
+        // WriteField quotes the cell - that is correct CSV output (AC1), not a formatting bug.
         Assert.Equal(
-            $"Batch-A,Synced,ToCloud,\"{expectedCreated}\",,,10,8,2,0,hybrid1",
+            "Batch-A,Synced,ToCloud,\"2026-01-02 10:30 (UTC, UTC+00:00)\",,,10,8,2,0,hybrid1",
             lines[1]);
     }
 
