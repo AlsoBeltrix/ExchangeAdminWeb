@@ -9,7 +9,7 @@ operator is told a user is eligible when the directory could not be asked. (2)
 `ApproveMigrationUserAsync` runs `Set-MigrationBatch` twice and `Complete-MigrationBatch` through
 `Ignore` / `InvokeOptional`, so none of them can fail; the page reports "initiated completion"
 whether or not `Complete-MigrationBatch` ran.
-**Status**: Fixed on branch, guard proof below; not merged, not pushed
+**Status**: Merged `ab5361c8`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a3e674616251be4de` (forked at `34c7ccd4`)
 **Commit**: `5b5936eb` (fix, tests, record); plan `4cf6b629`; comments `033a1a54` (shared with aud-a23i)
 **Reviewer**: implementer (surfaced by the aud-a23g agent, 2026-10-22, candidates 1 and 2 of its hand-back)

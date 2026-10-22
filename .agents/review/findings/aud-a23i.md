@@ -10,7 +10,7 @@ live). (4) Under `-ErrorAction Stop` the error stream is empty, so app-wide `Run
 messages carry the "The running command stopped because..." prefix instead of the cmdlet's own
 message (aud-a23g unwrapped it for one path only). (5) The Migration export file names use the
 server's clock with no zone.
-**Status**: Fixed on branch, guard proof below; not merged, not pushed
+**Status**: Merged `ab5361c8`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a3e674616251be4de` (forked at `34c7ccd4`)
 **Commit**: `24c8957e` (fix, tests, record); plan `4cf6b629`; comments `033a1a54` (shared with aud-a23h)
 **Reviewer**: implementer (surfaced by the aud-a23g agent, 2026-10-22, candidates 3 to 7 of its hand-back)
