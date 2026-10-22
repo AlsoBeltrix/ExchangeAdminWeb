@@ -31,3 +31,21 @@ writer: `SamName` and the others; which call `ToString` on a caller-supplied val
 ## Guard proof
 
 Pending.
+
+## Folded in: a truncated JSONL tail swallows the next Written row; the dropped-row recovery log carries no identity (codex, attr-batch-12, 2026-10-22) - MEDIUM, MEDIUM
+
+(3) `Services/JsonlLogService.cs` `WriteToFile` around line 88: a write that appends part of a line and
+fails before the newline leaves a corrupt tail; the next successful audit row is appended onto it, the
+writer returns `Written`, the "AuditWritten" step is Success and the action is counted, yet the Admin Event
+Log parser drops the combined invalid line. Fix: capture the file length before appending and truncate back
+to it on a write or flush failure (best effort, guarded), or detect and repair a non-newline tail before
+the next append so each row starts on its own line; a repair is itself logged. Test: a stream that fails
+mid-line, then a successful write, then the file parses to exactly the rows reported Written. Mutation at
+the call site: the truncate-back removed.
+
+(4) `Services/JsonlLogService.cs` around line 106: when a row is `NotSerializable` or `FileWriteFailed`
+and the operation trace is unavailable or also drops, the surviving recovery log names stream, action,
+category and path but not who did what: no operation id, actor, IP, target, ticket or result, so the audit
+gap cannot be reconciled. Fix: the guarded recovery log includes those as string-only fields through
+`TextField` (never the payload, never a raw `ToString`). Test: the recovery log line for a dropped row
+contains the operation id and actor. Mutation at the call site: the identity fields dropped from the log.

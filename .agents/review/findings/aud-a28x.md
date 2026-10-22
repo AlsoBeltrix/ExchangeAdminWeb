@@ -103,3 +103,10 @@ site.
 ## Guard proof
 
 Pending.
+
+## Folded in: point the pool's fallback reads at ExoConfigFallback (aud-a26s follow-up, 2026-10-22) - LOW
+
+aud-a26s moved the fallback rule into `Services/ExoConfigFallback.cs` (`Resolve`/`Caption`) and pinned a test
+to the pool's current behaviour; the pool itself was owned by this finding's agent. `ExoConnectionPool.cs`
+lines 176-179 (at `a583777d`) become three `ExoConfigFallback.Resolve(...).Value` calls so one function owns
+the rule; the fail-closed read this finding adds sits in front of it (a failed read never reaches `Resolve`).

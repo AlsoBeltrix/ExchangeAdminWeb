@@ -1,5 +1,6 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using ExchangeAdminWeb.Services;
 
 [assembly: AssemblyFixture(typeof(ExchangeAdminWeb.Tests.PowerShellStartup))]
 
@@ -20,32 +21,28 @@ namespace ExchangeAdminWeb.Tests;
 /// <para>Both default session shapes the suite uses are opened: <c>CreateDefault</c> builds its session from the
 /// built-in snap-ins and <c>CreateDefault2</c> from modules, so each has a first time of its own. A start that fails is
 /// tried again and never thrown: an assembly fixture that throws fails every test, which is worse than the flake it
-/// guards against. <see cref="Started"/> says whether it took; PowerShellStartupTests reports it.</para>
+/// guards against. <see cref="Outcome"/> keeps what happened - whether it took, and when it did not, the shape that failed
+/// and the last exception - and PowerShellStartupTests reports it.</para>
+/// <para>The attempts are the app's own warm-up loop, <see cref="PowerShellWarmUp.Start"/> (aud-a28w), given this suite's
+/// two shapes and an open that also runs a command in each. A start that failed used to be swallowed whole, leaving the
+/// pin to say only that it had failed.</para>
 /// </remarks>
 public sealed class PowerShellStartup
 {
     private const int Attempts = 3;
-    private static int _started;
+    private static PowerShellStartOutcome? _outcome;
 
-    public PowerShellStartup()
-    {
-        for (var attempt = 0; attempt < Attempts && !Started; attempt++)
-        {
-            try
-            {
-                Open(InitialSessionState.CreateDefault());
-                Open(InitialSessionState.CreateDefault2());
-                Volatile.Write(ref _started, 1);
-            }
-            catch (Exception)
-            {
-                // The start-up race itself, or anything else: try again. Never thrown - see the remarks.
-            }
-        }
-    }
+    public PowerShellStartup() =>
+        Volatile.Write(ref _outcome, PowerShellWarmUp.Start(
+            [("CreateDefault", InitialSessionState.CreateDefault), ("CreateDefault2", InitialSessionState.CreateDefault2)],
+            Attempts,
+            Open));
+
+    /// <summary>What the start did; null until the fixture has run - and so when it is not registered.</summary>
+    public static PowerShellStartOutcome? Outcome => Volatile.Read(ref _outcome);
 
     /// <summary>Whether PowerShell was started before the tests ran.</summary>
-    public static bool Started => Volatile.Read(ref _started) == 1;
+    public static bool Started => Outcome?.Started == true;
 
     private static void Open(InitialSessionState state)
     {

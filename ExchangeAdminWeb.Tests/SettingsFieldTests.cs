@@ -120,7 +120,54 @@ public sealed class SettingsFieldTests : IDisposable
     }
 
     [Theory]
+    [InlineData("+42")]
+    [InlineData("0042")]
+    [InlineData("042")]
+    [InlineData("+0042")]
+    public async Task AdminSettings_ASecretIdWithASignOrALeadingZero_IsRefused_NamingTheField_AndNothingIsWritten(string entered)
+    {
+        // aud-a26s. The lookups read each of these as 42, so a lookup would work, but what is stored would not be what the
+        // admin meant. The onus is on the admin to enter the ID: it is refused, not normalised.
+        SeedRules(users: [Cfo]);
+        SeedSecret("777");
+        var page = _h.OpenAdminSettings();
+        await AddPattern(page, "svc-*");
+        EnterSecret(page, entered);
+
+        await _h.RunAsync(page, "SaveProtectedPrincipals");
+
+        Assert.Equal("777", StoredSecret());
+        Assert.Equal(new[] { "user:" + Cfo }, StoredRules());
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("Validation", Text(record, "refusedAt"));
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Contains("Directory Read Credential (Delinea Secret ID)", Status(page), StringComparison.Ordinal);
+        Assert.Contains("no sign or leading zero", Status(page), StringComparison.Ordinal);
+        Assert.DoesNotContain(entered, Status(page), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("1", true)]
+    [InlineData("10", true)]
+    [InlineData("4242", true)]
+    [InlineData("2147483647", true)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    [InlineData("0", false)]
+    [InlineData("00", false)]
+    [InlineData("01", false)]
+    [InlineData("+1", false)]
+    [InlineData("-1", false)]
+    [InlineData(" 1", false)]
+    [InlineData("1 ", false)]
+    [InlineData("2147483648", false)]
+    [InlineData("1e3", false)]
+    public void IsSecretId_TakesDigitsOnly_WithNoSignOrLeadingZero(string? value, bool expected) =>
+        Assert.Equal(expected, ProtectedPrincipalService.IsSecretId(value));
+
+    [Theory]
     [InlineData("4242", "4242")]
+    [InlineData("10", "10")]
     [InlineData(" 4242 ", "4242")]
     [InlineData("", "")]
     public async Task AdminSettings_AWholeNumberSecretIdOrABlankOne_IsSaved(string entered, string stored)
@@ -160,6 +207,29 @@ public sealed class SettingsFieldTests : IDisposable
 
         Assert.Equal(new[] { "sam_pattern:svc-*" }, StoredRules());
         Assert.False(dirty.IsDirty);
+    }
+
+    [Fact]
+    public async Task AdminSettings_ACasingOnlyEditAlreadyAppliedElsewhere_NamesBothEntriesInItsRecord()
+    {
+        // aud-a26s. The count counts this edit as two changes; the already-applied record named it as nothing, because the
+        // entries it names were compared ignoring case.
+        SeedRules(patterns: ["SVC-*"]);
+        var page = _h.OpenAdminSettings();
+        var patterns = SettingsPageHarness.Field<List<string>>(page, typeof(AdminSettingsPage), "ppPatterns");
+        var dirty = SettingsPageHarness.Field<AdminPageDirtyState>(page, typeof(AdminSettingsPage), "dirty");
+        Assert.True(patterns.Remove("SVC-*"), "the seeded pattern did not load - this fixture is stale");
+        await _h.RunAsync(page, "RecountProtected");
+        await AddPattern(page, "svc-*");
+        Assert.Equal(2, dirty.SectionCount(ProtectedSection));
+        _h.CreateOtherProtectedPrincipals().SaveConfig(new ProtectedPrincipalConfig { SamAccountNamePatterns = ["svc-*"] });
+
+        await _h.RunAsync(page, "SaveProtectedPrincipals");
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("Success", Text(record, "result"));
+        var named = record.GetProperty("alreadyApplied").EnumerateArray().Select(e => e.GetString()).Order(StringComparer.Ordinal);
+        Assert.Equal(new[] { "Patterns:SVC-*", "Patterns:svc-*" }, named);
     }
 
     // ---- Exchange Online Config: the fallback marking -----------------------------------------
