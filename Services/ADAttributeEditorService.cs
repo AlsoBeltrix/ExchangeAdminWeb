@@ -308,8 +308,32 @@ public class ADAttributeEditorService
 
     public void SaveAllowlist(List<EditableAttribute> attributes)
     {
+        foreach (var attribute in attributes)
+        {
+            var problem = DescribeUncompilablePattern(attribute);
+            if (problem is not null)
+                throw new ArgumentException(problem);
+        }
+
         _repository.SaveAllowlist(attributes.Select(ToAllowlistRow).ToList());
         InvalidateAllowlistCache();
+    }
+
+    private static string? DescribeUncompilablePattern(EditableAttribute attribute)
+    {
+        if (string.IsNullOrEmpty(attribute.Pattern))
+            return null;
+
+        try
+        {
+            _ = new Regex(attribute.Pattern, RegexOptions.None, RegexTimeout);
+            return null;
+        }
+        catch (ArgumentException ex)
+        {
+            return $"The pattern for attribute '{attribute.Label}' ({attribute.Name}) is not a valid regular expression, "
+                + $"so the allowlist was not saved: {ex.Message}";
+        }
     }
 
     public Dictionary<string, Dictionary<string, AttributeLegendEntry>> GetLegend()
@@ -1070,8 +1094,23 @@ public class ADAttributeEditorService
             if (attr.MaxLength.HasValue && value.Length > attr.MaxLength.Value)
                 return $"Attribute '{attr.Label}' exceeds maximum length of {attr.MaxLength.Value}.";
 
-            if (!string.IsNullOrEmpty(attr.Pattern) && !Regex.IsMatch(value, attr.Pattern, RegexOptions.None, RegexTimeout))
-                return $"Attribute '{attr.Label}' does not match the required pattern.";
+            if (!string.IsNullOrEmpty(attr.Pattern))
+            {
+                bool matches;
+                try
+                {
+                    matches = Regex.IsMatch(value, attr.Pattern, RegexOptions.None, RegexTimeout);
+                }
+                catch (Exception ex) when (ex is ArgumentException or RegexMatchTimeoutException)
+                {
+                    return $"The allowlist pattern for attribute '{attr.Label}' "
+                        + (ex is RegexMatchTimeoutException ? "took too long to evaluate" : "is not a valid regular expression")
+                        + ", so the value could not be checked. An administrator must correct the attribute allowlist.";
+                }
+
+                if (!matches)
+                    return $"Attribute '{attr.Label}' does not match the required pattern.";
+            }
 
             if (attr.Type == "Choice")
             {
