@@ -218,6 +218,14 @@ internal sealed class SettingsPageHarness : IDisposable
     public SectionAccessService CreateOtherSectionAccess() =>
         new(Config, NullLogger<SectionAccessService>.Instance, Env, Catalog, new SectionAccessRepository(TestConfigStore.Create(_root)));
 
+    /// <summary>The other instance's module-config service, over its own store on the same file (aud-a28n).</summary>
+    public ModuleConfigService CreateOtherModuleConfig() =>
+        new(Catalog, Env, new ModuleConfigRepository(TestConfigStore.Create(_root)), NullLogger<ModuleConfigService>.Instance);
+
+    /// <summary>The other instance's module-admin service, over its own store on the same file (aud-a28n).</summary>
+    public ModuleAdminService CreateOtherModuleAdmins() =>
+        new(Env, new ModuleAdminRepository(TestConfigStore.Create(_root)), NullLogger<ModuleAdminService>.Instance);
+
     public AdminSettingsPage OpenAdminSettings()
     {
         var page = new AdminSettingsHandlers();
@@ -333,6 +341,31 @@ internal sealed class SettingsPageHarness : IDisposable
         }
 
         throw new InvalidOperationException($"no button labelled '{label}' is rendered - this harness is stale");
+    }
+
+    /// <summary>
+    /// Whether the input whose placeholder is <paramref name="placeholder"/> renders disabled (aud-a26k).
+    /// </summary>
+    public static bool IsInputDisabled(ComponentBase page, string placeholder)
+    {
+        var frames = Frames(page);
+        for (var i = 0; i < frames.Count; i++)
+        {
+            var frame = frames[i];
+            if (frame.FrameType != RenderTreeFrameType.Element || frame.ElementName != "input")
+                continue;
+
+            var attributes = new List<RenderTreeFrame>();
+            for (var a = i + 1; a < frames.Count && frames[a].FrameType == RenderTreeFrameType.Attribute; a++)
+                attributes.Add(frames[a]);
+
+            if (!attributes.Any(a => a.AttributeName == "placeholder" && Equals(a.AttributeValue, placeholder)))
+                continue;
+
+            return attributes.Any(a => a.AttributeName == "disabled" && a.AttributeValue is not false);
+        }
+
+        throw new InvalidOperationException($"no input with placeholder '{placeholder}' is rendered - this harness is stale");
     }
 
     // The handler shells render nothing to the renderer, so a save that calls StateHasChanged builds no

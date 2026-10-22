@@ -1002,10 +1002,10 @@
             policyAliases.Add(gp.PolicyAlias);
 
         // The servicer alias joins policyAliases so it inherits the EXISTING load and save path
-        // rather than adding a second one. That is not tidiness: SectionAccessService.SaveSectionAccess
-        // -> SaveAll -> ClearAndInsert REPLACES the whole store, so this page is safe only because
-        // it reads every alias, merges its own, and writes the lot back. A separate save for this
-        // grant would silently erase the ordinary grants, or be erased by them.
+        // rather than adding a second one: it is loaded, confirmed against the directory, compared
+        // under the write lock with what the page loaded, and recorded exactly as the module's other
+        // grants are, by the one save of this tab (SectionAccessService.SaveEditedAliases). A second
+        // path would have to repeat every one of those guards to be as safe.
         ServicerAlias = ModulesWithProtectedPrincipalServicing.Contains(module.Id)
             ? ProtectedPrincipalServicerService.SectionKeyFor(module.Id)
             : null;
@@ -1063,13 +1063,19 @@
     /// to decide what to audit, so the number in the save bar is the number of changes the audit
     /// entry will name.
     /// </remarks>
-    private void RecountConfig()
-    {
-        var keys = configBaseline.Keys.Union(currentConfigState.Keys, StringComparer.OrdinalIgnoreCase);
-        var changes = keys.Count(k =>
-            (configBaseline.GetValueOrDefault(k, "") ?? "") != (currentConfigState.GetValueOrDefault(k, "") ?? ""));
+    private void RecountConfig() => dirty.SetCount(SecConfig, ChangedConfigKeys().Count);
 
-        dirty.SetCount(SecConfig, changes);
+    /// <summary>The config keys whose value differs from what the page loaded; absent reads as empty.</summary>
+    private List<string> ChangedConfigKeys() =>
+        configBaseline.Keys.Union(currentConfigState.Keys, StringComparer.OrdinalIgnoreCase)
+            .Where(k => (configBaseline.GetValueOrDefault(k, "") ?? "") != (currentConfigState.GetValueOrDefault(k, "") ?? ""))
+            .ToList();
+
+    /// <summary>A config key as the Configuration tab heads it: its field label, with the key.</summary>
+    private string ConfigKeyName(string key)
+    {
+        var field = module?.ConfigFields.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase));
+        return field is null ? key : $"{field.Label} ({key})";
     }
 
     /// <summary>
@@ -1175,19 +1181,45 @@
                 return;
             }
 
-            var previous = ModuleConfigSvc.GetModuleConfig(module.Id);
-            ModuleConfigSvc.SaveModuleConfig(module.Id, currentConfigState);
+            // aud-a28n. Only the keys the admin changed, each decided under the write lock against its row and the
+            // value this page loaded. Replacing the whole config from the page's copy wrote back every key changed
+            // elsewhere since the load - keys the page does not show, such as the ExcludedUsers protection list,
+            // included.
+            var changed = ChangedConfigKeys();
+            var outcome = ModuleConfigSvc.SaveChangedValues(
+                module.Id,
+                changed.ToDictionary(k => k, k => configBaseline.GetValueOrDefault(k, "") ?? "", StringComparer.OrdinalIgnoreCase),
+                changed.ToDictionary(k => k, k => currentConfigState.GetValueOrDefault(k, "") ?? "", StringComparer.OrdinalIgnoreCase));
+            if (outcome.Status == ModuleConfigSaveStatus.StoreCorrupt)
+            {
+                moduleConfigCorrupt = true;
+                statusMessage = "Refusing to save: this module's stored configuration could not be read as the save went to change it. Nothing was changed. "
+                    + SettingsStoreText.ModuleConfig(module.Id);
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
 
-            var allKeys = previous.Keys.Union(currentConfigState.Keys, StringComparer.OrdinalIgnoreCase).ToList();
-            var changed = allKeys.Where(k => (previous.GetValueOrDefault(k, "") ?? "") != (currentConfigState.GetValueOrDefault(k, "") ?? "")).ToList();
+            if (outcome.Status == ModuleConfigSaveStatus.ConcurrentChange)
+            {
+                var one = outcome.ConflictingKeys.Count == 1;
+                statusMessage = $"Refusing to save: the stored value of {string.Join(", ", outcome.ConflictingKeys.Select(ConfigKeyName))} {(one ? "was" : "were")} changed after this page loaded {(one ? "it" : "them")} - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage);
+                return;
+            }
 
+            var written = changed.Where(k => !outcome.AlreadyApplied.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
             if (changed.Count > 0)
             {
                 try
                 {
-                    var prevKeys = changed.Select(k => $"{k}={MaskIfSecret(k, previous.GetValueOrDefault(k) ?? "")}").ToArray();
-                    var newKeys = changed.Select(k => $"{k}={MaskIfSecret(k, currentConfigState.GetValueOrDefault(k) ?? "")}").ToArray();
-                    Audit.LogSettingsChange(currentUser, ip, section, prevKeys, newKeys);
+                    var prevKeys = written.Select(k => $"{k}={MaskIfSecret(k, outcome.Before.GetValueOrDefault(k) ?? "")}").ToArray();
+                    var newKeys = written.Select(k => $"{k}={MaskIfSecret(k, outcome.After.GetValueOrDefault(k) ?? "")}").ToArray();
+                    Audit.LogSettingsChange(currentUser, ip, section, prevKeys, newKeys,
+                        outcome.AlreadyApplied.Count > 0
+                            ? new Dictionary<string, object?> { ["alreadyApplied"] = outcome.AlreadyApplied.ToArray() }
+                            : null);
                 }
                 catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module config change"); }
             }
@@ -1196,7 +1228,11 @@
             // Re-baseline here, not merely tidy: this save does not reload the page, so a stale
             // baseline would count the values just persisted all over again on the next edit.
             configBaseline = new Dictionary<string, string>(currentConfigState);
-            statusMessage = "Configuration saved.";
+            statusMessage = changed.Count == 0
+                ? "Configuration is unchanged; there was nothing to save."
+                : written.Count == 0
+                    ? "Configuration saved: every changed value was already stored - set the same way elsewhere after this page loaded - so nothing needed writing."
+                    : "Configuration saved.";
             statusIsError = false;
         }
         catch (Exception ex)
@@ -1396,7 +1432,18 @@
             foreach (var (alias, curr) in edited)
             {
                 var prev = outcome.Before.TryGetValue(alias, out var stored) ? stored : Array.Empty<string>();
-                if (!prev.SequenceEqual(curr, StringComparer.OrdinalIgnoreCase))
+                // aud-a26k. An alias changed elsewhere to exactly what this save wanted was not written; it is
+                // recorded as already applied, so the attempt still leaves its trace.
+                if (outcome.AlreadyApplied.Contains(alias, StringComparer.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        Audit.LogSettingsChange(currentUser, ip, alias, prev, curr,
+                            new Dictionary<string, object?> { ["alreadyApplied"] = new[] { alias } });
+                    }
+                    catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for section access change"); }
+                }
+                else if (!prev.SequenceEqual(curr, StringComparer.OrdinalIgnoreCase))
                 {
                     try { Audit.LogSettingsChange(currentUser, ip, alias, prev, curr); }
                     catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for section access change"); }
@@ -1407,9 +1454,11 @@
             // unsaved edit rather than vanishing from the dirty count.
             accessBaseline = snapshot.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
             RecountAccess();
-            statusMessage = outcome.Status == SectionAccessSaveStatus.NothingToSave
-                ? "Section access is unchanged; there was nothing to save."
-                : "Section access saved.";
+            statusMessage = outcome.Status != SectionAccessSaveStatus.NothingToSave
+                ? "Section access saved."
+                : outcome.AlreadyApplied.Count > 0
+                    ? "Section access already held these changes - they were made the same way elsewhere after this page loaded - so nothing needed writing."
+                    : "Section access is unchanged; there was nothing to save.";
             statusIsError = false;
         }
         catch (Exception ex)
@@ -1481,33 +1530,53 @@
                 return;
             }
 
-            // aud-a28j. Re-read after the directory confirmation, immediately before the write; the same read
-            // is the record's before-state.
-            if (!ModuleAdmin.TryGetAllGrants(out var stored))
+            // aud-a28j. Re-read after the directory confirmation, immediately before the write.
+            if (!ModuleAdmin.TryGetAllGrants(out _))
             {
                 moduleAdminsUnreadable = true;
-                statusMessage = "Refusing to save: saving would replace module admin groups this page cannot see. Nothing was changed. "
+                statusMessage = "Refusing to save: the module admin groups cannot be read, so this save cannot be checked against them. Nothing was changed. "
                     + SettingsStoreText.ModuleAdmins();
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
             }
 
-            var previous = stored.TryGetValue(module.Id, out var storedAdmins) ? storedAdmins : Array.Empty<string>();
-            ModuleAdmin.SetModuleAdmins(module.Id, snapshot);
-
-            try
+            // aud-a28n. Only the groups the admin added and removed - from the confirmed snapshot, never the live
+            // list - each decided under the write lock against its row. Replacing the module's whole list from the
+            // snapshot dropped a group added elsewhere since the load and restored one removed elsewhere.
+            var added = snapshot.Except(moduleAdminGroupsBaseline, StringComparer.OrdinalIgnoreCase).ToArray();
+            var removed = moduleAdminGroupsBaseline.Except(snapshot, StringComparer.OrdinalIgnoreCase).ToArray();
+            var outcome = added.Length + removed.Length == 0 ? null : ModuleAdmin.ApplyAdminChanges(module.Id, added, removed);
+            if (outcome is { Readable: false })
             {
-                Audit.LogSettingsChange(currentUser, ip, section, previous, snapshot);
+                moduleAdminsUnreadable = true;
+                statusMessage = "Refusing to save: the module admin groups cannot be read, so this save cannot be checked against them. Nothing was changed. "
+                    + SettingsStoreText.ModuleAdmins();
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
             }
-            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module admin change"); }
+
+            if (outcome is not null)
+            {
+                try
+                {
+                    Audit.LogSettingsChange(currentUser, ip, section, outcome.Before, outcome.After,
+                        outcome.AlreadyApplied.Count > 0
+                            ? new Dictionary<string, object?> { ["alreadyApplied"] = outcome.AlreadyApplied.ToArray() }
+                            : null);
+                }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module admin change"); }
+            }
 
             // Re-baseline here, not merely tidy: this save does not reload the page, so a stale
             // baseline would count the groups just persisted all over again on the next edit. The
             // baseline is what was SAVED, so a row added during the lookup stays an unsaved edit.
             moduleAdminGroupsBaseline = new List<string>(snapshot);
             RecountAdmins();
-            statusMessage = "Module admins saved.";
+            statusMessage = outcome is null
+                ? "Module admins are unchanged; there was nothing to save."
+                : "Module admins saved.";
             statusIsError = false;
         }
         catch (Exception ex)

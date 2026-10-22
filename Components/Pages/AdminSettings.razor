@@ -277,9 +277,17 @@
                        back, so a secret-id-only edit read as "No unsaved changes". *@
                     <input type="text" class="form-control form-control-sm"
                            value="@ppDirectoryReadSecretId"
+                           disabled="@ppSecretUnreadable"
                            @oninput="(e) => SetPpDirectoryReadSecretId(e.Value?.ToString() ?? string.Empty)"
                            placeholder="Required when groups or OUs are configured" />
-                    <small class="text-muted">Read-only AD credential for group membership and OU checks.</small>
+                    @if (ppSecretUnreadable)
+                    {
+                        <small class="text-danger d-block">@SecretUnreadableText</small>
+                    }
+                    else
+                    {
+                        <small class="text-muted">Read-only AD credential for group membership and OU checks.</small>
+                    }
                 </div>
             </div>
         </div>
@@ -538,6 +546,21 @@
     // offered and the save refuses on its own: the button is not the guard.
     private bool ppLoaded;
 
+    // aud-a28n. The version of the rules this page loaded - from the same read as its lists - which the save
+    // compares under the write lock. The save replaces every rule with the page's lists, so a rule added or
+    // removed elsewhere since the load has to refuse it rather than be undone by it. A save that lands keeps the
+    // version it returns, so a second save from the same page is not refused.
+    private string ppRulesVersion = "";
+
+    // aud-a26k. The directory-read secret could not be read when the page loaded. The fail-open read showed an
+    // unreadable store as an unset id, and a changed id saved from there wrote over a value never shown. The
+    // field is disabled, and a save that would change the id refuses on its own: the field is not the guard.
+    private bool ppSecretUnreadable;
+
+    private string SecretUnreadableText =>
+        "The directory-read credential's setting could not be read, so it is not shown and cannot be changed here. "
+        + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey);
+
     // Surfaced next to the add controls, not through statusMessage: a refused Add must not
     // overwrite an unrelated save result.
     private string? ppAddError;
@@ -740,7 +763,9 @@
 
     private void LoadProtectedPrincipals()
     {
-        var (cfg, _, error) = ProtectedPrincipalService.LoadEffectiveConfig();
+        LoadDirectoryReadSecret();
+
+        var (_, _, error) = ProtectedPrincipalService.LoadEffectiveConfig();
         if (error != null)
         {
             // aud-a26h. The service's error is the text a module shows an operator ("Contact your
@@ -751,17 +776,36 @@
             ppLoaded = false;
             return;
         }
-        if (cfg != null)
+
+        var editing = ProtectedPrincipalService.LoadRulesForEditing();
+        if (editing is null)
         {
-            ppUsers = cfg.Users.ToList();
-            ppGroups = cfg.Groups.ToList();
-            ppOus = cfg.OrganizationalUnits.ToList();
-            ppPatterns = cfg.SamAccountNamePatterns.ToList();
-            ppTargets = cfg.GroupTargets.ToList();
+            ppLoadError = "The protection rules could not be read, so the lists below are empty and saving is disabled. "
+                + SettingsStoreText.ProtectedPrincipals(ProtectedPrincipalService.LegacyImportFailed, exclusionsUnreadable: false);
+            ppLoaded = false;
+            return;
         }
-        ppDirectoryReadSecretId = ProtectedPrincipalService.GetDirectoryReadSecretId()?.ToString() ?? "";
-        SnapshotProtectedBaseline();
+
+        ppUsers = editing.Config.Users.ToList();
+        ppGroups = editing.Config.Groups.ToList();
+        ppOus = editing.Config.OrganizationalUnits.ToList();
+        ppPatterns = editing.Config.SamAccountNamePatterns.ToList();
+        ppTargets = editing.Config.GroupTargets.ToList();
+        ppRulesVersion = editing.Version;
+        SnapshotProtectedRulesBaseline();
         ppLoaded = true;
+    }
+
+    /// <summary>Loads the directory-read secret id, telling an unreadable store from an unset id (aud-a26k).</summary>
+    /// <remarks>
+    /// Its own step, and first: the id lives in the ProtectedPrincipals module config, not with the rules, so it
+    /// is shown - or shown as unreadable - whether or not the rules load.
+    /// </remarks>
+    private void LoadDirectoryReadSecret()
+    {
+        ppSecretUnreadable = !ProtectedPrincipalService.TryGetDirectoryReadSecretId(out var secretId);
+        ppDirectoryReadSecretId = secretId?.ToString() ?? "";
+        ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;
     }
 
     // Only Patterns keeps a keydown handler. Users, Groups and OUs all use
@@ -1063,9 +1107,20 @@
 
             // The directory-read secret is written only when the admin changed it. Rewriting the loaded value
             // on every save reverted a change made elsewhere, and a value the page could not load went back
-            // blank. When it is changing, its store is checked before anything is written.
+            // blank. When it is changing, two checks before anything is written, as for the rules: the page's
+            // own load (aud-a26k) - the store may read again by now, and the value shown is still not the one the
+            // save would replace - and the store as it is now (aud-a28j).
             var secretId = ppDirectoryReadSecretId.Trim();
             var secretChanged = SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline) > 0;
+            if (secretChanged && ppSecretUnreadable)
+            {
+                statusMessage = "Refusing to save: the directory-read credential (Delinea Secret ID) could not be read when this page loaded, so the value it holds is not the stored one and saving it would overwrite a value never shown. Nothing was changed. Reload the page once the problem is fixed. "
+                    + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey);
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
+                return;
+            }
+
             if (secretChanged && ModuleConfigSvc.IsModuleCorrupt(ProtectedPrincipalService.ProtectedPrincipalsModuleKey))
             {
                 statusMessage = "Refusing to save: the directory-read credential's setting cannot be read. Nothing was changed. "
@@ -1084,9 +1139,11 @@
                 GroupTargets = ppTargets.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
             };
 
-            // Decided under the write lock from the rules as they are: a store that cannot be read, and a save
-            // holding no rules over rules this page never loaded, are refused there and write nothing.
-            var outcome = ProtectedPrincipalService.ReplaceConfig(newConfig, pageLoadedRules: LoadedRuleCount() > 0);
+            // Decided under the write lock from the rules as they are: a store that cannot be read, a save holding
+            // no rules over rules this page never loaded, and rules changed since this page loaded them (its
+            // version, aud-a28n) are refused there and write nothing. Rules already changed elsewhere to exactly
+            // these come back as already applied, and nothing is written either.
+            var outcome = ProtectedPrincipalService.ReplaceConfig(newConfig, pageLoadedRules: LoadedRuleCount() > 0, loadedVersion: ppRulesVersion);
             if (outcome.Status == ProtectedPrincipalSaveStatus.StoreCorrupt)
             {
                 statusMessage = "Refusing to save: the protection rules could not be read when this save went to replace them. Nothing was changed. "
@@ -1104,22 +1161,38 @@
                 return;
             }
 
+            if (outcome.Status == ProtectedPrincipalSaveStatus.ConcurrentChange)
+            {
+                statusMessage = "Refusing to save: the protection rules were changed after this page loaded them - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage);
+                return;
+            }
+
             // The rules are saved and in effect from here, so their record is written now - with the rows the
             // write replaced as its before-state (aud-a28k), not an empty one - and before the secret, whose
-            // failure must not hide that they landed (aud-a28j's folded-in partial save).
+            // failure must not hide that they landed (aud-a28j's folded-in partial save). Already applied is
+            // recorded the same way, nothing added or removed and the admin's own entries named, so the attempt
+            // leaves its trace.
+            var alreadyApplied = outcome.Status == ProtectedPrincipalSaveStatus.AlreadyApplied;
             try
             {
-                Audit.LogSettingsChange(currentUser, ip, section, RuleEntries(outcome.Before), RuleEntries(outcome.After),
-                    new Dictionary<string, object?> { ["counts"] = RuleCounts(outcome.After) });
+                var extra = new Dictionary<string, object?> { ["counts"] = RuleCounts(outcome.After) };
+                if (alreadyApplied)
+                    extra["alreadyApplied"] = ChangedRuleEntries();
+                Audit.LogSettingsChange(currentUser, ip, section, RuleEntries(outcome.Before), RuleEntries(outcome.After), extra);
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for protected principals change"); }
 
+            ppRulesVersion = outcome.Version ?? "";
             var secretFailure = secretChanged ? SaveDirectoryReadSecret(secretId, ip) : null;
             if (secretFailure is null)
             {
                 dirty.ClearSection(SectionProtected);
                 SnapshotProtectedBaseline();
-                statusMessage = "Protected principals saved. Changes are effective immediately.";
+                statusMessage = alreadyApplied
+                    ? "Protected principals saved: the rules already held these changes - made the same way elsewhere after this page loaded - so they were not written again. They are in effect."
+                    : "Protected principals saved. Changes are effective immediately.";
                 statusIsError = false;
             }
             else
@@ -1189,6 +1262,20 @@
                 .Concat(rules.SamAccountNamePatterns.Select(v => "Patterns:" + v))
                 .Concat(rules.GroupTargets.Select(v => "Targets:" + v))
                 .ToArray();
+
+    /// <summary>The entries the admin added or removed against what the page loaded, as <c>Kind:value</c>.</summary>
+    private string[] ChangedRuleEntries() =>
+        ChangedEntries("Users", ppUsers, ppUsersBaseline)
+            .Concat(ChangedEntries("Groups", ppGroups, ppGroupsBaseline))
+            .Concat(ChangedEntries("OUs", ppOus, ppOusBaseline))
+            .Concat(ChangedEntries("Patterns", ppPatterns, ppPatternsBaseline))
+            .Concat(ChangedEntries("Targets", ppTargets, ppTargetsBaseline))
+            .ToArray();
+
+    private static IEnumerable<string> ChangedEntries(string kind, List<string> current, List<string> loaded) =>
+        current.Except(loaded, StringComparer.OrdinalIgnoreCase)
+            .Concat(loaded.Except(current, StringComparer.OrdinalIgnoreCase))
+            .Select(v => kind + ":" + v);
 
     private static string RuleCounts(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData? rules) =>
         rules is null

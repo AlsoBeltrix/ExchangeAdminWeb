@@ -151,11 +151,15 @@ public class GroupGrantValidationTests
 
         var iConfirm = body.IndexOf("var refused = await ConfirmNewGroupGrantsAsync(", StringComparison.Ordinal);
         var iRefuse = body.IndexOf("if (refused is not null)", StringComparison.Ordinal);
-        var iPersist = body.IndexOf("ModuleAdmin.SetModuleAdmins(module.Id, snapshot);", StringComparison.Ordinal);
+        // aud-a28n: the save writes the confirmed snapshot's additions and removals, decided under the write lock.
+        var iPersist = body.IndexOf("ModuleAdmin.ApplyAdminChanges(module.Id, added, removed)", StringComparison.Ordinal);
 
         Assert.True(iConfirm >= 0, "The module-admin save no longer confirms new grants.");
         Assert.True(iRefuse > iConfirm && iPersist > iRefuse, "The confirmation must refuse BEFORE the store write.");
+        Assert.Contains("var added = snapshot.Except(moduleAdminGroupsBaseline,", body, StringComparison.Ordinal);
+        Assert.Contains("var removed = moduleAdminGroupsBaseline.Except(snapshot,", body, StringComparison.Ordinal);
         Assert.DoesNotContain("SetModuleAdmins(module.Id, moduleAdminGroups", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("moduleAdminGroups.Except(", body, StringComparison.Ordinal);
     }
 
     [Fact]

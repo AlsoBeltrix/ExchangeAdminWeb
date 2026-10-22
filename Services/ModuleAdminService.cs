@@ -133,12 +133,40 @@ public class ModuleAdminService
         return readable;
     }
 
-    public void SetModuleAdmins(string moduleId, string[] groups)
+    /// <summary>
+    /// Replaces a module's whole admin list with <paramref name="groups"/>. A test fixture: it compares nothing,
+    /// so the app writes through <see cref="ApplyAdminChanges"/> (aud-a26k).
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than removed because the suite seeds module admins through it. A production caller would be
+    /// the whole-list overwrite aud-a28n took out of the Module Configuration page; WholeStoreWriterTripwireTests
+    /// refuses one.
+    /// </remarks>
+    internal void SetModuleAdmins(string moduleId, string[] groups)
     {
         lock (_writeLock)
         {
             _repository.SetForModule(moduleId, groups);
             _logger.LogInformation("Module admins for {Module} saved", moduleId);
+        }
+    }
+
+    /// <summary>
+    /// The Module Configuration page's save (aud-a28n): adds and removes only the groups named, each decided
+    /// against the module's rows under the write lock; groups not named are not touched. Throws when the
+    /// write fails.
+    /// </summary>
+    public ModuleAdminChangeOutcome ApplyAdminChanges(string moduleId, IReadOnlyCollection<string> add, IReadOnlyCollection<string> remove)
+    {
+        ArgumentNullException.ThrowIfNull(add);
+        ArgumentNullException.ThrowIfNull(remove);
+
+        lock (_writeLock)
+        {
+            var outcome = _repository.ApplyChanges(moduleId, add, remove);
+            if (outcome.Written)
+                _logger.LogInformation("Module admins for {Module} changed ({Before} -> {After} group(s))", moduleId, outcome.Before.Length, outcome.After.Length);
+            return outcome;
         }
     }
 

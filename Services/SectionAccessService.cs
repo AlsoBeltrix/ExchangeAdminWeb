@@ -226,7 +226,17 @@ public class SectionAccessService
         return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.None, true);
     }
 
-    public void SaveSectionAccess(Dictionary<string, string[]> sectionAccess)
+    /// <summary>
+    /// Replaces the whole section-access table with <paramref name="sectionAccess"/>. A test fixture: it
+    /// compares nothing and records nothing, so the access page saves through <see cref="SaveEditedAliases"/>
+    /// (aud-a26k).
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than removed because the suite seeds grants through it. A production caller would be the
+    /// whole-table overwrite aud-a28k took out of the page, which lost grants made or revoked elsewhere;
+    /// WholeStoreWriterTripwireTests refuses one, and refuses the repository's SaveAll outside this fixture.
+    /// </remarks>
+    internal void SaveSectionAccess(Dictionary<string, string[]> sectionAccess)
     {
         lock (_writeLock)
         {
@@ -238,8 +248,9 @@ public class SectionAccessService
     /// <summary>
     /// The Module Configuration page's access save (aud-a28k): replaces only the aliases in
     /// <paramref name="edited"/>, inside one write, after comparing each with what the page loaded
-    /// (<paramref name="loaded"/>) against the table as it is under the write lock. Any alias that
-    /// differs refuses the whole save. Throws when the write fails.
+    /// (<paramref name="loaded"/>) against the table as it is under the write lock. An alias that has since
+    /// changed to what the save wants is already applied and not written; one that differs from both refuses
+    /// the whole save. Throws when the write fails.
     /// </summary>
     /// <remarks>
     /// The page used to overwrite every alias of its module with the lists it loaded and replace the whole
@@ -249,6 +260,10 @@ public class SectionAccessService
     /// refused rather than merged: the admin reloads and re-applies, and nothing is guessed. Section access
     /// never configured is compared, and written, as the fallback the gates read today, so the first save
     /// starts enforcement without moving anyone's effective access, as the whole-table save did.
+    ///
+    /// The one change that is not refused is a change to exactly the groups this save wants (aud-a26k): the
+    /// admin's intent is already in place, so refusing it only told them to reload and re-apply what was
+    /// there. Nothing is written for that alias, and the page records it as already applied.
     /// </remarks>
     public SectionAccessSaveOutcome SaveEditedAliases(
         IReadOnlyDictionary<string, string[]> loaded, IReadOnlyDictionary<string, string[]> edited)
@@ -258,8 +273,9 @@ public class SectionAccessService
 
         var before = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         var changed = new List<string>();
+        var alreadyApplied = new List<string>();
         if (_legacyFileCorrupt)
-            return new SectionAccessSaveOutcome(SectionAccessSaveStatus.StoreCorrupt, changed, before);
+            return new SectionAccessSaveOutcome(SectionAccessSaveStatus.StoreCorrupt, changed, before, alreadyApplied);
 
         var fallback = FallbackAccess();
         var status = SectionAccessSaveStatus.Saved;
@@ -274,11 +290,16 @@ public class SectionAccessService
                 }
 
                 var source = current.Configured ? current.Access : fallback;
-                foreach (var alias in edited.Keys)
+                foreach (var (alias, wanted) in edited)
                 {
                     var now = source.TryGetValue(alias, out var groups) ? groups : [];
                     before[alias] = now;
-                    if (!SameGroups(now, loaded.TryGetValue(alias, out var was) ? was : []))
+                    if (SameGroups(now, loaded.TryGetValue(alias, out var was) ? was : []))
+                        continue;
+
+                    if (SameGroups(now, wanted))
+                        alreadyApplied.Add(alias);
+                    else
                         changed.Add(alias);
                 }
 
@@ -296,7 +317,10 @@ public class SectionAccessService
                 }
 
                 foreach (var (alias, groups) in edited)
-                    replacement[alias] = groups;
+                {
+                    if (!alreadyApplied.Contains(alias, StringComparer.OrdinalIgnoreCase))
+                        replacement[alias] = groups;
+                }
 
                 if (replacement.Count == 0)
                 {
@@ -311,7 +335,7 @@ public class SectionAccessService
                 _logger.LogInformation("SectionAccess saved for {Count} alias(es)", edited.Count);
         }
 
-        return new SectionAccessSaveOutcome(status, changed, before);
+        return new SectionAccessSaveOutcome(status, changed, before, alreadyApplied);
     }
 
     // What the gates read while section access has never been configured in the store: the legacy
@@ -401,7 +425,10 @@ public enum SectionAccessSaveStatus
     /// <summary>The edited aliases were replaced.</summary>
     Saved,
 
-    /// <summary>Nothing written: no alias was edited and section access is already configured.</summary>
+    /// <summary>
+    /// Nothing written: section access is already configured and no alias was edited, or every edited alias
+    /// already held what the save wanted.
+    /// </summary>
     NothingToSave,
 
     /// <summary>Nothing written: the legacy file was not imported, or the table could not be read under the lock.</summary>
@@ -413,10 +440,12 @@ public enum SectionAccessSaveStatus
 
 /// <summary>
 /// The outcome of a section-access save: the edited aliases that had changed since the page loaded them
-/// (on <see cref="SectionAccessSaveStatus.ConcurrentChange"/>), and each edited alias's groups as they were
-/// under the write lock.
+/// (on <see cref="SectionAccessSaveStatus.ConcurrentChange"/>), each edited alias's groups as they were
+/// under the write lock, and the edited aliases that already held the groups the save wanted, which it did
+/// not write.
 /// </summary>
 public sealed record SectionAccessSaveOutcome(
     SectionAccessSaveStatus Status,
     IReadOnlyList<string> ChangedAliases,
-    IReadOnlyDictionary<string, string[]> Before);
+    IReadOnlyDictionary<string, string[]> Before,
+    IReadOnlyList<string> AlreadyApplied);

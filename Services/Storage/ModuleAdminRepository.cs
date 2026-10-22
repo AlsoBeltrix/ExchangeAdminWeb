@@ -59,6 +59,93 @@ public sealed class ModuleAdminRepository
     }
 
     /// <summary>
+    /// Adds and removes some of a module's admin groups in ONE write transaction (aud-a28n), each decided
+    /// against the module's rows as they are under the write lock: an added group already present, or a
+    /// removed group already absent, is reported as already applied and not written. Groups not named are
+    /// not touched. Nothing to write - or rows that cannot be read - rolls the transaction back, so nothing,
+    /// not even the change token, is written.
+    /// </summary>
+    /// <remarks>
+    /// The page used to replace the module's whole admin list with its snapshot, so a group added elsewhere
+    /// since it loaded was dropped and one removed elsewhere came back. Each named group is decided on its own
+    /// row under the write lock instead, and no other group is touched. There is no conflict to refuse: a
+    /// membership has two states, the one the page loaded and the one it wants, so the row is always one or the
+    /// other - unchanged, and written, or already as wanted, and reported (aud-a28k's enablement reasoning, and
+    /// the aud-a26k rule).
+    /// </remarks>
+    public ModuleAdminChangeOutcome ApplyChanges(string moduleId, IReadOnlyCollection<string> add, IReadOnlyCollection<string> remove)
+    {
+        ArgumentNullException.ThrowIfNull(add);
+        ArgumentNullException.ThrowIfNull(remove);
+        try
+        {
+            return _store.Write((connection, transaction) =>
+            {
+                string[] before;
+                try
+                {
+                    before = ReadModuleGroups(connection, transaction, moduleId);
+                }
+                catch
+                {
+                    throw new NothingWritten(null, []);
+                }
+
+                var present = new HashSet<string>(before, StringComparer.OrdinalIgnoreCase);
+                var alreadyApplied = new List<string>();
+                var inserts = new List<string>();
+                var deletes = new List<string>();
+                foreach (var group in add.Where(g => !string.IsNullOrWhiteSpace(g)).Distinct(StringComparer.OrdinalIgnoreCase))
+                    (present.Contains(group) ? alreadyApplied : inserts).Add(group);
+                foreach (var group in remove.Where(g => !string.IsNullOrWhiteSpace(g)).Distinct(StringComparer.OrdinalIgnoreCase))
+                    (present.Contains(group) ? deletes : alreadyApplied).Add(group);
+
+                if (inserts.Count == 0 && deletes.Count == 0)
+                    throw new NothingWritten(before, alreadyApplied);
+
+                foreach (var group in deletes)
+                {
+                    using var delete = connection.CreateCommand();
+                    delete.Transaction = transaction;
+                    delete.CommandText = "DELETE FROM module_admins WHERE module_id = $id AND admin_group = $group;";
+                    delete.Parameters.AddWithValue("$id", moduleId);
+                    delete.Parameters.AddWithValue("$group", group);
+                    delete.ExecuteNonQuery();
+                }
+
+                InsertGroups(connection, transaction, moduleId, inserts.ToArray());
+                return new ModuleAdminChangeOutcome(
+                    true, true, before, ReadModuleGroups(connection, transaction, moduleId), alreadyApplied);
+            });
+        }
+        catch (NothingWritten nothing)
+        {
+            return nothing.Before is null
+                ? new ModuleAdminChangeOutcome(false, false, [], [], [])
+                : new ModuleAdminChangeOutcome(true, false, nothing.Before, nothing.Before, nothing.AlreadyApplied);
+        }
+    }
+
+    // Thrown out of the write when there is nothing to write, or the rows cannot be read (a null Before):
+    // IConfigStore.Write commits, and bumps the change token both instances watch, whenever its callback
+    // returns, and an exception is its documented rollback. Caught in ApplyChanges; it never leaves this class.
+    private sealed class NothingWritten(string[]? before, IReadOnlyList<string> alreadyApplied) : Exception
+    {
+        public string[]? Before { get; } = before;
+
+        public IReadOnlyList<string> AlreadyApplied { get; } = alreadyApplied;
+    }
+
+    private static string[] ReadModuleGroups(SqliteConnection connection, SqliteTransaction transaction, string moduleId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT admin_group FROM module_admins WHERE module_id = $id;";
+        command.Parameters.AddWithValue("$id", moduleId);
+        return ReadGroups(command);
+    }
+
+    /// <summary>
     /// One-time import of a legacy module_id -> groups map. Only writes modules that have no
     /// rows yet, so existing DB state always wins. Returns the number of modules imported.
     /// </summary>
@@ -122,3 +209,11 @@ public sealed class ModuleAdminRepository
         return groups.ToArray();
     }
 }
+
+/// <summary>
+/// What <see cref="ModuleAdminRepository.ApplyChanges"/> did: whether the module's rows could be read under
+/// the write lock, whether it wrote, the groups as read and as left, and the named groups that already held
+/// the wanted state.
+/// </summary>
+public sealed record ModuleAdminChangeOutcome(
+    bool Readable, bool Written, string[] Before, string[] After, IReadOnlyList<string> AlreadyApplied);

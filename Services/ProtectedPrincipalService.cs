@@ -71,14 +71,31 @@ public enum ProtectedPrincipalSaveStatus
 
     /// <summary>Nothing written: the save held no rules, the store held some, and the page had loaded none.</summary>
     EmptyOverNonEmpty,
+
+    /// <summary>Nothing written: the rules changed after the page loaded them, to something other than this save.</summary>
+    ConcurrentChange,
+
+    /// <summary>Nothing written: the rules changed after the page loaded them, to exactly the rules this save holds.</summary>
+    AlreadyApplied,
 }
 
 /// <summary>
 /// The outcome of a protected-principals replace: the rules found under the write lock (null when they
-/// could not be read) and, after a replace, the rules it left.
+/// could not be read), the rules it left (after a replace, or as they stand when they already held this
+/// save), and - on <see cref="ProtectedPrincipalSaveStatus.Saved"/> and
+/// <see cref="ProtectedPrincipalSaveStatus.AlreadyApplied"/> - the version of the rules as they stand.
 /// </summary>
 public sealed record ProtectedPrincipalSaveOutcome(
-    ProtectedPrincipalSaveStatus Status, ProtectedPrincipalData? Before, ProtectedPrincipalData? After);
+    ProtectedPrincipalSaveStatus Status,
+    ProtectedPrincipalData? Before,
+    ProtectedPrincipalData? After,
+    string? Version = null);
+
+/// <summary>
+/// The protection rules as the admin page edits them, and the version of the one read they came from
+/// (aud-a28n).
+/// </summary>
+public sealed record ProtectedPrincipalRulesForEditing(ProtectedPrincipalConfig Config, string Version);
 
 /// <summary>
 /// One parsed Protected Targets entry. Stored as <c>objectGUID|DN</c>: the GUID is the immutable
@@ -998,7 +1015,16 @@ public class ProtectedPrincipalService
             EntraObjectId: null);
     }
 
-    public void SaveConfig(ProtectedPrincipalConfig config)
+    /// <summary>
+    /// Replaces every protection rule with <paramref name="config"/>. A test fixture: it compares nothing and
+    /// records nothing, so the app saves through <see cref="ReplaceConfig"/> (aud-a26k).
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than removed because the suite seeds the store through it. A production caller would be
+    /// the snapshot overwrite aud-a28j and aud-a28n took out of the admin page; WholeStoreWriterTripwireTests
+    /// refuses one.
+    /// </remarks>
+    internal void SaveConfig(ProtectedPrincipalConfig config)
     {
         _repository.Save(new ProtectedPrincipalData(
             config.Users ?? [],
@@ -1019,16 +1045,29 @@ public class ProtectedPrincipalService
     /// Whether the page saving this loaded at least one rule. A save holding no rules over a store
     /// that holds some is refused unless it did.
     /// </param>
+    /// <param name="loadedVersion">
+    /// The <see cref="RulesVersion"/> of the rules the page loaded, from <see cref="LoadRulesForEditing"/>, or
+    /// the one its last save returned.
+    /// </param>
     /// <remarks>
-    /// Three refusals, each writing nothing. A legacy file the import refused still holds rules the
+    /// Four refusals, each writing nothing. A legacy file the import refused still holds rules the
     /// database has never seen: writing now would mark the store configured, and the import would never
-    /// run again. Rows that cannot be read under the lock cannot be replaced knowingly. And a save holding
+    /// run again. Rows that cannot be read under the lock cannot be replaced knowingly. A save holding
     /// no rules, over a store that holds some, from a page that loaded none, is the aud-a28j wipe itself -
     /// the page's lists are empty because it could not read the rules, or because the other instance added
     /// them since, and either way the admin never saw what the save would delete. A page that loaded rules
     /// and had the admin remove them one by one is that admin's intent, and saves.
+    ///
+    /// And rules that changed after the page loaded them (aud-a28n): the save replaces every rule with the
+    /// page's lists, so it would delete a rule another admin or the other instance added since, or restore
+    /// one they removed, without anyone having seen it. The compare is made here, inside the write, because
+    /// a compare made before it can be overtaken by the other instance before the replace lands; the page's
+    /// version, not a read just before the save, because the stale view is the page's. A store that already
+    /// holds exactly the rules this save writes is no conflict - the change was made the same way elsewhere -
+    /// so it is reported as already applied and nothing is written (the aud-a26k rule). Nothing is merged:
+    /// any other difference is refused, and the admin reloads and re-applies.
     /// </remarks>
-    public ProtectedPrincipalSaveOutcome ReplaceConfig(ProtectedPrincipalConfig config, bool pageLoadedRules)
+    public ProtectedPrincipalSaveOutcome ReplaceConfig(ProtectedPrincipalConfig config, bool pageLoadedRules, string loadedVersion)
     {
         ArgumentNullException.ThrowIfNull(config);
 
@@ -1057,15 +1096,24 @@ public class ProtectedPrincipalService
                 return null;
             }
 
+            if (!string.Equals(RulesVersion(current), loadedVersion, StringComparison.Ordinal))
+            {
+                refusal = current.Configured && SameRules(current.Data, data)
+                    ? ProtectedPrincipalSaveStatus.AlreadyApplied
+                    : ProtectedPrincipalSaveStatus.ConcurrentChange;
+                return null;
+            }
+
             return data;
         });
 
         if (!outcome.Replaced)
         {
-            return new ProtectedPrincipalSaveOutcome(
-                refusal == ProtectedPrincipalSaveStatus.Saved ? ProtectedPrincipalSaveStatus.StoreCorrupt : refusal,
-                outcome.Before.Readable ? outcome.Before.Data : null,
-                null);
+            var status = refusal == ProtectedPrincipalSaveStatus.Saved ? ProtectedPrincipalSaveStatus.StoreCorrupt : refusal;
+            var before = outcome.Before.Readable ? outcome.Before.Data : null;
+            return status == ProtectedPrincipalSaveStatus.AlreadyApplied
+                ? new ProtectedPrincipalSaveOutcome(status, before, before, RulesVersion(outcome.Before))
+                : new ProtectedPrincipalSaveOutcome(status, before, null);
         }
 
         InvalidateCache();
@@ -1073,8 +1121,81 @@ public class ProtectedPrincipalService
         return new ProtectedPrincipalSaveOutcome(
             ProtectedPrincipalSaveStatus.Saved,
             outcome.Before.Data,
-            outcome.After is { Readable: true } after ? after.Data : data);
+            outcome.After is { Readable: true } after ? after.Data : data,
+            outcome.After is { Readable: true } left ? RulesVersion(left) : null);
     }
+
+    /// <summary>
+    /// The rules as the admin page shows them for editing, and the version of the same read; null when the
+    /// legacy file was not imported or the rows cannot be read (aud-a28n).
+    /// </summary>
+    /// <remarks>
+    /// One fresh read, not <see cref="LoadEffectiveConfig"/>'s cache: the version is the save's proof that the
+    /// rules are still what the admin was shown, so the lists shown and the version must come from the same
+    /// read. A version taken from a newer read than the lists would let the save write the older lists over a
+    /// change the page never displayed. An unconfigured store shows no rules, as the gate reads it.
+    /// </remarks>
+    public ProtectedPrincipalRulesForEditing? LoadRulesForEditing()
+    {
+        if (_legacyFileCorrupt)
+            return null;
+
+        var snapshot = _repository.ReadSnapshot();
+        if (!snapshot.Readable)
+            return null;
+
+        var rules = snapshot.Configured ? snapshot.Data : ProtectedPrincipalData.Empty;
+        return new ProtectedPrincipalRulesForEditing(
+            new ProtectedPrincipalConfig
+            {
+                Users = rules.Users,
+                Groups = rules.Groups,
+                OrganizationalUnits = rules.OrganizationalUnits,
+                SamAccountNamePatterns = rules.SamAccountNamePatterns,
+                GroupTargets = rules.GroupTargets,
+            },
+            RulesVersion(snapshot));
+    }
+
+    /// <summary>The rules' own content as a version: each kind's stored rows in order, and the presence marker.</summary>
+    /// <remarks>
+    /// Not the store's change token, for aud-a28i's reasons: it moves on every config write by either instance on
+    /// the shared database, so any settings save elsewhere would refuse every open page, and it misses a writer
+    /// that bypasses the store. The rows are exact. The marker is in it so that rules someone configured empty are
+    /// not the same version as rules never configured.
+    /// </remarks>
+    internal static string RulesVersion(ProtectedPrincipalSnapshot snapshot)
+    {
+        if (!snapshot.Readable)
+            return "unreadable";
+
+        var canonical = JsonSerializer.Serialize(new
+        {
+            snapshot.Configured,
+            Users = Sorted(snapshot.Data.Users),
+            Groups = Sorted(snapshot.Data.Groups),
+            OrganizationalUnits = Sorted(snapshot.Data.OrganizationalUnits),
+            SamAccountNamePatterns = Sorted(snapshot.Data.SamAccountNamePatterns),
+            GroupTargets = Sorted(snapshot.Data.GroupTargets),
+        });
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    private static string[] Sorted(string[] values) =>
+        values.OrderBy(v => v, StringComparer.OrdinalIgnoreCase).ThenBy(v => v, StringComparer.Ordinal).ToArray();
+
+    // Whether the stored rules are, kind by kind, the rules a save would write - compared as the table
+    // stores them: blanks dropped, and case ignored, as its NOCASE key does.
+    private static bool SameRules(ProtectedPrincipalData stored, ProtectedPrincipalData wanted) =>
+        SameSet(stored.Users, wanted.Users)
+        && SameSet(stored.Groups, wanted.Groups)
+        && SameSet(stored.OrganizationalUnits, wanted.OrganizationalUnits)
+        && SameSet(stored.SamAccountNamePatterns, wanted.SamAccountNamePatterns)
+        && SameSet(stored.GroupTargets, wanted.GroupTargets);
+
+    private static bool SameSet(string[] a, string[] b) =>
+        new HashSet<string>(a.Where(v => !string.IsNullOrWhiteSpace(v)), StringComparer.OrdinalIgnoreCase)
+            .SetEquals(b.Where(v => !string.IsNullOrWhiteSpace(v)));
 
     // One-time import of the legacy protected-principals.json into protected_principal, then
     // archive the file (SqliteConfigStore-Plan Section 4). Only fills if not yet configured (DB wins).
@@ -1137,18 +1258,36 @@ public class ProtectedPrincipalService
         }
     }
 
-    public int? GetDirectoryReadSecretId()
+    public int? GetDirectoryReadSecretId() =>
+        PositiveId(_moduleConfig.GetValue(ProtectedPrincipalsModuleKey, DirectoryReadSecretConfigKey))
+        ?? PositiveId(_config["Security:ProtectedPrincipalDirectoryReadSecretId"]);
+
+    /// <summary>
+    /// The directory-read secret id as the admin page shows it (aud-a26k): false when the ProtectedPrincipals
+    /// module config cannot be read, so the page can say so rather than show the id as unset. Otherwise the
+    /// value <see cref="GetDirectoryReadSecretId"/> answers, appsettings fallback included.
+    /// </summary>
+    /// <remarks>
+    /// The lookups keep <see cref="GetDirectoryReadSecretId"/>'s fail-open read, because an unreadable id there
+    /// means no credential and every lookup fails closed. On the admin page the same read made an unreadable
+    /// store look unset - blank, or the appsettings fallback - and a page that then saved a changed id wrote over
+    /// a value it had never shown.
+    /// </remarks>
+    public bool TryGetDirectoryReadSecretId(out int? secretId)
     {
-        var fromModuleConfig = _moduleConfig.GetValue(ProtectedPrincipalsModuleKey, DirectoryReadSecretConfigKey);
-        if (int.TryParse(fromModuleConfig, out var moduleId) && moduleId > 0)
-            return moduleId;
+        if (!_moduleConfig.TryGetModuleConfig(ProtectedPrincipalsModuleKey, out var values))
+        {
+            secretId = null;
+            return false;
+        }
 
-        var fromAppSettings = _config["Security:ProtectedPrincipalDirectoryReadSecretId"];
-        if (int.TryParse(fromAppSettings, out var appId) && appId > 0)
-            return appId;
-
-        return null;
+        secretId = PositiveId(values.GetValueOrDefault(DirectoryReadSecretConfigKey))
+            ?? PositiveId(_config["Security:ProtectedPrincipalDirectoryReadSecretId"]);
+        return true;
     }
+
+    private static int? PositiveId(string? value) =>
+        int.TryParse(value, out var id) && id > 0 ? id : null;
 
     /// <summary>
     /// Stores the directory-read secret id and returns the ProtectedPrincipals module values as they
