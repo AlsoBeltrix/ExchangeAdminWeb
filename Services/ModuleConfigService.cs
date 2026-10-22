@@ -148,7 +148,27 @@ public class ModuleConfigService
     /// could land between a read and a later write.
     /// </remarks>
     public ModuleConfigSaveOutcome SaveChangedValues(
-        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted)
+        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted) =>
+        DecideChangedValues(moduleId, loaded, wanted, writeIfClear: true);
+
+    /// <summary>
+    /// The compare <see cref="SaveChangedValues"/> makes, under the same lock and by the same decision, writing nothing
+    /// (aud-a28r): the transaction is rolled back, change token included. <see cref="ModuleConfigSaveStatus.Saved"/> here
+    /// means the compare passed - a save would write the keys.
+    /// </summary>
+    /// <remarks>
+    /// For a save that writes two stores in turn. No repository can take part in another's write - each opens its own
+    /// transaction - so the second store's compare runs before the first store is written, and a conflict there refuses
+    /// the whole save instead of leaving its first half written. It is the very decision the later write makes, run under
+    /// the same lock, so what it passes is what that write would do; the write still decides again under its own lock.
+    /// </remarks>
+    public ModuleConfigSaveOutcome CompareChangedValues(
+        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted) =>
+        DecideChangedValues(moduleId, loaded, wanted, writeIfClear: false);
+
+    // One decision for the save and its compare (aud-a28r), so the two cannot drift apart.
+    private ModuleConfigSaveOutcome DecideChangedValues(
+        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted, bool writeIfClear)
     {
         ArgumentNullException.ThrowIfNull(loaded);
         ArgumentNullException.ThrowIfNull(wanted);
@@ -195,7 +215,8 @@ public class ModuleConfigService
                     return null;
                 }
 
-                return write;
+                // A compare that passed stores nothing either: null is UpdateModuleIf's rollback.
+                return writeIfClear ? write : null;
             });
 
             if (update.Written)

@@ -527,6 +527,7 @@ public bool TryGetModuleConfig(string moduleId, out Dictionary<string, string> c
 public bool IsModuleConfigured(string moduleId);
 public ModuleConfigUpdate UpdateModuleValues(string moduleId, IReadOnlyDictionary<string, string> values);
 public ModuleConfigSaveOutcome SaveChangedValues(string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted);
+public ModuleConfigSaveOutcome CompareChangedValues(string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted);
 public bool HasConfigFile { get; }
 public bool IsCorrupt { get; }
 public bool HasModuleConfigFile(string moduleId);
@@ -544,7 +545,11 @@ Rules:
 - Writes name their keys. `UpdateModuleValues` upserts only the keys given;
   `SaveChangedValues` (the settings pages' saves: Module Configuration, the Exchange Online
   connection and the directory-read secret) writes only the keys an admin
-  changed, each compared under the write lock with the value the page loaded. There is no
+  changed, each compared under the write lock with the value the page loaded.
+  `CompareChangedValues` makes the same compare under the same lock and writes nothing: a save
+  that writes two stores in turn runs it before the first write, so a conflict in the second
+  refuses the whole save rather than leaving half of it (the directory-read secret beside the
+  protection rules, aud-a28r). There is no
   public whole-module replace: the shared config database is written by both instances, and
   replacing a module's whole config from a caller's copy reverts what the other wrote
   (aud-a28n, aud-a26k).
