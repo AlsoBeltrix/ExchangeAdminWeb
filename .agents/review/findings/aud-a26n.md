@@ -44,3 +44,19 @@ public whole writers; the two comments.
 ## Guard proof
 
 Pending.
+
+## Folded in: two LOW items from the codex review of aud-a28n/a26k (attr-batch-8, 2026-10-22)
+
+7. **Section-access no-op still writes stale display names.** `ModuleConfig.razor` around 1430: when
+   `SaveEditedAliases` returns `AlreadyApplied` for every alias, `SaveGroupDisplayNames` still updates
+   `group_display_name` rows from the page's stale `accessDisplayNames` and bumps the shared change
+   token, which can revert newer display names. Skip display-name writes on no-op paths, or scope them
+   to aliases actually written and record them separately. Test: an all-already-applied save writes no
+   display name. Mutation: write them again.
+8. **Protected-principal `AlreadyApplied` keeps the page's stale casing.** `AdminSettings.razor` around
+   1187: another save changed only the casing of a rule entry (same effective set); this page gets
+   `AlreadyApplied`, stores the returned version, but keeps its stale list values, so a later save from
+   the same page passes the version check and writes the stale casing back with little audit signal.
+   On `AlreadyApplied` rehydrate the page's lists and baselines from `outcome.After` (or canonicalise
+   case in the version if casing is not meaningful - say which). Test: after an `AlreadyApplied` the
+   page's lists equal the store's rows. Mutation: keep the stale lists.

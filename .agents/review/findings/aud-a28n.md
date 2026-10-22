@@ -7,7 +7,7 @@ another admin or the other instance added since it loaded; aud-a28j refuses only
 empty-over-non-empty case and records the rest. (2) `ModuleConfig.SaveConfigAsync` replaces a
 module's whole config, and `SaveModuleAdminsAsync` the whole admin list, from the page's state, with
 no compare against the rows under the lock.
-**Status**: Merged to master (`3ef12e60`); closed on guard proof; codex review pending
+**Status**: Merged to master (`3ef12e60`); closed on guard proof; codex attr-batch-8 clean (two LOW folded into aud-a26n)
 **Branch**: `worktree-agent-a5f93bbf442feb5e2`
 **Commit**: `650a359b` (plan `738cef45`; comments `639d721b`; merged `3ef12e60`)
 **Reviewer**: implementer (surfaced by the aud-a28j/a28k/a26h agent, 2026-10-22, candidates 1 and 2 of its hand-back)
