@@ -14,18 +14,26 @@ namespace ExchangeAdminWeb.Models;
 /// back is not known here (an assumption the finding record labels; no live call was made), so a count is
 /// read only where it is a whole number beyond doubt, and anything else is kept and named - the
 /// <see cref="ReportedTime"/> rule, whose unwrapping, naming and marker this shares rather than copies.
+/// <para>
+/// aud-a23g: the mailbox item counts read through it too, where <c>Convert.ToInt64</c> lost the whole mailbox
+/// list the same way, so a count is a <see cref="long"/>; and a negative number is not a count of anything.
+/// </para>
 /// </remarks>
 public sealed record ReportedCount
 {
-    private ReportedCount(int? count, string? unreadableType, string? unreadableText)
+    private ReportedCount(long? count, string? unreadableType, string? unreadableText)
     {
         Count = count;
         UnreadableType = unreadableType;
         UnreadableText = unreadableText;
     }
 
-    /// <summary>The count, when it could be read.</summary>
-    public int? Count { get; }
+    /// <summary>
+    /// The count, when it could be read: a whole number from 0 up. aud-a23g: a <see cref="long"/>, because the
+    /// mailbox item counts were Int64 reads, and an Int32 count would make a readable one above 2,147,483,647
+    /// its marker.
+    /// </summary>
+    public long? Count { get; }
 
     /// <summary>The type name of what was reported instead, when it could not be read as a count.</summary>
     public string? UnreadableType { get; }
@@ -44,13 +52,13 @@ public sealed record ReportedCount
     /// </summary>
     public override string ToString() => Show();
 
-    /// <summary>A count already held as an <see cref="int"/> - a default, or a test's value. Not a second reader.</summary>
-    public static ReportedCount Of(int count) => new(count, null, null);
+    /// <summary>A count already held as a number - a default, or a test's value. Not a second reader.</summary>
+    public static ReportedCount Of(long count) => new(count, null, null);
 
     /// <summary>
     /// The reader for a reported count: null when nothing was reported. A <c>PSObject</c> is read as what it
-    /// wraps; a whole number of any numeric type within <see cref="int"/>'s range as itself; text only in the
-    /// invariant culture's integer form (digits, an optional sign, surrounding spaces). Anything else is not
+    /// wraps; a whole number of any numeric type from 0 to <see cref="long"/>'s maximum as itself; text only in
+    /// the invariant culture's integer form (digits, an optional sign, surrounding spaces). Anything else is not
     /// readable.
     /// </summary>
     /// <remarks>
@@ -58,6 +66,10 @@ public sealed record ReportedCount
     /// for one or nought, and <c>1,205</c> is over a thousand in one culture and a fraction in another, with
     /// nothing here to say which wrote it. Unreadable, it is named by the reader <see cref="ReportedTime"/>
     /// uses, so a page says the same of every reported value it cannot read.
+    /// <para>
+    /// aud-a23g: so is a negative number, whatever carries it. Nothing is counted below nought, and read as a
+    /// count a FailedCount of -1 showed in the red failed cell as a fact and sorted before every 0.
+    /// </para>
     /// </remarks>
     public static ReportedCount? Read(object? reported)
     {
@@ -93,26 +105,30 @@ public sealed record ReportedCount
         _ => -1,
     };
 
+    // aud-a23g. A count: a whole number that is not negative. The one place the sign is checked, whatever type
+    // carried the number.
+    private static long? WholeNumber(object value) => Integer(value) is { } whole && whole >= 0 ? whole : null;
+
     // A whole number, whatever numeric type carries it; a fraction, a value out of range, NaN or an
     // infinity is not one. Text in the invariant culture's integer form only, so no culture is guessed.
-    private static int? WholeNumber(object value)
+    // aud-a23g: Int64's range, so the item counts lose nothing; 2^63 bounds a double, because long.MaxValue
+    // has no exact double and every whole double below 2^63 converts exactly.
+    private static long? Integer(object value)
     {
         switch (value)
         {
-            case int whole:
-                return whole;
-            case sbyte or byte or short or ushort or uint or long or ulong:
+            case int or long or sbyte or byte or short or ushort or uint or ulong:
                 var integral = Convert.ToDecimal(value, CultureInfo.InvariantCulture);
-                return integral is >= int.MinValue and <= int.MaxValue ? (int)integral : null;
+                return integral is >= long.MinValue and <= long.MaxValue ? (long)integral : null;
             case decimal exact:
-                return exact == decimal.Truncate(exact) && exact is >= int.MinValue and <= int.MaxValue ? (int)exact : null;
+                return exact == decimal.Truncate(exact) && exact is >= long.MinValue and <= long.MaxValue ? (long)exact : null;
             case float or double:
                 var real = Convert.ToDouble(value, CultureInfo.InvariantCulture);
-                return double.IsFinite(real) && real == Math.Truncate(real) && real is >= int.MinValue and <= int.MaxValue
-                    ? (int)real
+                return double.IsFinite(real) && real == Math.Truncate(real) && real >= -9223372036854775808.0 && real < 9223372036854775808.0
+                    ? (long)real
                     : null;
             case string text:
-                return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+                return long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
             default:
                 return null;
         }

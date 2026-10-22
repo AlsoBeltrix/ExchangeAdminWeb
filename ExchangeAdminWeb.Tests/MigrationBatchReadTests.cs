@@ -19,7 +19,9 @@ namespace ExchangeAdminWeb.Tests;
 /// <summary>
 /// Audit finding aud-a23f: <c>GetMigrationBatchesAsync</c> caught a row that threw while being read - a count
 /// <c>Convert.ToInt32</c> could not read, say - logged it and went on, so the page listed the other batches
-/// as if they were all there was.
+/// as if they were all there was. aud-a23g: a call that failed was an empty list, shown as "No migration
+/// batches found"; a mailbox count <c>Convert.ToInt64</c> could not read lost the mailbox list; a negative
+/// count read as a count; a cancellation read as an unreadable row.
 /// </summary>
 /// <remarks>
 /// Behaviour, not text. The real <see cref="MigrationService"/> on a real pool, whose connect seam hands out
@@ -35,6 +37,11 @@ public sealed class MigrationBatchReadTests : IDisposable
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "migration-rows-" + Guid.NewGuid().ToString("N"));
     private readonly ArrayList _rows = ArrayList.Synchronized(new ArrayList());
+    private readonly ArrayList _users = ArrayList.Synchronized(new ArrayList());
+
+    // aud-a23g. Empty: Get-MigrationBatch emits the rows. Otherwise how it fails - "throw" (a terminating
+    // error) or "error" (a non-terminating one, Write-Error) - and the message.
+    private readonly ArrayList _failure = ArrayList.Synchronized(new ArrayList());
     private ExoConnectionPool? _pool;
 
     public void Dispose()
@@ -72,6 +79,31 @@ public sealed class MigrationBatchReadTests : IDisposable
         public string Status => "Synced";
     }
 
+    /// <summary>aud-a23g. A live object whose count is fetched while the load is being cancelled.</summary>
+    public sealed class RowWhoseReadIsCancelled(Exception cancellation)
+    {
+        public string Identity => Throwing;
+        public string Status => "Synced";
+        public int TotalCount => throw cancellation;
+    }
+
+    /// <summary>aud-a23g. A mailbox as Get-MigrationUser hands one back: a property bag.</summary>
+    private static PSObject User(string email, params (string Name, object? Value)[] fields)
+    {
+        var user = new PSObject();
+        user.Properties.Add(new PSNoteProperty("Identity", email));
+        user.Properties.Add(new PSNoteProperty("Status", "Synced"));
+        foreach (var (name, value) in fields)
+            user.Properties.Add(new PSNoteProperty(name, value));
+        return user;
+    }
+
+    private static IEnumerable<Exception> Chain(Exception error)
+    {
+        for (Exception? cause = error; cause != null; cause = cause.InnerException)
+            yield return cause;
+    }
+
     /// <summary>A count this app cannot read, and the marker it is shown as.</summary>
     private static (object Value, string Marker) UnreadableCount(string form)
     {
@@ -89,7 +121,8 @@ public sealed class MigrationBatchReadTests : IDisposable
         }
     }
 
-    private MigrationService CreateService()
+    /// <param name="connects">aud-a23g. False: opening the connection throws, before any cmdlet runs.</param>
+    private MigrationService CreateService(bool connects = true)
     {
         Directory.CreateDirectory(_directory);
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -113,17 +146,28 @@ public sealed class MigrationBatchReadTests : IDisposable
         _pool = new ExoConnectionPool(config, moduleConfig, enablement,
             Substitute.For<ILogger<ExoConnectionPool>>(), trace, (_, generation, _) =>
             {
+                if (!connects)
+                    throw new InvalidOperationException("the connection could not be opened");
+
                 var state = InitialSessionState.CreateDefault2();
                 state.Variables.Add(new SessionStateVariableEntry("Rows", _rows, null));
+                state.Variables.Add(new SessionStateVariableEntry("Users", _users, null));
+                state.Variables.Add(new SessionStateVariableEntry("Failure", _failure, null));
                 state.Commands.Add(new SessionStateFunctionEntry("Disconnect-ExchangeOnline", "[CmdletBinding()] param([switch] $Confirm)"));
                 state.Commands.Add(new SessionStateFunctionEntry("Get-MigrationBatch", """
                     [CmdletBinding()]
                     param([string] $Identity)
+                    if ($Failure.Count -gt 0) {
+                        if ($Failure[0] -eq 'throw') { throw $Failure[1] }
+                        Write-Error $Failure[1]
+                        return
+                    }
                     foreach ($row in $Rows) { $row }
                     """));
                 state.Commands.Add(new SessionStateFunctionEntry("Get-MigrationUser", """
                     [CmdletBinding()]
                     param([string] $BatchId, [string] $ResultSize)
+                    foreach ($user in $Users) { $user }
                     """));
                 var runspace = RunspaceFactory.CreateRunspace(state);
                 runspace.Open();
@@ -186,6 +230,33 @@ public sealed class MigrationBatchReadTests : IDisposable
             .Invoke(page, [rows])!;
         return sorted.Select(b => b.BatchName).ToList();
     }
+
+    /// <summary>aud-a23g. The page's own ordering of mailbox rows by a column, in a direction.</summary>
+    private static List<string> SortedMailboxes(string column, bool ascending, IEnumerable<MigrationUserInfo> rows)
+    {
+        var page = new Migration();
+        PageField("mailboxSortColumn").SetValue(page, column);
+        PageField("mailboxSortAsc").SetValue(page, ascending);
+        var sorted = (IEnumerable<MigrationUserInfo>)typeof(Migration).GetMethod("SortMailboxes", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(page, [rows])!;
+        return sorted.Select(u => u.EmailAddress.Split('@')[0]).ToList();
+    }
+
+    /// <summary>aud-a23g. The Status tab before any load, over <paramref name="service"/>.</summary>
+    private static RenderableMigration PageOver(MigrationService service)
+    {
+        var page = Page(new MigrationBatchList([], []));
+        PageField("batchesLoaded").SetValue(page, false);
+        PageField("migrationBatches").SetValue(page, null);
+        typeof(Migration).GetProperty("MigrationSvc", Members)!.SetValue(page, service);
+        return page;
+    }
+
+    /// <summary>aud-a23g. The page's own batch-list load: what Refresh, the tab and a bulk action's reload run.</summary>
+    private static Task LoadBatchList(Migration page) =>
+        (Task)typeof(Migration).GetMethod("LoadBatchList", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [])!;
+
+    private static HashSet<string> Ticked(Migration page) => (HashSet<string>)PageField("selectedBatches").GetValue(page)!;
 
     private static string[] Lines(string csv) =>
         csv.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line.TrimEnd('\r')).ToArray();
@@ -383,5 +454,190 @@ public sealed class MigrationBatchReadTests : IDisposable
 
         Assert.Empty(list.Unreadable);
         Assert.Equal(expected, Assert.Single(list.Batches).AutoStart);
+    }
+
+    // ---- aud-a23g -----------------------------------------------------------------------------
+
+    // aud-a23g, the finding: a Get-MigrationBatch call that failed came back as an empty list, and the page said
+    // "No migration batches found", as if the tenant had none. It fails here both ways a cmdlet can - a
+    // terminating error, and an error it writes and goes on - and neither got past -ErrorAction Ignore. The
+    // result carries the failure, in the error's own words, and the page's own load shows it as an error: not
+    // the empty state, and with no Export. The stub had a row to emit, so a partial list would show too.
+    [Theory]
+    [InlineData("throw")]
+    [InlineData("error")]
+    public async Task AFailedBatchQuery_IsShownAsAFailure_NeverAsNoBatches(string how)
+    {
+        const string message = "Get-MigrationBatch was refused: the account lacks the Migration role";
+        _rows.Add(Row(Readable, ("TotalCount", 3)));
+        _failure.AddRange(new[] { how, message });
+        var service = CreateService();
+
+        var list = await service.GetMigrationBatchesAsync();
+
+        Assert.Equal(message, list.Failure);
+        Assert.Empty(list.Batches);
+        Assert.Empty(list.Unreadable);
+
+        var page = PageOver(service);
+        await LoadBatchList(page);
+        var rendered = page.RenderText();
+
+        Assert.Contains($"The migration batches could not be read: {message}", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("No migration batches found", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("There are currently no migration batches", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("Export batch list", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain(Readable, rendered, StringComparison.Ordinal);
+    }
+
+    // aud-a23g. A failure is never none: an exception with no message still fails the load, with a reason to show.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void AFailureWithNoReason_IsStillAFailure(string? reason)
+    {
+        var failed = MigrationBatchList.Failed(reason);
+
+        Assert.Equal("no reason was given", failed.Failure);
+        Assert.Empty(failed.Batches);
+        Assert.Empty(failed.Unreadable);
+    }
+
+    // aud-a23g. A failed load clears the list. The page shows what the last load returned, and a failed one returned
+    // none, so a reload that fails after one that read lists nothing the first one read, offers no Export of it, and
+    // leaves nothing ticked for an action to be aimed at.
+    [Fact]
+    public async Task AFailedReload_ListsNothing_OffersNoExport_AndLeavesNothingTicked()
+    {
+        _rows.Add(Row(Readable, ("TotalCount", 3)));
+        var service = CreateService();
+        var page = PageOver(service);
+
+        await LoadBatchList(page);
+        Ticked(page).Add(Readable);
+        var loaded = page.RenderText();
+        Assert.Contains(Readable, loaded, StringComparison.Ordinal);
+        Assert.Contains("Export batch list (1)", loaded, StringComparison.Ordinal);
+
+        _failure.AddRange(new[] { "throw", "the service is throttling this account" });
+        await LoadBatchList(page);
+        var failed = page.RenderText();
+
+        Assert.Contains("The migration batches could not be read: the service is throttling this account", failed, StringComparison.Ordinal);
+        Assert.DoesNotContain(Readable, failed, StringComparison.Ordinal);
+        Assert.DoesNotContain("Export batch list", failed, StringComparison.Ordinal);
+        Assert.Empty(Ticked(page));
+        Assert.Empty((List<MigrationBatchInfo>)PageField("migrationBatches").GetValue(page)!);
+    }
+
+    // aud-a23g. A load that throws before the query runs - here the connection cannot be opened - reaches the page's own
+    // catch, not the service's. The same failure, the same banner: not the empty state, and not the old dismissible
+    // "Failed to load migration batches" result banner, which on a first load left the empty state behind it.
+    [Fact]
+    public async Task ALoadThatFailsBeforeTheQueryRuns_IsShownAsTheSameFailure()
+    {
+        var page = PageOver(CreateService(connects: false));
+
+        await LoadBatchList(page);
+        var rendered = page.RenderText();
+
+        Assert.Contains("The migration batches could not be read: the connection could not be opened", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("No migration batches found", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("Failed to load migration batches", rendered, StringComparison.Ordinal);
+        Assert.Null(PageField("batchActionResult").GetValue(page));
+    }
+
+    // aud-a23g, part 2: ItemsSynced and ItemsSkipped were read with Convert.ToInt64, so one value it could not convert
+    // threw and the whole mailbox list was lost ("Unable to load mailboxes"). One this app cannot read is the marker in
+    // its own cell now, and every other mailbox loads with its count; an absent one is still 0.
+    [Fact]
+    public async Task AMailboxCountThisAppCannotRead_IsTheMarkerInItsCell_AndEveryMailboxLoads()
+    {
+        const string marker = "reported in a form this app cannot read (System.String): 1,205";
+        _rows.Add(Row(Readable, ("TotalCount", 3)));
+        _users.Add(User("alice@contoso.test", ("ItemsSynced", 10), ("ItemsSkipped", 2L)));
+        _users.Add(User("bob@contoso.test", ("ItemsSynced", "1,205"), ("ItemsSkipped", "a few")));
+        _users.Add(User("carol@contoso.test", ("ItemsSynced", 7L)));
+        var service = CreateService();
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
+
+        var users = await service.GetMigrationBatchUsersAsync(Readable);
+
+        Assert.Equal(["alice", "bob", "carol"], users.Select(u => u.EmailAddress.Split('@')[0]));
+        Assert.Equal([10L, null, 7L], users.Select(u => u.ItemsSynced.Count));
+        Assert.Equal([2L, null, 0L], users.Select(u => u.ItemsSkipped.Count));
+        Assert.Equal("reported in a form this app cannot read (System.String): a few", users[1].ItemsSkipped.Show());
+
+        var rendered = await OpenBatchRendered(service, batch);
+        Assert.Equal(1, rendered.Split(marker).Length - 1);
+        Assert.Contains("carol@contoso.test", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("Unable to load mailboxes", rendered, StringComparison.Ordinal);
+    }
+
+    // aud-a23g, part 2. The page's own Synced sort over the mailboxes: an unreadable count is unknown, so after every
+    // count in both directions, as the batch counts sort (aud-a23f).
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheMailboxSyncedSort_PutsACountThisAppCannotReadAfterEveryCount_InBothDirections(bool ascending)
+    {
+        // Input order puts the unreadable mailbox first, so a sort that took it for the lowest would leave it there.
+        _users.Add(User("unreadable@contoso.test", ("ItemsSynced", "1,205")));
+        _users.Add(User("five@contoso.test", ("ItemsSynced", 5)));
+        _users.Add(User("two@contoso.test", ("ItemsSynced", 2)));
+        _users.Add(User("nine@contoso.test", ("ItemsSynced", 9)));
+
+        var users = await CreateService().GetMigrationBatchUsersAsync(Readable);
+
+        Assert.Equal(ascending ? ["two", "five", "nine", "unreadable"] : ["nine", "five", "two", "unreadable"],
+            SortedMailboxes("Synced", ascending, users));
+    }
+
+    // aud-a23g, part 5: a negative count was read as one - a FailedCount of -1 showed in the red failed cell as a fact
+    // and sorted before every 0. Nothing is counted below nought, so it is unreadable, whatever type carried it: the
+    // marker in the cell and the CSV, and after every count in both directions of the Failed sort.
+    [Theory]
+    [InlineData("an Int32", "System.Int32")]
+    [InlineData("an Int64", "System.Int64")]
+    [InlineData("text", "System.String")]
+    [InlineData("a whole Double", "System.Double")]
+    public async Task ANegativeCount_IsTheMarker_NotACount(string form, string typeName)
+    {
+        object value = form switch
+        {
+            "an Int32" => -1,
+            "an Int64" => -1L,
+            "text" => "-1",
+            _ => -1.0,
+        };
+        _rows.Add(Row("negative", ("FailedCount", value), ("TotalCount", 3)));
+        _rows.Add(Row("none", ("FailedCount", 0), ("TotalCount", 3)));
+        _rows.Add(Row("two", ("FailedCount", 2), ("TotalCount", 3)));
+
+        var list = await CreateService().GetMigrationBatchesAsync();
+
+        Assert.Null(list.Batches.Single(b => b.BatchName == "negative").FailedCount.Count);
+        var marker = $"reported in a form this app cannot read ({typeName}): -1";
+        Assert.Contains(marker, ListRendered(list), StringComparison.Ordinal);
+        Assert.Contains(marker, Migration.BuildCsv(list.Batches, list.Unreadable), StringComparison.Ordinal);
+        Assert.Equal(["none", "two", "negative"], Sorted("Failed", true, list.Batches));
+        Assert.Equal(["two", "none", "negative"], Sorted("Failed", false, list.Batches));
+    }
+
+    // aud-a23g, part 6: a row whose reading was cancelled was listed as unreadable and the rest returned as a valid
+    // partial list. A cancelled load is cancelled: it escapes both catches, with no list at all. PowerShell's adapter
+    // wraps the getter's exception, so the cancellation is looked for in the chain.
+    [Theory]
+    [InlineData(typeof(OperationCanceledException))]
+    [InlineData(typeof(PipelineStoppedException))]
+    public async Task ACancellationWhileReadingARow_EscapesTheLoad(Type cancellation)
+    {
+        _rows.Add(Row(Readable, ("TotalCount", 3)));
+        _rows.Add(new RowWhoseReadIsCancelled((Exception)Activator.CreateInstance(cancellation, "the load was cancelled")!));
+
+        var error = await Assert.ThrowsAnyAsync<Exception>(() => CreateService().GetMigrationBatchesAsync());
+
+        Assert.Contains(Chain(error), cause => cause.GetType() == cancellation);
     }
 }

@@ -220,13 +220,13 @@ public sealed class MigrationReportedTimeTests : IDisposable
     // wrapped value vanished - no Started, no Completed, a "-" for the last sync, no schedule. Each is now
     // read as its instant and shown as the Kind-Utc DateTime of that instant is: in the header, the
     // mailbox row and the CSV. The offset handed over (+05:30) is not this server's, so a reading that
-    // kept the reported wall clock would show other times. A Kind-Local DateTime, which the old read
-    // accepted, is the control. aud-a23e: shown in UTC, labelled UTC, where it was the server's clock.
+    // kept the reported wall clock would show other times. aud-a23e: shown in UTC, labelled UTC, where it
+    // was the server's clock. aud-a23g: a Kind-Local DateTime, once the control here, names no zone this app
+    // can trust - ATimeOfKindLocal_IsShownAsReported_AndGivenNoZone.
     [Theory]
     [InlineData("DateTimeOffset")]
     [InlineData("PSObject wrapping a DateTimeOffset")]
     [InlineData("PSObject wrapping a DateTime")]
-    [InlineData("DateTime of Kind Local")]
     public async Task EachTimeReportedInAnotherForm_IsShownAsTheSameInstant(string form)
     {
         var completeAfterUtc = DateTime.SpecifyKind(DateTime.UtcNow.AddDays(30).Date.AddHours(22), DateTimeKind.Utc);
@@ -245,6 +245,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
         Assert.Contains($"\"{Utc(CreatedUtc)}\",\"{Utc(StartedUtc)}\",\"{Utc(CompletedUtc)}\"", csv, StringComparison.Ordinal);
         Assert.True(batch.AutoComplete);
         Assert.False(batch.CompleteAfterUnreadable);
+        Assert.False(batch.CompleteAfterZoneNotReported);
         Assert.Equal(completeAfterUtc, batch.ScheduledCompletionUtc);
         Assert.DoesNotContain("cannot read", rendered, StringComparison.Ordinal);
     }
@@ -352,6 +353,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
 
         Assert.True(batch.AutoComplete);
         Assert.True(batch.CompleteAfterUnreadable);
+        Assert.False(batch.CompleteAfterZoneNotReported);
         Assert.Null(batch.ScheduledCompletionUtc);
     }
 
@@ -366,6 +368,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
 
         Assert.False(batch.AutoComplete);
         Assert.False(batch.CompleteAfterUnreadable);
+        Assert.False(batch.CompleteAfterZoneNotReported);
         Assert.Null(batch.ScheduledCompletionUtc);
     }
 
@@ -373,12 +376,14 @@ public sealed class MigrationReportedTimeTests : IDisposable
 
     // aud-a23e, the finding: the page showed each readable time on the server's clock with no zone named, so a
     // reader could not tell which zone it was in. Every one - the header's three, the mailbox row's, the CSV's
-    // three - is now its instant in UTC, labelled UTC, whichever Kind it came in: no clock is unlabelled.
+    // three - is now its instant in UTC, labelled UTC, whichever form named the instant: no clock is unlabelled.
+    // aud-a23g: the Kind-Local values this mixed in name no zone this app can trust, so DateTimeOffsets at
+    // +05:30 stand in for them as the instants named another way.
     [Fact]
     public async Task EveryReadableTime_IsShownInUtc_AndSaysSo_OnThePageAndInTheCsv()
     {
-        ReportBatch(Batch, CreatedUtc, StartedUtc.ToLocalTime(), CompletedUtc);
-        ReportUser("alice@contoso.test", LastSyncUtc.ToLocalTime());
+        ReportBatch(Batch, CreatedUtc, As("DateTimeOffset", StartedUtc), CompletedUtc);
+        ReportUser("alice@contoso.test", As("DateTimeOffset", LastSyncUtc));
         var service = CreateService();
 
         var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
@@ -451,11 +456,11 @@ public sealed class MigrationReportedTimeTests : IDisposable
         Assert.Equal(ascending ? ["early", "late", "unreadable", "none"] : ["late", "early", "unreadable", "none"], order);
     }
 
-    // aud-a23e. Readable times compare as the instants they name, whatever their Kind; a time of Kind
-    // Unspecified names none, so those come after the instants, ordered by their clocks - both directions, in
-    // both of the page's time sorts. The Local value sits half this host's offset from the Utc one, so its clock
-    // and its instant order the opposite ways against it (on a UTC host the two cannot differ), and the
-    // Unspecified clocks fall either side of both, so a sort by raw DateTime misplaces them on any host.
+    // aud-a23e, amended by aud-a23g. Times that name an instant - Kind Utc, which a DateTimeOffset is read as -
+    // compare as instants; a time of Kind Unspecified names no zone, and since aud-a23g nor does one of Kind Local,
+    // so those come after the instants, ordered by their clocks - both directions, in both of the page's time
+    // sorts. The Local clock falls between the two Unspecified ones: a sort that took it for an instant would put
+    // it before both, and a sort by raw DateTime misplaces the Unspecified ones on any host.
     [Theory]
     [InlineData("Created", true)]
     [InlineData("Created", false)]
@@ -464,20 +469,17 @@ public sealed class MigrationReportedTimeTests : IDisposable
     public async Task TheTimeSorts_CompareInstants_AndPutTimesNamingNoZoneAfterThem(string column, bool ascending)
     {
         var utcInstant = new DateTime(2026, 7, 15, 12, 0, 0, DateTimeKind.Utc);
-        var localInstant = utcInstant - TimeZoneInfo.Local.GetUtcOffset(utcInstant) / 2;
-        (string Name, DateTime Time)[] reported =
+        (string Name, object Time)[] reported =
         [
             ("utc", utcInstant),
-            ("local", localInstant.ToLocalTime()),
+            ("offset", new DateTimeOffset(utcInstant.AddHours(-2)).ToOffset(TimeSpan.FromHours(5.5))),
+            ("local", utcInstant.ToLocalTime()),
             ("unzoned-early", DateTime.SpecifyKind(utcInstant.AddDays(-2), DateTimeKind.Unspecified)),
             ("unzoned-late", DateTime.SpecifyKind(utcInstant.AddDays(2), DateTimeKind.Unspecified)),
         ];
-        (string Name, DateTime Instant)[] instants = [("utc", utcInstant), ("local", localInstant)];
-        List<string> expected =
-        [
-            .. (ascending ? instants.OrderBy(i => i.Instant) : instants.OrderByDescending(i => i.Instant)).Select(i => i.Name),
-            .. (ascending ? new[] { "unzoned-early", "unzoned-late" } : new[] { "unzoned-late", "unzoned-early" }),
-        ];
+        List<string> expected = ascending
+            ? ["offset", "utc", "unzoned-early", "local", "unzoned-late"]
+            : ["utc", "offset", "unzoned-late", "local", "unzoned-early"];
 
         List<string> order;
         if (column == "Created")
@@ -496,5 +498,102 @@ public sealed class MigrationReportedTimeTests : IDisposable
         }
 
         Assert.Equal(expected, order);
+    }
+
+    // ---- aud-a23g -----------------------------------------------------------------------------
+
+    /// <summary>aud-a23g. A time that names no zone, as the page and the CSV show one: its clock, and that it names none.</summary>
+    private static string AsReported(DateTime clock) =>
+        clock.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + " (time zone not reported)";
+
+    // aud-a23g, part 7: a time of Kind Local was converted through this server's zone, as if the clock it carries were
+    // this server's. Nothing proves that of a time the module reported, so it names no zone this app can trust: on all
+    // five reads it is shown as reported, said to name none, never labelled UTC - and as a CompleteAfter it is set to
+    // finalise but is no schedule. Expected from the value itself, so the test holds on a host in any zone.
+    [Fact]
+    public async Task ATimeOfKindLocal_IsShownAsReported_AndGivenNoZone()
+    {
+        var completeAfterUtc = DateTime.SpecifyKind(DateTime.UtcNow.AddDays(30).Date.AddHours(22), DateTimeKind.Utc);
+        ReportBatch(Batch, CreatedUtc.ToLocalTime(), StartedUtc.ToLocalTime(), CompletedUtc.ToLocalTime(), completeAfterUtc.ToLocalTime());
+        ReportUser("alice@contoso.test", LastSyncUtc.ToLocalTime());
+        var service = CreateService();
+
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
+        var rendered = await OpenBatchRendered(service, batch);
+        var csv = Migration.BuildCsv([batch], []);
+
+        Assert.Contains($"Created:</strong> {AsReported(CreatedUtc.ToLocalTime())}", rendered, StringComparison.Ordinal);
+        Assert.Contains($"Started:</strong> {AsReported(StartedUtc.ToLocalTime())}", rendered, StringComparison.Ordinal);
+        Assert.Contains($"Completed:</strong> {AsReported(CompletedUtc.ToLocalTime())}", rendered, StringComparison.Ordinal);
+        Assert.Contains(AsReported(LastSyncUtc.ToLocalTime()), rendered, StringComparison.Ordinal);
+        Assert.Contains($"{AsReported(CreatedUtc.ToLocalTime())},{AsReported(StartedUtc.ToLocalTime())},{AsReported(CompletedUtc.ToLocalTime())}",
+            csv, StringComparison.Ordinal);
+        Assert.DoesNotContain("UTC", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("UTC", csv, StringComparison.Ordinal);
+        Assert.True(batch.AutoComplete);
+        Assert.False(batch.CompleteAfterUnreadable);
+        Assert.True(batch.CompleteAfterZoneNotReported);
+        Assert.Null(batch.ScheduledCompletionUtc);
+    }
+
+    // aud-a23g, part 4: a CompleteAfter that names no zone was read as this server's local time, so the model stated a
+    // schedule it did not know. Through the real read: the batch is set to finalise, the schedule is null, and the
+    // result says the zone was not reported - neither "not scheduled" nor unreadable.
+    [Theory]
+    [InlineData(DateTimeKind.Unspecified)]
+    [InlineData(DateTimeKind.Local)]
+    public async Task ACompleteAfterThatNamesNoZone_IsAutoCompleting_ButNotASchedule(DateTimeKind kind)
+    {
+        // A month ahead: a reading in any zone would call it a schedule.
+        ReportBatch(Batch, completeAfter: DateTime.SpecifyKind(DateTime.UtcNow.AddDays(30), kind));
+        var service = CreateService();
+
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
+
+        Assert.True(batch.AutoComplete);
+        Assert.False(batch.CompleteAfterUnreadable);
+        Assert.True(batch.CompleteAfterZoneNotReported);
+        Assert.Null(batch.ScheduledCompletionUtc);
+    }
+
+    // aud-a23g, part 3: the report dialog's "Taken" was the server's clock with no zone named. It is the instant in UTC,
+    // labelled UTC, as every other Migration time is - whether the report was just taken, or read back from the store,
+    // whose JSON must hand the time back as Kind Utc for the label to be the UTC one.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TheReportsTakenTime_IsShownInUtc_AndSaysSo(bool readBackFromTheStore)
+    {
+        Directory.CreateDirectory(_directory);
+        var environment = Substitute.For<IWebHostEnvironment>();
+        environment.ContentRootPath.Returns(_directory);
+        var store = new MigrationReportStore(environment);
+        var page = new RenderableMigration();
+        const BindingFlags properties = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+        typeof(Migration).GetProperty("ReportStore", properties)!.SetValue(page, store);
+        typeof(Migration).GetProperty("Logger", properties)!.SetValue(page, Substitute.For<ILogger<Migration>>());
+        typeof(Migration).GetProperty("Progress", properties)!
+            .SetValue(page, new ExchangeAdminWeb.Services.Progress.ActivityProgressService());
+        PageField("tabIndex").SetValue(page, 2);
+        PageField("batchesLoaded").SetValue(page, true);
+        PageField("expandedBatch").SetValue(page, Batch);
+
+        // An hour ago, inside the store's twelve; whole minutes, so the expected text is exact.
+        var hourAgo = DateTime.UtcNow.AddHours(-1);
+        var taken = new DateTime(hourAgo.Year, hourAgo.Month, hourAgo.Day, hourAgo.Hour, hourAgo.Minute, 0, DateTimeKind.Utc);
+        if (readBackFromTheStore)
+        {
+            store.Write(Batch, "alice@contoso.test", "the report", taken);
+            await (Task)typeof(Migration).GetMethod("LoadUserReport", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(page, ["alice@contoso.test"])!;
+        }
+        else
+        {
+            PageField("reportUser").SetValue(page, "alice@contoso.test");
+            PageField("userReport").SetValue(page, "the report");
+            PageField("reportFetchedAtUtc").SetValue(page, taken);
+        }
+
+        Assert.Contains($"Taken {Utc(taken)}", page.RenderText(), StringComparison.Ordinal);
     }
 }

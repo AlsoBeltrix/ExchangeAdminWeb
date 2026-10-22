@@ -482,13 +482,13 @@
                         </button>
                     </div>
                 }
+                else if (batchListFailure != null) { @* aud-a23g. A failed load is neither "no batches" nor a list: it returned none, so nothing is listed and Export, which needs a list, is not offered. *@ <div class="alert alert-danger" role="alert">The migration batches could not be read: @batchListFailure<div class="mt-1">No batch is listed until a load succeeds. Refresh to try again.</div></div> }
                 else if ((migrationBatches == null || !migrationBatches.Any()) && batchActionResult == null)
                 {
-                    @* R28. Three distinct empty states, and this is the first: no batches AT ALL. The
-                       others are "no batch matches the filter" (left pane) and "no mailbox matches the
-                       filter" (right pane): one message would hide whether the filter or the data is
-                       the problem, and the operator's next move differs. aud-a23f: when every row was
-                       unreadable there ARE batches, so it says none could be read, under the warning. *@
+                    @* R28. Three distinct empty states, and this is the first: no batches AT ALL. The others are "no batch
+                       matches the filter" (left pane) and "no mailbox matches the filter" (right pane): one message would
+                       hide whether the filter or the data is the problem, and the operator's next move differs. aud-a23f:
+                       every row unreadable is not none, so it says none could be read; a failed load (a23g) is above. *@
                     <div class="alert alert-info">
                         <strong>@(unreadableBatches.Count > 0 ? "No migration batch could be read" : "No migration batches found")</strong>
                         <p class="mb-0 mt-2">@(unreadableBatches.Count > 0 ? "Exchange returned only rows this page could not read; the warning above names each one." : "There are currently no migration batches. Create one using the Single User Check or Bulk CSV Check tabs.")</p>
@@ -1223,10 +1223,10 @@
                 }
                 @if (reportFetchedAtUtc.HasValue)
                 {
-                    @* R24a: the operator has to be able to tell how old this is before deciding
-                       whether another twenty minutes is worth it. *@
+                    @* R24a: the operator has to be able to tell how old this is before deciding whether another twenty
+                       minutes is worth it. aud-a23g: in UTC and labelled so, as every Migration time is - it was the server's clock, unnamed. *@
                     <small class="text-muted">
-                        Taken @reportFetchedAtUtc.Value.ToLocalTime().ToString("MMM dd HH:mm")
+                        Taken @OutOfOfficeRequest.ShowReported(reportFetchedAtUtc.Value, TimeZoneInfo.Utc)
                     </small>
                 }
                 <div class="ms-auto d-flex gap-2">
@@ -1296,7 +1296,7 @@
             }
         </td>
         <td><span class="badge bg-@GetUserStatusColor(user.Status)">@user.Status</span></td>
-        <td>@user.ItemsSynced.ToString("N0")</td>
+        <td>@(user.ItemsSynced.Count is { } synced ? synced.ToString("N0") : user.ItemsSynced.Show())</td>@* aud-a23g: a count as it always showed; one this app cannot read, its marker *@
         <td><small>@(user.LastSyncDateTime is { } lastSync ? FormatBatchDate(lastSync) : "-")</small></td>
         <td>
             @if (!string.IsNullOrEmpty(user.ErrorSummary))
@@ -1587,9 +1587,9 @@
     private bool bulkAutoStart = false;
     private bool bulkAutoComplete = false;
     private PermissionResult? createResult;
-    // Migration status. aud-a23f: unreadableBatches holds the rows the last load could not read as batches.
+    private string? batchListFailure; // Migration status. aud-a23g: why the last batch-list load failed; null when it read.
     private List<MigrationBatchInfo>? migrationBatches;
-    private List<UnreadableMigrationBatch> unreadableBatches = [];
+    private List<UnreadableMigrationBatch> unreadableBatches = []; // aud-a23f: the rows the last load could not read as batches
     private bool isLoadingStatus = false;
     private bool batchesLoaded = false;
     private bool accessDenied = false;
@@ -2289,13 +2289,13 @@
 
         try
         {
-            (migrationBatches, unreadableBatches) = await MigrationSvc.GetMigrationBatchesAsync();
+            (migrationBatches, unreadableBatches, batchListFailure) = await MigrationSvc.GetMigrationBatchesAsync();
             batchActionResult = null;
         }
         catch (Exception ex)
         {
-            migrationBatches ??= new List<MigrationBatchInfo>();
-            batchActionResult = PermissionResult.Fail($"Failed to load migration batches: {ex.Message}");
+            (migrationBatches, unreadableBatches, batchListFailure) = MigrationBatchList.Failed(ex.Message); // aud-a23g: a throw before the service returns (the borrow, the connect) is the same failed load
+            batchActionResult = null; // as on success: a bulk action's reload puts its own result back beside the failure, not under "Failed to load"
         }
         finally
         {
@@ -2308,7 +2308,7 @@
 
     // A batch that is no longer listed must not stay ticked: acting on a name Exchange no longer
     // knows produces a failure that reads as a bug in this app. Runs on every reload, including
-    // the failed one - a load that threw leaves migrationBatches as whatever it last held.
+    // the failed one, which lists nothing (aud-a23g), so a failed reload leaves nothing ticked.
     private void PruneSelection()
     {
         var kept = MigrationBatchActionPlanner.PruneSelection(migrationBatches, selectedBatches);
@@ -2489,8 +2489,8 @@
                 ? rows.OrderBy(u => u.Status, StringComparer.OrdinalIgnoreCase)
                 : rows.OrderByDescending(u => u.Status, StringComparer.OrdinalIgnoreCase),
             "Synced" => mailboxSortAsc
-                ? rows.OrderBy(u => u.ItemsSynced)
-                : rows.OrderByDescending(u => u.ItemsSynced),
+                ? rows.OrderBy(u => u.ItemsSynced, ReportedCount.Order(ascending: true)) // aud-a23g: an unreadable count after every count, both ways
+                : rows.OrderBy(u => u.ItemsSynced, ReportedCount.Order(ascending: false)),
             // ReportedTime.Order: unknowns last both ways, an unreadable time before none (aud-a23d); times compared
             // as instants, whatever their Kind, and one that names no zone after them (aud-a23e).
             "LastSync" => mailboxSortAsc

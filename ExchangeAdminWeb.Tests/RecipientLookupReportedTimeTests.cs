@@ -202,20 +202,40 @@ public sealed class RecipientLookupReportedTimeTests : IDisposable
     // aud-a23e, the finding: both times were printed as read, so a Kind-Local and a Kind-Utc value of one instant
     // showed two clocks, and neither said whose. With the browser's zone known, each is shown in it, the zone
     // named, with that zone's offset at that instant - New York's differs across the clocks going back.
+    // aud-a23g: of Kind Utc only; a Kind-Local value names no zone this app can trust (the test below).
     [Theory]
-    [InlineData("America/New_York", false, "2026-10-01 16:15 (America/New_York, UTC-04:00)", "2026-11-06 09:00 (America/New_York, UTC-05:00)")]
-    [InlineData("America/New_York", true, "2026-10-01 16:15 (America/New_York, UTC-04:00)", "2026-11-06 09:00 (America/New_York, UTC-05:00)")]
-    [InlineData("Asia/Kolkata", false, "2026-10-02 01:45 (Asia/Kolkata, UTC+05:30)", "2026-11-06 19:30 (Asia/Kolkata, UTC+05:30)")]
-    [InlineData("Asia/Kolkata", true, "2026-10-02 01:45 (Asia/Kolkata, UTC+05:30)", "2026-11-06 19:30 (Asia/Kolkata, UTC+05:30)")]
-    public async Task WithTheBrowsersZone_BothTimesAreShownInIt_WithTheZoneAndItsOffset(string zone, bool kindLocal, string created, string logon)
+    [InlineData("America/New_York", "2026-10-01 16:15 (America/New_York, UTC-04:00)", "2026-11-06 09:00 (America/New_York, UTC-05:00)")]
+    [InlineData("Asia/Kolkata", "2026-10-02 01:45 (Asia/Kolkata, UTC+05:30)", "2026-11-06 19:30 (Asia/Kolkata, UTC+05:30)")]
+    public async Task WithTheBrowsersZone_BothTimesAreShownInIt_WithTheZoneAndItsOffset(string zone, string created, string logon)
     {
-        _read["WhenCreated"] = kindLocal ? CreatedUtc.ToLocalTime() : CreatedUtc;
-        _read["LastLogonTime"] = kindLocal ? LogonAfterDstEndUtc.ToLocalTime() : LogonAfterDstEndUtc;
+        _read["WhenCreated"] = CreatedUtc;
+        _read["LastLogonTime"] = LogonAfterDstEndUtc;
 
         var text = await LookedUp(zone);
 
         Assert.Contains($"Created</td>{created}", text, StringComparison.Ordinal);
         Assert.Contains($"Last Logon</td>{logon}", text, StringComparison.Ordinal);
+    }
+
+    // aud-a23g. A Kind-Local value says its clock is this server's, which nothing here proves: it is shown as
+    // reported and given no zone, even with the browser's zone known - the rule Migration and Check Status share.
+    [Theory]
+    [InlineData("America/New_York")]
+    [InlineData("Asia/Kolkata")]
+    public async Task WithTheBrowsersZone_TimesOfKindLocal_AreShownAsReported_AndGivenNoZone(string zone)
+    {
+        var created = CreatedUtc.ToLocalTime();
+        var logon = LogonAfterDstEndUtc.ToLocalTime();
+        _read["WhenCreated"] = created;
+        _read["LastLogonTime"] = logon;
+
+        var text = await LookedUp(zone);
+
+        Assert.Contains($"Created</td>{created.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} (time zone not reported)",
+            text, StringComparison.Ordinal);
+        Assert.Contains($"Last Logon</td>{logon.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} (time zone not reported)",
+            text, StringComparison.Ordinal);
+        Assert.DoesNotContain($"({zone},", text, StringComparison.Ordinal);
     }
 
     // aud-a23e. Without the browser's zone - the call fails, the answer is blank, or this server cannot resolve

@@ -132,12 +132,19 @@ public class MigrationBatchInfo
     /// <summary>
     /// The future time this batch is scheduled to complete, or null when it is not scheduled -
     /// including when CompleteAfter holds a past value, which means "complete now" and is not a
-    /// schedule at all. Also null when the CompleteAfter cannot be read: see
-    /// <see cref="CompleteAfterUnreadable"/>, which then says this null is not an answer.
+    /// schedule at all. Also null when the CompleteAfter cannot be read, or names no zone: see
+    /// <see cref="CompleteAfterUnreadable"/> and <see cref="CompleteAfterZoneNotReported"/>, which then
+    /// say this null is not an answer.
     /// </summary>
+    /// <remarks>
+    /// aud-a23g. Only a time of Kind Utc names an instant here. One of Kind Unspecified names no zone,
+    /// and one of Kind Local claims this server's, which nothing proves of a time another system
+    /// reported; <c>ToUniversalTime()</c> read either as this server's clock - a guess that could call a
+    /// batch scheduled for a moment nobody set, or not scheduled when it is.
+    /// </remarks>
     public DateTime? ScheduledCompletionUtc =>
-        CompleteAfter?.Time is { } when && when.ToUniversalTime() > DateTime.UtcNow
-            ? when.ToUniversalTime()
+        CompleteAfter?.Time is { Kind: DateTimeKind.Utc } when && when > DateTime.UtcNow
+            ? when
             : null;
 
     /// <summary>
@@ -150,6 +157,17 @@ public class MigrationBatchInfo
     /// the result's own statement of it, for whatever asks next.
     /// </remarks>
     public bool CompleteAfterUnreadable => CompleteAfter is { Time: null };
+
+    /// <summary>
+    /// aud-a23g. True when Exchange reported a CompleteAfter whose zone it did not report - any Kind but Utc:
+    /// the batch is set to finalise (<see cref="AutoComplete"/>), but at which instant is unknown, so
+    /// <see cref="ScheduledCompletionUtc"/> is null and says nothing either way.
+    /// </summary>
+    /// <remarks>
+    /// The sibling of <see cref="CompleteAfterUnreadable"/>, for the same reason: no page shows a batch's
+    /// schedule today, so this is the result's own statement of it, for whatever asks next.
+    /// </remarks>
+    public bool CompleteAfterZoneNotReported => CompleteAfter?.Time is { Kind: not DateTimeKind.Utc };
 
     public MigrationDirection Direction { get; set; }
     public List<MigrationUserInfo> Users { get; set; } = new();
@@ -176,13 +194,27 @@ public sealed record UnreadableMigrationBatch(string? Identity, string Reason)
 
 /// <summary>
 /// aud-a23f. What <c>Get-MigrationBatch</c> returned: the batches, and beside them every row that could not be
-/// read as one - one result, so no caller is handed the first without the second.
+/// read as one - one result, so no caller is handed the first without the second. aud-a23g: and
+/// <see cref="Failure"/>, why the call failed, null when it read.
 /// </summary>
 /// <remarks>
-/// Positional, so the Migration page takes both where it took the list, on that one line: its line-keyed
+/// Positional, so the Migration page takes all three where it took the list, on that one line: its line-keyed
 /// ClickGate entries keep every edit to it in place.
+/// <para>
+/// aud-a23g. A failed call came back as an empty list, which the page showed as "No migration batches found"
+/// - a failed read reported as nothing there (Known Failure Class 2). It carries its failure instead, with no
+/// batches and no unreadable rows: nothing it would list is known.
+/// </para>
 /// </remarks>
-public sealed record MigrationBatchList(List<MigrationBatchInfo> Batches, List<UnreadableMigrationBatch> Unreadable);
+public sealed record MigrationBatchList(List<MigrationBatchInfo> Batches, List<UnreadableMigrationBatch> Unreadable, string? Failure = null)
+{
+    /// <summary>
+    /// aud-a23g. A call that failed: no batches, no unreadable rows, and why. A blank reason is given one, so a
+    /// failure can never read as no failure.
+    /// </summary>
+    public static MigrationBatchList Failed(string? reason) =>
+        new([], [], string.IsNullOrWhiteSpace(reason) ? "no reason was given" : reason);
+}
 
 public class MigrationUserInfo
 {
@@ -195,8 +227,12 @@ public class MigrationUserInfo
     /// app cannot read is shown as the marker, not as "-", and sorts after every time and before none.
     /// </summary>
     public ReportedTime? LastSyncDateTime { get; set; }
-    public long ItemsSynced { get; set; }
-    public long ItemsSkipped { get; set; }
+
+    // aud-a23g. The item counts as reported, each read through ReportedCount.Read: Convert.ToInt64 threw on a
+    // value it could not convert and the whole mailbox list was lost. One this app cannot read is its marker
+    // where the count goes, and every other mailbox still loads. Absent is 0, as it always read here.
+    public ReportedCount ItemsSynced { get; set; } = ReportedCount.Of(0);
+    public ReportedCount ItemsSkipped { get; set; } = ReportedCount.Of(0);
 }
 
 public class MigrationUserSearchResult

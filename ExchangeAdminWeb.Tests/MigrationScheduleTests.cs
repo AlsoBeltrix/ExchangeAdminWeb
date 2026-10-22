@@ -45,6 +45,7 @@ public class MigrationScheduleTests
 
         Assert.Equal(when.ToUniversalTime(), batch.ScheduledCompletionUtc);
         Assert.True(batch.AutoComplete);
+        Assert.False(batch.CompleteAfterZoneNotReported);
     }
 
     [Fact]
@@ -54,6 +55,7 @@ public class MigrationScheduleTests
 
         Assert.Null(batch.ScheduledCompletionUtc);
         Assert.False(batch.AutoComplete);
+        Assert.False(batch.CompleteAfterZoneNotReported);
     }
 
     [Fact]
@@ -76,38 +78,24 @@ public class MigrationScheduleTests
         }
     }
 
-    [Fact]
-    public void ALocalTimeIsComparedInUtcRatherThanAsWritten()
+    [Theory]
+    [InlineData(DateTimeKind.Unspecified)]
+    [InlineData(DateTimeKind.Local)]
+    public void ACompleteAfterThatNamesNoZone_IsNotASchedule_AndSaysSo(DateTimeKind kind)
     {
-        // Exchange returns local times, and the "complete now" sites pass DateTime.Now as well as
-        // DateTime.UtcNow. Comparing a local value against UtcNow without converting is wrong by
-        // the size of the machine's offset.
+        // aud-a23g. This was ALocalTimeIsComparedInUtcRatherThanAsWritten, which took "Exchange returns local
+        // times" as given and converted them through this server's zone. Nothing proves a reported Local clock
+        // is this server's, and an Unspecified one names no zone at all, so either was a guess at the instant -
+        // one that could call a batch scheduled for a moment nobody set. Neither is a schedule now, and the batch
+        // says why; it is still set to finalise.
         //
-        // THE MARGIN HAS TO BE SMALLER THAN THAT OFFSET OR THE TEST PROVES NOTHING. The first
-        // version used six hours, and a mutation probe showed it passing with the conversion
-        // removed: on a host less than six hours from UTC the raw comparison lands on the same
-        // side of now, so the bug is invisible. Derived from the running zone rather than
-        // assuming one, because no test here may depend on this environment's shape.
-        var offset = TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow);
+        // A day ahead, further than any zone's offset: read as a time in any zone, it would be a schedule.
+        var batch = Batch(DateTime.SpecifyKind(DateTime.UtcNow.AddDays(1), kind));
 
-        Assert.SkipWhen(offset == TimeSpan.Zero,
-            "This host runs at UTC, so a local and a UTC comparison cannot differ and nothing "
-            + "here could distinguish them. Not a pass - the case is unreachable on this machine.");
-
-        // Half the offset: far enough from now to be unambiguous, close enough that dropping the
-        // conversion moves it across now.
-        var margin = TimeSpan.FromTicks(Math.Abs(offset.Ticks) / 2);
-
-        var futureUtc = DateTime.UtcNow.Add(margin);
-        var asLocal = DateTime.SpecifyKind(futureUtc, DateTimeKind.Utc).ToLocalTime();
-
-        // Genuinely in the future, so it IS a schedule - whatever the clock on the wall says.
-        Assert.NotNull(Batch(asLocal).ScheduledCompletionUtc);
-
-        var pastUtc = DateTime.UtcNow.Subtract(margin);
-        var pastAsLocal = DateTime.SpecifyKind(pastUtc, DateTimeKind.Utc).ToLocalTime();
-
-        Assert.Null(Batch(pastAsLocal).ScheduledCompletionUtc);
+        Assert.Null(batch.ScheduledCompletionUtc);
+        Assert.True(batch.CompleteAfterZoneNotReported);
+        Assert.False(batch.CompleteAfterUnreadable);
+        Assert.True(batch.AutoComplete);
     }
 
     [Fact]

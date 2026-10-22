@@ -618,9 +618,13 @@ https://admin.exchange.microsoft.com/#/migration";
 
             try
             {
-                // Get all migration batches
+                // Get all migration batches. aud-a23g: Stop, not Ignore. Under Ignore a failed call came back
+                // as no rows - an error the cmdlet wrote, and even a throw, which Ignore runs straight past - and
+                // the page said there were no batches. Under Stop both throw, into the catch below.
+                // InvokeOptional rather than Invoke: it fails on an exception, where Invoke also fails on
+                // HadErrors alone, which an error a nested command suppresses sets with nothing thrown.
                 ps.AddCommand("Get-MigrationBatch")
-                  .AddParameter("ErrorAction", "Ignore");
+                  .AddParameter("ErrorAction", "Stop");
 
                 var batchResults = InvokeOptional(ps, tracker);
 
@@ -699,11 +703,12 @@ https://admin.exchange.microsoft.com/#/migration";
                             Direction = direction
                         });
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (!IsCancellation(ex))
                     {
                         // aud-a23f. A row whose reading throws anyway - a property whose getter throws, which
                         // a deserialized row has none of - is listed, not dropped: logging alone left the page
-                        // showing the other batches as if they were all there were.
+                        // showing the other batches as if they were all there were. aud-a23g: a cancellation is
+                        // not such a row. Listed as one, it made the rest of a cancelled load look like a list.
                         _logger.LogWarning(ex, "Could not read the migration batch row {Identity}; it is listed as unreadable",
                             batchNameVal ?? "(no identity)");
                         unreadable.Add(batchNameVal is null
@@ -714,13 +719,36 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 return new MigrationBatchList(batches, unreadable);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!IsCancellation(ex))
             {
+                // aud-a23g. A failed call is a failure, not an empty list, which the page showed as "No
+                // migration batches found". Returned rather than thrown: the tracker still holds what
+                // InvokeOptional classified, so the pool discards a dead session and retries a precheck
+                // failure once, as when the empty list came back.
                 _logger.LogError(ex, "Failed to retrieve migration batches");
-                return new MigrationBatchList([], []);
+                return MigrationBatchList.Failed(FailureReason(ex));
             }
         }, allowRetry: true);
     }
+
+    // aud-a23g. A cancelled or stopped load is neither a row that could not be read nor a read that failed, so
+    // both catches above let it pass. The whole chain is searched because PowerShell's adapter wraps whatever a
+    // property getter throws, a cancellation included, in a GetValueInvocationException.
+    private static bool IsCancellation(Exception ex)
+    {
+        for (Exception? cause = ex; cause != null; cause = cause.InnerException)
+        {
+            if (cause is OperationCanceledException or PipelineStoppedException)
+                return true;
+        }
+        return false;
+    }
+
+    // aud-a23g. What the page says went wrong: the error itself. Under -ErrorAction Stop an error the cmdlet
+    // writes arrives as an ActionPreferenceStopException, whose message puts "The running command stopped
+    // because..." in front of it; its ErrorRecord holds the error as written.
+    private static string FailureReason(Exception ex) =>
+        ex is ActionPreferenceStopException { ErrorRecord: { } stopped } ? stopped.ToString() : ResolvePsErrors(ex).primary;
 
     // aud-a23f. A flag as reported: false when nothing was, a bool as itself (wrappers unwrapped), text only
     // when it is True or False. Anything else is null, not false, which would be a guess.
@@ -757,8 +785,11 @@ https://admin.exchange.microsoft.com/#/migration";
                     // aud-a23d. Through the one reader: `as DateTime?` showed any other type as "-",
                     // a mailbox that never synced.
                     var lastSyncDateTime = ReportedTime.Read(userObj.Properties["LastSyncTime"]?.Value);
-                    var itemsSynced = Convert.ToInt64(userObj.Properties["ItemsSynced"]?.Value ?? 0);
-                    var itemsSkipped = Convert.ToInt64(userObj.Properties["ItemsSkipped"]?.Value ?? 0);
+                    // aud-a23g. Both counts through ReportedCount.Read, not Convert.ToInt64, which threw on a value
+                    // it could not convert and lost the whole mailbox list: one this app cannot read is the marker
+                    // in its own cell, and the list loads. Absent is still 0.
+                    var itemsSynced = ReportedCount.Read(userObj.Properties["ItemsSynced"]?.Value) ?? ReportedCount.Of(0);
+                    var itemsSkipped = ReportedCount.Read(userObj.Properties["ItemsSkipped"]?.Value) ?? ReportedCount.Of(0);
 
                     users.Add(new MigrationUserInfo
                     {

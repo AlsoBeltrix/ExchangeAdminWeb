@@ -704,18 +704,23 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         Assert.Contains($"{shownStart} \u2014 {shownEnd}", text, StringComparison.Ordinal);
     }
 
-    // aud-a7f. Local, in .NET, is a time in this server's own zone: still one instant, whatever the
-    // server's zone is, so it is shown exactly as the same instant of Kind Utc is.
+    // aud-a7f, reversed by aud-a23g. Local, in .NET, says the clock is this server's - but the clock came from
+    // the module that reported it, and nothing here proves that is this server's zone. So it names no zone
+    // this app can trust: shown as reported, given no zone and no offset, as Unspecified is.
     [Fact]
-    public async Task AReadScheduleOfKindLocal_IsShownAsTheSameInstant()
+    public async Task AReadScheduleOfKindLocal_IsShownAsReported_AndIsGivenNone()
     {
         var (page, _) = BuildPage("none", browserZone: "America/New_York");
-        ReadBack(Utc("2026-10-30T13:00:00Z").ToLocalTime(), Utc("2026-11-06T22:00:00Z").ToLocalTime());
+        var start = Utc("2026-10-30T13:00:00Z").ToLocalTime();
+        var end = Utc("2026-11-06T22:00:00Z").ToLocalTime();
+        ReadBack(start, end);
 
         var text = await CheckedStatus(page);
 
-        Assert.Contains("2026-10-30 09:00 (America/New_York, UTC-04:00) \u2014 2026-11-06 17:00 (America/New_York, UTC-05:00)",
-            text, StringComparison.Ordinal);
+        Assert.Contains($"{start.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} (time zone not reported) \u2014 "
+            + $"{end.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} (time zone not reported)", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("America/New_York", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("UTC", text, StringComparison.Ordinal);
     }
 
     // aud-a7f. A time of Kind Unspecified names no instant. It is shown as reported and given no zone

@@ -25,7 +25,10 @@ public sealed record ReportedTime
         UnreadableText = unreadableText;
     }
 
-    /// <summary>The time, when it could be read. Its Kind says whether it names an instant (aud-a7f).</summary>
+    /// <summary>
+    /// The time, when it could be read. Its Kind says whether it names an instant (aud-a7f) - since aud-a23g,
+    /// only Kind Utc does: Local claims this server's zone, which nothing here proves of a reported time.
+    /// </summary>
     public DateTime? Time { get; }
 
     /// <summary>The type name of what was reported instead, when it could not be read as a time.</summary>
@@ -86,23 +89,31 @@ public sealed record ReportedTime
 
     /// <summary>
     /// aud-a23e. The one ordering of reported times: <see cref="SortGroup"/> first, in both directions; among
-    /// the times, those that name an instant compared as instants, then those of Kind Unspecified ordered by
-    /// their clocks - each in the direction asked. Unreadable and none keep list order among themselves.
+    /// the times, those that name an instant (Kind Utc) compared as instants, then those that name no zone
+    /// (Kind Unspecified or, since aud-a23g, Local) ordered by their clocks - each in the direction asked.
+    /// Unreadable and none keep list order among themselves.
     /// </summary>
     /// <remarks>
     /// <see cref="DateTime"/> compares ticks and ignores Kind, so a Local and a Utc value were ordered by their
-    /// clocks, which differ by the server's offset for the same moment. Utc and Local each name an instant
-    /// (Local through this server's zone), so both convert to UTC first. Unspecified names none: placed among
-    /// the instants it would be read as some zone's clock, which is the guess aud-a7f refused to print, so
-    /// such times stand apart, after the instants and before an unreadable one.
+    /// clocks, which differ by the server's offset for the same moment. Unspecified names no zone: placed among
+    /// the instants it would be read as some zone's clock, which is the guess aud-a7f refused to print, so such
+    /// times stand apart, after the instants and before an unreadable one.
+    /// <para>
+    /// aud-a23g. Local went to UTC through this server's zone, which reads the clock the reporting module
+    /// carried as this server's. Nothing proves it is (an assumption the finding record labels; no live call
+    /// was made), so a Local time stands with the Unspecified ones: shown and ordered by the clock it carries,
+    /// given no instant.
+    /// </para>
     /// </remarks>
     public static IComparer<ReportedTime?> Order(bool ascending) => ascending ? AscendingOrder : DescendingOrder;
 
     private static readonly IComparer<ReportedTime?> AscendingOrder = Comparer<ReportedTime?>.Create((x, y) => Compare(x, y, 1));
     private static readonly IComparer<ReportedTime?> DescendingOrder = Comparer<ReportedTime?>.Create((x, y) => Compare(x, y, -1));
 
-    // The direction applies only within a kind of time; the groups and the instants-before-Unspecified split
-    // hold either way, so neither end of a list ever shows an unknown as the earliest or the latest.
+    // The direction applies only within a kind of time; the groups and the instants-before-the-zone-less split
+    // hold either way, so neither end of a list ever shows an unknown as the earliest or the latest. aud-a23g:
+    // only Kind Utc is an instant, so two of them compare by ticks with no conversion, and so do two zone-less
+    // clocks.
     private static int Compare(ReportedTime? x, ReportedTime? y, int direction)
     {
         var byGroup = SortGroup(x).CompareTo(SortGroup(y));
@@ -111,14 +122,12 @@ public sealed record ReportedTime
         if (x?.Time is not { } a || y?.Time is not { } b)
             return 0;
 
-        var aNamesNoInstant = a.Kind == DateTimeKind.Unspecified;
-        var bNamesNoInstant = b.Kind == DateTimeKind.Unspecified;
+        var aNamesNoInstant = a.Kind != DateTimeKind.Utc;
+        var bNamesNoInstant = b.Kind != DateTimeKind.Utc;
         if (aNamesNoInstant != bNamesNoInstant)
             return aNamesNoInstant ? 1 : -1;
 
-        var aKey = aNamesNoInstant ? a : a.ToUniversalTime();
-        var bKey = bNamesNoInstant ? b : b.ToUniversalTime();
-        return direction * aKey.CompareTo(bKey);
+        return direction * a.CompareTo(b);
     }
 
     /// <summary>
