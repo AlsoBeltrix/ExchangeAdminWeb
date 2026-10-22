@@ -1177,6 +1177,11 @@
             // and both halves are recorded.
             if (secretChanged)
             {
+                // aud-a28v. The compare holds the settings store's write lock, so a lock held elsewhere for longer than the
+                // store waits - about 35 seconds - fails it, and with it the whole save, before anything is written. That used to
+                // reach the save's catch as "Failed to save: SQLite Error 5", which said neither that the store was busy nor that
+                // a retry would work. Only the busy result is caught here, as a refusal; any other failure still reaches the
+                // save's catch as a failure.
                 ModuleConfigSaveOutcome secretCheck;
                 try
                 {
@@ -1387,6 +1392,8 @@
             .Concat(ChangedEntries("Targets", ppTargets, ppTargetsBaseline))
             .ToArray();
 
+    // aud-a26s. Ordinal, as EntryDelta counts: an entry removed and added back in other casing, which the count shows as two
+    // changes, is named as those two entries in an already-applied record, where it was named as nothing.
     private static IEnumerable<string> ChangedEntries(string kind, List<string> current, List<string> loaded) =>
         current.Except(loaded, StringComparer.Ordinal)
             .Concat(loaded.Except(current, StringComparer.Ordinal))

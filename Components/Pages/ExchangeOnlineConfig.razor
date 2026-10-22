@@ -246,6 +246,8 @@
                 return;
             }
 
+            // aud-a26s. The fields, what the store held and the captions all come from the one rule, ExoConfigFallback - the
+            // runtime's - where this page used to restate it by hand, with nothing keeping the two in step.
             var appId = Resolve(stored, ExoConnectionPool.ConfigAppIdKey);
             var org = Resolve(stored, ExoConnectionPool.ConfigOrganizationKey);
             var cert = Resolve(stored, ExoConnectionPool.ConfigCertSubjectKey);
@@ -594,12 +596,18 @@
         "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
         + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
 
+    /// <summary>A connection key as the runtime's rule resolves it from this load's one read (a key with no row: null).</summary>
     private ExoConfigValue Resolve(Dictionary<string, string> stored, string key) =>
         ExoConfigFallback.Resolve(Config, key, stored.GetValueOrDefault(key));
 
+    /// <summary>What the store held for a key, empty for one with no row - the value the save compares under its lock.</summary>
     private static string StoredOrEmpty(ExoConfigValue value) =>
         value.Source == ExoConfigSource.Stored ? value.Value : "";
 
+    /// <summary>
+    /// The caption under each field a fallback supplies, keyed by its config key; <see cref="ExoConfigFallback.Caption"/>
+    /// decides which fields have one and what it says.
+    /// </summary>
     private static Dictionary<string, string> FallbackCaptions(params (string Key, ExoConfigValue Value)[] fields)
     {
         var captions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
