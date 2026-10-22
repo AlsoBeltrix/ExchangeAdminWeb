@@ -907,6 +907,47 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         }
     }
 
+    // ---- an unconfirmed save names what it tried to set (aud-a28o) -----------------------------
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnUnconfirmedSave_RecordsWhatItTriedToSet_NotAsAPairToUndo(bool readBackFails)
+    {
+        // Not confirmed (nothing applied), or not confirmable (the read-back failed): either way the record has
+        // no old/new pair, so it held neither the value before the write nor the one proposed.
+        var alex = _h.Ad.AddAlex(title: "Analyst");
+        if (readBackFails)
+            _h.Ad.ReadBackFailure = "The server is not operational.";
+        else
+            _h.Ad.SetChangesNothing = true;
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst", ["department"] = "" });
+
+        Assert.False(result.Success);
+        var record = Assert.Single(_h.AuditEvents());
+        AssertUnconfirmedRecord(record, result.Error!, alex);
+
+        var title = record.GetProperty("attempted_title");
+        Assert.Equal("Analyst", title.GetProperty("old").GetString());
+        Assert.Equal("Lead Analyst", title.GetProperty("proposed").GetString());
+        var department = record.GetProperty("attempted_department");
+        Assert.Equal("Finance", department.GetProperty("old").GetString());
+        Assert.Equal(JsonValueKind.Null, department.GetProperty("proposed").ValueKind);
+
+        // And its trace step lists them, beside an empty list of what was written.
+        var step = Assert.Single(_h.TraceEvents(), e => e.TryGetProperty("stage", out var stage) && stage.GetString() == "AttributeWriteCompleted");
+        Assert.Equal("Failed", step.GetProperty("result").GetString());
+        var details = step.GetProperty("details");
+        Assert.Equal(0, details.GetProperty("changedAttributes").GetArrayLength());
+        var listed = details.GetProperty("attemptedChanges").EnumerateArray().ToList();
+        Assert.Equal(["title", "department"], listed.Select(c => c.GetProperty("name").GetString()));
+        Assert.Equal("Analyst", listed[0].GetProperty("oldValue").GetString());
+        Assert.Equal("Lead Analyst", listed[0].GetProperty("proposedValue").GetString());
+        Assert.Equal("Finance", listed[1].GetProperty("oldValue").GetString());
+        Assert.False(listed[1].TryGetProperty("proposedValue", out _));
+    }
+
     // ---- a save that finds nothing to change (aud-a26d) ----------------------------------------
 
     [Fact]

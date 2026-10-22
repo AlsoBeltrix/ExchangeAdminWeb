@@ -84,6 +84,83 @@ Files: `Components/Pages/AdminEventLog.razor`, `Services/ADAttributeEditorUndoSe
 `ExchangeAdminWeb.Tests/ADAttributeEditorUndoRefusalTests.cs`, `ExchangeAdminWeb.Tests/ADAttributeEditorSaveTests.cs`,
 `ExchangeAdminWeb.Tests/AttributeEditorHarness.cs` (the seam's subclass, a trace reader), this record.
 
+## Fix
+
+- `Components/Pages/AdminEventLog.razor`: `if (undoExecuting) return;` as the first statement of ShowUndoPreview
+  and of ExecuteUndo. NotYetConverted in ClickGateRegistry ("tier 4, not approved"), no line-keyed entry, so no
+  key moves; both guards return before `Progress.Begin`.
+- `Services/ADAttributeEditorUndoService.cs`, ExecuteUndoAsync: `OperationTraceService.OperationScope? scope =
+  null;` before the try, `scope = BeginUndoOperation(...)` its first statement, the catch's `scope?.Complete(false,
+  ex.Message)`, a new `finally { scope?.Dispose(); }` in place of the using. New `BeginUndoOperation` (internal
+  virtual, the test seam): the `BeginOperation` call it replaces, unchanged.
+- `Services/ADAttributeEditorService.cs`: LogAudit's optional `attempted` adds `attemptedChanges` (name, oldValue,
+  proposedValue) to the AttributeWriteCompleted trace step and `attempted_<name>` = `{ "old": ..., "proposed": ...
+  }` to the record; PerformSave's unconfirmed save passes `attempted: changes`. The record's `changedAttributes`
+  stays empty and it has no `old_`/`new_` pair.
+
+Harness (`ExchangeAdminWeb.Tests/AttributeEditorHarness.cs`): `CreateUndoServiceWhoseTraceFails(message)`, over a
+private `TraceFailingUndoService` whose BeginUndoOperation throws; `TraceEvents()` beside `AuditEvents()`, both
+through one reader; CreateUndoService's enablement setup moved into a helper both use.
+
+Tests: `EventLogUndoRefusalTests` -
+`APreviewRequestedWhileAnUndoRuns_IsRefused_AndTheUndosOutcomeStaysOnItsPanel`,
+`ASecondConfirmWhileAnUndoRuns_ReturnsAtOnce_AndLeavesNoRecordOfItsOwn` (PageConfirming's log row now built by an
+`Entry` helper the preview test also uses); `ADAttributeEditorUndoRefusalTests` -
+`AnUndoWhoseTraceCannotBegin_LeavesOneFailureRecord`; `ADAttributeEditorSaveTests` -
+`AnUnconfirmedSave_RecordsWhatItTriedToSet_NotAsAPairToUndo` (not confirmed; could not be confirmed).
+
+Caller-visible change, by design: while an undo runs, the event log's Undo buttons and a second Confirm do nothing;
+the running undo's panel, outcome and record are its own. An undo whose trace operation cannot begin is a failed
+`ADAttributeEditor_Undo` record with a failure notice instead of an exception out of the module. An unconfirmed
+attribute save's record and trace step name each attribute's value before the write and the value proposed.
+
+`AdminEventLog.razor`: 1,558 lines before, 1,564 after; NotYetConverted in ClickGateRegistry, so no line key moves.
+
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: M4 and E1 are the two handlers as at `afa9dbf6` (no re-entry guard), M5 the
+operation begun before the try as at `afa9dbf6`, M6 the unconfirmed record as at `afa9dbf6` (no attempted values);
+each fails the test that names it.
+
+Same driver and conditions as aud-a26l (`a28o-mutations.log`), the filter widened to the page's other tripwires:
+`FullyQualifiedName~ADAttributeEditor|FullyQualifiedName~AttributeEditorPageSaveAuditTests|FullyQualifiedName~ReversedOperationsTests|FullyQualifiedName~UndoNotificationTests|FullyQualifiedName~UndoIdentityTests|FullyQualifiedName~EventLogUndoRefusalTests|FullyQualifiedName~Allowlist|FullyQualifiedName~PageAuthorizationRecheckTests|FullyQualifiedName~Progress|FullyQualifiedName~ClickGate`
+(668 tests). Every mutant built with 0 errors; each restore matched its original MD5. After the round, a rebuild on
+the restored bytes and the filter: 668/668 green. (The round was run twice: the first time on a test file whose
+`Task.Delay` raised xUnit1051; the token was passed and the round re-run on these bytes, with the same verdicts.)
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| M4 ExecuteUndo's re-entry guard dropped | `AdminEventLog.razor`, `24B3D9EB7303E3E70007015FC5131785` | `15476CEE216194941708597C9865AEB5` | `ASecondConfirmWhileAnUndoRuns_ReturnsAtOnce_AndLeavesNoRecordOfItsOwn` only - the second call passes every check the first did and waits on its held authorization check instead of returning |
+| M5 BeginOperation back before the try | `ADAttributeEditorUndoService.cs`, `D28863B61DF5580BBE92C1FA7313D288` | `7D200207953DFE479617CF1CAB063B97` | `AnUndoWhoseTraceCannotBegin_LeavesOneFailureRecord` only - the throw escapes ExecuteUndoAsync instead of reaching its catch |
+| M6 the attempted values dropped from the unconfirmed save's record | `ADAttributeEditorService.cs`, `8A8C96CCDDD10ECCF34A658693AC8582` | `7B32ADBC2E729B40BB732FE3130B354F` | `AnUnconfirmedSave_RecordsWhatItTriedToSet_NotAsAPairToUndo`, both cases |
+| extra E1 ShowUndoPreview's re-entry guard dropped | `AdminEventLog.razor`, `24B3D9EB7303E3E70007015FC5131785` | `5ED252B12AD033534C493AB264B035F7` | `APreviewRequestedWhileAnUndoRuns_IsRefused_AndTheUndosOutcomeStaysOnItsPanel` only - the preview replaces the panel the undo was confirmed on |
+
+Unchanged through the round: `EventLogUndoRefusalTests.cs` `94E350B12ACC22F172C248E3D87C10A8`,
+`ADAttributeEditorUndoRefusalTests.cs` `F3402FA6B7F0D29A65196F6AF5E6CAF2`, `ADAttributeEditorSaveTests.cs`
+`A41EF2E291008EEF5A6D8D890A50ADE1`, `AttributeEditorHarness.cs` `A05AD976CDD631899932CDEB352FD869`. The code comments
+are written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental --no-restore`: 0 errors, 41 warnings, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx --no-build --blame-hang --blame-hang-timeout 10m` (Debug, after a Debug
+  build of this tree): exit 0, 5,453 passed / 3 skipped (the three known AD skips) / 0 failed, 5,456 total, 4m58s;
+  nothing hung, no Sequence file. aud-a26m's tree (`d0edf1ea`): 5,448 / 3 / 0, 5,451 total; the five new cases are
+  this record's.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1`: exit 0. `ClickGate*`, `ProgressRegistryTests` and `PageAuthorizationRecheckTests`
+  among the 668 above, green.
+
+No PowerShell source, AD module, directory, Delinea, SMTP, push or deployment. The page was not rendered in a
+browser and no live circuit was run. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- ShowUndoPreview is guarded while an undo RUNS, as the record asks, not while a preview LOADS: two previews
+  requested back to back (keyboard, behind the backdrop) can still finish out of order, leaving one event's preview
+  on the panel beside the other event as the target. A candidate, not fixed here.
+- The guards record nothing: a second click is not a second attempt, and the running undo records its own outcome.
+- ExecuteUndo and ShowUndoPreview are driven through the compiled page by reflection on a do-nothing renderer, not
+  through a rendered circuit (aud-a28m's harness).
+- The trace seam is a virtual method on the undo service; production begins exactly the operation it began before.

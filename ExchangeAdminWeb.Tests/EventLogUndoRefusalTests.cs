@@ -87,12 +87,7 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         SetProperty(page, "Progress", _progress);
         SetProperty(page, "Logger", NullLogger<Page>.Instance);
 
-        var entryType = typeof(Page).GetNestedType("MergedLogEntry", BindingFlags.NonPublic)!;
-        var entry = Activator.CreateInstance(entryType)!;
-        entryType.GetProperty("RawFields")!.SetValue(entry, edit);
-        entryType.GetProperty("OperationId")!.SetValue(entry, (string)edit["operationId"]!);
-        entryType.GetProperty("FullTarget")!.SetValue(entry, (string)edit["target"]!);
-        SetField(page, "undoTargetEvent", entry);
+        SetField(page, "undoTargetEvent", Entry(edit));
         SetField(page, "undoPreview", new UndoPreview(
             true, null, "ADAttributeEditor", "ADAttributeEditor_Update", (string)edit["target"]!,
             (string)edit["operationId"]!, [], false, null));
@@ -102,9 +97,24 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         return page;
     }
 
+    /// <summary>The page's log row for <paramref name="edit"/>, as LoadEvents builds it.</summary>
+    private static object Entry(Dictionary<string, object?> edit)
+    {
+        var entryType = typeof(Page).GetNestedType("MergedLogEntry", BindingFlags.NonPublic)!;
+        var entry = Activator.CreateInstance(entryType)!;
+        entryType.GetProperty("RawFields")!.SetValue(entry, edit);
+        entryType.GetProperty("OperationId")!.SetValue(entry, (string)edit["operationId"]!);
+        entryType.GetProperty("FullTarget")!.SetValue(entry, (string)edit["target"]!);
+        return entry;
+    }
+
     private Task ExecuteUndo(Page page) =>
         _renderer.Dispatcher.InvokeAsync(() =>
             (Task)typeof(Page).GetMethod("ExecuteUndo", PrivateInstance)!.Invoke(page, null)!);
+
+    private Task ShowUndoPreview(Page page, object entry) =>
+        _renderer.Dispatcher.InvokeAsync(() =>
+            (Task)typeof(Page).GetMethod("ShowUndoPreview", PrivateInstance)!.Invoke(page, [entry])!);
 
     private Task CloseUndoPanel(Page page) =>
         _renderer.Dispatcher.InvokeAsync(() =>
@@ -346,6 +356,70 @@ public sealed class EventLogUndoRefusalTests : IDisposable
 
         Assert.Equal(2, buttons.Count);
         Assert.All(buttons, button => Assert.Contains("disabled=\"@undoExecuting\"", button, StringComparison.Ordinal));
+    }
+
+    // ---- aud-a28o: neither a preview nor a second undo starts while an undo runs --------------------
+
+    [Fact]
+    public async Task APreviewRequestedWhileAnUndoRuns_IsRefused_AndTheUndosOutcomeStaysOnItsPanel()
+    {
+        // The table's Undo buttons sit behind the backdrop but can still be reached by keyboard. A preview
+        // opened mid-run used to replace the panel, and the running undo's outcome then showed on it.
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var page = PageConfirming(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
+        var check = Hold("EventLog");
+        var confirmed = Field<object?>(page, "undoTargetEvent");
+        var confirmedPreview = Field<UndoPreview?>(page, "undoPreview");
+
+        var undo = ExecuteUndo(page);
+        Assert.False(undo.IsCompleted);
+
+        var sam = _h.Ad.Add("sam.rivera@example.test", "CN=Sam Rivera,OU=Staff,DC=example,DC=test", "Sam Rivera", ("title", "Lead Analyst"));
+        var other = AttributeEditorHarness.ForwardEdit(sam, "title", from: "Analyst", to: "Lead Analyst");
+        other["operationId"] = "op-forward-2";
+        await ShowUndoPreview(page, Entry(other));
+
+        Assert.Same(confirmed, Field<object?>(page, "undoTargetEvent"));
+        Assert.Same(confirmedPreview, Field<UndoPreview?>(page, "undoPreview"));
+        Assert.Equal(Ticket, Field<string>(page, "undoTicket"));
+        Assert.Equal(0, _h.Service.SessionsOpened);
+
+        check.SetException(new InvalidOperationException(StoreUnreadable));
+        Assert.Null(await Record.ExceptionAsync(() => undo));
+
+        var shown = Field<string?>(page, "undoError");
+        Assert.Contains(StoreUnreadable, shown, StringComparison.Ordinal);
+        AssertEventLogRecord(Assert.Single(_h.AuditEvents()), shown!, alex);
+        Assert.Same(confirmed, Field<object?>(page, "undoTargetEvent"));
+    }
+
+    [Fact]
+    public async Task ASecondConfirmWhileAnUndoRuns_ReturnsAtOnce_AndLeavesNoRecordOfItsOwn()
+    {
+        // A double-click before the re-render disables Confirm: the second call used to pass every check the
+        // first had and run a second undo beside it.
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var page = PageConfirming(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
+        var check = Hold("EventLog");
+
+        var first = ExecuteUndo(page);
+        Assert.False(first.IsCompleted);
+        var second = ExecuteUndo(page);
+        var settled = await Task.WhenAny(second, Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        var secondReturnedAtOnce = ReferenceEquals(settled, second);
+        var recordsWhileTheFirstRuns = _h.AuditEvents().Count;
+
+        // Released either way, so a second call that did wait cannot hang the test.
+        check.SetException(new InvalidOperationException(StoreUnreadable));
+        var escaped = await Record.ExceptionAsync(() => Task.WhenAll(first, second));
+
+        Assert.True(secondReturnedAtOnce, "the second ExecuteUndo waited on the first one's check instead of returning");
+        Assert.Equal(0, recordsWhileTheFirstRuns);
+        Assert.Null(escaped);
+        var shown = Field<string?>(page, "undoError");
+        Assert.Contains(StoreUnreadable, shown, StringComparison.Ordinal);
+        AssertEventLogRecord(Assert.Single(_h.AuditEvents()), shown!, alex);
+        Assert.False(Field<bool>(page, "undoExecuting"));
     }
 
     private sealed class QuietEventLog : Page

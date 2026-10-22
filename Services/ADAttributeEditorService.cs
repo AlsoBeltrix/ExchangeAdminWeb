@@ -1474,7 +1474,7 @@ public class ADAttributeEditorService
         var (confirmError, asRead) = ConfirmWrite(ps, target, reReadGuid, changes, allowlist, server, credential);
         if (confirmError != null)
         {
-            LogAudit(target, [], performedBy, ip, ticket, false, confirmError);
+            LogAudit(target, [], performedBy, ip, ticket, false, confirmError, attempted: changes);
             return new(false, confirmError, null);
         }
 
@@ -1905,7 +1905,7 @@ public class ADAttributeEditorService
         }
     }
 
-    private void LogAudit(ResolvedDirectoryPrincipal target, List<AttributeChange> changes, string performedBy, string ip, string ticket, bool success, string? errorDetail, string? servicedNote = null)
+    private void LogAudit(ResolvedDirectoryPrincipal target, List<AttributeChange> changes, string performedBy, string ip, string ticket, bool success, string? errorDetail, string? servicedNote = null, List<AttributeChange>? attempted = null)
     {
         var changedAttrs = changes.Select(c => c.Name).ToArray();
         var details = new Dictionary<string, object?>
@@ -1914,6 +1914,8 @@ public class ADAttributeEditorService
             ["changedAttributes"] = changedAttrs,
             ["changes"] = changes.Select(c => new { c.Name, c.OldValue, c.NewValue }).ToArray()
         };
+        if (attempted is not null)
+            details["attemptedChanges"] = attempted.Select(c => new { c.Name, c.OldValue, ProposedValue = c.NewValue }).ToArray();
 
         _operationTrace.Step("AttributeWriteCompleted", success ? "Success" : "Failed", details: details);
 
@@ -1925,6 +1927,8 @@ public class ADAttributeEditorService
         var extra = ProtectedPrincipalServicing.Extra(servicedNote) ?? new Dictionary<string, object?>();
         if (!string.IsNullOrWhiteSpace(target.ObjectGuid))
             extra["targetObjectGuid"] = target.ObjectGuid;
+        foreach (var change in attempted ?? [])
+            extra[$"attempted_{change.Name}"] = new Dictionary<string, object?> { ["old"] = change.OldValue, ["proposed"] = change.NewValue };
 
         _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, changes, success, ticket, errorDetail, extra: extra);
     }

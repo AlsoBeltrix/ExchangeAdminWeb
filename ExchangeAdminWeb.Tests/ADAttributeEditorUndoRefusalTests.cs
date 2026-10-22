@@ -278,4 +278,38 @@ public sealed class ADAttributeEditorUndoRefusalTests : IDisposable
         Assert.True(failed.ContainsKey("old_title") && failed.ContainsKey("new_title"));
         Assert.False(_h.CreateUndoService().CanUndo(failed));
     }
+
+    // ---- aud-a28o: a trace that cannot begin is the undo's recorded failure -----------------------
+
+    [Fact]
+    public async Task AnUndoWhoseTraceCannotBegin_LeavesOneFailureRecord()
+    {
+        // The operation was begun before the try, outside the catch that records an undo's failure, so a throw
+        // there left the event log an exception and the audit log nothing.
+        const string traceDown = "The operation trace could not be started.";
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+
+        UndoResult? result = null;
+        var thrown = await Record.ExceptionAsync(async () => result = await Undo(
+            AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"),
+            _h.CreateUndoServiceWhoseTraceFails(traceDown)));
+
+        Assert.Null(thrown);
+        Assert.False(result!.Success);
+        Assert.Contains(traceDown, result.Error, StringComparison.Ordinal);
+        Assert.Equal(0, _h.Service.SessionsOpened);
+        Assert.Empty(_h.Ad.Sets);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Undo", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(traceDown, Text(record, "error"));
+        Assert.Equal("op-forward-1", Text(record, "originalOperationId"));
+        Assert.Equal(alex.Upn, Text(record, "target"));
+        Assert.False(record.TryGetProperty("refusedAt", out _));
+
+        var notice = Assert.Single(_h.Notices);
+        Assert.Equal(AttributeEditReversal.NoticeAction, notice.Action);
+        Assert.False(notice.Success);
+    }
 }

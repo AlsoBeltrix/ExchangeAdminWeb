@@ -909,6 +909,9 @@
 
     private async Task ShowUndoPreview(MergedLogEntry evt)
     {
+        if (undoExecuting)
+            return;
+
         undoTargetEvent = evt;
         undoLoading = true;
         undoError = null;
@@ -966,6 +969,9 @@
 
     private async Task ExecuteUndo()
     {
+        if (undoExecuting)
+            return;
+
         // aud-a28m: what this handler acts on and records is read once, here, before its first
         // await. The panel's fields belong to the panel, and a control that writes them while the
         // undo is suspended - a close, before CloseUndoPanel refused one - must not change which

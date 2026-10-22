@@ -218,20 +218,32 @@ internal sealed class AttributeEditorHarness : IDisposable
             ["_undoMaxLevel"] = 3,
         };
 
-    public ADAttributeEditorUndoService CreateUndoService(bool moduleEnabled = true)
+    public ADAttributeEditorUndoService CreateUndoService(bool moduleEnabled = true) =>
+        new(Service, Protection, Servicers, Enablement(moduleEnabled), Audit, Trace, Email,
+            NullLogger<ADAttributeEditorUndoService>.Instance);
+
+    /// <summary>
+    /// The undo service with its trace operation failing to begin, with <paramref name="failure"/> as the
+    /// exception's message (aud-a28o). Nothing else differs.
+    /// </summary>
+    public ADAttributeEditorUndoService CreateUndoServiceWhoseTraceFails(string failure) =>
+        new TraceFailingUndoService(failure, Service, Protection, Servicers, Enablement(true), Audit, Trace, Email);
+
+    private ModuleEnablementService Enablement(bool moduleEnabled)
     {
         var enablementRepository = TestConfigStore.CreateModuleEnablement(_root);
         enablementRepository.SaveAll(new Dictionary<string, bool> { ["ADAttributeEditor"] = moduleEnabled });
-        var enablement = new ModuleEnablementService(
+        return new ModuleEnablementService(
             new ModuleCatalog(), Env, ModuleConfig, enablementRepository, Config, NullLogger<ModuleEnablementService>.Instance);
-
-        return new ADAttributeEditorUndoService(
-            Service, Protection, Servicers, enablement, Audit, Trace, Email,
-            NullLogger<ADAttributeEditorUndoService>.Instance);
     }
 
     /// <summary>Every audit record written so far, oldest first.</summary>
-    public IReadOnlyList<JsonElement> AuditEvents()
+    public IReadOnlyList<JsonElement> AuditEvents() => Events(trace: false);
+
+    /// <summary>Every operation-trace event written so far, oldest first.</summary>
+    public IReadOnlyList<JsonElement> TraceEvents() => Events(trace: true);
+
+    private List<JsonElement> Events(bool trace)
     {
         var folder = Path.Combine(_root, "ExchangeAdminWeb");
         var events = new List<JsonElement>();
@@ -239,14 +251,15 @@ internal sealed class AttributeEditorHarness : IDisposable
             return events;
 
         var files = Directory.GetFiles(folder, "exchangeadmin_*.jsonl")
-            .Where(f => !Path.GetFileNameWithoutExtension(f).EndsWith("_trace", StringComparison.OrdinalIgnoreCase))
+            .Where(f => Path.GetFileNameWithoutExtension(f).EndsWith("_trace", StringComparison.OrdinalIgnoreCase) == trace)
             .OrderBy(f => f, StringComparer.Ordinal);
 
         foreach (var line in files.SelectMany(File.ReadAllLines).Where(l => !string.IsNullOrWhiteSpace(l)))
         {
             using var document = JsonDocument.Parse(line);
             var root = document.RootElement;
-            if (root.TryGetProperty("eventType", out var type) && type.GetString() == "audit")
+            var type = root.TryGetProperty("eventType", out var eventType) ? eventType.GetString() : null;
+            if (trace ? type?.StartsWith("operation.", StringComparison.Ordinal) == true : type == "audit")
                 events.Add(root.Clone());
         }
 
@@ -300,6 +313,24 @@ internal sealed class AttributeEditorHarness : IDisposable
         internal override Task<(string username, string password, string domain)?> GetCredentialsAsync(string purpose) =>
             Task.FromResult<(string username, string password, string domain)?>(
                 _harness.CredentialsAvailable ? ("svc-attribute-editor", "not-a-secret", "EXAMPLE") : null);
+    }
+
+    /// <summary>The undo service with only its trace seam replaced: beginning the operation throws.</summary>
+    private sealed class TraceFailingUndoService(
+        string failure,
+        ADAttributeEditorService editor,
+        ProtectedPrincipalService protection,
+        ProtectedPrincipalServicerService servicers,
+        ModuleEnablementService enablement,
+        AuditService audit,
+        OperationTraceService trace,
+        EmailService email)
+        : ADAttributeEditorUndoService(editor, protection, servicers, enablement, audit, trace, email,
+            NullLogger<ADAttributeEditorUndoService>.Instance)
+    {
+        internal override OperationTraceService.OperationScope BeginUndoOperation(
+            string performedBy, string ip, string target, string ticket, string? originalOperationId) =>
+            throw new InvalidOperationException(failure);
     }
 
     /// <summary>A protected-principal service whose decision the test sets.</summary>

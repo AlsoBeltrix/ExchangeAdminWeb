@@ -196,17 +196,11 @@ public class ADAttributeEditorUndoService : IUndoableModule
             return new UndoResult(false, noChanges, null);
         }
 
-        using var scope = _operationTrace.BeginOperation(
-            module: "ADAttributeEditor",
-            action: "ADAttributeEditor_Undo",
-            actor: performedBy,
-            ipAddress: ip,
-            target: target,
-            ticket: ticket,
-            details: new Dictionary<string, object?> { ["originalOperationId"] = originalOperationId });
-
+        OperationTraceService.OperationScope? scope = null;
         try
         {
+            scope = BeginUndoOperation(performedBy, ip, target, ticket, originalOperationId);
+
             // Re-read current state
             var lookupResult = await _editorService.LookupAsync(target);
             if (!lookupResult.Success || lookupResult.CurrentValues == null || lookupResult.Principal == null)
@@ -345,10 +339,25 @@ public class ADAttributeEditorUndoService : IUndoableModule
                 performedBy, ip, ticket, target, changedAttributes, originalOperationId,
                 success: false, error: ex.Message);
 
-            scope.Complete(false, ex.Message);
+            scope?.Complete(false, ex.Message);
             return new UndoResult(false, $"Unexpected error during undo: {ex.Message}", null);
         }
+        finally
+        {
+            scope?.Dispose();
+        }
     }
+
+    internal virtual OperationTraceService.OperationScope BeginUndoOperation(
+        string performedBy, string ip, string target, string ticket, string? originalOperationId) =>
+        _operationTrace.BeginOperation(
+            module: "ADAttributeEditor",
+            action: "ADAttributeEditor_Undo",
+            actor: performedBy,
+            ipAddress: ip,
+            target: target,
+            ticket: ticket,
+            details: new Dictionary<string, object?> { ["originalOperationId"] = originalOperationId });
 
     /// <summary>
     /// Records an undo the event log refused before calling <see cref="ExecuteUndoAsync"/> (aud-a28l).
