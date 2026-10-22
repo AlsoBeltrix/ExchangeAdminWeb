@@ -6,7 +6,7 @@ module-config store's write lock before any write. A database whose lock is held
 sees a generic "Failed to save" with no hint that the store was busy and a retry would succeed.
 **Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
 **Branch**: `worktree-agent-a9db60993a8970569`
-**Commit**: -
+**Commit**: `65e8644b` (plan `40026345`; comments `082a2b51`, `c7b61943`)
 **Reviewer**: implementer (surfaced by the aud-a28r/a26p agent, 2026-10-22, candidate 5 of its hand-back)
 
 ## Evidence
@@ -97,7 +97,8 @@ is locked'." and left a failure record. Nothing is written either way.
 
 ## Guard proof
 
-Session-local driver (`mutate.ps1` in the scratchpad): the fix staged; MD5; mutate by exact text (one match required); touch;
+Session-local driver (`mutate.ps1` in the scratchpad - which turned out to be shared with sibling agents: the name was
+another agent's too, and the file holds theirs now; aud-a28w's round ran the same steps as `a9db-mutate.ps1`): the fix staged; MD5; mutate by exact text (one match required); touch;
 `dotnet build` of the test project; `dotnet test --no-build` filtered to
 `FullyQualifiedName~SettingsStoreBusyTests|FullyQualifiedName~SettingsSaveAuditTests|FullyQualifiedName~SettingsWholeProtectedSaveTests|FullyQualifiedName~SettingsConnectionAndSecretSaveTests|FullyQualifiedName~SettingsSaveStoreCheckTests|FullyQualifiedName~SettingsFieldTests|FullyQualifiedName~SettingsNoOpAndUnreadableSecretTests|FullyQualifiedName~SettingsPerRowSaveTests|FullyQualifiedName~AdminPageDirtyStateTests|FullyQualifiedName~ProgressRegistryTests|FullyQualifiedName~SqliteConfigStoreTests|FullyQualifiedName~SettingsConcurrentSaveTests|FullyQualifiedName~SettingsStoreTextTests`
 (230 tests); `git checkout --` of the file from the index; touch; MD5 re-confirmed; rebuild; the same filter. Every mutant built
@@ -131,3 +132,12 @@ never looked up. The page was not rendered in a browser. No coder self-review ve
   finding, which names the compare; raised in the hand-back as a candidate.
 - The lock is held by a raw connection on the harness's temp file; nothing ran against the shared database or a second
   instance.
+
+## Branch-tip gates - 2026-10-22 (`c7b61943`: the three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,788 passed / 3 skipped (the three known AD skips) / 0 failed, 5,791 total, 5m16s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- The comments commit `082a2b51` failed this gate once, on aud-a28w's comment (that record says how); `c7b61943` rewords it.

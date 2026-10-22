@@ -9,7 +9,7 @@ entries in an already-applied record, compares case-insensitively while the dirt
 now case-sensitive, so a casing-only change counts as unsaved yet is named as unchanged.
 **Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review (one follow-up in a file owned by another agent, below)
 **Branch**: `worktree-agent-a9db60993a8970569`
-**Commit**: -
+**Commit**: `63f43eb5` (plan `40026345`; comments `082a2b51`, `c7b61943`)
 **Reviewer**: implementer (surfaced by the aud-a28r/a26p agent, 2026-10-22, candidates 2, 3 and 4 of its hand-back)
 
 ## Evidence
@@ -185,3 +185,12 @@ rendered in a browser. No coder self-review verdict is claimed.
   `BorrowAsync` are public. Nothing connected to Exchange Online.
 - A "+42" or "0042" stored before this fix stays as stored, and the lookups still read it as 42: the page refuses only a changed
   value, so the stored text is corrected when an admin next enters the ID.
+
+## Branch-tip gates - 2026-10-22 (`c7b61943`: the three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,788 passed / 3 skipped (the three known AD skips) / 0 failed, 5,791 total, 5m16s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- The comments commit `082a2b51` failed this gate once, on aud-a28w's comment (that record says how); `c7b61943` rewords it.

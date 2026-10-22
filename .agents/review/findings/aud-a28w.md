@@ -6,7 +6,7 @@ runspaces opened at once. Nothing in the app opens a runspace first: after a sta
 operators' sessions may open concurrently, the same shape.
 **Status**: Fixed on the branch, the folded-in LOW with it; closed on guard proof; awaiting merge and codex review
 **Branch**: `worktree-agent-a9db60993a8970569`
-**Commit**: -
+**Commit**: `9c554a5a` (plan `40026345`; comments `082a2b51`, `c7b61943`)
 **Reviewer**: implementer (surfaced by the aud-a28r/a26p agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence
@@ -160,6 +160,20 @@ self-review verdict is claimed.
 - Program.cs is pinned by source order (after `builder.Build()`, before `app.Run()`); the app itself was not started here, under
   IIS or otherwise.
 - A warm-up whose open never returns would leave a thread-pool thread blocked and write no line; start-up still goes on.
+
+## Branch-tip gates - 2026-10-22 (`c7b61943`: the three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,788 passed / 3 skipped (the three known AD skips) / 0 failed, 5,791 total, 5m16s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- The comments commit `082a2b51` failed this gate once: exit 1, 5,787 passed / 3 skipped / 1 failed -
+  `CircuitRevalidationTests.ProgramCs_ResolvesTheOffSwitchAndReportsItAtStartup`. That test finds `app.Run()` in Program.cs's
+  raw text (comments included) and requires `ReportIfDisabled` before it; the warm-up's new comment named that call, above
+  `ReportIfDisabled`, so the test read the comment as the call. The round's filter had run the class against the code, before
+  the comments. `c7b61943` rewords the comment so it names neither call; comment-only - Program.cs's code with whole-line
+  comments and blank lines stripped hashes `7ADA775A7E73A1F3504F5674227EFD34` at `9c554a5a`, `082a2b51` and `c7b61943`.
 
 ## Folded in: the warm-up fixture discards the failure it is meant to diagnose (codex, settings-batch-4, 2026-10-22) - LOW
 
