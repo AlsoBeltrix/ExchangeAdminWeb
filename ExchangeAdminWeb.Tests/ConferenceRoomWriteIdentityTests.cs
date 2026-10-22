@@ -55,6 +55,11 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         // throws - the way a test reaches that step. Live it is not reached so: the module's PAM provider returns no
         // credential at all for a secret without a password (DelineaService), which the paths refuse as not configured.
         public string? IncompleteCredentialFor;
+        // aud-a2v. For a purpose containing this text, no credential at all - what the module's credential lookup returns live
+        // for no secret ID, a corrupt module config, or a PAM provider that fails or holds an incomplete secret.
+        public string? NoCredentialFor;
+        // aud-a2v. Each purpose the lookup was asked with, in order: the text a path's refusal line names beside the room.
+        public List<string> CredentialPurposes { get; } = [];
 
         public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null)
             : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
@@ -62,6 +67,9 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
         {
             CredentialRequests++;
+            CredentialPurposes.Add(purpose);
+            if (NoCredentialFor is { } none && purpose.Contains(none, StringComparison.Ordinal))
+                return Task.FromResult<(string username, string password, string domain)?>(null);
             if (IncompleteCredentialFor is { } incomplete && purpose.Contains(incomplete, StringComparison.Ordinal))
                 return Task.FromResult<(string username, string password, string domain)?>(("svc", null!, "CONTOSO"));
             return Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
@@ -1278,9 +1286,11 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
 
     private const string NothingWritten = " Nothing was written.";
 
-    // The line each path logs for a refusal - aud-a2t's two room-list lines among them - for the room as it was typed.
+    // The line each path logs for a refusal - aud-a2t's two room-list lines among them, and since aud-a2v the row's own - for
+    // the room as it was typed.
     private static string RefusalLine(string path, string refusal) => path switch
     {
+        "Room Finder apply" => $"Room Finder apply for {Typed} refused the row; nothing was written: {refusal}",
         "City/State/Country preflight" => $"Set-ADUser preflight for {Typed} refused the row; nothing was written: {refusal}",
         "City/State/Country write" => $"Set-ADUser City/State/Country write for {Typed} refused before its write: {refusal}",
         "room-list preflight" => $"Room-list preflight for {Typed} on {List} refused the row; nothing was written: {refusal}",
@@ -1347,8 +1357,7 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     {
         // Each refusal a path decides before it opens a runspace or asks for a credential, through the whole row: refused
         // while nothing is written, in its one step, as before - and one warning, the path's, naming the room, the list where
-        // there is one, and the refusal as the row reports it, less the " Nothing was written." the room-list preflight
-        // appends.
+        // there is one, and the refusal as the row reports it, less the " Nothing was written." each preflight appends.
         var room = Room();
         var city = "";
         var country = "";
@@ -1375,13 +1384,10 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.Equal(result.Message, step.Error);
         var cityStateAndCountry = refusal is "an unmappable country" or "no AD object for City/State/Country";
         Assert.Equal(cityStateAndCountry ? "Set-ADUser preflight (City/State/Country)" : "Room list preflight", step.Stage);
-        // The City/State/Country preflight's two say what could not be written, and append nothing.
-        var reason = result.Message;
-        if (!cityStateAndCountry)
-        {
-            Assert.EndsWith(NothingWritten, reason, StringComparison.Ordinal);
-            reason = reason[..^NothingWritten.Length];
-        }
+        // aud-a2v. All five end so, the City/State/Country preflight's two as well since that preflight took the room-list
+        // preflight's rule: they said only what could not be written.
+        Assert.EndsWith(NothingWritten, result.Message, StringComparison.Ordinal);
+        var reason = result.Message[..^NothingWritten.Length];
         Assert.Contains(refusal switch
         {
             "an unmappable country" => "'ZZ' is not a recognized ISO 3166-1 alpha-2 country code",
@@ -1423,5 +1429,214 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.Empty(_h.CallsTo("Set-ADGroup"));
         Assert.Equal(0, service.CredentialRequests);
         AssertLoggedOnce(logger, "on-prem room-list add", step.Error);
+    }
+
+    // ---- aud-a2v: the row's own refusals and a credential no lookup returned are logged; one refusal style ----
+    // The row's own refusals before its preflights - no validated room, an invalid time zone, a recipient that is not a room
+    // mailbox - were returned and logged nowhere. A credential lookup returning none left only the credential services'
+    // lines, which name the secret, not the room or the row. The unmappable country reached the operator ending with .NET's
+    // " (Parameter 'countryOrRegion')". And the City/State/Country preflight's refusals before its runspace did not end
+    // "Nothing was written." as the room-list preflight's do.
+
+    [Theory]
+    [InlineData("no validated room")]
+    [InlineData("an invalid time zone")]
+    [InlineData("a recipient that is not a room mailbox")]
+    public async Task TheRowsOwnRefusal_IsLoggedOnce_NamingTheRoomAndTheReason(string refusal)
+    {
+        // Each refusal the row makes before its preflights, with every field set so that a row past it would ask for a
+        // credential and write: refused in no step, nothing written, nothing asked for, its message as before to the byte -
+        // and one warning, the row's, naming the room as typed and the refusal.
+        ValidatedMailbox? room = Room();
+        var timezone = "GMT Standard Time";
+        switch (refusal)
+        {
+            case "no validated room": room = null; break;
+            case "an invalid time zone": timezone = "Mars Standard Time"; break;
+            case "a recipient that is not a room mailbox": _h.AddMailbox("room1@contoso.test", Checked, recipientTypeDetails: "EquipmentMailbox"); break;
+            default: throw new ArgumentOutOfRangeException(nameof(refusal), refusal, null);
+        }
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
+
+        var result = await service.SetRoomMetadataAndListAsync(
+            Typed, room, "Dublin", "Building 1", 8, "2", "Second", "TV", "Polycom", "IE", "Leinster", timezone);
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(result.Steps);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, service.CredentialRequests);
+        Assert.Equal(refusal switch
+        {
+            "no validated room" => ValidatedMailbox.Refusal(Typed),
+            "an invalid time zone" => "Invalid timezone: 'Mars Standard Time'.",
+            _ => $"'{Typed}' is a EquipmentMailbox, not a room mailbox. Conference Room operations require RoomMailbox or RemoteRoomMailbox.",
+        }, result.Message);
+        AssertLoggedOnce(logger, "Room Finder apply", result.Message);
+    }
+
+    [Theory]
+    [InlineData("City/State/Country preflight")]
+    [InlineData("City/State/Country write")]
+    [InlineData("on-prem room-list preflight")]
+    [InlineData("on-prem room-list add")]
+    public async Task ACredentialTheLookupDoesNotReturn_IsLoggedOnce_NamingTheRoomTheListAndThePurpose(string path)
+    {
+        // The module's credential lookup returning none for one path's purpose only, on each of the four. Refused as before -
+        // a preflight while nothing is written, a write after Set-Place, inside the partial - and one warning, the path's,
+        // naming the room, the list where there is one, and the purpose the lookup was asked with: the purpose the credential
+        // service's own line names, where it logs one.
+        var cityStateAndCountry = path.StartsWith("City/State/Country", StringComparison.Ordinal);
+        var preflight = path.EndsWith("preflight", StringComparison.Ordinal);
+        if (!cityStateAndCountry)
+            SyncedListTakingTheRoomOnPrem();
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger)
+        {
+            NoCredentialFor = path switch
+            {
+                "City/State/Country preflight" => "Set-ADUser preflight",
+                "City/State/Country write" => "Set-ADUser synced attributes",
+                "on-prem room-list preflight" => "membership preflight",
+                _ => "membership add",
+            },
+        };
+        var purpose = path switch
+        {
+            "City/State/Country preflight" => $"Set-ADUser preflight for {Typed}",
+            "City/State/Country write" => $"Set-ADUser synced attributes for {Typed}",
+            "on-prem room-list preflight" => $"on-prem room-list membership preflight for {Typed}",
+            _ => $"on-prem room-list membership add for {Typed}",
+        };
+        var refusal = path switch
+        {
+            "on-prem room-list preflight" => $"On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config), and room list '{List}' is synchronized from on-premises, so the room cannot be added to it.",
+            "on-prem room-list add" => "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). The room could not be added to the on-prem room list.",
+            _ => "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.",
+        };
+
+        var result = await Finder(service, Room(), city: cityStateAndCountry ? "Dublin" : "");
+
+        Assert.False(result.Success);
+        Assert.Equal(!preflight, result.Partial);
+        Assert.Equal(purpose, service.CredentialPurposes.Last());
+        var step = Assert.Single(result.Steps, s => !s.Success);
+        Assert.Equal(path switch
+        {
+            "City/State/Country preflight" => "Set-ADUser preflight (City/State/Country)",
+            "City/State/Country write" => "Set-ADUser (City/State/Country)",
+            "on-prem room-list preflight" => "Room list preflight",
+            _ => $"Add to '{List}' (on-prem)",
+        }, step.Stage);
+        if (preflight)
+        {
+            Assert.Empty(_h.Writes);
+            Assert.Single(result.Steps);
+            Assert.Equal(refusal + NothingWritten, result.Message);
+            Assert.Equal(result.Message, step.Error);
+        }
+        else
+        {
+            Assert.Single(_h.CallsTo("Set-Place"));
+            Assert.Empty(_h.CallsTo(cityStateAndCountry ? "Set-ADUser" : "Set-ADGroup"));
+            Assert.Equal(refusal, step.Error);
+            Assert.Contains(refusal, result.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("Nothing was written", result.Message, StringComparison.Ordinal);
+        }
+        AssertLoggedOnce(logger, path, $"no AD credential was returned for {purpose}: {refusal}");
+        // And that line is the only one carrying the refusal: the row, which puts it on its result, logs it no second time.
+        Assert.Single(logger.Entries, e => e.Message.Contains(refusal, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheUnmappableCountrysMessage_CarriesNoParameterSuffix()
+    {
+        // An unmappable country through the whole row: the operator reads the mapping's own words - the value, and what to do
+        // about it - then that nothing was written, and no " (Parameter 'countryOrRegion')", which ArgumentException adds to
+        // the message of an exception naming its parameter. The line carries the same words.
+        const string Mapping = "'ZZ' is not a recognized ISO 3166-1 alpha-2 country code. Use the two-letter code (e.g. IE, US, GB). If this is a new country, add it to IsoCountryCodes.cs.";
+        var logger = new CapturingLogger();
+
+        var result = await Finder(new Service(_h, logger), Room(), country: "ZZ");
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.Writes);
+        Assert.DoesNotContain("(Parameter", result.Message, StringComparison.Ordinal);
+        Assert.Equal(Mapping + NothingWritten, result.Message);
+        AssertLoggedOnce(logger, "City/State/Country preflight", Mapping);
+    }
+
+    [Fact]
+    public void TheCountryMappingsOtherRefusal_CarriesNoParameterSuffix()
+    {
+        // The mapping's other refusal: a code in the ISO table that this runtime's RegionInfo cannot name, so co would have no
+        // value. Western Sahara (EH) is one on this machine's runtime (.NET 10 over the operating system's ICU; measured
+        // 2026-10-22, the only one of the table's 249 codes). On a runtime that can name it, EH maps, and that is pinned instead.
+        string? englishName;
+        try
+        {
+            englishName = new System.Globalization.RegionInfo("EH").EnglishName;
+        }
+        catch (ArgumentException)
+        {
+            englishName = null;
+        }
+
+        if (englishName is null)
+        {
+            var refused = Assert.Throws<ArgumentException>(() => ConferenceRoomService.BuildCountryAttributes("EH"));
+            Assert.Equal("Country 'EH' has no display name on this system; cannot set the 'co' attribute.", refused.Message);
+        }
+        else
+        {
+            var mapped = ConferenceRoomService.BuildCountryAttributes("EH");
+            Assert.NotNull(mapped);
+            Assert.Equal(("EH", englishName, 732), mapped.Value);
+        }
+    }
+
+    [Theory]
+    [InlineData("City/State/Country", "an unmappable country")]
+    [InlineData("City/State/Country", "no AD object")]
+    [InlineData("City/State/Country", "no credential")]
+    [InlineData("room list", "no GUID")]
+    [InlineData("room list", "no sync state")]
+    [InlineData("room list", "no AD object")]
+    [InlineData("room list", "no credential")]
+    public async Task EveryRefusalEitherPreflightDecidesBeforeTheDirectoryWork_EndsNothingWasWritten(string preflight, string refusal)
+    {
+        // One rule for both preflights: a refusal decided before any write says so at its end, in the same words. The
+        // room-list preflight's did; the City/State/Country preflight's three before its runspace said only what could not be
+        // written, so the operator read two styles for one fact.
+        var room = Room();
+        var city = "";
+        var country = "";
+        var service = new Service(_h);
+        switch (preflight, refusal)
+        {
+            case ("City/State/Country", "an unmappable country"): country = "ZZ"; break;
+            case ("City/State/Country", "no AD object"): city = "Dublin"; room = Room(directoryObject: null); break;
+            case ("City/State/Country", "no credential"): city = "Dublin"; service.NoCredentialFor = "Set-ADUser preflight"; break;
+            case ("room list", "no GUID"): _h.ListGuids[List] = null; break;
+            case ("room list", "no sync state"): _h.ListSyncState[List] = null; break;
+            case ("room list", "no AD object"): room = Room(directoryObject: null); SyncedListTakingTheRoomOnPrem(); break;
+            case ("room list", "no credential"): service.NoCredentialFor = "membership preflight"; SyncedListTakingTheRoomOnPrem(); break;
+            default: throw new ArgumentOutOfRangeException(nameof(refusal), refusal, null);
+        }
+
+        var result = await Finder(service, room, city: city, country: country);
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.Writes);
+        var step = Assert.Single(result.Steps);
+        Assert.False(step.Success);
+        Assert.Equal(preflight == "room list" ? "Room list preflight" : "Set-ADUser preflight (City/State/Country)", step.Stage);
+        Assert.Equal(result.Message, step.Error);
+        Assert.EndsWith(NothingWritten, result.Message, StringComparison.Ordinal);
+        Assert.EndsWith(".", result.Message[..^NothingWritten.Length], StringComparison.Ordinal);
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(result.Message, "Nothing was written"));
     }
 }
