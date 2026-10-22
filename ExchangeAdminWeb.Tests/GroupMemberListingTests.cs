@@ -214,4 +214,30 @@ public class GroupMemberListingTests
             "Components", "Pages", "GroupManagement.razor"));
         Assert.Contains("member.IsPrimaryMember", page, StringComparison.Ordinal);
     }
+
+    // ----- Tripwire: no production code calls Get-ADGroupMember (aud-a2i) -----
+
+    [Fact]
+    public void NoProductionCode_CallsGetAdGroupMember()
+    {
+        // The cmdlet resolves every member server-side: ADWS refuses a group past
+        // MaxGroupOrMemberEntries (5,000 by default), and the read faults on a member in another
+        // domain it cannot chase. Every membership read takes the group's member attribute instead;
+        // the Conference Rooms on-prem room-list check was the last call. Every .cs and .razor under
+        // Services/ and Components/ - where every PowerShell call the app makes is issued - with //
+        // comments stripped, because the services explain in prose why they do not call it.
+        var root = Path.GetDirectoryName(AuditCategoryFilingTests.FindRepoFile("ExchangeAdminWeb.csproj"))!;
+        var files = new[] { "Services", "Components" }
+            .SelectMany(dir => Directory.EnumerateFiles(Path.Combine(root, dir), "*", SearchOption.AllDirectories))
+            .Where(f => f.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".razor", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        Assert.Contains(files, f => Path.GetFileName(f) == "ConferenceRoomService.cs");
+
+        var offenders = files
+            .Where(f => System.Text.RegularExpressions.Regex.Replace(File.ReadAllText(f), @"//[^\n]*", "")
+                .Contains("Get-ADGroupMember", StringComparison.OrdinalIgnoreCase))
+            .Select(f => Path.GetRelativePath(root, f))
+            .ToList();
+        Assert.Empty(offenders);
+    }
 }

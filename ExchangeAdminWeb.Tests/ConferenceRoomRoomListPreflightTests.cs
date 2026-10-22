@@ -26,7 +26,11 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     private const string Building = "Building 1";
     private static readonly Guid Checked = Guid.Parse("0f0f0f0f-1111-4222-8333-444444444444");
     private const string CheckedObject = "5a5a5a5a-0000-4000-8000-000000000001";
+    // aud-a2i. The DN of the room's AD object, and of its list's on-prem group, as the stand-in directory
+    // holds them: the on-prem membership is compared by the first and read by the second.
+    private const string RoomDn = "CN=Room 1,OU=Rooms,DC=contoso,DC=test";
     private static readonly string List = ConferenceRoomService.BuildRoomListName(Building);
+    private static readonly string GroupDn = ExchangeWriteHarness.DirectoryGroupDn(ExchangeWriteHarness.DefaultDirectoryGroupGuid);
 
     // Exchange Online's refusal of a cloud add to a list synchronized from on-premises.
     private const string OnPremMastered =
@@ -44,7 +48,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         _h.DirectoryObjects[CheckedObject] = new Hashtable
         {
             ["ObjectGUID"] = Guid.Parse(CheckedObject),
-            ["DistinguishedName"] = "CN=Room 1,OU=Rooms,DC=contoso,DC=test",
+            ["DistinguishedName"] = RoomDn,
         };
     }
 
@@ -304,6 +308,171 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         if (resultSize is not null)
             read.AddParameter("ResultSize", resultSize);
         read.AddParameter("ErrorAction", errorAction);
+        return ps.Invoke();
+    }
+
+    // aud-a2i. A synced list the room is not on in Exchange - a first add, or a re-run inside the sync
+    // window after an on-prem add - with Exchange refusing the cloud add, as it does for such a list:
+    // the preflight proves the on-prem add and the row reaches it.
+    private void SyncedListTheRoomIsNotOnInExchange()
+    {
+        _h.ListSyncState[List] = true;
+        _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
+    }
+
+    // The positions in the call log of every on-prem membership read: Get-ADGroup by -Identity.
+    private List<int> MembershipReads()
+    {
+        var calls = _h.Calls.Cast<Hashtable>().ToList();
+        return Enumerable.Range(0, calls.Count)
+            .Where(i => (string)calls[i]["__Command"]! == "Get-ADGroup" && calls[i].ContainsKey("Identity"))
+            .ToList();
+    }
+
+    // The repo's membership read: the group's member attribute, by the group's DN, on the domain the DN names.
+    private static void AssertReadsTheGroupsMemberAttributeInItsDomain(Hashtable read)
+    {
+        Assert.Equal(GroupDn, ExchangeWriteHarness.Bound(read, "Identity"));
+        Assert.Equal("contoso.test", ExchangeWriteHarness.Bound(read, "Server"));
+        var properties = Assert.IsAssignableFrom<IEnumerable>(ExchangeWriteHarness.Bound(read, "Properties"));
+        Assert.Contains("member", properties.Cast<object>().Select(p => p?.ToString()));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARoomAlreadyInItsOnPremGroup_ByTheMemberAttribute_IsNotAddedAgain(bool dnInAnotherCase)
+    {
+        // aud-a2i. The room is already in the list's on-prem group - its DN on the group's member
+        // attribute, in either case, DNs comparing case-insensitively - but not yet on Exchange's copy.
+        // Nothing on-prem is written and nothing is partial. The membership was read before Set-Place,
+        // by the preflight, and again by the add, the same way both times - never by Get-ADGroupMember.
+        SyncedListTheRoomIsNotOnInExchange();
+        _h.DirectoryGroupMembers.Add("CN=Someone,OU=People,DC=contoso,DC=test");
+        _h.DirectoryGroupMembers.Add(dnInAnotherCase ? RoomDn.ToUpperInvariant() : RoomDn);
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.CallsTo("Add-ADGroupMember"));
+        Assert.Empty(_h.CallsTo("Get-ADGroupMember"));
+        var calls = _h.Calls.Cast<Hashtable>().ToList();
+        var setPlace = calls.FindIndex(c => (string)c["__Command"]! == "Set-Place");
+        var reads = MembershipReads();
+        Assert.Equal(2, reads.Count);
+        Assert.True(reads[0] < setPlace && setPlace < reads[1], $"membership reads at {reads[0]} and {reads[1]}, Set-Place at {setPlace}");
+        Assert.All(reads, i => AssertReadsTheGroupsMemberAttributeInItsDomain(calls[i]));
+    }
+
+    [Theory]
+    [InlineData("over the ADWS cap", false)]
+    [InlineData("over the ADWS cap", true)]
+    [InlineData("a member in another domain", false)]
+    [InlineData("a member in another domain", true)]
+    public async Task AGroupGetAdGroupMemberWouldRefuse_NoLongerAffectsTheRow(string shape, bool alreadyAMember)
+    {
+        // aud-a2i, the finding. The two groups Get-ADGroupMember cannot read - more members than the ADWS
+        // cap, or a member in another domain - which the stand-in refuses as the real cmdlet does. The old
+        // read failed after Set-Place and the timezone had committed, so the row came back partial on
+        // every re-run; the member attribute reads both, and the row completes: added when the room was
+        // not a member, left alone when it was.
+        SyncedListTheRoomIsNotOnInExchange();
+        if (shape == "over the ADWS cap")
+        {
+            for (var i = 0; i < ExchangeWriteHarness.AdwsMaxGroupOrMemberEntries; i++)
+                _h.DirectoryGroupMembers.Add($"CN=Member {i},OU=People,DC=contoso,DC=test");
+            if (!alreadyAMember)
+                _h.DirectoryGroupMembers.Add("CN=One More,OU=People,DC=contoso,DC=test");
+        }
+        else
+        {
+            _h.DirectoryGroupMembers.Add("CN=Someone,OU=People,DC=fabrikam,DC=test");
+        }
+        if (alreadyAMember)
+            _h.DirectoryGroupMembers.Add(RoomDn);
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        if (alreadyAMember)
+            Assert.Empty(_h.CallsTo("Add-ADGroupMember"));
+        else
+            Assert.Equal(CheckedObject, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Add-ADGroupMember")), "Members"));
+    }
+
+    [Fact]
+    public async Task AnotherObjectWithTheRoomsName_InItsOnPremGroup_IsNotTheRoom()
+    {
+        // aud-a2i. The room is compared by the DN of the object proven by its objectGUID, never by a name:
+        // a member named like the room, elsewhere in the directory, is another object, and the room is added.
+        SyncedListTheRoomIsNotOnInExchange();
+        _h.DirectoryGroupMembers.Add("CN=Room 1,OU=Retired Rooms,DC=contoso,DC=test");
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(CheckedObject, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Add-ADGroupMember")), "Members"));
+    }
+
+    [Theory]
+    [InlineData("the membership read fails")]
+    [InlineData("the group answers as another object")]
+    [InlineData("the room's object has no DN")]
+    public async Task AnOnPremGroupWhoseMembershipCannotBeRead_IsRefusedBeforeAnyWrite(string problem)
+    {
+        // aud-a2i. Whether the on-prem add will write is settled before any write. A membership that
+        // cannot be read - the read fails, the group answers as another object, or the room's object has
+        // no DN to compare - refuses the row, not partial, nothing written. It used to surface only at the
+        // add, after Set-Place and the timezone.
+        SyncedListTheRoomIsNotOnInExchange();
+        switch (problem)
+        {
+            case "the membership read fails": _h.Failures["Get-ADGroup -Identity"] = "Unable to contact the server."; break;
+            case "the group answers as another object": _h.DirectoryGroupReadBack[GroupDn] = "77777777-7777-7777-7777-777777777777"; break;
+            case "the room's object has no DN": ((Hashtable)_h.DirectoryObjects[CheckedObject]!).Remove("DistinguishedName"); break;
+        }
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Contains(List, result.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+    }
+
+    [Fact]
+    public void TheHarness_GetAdGroupMember_RefusesAGroupOverTheCapAndAMemberInAnotherDomain()
+    {
+        // aud-a2i. The stand-in refuses what the real cmdlet refuses, so a restored Get-ADGroupMember read
+        // fails the tests above for the reason it fails live: a small group in its own domain is answered
+        // (the member's objectGUID resolved), a member in another domain faults the read, and a group past
+        // the cap is refused.
+        using var rs = _h.OpenDirectoryRunspace();
+        using var ps = PowerShell.Create();
+        ps.Runspace = rs;
+
+        _h.DirectoryGroupMembers.Add(RoomDn);
+        Assert.Equal(CheckedObject, Assert.Single(ReadGroupMembers(ps)).Properties["ObjectGUID"]?.Value?.ToString());
+
+        _h.DirectoryGroupMembers.Add("CN=Someone,OU=People,DC=fabrikam,DC=test");
+        Assert.Contains("An operations error occurred",
+            Assert.ThrowsAny<RuntimeException>(() => ReadGroupMembers(ps)).Message, StringComparison.Ordinal);
+
+        _h.DirectoryGroupMembers.RemoveAt(1);
+        for (var i = 0; i < ExchangeWriteHarness.AdwsMaxGroupOrMemberEntries; i++)
+            _h.DirectoryGroupMembers.Add($"CN=Member {i},OU=People,DC=contoso,DC=test");
+        Assert.Contains("The size limit for this request was exceeded",
+            Assert.ThrowsAny<RuntimeException>(() => ReadGroupMembers(ps)).Message, StringComparison.Ordinal);
+    }
+
+    private static Collection<PSObject> ReadGroupMembers(PowerShell ps)
+    {
+        ps.Commands.Clear();
+        ps.Streams.Error.Clear();
+        ps.AddCommand("Get-ADGroupMember").AddParameter("Identity", GroupDn).AddParameter("ErrorAction", "Stop");
         return ps.Invoke();
     }
 }

@@ -155,10 +155,11 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
     [InlineData("bulk")]
     public async Task ARoomAlreadyOnItsOnPremList_IsNotRecordedAsWritten(string surface)
     {
-        // The on-prem add's idempotency check finds the room already a member and writes nothing.
+        // The on-prem add's idempotency check finds the room already a member - its DN on the group's
+        // member attribute (aud-a2i) - and writes nothing.
         _h.ListSyncState[ConferenceRoomService.BuildRoomListName(Building)] = true;
         _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
-        _h.DirectoryGroupMembers.Add(CheckedObject);
+        _h.DirectoryGroupMembers.Add("CN=Room 1,OU=Rooms,DC=contoso,DC=test");
 
         var row = await ApplyAndReadAudit(surface);
 
