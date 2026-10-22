@@ -2,11 +2,11 @@
 
 **Severity**: MEDIUM - the same live-file promotion corruption `aud-a38c` closed, still open for
 an IIS application or virtual directory rooted inside the prod folder and served by another pool.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Fixed on master `c3c4b685` (patch applied by the supervisor); closed on guard proof; codex ops review pending. Known gap for the owner: a nested IIS node under the SAME pool passes the check, yet robocopy /MIR still replaces or purges its files
 **Branch**: `worktree-agent-aec54e09518f47fc1` - forked at `ca6575a2`, before the `aud-a38c` code it
 fixes, so built and gated on a `git archive` export of master `1c6038d5` and delivered as a patch
 for the supervisor to apply
-**Commit**: `<pending>`
+**Commit**: `c3c4b685`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh, services-batch-2, 2026-10-21
 
 (Not the cutover finding first committed under this id in `3dd3ca5`: that one is `aud-a38h`, renamed
