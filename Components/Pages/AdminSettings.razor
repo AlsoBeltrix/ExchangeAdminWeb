@@ -322,7 +322,7 @@
         }
         <span class="adm-grow"></span>
         <button class="btn btn-outline-secondary btn-sm" @onclick="DiscardChanges" disabled="@(saving || !dirty.IsDirty)">Discard</button>
-        <button class="btn btn-primary btn-sm" @onclick="SaveCurrentTabAsync" disabled="@(saving || ppValidating)">Save</button>
+        <button class="btn btn-primary btn-sm" @onclick="SaveCurrentTabAsync" disabled="@(saving || ppValidating || !CanSaveCurrentTab())">Save</button>
     </div>
 </div>
 
@@ -379,6 +379,14 @@
             case SecLogging: await SaveLogLevel(); break;
         }
     }
+
+    /// <summary>Whether the visible tab's store was read when the page loaded, so Save is offered.</summary>
+    private bool CanSaveCurrentTab() => tab switch
+    {
+        SecModules => !enablementStoreCorrupt,
+        SecProtected => ppLoaded,
+        _ => true,
+    };
 
     /// <summary>
     /// Discards by reloading from the store. Clears dirty state FIRST or the guard blocks the
@@ -489,13 +497,23 @@
     /// </remarks>
     private void SnapshotProtectedBaseline()
     {
+        SnapshotProtectedRulesBaseline();
+        ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;
+    }
+
+    /// <summary>Re-baselines the five rule lists only, leaving the directory-read secret id pending.</summary>
+    private void SnapshotProtectedRulesBaseline()
+    {
         ppUsersBaseline = new List<string>(ppUsers);
         ppGroupsBaseline = new List<string>(ppGroups);
         ppOusBaseline = new List<string>(ppOus);
         ppPatternsBaseline = new List<string>(ppPatterns);
         ppTargetsBaseline = new List<string>(ppTargets);
-        ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;
     }
+
+    /// <summary>How many rules of the five kinds the page last loaded or saved.</summary>
+    private int LoadedRuleCount() =>
+        ppUsersBaseline.Count + ppGroupsBaseline.Count + ppOusBaseline.Count + ppPatternsBaseline.Count + ppTargetsBaseline.Count;
 
     private List<string> ppUsers = new();
     private List<string> ppGroups = new();
@@ -511,6 +529,7 @@
     private string ppDirectoryReadSecretId = "";
     private string ppDirectoryReadSecretIdBaseline = "";
     private string? ppLoadError;
+    private bool ppLoaded;
 
     // Surfaced next to the add controls, not through statusMessage: a refused Add must not
     // overwrite an unrelated save result.
@@ -585,6 +604,14 @@
                 statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreCorrupt", statusMessage, PendingEnablementSections());
+                return;
+            }
+
+            if (enablementStoreCorrupt)
+            {
+                statusMessage = "Refusing to save: this page's toggles are not the stored module enablement state (the store could not be read), so saving them could switch modules off. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreUnreadable", statusMessage, PendingEnablementSections());
                 return;
             }
 
@@ -692,7 +719,7 @@
     private void LoadProtectedPrincipals()
     {
         var (cfg, _, error) = ProtectedPrincipalService.LoadEffectiveConfig();
-        if (error != null) { ppLoadError = error; return; }
+        if (error != null) { ppLoadError = error; ppLoaded = false; return; }
         if (cfg != null)
         {
             ppUsers = cfg.Users.ToList();
@@ -703,6 +730,7 @@
         }
         ppDirectoryReadSecretId = ProtectedPrincipalService.GetDirectoryReadSecretId()?.ToString() ?? "";
         SnapshotProtectedBaseline();
+        ppLoaded = true;
     }
 
     // Only Patterns keeps a keydown handler. Users, Groups and OUs all use
@@ -992,6 +1020,24 @@
                 return;
             }
 
+            if (!ppLoaded)
+            {
+                statusMessage = "Refusing to save: the protected principals could not be read when this page loaded, so the lists shown are not the stored rules and saving would replace every rule with them. Nothing was changed. Reload the page once the problem shown above is fixed.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
+                return;
+            }
+
+            var secretId = ppDirectoryReadSecretId.Trim();
+            var secretChanged = SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline) > 0;
+            if (secretChanged && ModuleConfigSvc.IsModuleCorrupt(ProtectedPrincipalService.ProtectedPrincipalsModuleKey))
+            {
+                statusMessage = "Refusing to save: the directory-read credential's setting (the ProtectedPrincipals rows of the module_config table in the config database) cannot be read. Nothing was changed. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
+
             var newConfig = new ProtectedPrincipalConfig
             {
                 Users = ppUsers.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
@@ -1001,21 +1047,45 @@
                 GroupTargets = ppTargets.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
             };
 
-            ProtectedPrincipalService.SaveConfig(newConfig);
-            ProtectedPrincipalService.SaveDirectoryReadSecretId(ppDirectoryReadSecretId.Trim());
+            var outcome = ProtectedPrincipalService.ReplaceConfig(newConfig, pageLoadedRules: LoadedRuleCount() > 0);
+            if (outcome.Status == ProtectedPrincipalSaveStatus.StoreCorrupt)
+            {
+                statusMessage = "Refusing to save: the protection rules in the config database (the protected_principal table) could not be read when this save went to replace them. Nothing was changed. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
+
+            if (outcome.Status == ProtectedPrincipalSaveStatus.EmptyOverNonEmpty)
+            {
+                statusMessage = $"Refusing to save: this page holds no protection rules - none were read when it loaded - but the store now holds {outcome.Before?.RuleCount ?? 0}. Saving would delete every one of them, so nothing was changed. Reload the page to see the current rules.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "EmptyOverNonEmpty", statusMessage);
+                return;
+            }
 
             try
             {
-                Audit.LogSettingsChange(currentUser, ip, section,
-                    Array.Empty<string>(),
-                    new[] { $"Users:{newConfig.Users.Length},Groups:{newConfig.Groups.Length},OUs:{newConfig.OrganizationalUnits.Length},Patterns:{newConfig.SamAccountNamePatterns.Length},Targets:{newConfig.GroupTargets.Length}" });
+                Audit.LogSettingsChange(currentUser, ip, section, RuleEntries(outcome.Before), RuleEntries(outcome.After),
+                    new Dictionary<string, object?> { ["counts"] = RuleCounts(outcome.After) });
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for protected principals change"); }
 
-            dirty.ClearSection(SectionProtected);
-            SnapshotProtectedBaseline();
-            statusMessage = "Protected principals saved. Changes are effective immediately.";
-            statusIsError = false;
+            var secretFailure = secretChanged ? SaveDirectoryReadSecret(secretId, ip) : null;
+            if (secretFailure is null)
+            {
+                dirty.ClearSection(SectionProtected);
+                SnapshotProtectedBaseline();
+                statusMessage = "Protected principals saved. Changes are effective immediately.";
+                statusIsError = false;
+            }
+            else
+            {
+                SnapshotProtectedRulesBaseline();
+                RecountProtected();
+                statusMessage = secretFailure;
+                statusIsError = true;
+            }
             ppLoadError = null;
         }
         catch (Exception ex)
@@ -1026,4 +1096,53 @@
         }
         finally { saving = false; }
     }
+
+    private const string SecretSection = "ProtectedPrincipals:DirectoryReadSecretId";
+
+    /// <summary>
+    /// Writes the directory-read secret id after the rules have been saved and records it. Null when it
+    /// was saved; otherwise what the admin is told.
+    /// </summary>
+    private string? SaveDirectoryReadSecret(string secretId, string ip)
+    {
+        try
+        {
+            var update = ProtectedPrincipalService.SaveDirectoryReadSecretId(secretId);
+            try
+            {
+                Audit.LogSettingsChange(currentUser, ip, SecretSection, SecretValue(update.Before), SecretValue(update.After));
+            }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the directory-read secret id change"); }
+
+            return null;
+        }
+        catch (Exception secretEx)
+        {
+            Logger.LogError(secretEx, "The directory-read secret id was not saved; the protection rules were");
+            var message = $"The protection rules were saved and are in effect, but the directory-read credential (Delinea Secret ID) was not saved: {secretEx.Message} Save again to retry it.";
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, SecretSection, message);
+            return message;
+        }
+    }
+
+    private static string[] SecretValue(IReadOnlyDictionary<string, string> values) =>
+        values.TryGetValue(ProtectedPrincipalService.DirectoryReadSecretConfigKey, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? [value.Trim()]
+            : [];
+
+    /// <summary>Every rule as <c>Kind:value</c>, so a settings-change record lists what was added and removed.</summary>
+    private static string[] RuleEntries(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData? rules) =>
+        rules is null
+            ? []
+            : rules.Users.Select(v => "Users:" + v)
+                .Concat(rules.Groups.Select(v => "Groups:" + v))
+                .Concat(rules.OrganizationalUnits.Select(v => "OUs:" + v))
+                .Concat(rules.SamAccountNamePatterns.Select(v => "Patterns:" + v))
+                .Concat(rules.GroupTargets.Select(v => "Targets:" + v))
+                .ToArray();
+
+    private static string RuleCounts(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData? rules) =>
+        rules is null
+            ? ""
+            : $"Users:{rules.Users.Length},Groups:{rules.Groups.Length},OUs:{rules.OrganizationalUnits.Length},Patterns:{rules.SamAccountNamePatterns.Length},Targets:{rules.GroupTargets.Length}";
 }

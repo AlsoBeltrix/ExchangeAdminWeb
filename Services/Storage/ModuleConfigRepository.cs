@@ -93,6 +93,22 @@ public sealed class ModuleConfigRepository
     }
 
     /// <summary>
+    /// Upserts only the given keys of a module's config and marks it present, in one write
+    /// transaction, and returns the module's values as read under that write's lock and as left by
+    /// it (aud-a28j). Keys not named are not touched. Empty/whitespace keys are skipped.
+    /// </summary>
+    public ModuleConfigUpdate UpdateModule(string moduleId, IReadOnlyDictionary<string, string> values)
+    {
+        return _store.Write((connection, transaction) =>
+        {
+            var before = ReadModule(connection, moduleId, transaction);
+            MarkPresent(connection, transaction, moduleId);
+            InsertValues(connection, transaction, moduleId, values);
+            return new ModuleConfigUpdate(before, ReadModule(connection, moduleId, transaction));
+        });
+    }
+
+    /// <summary>
     /// One-time import of a module's config only if it has no rows yet (DB wins). Returns true
     /// if rows were written.
     /// </summary>
@@ -237,3 +253,9 @@ public sealed class ModuleConfigRepository
         return result;
     }
 }
+
+/// <summary>
+/// A module's config values as read under the write lock before an update, and as the update left
+/// them (<see cref="ModuleConfigRepository.UpdateModule"/>).
+/// </summary>
+public sealed record ModuleConfigUpdate(Dictionary<string, string> Before, Dictionary<string, string> After);

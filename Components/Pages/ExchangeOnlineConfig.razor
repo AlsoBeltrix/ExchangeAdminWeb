@@ -51,18 +51,31 @@
             <strong>Configuration file is corrupt.</strong> The module-config.json file cannot be parsed. Fix or delete the file to restore EXO configuration. Values shown below are NOT active — the runtime will refuse EXO connections until the config file is repaired.
         </div>
     }
+    else if (!exoConfigLoaded)
+    {
+        <div class="alert alert-danger">
+            <strong>Connection settings could not be read.</strong> The ExchangeOnline rows of the module_config table in the config database could not be read, so the fields below are blank rather than the stored values, and saving them is disabled. Reload this page; if this persists, correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped.
+        </div>
+    }
+
+    @if (enablementStoreCorrupt)
+    {
+        <div class="alert alert-danger">
+            <strong>Module enablement cannot be read.</strong> The module_enablement table in the config database could not be read, so the status shown is the all-disabled fallback, not the stored state, and saving it is disabled. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.
+        </div>
+    }
 
     <!-- Module Status -->
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
             <strong>Module Status</strong>
-            <button class="btn btn-primary btn-sm" @onclick="SaveModuleStatus" disabled="@saving">Save Status</button>
+            <button class="btn btn-primary btn-sm" @onclick="SaveModuleStatus" disabled="@(saving || enablementStoreCorrupt)">Save Status</button>
         </div>
         <div class="card-body">
             <div class="form-check form-switch mb-2">
                 <input class="form-check-input" type="checkbox" id="exo-enabled"
                        checked="@moduleEnabled"
-                       disabled="@saving"
+                       disabled="@(saving || enablementStoreCorrupt)"
                        @onchange="(e) => moduleEnabled = (bool)(e.Value ?? false)" />
                 <label class="form-check-label fw-semibold" for="exo-enabled">
                     @(moduleEnabled ? "Enabled" : "Disabled")
@@ -78,7 +91,7 @@
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
             <strong>Exchange Online Connection</strong>
-            <button class="btn btn-primary btn-sm" @onclick="SaveExoConfig" disabled="@(saving || configCorrupt)">Save Connection</button>
+            <button class="btn btn-primary btn-sm" @onclick="SaveExoConfig" disabled="@(saving || !exoConfigLoaded)">Save Connection</button>
         </div>
         <div class="card-body">
             <p class="text-muted mb-3"><small>The certificate must be installed in the server's LocalMachine certificate store with the private key accessible to the app pool identity. <a href="https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2" target="_blank">Setup guide</a></small></p>
@@ -143,6 +156,8 @@
 
     private bool moduleEnabled;
     private bool configCorrupt;
+    private bool exoConfigLoaded;
+    private bool enablementStoreCorrupt;
     private string exoAppId = "";
     private string exoOrganization = "";
     private string exoCertSubject = "";
@@ -161,6 +176,7 @@
             return;
         }
 
+        enablementStoreCorrupt = Enablement.IsStoreCorrupt();
         moduleEnabled = Enablement.IsModuleRawEnabled("ExchangeOnline");
         LoadExoConfig();
         dependentModules = Catalog.GetOrdered()
@@ -189,6 +205,7 @@
             exoAppId = appId ?? Config["ExchangeOnline:AppId"] ?? "";
             exoOrganization = org ?? Config["ExchangeOnline:Organization"] ?? "";
             exoCertSubject = cert ?? Config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
+            exoConfigLoaded = true;
         }
         catch (Exception ex)
         {
@@ -215,6 +232,23 @@
                 statusMessage = "Authorization check failed.";
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage);
+                return;
+            }
+
+            if (Enablement.IsStoreCorrupt())
+            {
+                enablementStoreCorrupt = true;
+                statusMessage = "Refusing to save: the module enablement store (the module_enablement table in the config database) is corrupt or cannot be read, and saving would overwrite it with the all-disabled fallback. Nothing was changed. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
+
+            if (enablementStoreCorrupt)
+            {
+                statusMessage = "Refusing to save: this page's status is not the stored module enablement state (the store could not be read), so saving it could switch Exchange Online off. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
                 return;
             }
 
@@ -304,6 +338,14 @@
                 return;
             }
 
+            if (!exoConfigLoaded)
+            {
+                statusMessage = "Refusing to save: the Exchange Online connection settings could not be read when this page loaded, so the fields shown are not the stored values. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
+                return;
+            }
+
             var trimmedAppId = exoAppId.Trim();
             var trimmedOrg = exoOrganization.Trim();
             var trimmedCert = exoCertSubject.Trim();
@@ -348,6 +390,16 @@
                     Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Validation", statusMessage);
                     return;
                 }
+            }
+
+            if (ModuleConfigSvc.IsModuleCorrupt(ExoConnectionPool.ConfigModuleKey))
+            {
+                configCorrupt = true;
+                exoConfigLoaded = false;
+                statusMessage = "Refusing to save: the Exchange Online connection settings (the ExchangeOnline rows of the module_config table in the config database) cannot be read, and saving would overwrite them. Nothing was changed. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
             }
 
             var current = ModuleConfigSvc.GetModuleConfig(ExoConnectionPool.ConfigModuleKey);

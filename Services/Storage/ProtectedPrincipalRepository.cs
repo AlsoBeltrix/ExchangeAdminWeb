@@ -88,6 +88,63 @@ public sealed class ProtectedPrincipalRepository
     }
 
     /// <summary>
+    /// Reads the rules and replaces them in ONE write transaction (aud-a28j): <paramref name="decide"/>
+    /// is shown the rows and the presence marker as they are under the write lock and returns the
+    /// rules to store, or null to store nothing - in which case the transaction is rolled back and
+    /// nothing, not even the change token, is written.
+    /// </summary>
+    public ProtectedPrincipalReplaceOutcome Replace(Func<ProtectedPrincipalSnapshot, ProtectedPrincipalData?> decide)
+    {
+        ArgumentNullException.ThrowIfNull(decide);
+        try
+        {
+            return _store.Write((connection, transaction) =>
+            {
+                var before = ReadSnapshot(connection, transaction);
+                var replacement = decide(before) ?? throw new NothingWritten(before);
+
+                using (var delete = connection.CreateCommand())
+                {
+                    delete.Transaction = transaction;
+                    delete.CommandText = "DELETE FROM protected_principal;";
+                    delete.ExecuteNonQuery();
+                }
+
+                InsertKind(connection, transaction, KindUser, replacement.Users);
+                InsertKind(connection, transaction, KindGroup, replacement.Groups);
+                InsertKind(connection, transaction, KindOu, replacement.OrganizationalUnits);
+                InsertKind(connection, transaction, KindSamPattern, replacement.SamAccountNamePatterns);
+                InsertKind(connection, transaction, KindGroupTarget, replacement.GroupTargets);
+                MarkPresent(connection, transaction);
+
+                return new ProtectedPrincipalReplaceOutcome(true, before, ReadSnapshot(connection, transaction));
+            });
+        }
+        catch (NothingWritten nothing)
+        {
+            return new ProtectedPrincipalReplaceOutcome(false, nothing.Before, null);
+        }
+    }
+
+    private static ProtectedPrincipalSnapshot ReadSnapshot(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        try
+        {
+            return new ProtectedPrincipalSnapshot(
+                true, ReadLists(connection, transaction), ReadConfigured(connection, transaction));
+        }
+        catch
+        {
+            return ProtectedPrincipalSnapshot.Unreadable;
+        }
+    }
+
+    private sealed class NothingWritten(ProtectedPrincipalSnapshot before) : Exception
+    {
+        public ProtectedPrincipalSnapshot Before { get; } = before;
+    }
+
+    /// <summary>
     /// One-time import only if not yet configured (presence marker absent). Marks present even
     /// for an all-empty config (an existing file with empty lists still counted as configured).
     /// Returns true if it imported.
@@ -114,9 +171,12 @@ public sealed class ProtectedPrincipalRepository
         });
     }
 
-    private static ProtectedPrincipalData ReadLists(SqliteConnection connection)
+    private static ProtectedPrincipalData ReadLists(SqliteConnection connection) => ReadLists(connection, null);
+
+    private static ProtectedPrincipalData ReadLists(SqliteConnection connection, SqliteTransaction? transaction)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT kind, value FROM protected_principal;";
         var users = new List<string>();
         var groups = new List<string>();
@@ -141,9 +201,12 @@ public sealed class ProtectedPrincipalRepository
             users.ToArray(), groups.ToArray(), ous.ToArray(), patterns.ToArray(), targets.ToArray());
     }
 
-    private static bool ReadConfigured(SqliteConnection connection)
+    private static bool ReadConfigured(SqliteConnection connection) => ReadConfigured(connection, null);
+
+    private static bool ReadConfigured(SqliteConnection connection, SqliteTransaction? transaction)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT 1 FROM protected_principal_present LIMIT 1;";
         return command.ExecuteScalar() is not null;
     }
@@ -185,4 +248,22 @@ public sealed record ProtectedPrincipalData(
     string[] GroupTargets)
 {
     public static ProtectedPrincipalData Empty { get; } = new([], [], [], [], []);
+
+    /// <summary>How many rules of all five kinds these lists hold.</summary>
+    public int RuleCount =>
+        Users.Length + Groups.Length + OrganizationalUnits.Length + SamAccountNamePatterns.Length + GroupTargets.Length;
 }
+
+/// <summary>The protected-principal rows and presence marker, read together (aud-a28j).</summary>
+/// <param name="Readable">False when the read failed; <paramref name="Data"/> is then empty and means nothing.</param>
+public sealed record ProtectedPrincipalSnapshot(bool Readable, ProtectedPrincipalData Data, bool Configured)
+{
+    public static ProtectedPrincipalSnapshot Unreadable { get; } = new(false, ProtectedPrincipalData.Empty, false);
+}
+
+/// <summary>
+/// What <see cref="ProtectedPrincipalRepository.Replace"/> did: whether it replaced the rules, the rows
+/// it found under the write lock, and - after a replace - the rows it left, read back before the commit.
+/// </summary>
+public sealed record ProtectedPrincipalReplaceOutcome(
+    bool Replaced, ProtectedPrincipalSnapshot Before, ProtectedPrincipalSnapshot? After);

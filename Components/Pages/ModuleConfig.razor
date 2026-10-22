@@ -620,6 +620,13 @@
 
                 <p class="text-muted mb-2"><small>Groups that can manage this module's configuration without global admin access.</small></p>
 
+                @if (moduleAdminsUnreadable)
+                {
+                    <div class="alert alert-danger py-2 mb-2">
+                        <small><strong>Module admin groups cannot be read.</strong> The module_admins table in the config database could not be read, so the list below is not the stored groups and saving is disabled. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.</small>
+                    </div>
+                }
+
                 @* Rows, not chips - same reasoning as the Access pane, and this is a list the
                    owner expects to reach 10-20 entries. *@
                 <table class="adm-tbl">
@@ -667,7 +674,7 @@
         }
         <span class="adm-grow"></span>
         <button class="btn btn-outline-secondary btn-sm" @onclick="ReloadAsync" disabled="@(saving || !dirty.IsDirty)">Discard</button>
-        <button class="btn btn-primary btn-sm" @onclick="SaveCurrentTabAsync" disabled="@saving">Save</button>
+        <button class="btn btn-primary btn-sm" @onclick="SaveCurrentTabAsync" disabled="@(saving || !CanSaveCurrentTab())">Save</button>
     </div>
 </div>
 
@@ -868,6 +875,17 @@
         }
     }
 
+    /// <summary>Whether the visible tab's store was read when the page loaded, so Save is offered.</summary>
+    private bool CanSaveCurrentTab() => tab switch
+    {
+        SecStatus => !enablementStoreCorrupt,
+        SecAccess => !sectionAccessCorrupt,
+        SecConfig => !moduleConfigCorrupt,
+        SecAttrs => !allowlistCorrupt,
+        SecAdmins => !moduleAdminsUnreadable,
+        _ => true,
+    };
+
     /// <summary>
     /// Discards edits by reloading the page from the store. Clears dirty state FIRST, or the
     /// unsaved-changes guard blocks the very navigation the operator asked for.
@@ -907,6 +925,7 @@
     private bool moduleConfigCorrupt;
     private bool sectionAccessCorrupt;
     private bool sectionAccessUnconfigured;
+    private bool moduleAdminsUnreadable;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -960,11 +979,12 @@
         enablementStoreCorrupt = Enablement.IsStoreCorrupt();
         moduleConfigCorrupt = ModuleConfigSvc.IsModuleCorrupt(module.Id);
         sectionAccessCorrupt = SectionAccess.IsFragmentCorrupt();
-        sectionAccessUnconfigured = !SectionAccess.IsSectionAccessConfigured();
+        sectionAccessUnconfigured = !sectionAccessCorrupt && !SectionAccess.IsSectionAccessConfigured();
 
         currentConfigState = ModuleConfigSvc.GetModuleConfig(module.Id);
         moduleEnabled = Enablement.IsModuleRawEnabled(module.Id);
-        moduleAdminGroups = ModuleAdmin.GetModuleAdmins(module.Id).ToList();
+        moduleAdminsUnreadable = !ModuleAdmin.TryGetAllGrants(out var adminGrants);
+        moduleAdminGroups = (adminGrants.TryGetValue(module.Id, out var admins) ? admins : Array.Empty<string>()).ToList();
 
         configBaseline = new Dictionary<string, string>(currentConfigState);
         moduleEnabledBaseline = moduleEnabled;
@@ -1137,6 +1157,14 @@
                 return;
             }
 
+            if (moduleConfigCorrupt)
+            {
+                statusMessage = "Refusing to save: this page does not hold the module's stored configuration (it could not be read), so saving would overwrite it with the blank fields shown. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
+                return;
+            }
+
             var previous = ModuleConfigSvc.GetModuleConfig(module.Id);
             ModuleConfigSvc.SaveModuleConfig(module.Id, currentConfigState);
 
@@ -1197,6 +1225,14 @@
                 statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
+
+            if (enablementStoreCorrupt)
+            {
+                statusMessage = "Refusing to save: this page's toggle is not the stored module enablement state (the store could not be read), so saving it could switch the module off. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
                 return;
             }
 
@@ -1270,6 +1306,14 @@
                 statusMessage = "Refusing to save: config\\sectionaccess.json is corrupt and saving would replace it, wiping every module's groups. Fix or restore the file first.";
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, PendingAccessSections());
+                return;
+            }
+
+            if (sectionAccessCorrupt)
+            {
+                statusMessage = "Refusing to save: this page does not hold the stored section access (it could not be read), so saving would replace the stored groups with the empty lists it has. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage, PendingAccessSections());
                 return;
             }
 
@@ -1370,6 +1414,14 @@
                 return;
             }
 
+            if (moduleAdminsUnreadable)
+            {
+                statusMessage = "Refusing to save: the module admin groups could not be read when this page loaded, so the list shown is not the stored groups and saving would replace them with it. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
+                return;
+            }
+
             // aud-a1b, the same rule as the access save: confirm every grant this save adds, and
             // persist the snapshot that was confirmed, never the live list.
             var snapshot = moduleAdminGroups.ToArray();
@@ -1383,7 +1435,16 @@
                 return;
             }
 
-            var previous = ModuleAdmin.GetModuleAdmins(module.Id);
+            if (!ModuleAdmin.TryGetAllGrants(out var stored))
+            {
+                moduleAdminsUnreadable = true;
+                statusMessage = "Refusing to save: the module admin groups cannot be read (the module_admins table in the config database), so saving would replace groups this page cannot see. Nothing was changed. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
+
+            var previous = stored.TryGetValue(module.Id, out var storedAdmins) ? storedAdmins : Array.Empty<string>();
             ModuleAdmin.SetModuleAdmins(module.Id, snapshot);
 
             try

@@ -60,6 +60,26 @@ public sealed class ProtectedPrincipalConfig
     public string[] GroupTargets { get; set; } = [];
 }
 
+/// <summary>How <see cref="ProtectedPrincipalService.ReplaceConfig"/> ended.</summary>
+public enum ProtectedPrincipalSaveStatus
+{
+    /// <summary>The rules were replaced.</summary>
+    Saved,
+
+    /// <summary>Nothing written: the legacy file was not imported, or the rules could not be read under the lock.</summary>
+    StoreCorrupt,
+
+    /// <summary>Nothing written: the save held no rules, the store held some, and the page had loaded none.</summary>
+    EmptyOverNonEmpty,
+}
+
+/// <summary>
+/// The outcome of a protected-principals replace: the rules found under the write lock (null when they
+/// could not be read) and, after a replace, the rules it left.
+/// </summary>
+public sealed record ProtectedPrincipalSaveOutcome(
+    ProtectedPrincipalSaveStatus Status, ProtectedPrincipalData? Before, ProtectedPrincipalData? After);
+
 /// <summary>
 /// One parsed Protected Targets entry. Stored as <c>objectGUID|DN</c>: the GUID is the immutable
 /// identity (a rename or move cannot silently un-protect the group), the DN doubles as the
@@ -988,6 +1008,62 @@ public class ProtectedPrincipalService
         _logger.LogInformation("Protected-principals config saved and cache invalidated");
     }
 
+    /// <summary>
+    /// The admin page's save (aud-a28j): replaces the rules with <paramref name="config"/>, deciding
+    /// inside the write from the rules as they are under its lock, and returns what it found and left.
+    /// </summary>
+    /// <param name="pageLoadedRules">
+    /// Whether the page saving this loaded at least one rule. A save holding no rules over a store
+    /// that holds some is refused unless it did.
+    /// </param>
+    public ProtectedPrincipalSaveOutcome ReplaceConfig(ProtectedPrincipalConfig config, bool pageLoadedRules)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        if (_legacyFileCorrupt)
+            return new ProtectedPrincipalSaveOutcome(ProtectedPrincipalSaveStatus.StoreCorrupt, null, null);
+
+        var data = new ProtectedPrincipalData(
+            config.Users ?? [],
+            config.Groups ?? [],
+            config.OrganizationalUnits ?? [],
+            config.SamAccountNamePatterns ?? [],
+            config.GroupTargets ?? []);
+        var refusal = ProtectedPrincipalSaveStatus.Saved;
+
+        var outcome = _repository.Replace(current =>
+        {
+            if (!current.Readable)
+            {
+                refusal = ProtectedPrincipalSaveStatus.StoreCorrupt;
+                return null;
+            }
+
+            if (data.RuleCount == 0 && current.Data.RuleCount > 0 && !pageLoadedRules)
+            {
+                refusal = ProtectedPrincipalSaveStatus.EmptyOverNonEmpty;
+                return null;
+            }
+
+            return data;
+        });
+
+        if (!outcome.Replaced)
+        {
+            return new ProtectedPrincipalSaveOutcome(
+                refusal == ProtectedPrincipalSaveStatus.Saved ? ProtectedPrincipalSaveStatus.StoreCorrupt : refusal,
+                outcome.Before.Readable ? outcome.Before.Data : null,
+                null);
+        }
+
+        InvalidateCache();
+        _logger.LogInformation("Protected-principals config replaced and cache invalidated");
+        return new ProtectedPrincipalSaveOutcome(
+            ProtectedPrincipalSaveStatus.Saved,
+            outcome.Before.Data,
+            outcome.After is { Readable: true } after ? after.Data : data);
+    }
+
     // One-time import of the legacy protected-principals.json into protected_principal, then
     // archive the file (SqliteConfigStore-Plan Section 4). Only fills if not yet configured (DB wins).
     // Returns true if the legacy file exists but is unparseable / missing the ProtectedPrincipals
@@ -1062,12 +1138,14 @@ public class ProtectedPrincipalService
         return null;
     }
 
-    public void SaveDirectoryReadSecretId(string value)
-    {
-        var current = _moduleConfig.GetModuleConfig(ProtectedPrincipalsModuleKey);
-        current[DirectoryReadSecretConfigKey] = value;
-        _moduleConfig.SaveModuleConfig(ProtectedPrincipalsModuleKey, current);
-    }
+    /// <summary>
+    /// Stores the directory-read secret id and returns the ProtectedPrincipals module values as they
+    /// were under the write lock and as the write left them.
+    /// </summary>
+    public ModuleConfigUpdate SaveDirectoryReadSecretId(string value) =>
+        _moduleConfig.UpdateModuleValues(
+            ProtectedPrincipalsModuleKey,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = value });
 
     // Legacy exclusions come only from the MailboxPermissions/ExcludedUsers module
     // config. The appsettings Security:ExcludedUsers fallback was retired 2026-07-28:

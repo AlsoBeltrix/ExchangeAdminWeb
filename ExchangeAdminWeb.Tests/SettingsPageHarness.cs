@@ -194,6 +194,14 @@ internal sealed class SettingsPageHarness : IDisposable
         return page;
     }
 
+    /// <summary>
+    /// A second protected-principal service over its own store and connections on the same database
+    /// file: the other instance, which shares the database (aud-a28j).
+    /// </summary>
+    public ProtectedPrincipalService CreateOtherProtectedPrincipals() =>
+        new(Env, Config, ModuleConfig, new ProtectedPrincipalRepository(TestConfigStore.Create(_root)), Delinea,
+            NullLogger<ProtectedPrincipalService>.Instance);
+
     public AdminSettingsPage OpenAdminSettings()
     {
         var page = new AdminSettingsHandlers();
@@ -267,15 +275,70 @@ internal sealed class SettingsPageHarness : IDisposable
     /// <summary>The text and markup <paramref name="page"/> renders, its child components excluded.</summary>
     public static string RenderedText(ComponentBase page)
     {
-        var builder = new RenderTreeBuilder();
-        typeof(ComponentBase).GetMethod("BuildRenderTree", PrivateInstance)!.Invoke(page, [builder]);
-        var frames = builder.GetFrames();
-        return string.Join(" ", frames.Array.Take(frames.Count).Select(frame => frame.FrameType switch
+        var frames = Frames(page);
+        return string.Join(" ", frames.Select(frame => frame.FrameType switch
         {
             RenderTreeFrameType.Text => frame.TextContent,
             RenderTreeFrameType.Markup => frame.MarkupContent,
             _ => "",
         }));
+    }
+
+    /// <summary>
+    /// Whether the button labelled <paramref name="label"/> renders disabled - a rendered disabled
+    /// attribute, which is what stops the browser offering the click.
+    /// </summary>
+    public static bool IsButtonDisabled(ComponentBase page, string label)
+    {
+        var frames = Frames(page);
+        for (var i = 0; i < frames.Count; i++)
+        {
+            var frame = frames[i];
+            if (frame.FrameType != RenderTreeFrameType.Element || frame.ElementName != "button")
+                continue;
+
+            var end = i + frame.ElementSubtreeLength;
+            var text = string.Concat(frames.Skip(i + 1).Take(end - i - 1).Select(f => f.FrameType switch
+            {
+                RenderTreeFrameType.Text => f.TextContent,
+                RenderTreeFrameType.Markup => f.MarkupContent,
+                _ => "",
+            })).Trim();
+            if (text != label)
+                continue;
+
+            for (var a = i + 1; a < end && frames[a].FrameType == RenderTreeFrameType.Attribute; a++)
+            {
+                if (frames[a].AttributeName == "disabled")
+                    return frames[a].AttributeValue is not false;
+            }
+
+            return false;
+        }
+
+        throw new InvalidOperationException($"no button labelled '{label}' is rendered - this harness is stale");
+    }
+
+    // The handler shells render nothing to the renderer, so a save that calls StateHasChanged builds no
+    // child component; they render their markup only here, when a test asks to read it.
+    private static List<RenderTreeFrame> Frames(ComponentBase page)
+    {
+        var shell = page as IMarkupShell;
+        if (shell is not null)
+            shell.Markup = true;
+
+        try
+        {
+            var builder = new RenderTreeBuilder();
+            typeof(ComponentBase).GetMethod("BuildRenderTree", PrivateInstance)!.Invoke(page, [builder]);
+            var frames = builder.GetFrames();
+            return frames.Array.Take(frames.Count).ToList();
+        }
+        finally
+        {
+            if (shell is not null)
+                shell.Markup = false;
+        }
     }
 
     private void Attach(IComponent page) =>
@@ -370,22 +433,45 @@ internal sealed class SettingsPageHarness : IDisposable
 
     // ---- the page shells ----------------------------------------------------------------------
 
-    private sealed class ModuleConfigHandlers : ModuleConfigPage
+    private interface IMarkupShell
     {
-        protected override void BuildRenderTree(RenderTreeBuilder builder) { }
+        bool Markup { get; set; }
     }
 
-    private sealed class AdminSettingsHandlers : AdminSettingsPage
+    private sealed class ModuleConfigHandlers : ModuleConfigPage, IMarkupShell
     {
-        protected override void BuildRenderTree(RenderTreeBuilder builder) { }
+        public bool Markup { get; set; }
+
+        protected override void BuildRenderTree(RenderTreeBuilder builder)
+        {
+            if (Markup)
+                base.BuildRenderTree(builder);
+        }
+    }
+
+    private sealed class AdminSettingsHandlers : AdminSettingsPage, IMarkupShell
+    {
+        public bool Markup { get; set; }
+
+        protected override void BuildRenderTree(RenderTreeBuilder builder)
+        {
+            if (Markup)
+                base.BuildRenderTree(builder);
+        }
 
         // The page's own sweep asks the directory about every saved entry. Never here.
         protected override Task OnAfterRenderAsync(bool firstRender) => Task.CompletedTask;
     }
 
-    private sealed class ExchangeOnlineConfigHandlers : ExchangeOnlineConfigPage
+    private sealed class ExchangeOnlineConfigHandlers : ExchangeOnlineConfigPage, IMarkupShell
     {
-        protected override void BuildRenderTree(RenderTreeBuilder builder) { }
+        public bool Markup { get; set; }
+
+        protected override void BuildRenderTree(RenderTreeBuilder builder)
+        {
+            if (Markup)
+                base.BuildRenderTree(builder);
+        }
     }
 
     internal sealed class RecordingNavigation : NavigationManager
