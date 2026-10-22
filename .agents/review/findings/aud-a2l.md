@@ -6,7 +6,7 @@ constraint the server did not report) is audited and announced as done. Known Fa
 success must be confirmed, not inferred from the absence of an error.
 **Status**: Fixed on branch, not merged; independent review pending; dev acceptance owed with a2f/a2i/a2j/a2k
 **Branch**: `worktree-agent-ae52370b2527142a4`
-**Commit**: plan `b836c6d7`; fix, tests and comments in the commit after aud-a2k's `3341e112`
+**Commit**: `a38df458` (fix, tests, comments); plan `b836c6d7`; after aud-a2k's `3341e112`
 **Reviewer**: implementer (surfaced by the aud-a2j agent, 2026-10-22, candidate 3 of its hand-back)
 
 ## Evidence
@@ -222,12 +222,24 @@ Implemented under the owner's 2026-10-21 go by an Opus 5.5 implementation agent 
 ## Closeout
 
 Fixed on branch, not merged, not pushed: the plan `b836c6d7` (with aud-a2k's), aud-a2k's fix
-`3341e112`, then this fix, tests, comments and record in one commit. A module-scoped behaviour change:
+`3341e112`, then this fix, tests, comments and record in one commit, `a38df458`. A module-scoped behaviour change:
 the Conference Rooms module version bump is due at merge (one bump covers a2k and a2l). No shared code
 changed (`GroupManagementService` and the a2i helper are reused as they are) and the harness change is
 test-only, so no base app bump from this finding.
 
 Gates on this commit: the Conference Rooms, `GroupMemberListingTests` and `*WriteIdentityTests` classes
 250 passed, 0 failed; `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore` clean;
-`git diff --check` clean; `tools/Test-AsciiOnly.ps1` after `git add` clean. The Release build and the
-full suite on the branch tip: recorded below once run.
+`git diff --check` clean; `tools/Test-AsciiOnly.ps1` after `git add` clean.
+
+Gates on the branch tip `a38df458` (aud-a2k and aud-a2l both in), the final files:
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings - the baseline count - none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m`: 5108 passed, 0 failed, 3
+  skipped (the known AD skips), 5111 total, 5 m 20 s; nothing hung, no Sequence file generated. The 28
+  new cases are aud-a2k's 7 and this record's 21.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: clean.
+- `git diff --check HEAD`: clean.
+- `tools/Test-AsciiOnly.ps1` after `git add -A`: clean.
+
+PSScriptAnalyzer and Pester were not run: no `.ps1` or `.psm1` changed.

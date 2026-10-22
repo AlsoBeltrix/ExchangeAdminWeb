@@ -5,7 +5,7 @@ narrows it, but one unrelated group that happens to carry the list's name as its
 name, with the real synced group absent from the catalog result, is written in its place.
 **Status**: Fixed on branch, not merged; independent review pending; dev acceptance owed with a2f/a2i/a2j
 **Branch**: `worktree-agent-ae52370b2527142a4`
-**Commit**: plan `b836c6d7`; fix, tests and comments in the commit after it
+**Commit**: `3341e112` (fix, tests, comments); plan `b836c6d7`
 **Reviewer**: implementer (surfaced by the aud-a2j agent, 2026-10-22, candidate 2 of its hand-back)
 
 ## Evidence
@@ -225,5 +225,5 @@ finding.
 Gates on this commit: the Conference Rooms, `GroupMemberListingTests` and `*WriteIdentityTests` classes
 (every user of the harness) 229 passed, 0 failed; `dotnet format ExchangeAdminWeb.slnx
 --verify-no-changes --no-restore` clean; `git diff --check` clean; `tools/Test-AsciiOnly.ps1` after
-`git add` clean. The Release build and the full suite run on the branch tip, after aud-a2l (its record
-carries the totals).
+`git add` clean. The Release build and the full suite ran on the branch tip, after aud-a2l: see its
+Closeout (0 errors; 5108 passed, 0 failed, 3 skipped).
