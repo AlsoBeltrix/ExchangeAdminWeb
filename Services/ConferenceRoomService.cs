@@ -1617,7 +1617,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 ps.Runspace = runspace;
 
                 step = "importing the ActiveDirectory module";
-                ImportActiveDirectoryModule(ps);
+                ActiveDirectoryModuleImport.Import(ps);
 
                 step = "preparing the module's AD credential";
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
@@ -1719,7 +1719,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 ps.Runspace = runspace;
 
                 step = "importing the ActiveDirectory module";
-                ImportActiveDirectoryModule(ps);
+                ActiveDirectoryModuleImport.Import(ps);
 
                 step = "preparing the module's AD credential";
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
@@ -1917,7 +1917,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 ps.Runspace = runspace;
 
                 step = "importing the ActiveDirectory module";
-                ImportActiveDirectoryModule(ps);
+                ActiveDirectoryModuleImport.Import(ps);
 
                 step = "preparing the module's AD credential";
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
@@ -2028,7 +2028,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 ps.Runspace = runspace;
 
                 step = "importing the ActiveDirectory module";
-                ImportActiveDirectoryModule(ps);
+                ActiveDirectoryModuleImport.Import(ps);
 
                 step = "preparing the module's AD credential";
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
@@ -2185,31 +2185,6 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 return ($"Failed to add the room to the on-prem room list '{roomListName}': {step} failed: {ex.Message}", null, null);
             }
         });
-    }
-
-    // aud-a2r. Imports the ActiveDirectory module into a directory runspace, as its first command; the callers name the
-    // step through their step - the room-list paths since aud-a2s, which dropped their own catch for it. The import's
-    // error is the one it throws. Under -ErrorAction Stop the cmdlet's own error is thrown from Invoke and leaves no record
-    // in the stream (measured on this SDK: TheRealImportModule_ThrowsItsOwnErrorUnderStop_AndLeavesNoRecord), so the
-    // HadErrors check each of the four AD paths made after its import never saw that error. It saw only an error written
-    // past the preference, and returned that, in no step's name, as the row's refusal though the module had loaded. Every
-    // other directory import in the app is judged by its throw alone (GroupManagementService, ADAttributeEditorService,
-    // Comms10kService), as aud-a2o and aud-a26g judged the writes. That makes -ErrorAction Stop load-bearing: without it a
-    // module that cannot load is a record, cleared below unread, and the failure surfaces at the next step, in that
-    // step's name. The finally clears the error stream as well as the commands, so a record left past the preference is
-    // not taken by the next read's own error check (ConfirmDirectoryObject's HadErrors, psl-2) for that read's error.
-    private static void ImportActiveDirectoryModule(PowerShell ps)
-    {
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        try
-        {
-            ps.Invoke();
-        }
-        finally
-        {
-            ps.Commands.Clear();
-            ps.Streams.Error.Clear();
-        }
     }
 
     // Confirms the validated room's AD object can be read, by its objectGUID, before an AD write

@@ -1,8 +1,24 @@
+using System.Management.Automation.Runspaces;
 using ExchangeAdminWeb.Services;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ExchangeAdminWeb.Tests;
 
-[Collection(LiveDirectoryCollection.Name)]
+/// <summary>
+/// ADDirectorySearchService's pure helpers and its fail-soft contract, over a stand-in directory session (psl-8).
+/// </summary>
+/// <remarks>
+/// Every service here comes from <see cref="CreateService"/>, whose availability probe opens a stand-in session: its
+/// Import-Module is an advanced function that fails as the real cmdlet does for a module it cannot find, and module
+/// autoloading is off. So the directory is unavailable on every host, the fail-soft tests run everywhere instead of
+/// skipping wherever Active Directory is reachable, and nothing here loads the ActiveDirectory module or reaches a
+/// directory. The probe used to be the production one, which imported the real module - and on a host with RSAT the
+/// module's import connects to a domain controller for its AD: drive. That is also why the class is no longer in
+/// LiveDirectoryCollection, whose rule is that a class talking to no live directory must not join it. The classes that
+/// do exercise the real directory, where one is reachable, are ADDirectoryLiveTests, AdDirectoryForestSearchLiveTests
+/// and ADDirectoryValidateExistsTests.
+/// </remarks>
 public class ADDirectorySearchServiceTests
 {
     // ---------------------------------------------------------------
@@ -73,7 +89,7 @@ public class ADDirectorySearchServiceTests
     public void Search_InvalidMaxResults_DoesNotThrow(int maxResults)
     {
         var svc = CreateService();
-        // Should not throw; will return empty because AD is unavailable in test env
+        // Should not throw; returns empty because the directory is unavailable (the stand-in probe)
         var results = svc.Search("test term", "Any", maxResults);
         Assert.NotNull(results);
     }
@@ -85,29 +101,25 @@ public class ADDirectorySearchServiceTests
     [Fact]
     public void IsAvailable_WhenAdUnavailable_ReturnsFalse()
     {
-        // In a test environment without RSAT, IsAvailable should be false
-        var svc = CreateService();
-        // Access IsAvailable - this triggers the lazy probe
-        var available = svc.IsAvailable;
-        // We can't guarantee the test host has RSAT, so just verify no exception
-        Assert.IsType<bool>(available);
+        // The probe's failing import is the directory's unavailability, reported once as a warning carrying the
+        // import's own error - not the "could not be loaded" HadErrors branch psl-7 removed.
+        var logger = new CapturingLogger();
+        var svc = CreateService(logger);
+
+        Assert.False(svc.IsAvailable);
+        var warning = Assert.Single(logger.Warnings);
+        Assert.Contains(ImportFailure, warning.Exception?.Message, StringComparison.Ordinal);
     }
 
-    // These three assert the fail-soft contract, which only holds when AD is ABSENT - so they
-    // are inherently conditional. Skip loudly rather than returning: a returned test reports
-    // PASSED, so on this dev box (RSAT installed, IsAvailable true) the wrapped assertions
-    // silently never ran and the result was indistinguishable from real coverage. Same defect as
-    // review finding ppv-4, which fixed the sibling pattern in ADDirectoryLiveTests; these
-    // predated that range and are cleaned up here.
-    //
-    // Note the asymmetry this leaves: these run on CI and skip locally, while ADDirectoryLiveTests
-    // does the reverse. Neither file alone proves the service works.
+    // These three assert the fail-soft contract: a search of a directory that is unavailable answers nothing. They used
+    // to hold only where AD was ABSENT, because the probe imported the real module - so they skipped loudly wherever
+    // RSAT was installed and the directory reachable (ppv-4's rule: a returned test reports PASSED), and ran only on CI.
+    // The stand-in probe makes the directory unavailable on every host, so they run everywhere (psl-8).
 
     [Fact]
     public void Search_WhenAdUnavailable_ReturnsEmpty()
     {
         var svc = CreateService();
-        Assert.SkipWhen(svc.IsAvailable, "Active Directory IS reachable here; the fail-soft path cannot be exercised.");
 
         Assert.Empty(svc.Search("test user search", "User"));
     }
@@ -116,7 +128,6 @@ public class ADDirectorySearchServiceTests
     public void SearchUsers_WhenAdUnavailable_ReturnsEmpty()
     {
         var svc = CreateService();
-        Assert.SkipWhen(svc.IsAvailable, "Active Directory IS reachable here; the fail-soft path cannot be exercised.");
 
         Assert.Empty(svc.SearchUsers("test user"));
     }
@@ -125,7 +136,6 @@ public class ADDirectorySearchServiceTests
     public void SearchGroups_WhenAdUnavailable_ReturnsEmpty()
     {
         var svc = CreateService();
-        Assert.SkipWhen(svc.IsAvailable, "Active Directory IS reachable here; the fail-soft path cannot be exercised.");
 
         Assert.Empty(svc.SearchGroups("test group"));
     }
@@ -197,9 +207,67 @@ public class ADDirectorySearchServiceTests
     // Helpers
     // ---------------------------------------------------------------
 
-    private static ADDirectorySearchService CreateService()
+    // The real cmdlet's words for a module it cannot find (aud-a2r measured the shape: a non-terminating error that only
+    // the caller's -ErrorAction Stop throws).
+    private const string ImportFailure =
+        "The specified module ActiveDirectory was not loaded because no valid module file was found in any module directory.";
+
+    /// <summary>
+    /// The service, its availability probe given a stand-in session (psl-8). Checked before it is handed over: the
+    /// directory is unavailable, and the stand-in took the probe's one import - so no test reaches a search (which
+    /// returns before opening any session while the directory is unavailable), and none could be reaching the real
+    /// module through some other session instead.
+    /// </summary>
+    private static ADDirectorySearchService CreateService(ILogger<ADDirectorySearchService>? logger = null)
     {
-        var logger = Microsoft.Extensions.Logging.Abstractions.NullLogger<ADDirectorySearchService>.Instance;
-        return new ADDirectorySearchService(logger);
+        var calls = new List<string>();
+        var svc = new ADDirectorySearchService(logger ?? NullLogger<ADDirectorySearchService>.Instance)
+        {
+            CreateProbeRunspace = () => StandInProbeSession(calls),
+        };
+
+        Assert.False(svc.IsAvailable);
+        Assert.Equal(["Import-Module|ActiveDirectory"], calls);
+        return svc;
+    }
+
+    /// <summary>
+    /// A local session whose Import-Module is an ADVANCED function - so the probe's -ErrorAction Stop acts on it as on the
+    /// cmdlet - writing the cmdlet's error for a module it cannot find, and noting the call. Module autoloading is off, so
+    /// nothing in the session can load a module.
+    /// </summary>
+    private static Runspace StandInProbeSession(List<string> calls)
+    {
+        var state = InitialSessionState.CreateDefault();
+        state.Variables.Add(new SessionStateVariableEntry("PSModuleAutoloadingPreference", "None", "no autoloading"));
+        state.Variables.Add(new SessionStateVariableEntry("DirectoryCalls", calls, "the calls the session took"));
+        state.Commands.Add(new SessionStateFunctionEntry("Import-Module",
+            "[CmdletBinding()] param([Parameter(Position = 0)] $Name)\n"
+            + "$global:DirectoryCalls.Add(\"Import-Module|$Name\")\n"
+            + $"Write-Error -Message '{ImportFailure}'"));
+        return RunspaceFactory.CreateRunspace(state);
+    }
+
+    private sealed record Logged(LogLevel Level, string Message, Exception? Exception);
+
+    private sealed class CapturingLogger : ILogger<ADDirectorySearchService>
+    {
+        private readonly List<Logged> _entries = [];
+
+        public IReadOnlyList<Logged> Warnings
+        {
+            get { lock (_entries) return _entries.Where(e => e.Level == LogLevel.Warning).ToList(); }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (_entries)
+                _entries.Add(new Logged(logLevel, formatter(state, exception), exception));
+        }
     }
 }

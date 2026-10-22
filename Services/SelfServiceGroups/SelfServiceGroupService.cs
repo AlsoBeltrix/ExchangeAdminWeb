@@ -1083,7 +1083,7 @@ public class SelfServiceGroupService
     /// when the group cannot be resolved (e.g. deleted since the caller loaded it) so the caller fails
     /// closed rather than writing to a stale target.
     /// </summary>
-    private static PSObject? ResolveGroupByGuid(PowerShell ps, PSCredential credential, string groupObjectGuid)
+    internal static PSObject? ResolveGroupByGuid(PowerShell ps, PSCredential credential, string groupObjectGuid)
     {
         try
         {
@@ -1228,10 +1228,12 @@ public class SelfServiceGroupService
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
 
-        var credential = CreateCredential(creds.username, creds.password, creds.domain);
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        return GroupWithIdentityExists(ps, CreateCredential(creds.username, creds.password, creds.domain), memberIdentity);
+    }
+
+    internal static bool GroupWithIdentityExists(PowerShell ps, PSCredential credential, string memberIdentity)
+    {
+        ActiveDirectoryModuleImport.Import(ps);
 
         ps.AddCommand("Get-ADObject")
           .AddParameter("LDAPFilter", AdOwnershipFilter.BuildGroupProbeFilter(memberIdentity.Trim()))
@@ -1254,12 +1256,7 @@ public class SelfServiceGroupService
     /// drive for Get-Acl reads; that read returned an empty DACL here and was replaced by
     /// Get-ADGroup -Properties nTSecurityDescriptor - see <see cref="CallerCanManageMembers"/>.)
     /// </summary>
-    private static void PrepareAdRunspace(PowerShell ps)
-    {
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
-    }
+    internal static void PrepareAdRunspace(PowerShell ps) => ActiveDirectoryModuleImport.Import(ps);
 
     /// <summary>
     /// Resolves the caller ONCE to their DN via the immutable SID (bound -Identity, no interpolation).

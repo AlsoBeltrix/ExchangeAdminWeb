@@ -8,7 +8,7 @@ taken for a later read's error. (3) The full-suite gate imports the real ActiveD
 production probe in `ADDirectorySearchServiceTests` (the three known "AD unavailable" skips); psl-7's new
 `CreateProbeRunspace` seam would let those tests use a stand-in, removing the suite's one live-module
 dependency.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; plan written, in progress
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; fixed on branch, not merged, not pushed; review pending
 **Branch**: `worktree-agent-a56481d2c0a45a8cb`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the psl-7/a28q/a26o agent, 2026-10-22, candidates 1, 2 and 5 of its hand-back)
@@ -126,8 +126,90 @@ SelfService` - stand-ins and source scans only, the live directory classes exclu
   which imports the real module, and the module's import connects to the directory for its drive (*documented module
   behaviour, not probed*) - the probe the owner forbids (psl-7 declined seam reverts for the same reason).
 
-**Left for a follow-up (file owned by another agent)** - recorded here, not fixed:
-- `Services/ExoConnectionPool.cs` `CreateConnected`, 679-682:
+**Left for a follow-up**: the connection pool's import, in its own section below (its file is owned by another agent).
+
+**Files.** `Services/ConferenceRoomService.cs`, `Services/EmergencyDisableService.cs`,
+`Services/SelfServiceGroups/SelfServiceGroupService.cs`, `ExchangeAdminWeb.Tests/DirectoryModuleImportTests.cs`,
+`ExchangeAdminWeb.Tests/ADDirectorySearchServiceTests.cs`, this record; in the comments commit
+`Services/ActiveDirectoryModuleImport.cs`.
+
+## Fix
+
+- `Services/ConferenceRoomService.cs`: the four directory paths import through `ActiveDirectoryModuleImport.Import(ps)`
+  (the City/State/Country preflight and write, the room-list preflight and add); the private `ImportActiveDirectoryModule`
+  and its comment are gone. The same statements in the same order.
+- `Services/EmergencyDisableService.cs`: the four steps' sessions come from the new `internal virtual Runspace
+  CreateDirectoryRunspace()` (the session each built inline: `InitialSessionState.CreateDefault()`, `Bypass`), and each
+  imports through the helper in place of its commands-only import. `ReadAdEnabledState`, `ExecuteDisableAD`,
+  `ExecuteMoveToLockdownOu` and `ExecuteResetPassword` are `internal` (they were `private`), for the tests.
+- `Services/SelfServiceGroups/SelfServiceGroupService.cs`: `PrepareAdRunspace` is `internal` and is the helper; the add
+  path's group probe hands its session to the new `internal static bool GroupWithIdentityExists(PowerShell ps,
+  PSCredential credential, string memberIdentity)`, whose import is the helper (the credential built first, as before);
+  `ResolveGroupByGuid` is `internal`. The two untouched imports (`ResolveListedMemberByGuid`, `ResolveUserMember`) have no
+  check after them.
+- `ExchangeAdminWeb.Tests/ADDirectorySearchServiceTests.cs`: `CreateService` gives the probe a stand-in session (an
+  advanced-function `Import-Module` writing the cmdlet's not-found error, autoloading off) and checks the directory
+  unavailable and the stand-in's one import before returning the service; the three `*_WhenAdUnavailable_ReturnsEmpty` run
+  without `Assert.SkipWhen`; `IsAvailable_WhenAdUnavailable_ReturnsFalse` asserts false and the one warning carrying the
+  import's error; the class is out of `LiveDirectoryCollection`; the class summary says why.
+- `ExchangeAdminWeb.Tests/DirectoryModuleImportTests.cs`: two sections, below.
+
+Caller-visible change, by design: an error an ActiveDirectory import reports without throwing no longer fails an Emergency
+Disable step - the pre-state read, the disable, the lockdown move, the password reset - nor hides a group from Self-Service
+Groups' lists, refuses its member listing or membership change as a vanished group, or makes its group probe say no group
+answered. An import that throws fails as before, with its own error. No outcome the real cmdlet is known to produce changes
+(*assumption, not probed*, aud-a2r's and psl-7's: the real ActiveDirectory module's import writes no error past
+`-ErrorAction Stop`). Conference Rooms: none (the same code, moved).
+
+## Guard proof
+
+| Test (`DirectoryModuleImportTests` unless named) | What it pins |
+| --- | --- |
+| `EmergencyDisable_AnImportThatReportsAnError_IsNotTakenForTheStepsError` (the pre-state read, the disable, the lockdown move, the password reset) | a stand-in import that reports an error without throwing: the pre-state read answers the account's Enabled; the disable and the reset are `OK` with their write sent; the move is `Moved`, its stamp `Stamped`, both steps `OK`, the `Move-ADObject` sent |
+| `EmergencyDisable_AFailingImport_IsTheStepsFailure_AndNoReadIsSent` (the same four) | a failing import (the cmdlet's not-found shape, thrown by Stop): the pre-state read throws it; each step is `FAILED` with it (the move `Failed`, its stamp `NotAttempted`); the import the only call |
+| `SelfService_AnImportThatReportsAnError_IsNotTakenForTheGroupReReadsError` | `PrepareAdRunspace` on a reporting import, then the re-read by objectGUID: the group, `HadErrors` false, the import and the read the calls |
+| `SelfService_AnImportThatReportsAnError_IsNotTakenForTheGroupProbesError` | the group probe on a reporting import: a group answers |
+| `SelfService_AFailingImport_IsTheImportsFailure_AndNoReadIsSent` | `PrepareAdRunspace` and the probe each throw the import's error; no read sent |
+| `ADDirectorySearchServiceTests` - every case through `CreateService` | the guard: the probe's stand-in took one import and the directory is unavailable, before the test runs - so no case reaches a search, or a session that could load the real module unnoticed |
+| `ADDirectorySearchServiceTests.Search_WhenAdUnavailable_ReturnsEmpty`, `SearchUsers_...`, `SearchGroups_...` | the fail-soft contract on every host: each search of the unavailable directory answers nothing (they skipped on this host before) |
+| `ADDirectorySearchServiceTests.IsAvailable_WhenAdUnavailable_ReturnsFalse` | false, and one warning carrying the stand-in import's error (it asserted only that a bool came back) |
+| Conference Rooms, aud-a2r's, unchanged: `ConferenceRoomWriteIdentityTests.AnErrorTheImportReportsWithoutThrowing_IsNotTakenForAnyStepsError`, `AFailureAtEachStepOfTheCityStateAndCountryPreflight_NamesThatStep` (import), `AFailedImportOnTheOnPremRoomListPaths_NamesThatStep` | part 1: the four paths through the helper behave as through the copy |
+
+New cases: 11 in `DirectoryModuleImportTests` (4 + 4 + 3). `ADDirectorySearchServiceTests`: 29 cases as before, the three
+that skipped here now passing; one strengthened. No other existing assertion changed.
+
+**Mutations** (`scratchpad/round/round.ps1`, rows `rows-psl8.ps1`, log `round-psl8.log`; 2026-10-22 18:35-18:43). Each row:
+md5 before, the replacement (matching exactly once), the file touched, `dotnet test` on the filter (the projects rebuilt),
+the failures read from its TRX, the file restored from the git index (the fix staged), touched, md5 after equal to before.
+Filters: rows M - `DirectoryModuleImportTests|ADDirectorySearchServiceTests|ConferenceRoom|EmergencyDisable|SelfService`
+(546 cases); rows P - `ADDirectorySearchServiceTests|DirectoryModuleImportTests` (55). Stand-in sessions and source scans
+only; the live directory classes are in neither. Every mutant built with 0 errors.
+
+| # | Mutation (call site) | File, md5 before = after | md5 mutated | Named test failing | Result |
+| --- | --- | --- | --- | --- | --- |
+| M1 | the City/State/Country preflight's import inline, clearing the commands only (the shape the Emergency Disable sites had) | `ConferenceRoomService.cs` `50b71ae398e1227243a24cd7b2de6b8c` | `6789b1ce4e1870756c942c7e24da08c5` | `ConferenceRoomWriteIdentityTests.AnErrorTheImportReportsWithoutThrowing_IsNotTakenForAnyStepsError` | FAIL, 1 of 546: the record refused the row as the object read's error, "A non-terminating error the import reported and carried on past. Nothing was written." |
+| M2a | the pre-state read's import as at `e9886df7` | `EmergencyDisableService.cs` `d2eb94629452915b9b75e72ce79bf583` | `e1a5e5e52a98143a445433c241fb1b2d` | `EmergencyDisable_AnImportThatReportsAnError_...` (the pre-state read) | FAIL, 1: the read threw the import's record as its error |
+| M2b | the disable's import as at `e9886df7` | the same | `bc9f8117645a5e7f0bb479a04afe8af0` | the same (the disable) | FAIL, 1: `FAILED` with the import's record, the `Set-ADUser` sent |
+| M2c | the lockdown move's import as at `e9886df7` | the same | `9a1cbb5f14721f076391c8b427fe342a` | the same (the lockdown move) | FAIL, 1: `Failed`, not `Moved` |
+| M2d | the password reset's import as at `e9886df7` | the same | `4a6680654d8706c9b34acf9d2713fe4f` | the same (the password reset) | FAIL, 1: `FAILED` with the import's record, the reset sent |
+| M2e | `PrepareAdRunspace` as at `e9886df7` | `SelfServiceGroupService.cs` `bd92bce4f2da4f2d20e79018c2ab595b` | `ef86f718463e67f1170375511ccc63f6` | `SelfService_AnImportThatReportsAnError_IsNotTakenForTheGroupReReadsError` | FAIL, 1: the re-read returned null (the vanished-group refusal). Run twice: first with the test asserting the empty stream before the re-read, which failed on the stream; reordered so the behaviour fails first, run again |
+| M2f | the group probe's import as at `e9886df7` | the same | `59e9a3ef40a86701837036c564b64e31` | `SelfService_AnImportThatReportsAnError_IsNotTakenForTheGroupProbesError` | FAIL, 1: the probe said no group answered |
+| P1 | `Search`'s unavailable return answering one result | `ADDirectorySearchService.cs` `bfc67ee19836f92b3e29749c6258ed5f` | `0179717bcbd3b50cb5d32bf66f72572e` | `ADDirectorySearchServiceTests.Search_WhenAdUnavailable_ReturnsEmpty`, `SearchUsers_...`, `SearchGroups_...` | FAIL, 3 of 55: the three that skipped here before |
+| P2 | the probe's catch marking the directory available | the same | `4c80c980c99ab4836e4b671d00710b79` | every `ADDirectorySearchServiceTests` case through `CreateService` (17), `DirectorySearch_AFailingImport_IsTheImportsFailure` | FAIL, 18 of 55: the guard's `Assert.False(IsAvailable)`, before any search |
+| P3 | the probe opening an empty session of its own (`InitialSessionState.Create()`, autoloading off) instead of `CreateProbeRunspace`'s | the same | `182b4caae04483e8868021bd93208e7a` | the 17 through `CreateService`; both `DirectorySearch_...` cases | FAIL, 19 of 55: the guard's pin on the stand-in's import (no call noted) though the directory read as unavailable; the psl-7 cases, available false and the warning "The term 'Import-Module' is not recognized" |
+
+Not run, by design: production's own probe session in place of the seam (it imports the real module, which connects to the
+directory for its drive - the probe the owner forbids); a dead `HadErrors` branch restored (none remains to restore).
+
+After the last row the restored tree rebuilt and the related suites (the filter above plus `RefusalAuditTests`,
+`GroupMember*`, `ProtectedGroupWriteTargetTests`, `GroupBulkActionsWiringTests`, `ResourceDomainDeniesTests`,
+`AuditCategoryFilingTests` - the source scans of these files) passed, 845/845. Test files at the round's end:
+`DirectoryModuleImportTests.cs` `74eacafe2041dd5d3280d80b0c9ceac6`, `ADDirectorySearchServiceTests.cs`
+`8f0b19a15a91286373bd7d84d95b2b9b`.
+
+## Left for a follow-up (file owned by another agent)
+
+- `Services/ExoConnectionPool.cs` `CreateConnected`, 679-682 at `e9886df7`:
   `ps.AddCommand("Import-Module").AddParameter("Name", "ExchangeOnlineManagement").AddParameter("ErrorAction", "Stop");
   ps.Invoke(); ps.Commands.Clear();`. A record the import writes past Stop stays in the stream; the next check is
   `ReadConnectionIds`' `if (ps.Streams.Error.Count > 0) return null;` (644), so the list of connections before the connect
@@ -136,12 +218,29 @@ SelfService` - stand-ins and source scans only, the live directory classes exclu
   ps.Commands.Clear(); ps.Streams.Error.Clear(); }` around the import (the shape of `ActiveDirectoryModuleImport`, for this
   module), with a stand-in test that a reporting import leaves the id identified. *Assumption, not probed:* the real
   ExchangeOnlineManagement import writes no error past Stop.
+- `Services/ProtectedPrincipalService.cs` and `Services/ExchangeServiceBase.cs`: audited (the table), nothing needed.
 
-**Files.** `Services/ConferenceRoomService.cs`, `Services/EmergencyDisableService.cs`,
-`Services/SelfServiceGroups/SelfServiceGroupService.cs`, `ExchangeAdminWeb.Tests/DirectoryModuleImportTests.cs`,
-`ExchangeAdminWeb.Tests/ADDirectorySearchServiceTests.cs`, this record; in the comments commit
-`Services/ActiveDirectoryModuleImport.cs`.
+## Known gaps
 
-## Guard proof
+- The DHCP change's remote script (`DhcpAuthorizationService` 101, 165) imports DhcpServer and makes the change in one
+  `Invoke-Command`, whose records share the stream the change's `HadErrors` reads; no clear can come between them from
+  C#. A record the import wrote past Stop would report a completed change as failed. *Assumption, not probed:* the
+  DhcpServer module's import writes none. Separating them would change the remote script itself, against a module this
+  host does not have; not done here.
+- The suite still reads the live directory where one is reachable: `ADDirectoryLiveTests` (5) and
+  `AdDirectoryForestSearchLiveTests` (3) by design, and one theory of `ADDirectoryValidateExistsTests`
+  (`Search_AllObjectKindsIncludingOu_DoNotThrow`, 4 cases, searching "test search term" through the production probe -
+  the shape of the `Search_AllObjectKinds_DoNotThrow` this record moved onto the stand-in). The approach's "the suite
+  imports no live module" is true of `ADDirectorySearchServiceTests` only; the others are not this record's (the last is
+  a candidate in the hand-back).
+- The Emergency Disable steps are reached directly, not through `DisableAsync`, whose credential, Graph and protection
+  steps are outside this record; the steps are what the four imports feed.
 
-Pending.
+## Closeout
+
+Fixed on branch `worktree-agent-a56481d2c0a45a8cb`, not merged, not pushed. Module-scoped behaviour changes to Emergency
+Disable and Self-Service Groups (an import's reported, unthrown error no longer fails their steps), so their module
+versions are due at merge; Conference Rooms' code is the same statements moved (its bump is due with aud-a2w and aud-a2x
+on this branch). No shared code changes behaviour (`ActiveDirectoryModuleImport` gains a corrected comment only, in the
+comments commit), so no base app bump from this record. `ExchangeAdminWeb.csproj` and `Modules/ModuleCatalog.cs` were
+outside this brief. Gates are in the branch-tip section the records' last commit adds.
