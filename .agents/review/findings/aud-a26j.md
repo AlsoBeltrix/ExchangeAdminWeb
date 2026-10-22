@@ -98,6 +98,99 @@ values recorded as before; extra E3 the write's finally no longer clearing the e
 Files: `Services/ADAttributeEditorService.cs`, `ExchangeAdminWeb.Tests/AttributeEditorHarness.cs`,
 `ExchangeAdminWeb.Tests/ADAttributeEditorSaveTests.cs`, this record.
 
+## Fix
+
+`Services/ADAttributeEditorService.cs`, PerformSave: after the write's try/catch/finally,
+`ConfirmWrite(ps, target, reReadGuid, changes, credential)`. Its failure message is recorded as
+`LogAudit(target, [], performedBy, ip, ticket, false, <message>)` and returned as the failed result;
+otherwise the success record and the result carry the changes as read. New, beside it:
+
+- `ConfirmWrite` (private): runs the read-back, a throw caught as the read's error. A failed read - "Set-ADUser
+  on <upn> was sent but could not be confirmed: reading <names> back by objectGUID <guid> failed: <error>";
+  differences - "Set-ADUser on <upn> was not confirmed: read back by objectGUID <guid>, <each>." Each logs a
+  warning.
+- `ReadBackWrittenAttributes` (private static): `Get-ADUser -Identity <objectGUID> -Properties <the written
+  names> -Credential -ErrorAction Stop`, no `-Server`; no objectGUID to read by, an error record, or anything
+  but exactly one object with that objectGUID is a failed read.
+- `UnconfirmedWrites` (internal static, pure): each change's NewValue against the value read, ordinal, nothing
+  trimmed, "" and absent equal; returns the differences - `<name> (<label>) is '<read>'` or `is not set`, then
+  `, not '<written>' as written` or `, not cleared as written` - and the changes with NewValue as read.
+- `ReadDirectoryString`, `EmptyAsAbsent`, `Unwrapped` (private static): aud-a2p's, as siblings - a one-element
+  collection read as its element, several joined by "; ".
+
+The write, its catch and its finally are unchanged.
+
+Harness (`ExchangeAdminWeb.Tests/AttributeEditorHarness.cs`, `LocalAd`), all default off: `SetChangesNothing`
+(Set-ADUser records the call and applies nothing), `SetStoresAs` (Set-ADUser stores each -Replace value as
+this returns it), `ReadBackFailure` (a Get-ADUser after a Set-ADUser in the same session -
+`$global:AttributeWriteSent`, set by the stand-in Set-ADUser - fails terminating) and `Reads` (each
+Get-ADUser's identity and -Properties, through `NoteRead`).
+
+Tests (`ExchangeAdminWeb.Tests/ADAttributeEditorSaveTests.cs`, 6 cases):
+`AWriteThatApplies_IsConfirmedByReadingItBack_AndRecordedAsRead`,
+`AWriteThatRaisesNothingAndAppliesNothing_IsAFailedSave_ThatOffersNoUndo`,
+`AReadBackThatFails_IsAFailedSave_ThoughTheWriteWasSent`,
+`AServerThatStoresTheValueInAnotherForm_IsNotConfirmed_AndTheRecordCarriesTheValueRead`, the pure
+`TheReadBack_IsOrdinal_AnEmptyValueIsAnAbsentOne_AndAOneElementCollectionIsItsElement` and the knob self-test
+`TheHarness_SetADUser_CanApplyNothingOrNormalise_AndAReadAfterItCanFail`. The existing
+`AnOrdinaryEdit_IsWrittenOnceToTheBoundObject_AndAudited` pins the exact call list, which gains
+`Get-ADUser|<objectGUID>|` after the write.
+
+Caller-visible change, by design: a save whose attributes do not read back as written - nothing applied, a
+value stored in another form, or a read-back that cannot be made - is a failed save. The operator is shown the
+message, administrators get a failure notice, and its `ADAttributeEditor_Update` is Failed with no old/new
+pair, so the event log offers no Undo. A confirmed save is recorded, returned and announced as before, its
+values those read. One more Get-ADUser for each save that writes. The undo path's save runs the same
+read-back, so an unconfirmed reversal is a failed undo, recorded by the undo service as any failed save is.
+
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: M4 is the save as at `762c774c` - the read-back dropped at its call site,
+the proposed values recorded - and it fails the applies-nothing test that names the defect.
+
+Same driver and conditions as aud-a28m (`a26j-mutations.log`), filter
+`FullyQualifiedName~ADAttributeEditorSaveTests|FullyQualifiedName~ADAttributeEditorNotificationTests|FullyQualifiedName~ADAttributeEditorUndoRefusalTests|FullyQualifiedName~ADAttributeEditorLookupTests|FullyQualifiedName~ADAttributeEditorPatternTests|FullyQualifiedName~ADAttributeEditorServiceTests|FullyQualifiedName~AttributeEditorPageSaveAuditTests|FullyQualifiedName~ReversedOperationsTests|FullyQualifiedName~UndoNotificationTests|FullyQualifiedName~UndoIdentityTests|FullyQualifiedName~EventLogUndoRefusalTests`
+(175 tests). Every mutant built with 0 errors; each restore matched its original MD5. After the round, a
+rebuild on the restored bytes and the filter: 175/175 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| M4 the read-back dropped - `ConfirmWrite` not called, the proposed values recorded as before | `ADAttributeEditorService.cs`, `3842B3F4A1784D880ADB215BBBFF3C27` | `A6841725581DF45645944044802E92EE` | `AWriteThatRaisesNothingAndAppliesNothing_IsAFailedSave_ThatOffersNoUndo` (a success reported with nothing applied), `AReadBackThatFails_IsAFailedSave_ThoughTheWriteWasSent`, `AServerThatStoresTheValueInAnotherForm_IsNotConfirmed_AndTheRecordCarriesTheValueRead`, and `AWriteThatApplies_IsConfirmedByReadingItBack_AndRecordedAsRead` with `AnOrdinaryEdit_IsWrittenOnceToTheBoundObject_AndAudited` (no read-back call) |
+| extra E3 the write's finally no longer clearing the error stream | `ADAttributeEditorService.cs`, `3842B3F4A1784D880ADB215BBBFF3C27` | `098AA25F7502BA0D045BF446290DAD80` | `AnErrorTheWriteReportsWithoutThrowing_IsNotTakenForAFailedWrite` only - the record the write left past `-ErrorAction Stop` fails the read-back's error check, so an applied write is reported unconfirmed; the aud-a26g test now pins the finally |
+
+Unchanged through the round: `AttributeEditorHarness.cs` `B81DDFCE7A6B045D93F2A52771E5FFA5`,
+`ADAttributeEditorSaveTests.cs` `56833579FD65B29DD5B695A266CA5AD3`. The code comments are written after the
+round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline
+  count - none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,324 passed / 3 skipped (the three known AD skips) / 0 failed, 5,327 total, 5m8s;
+  nothing hung, no Sequence file. aud-a28m's tree: 5,318 / 3 / 0, 5,321 total; the six new cases are this
+  record's.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` with the files staged: exit 0.
+
+No PowerShell source, AD module, directory, Delinea, SMTP, push or deployment. No coder self-review verdict
+is claimed.
+
+## Known gaps
+
+- *Assumption, not probed* (no directory call is made here): with no `-Server`, the read-back is answered where
+  the module's default sends this session, as the write was; one domain controller is not pinned. One that has
+  not yet seen the write reports a landed write as not confirmed - a loud failed save with no Undo; saving
+  again re-reads the directory first. A false success would need the server read to hold the written values
+  already.
+- *Assumption, not probed*: the module answers `-Properties <name>` with a single-valued attribute as its value
+  through `Properties[..].Value`, as the editor's own reads take it; a one-element collection is taken too.
+  Were it otherwise every save that writes would read back unconfirmed - loud, never a false success.
+- A value the directory stores in another form - a DN in its canonical case, a Boolean's or an integer's own
+  text - is not confirmed, by the ordinal rule: a loud false failure for such an attribute, never a false
+  success. An allowlist that offers one should offer its values as the directory returns them.
+- An unconfirmed save's record carries no old/new pair, as the brief asks, so it does not hold the value the
+  attribute had before the write; its error holds the value read and the value written. Where the directory
+  took the write in another form, the pre-write value is in neither this record nor its trace step.
+- A write that threw stays the failure it was (aud-a28c) and is not read back.
+- Cost: one more Get-ADUser for each save that writes.

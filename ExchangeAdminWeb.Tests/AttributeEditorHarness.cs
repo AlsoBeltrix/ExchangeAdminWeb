@@ -415,6 +415,7 @@ internal sealed class LocalAd
     private readonly List<User> _users = [];
     private readonly List<string> _calls = [];
     private readonly List<SetCall> _sets = [];
+    private readonly List<ReadCall> _reads = [];
 
     public sealed class User
     {
@@ -428,6 +429,8 @@ internal sealed class LocalAd
     }
 
     public sealed record SetCall(string Identity, IReadOnlyDictionary<string, string?> Replace, IReadOnlyList<string> Clear);
+
+    public sealed record ReadCall(string Identity, IReadOnlyList<string> Properties);
 
     /// <summary>
     /// Per search base, how Get-ADUser fails there: <c>"terminating"</c> (the cmdlet's
@@ -455,6 +458,24 @@ internal sealed class LocalAd
     /// </summary>
     public string? SetReportsErrorWithoutThrowing { get; set; }
 
+    /// <summary>
+    /// When true, Set-ADUser takes the call and applies nothing, raising nothing: a write the
+    /// directory accepted without applying it (aud-a26j).
+    /// </summary>
+    public bool SetChangesNothing { get; set; }
+
+    /// <summary>
+    /// When set, Set-ADUser stores each -Replace value as this returns it, as a server that
+    /// normalises a value does (aud-a26j).
+    /// </summary>
+    public Func<string?, string?>? SetStoresAs { get; set; }
+
+    /// <summary>
+    /// When set, a Get-ADUser that runs after a Set-ADUser in the same session fails with this
+    /// message as a terminating error: a read-back that cannot be made (aud-a26j).
+    /// </summary>
+    public string? ReadBackFailure { get; set; }
+
     /// <summary>When set, Import-Module fails with this message, as on a host without the module.</summary>
     public string? ImportFailure { get; set; }
 
@@ -466,6 +487,12 @@ internal sealed class LocalAd
     public IReadOnlyList<SetCall> Sets
     {
         get { lock (_sets) return _sets.ToList(); }
+    }
+
+    /// <summary>Every Get-ADUser call, in order: the identity it asked for and its -Properties.</summary>
+    public IReadOnlyList<ReadCall> Reads
+    {
+        get { lock (_reads) return _reads.ToList(); }
     }
 
     public User Add(string upn, string dn, string displayName, params (string Name, string? Value)[] attributes)
@@ -505,6 +532,26 @@ internal sealed class LocalAd
     {
         lock (_calls)
             _calls.Add(call);
+    }
+
+    public void NoteRead(string identity, object? properties)
+    {
+        var names = new List<string>();
+        switch (Unwrap(properties))
+        {
+            case null:
+                break;
+            case string one:
+                names.Add(one);
+                break;
+            case IEnumerable many:
+                foreach (var name in many)
+                    names.Add(Unwrap(name)?.ToString() ?? "");
+                break;
+        }
+
+        lock (_reads)
+            _reads.Add(new ReadCall(identity, names));
     }
 
     public string FailureFor(string searchBase) =>
@@ -552,6 +599,9 @@ internal sealed class LocalAd
         lock (_sets)
             _sets.Add(new SetCall(identity, replaced, cleared));
 
+        if (SetChangesNothing)
+            return;
+
         lock (_users)
         {
             var user = _users.FirstOrDefault(u => string.Equals(u.Dn, identity, StringComparison.OrdinalIgnoreCase));
@@ -559,7 +609,7 @@ internal sealed class LocalAd
                 return;
 
             foreach (var (name, value) in replaced)
-                user.Attributes[name] = value;
+                user.Attributes[name] = SetStoresAs is { } storesAs ? storesAs(value) : value;
             foreach (var name in cleared)
                 user.Attributes[name] = null;
         }
@@ -592,6 +642,12 @@ internal sealed class LocalAd
             [CmdletBinding()] param($Identity, $LDAPFilter, $SearchBase, $Properties, $Credential)
             $directory = $global:AttributeDirectory
             $directory.Note("Get-ADUser|$Identity|$SearchBase")
+            $directory.NoteRead([string]$Identity, $Properties)
+            if ($global:AttributeWriteSent -and $directory.ReadBackFailure) {
+                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                    [System.InvalidOperationException]::new($directory.ReadBackFailure),
+                    'ReadBackFailed', [System.Management.Automation.ErrorCategory]::ReadError, $Identity))
+            }
             $failure = $directory.FailureFor([string]$SearchBase)
             if ($failure -eq 'terminating') {
                 $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
@@ -621,6 +677,7 @@ internal sealed class LocalAd
             [CmdletBinding()] param($Identity, $Credential, $Replace, $Clear)
             $directory = $global:AttributeDirectory
             $directory.Note("Set-ADUser|$Identity")
+            $global:AttributeWriteSent = $true
             if ($directory.SetFailure) {
                 $refusal = [System.Management.Automation.ErrorRecord]::new(
                     [System.InvalidOperationException]::new($directory.SetFailure),

@@ -94,7 +94,7 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
 
         // The stand-in took the import, so nothing real was loaded; then one re-read BY DN and one
         // write, carrying the replace and the clear together.
-        Assert.Equal(["Import-Module|ActiveDirectory", $"Get-ADUser|{alex.Dn}|", $"Set-ADUser|{alex.Dn}"], _h.Ad.Calls);
+        Assert.Equal(["Import-Module|ActiveDirectory", $"Get-ADUser|{alex.Dn}|", $"Set-ADUser|{alex.Dn}", $"Get-ADUser|{alex.Guid}|"], _h.Ad.Calls);
         var write = Assert.Single(_h.Ad.Sets);
         Assert.Equal(alex.Dn, write.Identity);
         Assert.Equal("Lead Analyst", Assert.Single(write.Replace, kv => kv.Key == "title").Value);
@@ -434,6 +434,187 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         shell.AddCommand("Set-ADUser").AddParameter("Identity", user.Dn).AddParameter("Replace", replace);
         if (stop)
             shell.AddParameter("ErrorAction", "Stop");
+        return shell;
+    }
+
+    // ---- the write is done when it reads back as written (aud-a26j) ----------------------------
+
+    /// <summary>
+    /// A write that was not confirmed: one failed ADAttributeEditor_Update carrying the message, with
+    /// no old/new pair, and nothing the event log would offer to undo.
+    /// </summary>
+    private void AssertUnconfirmedRecord(JsonElement record, string error, LocalAd.User user)
+    {
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(error, Text(record, "error"));
+        Assert.Equal(user.Guid.ToString(), Text(record, "targetObjectGuid"));
+        Assert.Equal(0, record.GetProperty("changedAttributes").GetArrayLength());
+        Assert.DoesNotContain(record.EnumerateObject(), p =>
+            p.Name.StartsWith("old_", StringComparison.Ordinal) || p.Name.StartsWith("new_", StringComparison.Ordinal));
+        Assert.False(record.TryGetProperty("refusedAt", out _));
+        Assert.False(record.TryGetProperty("mutationAttempted", out _));
+
+        var logged = record.EnumerateObject()
+            .ToDictionary(p => p.Name, p => (object?)p.Value.Clone(), StringComparer.OrdinalIgnoreCase);
+        Assert.False(_h.CreateUndoService().CanUndo(logged));
+    }
+
+    [Fact]
+    public async Task AWriteThatApplies_IsConfirmedByReadingItBack_AndRecordedAsRead()
+    {
+        var alex = _h.Ad.AddAlex();
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst", ["department"] = "" });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal($"Set-ADUser|{alex.Dn}", _h.Ad.Calls[^2]);
+        Assert.Equal($"Get-ADUser|{alex.Guid}|", _h.Ad.Calls[^1]);
+        var readBack = _h.Ad.Reads[^1];
+        Assert.Equal(alex.Guid.ToString(), readBack.Identity);
+        Assert.Equal(["department", "title"], readBack.Properties.Order(StringComparer.Ordinal));
+
+        Assert.Equal(alex.Attributes["title"], result.AppliedChanges!.Single(c => c.Name == "title").NewValue);
+        Assert.Null(alex.Attributes["department"]);
+        Assert.Null(result.AppliedChanges!.Single(c => c.Name == "department").NewValue);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("Success", Text(record, "result"));
+        Assert.Equal(alex.Attributes["title"], Text(record, "new_title"));
+        Assert.Equal("Finance", Text(record, "old_department"));
+        Assert.False(record.TryGetProperty("new_department", out _));
+        Assert.True(Assert.Single(_h.Notices).Success);
+    }
+
+    [Fact]
+    public async Task AWriteThatRaisesNothingAndAppliesNothing_IsAFailedSave_ThatOffersNoUndo()
+    {
+        var alex = _h.Ad.AddAlex(title: "Analyst");
+        _h.Ad.SetChangesNothing = true;
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        Assert.False(result.Success);
+        Assert.Null(result.AppliedChanges);
+        Assert.Contains("title", result.Error, StringComparison.Ordinal);
+        Assert.Contains("'Analyst'", result.Error, StringComparison.Ordinal);
+        Assert.Contains("'Lead Analyst'", result.Error, StringComparison.Ordinal);
+        Assert.Single(_h.Ad.Sets);
+        Assert.Equal("Analyst", alex.Attributes["title"]);
+
+        AssertUnconfirmedRecord(Assert.Single(_h.AuditEvents()), result.Error!, alex);
+        var notice = Assert.Single(_h.Notices);
+        Assert.False(notice.Success);
+        Assert.Equal(result.Error, notice.Details["Error"]);
+    }
+
+    [Fact]
+    public async Task AReadBackThatFails_IsAFailedSave_ThoughTheWriteWasSent()
+    {
+        const string unreachable = "The server is not operational.";
+        var alex = _h.Ad.AddAlex(title: "Analyst");
+        _h.Ad.ReadBackFailure = unreachable;
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        Assert.False(result.Success);
+        Assert.Null(result.AppliedChanges);
+        Assert.Contains(unreachable, result.Error, StringComparison.Ordinal);
+        Assert.Single(_h.Ad.Sets);
+        Assert.Equal("Lead Analyst", alex.Attributes["title"]);
+
+        AssertUnconfirmedRecord(Assert.Single(_h.AuditEvents()), result.Error!, alex);
+        Assert.False(Assert.Single(_h.Notices).Success);
+    }
+
+    [Fact]
+    public async Task AServerThatStoresTheValueInAnotherForm_IsNotConfirmed_AndTheRecordCarriesTheValueRead()
+    {
+        var alex = _h.Ad.AddAlex(title: "Analyst");
+        _h.Ad.SetStoresAs = value => value?.ToUpperInvariant();
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        Assert.False(result.Success);
+        Assert.Null(result.AppliedChanges);
+        Assert.Equal("LEAD ANALYST", alex.Attributes["title"]);
+        Assert.Contains("'LEAD ANALYST'", result.Error, StringComparison.Ordinal);
+        Assert.Contains("'Lead Analyst'", result.Error, StringComparison.Ordinal);
+
+        AssertUnconfirmedRecord(Assert.Single(_h.AuditEvents()), result.Error!, alex);
+        Assert.False(Assert.Single(_h.Notices).Success);
+    }
+
+    [Fact]
+    public void TheReadBack_IsOrdinal_AnEmptyValueIsAnAbsentOne_AndAOneElementCollectionIsItsElement()
+    {
+        var read = new PSObject();
+        read.Properties.Add(new PSNoteProperty("title", new[] { "Lead Analyst" }));
+        read.Properties.Add(new PSNoteProperty("department", ""));
+        read.Properties.Add(new PSNoteProperty("company", "contoso"));
+
+        var (unconfirmed, asRead) = ADAttributeEditorService.UnconfirmedWrites(
+        [
+            new AttributeChange("title", "Job Title", "Analyst", "Lead Analyst"),
+            new AttributeChange("department", "Department", "Finance", null),
+            new AttributeChange("company", "Company", null, "Contoso"),
+            new AttributeChange("extensionAttribute5", "Cost Centre", null, "CC-1"),
+        ], read);
+
+        Assert.Equal(2, unconfirmed.Count);
+        Assert.Contains(unconfirmed, u => u.StartsWith("company", StringComparison.Ordinal)
+            && u.Contains("'contoso'", StringComparison.Ordinal) && u.Contains("'Contoso'", StringComparison.Ordinal));
+        Assert.Contains(unconfirmed, u => u.StartsWith("extensionAttribute5", StringComparison.Ordinal)
+            && u.Contains("'CC-1'", StringComparison.Ordinal) && !u.Contains("is '", StringComparison.Ordinal));
+        Assert.Equal("Lead Analyst", asRead.Single(c => c.Name == "title").NewValue);
+        Assert.Null(asRead.Single(c => c.Name == "department").NewValue);
+        Assert.Equal("contoso", asRead.Single(c => c.Name == "company").NewValue);
+        Assert.Null(asRead.Single(c => c.Name == "extensionAttribute5").NewValue);
+    }
+
+    [Fact]
+    public void TheHarness_SetADUser_CanApplyNothingOrNormalise_AndAReadAfterItCanFail()
+    {
+        var alex = _h.Ad.AddAlex(title: "Analyst");
+        var replace = new Hashtable { ["title"] = "Lead Analyst" };
+
+        _h.Ad.SetChangesNothing = true;
+        using (var session = Session())
+        {
+            SetTitle(session.Shell, alex, replace, stop: true).Invoke();
+            Assert.False(session.Shell.HadErrors);
+            Assert.Single(_h.Ad.Sets);
+            Assert.Equal("Analyst", alex.Attributes["title"]);
+        }
+
+        _h.Ad.SetChangesNothing = false;
+        _h.Ad.SetStoresAs = value => value?.ToUpperInvariant();
+        using (var session = Session())
+        {
+            SetTitle(session.Shell, alex, replace, stop: true).Invoke();
+            Assert.Equal("LEAD ANALYST", alex.Attributes["title"]);
+        }
+
+        _h.Ad.SetStoresAs = null;
+        _h.Ad.ReadBackFailure = "The server is not operational.";
+        using (var session = Session())
+        {
+            Assert.Single(ReadTitle(session.Shell, alex).Invoke());
+            SetTitle(session.Shell, alex, replace, stop: true).Invoke();
+            var thrown = Assert.ThrowsAny<RuntimeException>(() => ReadTitle(session.Shell, alex).Invoke());
+            Assert.Contains("The server is not operational.", thrown.Message, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(["title"], _h.Ad.Reads[^1].Properties);
+    }
+
+    private static PowerShell ReadTitle(PowerShell shell, LocalAd.User user)
+    {
+        shell.Commands.Clear();
+        shell.AddCommand("Get-ADUser")
+            .AddParameter("Identity", user.Guid.ToString())
+            .AddParameter("Properties", new[] { "title" })
+            .AddParameter("ErrorAction", "Stop");
         return shell;
     }
 

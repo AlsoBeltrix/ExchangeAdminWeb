@@ -1453,10 +1453,120 @@ public class ADAttributeEditorService
             ps.Streams.Error.Clear();
         }
 
-        LogAudit(target, changes, performedBy, ip, ticket, true, null, servicedNote);
+        var (confirmError, asRead) = ConfirmWrite(ps, target, reReadGuid, changes, credential);
+        if (confirmError != null)
+        {
+            LogAudit(target, [], performedBy, ip, ticket, false, confirmError);
+            return new(false, confirmError, null);
+        }
 
-        return new(true, null, changes);
+        LogAudit(target, asRead, performedBy, ip, ticket, true, null, servicedNote);
+
+        return new(true, null, asRead);
     }
+
+    private (string? Error, List<AttributeChange> AsRead) ConfirmWrite(
+        PowerShell ps,
+        ResolvedDirectoryPrincipal target,
+        string? objectGuid,
+        List<AttributeChange> written,
+        PSCredential credential)
+    {
+        string? readError;
+        PSObject? read = null;
+        try
+        {
+            (readError, read) = ReadBackWrittenAttributes(ps, objectGuid, written, credential);
+        }
+        catch (Exception ex)
+        {
+            readError = ex.InnerException?.Message ?? ex.Message;
+        }
+
+        if (readError != null || read is null)
+        {
+            var failed = readError ?? "nothing was read";
+            _logger.LogWarning("Set-ADUser on {Target} could not be confirmed by reading it back by objectGUID {ObjectGuid}: {Error}", target.UserPrincipalName, objectGuid, failed);
+            return ($"Set-ADUser on {target.UserPrincipalName} was sent but could not be confirmed: reading {string.Join(", ", written.Select(c => c.Name))} back by objectGUID {objectGuid ?? "(none)"} failed: {failed}", written);
+        }
+
+        var (unconfirmed, asRead) = UnconfirmedWrites(written, read);
+        if (unconfirmed.Count > 0)
+        {
+            var detail = string.Join("; ", unconfirmed);
+            _logger.LogWarning("Set-ADUser on {Target} was not confirmed by reading it back by objectGUID {ObjectGuid}: {Detail}", target.UserPrincipalName, objectGuid, detail);
+            return ($"Set-ADUser on {target.UserPrincipalName} was not confirmed: read back by objectGUID {objectGuid}, {detail}.", written);
+        }
+
+        return (null, asRead);
+    }
+
+    private static (string? Error, PSObject? Read) ReadBackWrittenAttributes(
+        PowerShell ps, string? objectGuid, List<AttributeChange> written, PSCredential credential)
+    {
+        if (string.IsNullOrEmpty(objectGuid))
+            return ("the object read before the write carried no objectGUID", null);
+
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Identity", objectGuid)
+          .AddParameter("Properties", written.Select(c => c.Name).ToArray())
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var found = ps.Invoke();
+        if (ps.HadErrors)
+            return (ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? $"Get-ADUser reported an error reading {objectGuid}.", null);
+        ps.Commands.Clear();
+
+        var answered = found.Count == 1 ? found[0]?.Properties["ObjectGUID"]?.Value?.ToString() : null;
+        if (answered is null || !string.Equals(answered, objectGuid, StringComparison.OrdinalIgnoreCase))
+            return ($"{found.Count} object(s) answered, ObjectGUID {answered ?? "none"}", null);
+
+        return (null, found[0]);
+    }
+
+    internal static (List<string> Unconfirmed, List<AttributeChange> AsRead) UnconfirmedWrites(
+        IReadOnlyList<AttributeChange> written, PSObject read)
+    {
+        var unconfirmed = new List<string>();
+        var asRead = new List<AttributeChange>();
+        foreach (var change in written)
+        {
+            var expected = EmptyAsAbsent(change.NewValue);
+            var actual = EmptyAsAbsent(ReadDirectoryString(read, change.Name));
+            if (!string.Equals(expected, actual, StringComparison.Ordinal))
+            {
+                unconfirmed.Add($"{change.Name} ({change.Label}) {(actual is null ? "is not set" : $"is '{actual}'")}, "
+                    + $"not {(expected is null ? "cleared" : $"'{expected}'")} as written");
+            }
+
+            asRead.Add(change with { NewValue = actual });
+        }
+
+        return (unconfirmed, asRead);
+    }
+
+    private static string? EmptyAsAbsent(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
+    private static string? ReadDirectoryString(PSObject read, string name)
+    {
+        var value = Unwrapped(read.Properties[name]?.Value);
+        if (value is null or string)
+            return (string?)value;
+        if (value is System.Collections.IEnumerable values)
+        {
+            var items = values.Cast<object?>().Select(v => Unwrapped(v)?.ToString()).ToList();
+            return items.Count switch
+            {
+                0 => null,
+                1 => items[0],
+                _ => string.Join("; ", items),
+            };
+        }
+
+        return value.ToString();
+    }
+
+    private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
 
     private Dictionary<string, string?>? ReReadCurrentValues(
         ResolvedDirectoryPrincipal target,
