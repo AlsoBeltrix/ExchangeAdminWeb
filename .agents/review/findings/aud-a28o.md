@@ -8,7 +8,7 @@ before the re-render can start two undos. (3) `ADAttributeEditorUndoService.Exec
 `BeginOperation` before the try and outside its catch; not known to throw, but if it did there would
 be no record. (4) An unconfirmed attribute save's record (aud-a26j) has no pre-write value and its
 trace step lists no changes, so a reviewer cannot see what the editor tried to set.
-**Status**: Merged to master (`fee8a58b`); closed on guard proof; codex review pending
+**Status**: Merged to master (`fee8a58b`); closed on guard proof; codex attr-batch-9 clean; dev acceptance owed
 **Branch**: `worktree-agent-a6af37cca287ebc2c`
 **Commit**: `6d4bd8c7` (comments `97592e99`; plan `4684d84d`; merged `fee8a58b`)
 **Reviewer**: implementer (surfaced by the aud-a28m/a26j agent, 2026-10-22, candidates 1 to 4 of its hand-back)

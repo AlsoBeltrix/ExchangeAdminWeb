@@ -8,7 +8,7 @@ without leading zeros, some strings with the directory's own trimming. For those
 legitimate save now ends as a failed `ADAttributeEditor_Update` naming the value read and the value
 written, offers no Undo, and announces a failure to administrators, although the write landed. Loud,
 never a false success, but it blocks real edits until fixed.
-**Status**: Merged to master (`fee8a58b`); closed on guard proof; codex review pending; dev acceptance owed - blocks the deploy of the attribute editor until landed
+**Status**: Merged to master (`fee8a58b`); closed on guard proof; codex attr-batch-9 clean; dev acceptance owed; dev acceptance owed - blocks the deploy of the attribute editor until landed
 **Branch**: `worktree-agent-a6af37cca287ebc2c`
 **Commit**: `7b7acc41` (comments `97592e99`; plan `4684d84d`; merged `fee8a58b`)
 **Reviewer**: implementer (surfaced by the aud-a28m/a26j agent, 2026-10-22, candidate 5 of its hand-back, recorded by it as a known gap)
