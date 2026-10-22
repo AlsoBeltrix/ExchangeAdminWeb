@@ -98,7 +98,7 @@ public sealed class PermissionValidatorExclusionsReadTests : IDisposable
     }
 
     /// <summary>A real validator whose Mailbox Permissions module config is read through <paramref name="moduleConfigStore"/>.</summary>
-    private PermissionValidator ValidatorOver(IConfigStore moduleConfigStore)
+    private PermissionValidator ValidatorOver(IConfigStore moduleConfigStore, ILogger<PermissionValidator>? logger = null)
     {
         var moduleConfig = new ModuleConfigService(
             new ModuleCatalog(), _env, new ModuleConfigRepository(moduleConfigStore), NullLogger<ModuleConfigService>.Instance);
@@ -119,7 +119,7 @@ public sealed class PermissionValidatorExclusionsReadTests : IDisposable
         provider.GetService(typeof(IIdentityResolver)).Returns(resolver);
 
         return new PermissionValidator(_h.Config, moduleConfig, _unconfiguredPool, protection, servicers,
-            NullLogger<PermissionValidator>.Instance, scopeFactory);
+            logger ?? NullLogger<PermissionValidator>.Instance, scopeFactory);
     }
 
     /// <summary>One CSV row granting <see cref="Trustee"/> FullAccess on <paramref name="target"/>, through the bulk loop.</summary>
@@ -175,6 +175,22 @@ public sealed class PermissionValidatorExclusionsReadTests : IDisposable
     }
 
     [Fact]
+    public async Task AStoreThatCannotBeRead_LogsTheRowsAndTheirFix_NotAFile()
+    {
+        // aud-a26q. There has been no config file since the SQLite move: the log names the rows that cannot be read and
+        // how they are fixed, in the words the admin pages use.
+        SeedExclusions(Vip);
+        var logger = new CapturingLogger();
+        var validator = ValidatorOver(new FailsAfterReadsStore(TestConfigStore.Create(_h.Dir), answered: 0), logger);
+
+        await validator.ValidateTargetMailboxAsync(Other, actingUser: null, ModuleId);
+
+        var error = Assert.Single(logger.Errors);
+        Assert.Contains(SettingsStoreText.ModuleConfig(ModuleId), error, StringComparison.Ordinal);
+        Assert.DoesNotContain("file", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task AnEmptyListOverAHealthyStore_Allows_BoundToTheMailboxExchangeNames()
     {
         // The control: the refusals above are about the list, not a check that refuses everything. Asked of the
@@ -226,6 +242,26 @@ public sealed class PermissionValidatorExclusionsReadTests : IDisposable
         public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write) => inner.Write(write);
 
         public void Write(Action<SqliteConnection, SqliteTransaction> write) => inner.Write(write);
+    }
+
+    /// <summary>Keeps the text of every error the validator logs.</summary>
+    private sealed class CapturingLogger : ILogger<PermissionValidator>
+    {
+        public List<string> Errors { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel != LogLevel.Error)
+                return;
+
+            lock (Errors)
+                Errors.Add(formatter(state, exception));
+        }
     }
 
     private sealed class NoNetwork : HttpMessageHandler

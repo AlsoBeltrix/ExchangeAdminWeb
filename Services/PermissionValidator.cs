@@ -665,7 +665,8 @@ public class PermissionValidator
                 _initialized = true;
                 _lastRefresh = UtcNow();
                 _loadedToken = token;
-                _logger.LogError("Module config file is corrupt - blocking all protected-target operations until file is fixed");
+                _logger.LogError("The protected-user list cannot be loaded - every protected-target operation is refused; the load is retried after {Retry}. {Store}",
+                    FailedLoadRetry, SettingsStoreText.ModuleConfig("MailboxPermissions"));
                 return;
             }
 
