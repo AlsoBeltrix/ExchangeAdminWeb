@@ -2,9 +2,9 @@
 
 **Severity**: MEDIUM - after aud-a2b and aud-a2c the check names the right object, but every write
 hands Exchange the typed string again, so check and write can still name different objects.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex review pending; dev acceptance check owed (grant/revoke FullAccess and Send As, calendar set/remove, OOF set/disable, Room Finder with and without City/State/Country, room type)
 **Branch**: `worktree-agent-ab74b77ad109ec5f3`
-**Commit**: `<pending>`
+**Commit**: `fb449b5e` (plumbing + Mailbox), `6241bb20` (Calendar), `73787287` (Out of Office), `404c856a` (Conference Rooms); records `3dcb15e4`, `32a09ace`, `7ae55b9a` (merged)
 **Reviewer**: implementer (gap recorded in aud-a2b; admitted by the supervisor 2026-10-21)
 
 ## Evidence
