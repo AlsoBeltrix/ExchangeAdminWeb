@@ -378,6 +378,14 @@ try
             throw new InvalidOperationException(ExchangeAdminWeb.Services.AuditLogRoot.UnsetMessage);
         }
 
+        // PowerShell started once, in the background, before the first sessions open (aud-a28w): nothing else serialises the
+        // app's first runspace opens, and two of them at once is the shape of PowerShell's start-up race. Here - after the
+        // log-root check, ahead of the passes below so it overlaps them - and before the host is run, so before any request.
+        // Not awaited: start-up never waits for it. A one-shot call like BulkJobService's below, not a hosted worker (the
+        // 2026-06-17 posture). It opens one runspace and runs nothing in it, and it never throws. (Source-order tests read
+        // this file as text, so this comment does not spell out the calls it is placed between.)
+        _ = PowerShellWarmUp.StartInBackground(app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(PowerShellWarmUp)));
+
         var migrator = app.Services.GetRequiredService<ExchangeAdminWeb.Services.Storage.ConfigStoreMigrator>();
         var schemaVersion = migrator.Migrate();
         Log.Information("Config store schema ready at version {SchemaVersion}", schemaVersion);

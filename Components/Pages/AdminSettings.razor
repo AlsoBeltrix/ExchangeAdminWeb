@@ -1138,12 +1138,13 @@
 
             // aud-a26p. A changed Secret ID the lookups would not read is refused before anything is written: stored, it
             // sent every lookup to the appsettings fallback or to no credential, and the typo showed only as a lookup
-            // failing later. The rule is the lookups' own (IsSecretId); blank stays allowed - it clears the stored id. The
-            // message names the field and never repeats its text: a field that takes an ID is where a pasted password
-            // lands, and the refusal is recorded.
+            // failing later. The rule (IsSecretId) takes digits only, with no sign or leading zero (aud-a26s): stricter than the
+            // lookups' read, so nothing is stored that they would not use and nothing is stored that differs from what was meant.
+            // Blank stays allowed - it clears the stored id. The message names the field and never repeats its text: a field
+            // that takes an ID is where a pasted password lands, and the refusal is recorded.
             if (secretChanged && secretId.Length > 0 && !ProtectedPrincipalService.IsSecretId(secretId))
             {
-                statusMessage = "Refusing to save: the Directory Read Credential (Delinea Secret ID) must be the ID of a secret in Secret Server - a whole number greater than zero - or empty to clear it. Nothing was changed.";
+                statusMessage = "Refusing to save: the Directory Read Credential (Delinea Secret ID) must be the ID of a secret in Secret Server - a whole number greater than zero, in digits only, with no sign or leading zero - or empty to clear it. Nothing was changed.";
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Validation", statusMessage);
                 return;
@@ -1176,7 +1177,25 @@
             // and both halves are recorded.
             if (secretChanged)
             {
-                var secretCheck = ProtectedPrincipalService.CompareDirectoryReadSecretId(ppDirectoryReadSecretIdBaseline, secretId);
+                // aud-a28v. The compare holds the settings store's write lock, so a lock held elsewhere for longer than the
+                // store waits - about 35 seconds - fails it, and with it the whole save, before anything is written. That used to
+                // reach the save's catch as "Failed to save: SQLite Error 5", which said neither that the store was busy nor that
+                // a retry would work. Only the busy result is caught here, as a refusal; any other failure still reaches the
+                // save's catch as a failure.
+                ModuleConfigSaveOutcome secretCheck;
+                try
+                {
+                    secretCheck = ProtectedPrincipalService.CompareDirectoryReadSecretId(ppDirectoryReadSecretIdBaseline, secretId);
+                }
+                catch (Exception busy) when (ExchangeAdminWeb.Services.Storage.ConfigStoreBusy.IsBusy(busy))
+                {
+                    Logger.LogWarning(busy, "Protected-principals save not attempted: the settings store was busy when the Secret ID compare went to check it");
+                    statusMessage = "Not saved: the settings store was busy - another save, on this instance or the other, held it for longer than this one could wait - so the directory-read credential (Delinea Secret ID) could not be checked. Nothing was written, the protection rules included. Try again in a moment; your changes are still on this page.";
+                    statusIsError = true;
+                    Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreBusy", statusMessage);
+                    return;
+                }
+
                 if (secretCheck.Status == ModuleConfigSaveStatus.StoreCorrupt)
                 {
                     statusMessage = "Refusing to save: the directory-read credential's setting could not be read as the save went to check it. Nothing was saved, the protection rules included. "
@@ -1373,9 +1392,11 @@
             .Concat(ChangedEntries("Targets", ppTargets, ppTargetsBaseline))
             .ToArray();
 
+    // aud-a26s. Ordinal, as EntryDelta counts: an entry removed and added back in other casing, which the count shows as two
+    // changes, is named as those two entries in an already-applied record, where it was named as nothing.
     private static IEnumerable<string> ChangedEntries(string kind, List<string> current, List<string> loaded) =>
-        current.Except(loaded, StringComparer.OrdinalIgnoreCase)
-            .Concat(loaded.Except(current, StringComparer.OrdinalIgnoreCase))
+        current.Except(loaded, StringComparer.Ordinal)
+            .Concat(loaded.Except(current, StringComparer.Ordinal))
             .Select(v => kind + ":" + v);
 
     private static string RuleCounts(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData? rules) =>
