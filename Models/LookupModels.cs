@@ -239,26 +239,30 @@ public sealed record OutOfOfficeRequest(
     /// <summary>
     /// aud-a7f. A time Exchange reported, as the Check Status tab shows it: the wall-clock time it
     /// reads in <paramref name="zone"/>, with the zone's name and its offset at that instant - the form
-    /// the owner's notice uses. When its Kind is Unspecified it is shown as reported, marked as naming
-    /// no zone.
+    /// the owner's notice uses. When its Kind is not Utc it is shown as reported, marked as naming no
+    /// zone. Migration and Recipient Lookup show their reported times through it too.
     /// </summary>
     /// <remarks>
     /// Shown by what its Kind states, because which Kind the Exchange Online module hands back is not
-    /// known here - an assumption the finding record labels; no live call was made. Utc and Local each
-    /// name an instant (Local is a time in this server's own zone), so either converts. Unspecified
-    /// names none: reading it as UTC would print a confident label that, whenever the guess is wrong,
-    /// is wrong by the zone's whole offset - the ambiguity aud-a7e removed from the write. The offset
-    /// is the zone's at the instant, not at the wall-clock time as <see cref="OffsetAt"/> reads it: the
-    /// two instants of an hour the clocks repeat show the same clock time and differ only in it.
+    /// known here - an assumption the finding record labels; no live call was made. Utc names an
+    /// instant, so it converts. Unspecified names none: reading it as UTC would print a confident label
+    /// that, whenever the guess is wrong, is wrong by the zone's whole offset - the ambiguity aud-a7e
+    /// removed from the write. The offset is the zone's at the instant, not at the wall-clock time as
+    /// <see cref="OffsetAt"/> reads it: the two instants of an hour the clocks repeat show the same clock
+    /// time and differ only in it.
+    /// <para>
+    /// aud-a23g. Local is shown as Unspecified is. It converted through this server's zone, so the clock the
+    /// reporting module carried was read as this server's - nothing proves it is, so the label it got could
+    /// name the wrong instant. One rule for every page that shows a reported time.
+    /// </para>
     /// </remarks>
     public static string ShowReported(DateTime reported, TimeZoneInfo zone)
     {
-        if (reported.Kind == DateTimeKind.Unspecified)
+        if (reported.Kind != DateTimeKind.Utc)
             return reported.ToString(ReportedFormat, System.Globalization.CultureInfo.InvariantCulture) + " (time zone not reported)";
 
-        var instant = reported.ToUniversalTime();
-        var shown = TimeZoneInfo.ConvertTimeFromUtc(instant, zone);
-        return $"{shown.ToString(ReportedFormat, System.Globalization.CultureInfo.InvariantCulture)} ({ZoneName(zone)}, {UtcOffset(zone.GetUtcOffset(instant))})";
+        var shown = TimeZoneInfo.ConvertTimeFromUtc(reported, zone);
+        return $"{shown.ToString(ReportedFormat, System.Globalization.CultureInfo.InvariantCulture)} ({ZoneName(zone)}, {UtcOffset(zone.GetUtcOffset(reported))})";
     }
 
     /// <summary>
