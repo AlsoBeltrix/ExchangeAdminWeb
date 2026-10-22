@@ -7,8 +7,8 @@ editor writes text attributes only. (2) An attribute holding several binary valu
 several-values wording rather than named as binary. (3) On the Admin Event Log page, a closed undo
 preview's progress bar stays visible until its handler returns (cosmetic; aud-a26r cleared the loading
 guard, not the bar).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan below)
+**Branch**: `worktree-agent-aca5b5b4f6295736c`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a28u/a26r agent, 2026-10-22, candidates 2, 3 and 4 of its hand-back)
 
@@ -27,6 +27,79 @@ At `172902c2`: `Components/Pages/ADAttributeEditor.razor` (the value fields; Not
 - `CloseUndoPanel` hides the bar with the panel.
 - Tests through `AttributeEditorHarness` and the page's reflection driver; mutations at the call site: the
   editable input again; the several-values wording for a binary collection; the bar left visible.
+
+## Plan (approved by the owner's EVERYTHING go)
+
+Owner go 2026-10-21 ("fix all the bugs ... EVERYTHING"); admitted from the aud-a28u/a26r hand-back (`d886a1f8`). One
+commit `fix(ad-attribute-editor,event-log): ... (aud-a26u)`, second of three on branch
+`worktree-agent-aca5b5b4f6295736c` (after aud-a28z; cdt-41 follows). Behaviour: AD Attribute Editor (parts 1 and 2)
+and Admin Event Log (part 3) - both module versions; the supervisor owns the bumps. Evidence re-read at `18530b58`:
+
+1. `Components/Pages/ADAttributeEditor.razor` 142-168: every allowlisted attribute's "New Value" cell is a select (a
+   Choice with choices) or a text input, whatever the attribute holds. The lookup's values (`PerformSearch` 393-395)
+   are text - since aud-a26r "a; b" for several values and "binary (N bytes)" for a binary one - so such an attribute
+   is offered as editable text and refused only at save, by `NotSingleTextRefusal` (`Services/ADAttributeEditorService.cs`
+   PerformSave 1427-1432). The lookup (`PerformLookup` 1304-1310) returns `CurrentValues` only: nothing tells the page
+   which attributes are not one text value. NotYetConverted in `ClickGateRegistry` (76: "tier 2, not approved").
+2. `NotSingleTextRefusal` (1792-1816) takes `values.Count > 1` as several values (1803-1804) before its binary case
+   (1805-1806, a single `byte[]` only), so an attribute holding several byte arrays is refused as "holds N values in
+   the directory; the attribute editor writes single-valued attributes only."
+3. `Components/Pages/AdminEventLog.razor` `ShowUndoPreview` (913-976) holds its activity in a local (`using var activity`,
+   936-937), completed in its finally (969). `CloseUndoPanel` (978-998) clears the panel, the request token and the
+   loading flag (aud-a26r) but cannot reach the activity, so "Building undo preview" stays in the status frame until the
+   closed request's handler returns. NotYetConverted (`ClickGateRegistry` 87); `ProgressRegistry` exempts
+   CloseUndoPanel as local page state (561) and pins `handler.PreviewUndoAsync` inside ShowUndoPreview's window (456).
+
+**Rule.** The editor offers for editing only what it can write: an attribute that holds several values or a binary
+value is shown read-only with the reason, and the save's refusal stays behind it. A binary attribute is named binary
+however many values it holds. A panel that closes takes its preview's status-bar activity with it.
+
+1. Service. New private `readonly record struct NotText(bool Binary, string Holds)` and private static
+   `NotSingleText(PSObject read, string name)`, from `DirectoryValues`: one `byte[]` is binary ("is binary (N bytes) in
+   the directory"); several values that are all `byte[]` are binary ("holds N binary values in the directory"); several
+   values otherwise are several ("holds N values in the directory"); anything else is null. `NotSingleTextRefusal`
+   groups each proposed attribute by it - the several-values and the single-binary messages byte-identical to today's,
+   several binary values joining the binary group under "the attribute editor writes text attributes only." The rules
+   become two constants. `AttributeLookupResult` gains an optional last member `ReadOnlyAttributes`
+   (`IReadOnlyDictionary<string, string>?`, default null, so every construction compiles and reads as before);
+   PerformLookup fills it with each allowlisted attribute that is not one text value, by name, its reason "This
+   attribute <holds>; <rule>" - for example "This attribute holds 2 values in the directory; the attribute editor
+   writes single-valued attributes only."
+2. Page. A field `readOnlyAttributes`, reset with the others at the top of PerformSearch and set from the lookup beside
+   `currentValues`. The "New Value" cell shows the reason (`<small class="text-muted">`) in place of the select or input
+   for an attribute in it. Its edit value stays the lookup's, so it is never a change, and the Reset button never shows
+   for it; SaveAsync's refusal stays the second line of defence.
+3. AdminEventLog.razor. A field `undoPreviewActivity` (`IActivityHandle?`), set to the activity right after its Begin.
+   CloseUndoPanel completes it (`Complete(false, ...)`; Complete is idempotent, so the closed request's own finally then
+   completes nothing) and clears it; the finally clears it only while its request is still the panel's - the aud-a26r
+   condition that lowers the loading flag - so a closed request never clears the next one's. The guard still returns
+   before Begin and `handler.PreviewUndoAsync` stays inside the window. ProgressRegistry's CloseUndoPanel exemption keeps
+   its class (no remote, disk or JS call) and says it ends the closed preview's activity.
+4. Comments after the mutation round, checked code-identical.
+
+Tests.
+- `ADAttributeEditorSaveTests` through `AttributeEditorHarness`: the lookup marks the several-valued and the binary
+  attribute read-only with their reasons, and neither a text attribute nor one read as a one-element collection; an
+  attribute read as two byte arrays is refused as "holds 2 binary values in the directory; the attribute editor writes
+  text attributes only." by the save and the preview, never under the single-valued rule, and nothing is written.
+- `AttributeEditorPageSaveAuditTests` (the page's reflection driver; the page's own BuildRenderTree into a
+  RenderTreeBuilder, the Comms10k and Defender page tests' shape): the grid for a lookup holding a text, a
+  several-valued and a binary attribute renders one value input, and each read-only attribute's reason where its input
+  would be.
+- `EventLogUndoRefusalTests` (the held stand-in handler): the preview's activity is in the frame while it loads and gone
+  when the panel closes though the handler is still held; the next preview's activity is its own - the closed one's
+  answer leaves it - and closing that panel takes it too.
+
+Mutations at the call site (md5 before and after, the named failing test, restored, md5 matched, touched, rebuilt,
+green): M1 the editable input again (the page's read-only branch dropped); M2 the several-values wording for a binary
+collection (the several-binary case removed from NotSingleText); M3 the bar left visible (CloseUndoPanel's Complete
+removed); extras E1 the lookup's read-only map left empty, E2 the closed request's finally clearing the activity field
+whatever the request.
+
+Files: `Services/ADAttributeEditorService.cs`, `Components/Pages/ADAttributeEditor.razor`,
+`Components/Pages/AdminEventLog.razor`, `ExchangeAdminWeb.Tests/ADAttributeEditorSaveTests.cs`,
+`ExchangeAdminWeb.Tests/AttributeEditorPageSaveAuditTests.cs`, `ExchangeAdminWeb.Tests/EventLogUndoRefusalTests.cs`,
+`ExchangeAdminWeb.Tests/ProgressRegistry.cs` (one exemption's reason), this record.
 
 ## Guard proof
 
