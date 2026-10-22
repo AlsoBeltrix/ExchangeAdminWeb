@@ -7,9 +7,9 @@ row from an applied write. (2) The on-prem already-a-member no-op uses the same 
 real add, "Add to '<list>' (on-prem)", so the step list reads as if a write happened. (3) The
 write's error-without-a-throw (`HadErrors`) branch cannot be reached under `-ErrorAction Stop`
 and has no test; dead code that a later edit could make live and wrong.
-**Status**: Fixed on branch, not merged, not pushed; independent review pending; dev acceptance owed
+**Status**: Merged to master (`15de2fcf`); closed on guard proof; codex review pending (batched with aud-a2p); dev acceptance owed
 **Branch**: `worktree-agent-a9e6dd9435998c5ff`
-**Commit**: plan `e53a2e2d`; the fix, tests, comments and this record in the commit after it
+**Commit**: `df579d08` (fix, tests, comments, record); plan `e53a2e2d`; merged `15de2fcf`
 **Reviewer**: implementer (surfaced by the aud-a2m/a2n agent, 2026-10-22, candidates 3 to 5 of its hand-back)
 
 ## Evidence
