@@ -1884,7 +1884,7 @@
         {
             ReplaceBatchUsers(generation, new MigrationMailboxList([], []));
             mailboxLoadFailed |= generation == batchUsersGeneration;
-            loadFailure = $"Unable to load mailboxes in {batchName}: {ex.Message}";
+            loadFailure = $"Unable to load mailboxes in {batchName}: {ExchangeServiceBase.ResolveFailure(ex).primary}";
         }
         finally
         {
@@ -1947,7 +1947,7 @@
         {
             ReplaceBatchUsers(generation, new MigrationMailboxList([], []));
             mailboxLoadFailed |= generation == batchUsersGeneration;
-            loadFailure = $"Unable to load mailboxes in {requested}: {ex.Message}";
+            loadFailure = $"Unable to load mailboxes in {requested}: {ExchangeServiceBase.ResolveFailure(ex).primary}";
         }
         finally
         {
@@ -4061,11 +4061,11 @@
         }
         catch (Exception ex)
         {
-            fetchFailure = $"The report for {emailAddress} could not be fetched: {ex.Message}";
+            fetchFailure = $"The report for {emailAddress} could not be fetched: {ExchangeServiceBase.ResolveFailure(ex).primary}";
             if (generation != reportGeneration) return;
             // NOT stored. An error string is not a report, and keeping it would serve the failure
             // back on the next open as though it were the answer.
-            userReport = null; reportFailure = ex.Message;
+            userReport = null; reportFailure = ExchangeServiceBase.ResolveFailure(ex).primary;
             reportFetchedAtUtc = null;
             reportUser = emailAddress;
         }

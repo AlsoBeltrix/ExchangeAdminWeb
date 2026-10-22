@@ -95,4 +95,62 @@ Part 3 is not implemented here: both files belong to another agent working now. 
 
 ## Guard proof
 
-Pending.
+Parts 1 and 2, built as the Plan. The fix commit carries no new code comments. `Components/Pages/Migration.razor` is
+4377 lines before and after, four lines changed in place (1887, 1950, 4064, 4068), none registered.
+
+- `Services/MigrationService.cs`:
+  - `ProtectionGate` (404) gains `IsProtected` (default false); `CheckProtectedAsync`'s answered refusal sets it (444);
+    every other denial - unavailable, ambiguous, a failed check, a throw - leaves it false.
+  - `PartitionByProtectionAsync` returns a fourth list, `unverified` (482, 498): the excluded entries whose check did
+    not answer, the same "target - reason" strings as `excluded`.
+  - `CreateMigrationBatchAsync` (564) through `AllExcludedMessage` (689): all answered protected - the messages as
+    before; one unverified - "The migration target could not be verified as unprotected: <target - reason>; nothing was
+    written."; several, none verified - "None of the N migration targets could be verified as unprotected; nothing was
+    written."; a mix - "All N migration targets were excluded: K is/are protected principal(s) and M could not be
+    verified as unprotected; nothing was written. Escalate the protected ones ...". Detail and `ExcludedTargets`
+    unchanged.
+  - `GetMigrationUserReportAsync`'s failure (1476) and `FindMigrationUserBatchAsync`'s (1507) through
+    `ResolveFailure(ex).primary`.
+- `Components/Pages/Migration.razor`: `LoadMailboxesFor` (1887), `SyncOpenBatchFromUrl` (1950) and `FetchUserReport`'s
+  catch (4064, 4068) through `ExchangeServiceBase.ResolveFailure(ex).primary`.
+- `MigrationServiceProtectedPrincipalTests`: the two `CreateBatch_..._AllTargetsProtected_...` tests, which ran the real
+  gate with no directory secret (so UNAVAILABLE) and pinned "protected principal(s)", are renamed
+  `..._ProtectionUnavailable_CreatesNothing_SaysNotVerified` and pin the fix; both files' partition deconstructions
+  take the fourth element (`MigrationServiceProtectedPrincipalTests` 2, `MigrationServicerTests` 7), nothing else
+  changed in them.
+
+New `ExchangeAdminWeb.Tests/MigrationMessageTests.cs`, 9 tests (11 cases):
+
+| Test | Pins |
+| --- | --- |
+| `ASearchThatFails_GivesTheErrorsOwnWords` | **part 1, the finding**: the search's `Error` is exactly the written error's text |
+| `AMailboxLoadThatFails_GivesTheErrorsOwnWords` | the page's mailbox-load activity: exactly "Unable to load mailboxes in <batch>: <the error>" |
+| `AMailboxLoadFromTheAddressThatFails_GivesTheErrorsOwnWords` | the same through `SyncOpenBatchFromUrl` |
+| `AReportFetchThatFails_GivesTheErrorsOwnWords` | the report's `reportFailure` and the activity text, exactly the error's |
+| `ATargetWhoseCheckDidNotAnswer_CouldNotBeVerified_ItIsNotCalledProtected` (unavailable, ambiguous, failed) | **part 2, the finding**: "could not be verified as unprotected: <target - reason>; nothing was written.", no "protected principal", no `New-MigrationBatch` |
+| `SeveralTargets_NoneVerified_SaySo` | "None of the 2 ..." |
+| `AProtectedTarget_IsStillAProtectedPrincipal`, `SeveralProtectedTargets_AreStillProtectedPrincipals` | the controls: the answered wording, as before |
+| `AMixOfProtectedAndUnverified_CountsEachApart` | "1 is a protected principal and 1 could not be verified as unprotected" |
+
+Mutations at the call site, by the same driver and protocol (`round-a23l.ps1`, session scratchpad `a23jklmn-work`),
+over the 1140 tests of the same filter. Bytes (LF) before every mutation and after every restore: service
+`8b5df0d35f60682c906106461796a370`, page `c73c5d5190e7b0b44556f5bbbdb39119`.
+
+| Mutation | File | md5 mutated | Failed (of 1140) | Restored, rerun |
+| --- | --- | --- | --- | --- |
+| L1 (the record's): raw `ex.Message` again at `FindMigrationUserBatchAsync` | service | `deb29ea31369de0f339b4b6a05c14ad1` | 1: `ASearchThatFails_GivesTheErrorsOwnWords` - the Stop prefix again | equal; 1140/0 |
+| L2 (the record's): the single wording again (every all-excluded message "protected principal(s)") | service | `4036c75ea12c94a771837c0fa19c65c3` | 7: `ATargetWhoseCheckDidNotAnswer...` (3), `SeveralTargets_NoneVerified...`, `AMixOf...`, both renamed `MigrationServiceProtectedPrincipalTests` | equal; 1140/0 |
+| L1b: raw `ex.Message` again at the page's `LoadMailboxesFor` | page | `fd8bd462f4b601fefab27227d62c115f` | 1: `AMailboxLoadThatFails_GivesTheErrorsOwnWords` | equal; 1140/0 |
+| L2b: the answered refusal's `IsProtected` not set | service | `67d5ce03f73afc0e0ad7124b8bf89499` | 3: `AProtectedTarget...`, `SeveralProtectedTargets...`, `AMixOf...` - a protected target called unverified | equal; 1140/0 |
+| L1c: raw `ex.Message` again at `GetMigrationUserReportAsync` | service | `49319a92c9039eaf62bbd22f715ad424` | 1: `AReportFetchThatFails_GivesTheErrorsOwnWords` | equal; 1140/0 |
+
+Part 3 ("Ineligible" again) is not run: it is not implemented here (above).
+
+md5s (LF) of the other files at the fix commit: `MigrationMessageTests.cs` `02d6601fc6af9ea5655ad74a2d58a082`,
+`MigrationServiceProtectedPrincipalTests.cs` `d2833fffca57b0dd34750dafee5fb4d2`, `MigrationServicerTests.cs`
+`42f979a255f61092aeb4857df35ef3c5`.
+
+On the fix commit's tree: Release build 0 errors; the 1140 focused tests 1140/0; `dotnet format --verify-no-changes`
+exit 0; `git diff --check HEAD` exit 0; `wc -l` 4377. Out of scope, named in the hand-back: the same "protected
+principal" claim over an unverified exclusion on a partial success (`WithProtectionOutcome`'s NOTE, the success
+formatter's Detail header) and on the page (the two exclusion banners, their audit rows and notification notes).

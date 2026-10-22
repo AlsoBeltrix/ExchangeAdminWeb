@@ -40,7 +40,7 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
     {
         var service = CreateService();
 
-        var (allowed, excluded, _) = await service.PartitionByProtectionAsync(
+        var (allowed, excluded, _, _) = await service.PartitionByProtectionAsync(
             new[] { "clean1@contoso.com", "ceo@contoso.com", "clean2@contoso.com" },
             checker: id => Task.FromResult(new MigrationService.ProtectionGate(
                 id == "ceo@contoso.com"
@@ -59,7 +59,7 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
     {
         var service = CreateService();
 
-        var (allowed, excluded, _) = await service.PartitionByProtectionAsync(
+        var (allowed, excluded, _, _) = await service.PartitionByProtectionAsync(
             new[] { "a@contoso.com", "b@contoso.com" },
             checker: _ => Task.FromResult(new MigrationService.ProtectionGate(null, null)));
 
@@ -69,9 +69,12 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
 
     // --- CreateMigrationBatchAsync: real gate, no directory-read secret => Unavailable
     //     => every target excluded (fail-closed) => nothing created, no EXO call. ---
+    // aud-a23l: an unavailable check never answered that the target is protected, so the message
+    // says the target could not be verified as unprotected - these tests used to pin the claim
+    // "protected principal(s)" for exactly this case.
 
     [Fact]
-    public async Task CreateBatch_ToCloud_AllTargetsProtected_CreatesNothing_FailsClosed()
+    public async Task CreateBatch_ToCloud_ProtectionUnavailable_CreatesNothing_SaysNotVerified()
     {
         var service = CreateService();
 
@@ -84,7 +87,8 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
             actingUser: null);
 
         Assert.False(result.Success);
-        Assert.Contains("protected principal", result.Message);
+        Assert.Contains("could not be verified as unprotected", result.Message);
+        Assert.DoesNotContain("is a protected principal", result.Message);
         var excluded = Assert.Single(result.ExcludedTargets!);
         Assert.Contains("user@contoso.com", excluded);
         // Unavailable resolver => fail-closed exclusion, not a clean "not protected".
@@ -92,7 +96,7 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateBatch_ToOnPrem_AllTargetsProtected_CreatesNothing_FailsClosed()
+    public async Task CreateBatch_ToOnPrem_ProtectionUnavailable_CreatesNothing_SaysNotVerified()
     {
         // ToOnPrem resolves target databases before the gate; configure one so the method
         // reaches the partition step rather than failing on missing databases.
@@ -107,7 +111,7 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
             actingUser: null);
 
         Assert.False(result.Success);
-        Assert.Contains("protected principals", result.Message);
+        Assert.Equal("None of the 2 migration targets could be verified as unprotected; nothing was written.", result.Message);
         Assert.Equal(2, result.ExcludedTargets!.Count);
     }
 

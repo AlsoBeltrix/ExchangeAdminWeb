@@ -401,7 +401,7 @@ public class MigrationService : ExchangeServiceBase
     /// migrate it. <paramref name="ServicedNote"/> is set only when the target was protected and an
     /// authorised servicer overrode the exclusion; it must reach the page's audit call.
     /// </summary>
-    internal readonly record struct ProtectionGate(PermissionResult? Denial, string? ServicedNote);
+    internal readonly record struct ProtectionGate(PermissionResult? Denial, string? ServicedNote, bool IsProtected = false);
 
     private async Task<ProtectionGate> CheckProtectedAsync(string identity, ClaimsPrincipal? actingUser)
     {
@@ -441,7 +441,7 @@ public class MigrationService : ExchangeServiceBase
                         _servicers, actingUser, ServicerModuleId, check.MatchedRules, qualifier: identity);
 
                     if (servicedNote is null)
-                        return new(PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted."), null);
+                        return new(PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted."), null, IsProtected: true);
 
                     return new(null, servicedNote);
                 }
@@ -469,7 +469,7 @@ public class MigrationService : ExchangeServiceBase
     /// list so the caller can audit each override individually - a batch-level "some target was
     /// serviced" would not say which, which is the fact an audit exists to answer.
     /// </remarks>
-    internal async Task<(List<string> allowed, List<string> excluded, List<string> servicedNotes)> PartitionByProtectionAsync(
+    internal async Task<(List<string> allowed, List<string> excluded, List<string> servicedNotes, List<string> unverified)> PartitionByProtectionAsync(
         IEnumerable<string> targets,
         ClaimsPrincipal? actingUser = null,
         Func<string, Task<ProtectionGate>>? checker = null)
@@ -479,6 +479,7 @@ public class MigrationService : ExchangeServiceBase
         var allowed = new List<string>();
         var excluded = new List<string>();
         var servicedNotes = new List<string>();
+        var unverified = new List<string>();
 
         foreach (var target in targets)
         {
@@ -491,11 +492,14 @@ public class MigrationService : ExchangeServiceBase
             }
             else
             {
-                excluded.Add($"{target} - {gate.Denial.Message}");
+                var entry = $"{target} - {gate.Denial.Message}";
+                excluded.Add(entry);
+                if (!gate.IsProtected)
+                    unverified.Add(entry);
             }
         }
 
-        return (allowed, excluded, servicedNotes);
+        return (allowed, excluded, servicedNotes, unverified);
     }
 
     /// <summary>
@@ -548,7 +552,7 @@ public class MigrationService : ExchangeServiceBase
         // decision (2026-06-30): one protected target must not block the whole batch and the
         // exclusion must never be silent - filter the protected targets out, migrate the rest,
         // and report the exclusions back clearly.
-        var (allowedEmails, excludedTargets, servicedNotes) = await PartitionByProtectionAsync(eligibleEmails, actingUser);
+        var (allowedEmails, excludedTargets, servicedNotes, unverifiedTargets) = await PartitionByProtectionAsync(eligibleEmails, actingUser);
 
         if (allowedEmails.Count == 0)
         {
@@ -557,9 +561,7 @@ public class MigrationService : ExchangeServiceBase
             return new PermissionResult
             {
                 Success = false,
-                Message = excludedTargets.Count == 1
-                    ? "The migration target is a protected principal and was excluded. Nothing was created. Escalate to an administrator outside this tool if migration is required."
-                    : $"All {excludedTargets.Count} migration target(s) are protected principals and were excluded. Nothing was created. Escalate to an administrator outside this tool if migration is required.",
+                Message = AllExcludedMessage(excludedTargets, unverifiedTargets),
                 Detail = "Excluded:\n" + string.Join("\n", excludedTargets),
                 ExcludedTargets = excludedTargets
             };
@@ -682,6 +684,28 @@ https://admin.exchange.microsoft.com/#/migration";
         }
 
         return result;
+    }
+
+    private static string AllExcludedMessage(IReadOnlyList<string> excluded, IReadOnlyList<string> unverified)
+    {
+        if (unverified.Count == 0)
+        {
+            return excluded.Count == 1
+                ? "The migration target is a protected principal and was excluded. Nothing was created. Escalate to an administrator outside this tool if migration is required."
+                : $"All {excluded.Count} migration target(s) are protected principals and were excluded. Nothing was created. Escalate to an administrator outside this tool if migration is required.";
+        }
+
+        if (excluded.Count == 1)
+            return $"The migration target could not be verified as unprotected: {unverified[0].TrimEnd('.')}; nothing was written.";
+
+        if (unverified.Count == excluded.Count)
+            return $"None of the {excluded.Count} migration targets could be verified as unprotected; nothing was written.";
+
+        var protectedCount = excluded.Count - unverified.Count;
+        return $"All {excluded.Count} migration targets were excluded: {protectedCount} "
+            + (protectedCount == 1 ? "is a protected principal" : "are protected principals")
+            + $" and {unverified.Count} could not be verified as unprotected; nothing was written. "
+            + "Escalate the protected ones to an administrator outside this tool if migration is required.";
     }
 
     /// <summary>
@@ -1449,7 +1473,7 @@ https://admin.exchange.microsoft.com/#/migration";
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get migration report for {Email}", emailAddress);
-                return MigrationUserReport.Failed(ex.Message);
+                return MigrationUserReport.Failed(ResolveFailure(ex).primary);
             }
         }, allowRetry: true);
     }
@@ -1480,7 +1504,7 @@ https://admin.exchange.microsoft.com/#/migration";
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to search migration users for {Term}", searchTerm);
-                return MigrationUserSearchResult.Failed(ex.Message);
+                return MigrationUserSearchResult.Failed(ResolveFailure(ex).primary);
             }
         }, allowRetry: true);
     }
