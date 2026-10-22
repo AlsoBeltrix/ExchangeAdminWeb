@@ -373,19 +373,22 @@
                 return;
             }
 
-            // Fetch current state before mutation for audit trail
+            // Fetch current state before mutation for audit trail - of the mailbox the write is
+            // bound to (aud-a2d), so the state recorded belongs to the mailbox changed.
             string previousState = "Unknown";
             try
             {
                 activity.Step("reading the current auto-reply state");
-                var currentOof = await OofService.GetOutOfOfficeAsync(target);
+                var currentOof = await OofService.GetOutOfOfficeAsync(protectedValidation.Mailbox);
                 if (currentOof != null && currentOof.Error == null)
                     previousState = currentOof.State ?? "Unknown";
             }
             catch (Exception ex) { Logger.LogWarning(ex, "Could not retrieve current OOF state for {Target} before mutation", target); }
 
+            // aud-a2d. The write takes the mailbox the check validated, never request.Mailbox: the
+            // captured address is what the operator asked for, the validation's mailbox is what it is.
             activity.Step(request.State == "Disabled" ? "disabling the auto-reply" : "writing the auto-reply");
-            setResult = await OofService.SetOutOfOfficeAsync(request);
+            setResult = await OofService.SetOutOfOfficeAsync(request, protectedValidation.Mailbox);
 
             var action = request.State == "Disabled" ? "OutOfOffice_Disable" : "OutOfOffice_Set";
             var extra = new Dictionary<string, object?>
@@ -399,6 +402,9 @@
             // another. Only present when a servicer overrode a protected-principal refusal.
             if (servicedNote is not null)
                 extra[ProtectedPrincipalServicing.AuditKey] = servicedNote;
+
+            // The identity written rides beside them; `target` stays the address as typed.
+            ValidatedMailbox.WithWrittenIdentity(extra, protectedValidation.Mailbox);
 
             try
             {

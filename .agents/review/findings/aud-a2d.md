@@ -216,6 +216,19 @@ Conference Rooms. Gates before each.
 - CSV and page as for Mailbox Permissions. `ValidateMailbox(string)` removed - it had no caller
   left. Line count unchanged (762).
 
+### Out of Office
+
+- `SetOutOfOfficeAsync(OutOfOfficeRequest request, ValidatedMailbox? mailbox)`: the aud-a7b request
+  record is unchanged and still the only source of what is written; the mailbox is a second
+  parameter because it exists only after the check, while the request is captured before any
+  await. `Set-MailboxAutoReplyConfiguration -Identity` takes the GUID; null refuses before a
+  connection. The message still names the address as typed.
+- `GetOutOfOfficeAsync(ValidatedMailbox?)`: the page's previous-state read for the audit is of the
+  mailbox about to be written. The status check (`CheckStatus`) stays on the typed string - it is
+  a read-only lookup no write follows.
+- Page: `SetOof` passes `protectedValidation.Mailbox` to both; the audit `extra` gains
+  `writtenIdentity` beside `previousState`/`newState`. The page is not ClickGate-registered.
+
 ## Guard proof
 
 | Test | What it pins |
@@ -316,3 +329,25 @@ mailbox whose calendar folder is "Kalender"):
 | CP2 | page: on-prem remove handed null | same | `5354cb61bb2589102940e0b84e36bb2f` | same | FAIL |
 | CP3 | page: location read by the typed string | same | `2b36a605c73fa4b318ffa5f2780b76f2` | same | FAIL |
 | CP4 | page: single-write audit drops `writtenIdentity` | same | `4ce60521af1611d4efd2494026ef6cd9` | `ValidatedWriteCallSiteTests.EveryPageWriteAudit_RecordsTheIdentityWritten` | FAIL |
+
+**Out of Office tests:**
+
+| Test | What it pins |
+| --- | --- |
+| `OutOfOfficeWriteIdentityTests.TheWrite_IsBoundToTheValidatedMailbox_NotTheStringTyped` (Enabled, Disabled) | `Set-MailboxAutoReplyConfiguration -Identity` is the GUID; the typed alias (another mailbox) is not written |
+| `WithoutAValidatedMailbox_NothingIsWritten_AndNoConnectionIsBorrowed` | null refuses before a connection |
+| `ThePreviousStateRead_IsOfTheValidatedMailbox_AndWithoutOneReadsNothing` | the audit's previous state is read from the GUID; no mailbox reads nothing |
+| `OutOfOfficeRequestCaptureTests.AnEditDuringTheOperation_ChangesNeitherWhatIsWrittenNorWhatIsRecorded` (auth, read, write) | **existing harness, still passing**: an edit to every bound field mid-operation (the box moves to another mailbox with its own GUID) changes nothing - the write, the previous-state read and the audit's `writtenIdentity` are the captured mailbox's GUID; `target` stays the typed address. Assertion changed from the typed string to the GUID, which is the point of the finding |
+| `ASecondSubmitWhileOneIsInFlight_WritesNothing` | unchanged guard; the one write is the captured mailbox's GUID |
+
+**Mutations, round 3** (Out of Office):
+
+| # | Mutation | File, md5 before (= restored) | md5 mutated | Named test | Result |
+| --- | --- | --- | --- | --- | --- |
+| O1 | `Set-MailboxAutoReplyConfiguration -Identity` typed string | `OutOfOfficeService.cs` `a2a033ab4ca8fa38660197a7bd88a14d` | `3aba8bd5825ecb08f28e955e9d30e333` | `OutOfOfficeWriteIdentityTests.TheWrite_IsBoundToTheValidatedMailbox_NotTheStringTyped` | FAIL (both cases) |
+| O1b | the same mutation | same | same | `OutOfOfficeRequestCaptureTests.AnEditDuringTheOperation_...` | FAIL (all three holds) |
+| O2 | null refusal dropped | same | `05462c61c3317fa0ba5c1fc8d5478872` | `WithoutAValidatedMailbox_NothingIsWritten_AndNoConnectionIsBorrowed` | FAIL |
+| O3 | previous-state read not of the validated mailbox | same | `76ed1ca2cf78081dbde46014955e7cc3` | `ThePreviousStateRead_IsOfTheValidatedMailbox_AndWithoutOneReadsNothing` | FAIL |
+| OP1 | page: the write handed null | `OutOfOffice.razor` `0af66f3898ed894f03a548698aaf6d7b` | `b0da1605c3363c8d492cc3a81c9949e7` | `OutOfOfficeRequestCaptureTests.AnEditDuringTheOperation_...` | FAIL (all three holds) |
+| OP2 | page: previous-state read by the typed string | same | `64b2397512a86eb08ce18794fdf41f30` | same | FAIL (all three holds) |
+| OP3 | page: audit drops `writtenIdentity` | same | `082b6337533c9e36248ca79ccd3cbea9` | same | FAIL (all three holds) |
