@@ -191,15 +191,36 @@ public sealed record OutOfOfficeRequest(
             Ticket: (ticket ?? "").Trim());
 
     /// <summary>
-    /// The instant a wall-clock time names in <paramref name="zone"/>, as UTC - or null for a time the
-    /// zone skips when its clocks go forward, which names no instant at all. (An hour the clocks
-    /// repeat is read as standard time, as <see cref="TimeZoneInfo.ConvertTimeToUtc(DateTime, TimeZoneInfo)"/> does.)
+    /// The instant a wall-clock time names in <paramref name="zone"/>, as UTC - or null when it names
+    /// no single instant, for the reason <see cref="NoInstantReason"/> gives.
     /// </summary>
-    public static DateTime? ToUtc(DateTime wallClock, TimeZoneInfo zone)
+    public static DateTime? ToUtc(DateTime wallClock, TimeZoneInfo zone) =>
+        NoInstantReason(wallClock, zone) is null ? TimeZoneInfo.ConvertTimeToUtc(WallClock(wallClock), zone) : null;
+
+    /// <summary>
+    /// Why a wall-clock time names no single instant in <paramref name="zone"/>, worded to follow the
+    /// time in a sentence - or null when it names exactly one.
+    /// </summary>
+    /// <remarks>
+    /// A time the clocks skip when they go forward names no instant. aud-a7g: one they repeat when they
+    /// go back names two, and <see cref="TimeZoneInfo.ConvertTimeToUtc(DateTime, TimeZoneInfo)"/> picks
+    /// one of them without asking (standard time), so a window entered in that hour could be written an
+    /// hour off. Neither is guessed: both are refused with their own reason, here in one place for the
+    /// page and the write boundary alike, and choosing a time outside the hour is the operator's.
+    /// </remarks>
+    public static string? NoInstantReason(DateTime wallClock, TimeZoneInfo zone)
     {
         var local = WallClock(wallClock);
-        return zone.IsInvalidTime(local) ? null : TimeZoneInfo.ConvertTimeToUtc(local, zone);
+        if (zone.IsInvalidTime(local))
+            return $"does not exist in {ZoneName(zone)}: the clocks skip it";
+        if (zone.IsAmbiguousTime(local))
+            return $"occurs twice in {ZoneName(zone)}: the clocks go back and repeat that hour, so it could mean either of two moments; choose a time outside the repeated hour";
+        return null;
     }
+
+    /// <summary>A wall-clock time as the page and the refusals print it: <c>2026-11-01 01:30</c>.</summary>
+    public static string ClockText(DateTime wallClock) =>
+        wallClock.ToString(ReportedFormat, System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
     /// The zone's name as the page's label and the owner's notice both print it - one definition, so

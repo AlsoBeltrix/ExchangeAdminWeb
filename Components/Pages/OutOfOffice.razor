@@ -259,27 +259,57 @@
 
     // Kept apart from OnAfterRenderAsync so it runs without a renderer (StateHasChanged needs one).
     // The IANA id is resolved with FindSystemTimeZoneById, which takes IANA ids through ICU: an id
-    // this server cannot resolve is a failure like any other, not a reason to pick another zone.
+    // this server cannot resolve is a failure, never a reason to pick another zone.
+    //
+    // aud-a7g: two failures, two messages. The browser not saying (the call fails, or answers blank)
+    // may pass with a reload. An id the browser did give that this server cannot resolve will not: it is
+    // the server's time-zone data, so the operator is shown the id and what an administrator must fix.
     private async Task ReadScheduleZoneAsync()
     {
+        string? id;
         try
         {
-            var id = await JS.InvokeAsync<string>("getBrowserTimeZone");
-            var zone = TimeZoneInfo.FindSystemTimeZoneById(id);
-            // The defaults were DateTime.Now - the server's clock. Re-based to the browser's before the
-            // fields are shown, so an untouched default is "now" in the zone the label states.
-            var now = DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, zone), DateTimeKind.Unspecified);
-            startTime = now;
-            endTime = now.AddDays(7);
-            scheduleZone = zone;
+            id = await JS.InvokeAsync<string?>("getBrowserTimeZone");
         }
         catch (Exception ex)
         {
-            scheduleZoneError = "Your browser's time zone could not be read, so a schedule cannot be set here: its times "
-                + "would name no moment. Enable and Disable still work; reload the page to try again.";
-            Logger.LogWarning(ex, "Could not read the browser's time zone for the Out of Office schedule");
+            scheduleZoneError = BrowserZoneUnread;
+            Logger.LogWarning(ex, "The browser did not report its time zone for the Out of Office schedule");
+            return;
         }
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            scheduleZoneError = BrowserZoneUnread;
+            Logger.LogWarning("The browser reported an empty time zone for the Out of Office schedule");
+            return;
+        }
+
+        TimeZoneInfo zone;
+        try
+        {
+            zone = TimeZoneInfo.FindSystemTimeZoneById(id);
+        }
+        catch (Exception ex)
+        {
+            scheduleZoneError = $"Your browser reports its time zone as '{id}', but this server cannot resolve that name, so a schedule "
+                + "cannot be set here, and reloading the page will not change that. An administrator must fix the server's time-zone "
+                + "data: .NET resolves these names through ICU, which must be present on the server and not switched off "
+                + "(invariant-globalization or NLS mode), with this zone in its data. Enable and Disable still work.";
+            Logger.LogWarning(ex, "This server cannot resolve the browser's time zone {ZoneId} for the Out of Office schedule", id);
+            return;
+        }
+
+        // The defaults were DateTime.Now - the server's clock. Re-based to the browser's before the
+        // fields are shown, so an untouched default is "now" in the zone the label states.
+        var now = DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, zone), DateTimeKind.Unspecified);
+        startTime = now;
+        endTime = now.AddDays(7);
+        scheduleZone = zone;
     }
+
+    private const string BrowserZoneUnread = "Your browser's time zone could not be read, so a schedule cannot be set here: its times "
+        + "would name no moment. Enable and Disable still work; reload the page to try again.";
 
     private async Task HandleCheckKeyDown(KeyboardEventArgs e)
     {
@@ -324,12 +354,17 @@
             return "Start and end times are required for scheduled auto-reply.";
         // aud-a7e. Refused here, before anything is audited, notified or written; the service refuses
         // the same request again at the write. Order is compared on the instants the write will send.
+        // aud-a7g: a time the zone repeats names two instants and is refused like one it skips; the
+        // refusal names the time, so the operator can see which field to move out of the hour.
         if (zone is null)
             return "The schedule's time zone is not known, so its times name no moment. Reload the page so your browser's time zone can be read.";
         var startUtc = OutOfOfficeRequest.ToUtc(start.Value, zone);
         var endUtc = OutOfOfficeRequest.ToUtc(end.Value, zone);
         if (startUtc is null || endUtc is null)
-            return $"The {(startUtc is null ? "start" : "end")} time does not exist in {OutOfOfficeRequest.ZoneName(zone)}: the clocks skip it.";
+        {
+            var (which, time) = startUtc is null ? ("start", start.Value) : ("end", end.Value);
+            return $"The {which} time, {OutOfOfficeRequest.ClockText(time)}, {OutOfOfficeRequest.NoInstantReason(time, zone)}.";
+        }
         if (endUtc.Value <= startUtc.Value)
             return "End time must be after start time.";
         return null;

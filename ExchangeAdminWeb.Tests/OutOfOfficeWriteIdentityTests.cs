@@ -62,6 +62,8 @@ public sealed class OutOfOfficeWriteIdentityTests : IDisposable
     [Theory]
     [InlineData(null, "2026-11-02T09:00:00")]
     [InlineData("America/New_York", "2026-03-08T02:30:00")]
+    // aud-a7g: a time the clocks repeat names two instants - also none to write.
+    [InlineData("America/New_York", "2026-11-01T01:30:00")]
     public async Task AScheduleThatNamesNoInstant_WritesNothing_AndBorrowsNoConnection(string? zoneId, string start)
     {
         var zone = zoneId is null ? null : TimeZoneInfo.FindSystemTimeZoneById(zoneId);
@@ -72,6 +74,24 @@ public sealed class OutOfOfficeWriteIdentityTests : IDisposable
         var result = await Service().SetOutOfOfficeAsync(request, ExchangeWriteHarness.Validated(Checked));
 
         Assert.False(result.Success);
+        Assert.Empty(_h.Calls);
+        Assert.Equal(0, _h.Connects);
+    }
+
+    // aud-a7g. The write boundary's own refusal of a repeated time - here the end - names the time and
+    // the zone, as the page's does, and chooses no instant.
+    [Fact]
+    public async Task ATimeTheClocksRepeat_IsRefusedAtTheWrite_NamingTheTimeAndTheZone()
+    {
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+        var request = OutOfOfficeRequest.FromForm(Typed, "Scheduled", "Away", "Away (external)",
+            new DateTime(2026, 10, 30, 9, 0, 0), new DateTime(2026, 11, 1, 1, 30, 0), zone, "INC100");
+
+        var result = await Service().SetOutOfOfficeAsync(request, ExchangeWriteHarness.Validated(Checked));
+
+        Assert.False(result.Success);
+        Assert.Contains("2026-11-01 01:30", result.Message, StringComparison.Ordinal);
+        Assert.Contains("America/New_York", result.Message, StringComparison.Ordinal);
         Assert.Empty(_h.Calls);
         Assert.Equal(0, _h.Connects);
     }

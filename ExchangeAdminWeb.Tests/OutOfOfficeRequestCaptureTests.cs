@@ -56,6 +56,9 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     // offset, so a write that forgot to convert is off by hours, and not the zone of any server this is
     // likely to run on - the server's zone must play no part.
     private const string BrowserZone = "Asia/Kolkata";
+    // aud-a7g. Shaped like an IANA id, and resolvable by no server: what a browser reports when this
+    // host's time-zone data cannot name its zone.
+    private const string UnresolvableZone = "Mars/Olympus_Mons";
     private static readonly DateTime StartUtc = new(2026, 11, 2, 3, 30, 0, DateTimeKind.Utc);
     private static readonly DateTime EndUtc = new(2026, 11, 6, 11, 30, 0, DateTimeKind.Utc);
     private static readonly Guid AliceGuid = Guid.Parse("3c3c3c3c-0000-4000-8000-00000000a11c");
@@ -168,6 +171,21 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
             identifier == "getBrowserTimeZone" && zone is not null
                 ? ValueTask.FromResult((TValue)(object)zone)
                 : ValueTask.FromException<TValue>(new JSException($"{identifier} could not answer"));
+    }
+
+    /// <summary>
+    /// aud-a7g. What the page concludes about the schedule's zone from a browser that answers
+    /// <paramref name="zone"/> (null: the call fails): the reason it gives, and the zone it settles on.
+    /// </summary>
+    private static (string? Error, TimeZoneInfo? Zone) ZoneRead(string? zone)
+    {
+        var page = new Page();
+        SetProperty(page, "JS", new Browser(zone));
+        SetProperty(page, "Logger", NullLogger<Page>.Instance);
+        var read = (Task)typeof(Page).GetMethod("ReadScheduleZoneAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(page, null)!;
+        Assert.True(read.IsCompletedSuccessfully, "The page's time-zone read must finish without a renderer.");
+        return (GetField<string?>(page, "scheduleZoneError"), GetField<TimeZoneInfo?>(page, "scheduleZone"));
     }
 
     private static DateTime Parse(string value) => DateTime.Parse(value, CultureInfo.InvariantCulture);
@@ -541,6 +559,8 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     [Theory]
     [InlineData("Asia/Kolkata", "2026-11-02T09:00", "2026-11-06T17:00", "2026-11-02T03:30", "2026-11-06T11:30")]
     [InlineData("America/New_York", "2026-10-30T09:00", "2026-11-06T17:00", "2026-10-30T13:00", "2026-11-06T22:00")]
+    // aud-a7g: the day New York's clocks go back, either side of the hour they repeat.
+    [InlineData("America/New_York", "2026-11-01T00:30", "2026-11-01T02:30", "2026-11-01T04:30", "2026-11-01T07:30")]
     public async Task AScheduleEnteredInTheBrowsersZone_IsWrittenAsTheSameInstant_InUtc(
         string zone, string start, string end, string startUtc, string endUtc)
     {
@@ -609,10 +629,13 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     // aud-a7e, fail closed. A browser that cannot say which zone it is in leaves the schedule with no
     // moment to name: the fields are not offered, the page says why, and a Scheduled submit is refused
     // before the first await - nothing read, written, audited or sent - with the form left usable.
-    [Fact]
-    public async Task WithoutTheBrowsersZone_AScheduleIsRefused_BeforeAnythingIsAuditedNotifiedOrWritten()
+    // aud-a7g: the same for a zone the browser did name but this server cannot resolve.
+    [Theory]
+    [InlineData(null)]
+    [InlineData(UnresolvableZone)]
+    public async Task WithoutTheBrowsersZone_AScheduleIsRefused_BeforeAnythingIsAuditedNotifiedOrWritten(string? browserZone)
     {
-        var (page, email) = BuildPage("none", browserZone: null);
+        var (page, email) = BuildPage("none", browserZone: browserZone);
         SetField(page, "tabIndex", 1);
 
         var (text, inputs) = Rendered(page);
@@ -714,5 +737,51 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
 
         var date = Regex.Match(body, "<strong>Date:</strong> (?<when>[^<]+)</p>").Groups["when"].Value;
         Assert.Equal(WebUtility.HtmlEncode($"{new DateTime(2026, 10, 22, 13, 52, 0):MMMM dd, yyyy 'at' h:mm tt} UTC"), date);
+    }
+
+    // aud-a7g, the finding: the day New York's clocks go back, 01:30 happens twice - at 05:30Z and at
+    // 06:30Z - and ConvertTimeToUtc picked one without asking, so the auto-reply could be written an hour
+    // off. The page refuses it, naming the time and the zone, before anything is read, written, audited
+    // or sent; choosing a time outside the repeated hour is the operator's.
+    [Fact]
+    public async Task ATimeTheClocksRepeat_IsRefusedByThePage_BeforeAnythingIsReadWrittenAuditedOrNotified()
+    {
+        var (page, email) = BuildPage("none", browserZone: "America/New_York");
+        SetField(page, "startTime", Parse("2026-11-01T01:30"));
+        SetField(page, "endTime", Parse("2026-11-02T09:00"));
+
+        await SetOof(page);
+
+        var refusal = GetField<string?>(page, "setValidationError");
+        Assert.NotNull(refusal);
+        Assert.Contains("2026-11-01 01:30", refusal, StringComparison.Ordinal);
+        Assert.Contains("America/New_York", refusal, StringComparison.Ordinal);
+        Assert.Empty(_setCalls);
+        Assert.Empty(_getCalls);
+        Assert.Empty(AuditRows());
+        Assert.DoesNotContain(email.ReceivedCalls(), call => call.GetMethodInfo().Name
+            is nameof(EmailService.SendAdminNotificationAsync) or nameof(EmailService.SendOofNotificationAsync));
+        Assert.False(GetField<bool>(page, "isSetting"));
+    }
+
+    // aud-a7g. Two failures shared one message. A browser that gives no zone - the call fails, or it
+    // answers blank - is told to reload. A zone the browser did give that this server cannot resolve is
+    // the server's problem, which a reload cannot fix: its message carries the id and is not the
+    // browser's. Either way no zone is settled on, so nothing can be scheduled.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void AZoneThisServerCannotResolve_IsToldApartFromABrowserThatGaveNone(string? noZone)
+    {
+        Assert.Throws<TimeZoneNotFoundException>(() => TimeZoneInfo.FindSystemTimeZoneById(UnresolvableZone));
+
+        var browser = ZoneRead(noZone);
+        var server = ZoneRead(UnresolvableZone);
+
+        Assert.Null(browser.Zone);
+        Assert.Null(server.Zone);
+        Assert.False(string.IsNullOrEmpty(browser.Error));
+        Assert.Contains(UnresolvableZone, server.Error, StringComparison.Ordinal);
+        Assert.NotEqual(browser.Error, server.Error);
     }
 }

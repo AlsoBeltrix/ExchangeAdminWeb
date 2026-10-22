@@ -1,5 +1,6 @@
 using System.Globalization;
 using ExchangeAdminWeb.Components.Pages;
+using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Services;
 
 namespace ExchangeAdminWeb.Tests;
@@ -127,6 +128,39 @@ public class OofScheduleValidationTests
         var result = OutOfOffice.ValidateOofSchedule("Scheduled", new DateTime(2026, 3, 8, 2, 30, 0),
             new DateTime(2026, 3, 9, 9, 0, 0), newYork);
         Assert.Contains("does not exist in America/New_York", result);
+    }
+
+    // aud-a7g. A time the clocks repeat when they go back (New York, 1 November 2026, 01:00 to 01:59)
+    // names two instants. It is refused - start or end - naming the time and the zone, with a reason of
+    // its own rather than the skipped-time one, and no instant is chosen for it.
+    [Theory]
+    [InlineData("2026-11-01T01:30:00", "2026-11-02T09:00:00", "2026-11-01T01:30:00")]
+    [InlineData("2026-10-31T09:00:00", "2026-11-01T01:00:00", "2026-11-01T01:00:00")]
+    public void Scheduled_AtATimeTheZoneRepeats_ReturnsError(string start, string end, string repeated)
+    {
+        var newYork = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+        var time = DateTime.Parse(repeated, CultureInfo.InvariantCulture);
+
+        var result = OutOfOffice.ValidateOofSchedule("Scheduled", DateTime.Parse(start, CultureInfo.InvariantCulture),
+            DateTime.Parse(end, CultureInfo.InvariantCulture), newYork);
+
+        Assert.NotNull(result);
+        Assert.Contains(time.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture), result, StringComparison.Ordinal);
+        Assert.Contains("America/New_York", result, StringComparison.Ordinal);
+        var reason = OutOfOfficeRequest.NoInstantReason(time, newYork);
+        Assert.NotNull(reason);
+        Assert.Contains(reason, result, StringComparison.Ordinal);
+        Assert.NotEqual(OutOfOfficeRequest.NoInstantReason(new DateTime(2026, 3, 8, 2, 30, 0), newYork), reason);
+        Assert.Null(OutOfOfficeRequest.ToUtc(time, newYork));
+    }
+
+    [Fact]
+    public void Scheduled_OnTheDayTheClocksGoBack_OutsideTheRepeatedHour_ReturnsNull()
+    {
+        var newYork = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+        var result = OutOfOffice.ValidateOofSchedule("Scheduled", new DateTime(2026, 11, 1, 0, 30, 0),
+            new DateTime(2026, 11, 1, 2, 30, 0), newYork);
+        Assert.Null(result);
     }
 }
 
