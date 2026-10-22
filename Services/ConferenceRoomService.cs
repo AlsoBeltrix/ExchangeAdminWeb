@@ -1555,6 +1555,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
         catch (ArgumentException ex)
         {
+            // aud-a2u. A refusal is logged where the path decides it, once, at Warning: the room, the list where there is
+            // one, and the reason. These used to reach only the row's result and audit, so the application log held no
+            // trace of why a row was refused. Not again by the row, which puts the refusal on its result - aud-a2t's
+            // placement, for the resolver's refusals.
+            _logger.LogWarning("Set-ADUser preflight for {Room} refused the row; nothing was written: {Refusal}", roomEmail, ex.Message);
             return (ex.Message, null); // unmappable country - fail the row closed
         }
 
@@ -1562,7 +1567,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             return (null, null); // nothing synced to write for this row - AD step will be a no-op
 
         if (room.DirectoryObjectGuid is not { } objectGuid)
-            return (NoDirectoryObject(roomEmail, "City/State/Country could not be written"), null);
+        {
+            var refusal = NoDirectoryObject(roomEmail, "City/State/Country could not be written");
+            _logger.LogWarning("Set-ADUser preflight for {Room} refused the row; nothing was written: {Refusal}", roomEmail, refusal);
+            return (refusal, null);
+        }
 
         var creds = await GetModuleCredentialsAsync($"Set-ADUser preflight for {roomEmail}");
         if (creds is null)
@@ -1589,9 +1598,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 step = "reading the AD object";
                 var objectError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential, out var roomDn);
                 // Before any write, so the refusal says nothing was written: ConfirmDirectoryObject leaves that to its
-                // caller (aud-a2r), its callers on the write paths coming after Set-Place.
+                // caller (aud-a2r), its callers on the write paths coming after Set-Place - and leaves the log line to
+                // it as well (aud-a2u).
                 if (objectError != null)
+                {
+                    _logger.LogWarning("Set-ADUser preflight for {Room} refused the row; nothing was written: {Refusal}", roomEmail, objectError);
                     return ($"{Sentence(objectError)} Nothing was written.", null);
+                }
 
                 // aud-a2q. The server the write and its read-back will use, derived here, once.
                 var server = GroupManagementService.ServerFromDn(roomDn);
@@ -1633,6 +1646,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
     private async Task<(string? error, string? written, string? confirmed)> SetSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion, string? server)
     {
+        // aud-a2u. The two refusals below, unlike the preflight's, are not logged: nothing reaches them. The row runs this
+        // only after the preflight passed on the same room and the same fields, and BuildSyncedUserAttributes is pure, so
+        // the preflight has refused - and logged - every row they could refuse.
         Dictionary<string, object> attrs;
         try
         {
@@ -1678,10 +1694,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // one the preflight proved (aud-a2q), and this read's DN is not consulted, so the write
                 // cannot move to a domain nothing proved. Its refusal is returned as it is (aud-a2r): this
                 // comes after Set-Place, inside the row's partial, where "Nothing was written." would be false.
+                // Logged so as well (aud-a2u): the line says this write was refused, not that nothing was written.
                 step = "reading the AD object";
                 var confirmError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential);
                 if (confirmError != null)
+                {
+                    _logger.LogWarning("Set-ADUser City/State/Country write for {Room} refused before its write: {Refusal}", roomEmail, confirmError);
                     return (confirmError, null, null);
+                }
 
                 step = "Set-ADUser";
                 // Write by the validated objectGUID (immutable identity), never by a name.
@@ -1802,10 +1822,22 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // so a list Exchange reported without one cannot be added to. Refused here, while nothing has been
         // written, rather than at the add; and never by the name instead - "we do not guess".
         if (list.Guid is null)
-            return $"Exchange reported no GUID for room list '{list.Name}', so the list cannot be named by an immutable identity, and the room is not added to it by its name. Check the list in Exchange Online. Nothing was written.";
+        {
+            var refusal = $"Exchange reported no GUID for room list '{list.Name}', so the list cannot be named by an immutable identity, and the room is not added to it by its name. Check the list in Exchange Online.";
+            // aud-a2u. Logged where it is decided, as every refusal on these paths. In the room-list preflight's words, not
+            // the on-prem one's: this and the next refuse an existing list of either kind, before its sync state is known.
+            // Each is built without its " Nothing was written.", so the line carries the refusal as the others do and the
+            // message is unchanged.
+            _logger.LogWarning("Room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, refusal);
+            return $"{refusal} Nothing was written.";
+        }
 
         if (list.IsDirSynced is null)
-            return $"Exchange did not report whether room list '{list.Name}' is synchronized from on-premises, so it cannot be established before writing that the room can be added to it. Nothing was written.";
+        {
+            var refusal = $"Exchange did not report whether room list '{list.Name}' is synchronized from on-premises, so it cannot be established before writing that the room can be added to it.";
+            _logger.LogWarning("Room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, refusal);
+            return $"{refusal} Nothing was written.";
+        }
 
         if (!list.TakesOnPremFallback)
             return null;
@@ -1818,7 +1850,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             return null;
 
         if (room.DirectoryObjectGuid is not { } roomGuid)
-            return NoDirectoryObject(roomEmail, $"it cannot be added to room list '{list.Name}', which is synchronized from on-premises and takes members only there. Nothing was written");
+        {
+            var refusal = NoDirectoryObject(roomEmail, $"it cannot be added to room list '{list.Name}', which is synchronized from on-premises and takes members only there");
+            _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, refusal);
+            return $"{refusal} Nothing was written.";
+        }
 
         var creds = await GetModuleCredentialsAsync($"on-prem room-list membership preflight for {roomEmail}");
         if (creds is null)
@@ -1849,9 +1885,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // group - each read here exactly as the add will read them, without writing.
                 step = "reading the room's AD object";
                 var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential, out var roomDn);
-                // Before any write: the refusal says so, as the resolver's and the membership read's below do (aud-a2r).
+                // Before any write: the refusal says so, as the resolver's and the membership read's below do (aud-a2r),
+                // and is logged, as theirs are (aud-a2t, aud-a2u).
                 if (roomError != null)
+                {
+                    _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, roomError);
                     return $"{Sentence(roomError)} Nothing was written.";
+                }
 
                 // The resolver's refusals are shared with the add, which meets them after the writes,
                 // so here, as for the membership read below, the preflight says nothing was written.
@@ -1910,7 +1950,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     private async Task<(string? error, string? written, string? confirmed)> AddToRoomListViaAdAsync(ValidatedMailbox room, string roomEmail, string roomListName, string? listAddress)
     {
         if (room.DirectoryObjectGuid is not { } roomGuid)
-            return (NoDirectoryObject(roomEmail, "the room could not be added to the on-prem room list"), null, null);
+        {
+            var refusal = NoDirectoryObject(roomEmail, "the room could not be added to the on-prem room list");
+            // aud-a2u. Logged as the add's other refusals. Through the row only a race reaches it: the preflight passes a
+            // room with no object on a synced list only when Exchange shows the room on the list already, and the add's own
+            // membership read then no longer does.
+            _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail, roomListName, refusal);
+            return (refusal, null, null);
+        }
 
         var creds = await GetModuleCredentialsAsync($"on-prem room-list membership add for {roomEmail}");
         if (creds is null)
@@ -1942,9 +1989,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 step = "reading the room's AD object";
                 var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential, out var roomDn);
                 // After Set-Place and the timezone, inside the row's partial: the refusal is returned as it is, with no
-                // "Nothing was written." (aud-a2r).
+                // "Nothing was written." (aud-a2r), and logged as the resolver's below (aud-a2t, aud-a2u).
                 if (roomError != null)
+                {
+                    _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail, roomListName, roomError);
                     return (roomError, null, null);
+                }
 
                 var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, roomListName, listAddress, credential, ref step);
                 if (groupError != null)
@@ -2122,6 +2172,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // ResolveAdGroupGuid's. The two preflights, before any write, add "Nothing was written."; the
     // City/State/Country write and the room-list add, after Set-Place, add nothing, their refusal shown
     // inside the row's partial, which says what was written. It used to end every refusal so.
+    // aud-a2u. Nor does it log them: each caller logs its refusal where it refuses (aud-a2t's placement) - only the caller
+    // knows whether anything was written, which its line says - one line at each of the four for all three refusals, the
+    // error record and the empty answer among them, which no stand-in produces.
     private static string? ConfirmDirectoryObject(PowerShell ps, string objectGuid, string roomEmail, PSCredential credential) =>
         ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential, out _);
 

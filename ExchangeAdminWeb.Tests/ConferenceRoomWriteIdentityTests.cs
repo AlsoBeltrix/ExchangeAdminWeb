@@ -1269,4 +1269,159 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.True(failure is null || failure.Message.Contains("different mailbox", StringComparison.Ordinal), failure?.Message);
         Assert.Empty(_h.Writes);
     }
+
+    // ---- aud-a2u: the room-object read's refusals, and those decided before the directory work, are logged once ----
+    // Each path took the reason into its refusal and logged nothing: the room-object read's refusal on all four directory
+    // paths, and - before any runspace - an unmappable country, a list Exchange reported with no GUID or no sync state, or a
+    // room with no proven directory object. Only the row's result and audit carried them. Each is now logged once, at
+    // Warning, where the path refuses (aud-a2t's placement); the row, which puts the refusal on its result, adds no line.
+
+    private const string NothingWritten = " Nothing was written.";
+
+    // The line each path logs for a refusal - aud-a2t's two room-list lines among them - for the room as it was typed.
+    private static string RefusalLine(string path, string refusal) => path switch
+    {
+        "City/State/Country preflight" => $"Set-ADUser preflight for {Typed} refused the row; nothing was written: {refusal}",
+        "City/State/Country write" => $"Set-ADUser City/State/Country write for {Typed} refused before its write: {refusal}",
+        "room-list preflight" => $"Room-list preflight for {Typed} on {List} refused the row; nothing was written: {refusal}",
+        "on-prem room-list preflight" => $"On-prem room-list preflight for {Typed} on {List} refused the row; nothing was written: {refusal}",
+        "on-prem room-list add" => $"On-prem room-list add for {Typed} on {List} refused before its write: {refusal}",
+        _ => throw new ArgumentOutOfRangeException(nameof(path), path, null),
+    };
+
+    // Exactly one entry carries the refusal, so nothing logs it a second time: a warning, the path's own line.
+    private static void AssertLoggedOnce(CapturingLogger logger, string path, string refusal)
+    {
+        var logged = Assert.Single(logger.Entries, e => e.Message.Contains(refusal, StringComparison.Ordinal));
+        Assert.Equal(LogLevel.Warning, logged.Level);
+        Assert.Equal(RefusalLine(path, refusal), logged.Message);
+    }
+
+    [Theory]
+    [InlineData("City/State/Country", "preflight")]
+    [InlineData("City/State/Country", "write")]
+    [InlineData("room list", "preflight")]
+    [InlineData("room list", "add")]
+    public async Task TheObjectReadsRefusal_IsLoggedOnce_WhereThePathRefuses(string path, string phase)
+    {
+        // The read that proves the room's object answered by another object, on each of the four paths, set up as in
+        // TheObjectReadsRefusal_SaysNothingWasWritten_OnlyWhereNothingWas: a preflight refused with nothing written, a write
+        // partial with its own write not made - and one warning, the path's, carrying the refusal.
+        const string Another = "7a7a7a7a-0000-4000-8000-000000000002";
+        if (phase == "preflight")
+            _h.ObjectReadAnswersAs = Another;
+        else
+            _h.ObjectReadAnswersAsAfterSetPlace = Another;
+        if (path == "room list")
+            SyncedListTakingTheRoomOnPrem();
+        var logger = new CapturingLogger();
+
+        var result = await Finder(new Service(_h, logger), Room(), city: path == "room list" ? "" : "Dublin");
+
+        Assert.False(result.Success);
+        Assert.Equal(phase != "preflight", result.Partial);
+        if (phase == "preflight")
+            Assert.Empty(_h.Writes);
+        else
+            Assert.Empty(_h.CallsTo(path == "room list" ? "Set-ADGroup" : "Set-ADUser"));
+        var refusal = $"Active Directory answered {CheckedObject} with a different object ({Another}).";
+        var step = Assert.Single(result.Steps, s => !s.Success);
+        Assert.NotNull(step.Error);
+        Assert.Contains(refusal, step.Error, StringComparison.Ordinal);
+        AssertLoggedOnce(logger, (path, phase) switch
+        {
+            ("City/State/Country", "preflight") => "City/State/Country preflight",
+            ("City/State/Country", _) => "City/State/Country write",
+            (_, "preflight") => "on-prem room-list preflight",
+            _ => "on-prem room-list add",
+        }, refusal);
+    }
+
+    [Theory]
+    [InlineData("an unmappable country")]
+    [InlineData("no AD object for City/State/Country")]
+    [InlineData("a list with no GUID")]
+    [InlineData("a list with no sync state")]
+    [InlineData("no AD object for a synced list")]
+    public async Task ARefusalBeforeTheDirectoryWork_IsLoggedOnce_NamingTheRoomTheListAndTheReason(string refusal)
+    {
+        // Each refusal a path decides before it opens a runspace or asks for a credential, through the whole row: refused
+        // while nothing is written, in its one step, as before - and one warning, the path's, naming the room, the list where
+        // there is one, and the refusal as the row reports it, less the " Nothing was written." the room-list preflight
+        // appends.
+        var room = Room();
+        var city = "";
+        var country = "";
+        switch (refusal)
+        {
+            case "an unmappable country": country = "ZZ"; break;
+            case "no AD object for City/State/Country": room = Room(directoryObject: null); city = "Dublin"; break;
+            case "a list with no GUID": _h.ListGuids[List] = null; break;
+            case "a list with no sync state": _h.ListSyncState[List] = null; break;
+            case "no AD object for a synced list": room = Room(directoryObject: null); SyncedListTakingTheRoomOnPrem(); break;
+            default: throw new ArgumentOutOfRangeException(nameof(refusal), refusal, null);
+        }
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
+
+        var result = await Finder(service, room, city: city, country: country);
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, service.CredentialRequests);
+        var step = Assert.Single(result.Steps);
+        Assert.False(step.Success);
+        Assert.Equal(result.Message, step.Error);
+        var cityStateAndCountry = refusal is "an unmappable country" or "no AD object for City/State/Country";
+        Assert.Equal(cityStateAndCountry ? "Set-ADUser preflight (City/State/Country)" : "Room list preflight", step.Stage);
+        // The City/State/Country preflight's two say what could not be written, and append nothing.
+        var reason = result.Message;
+        if (!cityStateAndCountry)
+        {
+            Assert.EndsWith(NothingWritten, reason, StringComparison.Ordinal);
+            reason = reason[..^NothingWritten.Length];
+        }
+        Assert.Contains(refusal switch
+        {
+            "an unmappable country" => "'ZZ' is not a recognized ISO 3166-1 alpha-2 country code",
+            "no AD object for City/State/Country" => $"No on-premises Active Directory object was validated for '{Typed}' (a cloud-only room has none), so City/State/Country could not be written.",
+            "a list with no GUID" => $"Exchange reported no GUID for room list '{List}'",
+            "a list with no sync state" => $"Exchange did not report whether room list '{List}' is synchronized from on-premises",
+            _ => $"(a cloud-only room has none), so it cannot be added to room list '{List}', which is synchronized from on-premises and takes members only there.",
+        }, reason, StringComparison.Ordinal);
+        AssertLoggedOnce(logger, refusal switch
+        {
+            "an unmappable country" or "no AD object for City/State/Country" => "City/State/Country preflight",
+            "no AD object for a synced list" => "on-prem room-list preflight",
+            _ => "room-list preflight",
+        }, reason);
+    }
+
+    [Fact]
+    public async Task TheOnPremAddsRefusalOfARoomWithNoDirectoryObject_IsLoggedOnce()
+    {
+        // The on-prem add's own refusal of a room with no proven object. Through the row only a race reaches it - the
+        // preflight's membership read finding the room on its synced list, the add's no longer - so the add is called
+        // directly, as the row calls it after Set-Place (aud-a2p): it fails with nothing written on-prem and no credential
+        // asked for, and one warning names the room, the list and the refusal.
+        SyncedListTakingTheRoomOnPrem();
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
+        var list = new ConferenceRoomService.RoomListTarget(List, Exists: true, IsLegacy: false, IsDirSynced: true,
+            ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid);
+
+        var result = await service.AddToRoomListAsync(Room(directoryObject: null), "room1@contoso.test", Typed, list);
+
+        Assert.False(result.Success);
+        Assert.Null(result.WrittenDirectoryObject);
+        var step = Assert.Single(result.Steps, s => s.Stage == $"Add to '{List}' (on-prem)");
+        Assert.False(step.Success);
+        Assert.NotNull(step.Error);
+        Assert.Equal(step.Error, result.Message);
+        Assert.Equal($"No on-premises Active Directory object was validated for '{Typed}' (a cloud-only room has none), so the room could not be added to the on-prem room list.", step.Error);
+        Assert.Empty(_h.CallsTo("Set-ADGroup"));
+        Assert.Equal(0, service.CredentialRequests);
+        AssertLoggedOnce(logger, "on-prem room-list add", step.Error);
+    }
 }
