@@ -6,9 +6,9 @@ all four directory paths. (2) The refusals returned before the directory work st
 country, no list GUID, no sync state reported, no proven directory object) are not logged by the
 service either. Only the row's audit carries them, so the application log shows no trace of why a
 row was refused (the aud-a2t class, on the remaining refusal sites).
-**Status**: Fixed on branch, not merged; guard proof below; independent review pending
+**Status**: Merged to master (`bf7ba5b4`); closed on guard proof; codex review pending (batched with aud-a2s and aud-a2t)
 **Branch**: `worktree-agent-addb7857655adf8dc`
-**Commit**: the fix commit after plan `8233d1ff` (fix, tests, comments, record)
+**Commit**: `351f887b` (fix, tests, comments, record); plan `8233d1ff`; merged `bf7ba5b4`
 **Reviewer**: implementer (surfaced by the aud-a2t agent, 2026-10-22, its two candidates)
 
 ## Evidence
