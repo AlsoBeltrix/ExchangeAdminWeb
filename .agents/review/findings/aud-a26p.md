@@ -11,7 +11,7 @@ added. Key: Alias"), seen once in `ADAttributeEditorSaveTests` during a filtered
 failure source for the full suite.
 **Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
 **Branch**: `worktree-agent-a992f9d6471a07501`
-**Commit**: -
+**Commit**: `ec2e09c3` (plan `c8deba78`; comments `07ef4e8e`)
 **Reviewer**: implementer (surfaced by the aud-a28p/a26n agent, 2026-10-22, candidates 1, 3, 4 and 6 of its hand-back; its candidate 5, a connection change on one instance not draining the other's pool, is the scdi-1 design - each borrow compares the config generation - and is not admitted)
 
 ## Evidence
@@ -199,3 +199,11 @@ save drains a pool that holds no session. The pages were not rendered in a brows
 - An Exchange Online field shown from a fallback and edited is captioned with the fallback until it is saved; the caption is
   about where the stored state stands, not about the text being typed.
 - `ChangedEntries`, which names the admin's entries in an already-applied record, still compares ignoring case (plan item 3).
+
+## Branch-tip gates - 2026-10-22 (`07ef4e8e`: both fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,639 passed / 3 skipped (the three known AD skips) / 0 failed, 5,642 total, 5m26s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.

@@ -8,7 +8,7 @@ honestly (a success record for the rules, a refusal for the secret, a message sa
 landed), so nothing is silent; but the save the admin confirmed as one change lands as half.
 **Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
 **Branch**: `worktree-agent-a992f9d6471a07501`
-**Commit**: -
+**Commit**: `dbcac40f` (plan `c8deba78`; comments `07ef4e8e`)
 **Reviewer**: implementer (surfaced by the aud-a28p/a26n agent, 2026-10-22, candidate 2 of its hand-back)
 
 ## Evidence
@@ -168,3 +168,11 @@ coder self-review verdict is claimed.
 - The compare takes the secret's write lock to read; a database whose write lock is held past the 5-second busy timeout fails
   the save before anything is written, where it used to fail only the secret after the rules.
 - Two in-process stores on one temp file stand in for the two instances; nothing ran against the shared database.
+
+## Branch-tip gates - 2026-10-22 (`07ef4e8e`: both fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,639 passed / 3 skipped (the three known AD skips) / 0 failed, 5,642 total, 5m26s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
