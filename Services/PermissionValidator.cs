@@ -79,11 +79,22 @@ public class PermissionValidator
 
     private bool GetPreventSelfGrant()
     {
-        var val = _moduleConfig.GetValue("MailboxPermissions", "PreventSelfGrant");
-        if (!string.IsNullOrEmpty(val) && bool.TryParse(val, out var result))
+        if (!_moduleConfig.TryGetModuleConfig("MailboxPermissions", out var values))
+        {
+            _logger.LogError("The self-grant setting cannot be read - self-grants are refused until it can be. {Store}",
+                SettingsStoreText.ModuleConfig("MailboxPermissions"));
+            return true;
+        }
+
+        var val = values.GetValueOrDefault("PreventSelfGrant");
+        if (string.IsNullOrWhiteSpace(val))
+            return bool.Parse(_config["Security:PreventSelfGrant"] ?? "true");
+
+        if (bool.TryParse(val, out var result))
             return result;
 
-        return bool.Parse(_config["Security:PreventSelfGrant"] ?? "true");
+        _logger.LogWarning("The self-grant setting holds '{Value}', which is neither true nor false - self-grants are refused until it is corrected", val);
+        return true;
     }
 
     public void InvalidateCache()
@@ -737,7 +748,11 @@ public class PermissionValidator
     {
         var members = new List<string>();
 
-        if (!_exoPool.IsConfigured)
+        if (!_exoPool.TryGetIsConfigured(out var exchangeConfigured))
+            throw new InvalidOperationException(
+                $"Exchange Online's module enablement or its module_config rows could not be read, so the excluded entry '{identity}' cannot be expanded into its members.");
+
+        if (!exchangeConfigured)
         {
             _logger.LogWarning("Exchange Online not configured - group '{Identity}' kept as literal match only; group members are not individually protected", identity);
             return members;

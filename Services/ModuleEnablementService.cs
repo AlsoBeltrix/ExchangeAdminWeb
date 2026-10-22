@@ -101,6 +101,40 @@ public class ModuleEnablementService
         return IsModuleRawEnabled(moduleId);
     }
 
+    public bool TryGetModuleEnabled(string moduleId, out bool enabled)
+    {
+        var module = _catalog.GetById(moduleId);
+        if (module == null || module.IsSystemModule)
+        {
+            enabled = module != null;
+            return true;
+        }
+
+        if (_legacyFileCorrupt || !_repository.TryGetAll(out var state))
+        {
+            enabled = false;
+            return false;
+        }
+
+        enabled = IsModuleEnabledIn(state, module);
+        return true;
+    }
+
+    private bool IsModuleEnabledIn(Dictionary<string, bool> state, AdminModuleDescriptor module)
+    {
+        if (module.IsSystemModule)
+            return true;
+
+        if (module.DependsOn != null)
+        {
+            var parent = _catalog.GetById(module.DependsOn);
+            if (parent == null || !IsModuleEnabledIn(state, parent))
+                return false;
+        }
+
+        return state.TryGetValue(module.Id, out var enabled) ? enabled : module.EnabledByDefault;
+    }
+
     /// <summary>
     /// Returns the raw toggle state without checking parent dependencies.
     /// Used by the Admin Settings UI to display and save toggle states independently.

@@ -161,6 +161,22 @@ public sealed class ExoConnectionPool : IDisposable
         }
     }
 
+    public bool TryGetIsConfigured(out bool configured)
+    {
+        configured = false;
+        if (!_enablement.TryGetModuleEnabled(ConfigModuleKey, out var enabled))
+            return false;
+        if (!enabled)
+            return true;
+        if (!_moduleConfig.TryGetModuleConfig(ConfigModuleKey, out var values))
+            return false;
+
+        var appId = values.GetValueOrDefault(ConfigAppIdKey) ?? _config["ExchangeOnline:AppId"];
+        var organization = values.GetValueOrDefault(ConfigOrganizationKey) ?? _config["ExchangeOnline:Organization"];
+        configured = !string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(organization);
+        return true;
+    }
+
     private ExoConnectionConfig GetExoConfig()
     {
         var appId = _moduleConfig.GetValue(ConfigModuleKey, ConfigAppIdKey);

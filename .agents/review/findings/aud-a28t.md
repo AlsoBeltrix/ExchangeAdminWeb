@@ -8,9 +8,9 @@ members are unprotected for the 30-minute cache. (2) `GetPreventSelfGrant` reads
 same fail-open read and, on failure, falls back to appsettings `Security:PreventSelfGrant`; the
 Constitution allows that fallback only when the module config is ABSENT, so a host whose appsettings
 says false allows self-grants while the store is unreadable.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
-**Commit**: -
+**Status**: Fixed on its branch, not merged; guard proof below; approved under the owner's 2026-10-21 "EVERYTHING" go
+**Branch**: `worktree-agent-acba5cd6b0762c5bf`
+**Commit**: plan `b18df623`; the fix and comments commits follow it on the branch
 **Reviewer**: implementer (surfaced by the aud-a28s agent, 2026-10-22, candidates 1 and 2 of its hand-back)
 
 ## Evidence
@@ -100,6 +100,92 @@ and falls back on a failed read again; extras (E1) the call site takes unreadabl
 `TryGetIsConfigured` reads the enablement through `IsModuleEnabled`, (E3) an unparseable value falls back again. Plus an
 executed reproduction with the three production files as at `5d93680b`.
 
+## Executed reproduction - 2026-10-22
+
+Branch `worktree-agent-acba5cd6b0762c5bf`, the fix's tests in place and `Services/PermissionValidator.cs`,
+`Services/ExoConnectionPool.cs` and `Services/ModuleEnablementService.cs` as they are at `5d93680b` (`git hash-object` equal
+to the blobs `cf2761b3`, `f8d76648`, `ce7c4a97`; MD5 `56C5F0A7A6D7003078AF1031CD8EBDFD`, `961683F4BCC31E44D593BAAA02C8CFD2`,
+`73F054CA4FCD54FCDD51E692F53E5C96`), build 0 errors: `PermissionValidatorConfigReadTests` 4 failed / 8 passed. A member of a
+listed group was allowed (`Error` null) when the store failed only the Exchange Online read and answered again - the first
+value read failed open to null, the probe after it answered, and `IsConfigured` said "not configured", so the group stayed
+a name - and allowed again with the enablement store unreadable (read as disabled). A self-grant was allowed with the module
+config unreadable and appsettings false (the failed read fell back), and with the value `yes` and appsettings false. Passed,
+as they must against the old code too: the store failing from the Exchange Online read on (the old chain's presence read
+throws there and fails the load), both not-configured controls, and the five readable self-grant rows. The fixed files were
+then restored to their MD5s and touched.
+
+## Fix
+
+`Services/ModuleEnablementService.cs`: `TryGetModuleEnabled(moduleId, out bool enabled)` - `IsModuleEnabled`'s rule over one
+`ModuleEnablementRepository.TryGetAll` read (`IsModuleEnabledIn`); a module the catalog decides alone (unknown, system) is
+answered without a read; false when the store cannot be read or a legacy file keeps it fail-closed.
+`Services/ExoConnectionPool.cs`: `TryGetIsConfigured(out bool configured)` beside `IsConfigured` - the enablement through
+`TryGetModuleEnabled`, the module config through `ModuleConfigService.TryGetModuleConfig`, false when either cannot be read;
+otherwise `IsConfigured`'s rule, the appsettings fallback only for a key absent from the module config. `IsConfigured`,
+`GetExoConfig` and `BorrowAsync` are unchanged.
+`Services/PermissionValidator.cs`: `TryExpandGroupAsync` throws when `TryGetIsConfigured` is false, so the load fails
+closed through the existing catch; not configured keeps the entry a literal as before. `GetPreventSelfGrant` reads the
+MailboxPermissions rows once through `TryGetModuleConfig`: unreadable refuses self-grants (logged with
+`SettingsStoreText.ModuleConfig`); a value that parses is used; absent or blank falls back to appsettings
+`Security:PreventSelfGrant`, default true; a value that does not parse refuses (logged).
+
+Tests: new `ExchangeAdminWeb.Tests/PermissionValidatorConfigReadTests.cs` (12 cases), as planned: the store failing the
+Exchange Online read from then on, and that read only (refused as the list unavailable, `IsUserExcludedAsync` true, nothing
+connected); the enablement store unreadable (the same); the readable not-configured controls, AppId blank and module
+disabled (the member allowed and bound to its mailbox, the listed name refused as protected); the module config unreadable
+refusing a self-grant, sync and async, with appsettings false; the six-row self-grant table over a readable store. No
+departure from the plan.
+
+Caller-visible change, by design: none while the stores read. When Exchange Online's enablement or module config cannot be
+read during a load that lists an entry, the load fails closed and every Mailbox Permissions, Calendar Permissions and Out of
+Office target is refused as the protected-user list unavailable, retried after `FailedLoadRetry` - where a listed group used
+to stay a name with its members unprotected for the cache lifetime. A self-grant is refused while the Mailbox Permissions
+module config cannot be read, or while its `PreventSelfGrant` holds a value that is neither true nor false, whatever
+appsettings says; a grant to someone else is unaffected.
+
 ## Guard proof
 
-Pending.
+Session-local driver (`mutate.ps1` in the scratchpad's `a28t-a26q-work`): back up, mutate by exact text (one match
+required), MD5, `dotnet build` of the test project, `dotnet test` filtered to
+`FullyQualifiedName~PermissionValidator|FullyQualifiedName~WriteIdentityTests|FullyQualifiedName~OutOfOfficeRequestCaptureTests|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~ProtectedPrincipalExclusionsReadTests|FullyQualifiedName~ExoConnectionPool|FullyQualifiedName~ModuleEnablement|FullyQualifiedName~ExchangeIdentityResolver|FullyQualifiedName~SharedTempDatabaseTripwireTests`
+(345 tests), restore from the backup, set the write time, MD5 re-confirmed. Fixed-file MD5s: `Services/PermissionValidator.cs`
+`CD5E1DBCC34698BD1D444658550B3F85`, `Services/ExoConnectionPool.cs` `BF64A1F4FC5565B82AB6F058AC8F4E6C`; every mutant built
+with 0 errors and its file was restored to that MD5 each time. After the round, the restored tree rebuilt and the same
+filter: 345/345 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| 1 | `TryExpandGroupAsync`: asks `IsConfigured` again - the read that is "not configured" on a failure | `6AB2003495A4CB2707B6EFFDF0391DBB` | `AStoreThatFailsTheExchangeOnlineRead_RefusesEveryValidation_NotNamesOnly(failing: 1)` (the member allowed: `Error` null), `AnEnablementStoreThatCannotBeRead_RefusesEveryValidation_NotNamesOnly` (`Error` null) |
+| 2 | `GetPreventSelfGrant`: the value read through `GetValue` again, so a failed read falls back to appsettings | `D94E0DA1E856F7CB0865EFB17445E255` | `AModuleConfigThatCannotBeRead_RefusesASelfGrant_EvenWithAppsettingsFalse` (the self-grant allowed: null) |
+| E1 | extra, `TryExpandGroupAsync`: unreadable taken for not configured (`_ = TryGetIsConfigured(...)`, names only) | `A6AB7351EBF02AF342EBE1CDFC8F19B0` | both `AStoreThatFailsTheExchangeOnlineRead_RefusesEveryValidation_NotNamesOnly` rows, `AnEnablementStoreThatCannotBeRead_RefusesEveryValidation_NotNamesOnly` |
+| E2 | extra, `ExoConnectionPool.TryGetIsConfigured`: the enablement read through `IsModuleEnabled` again | `F8F5EE8831F2414913ECBF7D82D9B367` | `AnEnablementStoreThatCannotBeRead_RefusesEveryValidation_NotNamesOnly` (`Error` null) |
+| E3 | extra, `GetPreventSelfGrant`: a value that does not parse falls back to appsettings again | `93085BA2D62946F1C9E492DF0D0DD09C` | `TheSelfGrantSetting_FallsBackToAppsettings_OnlyWhenTheModuleConfigHoldsNoValue(stored: "yes", appsettings: "false", refused: True)` (null) |
+
+Mutation 1 is the finding's own code, and only the confined failure catches it: from the Exchange Online read on, the old
+chain's presence read throws and fails the load, which is why the `failing: int.MaxValue` row passes under it and the
+`failing: 1` row is in the class. The code comments are written after the round, in their own commit, so the MD5s above are
+this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors; 61 warnings, all pre-existing, none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,645 passed / 3 skipped (the three known AD skips) / 0 failed, 5,648 total, 5m14s. No hang. (Baseline at
+  `5d93680b`: 5,633 / 3 / 0, 5,636, 5m44s; the twelve added are this class's.)
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No PowerShell source, AD module, directory, Exchange Online, Delinea, SMTP, push or deployment: Exchange is a stand-in
+resolver and a connect seam that throws, and no case here opens a session. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- `IsConfigured` and `GetExoConfig` keep their fail-open reads for their other callers. `BorrowAsync`: a failed value read
+  is null and falls back to appsettings `ExchangeOnline:*`, so with the store answering again a borrow can connect under the
+  appsettings values rather than the module config's. `ExchangeIdentityResolver.ResolveRecipientAsync` refuses on "not
+  configured", so it fails closed; the recipient autocomplete shows nothing. Not this gate; handed back.
+- The expansion asks once per entry, as before, so two entries of one load can see different answers (one configured, one
+  not), as before.
+- No case drives a real expansion - a listed group's members read from Exchange and protected - because that needs a
+  session and no case here opens one. The refusal is what is tested.
+- The failing stores stand in for a store fault; nothing ran against a damaged database.
