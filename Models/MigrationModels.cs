@@ -59,13 +59,14 @@ public class MigrationBatchInfo
 
     /// <summary>
     /// aud-a23d. When Exchange says the batch was created, as reported - one it cannot read is kept as
-    /// such and shown as the marker, and sorts after every readable time.
+    /// such and shown as the marker, and sorts after every readable time. aud-a23e: null when none was
+    /// reported, shown as "(not reported)", an empty CSV cell, and sorted as none.
     /// </summary>
     /// <remarks>
-    /// Not nullable, and <see cref="DateTime.MinValue"/> when none was reported, because that is what an
-    /// absent value always read as here; this finding changes what an unreadable one does, not that.
+    /// aud-a23e. It defaulted to <see cref="DateTime.MinValue"/>, which the page showed as a creation in the
+    /// year 0001 and an ascending sort put first: a date nobody reported, shown as a fact.
     /// </remarks>
-    public ReportedTime CreatedDateTime { get; set; } = ReportedTime.Of(DateTime.MinValue);
+    public ReportedTime? CreatedDateTime { get; set; }
 
     /// <summary>
     /// aud-a23d. When the batch started, as reported; null only when nothing was reported. A start this
@@ -77,14 +78,25 @@ public class MigrationBatchInfo
     /// <summary>aud-a23d. When the batch completed, as reported; null only when nothing was reported.</summary>
     public ReportedTime? CompletedDateTime { get; set; }
 
-    public int TotalCount { get; set; }
-    public int PendingCount { get; set; }
+    // aud-a23f. The counts as reported, each read through ReportedCount.Read: Convert.ToInt32 threw on a
+    // value it could not convert and the batch vanished from the list. One this app cannot read is its
+    // marker where the count goes, and the batch stays. Absent is 0, as it always read here. Being neither
+    // 0 nor more, an unreadable count tells the page neither "N pending. Batch not started." nor "contains
+    // no mailboxes", and its sorts put it after every count.
+    public ReportedCount TotalCount { get; set; } = ReportedCount.Of(0);
+    public ReportedCount PendingCount { get; set; } = ReportedCount.Of(0);
     public string? WorkflowStage { get; set; }
-    public int SyncedCount { get; set; }
-    public int FinalizedCount { get; set; }
-    public int FailedCount { get; set; }
+    public ReportedCount SyncedCount { get; set; } = ReportedCount.Of(0);
+    public ReportedCount FinalizedCount { get; set; } = ReportedCount.Of(0);
+    public ReportedCount FailedCount { get; set; } = ReportedCount.Of(0);
     public string? TargetEndpoint { get; set; }
-    public bool AutoStart { get; set; }
+
+    /// <summary>
+    /// aud-a23f. Whether the batch starts on its own, as reported: false when nothing was reported, null when
+    /// what was cannot be read as a flag - <c>Convert.ToBoolean</c> threw on it and lost the batch. Nothing
+    /// reads it today; false for an unreadable value would be a guess.
+    /// </summary>
+    public bool? AutoStart { get; set; }
 
     /// <summary>
     /// True when Exchange holds ANY CompleteAfter value for this batch - which means the batch is
@@ -142,6 +154,35 @@ public class MigrationBatchInfo
     public MigrationDirection Direction { get; set; }
     public List<MigrationUserInfo> Users { get; set; } = new();
 }
+
+/// <summary>
+/// aud-a23f. A row <c>Get-MigrationBatch</c> returned that could not be read as a batch: its identity as far
+/// as it was read - null when it had none, or when the identity is what could not be read - and why.
+/// </summary>
+/// <remarks>
+/// Such a row used to be logged and dropped, so the page listed the other batches as if they were all there
+/// were, and an operator looking for this one concluded it did not exist (Known Failure Class 2). It is
+/// carried beside the batches instead, named in a warning above the list and listed in the CSV.
+/// </remarks>
+public sealed record UnreadableMigrationBatch(string? Identity, string Reason)
+{
+    /// <summary>How the warning and the CSV name it: the identity when it has one, then the reason.</summary>
+    public string Shown => Identity is null ? Reason : $"{Identity}: {Reason}";
+
+    /// <summary>The page's warning, spelled once: "N batch(es) could not be read: name: reason; ...".</summary>
+    public static string Warning(IReadOnlyCollection<UnreadableMigrationBatch> rows) =>
+        $"{rows.Count} {(rows.Count == 1 ? "batch" : "batches")} could not be read: {string.Join("; ", rows.Select(r => r.Shown))}";
+}
+
+/// <summary>
+/// aud-a23f. What <c>Get-MigrationBatch</c> returned: the batches, and beside them every row that could not be
+/// read as one - one result, so no caller is handed the first without the second.
+/// </summary>
+/// <remarks>
+/// Positional, so the Migration page takes both where it took the list, on that one line: its line-keyed
+/// ClickGate entries keep every edit to it in place.
+/// </remarks>
+public sealed record MigrationBatchList(List<MigrationBatchInfo> Batches, List<UnreadableMigrationBatch> Unreadable);
 
 public class MigrationUserInfo
 {

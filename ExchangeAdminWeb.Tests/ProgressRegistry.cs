@@ -2225,6 +2225,11 @@ public static class ProgressRegistry
         [
             new("OnInitializedAsync", AuthPreambleOnly),
             new("HandleKeyDown", "Enter key; the lookup is RunLookup", "RunLookup"),
+            new("OnAfterRenderAsync",
+                "reads the browser's own time zone once, on the first interactive render, so the "
+                + "lookup's times can be shown in it with the zone named (aud-a23e): one JS interop "
+                + "call the browser answers itself, with no directory, Exchange, Graph, disk or "
+                + "config-store call behind it, and nothing the operator started or waits on"),
         ],
     };
 

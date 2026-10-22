@@ -193,7 +193,8 @@ public sealed class MigrationReportedTimeTests : IDisposable
         return sorted.Select(key).ToList();
     }
 
-    private static string Local(DateTime utc, string format) => utc.ToLocalTime().ToString(format, CultureInfo.CurrentCulture);
+    /// <summary>aud-a23e. A readable time as the page and the CSV show one: its instant in UTC, labelled UTC.</summary>
+    private static string Utc(DateTime utc) => utc.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + " (UTC, UTC+00:00)";
 
     private sealed class RenderableMigration : Migration
     {
@@ -220,7 +221,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
     // read as its instant and shown as the Kind-Utc DateTime of that instant is: in the header, the
     // mailbox row and the CSV. The offset handed over (+05:30) is not this server's, so a reading that
     // kept the reported wall clock would show other times. A Kind-Local DateTime, which the old read
-    // accepted, is the control.
+    // accepted, is the control. aud-a23e: shown in UTC, labelled UTC, where it was the server's clock.
     [Theory]
     [InlineData("DateTimeOffset")]
     [InlineData("PSObject wrapping a DateTimeOffset")]
@@ -233,16 +234,15 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportUser("alice@contoso.test", As(form, LastSyncUtc));
         var service = CreateService();
 
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
         var rendered = await OpenBatchRendered(service, batch);
-        var csv = Migration.BuildCsv([batch]);
+        var csv = Migration.BuildCsv([batch], []);
 
-        Assert.Contains($"Created:</strong> {Local(CreatedUtc, "MMM dd, yyyy HH:mm")}", rendered, StringComparison.Ordinal);
-        Assert.Contains($"Started:</strong> {Local(StartedUtc, "MMM dd, yyyy HH:mm")}", rendered, StringComparison.Ordinal);
-        Assert.Contains($"Completed:</strong> {Local(CompletedUtc, "MMM dd, yyyy HH:mm")}", rendered, StringComparison.Ordinal);
-        Assert.Contains(Local(LastSyncUtc, "MMM dd HH:mm"), rendered, StringComparison.Ordinal);
-        Assert.Contains($"\"{Local(CreatedUtc, "MMM dd, yyyy HH:mm")}\",\"{Local(StartedUtc, "MMM dd, yyyy HH:mm")}\",\"{Local(CompletedUtc, "MMM dd, yyyy HH:mm")}\"",
-            csv, StringComparison.Ordinal);
+        Assert.Contains($"Created:</strong> {Utc(CreatedUtc)}", rendered, StringComparison.Ordinal);
+        Assert.Contains($"Started:</strong> {Utc(StartedUtc)}", rendered, StringComparison.Ordinal);
+        Assert.Contains($"Completed:</strong> {Utc(CompletedUtc)}", rendered, StringComparison.Ordinal);
+        Assert.Contains(Utc(LastSyncUtc), rendered, StringComparison.Ordinal);
+        Assert.Contains($"\"{Utc(CreatedUtc)}\",\"{Utc(StartedUtc)}\",\"{Utc(CompletedUtc)}\"", csv, StringComparison.Ordinal);
         Assert.True(batch.AutoComplete);
         Assert.False(batch.CompleteAfterUnreadable);
         Assert.Equal(completeAfterUtc, batch.ScheduledCompletionUtc);
@@ -262,9 +262,9 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportUser("alice@contoso.test", value);
         var service = CreateService();
 
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
         var rendered = await OpenBatchRendered(service, batch);
-        var csv = Migration.BuildCsv([batch]);
+        var csv = Migration.BuildCsv([batch], []);
 
         Assert.Contains($"Created:</strong> {marker}", rendered, StringComparison.Ordinal);
         Assert.Contains($"Started:</strong> {marker}", rendered, StringComparison.Ordinal);
@@ -287,7 +287,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportBatch(Batch, started: value, pending: 2, stage: "Injection", total: 2);
         var service = CreateService();
 
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
         var rendered = await OpenBatchRendered(service, batch);
 
         Assert.DoesNotContain("Batch not started", rendered, StringComparison.Ordinal);
@@ -329,7 +329,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportBatch("late", created: As("DateTimeOffset", CreatedUtc.AddDays(3)));
         var service = CreateService();
 
-        var batches = await service.GetMigrationBatchesAsync();
+        var batches = (await service.GetMigrationBatchesAsync()).Batches;
         var order = Sorted("SortBatches", "Created", ascending, batches, b => b.BatchName);
 
         Assert.Equal(ascending ? ["early", "late", "unreadable"] : ["late", "early", "unreadable"], order);
@@ -348,7 +348,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportBatch(Batch, completeAfter: value);
         var service = CreateService();
 
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
 
         Assert.True(batch.AutoComplete);
         Assert.True(batch.CompleteAfterUnreadable);
@@ -362,10 +362,139 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportBatch(Batch);
         var service = CreateService();
 
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
 
         Assert.False(batch.AutoComplete);
         Assert.False(batch.CompleteAfterUnreadable);
         Assert.Null(batch.ScheduledCompletionUtc);
+    }
+
+    // ---- aud-a23e -----------------------------------------------------------------------------
+
+    // aud-a23e, the finding: the page showed each readable time on the server's clock with no zone named, so a
+    // reader could not tell which zone it was in. Every one - the header's three, the mailbox row's, the CSV's
+    // three - is now its instant in UTC, labelled UTC, whichever Kind it came in: no clock is unlabelled.
+    [Fact]
+    public async Task EveryReadableTime_IsShownInUtc_AndSaysSo_OnThePageAndInTheCsv()
+    {
+        ReportBatch(Batch, CreatedUtc, StartedUtc.ToLocalTime(), CompletedUtc);
+        ReportUser("alice@contoso.test", LastSyncUtc.ToLocalTime());
+        var service = CreateService();
+
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
+        var rendered = await OpenBatchRendered(service, batch);
+        var csv = Migration.BuildCsv([batch], []);
+
+        Assert.Equal(4, rendered.Split(" (UTC, UTC+00:00)").Length - 1);
+        Assert.Equal(3, csv.Split(" (UTC, UTC+00:00)").Length - 1);
+        Assert.Contains($"Started:</strong> {Utc(StartedUtc)}", rendered, StringComparison.Ordinal);
+        Assert.Contains(Utc(LastSyncUtc), rendered, StringComparison.Ordinal);
+    }
+
+    // aud-a23e. A time of Kind Unspecified names no instant: it is shown as reported, said to name no zone, and
+    // given none - labelling it UTC would put a confident name on a guess.
+    [Fact]
+    public async Task ATimeThatNamesNoZone_IsShownAsReported_AndGivenNone()
+    {
+        var unzoned = DateTime.SpecifyKind(CreatedUtc, DateTimeKind.Unspecified);
+        ReportBatch(Batch, unzoned, unzoned, unzoned);
+        ReportUser("alice@contoso.test", unzoned);
+        var service = CreateService();
+
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
+        var rendered = await OpenBatchRendered(service, batch);
+        var csv = Migration.BuildCsv([batch], []);
+
+        Assert.Contains("Created:</strong> 2026-10-01 20:15 (time zone not reported)", rendered, StringComparison.Ordinal);
+        Assert.Equal(4, rendered.Split("2026-10-01 20:15 (time zone not reported)").Length - 1);
+        Assert.Equal(3, csv.Split("2026-10-01 20:15 (time zone not reported)").Length - 1);
+        Assert.DoesNotContain("UTC", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("UTC", csv, StringComparison.Ordinal);
+    }
+
+    // aud-a23e. An absent creation time read as DateTime.MinValue: "Jan 01, 0001 00:00" in the header and in
+    // the CSV. Nothing was reported, so it says so, and its cell is empty, as an absent start's is.
+    [Fact]
+    public async Task AnAbsentCreationTime_IsNotReported_NotTheYearOne()
+    {
+        ReportBatch(Batch);
+        var service = CreateService();
+
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
+        var rendered = await OpenBatchRendered(service, batch);
+        var csv = Migration.BuildCsv([batch], []);
+
+        Assert.Null(batch.CreatedDateTime);
+        Assert.Contains("Created:</strong> (not reported)", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("0001", rendered, StringComparison.Ordinal);
+        Assert.Equal($"{Batch},Synced,ToCloud,,,,3,0,0,0,", csv.Split('\n')[1].TrimEnd('\r'));
+    }
+
+    // aud-a23e. The page's default sort, by Created: an absent creation time is none, so it goes last in both
+    // directions, after one this app cannot read - read as MinValue it led an ascending list.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheCreatedSort_PutsAnAbsentCreationTimeLast_AfterOneThisAppCannotRead(bool ascending)
+    {
+        var (value, _) = Unreadable("a number");
+        // Input order puts the batch with none first, where MinValue sorted it ascending.
+        ReportBatch("none");
+        ReportBatch("unreadable", created: value);
+        ReportBatch("early", created: As("DateTimeOffset", CreatedUtc));
+        ReportBatch("late", created: As("DateTimeOffset", CreatedUtc.AddDays(3)));
+        var service = CreateService();
+
+        var batches = (await service.GetMigrationBatchesAsync()).Batches;
+        var order = Sorted("SortBatches", "Created", ascending, batches, b => b.BatchName);
+
+        Assert.Equal(ascending ? ["early", "late", "unreadable", "none"] : ["late", "early", "unreadable", "none"], order);
+    }
+
+    // aud-a23e. Readable times compare as the instants they name, whatever their Kind; a time of Kind
+    // Unspecified names none, so those come after the instants, ordered by their clocks - both directions, in
+    // both of the page's time sorts. The Local value sits half this host's offset from the Utc one, so its clock
+    // and its instant order the opposite ways against it (on a UTC host the two cannot differ), and the
+    // Unspecified clocks fall either side of both, so a sort by raw DateTime misplaces them on any host.
+    [Theory]
+    [InlineData("Created", true)]
+    [InlineData("Created", false)]
+    [InlineData("LastSync", true)]
+    [InlineData("LastSync", false)]
+    public async Task TheTimeSorts_CompareInstants_AndPutTimesNamingNoZoneAfterThem(string column, bool ascending)
+    {
+        var utcInstant = new DateTime(2026, 7, 15, 12, 0, 0, DateTimeKind.Utc);
+        var localInstant = utcInstant - TimeZoneInfo.Local.GetUtcOffset(utcInstant) / 2;
+        (string Name, DateTime Time)[] reported =
+        [
+            ("utc", utcInstant),
+            ("local", localInstant.ToLocalTime()),
+            ("unzoned-early", DateTime.SpecifyKind(utcInstant.AddDays(-2), DateTimeKind.Unspecified)),
+            ("unzoned-late", DateTime.SpecifyKind(utcInstant.AddDays(2), DateTimeKind.Unspecified)),
+        ];
+        (string Name, DateTime Instant)[] instants = [("utc", utcInstant), ("local", localInstant)];
+        List<string> expected =
+        [
+            .. (ascending ? instants.OrderBy(i => i.Instant) : instants.OrderByDescending(i => i.Instant)).Select(i => i.Name),
+            .. (ascending ? new[] { "unzoned-early", "unzoned-late" } : new[] { "unzoned-late", "unzoned-early" }),
+        ];
+
+        List<string> order;
+        if (column == "Created")
+        {
+            foreach (var (name, time) in reported)
+                ReportBatch(name, created: time);
+            var batches = (await CreateService().GetMigrationBatchesAsync()).Batches;
+            order = Sorted("SortBatches", "Created", ascending, batches, b => b.BatchName);
+        }
+        else
+        {
+            foreach (var (name, time) in reported)
+                ReportUser(name + "@contoso.test", time);
+            var users = await CreateService().GetMigrationBatchUsersAsync(Batch);
+            order = Sorted("SortMailboxes", "LastSync", ascending, users, u => u.EmailAddress.Split('@')[0]);
+        }
+
+        Assert.Equal(expected, order);
     }
 }

@@ -11,6 +11,8 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject IActivityProgress Progress
+@inject IJSRuntime JS
+@inject ILogger<ExchangeAdminWeb.Components.Pages.RecipientLookup> Logger
 
 <PageTitle>Recipient Lookup</PageTitle>
 
@@ -71,9 +73,10 @@
                                     </td>
                                 </tr>
                                 @* aud-a23d. "N/A" only when Exchange reported nothing; a time it reported in a form
-                                   this app cannot read is shown as the marker naming it, not as "N/A". *@
-                                <tr><td class="fw-bold">Created</td><td>@(result.WhenCreated?.Show(created => created.ToString("yyyy-MM-dd")) ?? "N/A")</td></tr>
-                                <tr><td class="fw-bold">Last Logon</td><td>@(result.LastLogonTime?.Show(logon => logon.ToString("yyyy-MM-dd HH:mm")) ?? "N/A")</td></tr>
+                                   this app cannot read is shown as the marker naming it, not as "N/A".
+                                   aud-a23e. A readable one is shown with its zone named - see ShowTime. *@
+                                <tr><td class="fw-bold">Created</td><td>@ShowTime(result.WhenCreated)</td></tr>
+                                <tr><td class="fw-bold">Last Logon</td><td>@ShowTime(result.LastLogonTime)</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -124,6 +127,10 @@
     private string currentUser = "";
     private string clientIpAddress = "Unknown";
 
+    // aud-a23e. The zone this page shows times in: the browser's own, read once by ReadBrowserZoneAsync. Null
+    // until then, and for good when it cannot be read - and then the times are shown in UTC, labelled so.
+    private TimeZoneInfo? browserZone;
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -141,6 +148,55 @@
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
     }
+
+    // aud-a23e, the aud-a7e read: after the first interactive render, because JS interop does not exist before
+    // it (prerendering included). One read per page; the re-render shows any time already on screen in it.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await ReadBrowserZoneAsync();
+        StateHasChanged();
+    }
+
+    // Kept apart from OnAfterRenderAsync so it runs without a renderer (StateHasChanged needs one). The IANA id
+    // is resolved with FindSystemTimeZoneById, which reads IANA ids through ICU. Every failure - the browser
+    // not saying, a blank answer, an id this server cannot resolve - leaves the zone unknown and is logged:
+    // the times then show in UTC, said to be UTC, never in a zone picked for the operator.
+    private async Task ReadBrowserZoneAsync()
+    {
+        string? id;
+        try
+        {
+            id = await JS.InvokeAsync<string?>("getBrowserTimeZone");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "The browser did not report its time zone; Recipient Lookup shows times in UTC");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            Logger.LogWarning("The browser reported an empty time zone; Recipient Lookup shows times in UTC");
+            return;
+        }
+
+        try
+        {
+            browserZone = TimeZoneInfo.FindSystemTimeZoneById(id);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "This server cannot resolve the browser's time zone {ZoneId}; Recipient Lookup shows times in UTC", id);
+        }
+    }
+
+    // aud-a23e. Both rows printed a time as read: a Kind-Local and a Kind-Utc value of one moment showed two
+    // clocks, and neither said whose. Each is shown as aud-a7f's Check Status shows one - the instant in the
+    // browser's zone with the zone and its offset at that instant, or in UTC labelled UTC while no zone is
+    // known; a time of Kind Unspecified as reported, said to name no zone. "N/A" when nothing was reported.
+    private string ShowTime(ReportedTime? reported) =>
+        reported is null ? "N/A" : OutOfOfficeRequest.ShowReported(reported, browserZone ?? TimeZoneInfo.Utc);
 
     private async Task HandleKeyDown(KeyboardEventArgs e)
     {

@@ -16,7 +16,7 @@ public class MigrationCsvTests
     [Fact]
     public void BuildCsv_HeaderMatchesSpec()
     {
-        var csv = Migration.BuildCsv([]);
+        var csv = Migration.BuildCsv([], []);
         var header = csv.Split('\n')[0].TrimEnd('\r');
 
         Assert.Equal(
@@ -38,23 +38,22 @@ public class MigrationCsvTests
                 CreatedDateTime = ReportedTime.Of(created),
                 StartDateTime = null,
                 CompletedDateTime = null,
-                TotalCount = 10,
-                SyncedCount = 8,
-                FinalizedCount = 2,
-                FailedCount = 0,
+                TotalCount = ReportedCount.Of(10),
+                SyncedCount = ReportedCount.Of(8),
+                FinalizedCount = ReportedCount.Of(2),
+                FailedCount = ReportedCount.Of(0),
                 TargetEndpoint = "hybrid1",
             }
         };
 
-        var csv = Migration.BuildCsv(rows);
+        var csv = Migration.BuildCsv(rows, []);
         var lines = csv.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(l => l.TrimEnd('\r')).ToArray();
 
-        // The date format includes a comma, so CsvHelper's WriteField quotes the cell -
-        // that is correct CSV output (AC1), not a formatting bug.
-        var expectedCreated = created.ToLocalTime().ToString("MMM dd, yyyy HH:mm");
+        // aud-a23e: the time in UTC, labelled UTC. The label includes a comma, so CsvHelper's
+        // WriteField quotes the cell - that is correct CSV output (AC1), not a formatting bug.
         Assert.Equal(
-            $"Batch-A,Synced,ToCloud,\"{expectedCreated}\",,,10,8,2,0,hybrid1",
+            "Batch-A,Synced,ToCloud,\"2026-01-02 10:30 (UTC, UTC+00:00)\",,,10,8,2,0,hybrid1",
             lines[1]);
     }
 
