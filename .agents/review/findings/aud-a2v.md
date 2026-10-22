@@ -9,7 +9,7 @@ unmappable-country message shown to operators ends with .NET's " (Parameter 'cou
 suffix (`ArgumentException.Message`). (4) The City/State/Country preflight's early refusals do not end
 "Nothing was written." while the room-list preflight's do; both are true, the operator sees two
 styles.
-**Status**: Merged `6ac190f7`; closed on guard proof; codex review pending
+**Status**: Complete; merged `6ac190f7`; codex cr-batch-5 clean
 **Branch**: `worktree-agent-a3708734379b4119d`
 **Commit**: `1d6d2c2d` (plan), `937c2599` (fix, tests, comments, record); merged `6ac190f7`
 **Reviewer**: implementer (surfaced by the aud-a2u agent, 2026-10-22, its four candidates)
