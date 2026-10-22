@@ -7,7 +7,7 @@ sections in a `sections` list. The Admin Event Log filters on category/user/IP/r
 summary shows `section` only, and the CSV exports `FullTarget` only, so an admin reviewing
 `Module:MailboxPermissions` sees its success rows and not the refused or failed attempts that named
 it in `sections`.
-**Status**: Merged to master (`f0cccea8`); closed on guard proof; codex review pending
+**Status**: Merged to master (`f0cccea8`); closed on guard proof; codex attr-batch-5 clean
 **Branch**: `worktree-agent-ad10b5ab24c8ce164`
 **Commit**: `4a538d40` (comments `ee00d337`; plan `1aeaa315`); merged `f0cccea8`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-4, `prompt-attr-batch-4.md`, 2026-10-22)
