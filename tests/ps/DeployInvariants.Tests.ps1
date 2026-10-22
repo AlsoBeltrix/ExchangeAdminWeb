@@ -401,6 +401,65 @@ Describe 'deploy.ps1' {
         }
     }
 
+    It 'runs each branch''s real region over the real module: a folder the named pool is not shown to serve alone is refused in the mirror''s terms, before the stop (aud-a38k)' {
+        # deploy.ps1 mirrors the folder, so both refusals still say what the mirror would do; only the
+        # cutover's (-NestedNodes Allow) wording changed. The module decides here, not a stand-in.
+        foreach ($name in 'Write-Success', 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Get-WebApplication} = { $script:a38kCalls.Add('lookup'); [pscustomobject]@{ applicationPool = 'ExamplePool' } }
+            ${function:Stop-AppPoolVerified} = { param($Name) $script:a38kCalls.Add("stop($Name)"); 'Stopped' }
+            $PSDefaultParameterValues = @{
+                'Assert-AppPoolServesPath:ApplicationsProbe' = {
+                    {
+                        $script:a38kCalls.Add('applications probe')
+                        [pscustomobject]@{ Location = 'Example Site/'; ApplicationPool = 'DefaultAppPool'; PhysicalPath = 'D:\example\wwwroot' }
+                        if ($script:a38kElsewhere) {
+                            [pscustomobject]@{ Location = 'Other Site/Copy'; ApplicationPool = 'OtherPool'; PhysicalPath = 'D:\example\publish' }
+                        }
+                    }
+                }
+            }
+
+            $modeIf = (Get-FreshInstallBranch $s).Parent
+            foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
+                $statements = @($entry[1].Statements)
+                $from = -1; $stopAt = -1
+                for ($i = 0; $i -lt $statements.Count; $i++) {
+                    if ($statements[$i].Extent.Text -like '$boundPool = *') { $from = $i }
+                    if ($statements[$i].Extent.Text -like '$poolState = Stop-AppPoolVerified*') { $stopAt = $i }
+                }
+                $region = ($statements[$from..($stopAt + 1)] | ForEach-Object { $_.Extent.Text }) -join "`n"
+                $run = {
+                    param([bool]$Elsewhere)
+                    $script:a38kCalls = New-Object System.Collections.Generic.List[string]
+                    $script:a38kElsewhere = $Elsewhere
+                    # Read only by the lifted region.
+                    Set-Variable -Name AppAlias -Value 'ExampleApp'
+                    Set-Variable -Name ParentSite -Value 'Example Site'
+                    Set-Variable -Name AppPoolName -Value 'ExamplePool'
+                    Set-Variable -Name PublishPath -Value 'D:\example\publish'
+                    $ErrorActionPreference = 'Stop'
+                    $thrown = $null
+                    try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                    [pscustomobject]@{ Thrown = $thrown; Calls = ($script:a38kCalls -join ',') }
+                }
+
+                $nothing = & $run $false 6>$null
+                $nothing.Calls | Should -BeExactly 'lookup,applications probe' -Because "nothing at the folder must stop the $($entry[0]) run before the stop"
+                $nothing.Thrown | Should -BeLike "No IIS site or application has its files at 'D:\example\publish'*Refusing to replace files that may still be served."
+
+                $elsewhere = & $run $true 6>$null
+                $elsewhere.Calls | Should -BeExactly 'lookup,applications probe' -Because "a folder another pool serves must stop the $($entry[0]) run before the stop"
+                $elsewhere.Thrown | Should -BeLike "*Other Site/Copy runs under 'OtherPool'*Stopping 'ExamplePool' would leave that application running while its files are replaced.*"
+            }
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'confirms the pool is running after starting it, not only that IIS accepted the request (cdt-25)' {
         # Start-AppPoolWithRetry returned as soon as Start-WebAppPool returned, and the script then
         # printed "App pool started" - with the pool possibly still stopped.

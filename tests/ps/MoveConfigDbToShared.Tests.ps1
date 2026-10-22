@@ -1188,6 +1188,39 @@ Describe 'aud-a38g: the cutover refuses unless each named pool is the one servin
                 Should -Throw -ExpectedMessage '*Default Web Site/aud-a38g-Dev/reports*'
             $script:servesEvents | Should -Contain 'applications probe'
         }
+
+        It 'aud-a38k: refuses a folder nothing in IIS serves without a word about replacing files, and says nothing will be stopped' {
+            # The finding. The cutover stops pools and copies databases and never replaces a file, but
+            # the module ended this refusal "Refusing to replace files that may still be served." for
+            # every caller, so the cutover's operator was handed a reason that is not the cutover's.
+            $PSDefaultParameterValues = New-ServingProbe -Applications { $script:servesEvents.Add('applications probe'); @($script:ServedByDevPool[0]) }
+
+            $err = $null
+            try { Assert-PoolServesInstance -Label 'Dev' -Name 'aud-a38g-dev' -PublishPath $script:DevFolder -PoolParameter 'DevAppPoolName' 6>&1 | Out-Null }
+            catch { $err = "$_" }
+
+            $err | Should -Not -BeNullOrEmpty -Because 'nothing at the folder is still a refusal'
+            $script:servesEvents | Should -Contain 'applications probe'
+            $err | Should -BeLike "*No IIS site or application has its files at '$($script:DevFolder)'*"
+            $err | Should -BeLike "*IIS does not show 'aud-a38g-dev' serving '$($script:DevFolder)', so nothing will be stopped.*"
+            $err | Should -Not -BeLike '*replac*' -Because 'the cutover copies databases and replaces no file'
+            $err | Should -BeLike '*Nothing has been stopped or copied.'
+        }
+
+        It 'aud-a38k: refuses a folder another pool serves without a word about replacing files, and says nothing will be stopped' {
+            # aud-a38j dropped "while its files are replaced" from this refusal under Allow; it now says
+            # what the refusal does for the cutover instead, as the nothing-at-the-folder one does.
+            $PSDefaultParameterValues = New-ServingProbe -Applications { $script:servesEvents.Add('applications probe'); $script:ServedByDevPool }
+
+            $err = $null
+            try { Assert-PoolServesInstance -Label 'Dev' -Name 'DefaultAppPool' -PublishPath $script:DevFolder -PoolParameter 'DevAppPoolName' 6>&1 | Out-Null }
+            catch { $err = "$_" }
+
+            $err | Should -Not -BeNullOrEmpty
+            $script:servesEvents | Should -Contain 'applications probe'
+            $err | Should -BeLike "*runs under 'aud-a38g-dev'*Stopping 'DefaultAppPool' would leave that application running, so nothing will be stopped.*"
+            $err | Should -Not -BeLike '*replac*' -Because 'the cutover copies databases and replaces no file'
+        }
     }
 
     Context 'the cutover' {

@@ -597,6 +597,42 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
         }
 
+        It 'aud-a38k: refuses a prod folder nothing in IIS serves in the mirror''s terms, before stopping anything' {
+            # The promotion mirrors over the prod folder next, so it states -NestedNodes Refuse and its
+            # refusals still say what the mirror would do; only the cutover's wording changed.
+            Set-Variable -Name Apply -Value $true
+            $PSDefaultParameterValues = New-PoolProbe `
+                -Exists { $script:promoteEvents.Add('exists probe'); $true } `
+                -State { 'Stopped' } `
+                -Serving {
+                    $script:promoteEvents.Add('applications probe')
+                    [pscustomobject]@{ Location = 'Web/'; ApplicationPool = 'DefaultAppPool'; PhysicalPath = 'X:\inetpub' }
+                }
+
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' -PublishPath 'X:\prod' } |
+                Should -Throw -ExpectedMessage "*No IIS site or application has its files at 'X:\prod'*Refusing to replace files that may still be served."
+            $script:promoteEvents | Should -Contain 'applications probe'
+            $script:promoteEvents | Should -Not -Contain 'exists probe'
+            $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
+        }
+
+        It 'aud-a38k: refuses a prod folder another pool serves in the mirror''s terms, before stopping anything' {
+            Set-Variable -Name Apply -Value $true
+            $PSDefaultParameterValues = New-PoolProbe `
+                -Exists { $script:promoteEvents.Add('exists probe'); $true } `
+                -State { 'Stopped' } `
+                -Serving {
+                    $script:promoteEvents.Add('applications probe')
+                    [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38c-real-prod'; PhysicalPath = 'X:\prod' }
+                }
+
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' -PublishPath 'X:\prod' } |
+                Should -Throw -ExpectedMessage "*Stopping 'aud-a38b-prod' would leave that application running while its files are replaced.*"
+            $script:promoteEvents | Should -Contain 'applications probe'
+            $script:promoteEvents | Should -Not -Contain 'exists probe'
+            $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
+        }
+
         It 'checks the folder the mirror replaces, inside the stop step, before the stop' {
             $checks = @(Get-PromoteCommand 'Assert-AppPoolServesPath')
             $checks.Count | Should -Be 1
@@ -932,6 +968,55 @@ Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -Applicat
         It 'with Allow, still refuses when IIS cannot be read' {
             { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Allow -ApplicationsProbe { throw 'Cannot read configuration file' } } |
                 Should -Throw -ExpectedMessage '*Cannot read configuration file*'
+        }
+    }
+
+    Context 'aud-a38k: each refusal ends in the terms of the rule the caller named' {
+
+        # The rule a caller states (aud-a38j) also decides how a refusal ends: one that mirrors is told
+        # what the mirror would do to files still being served; one that replaces nothing (the cutover)
+        # is told that nothing will be stopped. Exact text, so a clause that drifts back is seen.
+
+        BeforeAll {
+            function Get-Refusal {
+                param([string]$NestedNodes, [scriptblock]$Probe)
+                try {
+                    $null = Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes $NestedNodes -ApplicationsProbe $Probe
+                } catch {
+                    return $_.Exception.Message
+                }
+                throw "Assert-AppPoolServesPath -NestedNodes $NestedNodes did not refuse"
+            }
+
+            $script:NothingAtTheFolder = { Get-IisEntry -Location 'Web/AppDev' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\AppDev' }
+            $script:AnotherPoolAtTheFolder = { Get-IisEntry -Location 'Web/App' -ApplicationPool 'RealPool' -PhysicalPath 'D:\sites\App' }
+        }
+
+        It 'with Refuse, refuses a folder nothing serves in the mirror''s terms, as before' {
+            Get-Refusal Refuse $script:NothingAtTheFolder |
+                Should -BeExactly "No IIS site or application has its files at 'D:\sites\App', so it cannot be confirmed that stopping app pool 'ProdPool' stops what runs from them. IIS reported 1: Web/AppDev at 'D:\sites\AppDev' under 'ProdPool'. Refusing to replace files that may still be served."
+        }
+
+        It 'with Allow, refuses a folder nothing serves without a word about replacing files, and says nothing will be stopped' {
+            Get-Refusal Allow $script:NothingAtTheFolder |
+                Should -BeExactly "No IIS site or application has its files at 'D:\sites\App', so it cannot be confirmed that stopping app pool 'ProdPool' stops what runs from them. IIS reported 1: Web/AppDev at 'D:\sites\AppDev' under 'ProdPool'. IIS does not show 'ProdPool' serving 'D:\sites\App', so nothing will be stopped."
+        }
+
+        It 'with Refuse, refuses a folder another pool serves in the mirror''s terms, as before' {
+            Get-Refusal Refuse $script:AnotherPoolAtTheFolder |
+                Should -BeExactly "Files at 'D:\sites\App' are served by an app pool other than 'ProdPool': Web/App runs under 'RealPool', with its files at 'D:\sites\App'. Stopping 'ProdPool' would leave that application running while its files are replaced. Name the pool that serves them, or fix the binding."
+        }
+
+        It 'with Allow, refuses a folder another pool serves without a word about replacing files, and says nothing will be stopped' {
+            Get-Refusal Allow $script:AnotherPoolAtTheFolder |
+                Should -BeExactly "Files at or under 'D:\sites\App' are served by an app pool other than 'ProdPool': Web/App runs under 'RealPool', with its files at 'D:\sites\App'. Stopping 'ProdPool' would leave that application running, so nothing will be stopped. Name the pool that serves them, or fix the binding."
+        }
+
+        It 'refuses an IIS it cannot read in the same words under either rule' {
+            $unreadable = { throw 'Cannot read configuration file' }
+            $refuse = Get-Refusal Refuse $unreadable
+            $refuse | Should -BeExactly "Cannot read the IIS sites and applications, so it cannot be confirmed that app pool 'ProdPool' is what serves 'D:\sites\App': Cannot read configuration file"
+            Get-Refusal Allow $unreadable | Should -BeExactly $refuse
         }
     }
 

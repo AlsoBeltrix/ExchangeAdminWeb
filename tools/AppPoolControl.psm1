@@ -324,6 +324,9 @@ function Assert-AppPoolServesPath {
         none of the folder's files. Under either rule IIS unreadable, nothing at the folder, or the
         folder's own nodes under another pool refuse.
 
+        aud-a38k. The same choice words the refusals: under Refuse they say what the mirror would do
+        to files still being served; under Allow, that nothing will be stopped.
+
     .OUTPUTS
         What IIS serves at or inside the folder (Location, ApplicationPool, PhysicalPath) when the
         rule the caller named holds - with Refuse, only what is at the folder. Throws otherwise.
@@ -388,15 +391,6 @@ function Assert-AppPoolServesPath {
             [string]::Equals((ConvertTo-ComparablePhysicalPath $_.PhysicalPath), $target, [System.StringComparison]::OrdinalIgnoreCase)
         })
 
-    if ($serving.Count -eq 0) {
-        if ($applications.Count -eq 0) {
-            $reported = 'IIS reported no sites or applications at all'
-        } else {
-            $reported = "IIS reported $($applications.Count): " + (@($applications | Select-Object -First 10 | ForEach-Object { "$($_.Location) at '$($_.PhysicalPath)' under '$($_.ApplicationPool)'" }) -join '; ')
-        }
-        throw "No IIS site or application has its files at '$PhysicalPath', so it cannot be confirmed that stopping app pool '$Name' stops what runs from them. $reported. Refusing to replace files that may still be served."
-    }
-
     # Which nodes must run under the named pool. Refuse: the folder's own. A node inside it is refused
     # below whatever its pool, and in the same refusal as every other nested node: "name the pool that
     # serves them" would be the wrong advice for it, since no pool makes it safe to mirror over.
@@ -404,15 +398,34 @@ function Assert-AppPoolServesPath {
     # files, so a nested node under the named pool is safe - stopping the pool stops it too - but one
     # under another pool would go on serving from inside the folder while the caller works on it. No
     # files are replaced then, so the refusal does not say they are.
+    #
+    # aud-a38k: how each refusal ends is chosen here too, with the rule, so the two cannot disagree. A
+    # caller that mirrors is told what the refusal prevents - replacing files that may still be served.
+    # A caller that replaces nothing has only the stop gated by this check, so it is told the named
+    # pool is not shown serving the folder and nothing will be stopped. The nothing-at-the-folder
+    # refusal used to end "Refusing to replace files" for every caller, the cutover included, which
+    # gave its operator a reason the cutover does not have.
     if ($NestedNodes -eq 'Refuse') {
         $held = $serving
         $scope = "at '$PhysicalPath'"
         $consequence = ' while its files are replaced'
+        $unserved = 'Refusing to replace files that may still be served.'
     } else {
         $held = $inside
         $scope = "at or under '$PhysicalPath'"
-        $consequence = ''
+        $consequence = ', so nothing will be stopped'
+        $unserved = "IIS does not show '$Name' serving '$PhysicalPath', so nothing will be stopped."
     }
+
+    if ($serving.Count -eq 0) {
+        if ($applications.Count -eq 0) {
+            $reported = 'IIS reported no sites or applications at all'
+        } else {
+            $reported = "IIS reported $($applications.Count): " + (@($applications | Select-Object -First 10 | ForEach-Object { "$($_.Location) at '$($_.PhysicalPath)' under '$($_.ApplicationPool)'" }) -join '; ')
+        }
+        throw "No IIS site or application has its files at '$PhysicalPath', so it cannot be confirmed that stopping app pool '$Name' stops what runs from them. $reported. $unserved"
+    }
+
     $elsewhere = @($held | Where-Object { -not [string]::Equals([string]$_.ApplicationPool, $Name, [System.StringComparison]::OrdinalIgnoreCase) })
     if ($elsewhere.Count -gt 0) {
         $named = @($elsewhere | ForEach-Object { "$($_.Location) runs under '$($_.ApplicationPool)', with its files at '$($_.PhysicalPath)'" }) -join '; '
