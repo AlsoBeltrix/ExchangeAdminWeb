@@ -299,6 +299,47 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public string? AttributeReadBackAnswersAs { get; set; }
 
     /// <summary>
+    /// aud-a2q. A <c>-Server</c> value the stand-in <c>Get-ADUser</c> and <c>Set-ADUser</c> refuse every call sent to, with the
+    /// message given: a domain this host reaches through the default domain controller - a call with no <c>-Server</c> is
+    /// untouched - but not by its DNS name, or one the module credential cannot use there. A <c>-Server</c> the stand-in
+    /// forest does not have at all both refuse as "Unable to contact the server".
+    /// </summary>
+    public Hashtable DirectoryServerFailures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// aud-a2q. The stand-in <c>Set-ADUser</c> applies its <c>-Replace</c> and then throws this (a message, or an exception as
+    /// it is) - the write that committed and then failed, a timeout after the server took it. Null, the default, throws
+    /// nothing. Read when a directory runspace opens.
+    /// </summary>
+    public object? SetAdUserFailsAfterApplying { get; set; }
+
+    /// <summary>
+    /// aud-a2q. Once a <c>Set-Place</c> has been called, opening a directory runspace throws this: the City/State/Country
+    /// write's runspace fails, the preflight's - opened before <c>Set-Place</c> - does not. Null, the default, fails nothing.
+    /// </summary>
+    public string? DirectoryRunspaceFailureAfterSetPlace { get; set; }
+
+    /// <summary>
+    /// aud-a2q. Once a <c>Set-Place</c> has been called, the stand-in <c>Import-Module</c> throws this - the write's import,
+    /// not the preflight's. Null, the default, fails nothing. Read when a directory runspace opens.
+    /// </summary>
+    public string? ImportModuleFailureAfterSetPlace { get; set; }
+
+    /// <summary>
+    /// aud-a2q. Once a <c>Set-Place</c> has been called, a <c>Get-ADUser -Identity</c> without <c>-Properties</c> - the read
+    /// that proves the object before a write, not the read-back - throws this. Null, the default, fails nothing. Read
+    /// when a directory runspace opens.
+    /// </summary>
+    public string? ObjectReadFailureAfterSetPlace { get; set; }
+
+    /// <summary>
+    /// aud-a2q. Once a <c>Set-Place</c> has been called, the stand-in <c>Get-ADUser</c> answers with this as the object's
+    /// DistinguishedName: the object read differently after the preflight, so a write that derived its server from its
+    /// own read would go elsewhere. Null, the default, changes nothing. Read when a directory runspace opens.
+    /// </summary>
+    public string? ObjectDnAfterSetPlace { get; set; }
+
+    /// <summary>
     /// aud-a2l. Another actor's add of the same DN lands just before the stand-in <c>Set-ADGroup</c>'s:
     /// the DN is put on the group first, so the write is refused as a value already there (or fails with
     /// whatever <see cref="Failures"/> names). The race codex raised. Read when a directory runspace opens.
@@ -490,6 +531,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <summary>What a Conference Rooms directory-runspace override returns: AD stand-ins, opened.</summary>
     public Runspace OpenDirectoryRunspace()
     {
+        // aud-a2q. The runspace of an AD step after Set-Place - the City/State/Country write's - cannot be opened.
+        if (DirectoryRunspaceFailureAfterSetPlace is { } failure && CallsTo("Set-Place").Count > 0)
+            throw new InvalidOperationException(failure);
         var rs = RunspaceFactory.CreateRunspace();
         rs.Open();
         Define(rs, DirectoryStandIns);
@@ -549,6 +593,11 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("SetAdUserReportsErrorWithoutThrowing", SetAdUserReportsErrorWithoutThrowing);
         rs.SessionStateProxy.SetVariable("AttributeReadBackFailure", AttributeReadBackFailure);
         rs.SessionStateProxy.SetVariable("AttributeReadBackAnswersAs", AttributeReadBackAnswersAs);
+        rs.SessionStateProxy.SetVariable("DirectoryServerFailures", DirectoryServerFailures);
+        rs.SessionStateProxy.SetVariable("SetAdUserFailsAfterApplying", SetAdUserFailsAfterApplying);
+        rs.SessionStateProxy.SetVariable("ImportModuleFailureAfterSetPlace", ImportModuleFailureAfterSetPlace);
+        rs.SessionStateProxy.SetVariable("ObjectReadFailureAfterSetPlace", ObjectReadFailureAfterSetPlace);
+        rs.SessionStateProxy.SetVariable("ObjectDnAfterSetPlace", ObjectDnAfterSetPlace);
         rs.SessionStateProxy.SetVariable("AnotherAddLandsFirst", AnotherAddLandsFirst);
         using var init = PowerShell.Create();
         init.Runspace = rs;
@@ -772,35 +821,64 @@ internal sealed class ExchangeWriteHarness : IDisposable
             $failure = $global:Failures[$Command]
             if ($failure) { throw $failure }
         }
-        function global:Import-Module { param($Name, $ErrorAction) }
+        # aud-a2q. Whether a Set-Place has been recorded: the knobs named "after Set-Place" fail the City/State/Country
+        # write's steps and leave its preflight's - all made before Set-Place - alone. ImportModuleFailureAfterSetPlace
+        # fails the import of a runspace's module after one.
+        function global:Test-StandInAfterSetPlace { @($global:Calls | Where-Object { $_['__Command'] -eq 'Set-Place' }).Count -gt 0 }
+        function global:Import-Module {
+            param($Name, $ErrorAction)
+            if ($global:ImportModuleFailureAfterSetPlace -and (Test-StandInAfterSetPlace)) { throw "$($global:ImportModuleFailureAfterSetPlace)" }
+        }
+        # aud-a2q. Why a call's -Server cannot be used, or $null: one DirectoryServerFailures names fails with its message;
+        # one the stand-in forest does not have (Get-StandInReach) cannot be contacted; no -Server - the default domain -
+        # is always usable.
+        function global:Get-StandInServerFailure($Bound) {
+            if (-not $Bound.ContainsKey('Server')) { return $null }
+            $server = "$($Bound['Server'])"
+            if ($global:DirectoryServerFailures.ContainsKey($server)) { return "$($global:DirectoryServerFailures[$server])" }
+            if ($null -eq (Get-StandInReach $Bound)) { return "Unable to contact the server '$server'." }
+            return $null
+        }
         # aud-a2p. Set-ADUser applies its -Replace to the object in DirectoryObjects, so a read-back sees what it changed -
         # unless SetAdUserChangesNothing, a write that reports success and changes nothing - and, told to
         # (SetAdUserReportsErrorWithoutThrowing), then reports an error the caller's -ErrorAction Stop does not throw: its
         # own -ErrorAction Continue. An object it does not hold is refused (Write-Error then return, so it stays refused
         # under any -ErrorAction); Failures['Set-ADUser'] throws before anything is applied. A Get-ADUser asking for
         # -Properties after a Set-ADUser is the read-back: AttributeReadBackFailure fails it, AttributeReadBackAnswersAs
-        # makes another object answer it. Both take -Server, which the code passes for the write and the read-back; they
-        # do not route by it (the room's object answers on any) - the tests pin what is passed.
+        # makes another object answer it. Both take -Server, which the code passes for the preflight's routed read, the
+        # write and the read-back: since aud-a2q they refuse one Get-StandInServerFailure finds unusable (Write-Error then
+        # return), and otherwise do not route by it (the room's object answers on any server they reach) - the tests pin
+        # what is passed. aud-a2q, after a Set-Place: ObjectReadFailureAfterSetPlace fails the object read (-Identity
+        # without -Properties) and ObjectDnAfterSetPlace changes the DN a read answers; SetAdUserFailsAfterApplying throws
+        # once the -Replace is applied.
         function global:Get-ADUser {
             [CmdletBinding()] param($Identity, $Filter, $Credential, $Properties, $Server)
             Write-StandInCall 'Get-ADUser' $PSBoundParameters
+            $unusable = Get-StandInServerFailure $PSBoundParameters
+            if ($unusable) { Write-Error $unusable; return }
             if ($PSBoundParameters.ContainsKey('Identity')) {
                 $entry = $global:DirectoryObjects["$Identity"]
                 if ($null -eq $entry) { throw "Cannot find an object with identity: '$Identity'" }
+                $afterSetPlace = Test-StandInAfterSetPlace
+                if (-not $PSBoundParameters.ContainsKey('Properties') -and $global:ObjectReadFailureAfterSetPlace -and $afterSetPlace) { throw "$($global:ObjectReadFailureAfterSetPlace)" }
                 $readBack = $PSBoundParameters.ContainsKey('Properties') -and @($global:Calls | Where-Object { $_['__Command'] -eq 'Set-ADUser' }).Count -gt 0
                 if ($readBack -and $global:AttributeReadBackFailure) { Write-Error "$($global:AttributeReadBackFailure)"; return }
                 $answer = New-Object psobject -Property $entry
                 if ($readBack -and $global:AttributeReadBackAnswersAs) { $answer.ObjectGUID = [guid]"$($global:AttributeReadBackAnswersAs)" }
+                if ($global:ObjectDnAfterSetPlace -and $afterSetPlace) { $answer | Add-Member -NotePropertyName DistinguishedName -NotePropertyValue "$($global:ObjectDnAfterSetPlace)" -Force }
                 $answer
             }
         }
         function global:Set-ADUser {
             [CmdletBinding()] param($Identity, $Replace, $Server, $Credential)
             Write-StandInCall 'Set-ADUser' $PSBoundParameters
+            $unusable = Get-StandInServerFailure $PSBoundParameters
+            if ($unusable) { Write-Error $unusable; return }
             $entry = $global:DirectoryObjects["$Identity"]
             if ($null -eq $entry) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
             if (-not $global:SetAdUserChangesNothing -and $null -ne $Replace) { foreach ($key in @($Replace.Keys)) { $entry["$key"] = $Replace[$key] } }
             if ($global:SetAdUserReportsErrorWithoutThrowing) { Write-Error "$($global:SetAdUserReportsErrorWithoutThrowing)" -ErrorAction Continue }
+            if ($null -ne $global:SetAdUserFailsAfterApplying) { throw $global:SetAdUserFailsAfterApplying }
         }
         # aud-a2j. The forest: what it reports as its global catalogs (GlobalCatalogs);
         # Failures['Get-ADForest'] fails the read.

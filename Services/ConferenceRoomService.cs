@@ -277,6 +277,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             ? $"In on-prem room list '{roomListName}', confirmed by reading its group back after this row's add was refused or reported an error: not recorded as written by this row."
             : $"Already in on-prem room list '{roomListName}': nothing was written.";
 
+    // aud-a2q. The cloud add's message when its membership read found the room already on the list and nothing was
+    // written: the on-prem no-op's message above, for a cloud list. That no-op said "Added to room list". Pure + static
+    // for unit testing.
+    internal static string BuildRoomListAlreadyInMessage(string roomListName)
+        => $"Already in room list '{roomListName}': nothing was written.";
+
     // Step result for "Remove existing permissions": any captured error makes the
     // step fail so the failedSteps aggregation surfaces it. A CEO conversion must
     // never report success while previous permission holders retain access.
@@ -499,7 +505,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // unavailable credential, no validated AD object) we must fail the row here so EXO is
         // never partially written. Without this guard a bad-AD row was reported failed but had
         // already committed Set-Place - the partial-apply defect from the 2026-06-17 review.
-        var adPreflightError = await PreflightSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion);
+        // aud-a2q. It also proves the server the write is to use - the object read through it - and
+        // hands it over, so the write goes nowhere the preflight did not reach the object.
+        var (adPreflightError, adServer) = await PreflightSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion);
         if (adPreflightError != null)
         {
             result.Success = false;
@@ -562,11 +570,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // Step 2: Set-ADUser (on-prem AD) - City/State/Country are dir-synced AD attributes
         // that EXO Set-User rejects. Written on the on-prem object instead (the bug fix).
         _operationTrace?.Step("SetADUser", backend: "AD", command: "Set-ADUser", target: room.DirectoryObjectGuid ?? roomEmail);
-        var (adError, adWritten) = await SetSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion);
+        var (adError, adWritten, adConfirmed) = await SetSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion, adServer);
         // aud-a2g. The object Set-ADUser wrote, if it wrote one - recorded now, so a later step
         // failing cannot hide it, and only from the write itself, so a row that wrote nothing in
         // Active Directory cannot claim it did.
         result.WrittenDirectoryObject = adWritten;
+        // aud-a2q. And why, if Set-ADUser reported an error and the values read back in place, no
+        // object is named for them: the audit records this in that place, and the step below shows it.
+        result.DirectoryAttributesConfirmed = adConfirmed;
         if (adError != null)
         {
             // Set-Place already committed EXO metadata; this row is now half-configured.
@@ -576,7 +587,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             result.Steps.Add(new RoomOperationStep { Stage = "Set-ADUser (City/State/Country)", Success = false, Error = adError });
             return result;
         }
-        result.Steps.Add(new RoomOperationStep { Stage = "Set-ADUser (City/State/Country)", Success = true });
+        result.Steps.Add(new RoomOperationStep { Stage = "Set-ADUser (City/State/Country)", Success = true, Error = adConfirmed });
 
         // Step 3: Timezone + WorkDays (EXO) - mailbox regional config is not synced.
         if (!string.IsNullOrWhiteSpace(timezone))
@@ -638,9 +649,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
 
         result.Success = true;
+        // aud-a2q. Values the read-back found in place after Set-ADUser reported an error are not
+        // claimed as written by this row; the admin notification carries this message.
         result.Message = string.IsNullOrWhiteSpace(city) && string.IsNullOrWhiteSpace(state) && string.IsNullOrWhiteSpace(countryOrRegion)
             ? "Room metadata and room list configured."
-            : "Room metadata and room list configured. City/State/Country were written on-prem and will appear in Exchange/Room Finder after the next directory sync (typically ~30 min).";
+            : adConfirmed is null
+                ? "Room metadata and room list configured. City/State/Country were written on-prem and will appear in Exchange/Room Finder after the next directory sync (typically ~30 min)."
+                : "Room metadata and room list configured. City/State/Country read back as set on-prem after Set-ADUser reported an error, and will appear in Exchange/Room Finder after the next directory sync (typically ~30 min).";
         return result;
     }
 
@@ -660,6 +675,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     {
         var result = new RoomOperationResult { Email = roomEmail };
         var (roomListName, exists, isLegacy) = (list.Name, list.Exists, list.IsLegacy);
+        // aud-a2q. Whether the cloud add's membership read found the room already on the list, so its success says what
+        // happened: the no-op said "Added to room list" as the add did - the claim aud-a2p took out of the on-prem
+        // fallback's messages.
+        var alreadyInList = false;
 
         var opResult = await RunAsync((ps, tracker) =>
         {
@@ -704,6 +723,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
               .AddParameter("ErrorAction", "SilentlyContinue");
             var members = InvokeOptional(ps, tracker);
             var alreadyMember = IsListMember(members, roomPrimary);
+            alreadyInList = alreadyMember;
 
             if (!alreadyMember)
             {
@@ -799,7 +819,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
 
         result.Success = true;
-        result.Message = BuildRoomListAddedMessage(roomListName, viaOnPrem: false);
+        // The caller shows a failure's message and replaces a success's, so neither is shown today; each is true if one
+        // ever is.
+        result.Message = alreadyInList
+            ? BuildRoomListAlreadyInMessage(roomListName)
+            : BuildRoomListAddedMessage(roomListName, viaOnPrem: false);
         return result;
     }
 
@@ -1488,10 +1512,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // object via Set-ADUser. These attributes are AD-mastered, so EXO Set-User rejects them
     // ("being synchronized from your on-premises organization") - the root cause of the
     // Room Finder apply failure (docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md).
-    // Returns (null, the objectGUID written) once the attributes Set-ADUser wrote have read back
-    // as written (aud-a2p), (null, null) when there is nothing to write, and (the failure message
-    // for the row, null) otherwise - the object is reported only by a write known to have
-    // happened (aud-a2g).
+    // Returns (null, the objectGUID written, null) once the attributes Set-ADUser wrote have read
+    // back as written (aud-a2p); (null, null, null) when there is nothing to write; (null, null, a
+    // detail) when Set-ADUser reported an error and the attributes read back as written all the
+    // same - values in place this row is not known to have written (aud-a2q); and (the failure
+    // message for the row, null, null) otherwise - the object is reported only by a write known to
+    // have happened (aud-a2g). It writes through the server the preflight below proved (aud-a2q).
     // Runs in its own AD runspace (mirrors Comms10k / CheckAdGroupMembership), not through
     // the EXO pool.
     //
@@ -1507,57 +1533,19 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // EXO Set-Place write commits. This is the all-or-nothing guard: without it, a row whose
     // AD prerequisites are bad (unmappable country, no validated object, missing/unavailable
     // credential) would already have committed EXO metadata before failing.
-    // Returns an error message to abort the row, or null when the AD write is expected to
-    // succeed. (Two-system writes can never be fully atomic; a genuine Set-ADUser failure
-    // after a passing preflight remains an inherent, accepted residual.)
-    private async Task<string?> PreflightSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion)
-    {
-        Dictionary<string, object> attrs;
-        try
-        {
-            attrs = BuildSyncedUserAttributes(city, state, countryOrRegion);
-        }
-        catch (ArgumentException ex)
-        {
-            return ex.Message; // unmappable country - fail the row closed
-        }
-
-        if (attrs.Count == 0)
-            return null; // nothing synced to write for this row - AD step will be a no-op
-
-        if (room.DirectoryObjectGuid is not { } objectGuid)
-            return NoDirectoryObject(roomEmail, "City/State/Country could not be written");
-
-        var creds = await GetModuleCredentialsAsync($"Set-ADUser preflight for {roomEmail}");
-        if (creds is null)
-            return "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.";
-
-        return await Task.Run(() =>
-        {
-            try
-            {
-                using var runspace = OpenDirectoryRunspace();
-                using var ps = PowerShell.Create();
-                ps.Runspace = runspace;
-
-                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                if (ps.HadErrors)
-                    return FirstError(ps) ?? "Failed to load the ActiveDirectory module.";
-                ps.Commands.Clear();
-
-                var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-                return ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential); // null = readable, AD write expected to succeed
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Set-ADUser preflight failed for {Room}", roomEmail);
-                return $"Failed to validate the AD object before writing: {ex.Message}";
-            }
-        });
-    }
-
-    private async Task<(string? error, string? written)> SetSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion)
+    // Returns (an error message to abort the row, null), or (null, the server the write is to use)
+    // when the AD write is expected to succeed - a null server when there is nothing to write or the
+    // object's DN names no domain. (Two-system writes can never be fully atomic; a genuine
+    // Set-ADUser failure after a passing preflight remains an inherent, accepted residual.)
+    //
+    // aud-a2q. "Readable" is through the server the write will use, not only through the module's
+    // default. The first read has no -Server, so the default domain controller answers it, but the
+    // write and its read-back go to the domain the object's DN names (aud-a2p). A domain this host
+    // reaches through the default locator but not by its DNS name - or one the module credential
+    // cannot use there - passed, Set-Place committed, and the routed write failed: the partial this
+    // guard exists to prevent (aud-a2f). So the object is read again, by its objectGUID, through that
+    // server, and the write is handed the server this read proved instead of deriving its own.
+    private async Task<(string? error, string? server)> PreflightSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion)
     {
         Dictionary<string, object> attrs;
         try
@@ -1570,16 +1558,16 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
 
         if (attrs.Count == 0)
-            return (null, null); // nothing synced to write for this row - and nothing written
+            return (null, null); // nothing synced to write for this row - AD step will be a no-op
 
         if (room.DirectoryObjectGuid is not { } objectGuid)
             return (NoDirectoryObject(roomEmail, "City/State/Country could not be written"), null);
 
-        var creds = await GetModuleCredentialsAsync($"Set-ADUser synced attributes for {roomEmail}");
+        var creds = await GetModuleCredentialsAsync($"Set-ADUser preflight for {roomEmail}");
         if (creds is null)
             return ("On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.", null);
 
-        return await Task.Run<(string? error, string? written)>(() =>
+        return await Task.Run<(string? error, string? server)>(() =>
         {
             try
             {
@@ -1594,36 +1582,128 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 ps.Commands.Clear();
 
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+                var objectError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential, out var roomDn);
+                if (objectError != null)
+                    return (objectError, null);
 
-                var confirmError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential, out var roomDn);
-                if (confirmError != null)
-                    return (confirmError, null);
-
-                // aud-a2p. The write and its read-back go to the room object's own domain, named by the DN its proven
-                // object was read with - the routing aud-a2j gives the group write and GroupManagementService every write
-                // (fsr-1) - so the read asks the server the write was sent to. The domain does not move: the read above
-                // has no -Server, so it finds the object only in the module's default domain, which the DN then names;
-                // and the write is by objectGUID, so a wrong server could only fail it, never write another object. A DN
-                // that names no domain leaves both on the module's default, as before.
+                // aud-a2q. The server the write and its read-back will use, derived here, once.
                 var server = GroupManagementService.ServerFromDn(roomDn);
-                var serverName = server ?? "the default domain controller";
+                // No domain in the DN - none at all, or no DC components - names no server, so the write
+                // goes to the default domain controller: the route the read above has just taken. The
+                // fallback is explicit, and logged; there is nothing further to prove.
+                if (server is null)
+                {
+                    _logger.LogWarning("Set-ADUser preflight for {Room}: the AD object {Object} was read with no distinguished name naming its domain ({Dn}), so City/State/Country go to the default domain controller, the route that read took", roomEmail, objectGuid, roomDn ?? "none");
+                    return (null, null);
+                }
 
+                // Exactly the object, through exactly that server. Any failure - unreachable, refused,
+                // another object or none answering - refuses the row while nothing is written, naming the
+                // server. No other server is tried: only this one is where the write goes.
+                string? routeError;
+                try
+                {
+                    routeError = ReadObjectThrough(ps, objectGuid, server, credential);
+                }
+                catch (Exception ex)
+                {
+                    routeError = ex.Message;
+                }
+                if (routeError != null)
+                {
+                    _logger.LogWarning("Set-ADUser preflight for {Room}: the AD object {Object} could not be read through {Server}, where City/State/Country would be written: {Error}", roomEmail, objectGuid, server, routeError);
+                    return ($"City/State/Country could not be written for '{roomEmail}': its AD object {objectGuid} is written through {server}, the domain its distinguished name names, and could not be read there: {Sentence(routeError)} Nothing was written.", null);
+                }
+                return (null, server);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Set-ADUser preflight failed for {Room}", roomEmail);
+                return ($"Failed to validate the AD object before writing: {ex.Message}", null);
+            }
+        });
+    }
+
+    private async Task<(string? error, string? written, string? confirmed)> SetSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion, string? server)
+    {
+        Dictionary<string, object> attrs;
+        try
+        {
+            attrs = BuildSyncedUserAttributes(city, state, countryOrRegion);
+        }
+        catch (ArgumentException ex)
+        {
+            return (ex.Message, null, null); // unmappable country - fail the row closed
+        }
+
+        if (attrs.Count == 0)
+            return (null, null, null); // nothing synced to write for this row - and nothing written
+
+        if (room.DirectoryObjectGuid is not { } objectGuid)
+            return (NoDirectoryObject(roomEmail, "City/State/Country could not be written"), null, null);
+
+        var creds = await GetModuleCredentialsAsync($"Set-ADUser synced attributes for {roomEmail}");
+        if (creds is null)
+            return ("On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.", null, null);
+
+        var serverName = server ?? "the default domain controller";
+        return await Task.Run<(string? error, string? written, string? confirmed)>(() =>
+        {
+            // aud-a2q. The step under way, for the catch at the end. It used to log "Set-ADUser
+            // synced-attribute write failed" and tell the row it had failed to write, whichever step had
+            // failed - the runspace, the module, the credential, the read of the object. Only those, and
+            // building the write, reach it now: the write and the read-back settle their own errors
+            // below, each in its own words, so what reaches the catch has written nothing.
+            var step = "opening the directory runspace";
+            try
+            {
+                using var runspace = OpenDirectoryRunspace();
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+
+                step = "importing the ActiveDirectory module";
+                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+                ps.Invoke();
+                if (ps.HadErrors)
+                    return (FirstError(ps) ?? "Failed to load the ActiveDirectory module.", null, null);
+                ps.Commands.Clear();
+
+                step = "preparing the module's AD credential";
+                var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+
+                // aud-a2d's read of the object before writing, unchanged. Not the route: the server is the
+                // one the preflight proved (aud-a2q), and this read's DN is not consulted, so the write
+                // cannot move to a domain nothing proved.
+                step = "reading the AD object";
+                var confirmError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential);
+                if (confirmError != null)
+                    return (confirmError, null, null);
+
+                step = "Set-ADUser";
                 // Write by the validated objectGUID (immutable identity), never by a name.
                 ps.AddCommand("Set-ADUser")
                   .AddParameter("Identity", objectGuid)
                   .AddParameter("Replace", new System.Collections.Hashtable(attrs))
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
+                // To the server the preflight read the object through (aud-a2q); none - the default domain
+                // controller - only for its explicit fallback.
                 if (server is not null)
                     ps.AddParameter("Server", server);
-                // aud-a2p. The write's error is the one it throws: under -ErrorAction Stop an error the cmdlet writes is
-                // thrown from Invoke and leaves no record in the stream (aud-a2o, measured), and it reaches the catch at
-                // the end - the row's failure, its message and log as before, nothing read back. The HadErrors check that
-                // followed could not see that error; it could see only a record another command left in this shared
-                // stream (psl-2), and would have told a clean write as a failing one.
+                // aud-a2q, aud-a2n's rule on this write: every outcome is held for the read-back below, not
+                // only a clean return. A Set-ADUser that committed and then threw - a timeout after the server
+                // took it - came back partial with the values in place. The error is the one it throws: under
+                // -ErrorAction Stop an error the cmdlet writes is thrown from Invoke and leaves no record in
+                // the stream (aud-a2o, measured), so there is no HadErrors check - it could see only a record
+                // another command left in this shared stream (psl-2).
+                Exception? writeError = null;
                 try
                 {
                     ps.Invoke();
+                }
+                catch (Exception ex)
+                {
+                    writeError = ex;
                 }
                 finally
                 {
@@ -1633,14 +1713,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                     ps.Streams.Error.Clear();
                 }
 
-                // aud-a2p. Done is the attributes reading back as written, not the write raising no error: a domain
-                // controller that dropped the values, or a constraint it did not report, raises none and changes nothing
-                // (Known Failure Class 2; aud-a2l for the room list). Read by the objectGUID written, from the server it
-                // was sent to. A difference, or a read that cannot be made, fails the step naming the attribute and the
-                // server, and nothing is reported written (aud-a2g). No retry: the operator re-runs. A write that threw is
-                // not read back and stays the failure it was: read back, as aud-a2n reads back the membership, a row whose
-                // values were found would be a success no object is recorded as written for, and neither the result nor
-                // the audit carries a detail saying so for these attributes.
+                // aud-a2p. Done is the attributes reading back as written, not the write raising no error: a
+                // domain controller that dropped the values, or a constraint it did not report, raises none and
+                // changes nothing (Known Failure Class 2; aud-a2l for the room list). Read by the objectGUID
+                // written, from the server it was sent to - whatever the write reported (aud-a2q). A
+                // difference, or a read that cannot be made, fails the step naming the attribute and the server,
+                // and nothing is reported written (aud-a2g). No retry: the operator re-runs.
                 string? readError;
                 List<string> unconfirmed;
                 try
@@ -1651,24 +1729,50 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 {
                     (readError, unconfirmed) = (ex.Message, []);
                 }
+                var readBack = string.Join(", ", SyncedAttributesReadBack);
+                // aud-a2q. The write raised an error. Read back as written, the row succeeds - the values it
+                // asked for are in place - but no object is reported written (aud-a2g): after an error nothing
+                // tells whether this row's write put them there or they were there already. The detail says
+                // so, with the error's own text, on the step and in the audit (as attributesConfirmedPresent,
+                // where the written object would have been named), as aud-a2n does for the membership. Not as
+                // written, or unreadable, the row is the failure it was, in the write's own words ("Failed to
+                // write ..."), followed by what the read-back found.
+                if (writeError is not null)
+                {
+                    if (readError != null)
+                    {
+                        _logger.LogError(writeError, "Set-ADUser City/State/Country write failed for {Room} on {Object} through {Server}, and reading it back afterwards failed too: {ReadError}", roomEmail, objectGuid, serverName, readError);
+                        return ($"Failed to write City/State/Country on the AD object: {Sentence(writeError.Message)} Reading {readBack} back from {serverName} afterwards failed too: {readError}", null, null);
+                    }
+                    if (unconfirmed.Count > 0)
+                    {
+                        var found = string.Join("; ", unconfirmed);
+                        _logger.LogError(writeError, "Set-ADUser City/State/Country write failed for {Room} on {Object} through {Server}; read back afterwards: {Detail}", roomEmail, objectGuid, serverName, found);
+                        return ($"Failed to write City/State/Country on the AD object: {Sentence(writeError.Message)} Read back from {serverName} afterwards, {found}.", null, null);
+                    }
+                    var confirmed = $"{AttributesConfirmedAfterWriteError} ({writeError.Message}): the AD object {objectGuid}, read back from {serverName}, holds them as written. No directory object is recorded as written: whether this row's write put them there is not known.";
+                    _logger.LogWarning("Set-ADUser City/State/Country write for {Room} on {Object}: {Confirmed}", roomEmail, objectGuid, confirmed);
+                    return (null, null, confirmed);
+                }
                 if (readError != null)
                 {
                     _logger.LogWarning("Set-ADUser City/State/Country write for {Room} on {Object} could not be confirmed from {Server}: {Error}", roomEmail, objectGuid, serverName, readError);
-                    return ($"Set-ADUser on the AD object {objectGuid} for {roomEmail} could not be confirmed: reading {string.Join(", ", SyncedAttributesReadBack)} back from {serverName} failed: {readError}", null);
+                    return ($"Set-ADUser on the AD object {objectGuid} for {roomEmail} could not be confirmed: reading {readBack} back from {serverName} failed: {readError}", null, null);
                 }
                 if (unconfirmed.Count > 0)
                 {
                     var detail = string.Join("; ", unconfirmed);
                     _logger.LogWarning("Set-ADUser City/State/Country write for {Room} on {Object} not confirmed from {Server}: {Detail}", roomEmail, objectGuid, serverName, detail);
-                    return ($"Set-ADUser on the AD object {objectGuid} for {roomEmail} was not confirmed: read back from {serverName}, {detail}.", null);
+                    return ($"Set-ADUser on the AD object {objectGuid} for {roomEmail} was not confirmed: read back from {serverName}, {detail}.", null, null);
                 }
 
-                return (null, objectGuid);
+                return (null, objectGuid, null);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Set-ADUser synced-attribute write failed for {Room}", roomEmail);
-                return ($"Failed to write City/State/Country on the AD object: {ex.Message}", null);
+                // Only the steps before the write's Invoke get here (see step), so nothing was written.
+                _logger.LogError(ex, "City/State/Country for {Room} were not written on the AD object {Object}: {Step} failed", roomEmail, objectGuid, step);
+                return ($"City/State/Country were not written on the AD object {objectGuid}: {step} failed: {ex.Message}", null, null);
             }
         });
     }
@@ -1972,6 +2076,28 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         return null;
     }
 
+    // aud-a2q. The validated object read by its objectGUID through server - the route the City/State/Country write and
+    // its read-back take - for the preflight. In the shape of this file's other reads: an error record fails it, and
+    // exactly one object, the one asked for, must answer. Returns why not, or null; a throw is the caller's to catch,
+    // and the caller reports the reason in a refusal naming the server.
+    private static string? ReadObjectThrough(PowerShell ps, string objectGuid, string server, PSCredential credential)
+    {
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Identity", objectGuid)
+          .AddParameter("Server", server)
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var found = ps.Invoke();
+        if (ps.HadErrors)
+            return FirstError(ps) ?? $"Get-ADUser reported an error reading {objectGuid}.";
+        ps.Commands.Clear();
+
+        var answered = found.Count == 1 ? found[0]?.Properties["ObjectGUID"]?.Value?.ToString() : null;
+        return answered is not null && string.Equals(answered, objectGuid, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : $"{found.Count} object(s) answered, ObjectGUID {answered ?? "none"}";
+    }
+
     // aud-a2p. The attributes the City/State/Country write is confirmed by: City, State and Country as the operator
     // gave them. c and countryCode go in the same -Replace as co and are not read - *assumption, not probed*: one
     // -Replace is one LDAP modify, applied whole, so co read back as written says the request applied.
@@ -2034,6 +2160,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     };
 
     private static string? EmptyAsAbsent(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
+    // The text ended as a sentence, so another can follow it in one message.
+    private static string Sentence(string text)
+    {
+        var trimmed = text.TrimEnd();
+        return trimmed.EndsWith('.') ? trimmed : trimmed + ".";
+    }
 
     // A single-valued attribute as read, null when absent. *Assumption, not probed*: the module answers one with its
     // value, as ADAttributeEditorService reads its attributes (Properties[..].Value). A collection is taken as its one
@@ -2325,6 +2458,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
     internal const string ConfirmedAfterWriteError = "Membership confirmed present after Set-ADGroup reported an error";
 
+    // aud-a2q. How the detail of City/State/Country the read-back found in place after Set-ADUser reported an error
+    // opens - the attributes' sibling of ConfirmedAfterWriteError, so a reader, or a test, can tell the path without
+    // parsing the error's own words.
+    internal const string AttributesConfirmedAfterWriteError = "City/State/Country confirmed in place after Set-ADUser reported an error";
+
     /// <summary>
     /// The audit <c>extra</c> key for a room-list membership the read-back confirmed after the row's own
     /// on-prem write was refused or reported an error (aud-a2n): recorded where
@@ -2344,6 +2482,27 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             return extra;
         extra ??= new Dictionary<string, object?>();
         extra[MembershipConfirmedAuditKey] = membershipConfirmed;
+        return extra;
+    }
+
+    /// <summary>
+    /// The audit <c>extra</c> key for City/State/Country the read-back found in place after the row's own Set-ADUser
+    /// reported an error (aud-a2q): recorded where <see cref="ValidatedMailbox.DirectoryAuditKey"/> would have named a
+    /// written object, which such a row does not (aud-a2g) - the sibling of <see cref="MembershipConfirmedAuditKey"/>.
+    /// </summary>
+    public const string AttributesConfirmedAuditKey = "attributesConfirmedPresent";
+
+    /// <summary>
+    /// <paramref name="extra"/> with <paramref name="attributesConfirmed"/> under <see cref="AttributesConfirmedAuditKey"/>,
+    /// created when absent; unchanged when there is none. Both Room Finder audit surfaces call it beside
+    /// <see cref="WithMembershipConfirmed"/>, so they record the row alike.
+    /// </summary>
+    public static Dictionary<string, object?>? WithAttributesConfirmed(Dictionary<string, object?>? extra, string? attributesConfirmed)
+    {
+        if (attributesConfirmed is null)
+            return extra;
+        extra ??= new Dictionary<string, object?>();
+        extra[AttributesConfirmedAuditKey] = attributesConfirmed;
         return extra;
     }
 

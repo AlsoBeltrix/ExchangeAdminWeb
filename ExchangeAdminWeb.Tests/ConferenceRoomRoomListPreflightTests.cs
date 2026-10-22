@@ -1212,6 +1212,50 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         });
     }
 
+    // aud-a2q. The list as the preflight reads a cloud one: existing, not synchronized from on-premises - the list the
+    // cloud add is handed.
+    private static ConferenceRoomService.RoomListTarget TheCloudList() =>
+        new(List, Exists: true, IsLegacy: false, IsDirSynced: false, ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid);
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheCloudAddsOwnMessage_ClaimsAnAddOnlyWhenItAddedTheRoom(bool alreadyThere)
+    {
+        // aud-a2q. The cloud twin of the on-prem messages above: the no-op that found the room already on the list - its
+        // step "Already in '<list>'" - still said "Added to room list". Each now says what happened. Called directly, as
+        // the message reaches no result the row returns.
+        if (alreadyThere)
+            _h.ListMembers.Add(Typed);
+
+        var result = await new Service(_h).AddToRoomListAsync(Room(), Typed, Typed, TheCloudList());
+
+        Assert.True(result.Success, result.Message);
+        var added = ConferenceRoomService.BuildRoomListAddedMessage(List, viaOnPrem: false);
+        if (alreadyThere)
+        {
+            Assert.Empty(_h.CallsTo("Add-DistributionGroupMember"));
+            Assert.Contains(result.Steps, s => s.Stage == $"Already in '{List}'" && s.Success);
+            Assert.NotEqual(added, result.Message);
+            Assert.Equal(ConferenceRoomService.BuildRoomListAlreadyInMessage(List), result.Message);
+        }
+        else
+        {
+            Assert.Single(_h.CallsTo("Add-DistributionGroupMember"));
+            Assert.Equal(added, result.Message);
+        }
+    }
+
+    [Fact]
+    public void TheCloudAddsAlreadyInMessage_NamesTheList_AndClaimsNoAdd()
+    {
+        var alreadyIn = ConferenceRoomService.BuildRoomListAlreadyInMessage(List);
+
+        Assert.Contains($"'{List}'", alreadyIn, StringComparison.Ordinal);
+        Assert.DoesNotContain("Added to", alreadyIn, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEqual(ConferenceRoomService.BuildOnPremRoomListNotWrittenMessage(List, confirmedAfterWrite: false), alreadyIn);
+    }
+
     // A directory exception type other than the base one, as the real module derives several (aud-a2n): the
     // code is read through the base type's name.
     private sealed class DerivedDirectoryException(string message, int errorCode) : AdException(message, errorCode);

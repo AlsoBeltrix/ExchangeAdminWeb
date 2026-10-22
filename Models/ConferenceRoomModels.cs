@@ -193,7 +193,8 @@ public class RoomOperationResult
     // attribute (aud-a2j) - or null when no AD write ran or none succeeded (aud-a2g). Set by the
     // service the moment the write succeeds, so a later step failing (Partial) does not hide it. The
     // audit names a written directory object only from this; it used to name one on every Room
-    // Finder row. Since aud-a2n not set for a membership confirmed only by the read-back.
+    // Finder row. Since aud-a2n not set for a membership confirmed only by the read-back, nor since
+    // aud-a2q for City/State/Country so confirmed.
     public string? WrittenDirectoryObject { get; set; }
 
     // aud-a2n. Set when the on-prem room-list add's own write was refused, or reported an error, and
@@ -202,6 +203,14 @@ public class RoomOperationResult
     // nothing for it and this says why, with the write's error text. The audit records it in that
     // place (ConferenceRoomService.MembershipConfirmedAuditKey). Null otherwise.
     public string? DirectoryMembershipConfirmed { get; set; }
+
+    // aud-a2q. Set when the City/State/Country Set-ADUser reported an error and the attributes read
+    // back afterwards held the values it wrote: the row succeeded on values this operation is not
+    // known to have written, so WrittenDirectoryObject names nothing for them and this says why, with
+    // the write's error text. The audit records it in that place
+    // (ConferenceRoomService.AttributesConfirmedAuditKey). The sibling of DirectoryMembershipConfirmed.
+    // Null otherwise.
+    public string? DirectoryAttributesConfirmed { get; set; }
 }
 
 public class RoomOperationStep

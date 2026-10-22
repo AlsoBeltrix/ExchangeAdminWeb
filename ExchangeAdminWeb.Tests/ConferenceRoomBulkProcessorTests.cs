@@ -365,6 +365,32 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
             Assert.Equal(Done, outcome.Message);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARowsMessage_CarriesCityStateAndCountryTheReadBackConfirmed_WhenTheResultHasThem(bool alsoAMembership)
+    {
+        // aud-a2q. The same for City/State/Country the read-back found in place after Set-ADUser reported an error: the
+        // detail follows the row's message - before a confirmed membership's, the order the steps ran in.
+        const string Done = "Room metadata and room list configured.";
+        const string Attributes = "City/State/Country confirmed in place after a stand-in write error: nothing recorded as written.";
+        const string Membership = "Membership confirmed present after a stand-in write error: nothing recorded as written.";
+        var f = CreateFixture();
+        f.Rooms.Result = email => new RoomOperationResult
+        {
+            Email = email,
+            Success = true,
+            Message = Done,
+            DirectoryAttributesConfirmed = Attributes,
+            DirectoryMembershipConfirmed = alsoAMembership ? Membership : null,
+        };
+
+        var outcome = await f.Processor.ProcessRowAsync(FinderJob("AllUsers", "room1@x"), 0, CancellationToken.None);
+
+        Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
+        Assert.Equal(alsoAMembership ? $"{Done} {Attributes} {Membership}" : $"{Done} {Attributes}", outcome.Message);
+    }
+
     [Fact]
     public async Task CountRows_ReturnsPayloadRowCount()
     {
