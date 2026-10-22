@@ -207,7 +207,8 @@ another domain (`Comms10kService.cs:39-42`, `ModuleCatalog.cs:590` and `:677-681
 timezone and the refused cloud add - partial, loud, on every re-run - and the preflight does not read
 it. Shape: the group's `member` attribute or the room object's `memberOf`, as elsewhere in the repo.
 Suggested severity LOW: no wrong object is written, and a room list that large, or with a member
-the read cannot resolve, is unusual.
+the read cannot resolve, is unusual. *Admitted 2026-10-21 as aud-a2i; `aud-a2i.md` owns it from
+here.*
 
 ## Known gaps
 

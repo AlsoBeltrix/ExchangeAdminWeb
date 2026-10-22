@@ -75,11 +75,45 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// </summary>
     public Hashtable ListSyncState { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
-    /// <summary>The objectGUIDs the stand-in <c>Get-ADGroup</c> returns for any filter: one group unless a test changes it.</summary>
-    public IList DirectoryGroupGuids { get; } = ArrayList.Synchronized(new ArrayList { "99999999-9999-9999-9999-999999999999" });
+    /// <summary>The objectGUID of the one group the stand-in <c>Get-ADGroup</c> search returns unless a test changes it.</summary>
+    public const string DefaultDirectoryGroupGuid = "99999999-9999-9999-9999-999999999999";
 
-    /// <summary>The member objectGUIDs the stand-in <c>Get-ADGroupMember</c> reports on any group: none unless a test adds them.</summary>
+    /// <summary>The objectGUIDs the stand-in <c>Get-ADGroup</c> returns for any filter: one group unless a test changes it.</summary>
+    public IList DirectoryGroupGuids { get; } = ArrayList.Synchronized(new ArrayList { DefaultDirectoryGroupGuid });
+
+    /// <summary>
+    /// The stand-in directory's one domain, as the DC part of a DN. Its groups live in it; to the stand-in
+    /// <c>Get-ADGroupMember</c> a member DN outside it is a member in another domain (aud-a2i).
+    /// </summary>
+    public const string DirectoryDomainDn = "DC=contoso,DC=test";
+
+    /// <summary>A stand-in group's DN from its objectGUID: what the stand-in <c>Get-ADGroup</c> reports as DistinguishedName.</summary>
+    public const string DirectoryGroupDnFormat = "CN=Group {0},OU=Groups," + DirectoryDomainDn;
+
+    /// <summary>The DN of the stand-in group whose objectGUID is <paramref name="objectGuid"/>.</summary>
+    public static string DirectoryGroupDn(string objectGuid) =>
+        string.Format(System.Globalization.CultureInfo.InvariantCulture, DirectoryGroupDnFormat, objectGuid);
+
+    /// <summary>
+    /// The member DNs on the stand-in group's linked <c>member</c> attribute - what
+    /// <c>Get-ADGroup -Properties member</c> returns, and what the stand-in <c>Get-ADGroupMember</c>
+    /// resolves against <see cref="DirectoryObjects"/>: none unless a test adds them (aud-a2i).
+    /// </summary>
     public IList DirectoryGroupMembers { get; } = ArrayList.Synchronized(new ArrayList());
+
+    /// <summary>
+    /// What the stand-in <c>Get-ADGroup -Identity</c> answers as ObjectGUID, by the identity asked: a
+    /// test's way of making Active Directory answer with another object. An identity not named here
+    /// answers as its own group.
+    /// </summary>
+    public Hashtable DirectoryGroupReadBack { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The default ADWS <c>MaxGroupOrMemberEntries</c>: past this many members the real
+    /// <c>Get-ADGroupMember</c> refuses the read ("The size limit for this request was exceeded"), and so
+    /// does the stand-in.
+    /// </summary>
+    public const int AdwsMaxGroupOrMemberEntries = 5000;
 
     private int _connects;
 
@@ -283,6 +317,10 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("ListSyncState", ListSyncState);
         rs.SessionStateProxy.SetVariable("DirectoryGroupGuids", DirectoryGroupGuids);
         rs.SessionStateProxy.SetVariable("DirectoryGroupMembers", DirectoryGroupMembers);
+        rs.SessionStateProxy.SetVariable("DirectoryGroupReadBack", DirectoryGroupReadBack);
+        rs.SessionStateProxy.SetVariable("DirectoryGroupDnFormat", DirectoryGroupDnFormat);
+        rs.SessionStateProxy.SetVariable("DirectoryDomainDn", DirectoryDomainDn);
+        rs.SessionStateProxy.SetVariable("AdwsMaxGroupOrMemberEntries", AdwsMaxGroupOrMemberEntries);
         using var init = PowerShell.Create();
         init.Runspace = rs;
         init.AddScript(definitions);
@@ -490,15 +528,47 @@ internal sealed class ExchangeWriteHarness : IDisposable
             [CmdletBinding()] param($Identity, $Replace, $Credential)
             Write-StandInCall 'Set-ADUser' $PSBoundParameters
         }
+        # aud-a2i. A search answers with every group in DirectoryGroupGuids, by objectGUID and DN. A read by
+        # -Identity (a DN or an objectGUID) answers with that group - as another object when
+        # DirectoryGroupReadBack names the identity - and with its member attribute when -Properties asks for
+        # it; Failures['Get-ADGroup -Identity'] fails that read alone. Its errors are Write-Error then
+        # return, so they stay errors under any -ErrorAction.
         function global:Get-ADGroup {
-            [CmdletBinding()] param($Filter, $Credential)
+            [CmdletBinding()] param($Filter, $Identity, $Properties, $Server, $Credential)
             Write-StandInCall 'Get-ADGroup' $PSBoundParameters
-            foreach ($group in $global:DirectoryGroupGuids) { [pscustomobject]@{ ObjectGUID = [guid]"$group" } }
+            if (-not $PSBoundParameters.ContainsKey('Identity')) {
+                foreach ($group in $global:DirectoryGroupGuids) {
+                    [pscustomobject]@{ ObjectGUID = [guid]"$group"; DistinguishedName = ($global:DirectoryGroupDnFormat -f "$group") }
+                }
+                return
+            }
+            $failure = $global:Failures['Get-ADGroup -Identity']
+            if ($failure) { Write-Error $failure; return }
+            $group = @($global:DirectoryGroupGuids | Where-Object { "$Identity" -eq ($global:DirectoryGroupDnFormat -f "$_") -or "$Identity" -eq "$_" })
+            if ($group.Count -ne 1) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
+            $answer = $global:DirectoryGroupReadBack["$Identity"]
+            $row = @{ ObjectGUID = [guid]"$(if ($answer) { $answer } else { $group[0] })"; DistinguishedName = ($global:DirectoryGroupDnFormat -f "$($group[0])") }
+            if (@($Properties) -contains 'member') { $row['member'] = [string[]]@($global:DirectoryGroupMembers) }
+            New-Object psobject -Property $row
         }
+        # aud-a2i. The real cmdlet resolves every member server-side: Active Directory Web Services refuses a
+        # group of more than MaxGroupOrMemberEntries members (5,000 by default), and the read faults on a
+        # member in another domain it cannot chase. The stand-in refuses both - Write-Error then return, so
+        # it stays refused under any -ErrorAction - and otherwise answers each member's objectGUID from
+        # DirectoryObjects. No production code calls it (GroupMemberListingTests pins that).
         function global:Get-ADGroupMember {
-            [CmdletBinding()] param($Identity, $Credential)
+            [CmdletBinding()] param($Identity, $Server, $Credential)
             Write-StandInCall 'Get-ADGroupMember' $PSBoundParameters
-            foreach ($member in $global:DirectoryGroupMembers) { [pscustomobject]@{ ObjectGUID = [guid]"$member" } }
+            $members = @($global:DirectoryGroupMembers)
+            if ($members.Count -gt $global:AdwsMaxGroupOrMemberEntries) { Write-Error 'The size limit for this request was exceeded'; return }
+            if (@($members | Where-Object { -not "$_".EndsWith(",$($global:DirectoryDomainDn)", [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) {
+                Write-Error 'An operations error occurred'
+                return
+            }
+            foreach ($dn in $members) {
+                $object = @($global:DirectoryObjects.Values | Where-Object { "$($_['DistinguishedName'])" -eq "$dn" })
+                [pscustomobject]@{ DistinguishedName = "$dn"; ObjectGUID = $(if ($object.Count -eq 1) { $object[0]['ObjectGUID'] }) }
+            }
         }
         function global:Add-ADGroupMember {
             [CmdletBinding()] param($Identity, $Members, $Credential)

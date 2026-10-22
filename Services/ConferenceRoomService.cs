@@ -1550,10 +1550,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // that does not exist yet is created cloud-side and a cloud list takes the cloud add, so neither
     // needs anything further. A list synchronized from on-premises takes the room only on-prem
     // (AddToRoomListViaAdAsync below), so everything that add needs and can be checked without
-    // writing - a proven AD object, the AD credential, that object readable by its objectGUID, and
-    // exactly one on-prem group for the list - is checked here, and its absence refuses the row
-    // while nothing has been written. A list whose sync state Exchange did not report is refused
-    // too: whether the row can complete is then unknown, and the old order found out by writing.
+    // writing - a proven AD object, the AD credential, that object readable by its objectGUID,
+    // exactly one on-prem group for the list, and whether the room is already in it (aud-a2i) - is
+    // checked here, and its absence refuses the row while nothing has been written. A list whose
+    // sync state Exchange did not report is refused too: whether the row can complete is then
+    // unknown, and the old order found out by writing.
     // Returns the refusal, or null. (A genuine Add-ADGroupMember failure after a passing preflight -
     // missing write-members delegation, say - remains the inherent two-system residual.)
     // roomPrimary is the address Exchange returned for the validated room: the membership test's key.
@@ -1600,12 +1601,21 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
                 // The two objects the on-prem add names - the room's proven object and the list's
                 // group - each read here exactly as the add will read them, without writing.
-                var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential);
+                var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential, out var roomDn);
                 if (roomError != null)
                     return roomError;
 
-                var (groupError, _) = ResolveAdGroupGuid(ps, list.Name, credential);
-                return groupError;
+                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, list.Name, credential);
+                if (groupError != null)
+                    return groupError;
+
+                // aud-a2i. And whether the add will write at all: the room's membership of that group,
+                // read as the add reads it. A membership that cannot be read refuses the row here, while
+                // nothing has been written. It used to be read only at the add, by Get-ADGroupMember -
+                // which fails on a group past the ADWS cap or with a member in another domain - after
+                // Set-Place and the timezone had committed, so such a list made every row partial.
+                var (memberError, _) = ReadOnPremListMembership(ps, groupGuid, groupDn, roomDn, list.Name, credential);
+                return memberError is null ? null : $"{memberError} Nothing was written.";
             }
             catch (Exception ex)
             {
@@ -1653,27 +1663,23 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
                 // BOTH objects by immutable GUID, fail-closed, before any write - so the wrong
                 // member is never added to the wrong group. The room's is the validated one.
-                var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential);
+                var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential, out var roomDn);
                 if (roomError != null)
                     return (roomError, null);
 
-                var (groupError, groupGuid) = ResolveAdGroupGuid(ps, roomListName, credential);
+                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, roomListName, credential);
                 if (groupError != null)
                     return (groupError, null);
 
                 // Idempotency: skip the add if the room is already a member (matches the cloud
-                // path's already-member no-op so a re-run is safe).
-                ps.AddCommand("Get-ADGroupMember")
-                  .AddParameter("Identity", groupGuid)
-                  .AddParameter("Credential", credential)
-                  .AddParameter("ErrorAction", "Stop");
-                var members = ps.Invoke();
-                if (ps.HadErrors)
-                    return (FirstError(ps) ?? $"Failed to read membership of on-prem room list '{roomListName}'.", null);
-                ps.Commands.Clear();
-
-                var alreadyMember = members.Any(m =>
-                    string.Equals(m.Properties["ObjectGUID"]?.Value?.ToString(), roomGuid, StringComparison.OrdinalIgnoreCase));
+                // path's already-member no-op so a re-run is safe). aud-a2i: read from the group's
+                // member attribute, as the preflight read it before anything was written - not by
+                // Get-ADGroupMember. Read again here rather than carried across the writes: a stale
+                // "already a member" would report success, silently, for a room taken off the group in
+                // between; a fresh read adds it, or fails loudly.
+                var (memberError, alreadyMember) = ReadOnPremListMembership(ps, groupGuid, groupDn, roomDn, roomListName, credential);
+                if (memberError != null)
+                    return (memberError, null);
                 if (alreadyMember)
                     return (null, null);
 
@@ -1702,8 +1708,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // Returns an error message, or null when exactly that object answered. It replaced a lookup
     // of the typed string by userPrincipalName, which found whichever object held that UPN.
     // Assumes the ActiveDirectory module is already imported into the runspace.
-    private static string? ConfirmDirectoryObject(PowerShell ps, string objectGuid, string roomEmail, PSCredential credential)
+    private static string? ConfirmDirectoryObject(PowerShell ps, string objectGuid, string roomEmail, PSCredential credential) =>
+        ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential, out _);
+
+    // The same, also reporting the object's distinguished name as Active Directory returned it (null
+    // when it returned none): the on-prem room-list membership is compared by it (aud-a2i).
+    private static string? ConfirmDirectoryObject(PowerShell ps, string objectGuid, string roomEmail, PSCredential credential, out string? distinguishedName)
     {
+        distinguishedName = null;
         ps.AddCommand("Get-ADUser")
           .AddParameter("Identity", objectGuid)
           .AddParameter("Credential", credential)
@@ -1720,6 +1732,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (!string.Equals(readGuid, objectGuid, StringComparison.OrdinalIgnoreCase))
             return $"Active Directory answered {objectGuid} with a different object ({readGuid ?? "no ObjectGUID"}). Nothing was written.";
 
+        distinguishedName = found[0].Properties["DistinguishedName"]?.Value?.ToString();
         return null;
     }
 
@@ -1727,8 +1740,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // Matches on mail first, then displayName/name, and refuses on not-found or ambiguous -
     // same fail-closed posture as ConfirmDirectoryObject so an on-prem membership write can never
     // target the wrong group. Shared by the room-list preflight and the add (aud-a2f), so they
-    // resolve the same group. Assumes the ActiveDirectory module is already imported.
-    private static (string? error, string? objectGuid) ResolveAdGroupGuid(PowerShell ps, string roomListName, PSCredential credential)
+    // resolve the same group. Also reports the group's DN, by which its membership is read
+    // (aud-a2i). Assumes the ActiveDirectory module is already imported.
+    private static (string? error, string? objectGuid, string? distinguishedName) ResolveAdGroupGuid(PowerShell ps, string roomListName, PSCredential credential)
     {
         var escaped = roomListName.Replace("'", "''");
         ps.AddCommand("Get-ADGroup")
@@ -1737,19 +1751,57 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
           .AddParameter("ErrorAction", "Stop");
         var found = ps.Invoke();
         if (ps.HadErrors)
-            return (FirstError(ps) ?? $"AD lookup failed for room list '{roomListName}'.", null);
+            return (FirstError(ps) ?? $"AD lookup failed for room list '{roomListName}'.", null, null);
         ps.Commands.Clear();
 
         if (found.Count == 0)
-            return ($"No on-prem AD group found for room list '{roomListName}'. The room was not added to the list.", null);
+            return ($"No on-prem AD group found for room list '{roomListName}'. The room was not added to the list.", null, null);
         if (found.Count > 1)
-            return ($"Multiple on-prem AD groups ({found.Count}) match room list '{roomListName}'. Refusing to write to avoid the wrong group.", null);
+            return ($"Multiple on-prem AD groups ({found.Count}) match room list '{roomListName}'. Refusing to write to avoid the wrong group.", null, null);
 
         var objectGuid = found[0].Properties["ObjectGUID"]?.Value;
         if (objectGuid is null)
-            return ($"Resolved on-prem AD group for room list '{roomListName}' has no ObjectGUID; refusing to write.", null);
+            return ($"Resolved on-prem AD group for room list '{roomListName}' has no ObjectGUID; refusing to write.", null, null);
 
-        return (null, objectGuid.ToString());
+        return (null, objectGuid.ToString(), found[0].Properties["DistinguishedName"]?.Value?.ToString());
+    }
+
+    // aud-a2i. Whether the room is a member of its room list's on-prem group, from the group's own
+    // linked member attribute - Get-ADGroup -Properties member, the repo's membership read
+    // (Comms10kService.ReadMemberDns, GroupManagementService.GetMembersAsync). Not Get-ADGroupMember:
+    // it resolves every member server-side, so Active Directory Web Services refuses a group past
+    // MaxGroupOrMemberEntries (5,000 by default) and the read faults on a member in another domain
+    // that cannot be chased; the attribute resolves nothing and comes back whole by range retrieval.
+    // The group is read by its DN, on the domain that DN names (routed as GetMembersAsync routes
+    // it), and must answer as the objectGUID ResolveAdGroupGuid resolved. The room is the object
+    // proven by objectGUID, compared by that object's DN - never by a name - so without its DN there
+    // is no answer. Shared by the room-list preflight and the add, so both read it the same way.
+    // Returns (the error, false) when the question cannot be answered, never "not a member".
+    // Assumes the ActiveDirectory module is already imported.
+    private static (string? error, bool isMember) ReadOnPremListMembership(
+        PowerShell ps, string? groupGuid, string? groupDn, string? roomDn, string roomListName, PSCredential credential)
+    {
+        if (string.IsNullOrWhiteSpace(roomDn))
+            return ($"The room's AD object was read without a distinguished name, so whether it is already a member of on-prem room list '{roomListName}' cannot be determined.", false);
+
+        ps.AddCommand("Get-ADGroup")
+          .AddParameter("Identity", groupDn)
+          .AddParameter("Properties", new[] { "member" })
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var server = GroupManagementService.ServerFromDn(groupDn);
+        if (server is not null)
+            ps.AddParameter("Server", server);
+        var found = ps.Invoke();
+        if (ps.HadErrors)
+            return (FirstError(ps) ?? $"Failed to read the membership of on-prem room list '{roomListName}'.", false);
+        ps.Commands.Clear();
+
+        var answered = found.Count == 1 ? found[0]?.Properties["ObjectGUID"]?.Value?.ToString() : null;
+        if (answered is null || !string.Equals(answered, groupGuid, StringComparison.OrdinalIgnoreCase))
+            return ($"Reading the membership of on-prem room list '{roomListName}' did not return its group ({groupGuid}): {found.Count} object(s) answered, ObjectGUID {answered ?? "none"}.", false);
+
+        return (null, GroupManagementService.MemberDnsOf(found[0]).Contains(roomDn, StringComparer.OrdinalIgnoreCase));
     }
 
     private static string? FirstError(PowerShell ps) =>
