@@ -542,6 +542,52 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Equal("^[A-Z]", Assert.Single(service.GetAllowlist()!).Pattern);
         Assert.False(service.IsAllowlistCorrupt());
         Assert.False(File.Exists(Path.Combine(_configDir, "ad-editable-attributes.json")), "an imported file is archived");
+        Assert.Null(service.LegacyAllowlistImportRefusal);
+    }
+
+    // ---- aud-a26f: a refused import says why, where an administrator will see it ---------------
+
+    [Fact]
+    public void ARefusedLegacyImport_KeepsItsReason_AndTheSaveRefusalNamesTheFileAndTheAttribute()
+    {
+        // The log used to be the only place that named the attribute. The reason is kept beside the
+        // corrupt flag, and the save's refusal - the one place the legacy file is the thing to fix -
+        // names the file and carries it.
+        WriteAllowlistConfig(new
+        {
+            Attributes = new[]
+            {
+                new { Name = "title", Label = "Job Title", Type = "String", Required = false, AllowClear = true, Pattern = "[" }
+            }
+        });
+
+        var service = CreateService();
+
+        Assert.Contains("Job Title", service.LegacyAllowlistImportRefusal, StringComparison.Ordinal);
+        var result = service.SaveAllowlistAndAudit(
+            [new EditableAttribute("department", "Department", "String", null, false, true, null, null)],
+            service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9");
+        Assert.False(result.Success);
+        Assert.True(result.StoreCorrupt);
+        Assert.Contains("config/ad-editable-attributes.json", result.Error, StringComparison.Ordinal);
+        Assert.Contains("Job Title", result.Error, StringComparison.Ordinal);
+        // Still failing closed, and the file is still where the administrator will correct it.
+        Assert.Null(service.GetAllowlist());
+        Assert.True(File.Exists(Path.Combine(_configDir, "ad-editable-attributes.json")));
+    }
+
+    [Theory]
+    [InlineData("{ not json", "parsed")]
+    [InlineData("{ \"Other\": [] }", "Attributes")]
+    [InlineData("{ \"Attributes\": [ { \"Name\": \"title\", \"Label\": \"Job Title\", \"Type\": \"String\", \"Required\": true, \"AllowClear\": true } ] }", "Job Title")]
+    public void EveryLegacyImportRefusal_SaysWhy(string file, string named)
+    {
+        File.WriteAllText(Path.Combine(_configDir, "ad-editable-attributes.json"), file);
+
+        var service = CreateService();
+
+        Assert.Null(service.GetAllowlist());
+        Assert.Contains(named, service.LegacyAllowlistImportRefusal, StringComparison.Ordinal);
     }
 
     /// <summary>Every error the service logged, as formatted text.</summary>
@@ -673,6 +719,8 @@ public class ADAttributeEditorServiceTests : IDisposable
         var cached = service.GetAllowlist();
         Assert.NotNull(cached);
         Assert.Same(cached, service.GetAllowlist());
+        // The page loaded the valid store; the save below is made from that view.
+        var loaded = service.LoadAllowlistForEditing();
 
         // A row whose choices cannot be parsed - the store's corrupt state - written behind the cache.
         _attrStore!.Write((connection, tx) =>
@@ -688,7 +736,7 @@ public class ADAttributeEditorServiceTests : IDisposable
 
         var result = service.SaveAllowlistAndAudit(
             [new EditableAttribute("title", "Title", "String", null, false, true, null, null)],
-            "EXAMPLE\\admin", "10.0.0.9");
+            loaded.Version, "EXAMPLE\\admin", "10.0.0.9");
 
         Assert.False(result.Success);
         Assert.True(result.StoreCorrupt);

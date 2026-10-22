@@ -101,11 +101,21 @@ internal sealed class AttributeEditorHarness : IDisposable
         var extendedLog = new ExtendedLogService(
             Config, Env, TestConfigStore.CreateAppSettings(_root), NullLogger<ExtendedLogService>.Instance);
         var delinea = new DelineaService(http, Config, NullLogger<DelineaService>.Instance, extendedLog, Trace);
-        var credentials = new ModuleCredentialService(ModuleConfig, delinea, NullLogger<ModuleCredentialService>.Instance);
+        _credentials = new ModuleCredentialService(ModuleConfig, delinea, NullLogger<ModuleCredentialService>.Instance);
 
         Protection = new FakeProtection(Env, Config, ModuleConfig, TestConfigStore.CreateProtectedPrincipal(_root), delinea);
-        Service = new HarnessService(this, credentials, Protection, Servicers, Trace, Audit, Email, ModuleConfig, Allowlist, Env, Logger);
+        Service = new HarnessService(this, _credentials, Protection, Servicers, Trace, Audit, Email, ModuleConfig, Allowlist, Env, Logger);
     }
+
+    private readonly ModuleCredentialService _credentials;
+
+    /// <summary>
+    /// "The other instance" (aud-a28i): a second service over a second store - its own connection
+    /// factory - on the same database file, as the other instance on the shared database is.
+    /// </summary>
+    public ADAttributeEditorService CreateOtherInstance() =>
+        new(_credentials, Protection, Servicers, Trace, Audit, Email, ModuleConfig,
+            new AttributeEditorRepository(TestConfigStore.Create(_root)), Env, NullLogger<ADAttributeEditorService>.Instance);
 
     public IConfiguration Config { get; }
     public IWebHostEnvironment Env { get; }
@@ -319,20 +329,40 @@ internal sealed class AttributeEditorHarness : IDisposable
 
         public bool WritesFail { get; set; }
 
+        /// <summary>
+        /// Run once, as the next write opens and before it takes the write lock: where another
+        /// writer - the other instance on the shared database - can land (aud-a28i).
+        /// </summary>
+        public Action? BeforeWrite { get; set; }
+
         public long GetChangeToken() => inner.GetChangeToken();
 
         public T Read<T>(Func<SqliteConnection, T> read) =>
             ReadsFail ? throw new InvalidOperationException("config store unreadable") : inner.Read(read);
 
-        public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write) =>
-            WritesFail ? throw new InvalidOperationException("config store unwritable") : inner.Write(write);
+        public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write)
+        {
+            if (WritesFail)
+                throw new InvalidOperationException("config store unwritable");
+
+            RunBeforeWrite();
+            return inner.Write(write);
+        }
 
         public void Write(Action<SqliteConnection, SqliteTransaction> write)
         {
             if (WritesFail)
                 throw new InvalidOperationException("config store unwritable");
 
+            RunBeforeWrite();
             inner.Write(write);
+        }
+
+        private void RunBeforeWrite()
+        {
+            var hook = BeforeWrite;
+            BeforeWrite = null;
+            hook?.Invoke();
         }
     }
 

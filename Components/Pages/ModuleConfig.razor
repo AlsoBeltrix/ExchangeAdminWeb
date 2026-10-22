@@ -507,15 +507,33 @@
             </div>
                 <p class="text-muted mb-3"><small>Configure which AD attributes users can edit. Attributes on the hard denylist (security-sensitive attributes like userAccountControl, memberOf, etc.) are automatically blocked.</small></p>
 
+                @* aud-a26f. Two causes, two fixes, and the banner names the right one: the legacy import
+                   refused its file - the one case where the file is the thing to fix, shown with the
+                   import's reason, which used to reach only the log - or the table in the config
+                   database cannot be read, fixed as the operations doc says. It used to name the file in
+                   both, and an admin following it edited a file nothing reads. *@
                 @if (allowlistCorrupt)
                 {
                     <div class="alert alert-danger mb-3">
                         <strong>Attribute allowlist store is corrupt.</strong>
-                        config\ad-editable-attributes.json exists but cannot be read, so the
-                        attribute list cannot be shown and saving is disabled — saving now would
-                        replace the whole file, discarding every configured attribute. Fix or
-                        restore the file (deploy backups: ConfigBackups\config.&lt;timestamp&gt;.bak),
-                        then reload this page.
+                        @if (allowlistImportRefusal is not null)
+                        {
+                            <span>
+                                The legacy file config\ad-editable-attributes.json was not imported: @allowlistImportRefusal
+                                It is left in place, and the attribute list cannot be shown and saving is
+                                disabled until it imports: correct the file, then reload this page.
+                            </span>
+                        }
+                        else
+                        {
+                            <span>
+                                The allowlist in the config database (the editable_attribute table) cannot be
+                                read or fails validation, so the attribute list cannot be shown and saving is
+                                disabled - saving now would replace every configured attribute. An administrator
+                                must correct the table as docs/ConfigDbOperations.md describes, with
+                                both application pools stopped, then reload this page.
+                            </span>
+                        }
                     </div>
                 }
                 @if (allowlistError != null)
@@ -1091,6 +1109,12 @@
         statusMessage = null;
         await Task.Yield();
 
+        // aud-a28h. Every save on this page records each refusal and its catch under the section its
+        // success files under, not only a success: a refused or failed attempt on section access or
+        // module admins - who can reach and run a module - used to leave no trace. The section and ip
+        // are worked out above the try so the catch has them.
+        var section = $"ModuleConfig:{module.Id}";
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -1100,6 +1124,7 @@
             {
                 statusMessage = "You are not authorized to configure this module.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage);
                 return;
             }
 
@@ -1108,6 +1133,7 @@
                 moduleConfigCorrupt = true;
                 statusMessage = "Refusing to save: this module's config file is corrupt and saving would overwrite it with the rendered fallback values. Fix or restore config\\module-config-" + module.Id + ".json first.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
             }
 
@@ -1121,10 +1147,9 @@
             {
                 try
                 {
-                    var ip = ClientInfo.GetIpForUser(currentUser);
                     var prevKeys = changed.Select(k => $"{k}={MaskIfSecret(k, previous.GetValueOrDefault(k) ?? "")}").ToArray();
                     var newKeys = changed.Select(k => $"{k}={MaskIfSecret(k, currentConfigState.GetValueOrDefault(k) ?? "")}").ToArray();
-                    Audit.LogSettingsChange(currentUser, ip, $"ModuleConfig:{module.Id}", prevKeys, newKeys);
+                    Audit.LogSettingsChange(currentUser, ip, section, prevKeys, newKeys);
                 }
                 catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module config change"); }
             }
@@ -1140,6 +1165,7 @@
         {
             statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally { saving = false; }
     }
@@ -1151,6 +1177,8 @@
         statusMessage = null;
         await Task.Yield();
 
+        var section = $"Module:{module.Id}";
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -1159,6 +1187,7 @@
             {
                 statusMessage = "Only global admins can change module status.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage);
                 return;
             }
 
@@ -1167,6 +1196,7 @@
                 enablementStoreCorrupt = true;
                 statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
             }
 
@@ -1179,8 +1209,7 @@
             {
                 try
                 {
-                    var ip = ClientInfo.GetIpForUser(currentUser);
-                    Audit.LogSettingsChange(currentUser, ip, $"Module:{module.Id}",
+                    Audit.LogSettingsChange(currentUser, ip, section,
                         previous ? new[] { "Enabled" } : Array.Empty<string>(),
                         moduleEnabled ? new[] { "Enabled" } : Array.Empty<string>());
                 }
@@ -1206,6 +1235,7 @@
         {
             statusMessage = $"Failed to save module status: {ex.Message}";
             statusIsError = true;
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally
         {
@@ -1220,6 +1250,8 @@
         statusMessage = null;
         await Task.Yield();
 
+        var section = module.MainPermission.PolicyAlias;
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -1228,6 +1260,7 @@
             {
                 statusMessage = "Only global admins can change section access.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage, PendingAccessSections());
                 return;
             }
 
@@ -1236,6 +1269,7 @@
                 sectionAccessCorrupt = true;
                 statusMessage = "Refusing to save: config\\sectionaccess.json is corrupt and saving would replace it, wiping every module's groups. Fix or restore the file first.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, PendingAccessSections());
                 return;
             }
 
@@ -1252,6 +1286,7 @@
             {
                 statusMessage = refused;
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "GroupGrantCheck", statusMessage, PendingAccessSections());
                 return;
             }
 
@@ -1277,7 +1312,6 @@
             // failing to store one must never fail the access save that already succeeded.
             SectionAccess.SaveGroupDisplayNames(accessDisplayNames);
 
-            var ip = ClientInfo.GetIpForUser(currentUser);
             foreach (var alias in policyAliases)
             {
                 var prev = previousGroups[alias];
@@ -1300,9 +1334,20 @@
         {
             statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage, PendingAccessSections());
         }
         finally { saving = false; }
     }
+
+    // A successful access save records one change per alias it changed, so there is no one section
+    // for an attempt that did not land: its one record is filed under the module's main grant and
+    // lists the aliases whose working list differs from the one the page loaded (aud-a28h).
+    private string[] PendingAccessSections() =>
+        policyAliases
+            .Where(a => GroupDelta(
+                accessState.GetValueOrDefault(a) ?? new List<string>(),
+                accessBaseline.GetValueOrDefault(a) ?? new List<string>()) > 0)
+            .ToArray();
 
     private async Task SaveModuleAdminsAsync()
     {
@@ -1311,6 +1356,8 @@
         statusMessage = null;
         await Task.Yield();
 
+        var section = $"ModuleAdmins:{module.Id}";
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -1319,6 +1366,7 @@
             {
                 statusMessage = "Only global admins can assign module admins.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage);
                 return;
             }
 
@@ -1331,6 +1379,7 @@
             {
                 statusMessage = refused;
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "GroupGrantCheck", statusMessage);
                 return;
             }
 
@@ -1339,8 +1388,7 @@
 
             try
             {
-                var ip = ClientInfo.GetIpForUser(currentUser);
-                Audit.LogSettingsChange(currentUser, ip, $"ModuleAdmins:{module.Id}", previous, snapshot);
+                Audit.LogSettingsChange(currentUser, ip, section, previous, snapshot);
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module admin change"); }
 
@@ -1356,6 +1404,7 @@
         {
             statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally { saving = false; }
     }
@@ -1596,19 +1645,34 @@
     private string? allowlistError;
     private bool allowlistSaved;
     private bool allowlistCorrupt;
+    private string? allowlistImportRefusal;
+
+    // What the save is checked against (aud-a28i): the version of the rows this page loaded. A save
+    // made after anyone else saved the allowlist - another admin, or either instance on the shared
+    // database - is refused rather than allowed to replace their change, and the admin reloads. The
+    // page's own successful save replaces it with the version that save left, so saving twice from
+    // one page is not a conflict.
+    private string allowlistVersion = "";
 
     private void LoadAllowlist()
     {
-        var list = AttrEditorService.GetAllowlist();
+        // Fresh, not the cached GetAllowlist, and one read for both the rows and their version.
+        var loaded = AttrEditorService.LoadAllowlistForEditing();
+        allowlistVersion = loaded.Version;
+        var list = loaded.Attributes;
         if (list == null)
         {
             allowlistCorrupt = true;
-            allowlistError = "Allowlist config is corrupt. Fix or delete config/ad-editable-attributes.json.";
+            allowlistImportRefusal = AttrEditorService.LegacyAllowlistImportRefusal;
+            allowlistError = allowlistImportRefusal is not null
+                ? "The allowlist was not loaded: the legacy file config/ad-editable-attributes.json was not imported (the reason is above). Correct the file, then reload this page."
+                : "The allowlist was not loaded: the editable_attribute table in the config database cannot be read or fails validation. Correct it as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
             allowlistAttributes = new();
             return;
         }
 
         allowlistCorrupt = false;
+        allowlistImportRefusal = null;
 
         allowlistAttributes = list.Select(a => new AllowlistRow
         {
@@ -1692,20 +1756,29 @@
                 return;
             }
 
-            var valid = allowlistAttributes
-                .Where(a => !string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(a.Label))
+            // Every row, as it is in the table: a row with a blank name or label used to be filtered
+            // out here and vanish without a word. The save refuses it by its position (aud-a26f).
+            var rows = allowlistAttributes
                 .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level))
                 .ToList();
 
-            var result = AttrEditorService.SaveAllowlistAndAudit(valid, currentUser, ip);
+            var result = AttrEditorService.SaveAllowlistAndAudit(rows, allowlistVersion, currentUser, ip);
             if (!result.Success)
             {
                 if (result.StoreCorrupt)
+                {
+                    // The banner names the store at fault; refreshed here because the store can have
+                    // turned corrupt after the page loaded.
                     allowlistCorrupt = true;
+                    allowlistImportRefusal = AttrEditorService.LegacyAllowlistImportRefusal;
+                }
                 allowlistError = result.Error;
                 return;
             }
 
+            // The version the save left is what this page now shows; without it the page's next save
+            // would be refused as someone else's change (aud-a28i).
+            allowlistVersion = result.Version ?? "";
             dirty.ClearSection(SecAttrs);
             allowlistSaved = true;
         }

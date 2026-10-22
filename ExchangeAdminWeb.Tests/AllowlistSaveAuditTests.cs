@@ -27,11 +27,21 @@ public sealed class AllowlistSaveAuditTests : IDisposable
 
     public void Dispose() => _h.Dispose();
 
-    /// <summary>The allowlist as the page loads it and would send it back untouched.</summary>
-    private List<EditableAttribute> Loaded() => _h.Service.GetAllowlist()!.ToList();
+    /// <summary>The version the last <see cref="Loaded"/> read, as the page keeps it (aud-a28i).</summary>
+    private string? _loadedVersion;
 
+    /// <summary>The allowlist as the page loads it and would send it back untouched.</summary>
+    private List<EditableAttribute> Loaded()
+    {
+        var view = _h.Service.LoadAllowlistForEditing();
+        _loadedVersion = view.Version;
+        return view.Attributes!.ToList();
+    }
+
+    /// <summary>A save from a page that loaded the store as it is now, unless <see cref="Loaded"/> said otherwise.</summary>
     private AllowlistSaveResult Save(List<EditableAttribute> attributes) =>
-        _h.Service.SaveAllowlistAndAudit(attributes, Admin, Ip);
+        _h.Service.SaveAllowlistAndAudit(
+            attributes, _loadedVersion ?? _h.Service.LoadAllowlistForEditing().Version, Admin, Ip);
 
     /// <summary>The stored rows, name-ordered, to show a refused save left them alone.</summary>
     private List<ExchangeAdminWeb.Services.Storage.AttributeRow> StoredRows()
@@ -192,6 +202,65 @@ public sealed class AllowlistSaveAuditTests : IDisposable
         AssertRefusal(Assert.Single(_h.AuditEvents()), "AllowlistConfig", result.Error);
     }
 
+    // ---- aud-a26f: blank and repeated rows are refused, not dropped -----------------------------
+
+    [Theory]
+    [InlineData("", "Employee ID")]
+    [InlineData("employeeID", "")]
+    [InlineData("  ", "  ")]
+    public void ARowWithABlankNameOrLabel_IsRefused_NamingTheRow_AndNothingIsWritten(string name, string label)
+    {
+        var before = StoredRows();
+        var edited = Loaded()
+            .Append(new EditableAttribute(name, label, "String", null, false, true, null, null))
+            .ToList();
+
+        var result = Save(edited);
+
+        Assert.False(result.Success);
+        Assert.False(result.StoreCorrupt);
+        // Which row: the admin is told where, not left to find it.
+        Assert.Contains($"row {edited.Count}", result.Error, StringComparison.Ordinal);
+        Assert.Equal(before, StoredRows());
+        AssertRefusal(Assert.Single(_h.AuditEvents()), "BlankRow", result.Error);
+    }
+
+    [Fact]
+    public void AnLdapNameOnTwoRows_IsRefused_NamingTheName_AndNothingIsWritten()
+    {
+        // The store keeps one row per name, ignoring case, so the second row used to be merged into
+        // the first without a word.
+        var before = StoredRows();
+        var edited = Loaded()
+            .Append(new EditableAttribute("Title", "Another Title", "String", null, false, true, null, null))
+            .ToList();
+        var first = edited.FindIndex(a => a.Name == "title") + 1;
+
+        var result = Save(edited);
+
+        Assert.False(result.Success);
+        Assert.Contains("'title'", result.Error, StringComparison.Ordinal);
+        Assert.Contains($"rows {first}, {edited.Count}", result.Error, StringComparison.Ordinal);
+        Assert.Equal(before, StoredRows());
+        AssertRefusal(Assert.Single(_h.AuditEvents()), "DuplicateName", result.Error);
+    }
+
+    [Fact]
+    public void TheCorruptStoreRefusal_NamesTheConfigDatabaseAndItsFix_NotTheLegacyFile()
+    {
+        // This finding is about the text: the allowlist has lived in the config database since the
+        // legacy import, so the file the refusal used to name is one nothing reads.
+        _h.CorruptAllowlist();
+
+        var result = Save([new EditableAttribute("title", "Job Title", "String", null, false, true, null, null)]);
+
+        Assert.True(result.StoreCorrupt);
+        Assert.Contains("editable_attribute", result.Error, StringComparison.Ordinal);
+        Assert.Contains("docs/ConfigDbOperations.md", result.Error, StringComparison.Ordinal);
+        Assert.Contains("both application pools stopped", result.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("ad-editable-attributes.json", result.Error, StringComparison.Ordinal);
+    }
+
     // ---- The exception path is recorded as a failure, not a refusal ----------------------------
 
     [Fact]
@@ -279,6 +348,18 @@ public sealed class AllowlistSaveAuditTests : IDisposable
         var audited = code.IndexOf("AttrEditorService.LogAllowlistSaveRefused(", check, StringComparison.Ordinal);
         Assert.True(audited > check && audited < refusalReturn,
             "SaveAllowlistAsync's authorisation refusal returns without writing its refusal record");
+    }
+
+    [Fact]
+    public void ThePageSave_HandsEveryRowToTheService_DroppingNone()
+    {
+        // aud-a26f: the page used to filter out a row with a blank name or label before the service
+        // saw it, so it vanished from the allowlist without a word. Every row goes to the service,
+        // which refuses a blank one by its position.
+        var code = PageSaveCode();
+
+        Assert.DoesNotContain("IsNullOrWhiteSpace", code, StringComparison.Ordinal);
+        Assert.DoesNotContain(".Where(", code, StringComparison.Ordinal);
     }
 
     [Fact]

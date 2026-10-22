@@ -189,13 +189,26 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     [Fact]
     public async Task AnAttributeAboveTheCallersLevel_IsRefused()
     {
-        // extensionAttribute5 is level 2; the caller holds level 1. The page filters too, but the
-        // service is the one that must not trust it.
+        // extensionAttribute5 is level 2; the caller holds level 1. The service is the one that
+        // must not trust any caller to have filtered (aud-a28g moved the page's own check here).
         var alex = _h.Ad.AddAlex();
 
         var result = await Save(alex, new() { ["extensionAttribute5"] = "CC-42" }, maxLevel: 1);
 
-        AssertRefusedBeforeTheDirectory(result, "Attribute 'extensionAttribute5' is not in the allowlist.", "Validation");
+        AssertRefusedBeforeTheDirectory(result,
+            "Access denied: you do not have permission to edit extensionAttribute5.", "LevelCheck");
+    }
+
+    [Fact]
+    public async Task AnAttributeTheAllowlistDoesNotHold_IsAValidationRefusal_WhateverTheLevel()
+    {
+        // The control for the level refusal above: a name the allowlist does not hold at all is
+        // not a level question, and is refused as what it is.
+        var alex = _h.Ad.AddAlex();
+
+        var result = await Save(alex, new() { ["employeeNumber"] = "42" }, maxLevel: 3);
+
+        AssertRefusedBeforeTheDirectory(result, "Attribute 'employeeNumber' is not in the allowlist.", "Validation");
     }
 
     [Fact]

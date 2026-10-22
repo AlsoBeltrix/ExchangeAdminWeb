@@ -70,6 +70,86 @@ public sealed class AttributeEditorRepository
         });
     }
 
+    /// <summary>The allowlist rows and its presence marker, read together (aud-a28i).</summary>
+    public AllowlistSnapshot ReadAllowlistSnapshot()
+    {
+        try
+        {
+            return _store.Read(connection => ReadSnapshot(connection, null));
+        }
+        catch
+        {
+            return AllowlistSnapshot.Unreadable;
+        }
+    }
+
+    /// <summary>
+    /// Reads the allowlist and replaces it in ONE write transaction (aud-a28i): <paramref name="decide"/>
+    /// is shown the rows as they are under the write lock and returns the rows to store, or null to
+    /// store nothing - in which case the transaction is rolled back and nothing, not even the change
+    /// token, is written.
+    /// </summary>
+    /// <remarks>
+    /// The save used to read in one transaction and replace in another (<see cref="SaveAllowlist"/>),
+    /// and dev and prod share this database: a save by the other instance, or another admin, could
+    /// commit in between and be wiped by a whole-table replace decided from rows that were no longer
+    /// there. <c>SqliteConfigStore.Write</c> opens BEGIN IMMEDIATE, so the read here already
+    /// holds the write lock the replace needs, and no other writer commits between them (the shape of
+    /// aud-a33b's ConvertToSids). The rows are read back before the commit so the caller knows exactly
+    /// what it left.
+    /// </remarks>
+    public AllowlistReplaceOutcome ReplaceAllowlist(Func<AllowlistSnapshot, IReadOnlyList<AttributeRow>?> decide)
+    {
+        ArgumentNullException.ThrowIfNull(decide);
+        try
+        {
+            return _store.Write((connection, transaction) =>
+            {
+                var before = ReadSnapshot(connection, transaction);
+                var replacement = decide(before) ?? throw new NothingWritten(before);
+
+                using (var delete = connection.CreateCommand())
+                {
+                    delete.Transaction = transaction;
+                    delete.CommandText = "DELETE FROM editable_attribute;";
+                    delete.ExecuteNonQuery();
+                }
+
+                InsertAllowlist(connection, transaction, replacement);
+                MarkAllowlistPresent(connection, transaction);
+                return new AllowlistReplaceOutcome(true, before, ReadSnapshot(connection, transaction));
+            });
+        }
+        catch (NothingWritten nothing)
+        {
+            return new AllowlistReplaceOutcome(false, nothing.Before, null);
+        }
+    }
+
+    // A read that throws - a damaged or missing table - is a snapshot that says it could not be read,
+    // which the service treats as a corrupt store and refuses on; inside a write it must not escape
+    // as an exception the caller would record as a failed write.
+    private static AllowlistSnapshot ReadSnapshot(SqliteConnection connection, SqliteTransaction? transaction)
+    {
+        try
+        {
+            return new AllowlistSnapshot(
+                true, ReadAllowlistRows(connection, transaction), ReadAllowlistConfigured(connection, transaction));
+        }
+        catch
+        {
+            return AllowlistSnapshot.Unreadable;
+        }
+    }
+
+    // Thrown out of the write when decide stores nothing, because IConfigStore.Write commits - and bumps
+    // the change token every cache on both instances watches - whenever its callback returns. An
+    // exception is its documented rollback. Caught in ReplaceAllowlist; it never leaves this class.
+    private sealed class NothingWritten(AllowlistSnapshot before) : Exception
+    {
+        public AllowlistSnapshot Before { get; } = before;
+    }
+
     /// <summary>
     /// One-time import of the allowlist only if not yet configured (marker absent). Marks present
     /// even for an empty list. Returns true if it imported (i.e. was not already configured).
@@ -176,9 +256,13 @@ public sealed class AttributeEditorRepository
         });
     }
 
-    private static List<AttributeRow> ReadAllowlistRows(SqliteConnection connection)
+    private static List<AttributeRow> ReadAllowlistRows(SqliteConnection connection) =>
+        ReadAllowlistRows(connection, null);
+
+    private static List<AttributeRow> ReadAllowlistRows(SqliteConnection connection, SqliteTransaction? transaction)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText =
             "SELECT name, label, type, choices_json, required, allow_clear, max_length, pattern, level FROM editable_attribute;";
         var rows = new List<AttributeRow>();
@@ -199,9 +283,13 @@ public sealed class AttributeEditorRepository
         return rows;
     }
 
-    private static bool ReadAllowlistConfigured(SqliteConnection connection)
+    private static bool ReadAllowlistConfigured(SqliteConnection connection) =>
+        ReadAllowlistConfigured(connection, null);
+
+    private static bool ReadAllowlistConfigured(SqliteConnection connection, SqliteTransaction? transaction)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT 1 FROM editable_attribute_present LIMIT 1;";
         return command.ExecuteScalar() is not null;
     }
@@ -256,3 +344,16 @@ public sealed record AttributeRow(
 
 /// <summary>Raw legend row as stored.</summary>
 public sealed record AttributeLegendRow(string Description, string? Note, string? Source);
+
+/// <summary>The allowlist as one read found it: its rows and its presence marker (aud-a28i).</summary>
+/// <param name="Readable">False when the read failed; the rows are then empty and mean nothing.</param>
+public sealed record AllowlistSnapshot(bool Readable, IReadOnlyList<AttributeRow> Rows, bool Configured)
+{
+    public static AllowlistSnapshot Unreadable { get; } = new(false, [], false);
+}
+
+/// <summary>What <see cref="AttributeEditorRepository.ReplaceAllowlist"/> did (aud-a28i).</summary>
+/// <param name="Replaced">The table was replaced; false when the decision stored nothing.</param>
+/// <param name="Before">The allowlist as the write found it, under its lock.</param>
+/// <param name="After">The allowlist as the write left it, read back in the same transaction; null when nothing was stored.</param>
+public sealed record AllowlistReplaceOutcome(bool Replaced, AllowlistSnapshot Before, AllowlistSnapshot? After);
