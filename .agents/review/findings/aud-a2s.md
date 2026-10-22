@@ -5,9 +5,9 @@ outer-catch class on the two room-list paths: `PreflightRoomListAsync`'s catch a
 `AddToRoomListViaAdAsync`'s catch name only the import step; the add's catch logs
 "Set-ADGroup ... failed" and reports a write failure when the runspace, credential, catalog
 resolution, re-read, membership read or read-back failed instead.
-**Status**: Fixed on branch, not merged; guard proof below; independent review pending
+**Status**: Merged to master (`3ff4a6d4`); closed on guard proof; codex review pending (batched with aud-a23g)
 **Branch**: `worktree-agent-a0b892d21bfcfd31b`
-**Commit**: the fix commit after plan `1e52277d` (fix, tests, comments, record)
+**Commit**: `cf9ae39e` (fix, tests, comments, record); plan `1e52277d`; merged `3ff4a6d4`
 **Reviewer**: implementer (surfaced by the aud-a2r agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence
