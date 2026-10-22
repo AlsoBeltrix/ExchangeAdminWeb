@@ -217,9 +217,10 @@ function Assert-ConfigStorePathValue {
     The app's ConfigStore:Path rule for one value: 'Local', 'NetworkShare' or 'NotAbsolute'.
 .DESCRIPTION
     The one copy of the rule in the ops scripts (cdt-37). Assert-ConfigStorePathValue applies it to
-    every value the scripts READ, after Get-ConfigStorePathSetting's trim; the installer applies it to
-    the -ConfigStorePath it is about to WRITE, so it writes only what the scripts read back and the
-    app opens. Pure: no trim, no file system access, no throw. A caller refuses anything but 'Local'.
+    every value the scripts READ, after Get-ConfigStorePathSetting's trim; the two writers apply it to
+    the path each is about to WRITE - the installer's -ConfigStorePath (cdt-37) and the cutover's
+    -SharedDbPath (cdt-38) - so they write only what the scripts read back and the app opens. Pure:
+    no trim, no file system access, no throw. A caller refuses anything but 'Local'.
 #>
 function Get-ConfigStorePathForm {
     [CmdletBinding()]
@@ -235,9 +236,9 @@ function Get-ConfigStorePathForm {
     # UNC or device path); then only an ASCII letter (the app's char.IsAsciiLetter), a colon, then \
     # or / - matched case-SENSITIVELY, because a case-insensitive match folds the Kelvin sign (U+212A)
     # onto k - so \??\UNC\..., which names a share, fails with every other form; and the accepted
-    # value turned into one spelling, / into \ (Get-ConfigStorePathSetting's Replace, the installer's
-    # GetFullPath). Of the two writers, the installer's -ConfigStorePath check is this function
-    # (cdt-37); the cutover's -SharedDbPath check accepts only X:\, which this reads back.
+    # value turned into one spelling, / into \ (Get-ConfigStorePathSetting's Replace, the writers'
+    # GetFullPath). Both writers' checks are this function: the installer's -ConfigStorePath (cdt-37)
+    # and the cutover's -SharedDbPath (cdt-38).
     # [IO.Path]::IsPathFullyQualified does not exist on .NET Framework (Windows PowerShell 5.1), hence
     # the explicit tests.
     if ($Value -match '^[\\/][\\/]') { return 'NetworkShare' }

@@ -114,17 +114,24 @@ function Test-IsAdministrator {
 }
 
 function Assert-LocalAbsolutePath {
+    # cdt-38: no copy of the rule here. This kept the old writers' own - a drive letter, a colon
+    # and a BACKSLASH, matched case-insensitively - after cdt-37 moved the installer off it, so it
+    # refused D:/... (which the app opens and the read side reads back), called \/server/share "not
+    # absolute" rather than a share, and passed a Kelvin-sign drive letter the app refuses. The rule
+    # is SqliteConfigBackup's Get-ConfigStorePathForm (imported above), the scripts' one copy of the
+    # app's ConfigStorePath.Resolve: any two leading separators are a network share, and only an
+    # ASCII letter, a colon, then \ or / is an absolute local path - so "D:file.db", which names a
+    # drive but resolves against that drive's current directory, is refused too (review finding
+    # scdi-2). Anything but Local is refused.
     param([string]$Path, [string]$Name)
 
     if ([string]::IsNullOrWhiteSpace($Path)) { Write-Fail "$Name is required." }
-    if ($Path.StartsWith('\\') -or $Path.StartsWith('//')) {
+    $form = Get-ConfigStorePathForm -Value $Path
+    if ($form -eq 'NetworkShare') {
         Write-Fail "$Name must be a local path, not a network share: $Path. SQLite locking is not reliable over a share and both instances run on this server."
     }
-    # Fully qualified, not merely rooted: "D:file.db" is rooted (it names a drive) but
-    # drive-relative, resolving against that drive's current directory (review finding scdi-2).
-    # [IO.Path]::IsPathFullyQualified does not exist on .NET Framework (Windows PowerShell 5.1).
-    if ($Path -notmatch '^[A-Za-z]:\\') {
-        Write-Fail "$Name must be an absolute local path (drive letter, colon, backslash - for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db): $Path"
+    if ($form -ne 'Local') {
+        Write-Fail "$Name must be an absolute local path (a drive letter, a colon, then \ or / - for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db): $Path"
     }
 }
 
@@ -598,6 +605,11 @@ function Assert-SharedDbUsable {
 # --- Preconditions (read-only) --------------------------------------------------------------
 
 Assert-LocalAbsolutePath -Path $SharedDbPath -Name 'SharedDbPath'
+# cdt-38: one spelling from here on, the installer's idiom. A Local value is fully qualified, so
+# GetFullPath consults no current directory, and it turns / into \ under .NET Framework and .NET
+# alike: the banner, the comparisons below, the VACUUM INTO, both ConfigStore:Path writes and the
+# restore commands all carry the spelling the read side returns.
+$SharedDbPath = [System.IO.Path]::GetFullPath($SharedDbPath)
 foreach ($p in @(@{ N = 'DevPublishPath'; V = $DevPublishPath }, @{ N = 'ProdPublishPath'; V = $ProdPublishPath })) {
     if (-not (Test-Path -LiteralPath $p.V -PathType Container)) { Write-Fail "$($p.N) does not exist or is not a directory: $($p.V)" }
 }

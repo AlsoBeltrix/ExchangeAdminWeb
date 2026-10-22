@@ -295,8 +295,8 @@ Describe 'SqliteConfigBackup module' {
                     if ($moduleAccepts) {
                         $moduleValue | Should -BeExactly $app -Because "the module must name the file the app opens for '$value', spelled the same way"
                     }
-                    # The writers' own drive test is case-insensitive too, but neither can write the
-                    # Kelvin-sign value: no such drive exists, so it is never a key on disk.
+                    # Neither writer writes the Kelvin-sign value - both refuse it through the module's
+                    # rule (cdt-37, cdt-38) - and no such drive exists, so it is never a key on disk.
                     if ($value -ne $kelvin) {
                         foreach ($name in $validators.Keys) {
                             $scriptAccepts = $true

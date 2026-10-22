@@ -1223,3 +1223,133 @@ Describe 'aud-a38g: the cutover refuses unless each named pool is the one servin
         }
     }
 }
+
+Describe 'cdt-38: the -SharedDbPath check is the module''s rule, and the path is written in one spelling' {
+
+    # The cutover kept its own copy of the old writers' rule - a drive letter, a colon and a
+    # BACKSLASH, matched case-insensitively - after cdt-37 moved the installer onto the module's
+    # Get-ConfigStorePathForm. It refused D:/... (which the app opens and the read side reads
+    # back), called \/server/share "not absolute" rather than a share, and passed a Kelvin-sign
+    # drive letter the app refuses.
+
+    BeforeAll {
+        $tokens = $null
+        $parseErrors = $null
+        $script:FormAst = [System.Management.Automation.Language.Parser]::ParseFile($script:ScriptPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+        $script:FormCheck = $script:FormAst.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-LocalAbsolutePath'
+            }, $true)
+        Import-Module (Join-Path $PSScriptRoot '..' '..' 'tools' 'SqliteConfigBackup.psm1') -Force
+        # Built at run time so this file stays ASCII.
+        $script:Kelvin = [string][char]0x212A
+    }
+
+    It 'accepts a <Form> -SharedDbPath, and plans and reports the backslash spelling' -TestCases @(
+        @{ Form = 'forward-slash' }
+        @{ Form = 'mixed-separator' }
+        @{ Form = 'lower-case-drive forward-slash' }
+    ) {
+        $fake = New-FakeInstances -WithProdDb
+        try {
+            $split = $fake.Shared.LastIndexOf('\Shared\')
+            $given = switch ($Form) {
+                'forward-slash' { $fake.Shared.Replace('\', '/') }
+                'mixed-separator' { $fake.Shared.Substring(0, $split) + $fake.Shared.Substring($split).Replace('\', '/') }
+                'lower-case-drive forward-slash' { $fake.Shared.Substring(0, 1).ToLowerInvariant() + $fake.Shared.Substring(1).Replace('\', '/') }
+            }
+            $expected = $given.Replace('/', '\')
+            $given | Should -Not -Be $expected
+
+            $out = Invoke-Cutover $fake @{ SharedDbPath = $given; PlanOnly = $true; MinimumAppVersion = '1.0' }
+
+            $out | Should -Match 'Plan only - nothing was changed' -Because 'the app opens this path and the read side reads it back'
+            $out.Contains("Shared DB : $expected") | Should -BeTrue -Because 'the banner reports the one spelling'
+            ([regex]::Matches($out, [regex]::Escape("PLAN Set ConfigStore:Path = $expected in "))).Count | Should -Be 2 -Because 'both appsettings.json files get the one spelling'
+            $out.Contains($given) | Should -BeFalse -Because 'the given spelling is normalised before anything uses it'
+            Test-Path -LiteralPath $fake.Shared | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses <Value> as a network share, before anything' -TestCases @(
+        @{ Value = '\\server\share\exchangeadmin.db' }
+        @{ Value = '//server/share/exchangeadmin.db' }
+        @{ Value = '\/server/share/exchangeadmin.db' }
+        @{ Value = '/\server\share\exchangeadmin.db' }
+    ) {
+        $fake = New-FakeInstances
+        try {
+            { & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $Value -BackupRoot (Join-Path $fake.Root 'backups') -PlanOnly -MinimumAppVersion '1.0' *>&1 | Out-Null } |
+                Should -Throw -ExpectedMessage "SharedDbPath must be a local path, not a network share: $Value. *"
+            Test-Path -LiteralPath (Join-Path $fake.Root 'backups') | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses a <Form> -SharedDbPath as not an absolute local path, naming it, before anything' -TestCases @(
+        @{ Form = 'relative'; Value = 'shared\exchangeadmin.db' }
+        @{ Form = 'drive-relative'; Value = 'D:exchangeadmin.db' }
+        @{ Form = 'driveless rooted'; Value = '\shared\exchangeadmin.db' }
+        @{ Form = 'driveless rooted forward-slash'; Value = '/shared/exchangeadmin.db' }
+        @{ Form = 'NT-namespace UNC'; Value = '\??\UNC\server\share\exchangeadmin.db' }
+        @{ Form = 'Kelvin-sign drive (U+212A)'; Value = '<kelvin>:\shared\exchangeadmin.db' }
+    ) {
+        $actual = $Value.Replace('<kelvin>', $script:Kelvin)
+        $fake = New-FakeInstances
+        try {
+            { & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $actual -BackupRoot (Join-Path $fake.Root 'backups') -PlanOnly -MinimumAppVersion '1.0' *>&1 | Out-Null } |
+                Should -Throw -ExpectedMessage "SharedDbPath must be an absolute local path (a drive letter, a colon, then \ or / - *): $actual"
+            Test-Path -LiteralPath (Join-Path $fake.Root 'backups') | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'makes the module''s call on every value: it accepts exactly what Get-ConfigStorePathForm calls Local' {
+        $check = [scriptblock]::Create("function Write-Fail { param(`$Message) throw `$Message }`n" + $script:FormCheck.Extent.Text + "`nAssert-LocalAbsolutePath -Path `$args[0] -Name SharedDbPath")
+        $values = @(
+            'D:\shared\x.db', 'D:/shared/x.db', 'D:\shared/x.db', 'd:/x.db', 'z:\a', 'config\x.db', 'D:x.db', 'D:', '\x.db', '/x.db',
+            '\\server\share\x.db', '//server/share/x.db', '\/server/share/x.db', '/\server\share\x.db', '\\?\D:\x.db', '\\.\D:\x.db',
+            '\??\UNC\server\share\x.db', '1:\x.db', 'DD:\x.db', ':\x.db', ' D:\x.db', ($script:Kelvin + ':\x.db'))
+        foreach ($value in $values) {
+            $accepted = $true
+            try { & $check $value } catch { $accepted = $false }
+            $accepted | Should -Be ((Get-ConfigStorePathForm -Value $value) -eq 'Local') -Because "the cutover must make the module's call on '$value'"
+        }
+    }
+
+    It 'holds no rule of its own, asks the module after importing it, and normalises the path next (AST)' {
+        $calls = @($script:FormCheck.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Get-ConfigStorePathForm'
+                }, $true))
+        $calls.Count | Should -Be 1
+        $calls[0].Extent.Text | Should -BeExactly 'Get-ConfigStorePathForm -Value $Path'
+
+        $patternOperators = 'Imatch', 'Inotmatch', 'Cmatch', 'Cnotmatch', 'Ilike', 'Inotlike', 'Clike', 'Cnotlike'
+        @($script:FormCheck.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.BinaryExpressionAst] -and $patternOperators -contains "$($node.Operator)"
+                }, $true)).Count | Should -Be 0 -Because 'no -match or -like of its own'
+        @($script:FormCheck.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                    @('StartsWith', 'EndsWith', 'IsPathRooted', 'IsPathFullyQualified', 'GetPathRoot') -contains "$($node.Member.Value)"
+                }, $true)).Count | Should -Be 0 -Because 'no string or path test of its own'
+
+        $top = @($script:FormAst.EndBlock.Statements)
+        $importAt = -1
+        $checkAt = -1
+        for ($i = 0; $i -lt $top.Count; $i++) {
+            if ($top[$i].Extent.Text -eq 'Import-Module (Join-Path $PSScriptRoot ''SqliteConfigBackup.psm1'') -Force') { $importAt = $i }
+            if ($top[$i].Extent.Text -eq 'Assert-LocalAbsolutePath -Path $SharedDbPath -Name ''SharedDbPath''') { $checkAt = $i }
+        }
+        $importAt | Should -BeGreaterOrEqual 0
+        $checkAt | Should -BeGreaterThan $importAt -Because 'the module is imported before the one call'
+        $top[$checkAt + 1].Extent.Text | Should -BeExactly '$SharedDbPath = [System.IO.Path]::GetFullPath($SharedDbPath)' -Because 'the accepted value is normalised before anything uses it'
+    }
+}
