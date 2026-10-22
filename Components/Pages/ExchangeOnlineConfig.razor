@@ -39,7 +39,7 @@
 
     @if (!string.IsNullOrEmpty(statusMessage))
     {
-        <div class="alert @(statusIsError ? "alert-danger" : "alert-success") alert-dismissible fade show">
+        <div class="alert @(statusIsError ? "alert-danger" : statusIsWarning ? "alert-warning" : "alert-success") alert-dismissible fade show">
             @statusMessage
             <button type="button" class="btn-close" @onclick="() => statusMessage = null"></button>
         </div>
@@ -48,20 +48,20 @@
     @if (configCorrupt)
     {
         <div class="alert alert-danger">
-            <strong>Configuration file is corrupt.</strong> The module-config.json file cannot be parsed. Fix or delete the file to restore EXO configuration. Values shown below are NOT active — the runtime will refuse EXO connections until the config file is repaired.
+            <strong>Connection settings are corrupt.</strong> Values shown below are NOT active - the runtime refuses Exchange Online connections until the settings can be read - and saving is disabled. @SettingsStoreText.ModuleConfig(ExoConnectionPool.ConfigModuleKey)
         </div>
     }
     else if (!exoConfigLoaded)
     {
         <div class="alert alert-danger">
-            <strong>Connection settings could not be read.</strong> The ExchangeOnline rows of the module_config table in the config database could not be read, so the fields below are blank rather than the stored values, and saving them is disabled. Reload this page; if this persists, correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped.
+            <strong>Connection settings could not be read.</strong> The fields below are blank rather than the stored values, and saving them is disabled. Reload this page; if this persists: @SettingsStoreText.ModuleConfig(ExoConnectionPool.ConfigModuleKey)
         </div>
     }
 
     @if (enablementStoreCorrupt)
     {
         <div class="alert alert-danger">
-            <strong>Module enablement cannot be read.</strong> The module_enablement table in the config database could not be read, so the status shown is the all-disabled fallback, not the stored state, and saving it is disabled. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.
+            <strong>Module enablement cannot be read.</strong> The status shown is the all-disabled fallback, not the stored state, and saving it is disabled. @SettingsStoreText.Enablement(Enablement.LegacyImportFailed)
         </div>
     }
 
@@ -153,6 +153,7 @@
     private bool saving;
     private string? statusMessage;
     private bool statusIsError;
+    private bool statusIsWarning;
 
     private bool moduleEnabled;
     private bool moduleEnabledBaseline;
@@ -219,6 +220,7 @@
     {
         saving = true;
         statusMessage = null;
+        statusIsWarning = false;
         await Task.Yield();
 
         // aud-a28h. Both saves on this page record each refusal and their catch under the section
@@ -240,7 +242,7 @@
             if (Enablement.IsStoreCorrupt())
             {
                 enablementStoreCorrupt = true;
-                statusMessage = "Refusing to save: the module enablement store (the module_enablement table in the config database) is corrupt or cannot be read, and saving would overwrite it with the all-disabled fallback. Nothing was changed. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
+                statusMessage = EnablementRefusal();
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
@@ -265,7 +267,7 @@
                 if (outcome.StoreCorrupt)
                 {
                     enablementStoreCorrupt = true;
-                    statusMessage = "Refusing to save: the module enablement store (the module_enablement table in the config database) is corrupt or cannot be read, and saving would overwrite it with the all-disabled fallback. Nothing was changed. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
+                    statusMessage = EnablementRefusal();
                     statusIsError = true;
                     Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                     return;
@@ -302,6 +304,7 @@
     {
         saving = true;
         statusMessage = null;
+        statusIsWarning = false;
 
         // Opened HERE, above the try, so the validation refusals inside it are covered too, and
         // completed in the finally so the bar does not read Idle while the pool teardown is
@@ -412,7 +415,8 @@
             {
                 configCorrupt = true;
                 exoConfigLoaded = false;
-                statusMessage = "Refusing to save: the Exchange Online connection settings (the ExchangeOnline rows of the module_config table in the config database) cannot be read, and saving would overwrite them. Nothing was changed. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
+                statusMessage = "Refusing to save: the Exchange Online connection settings cannot be read, and saving would overwrite them. Nothing was changed. "
+                    + SettingsStoreText.ModuleConfig(ExoConnectionPool.ConfigModuleKey);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
@@ -425,19 +429,36 @@
                 [ExoConnectionPool.ConfigCertSubjectKey] = trimmedCert,
             });
 
-            ExoPool.DrainPool();
-
             try
             {
                 Audit.LogSettingsChange(currentUser, ip, section, ConnectionEntries(update.Before), ConnectionEntries(update.After));
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for EXO config change"); }
 
-            statusMessage = allEmpty
+            var saved = allEmpty
                 ? "Exchange Online configuration cleared. EXO features are disabled until reconfigured."
-                : "Exchange Online configuration saved. Existing pooled connections have been drained; new connections will use the updated config.";
+                : "Exchange Online configuration saved.";
+            statusMessage = saved;
             statusIsError = false;
             completed = (true, statusMessage);
+
+            try
+            {
+                ExoPool.DrainPool();
+                if (!allEmpty)
+                {
+                    statusMessage = "Exchange Online configuration saved. Existing pooled connections have been drained; new connections will use the updated config.";
+                    completed = (true, statusMessage);
+                }
+            }
+            catch (Exception drainEx)
+            {
+                Logger.LogWarning(drainEx, "The Exchange Online connection settings were saved; draining the connection pool failed");
+                statusMessage = $"{saved} The Exchange Online connection pool could not be drained: {drainEx.Message.TrimEnd('.')}. Connections opened before the save may still use the previous settings - recycle the application pool to close them.";
+                statusIsWarning = true;
+                completed = (false, statusMessage);
+                Audit.LogSettingsSaveFailed(Logger, currentUser, ip, PoolSection, statusMessage);
+            }
         }
         catch (Exception ex)
         {
@@ -452,6 +473,12 @@
             activity.Complete(completed?.success ?? false, completed?.message);
         }
     }
+
+    private const string PoolSection = "ExchangeOnlineConfig:ConnectionPool";
+
+    private string EnablementRefusal() =>
+        "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
+        + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
 
     /// <summary>The three connection values as <c>AppId=</c>, <c>Org=</c> and <c>Cert=</c> entries, an empty one left out.</summary>
     private static string[] ConnectionEntries(IReadOnlyDictionary<string, string> values) =>

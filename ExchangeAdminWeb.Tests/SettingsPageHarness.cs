@@ -46,9 +46,14 @@ internal sealed class SettingsPageHarness : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "eaw-settings-" + Guid.NewGuid().ToString("N"));
     private readonly HandlerRenderer _renderer = new();
 
-    public SettingsPageHarness()
+    /// <param name="beforeServices">
+    /// Run with the content root before any service is built - where a test puts a legacy config file
+    /// the services' imports read as they are constructed (aud-a26h).
+    /// </param>
+    public SettingsPageHarness(Action<string>? beforeServices = null)
     {
         Directory.CreateDirectory(_root);
+        beforeServices?.Invoke(_root);
 
         // Unique per harness: ClientInfoService keeps its ip cache in a static, shared across tests.
         AdminName = "EXAMPLE\\settings-" + Guid.NewGuid().ToString("N")[..8];

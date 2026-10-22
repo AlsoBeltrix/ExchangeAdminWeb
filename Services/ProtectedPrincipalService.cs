@@ -216,6 +216,9 @@ public class ProtectedPrincipalService
         }
     }
 
+    /// <summary>True when a legacy protected-principals.json was not imported and keeps the store fail-closed (aud-a26h).</summary>
+    public bool LegacyImportFailed => _legacyFileCorrupt;
+
     public void InvalidateCache()
     {
         lock (_cacheLock)

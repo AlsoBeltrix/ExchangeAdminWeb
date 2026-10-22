@@ -70,10 +70,9 @@
             {
                 <div class="alert alert-danger mb-0">
                     <strong>Module enablement store is corrupt.</strong>
-                    config\modules-enabled.json exists but cannot be read, so the real enablement
-                    state cannot be shown and saving is disabled — saving now would overwrite the
-                    stored state with the all-disabled fallback. Fix or restore the file (deploy
-                    backups: ConfigBackups\config.&lt;timestamp&gt;.bak), then reload this page.
+                    The real enablement state cannot be shown and saving is disabled - saving now would
+                    overwrite the stored state with the all-disabled fallback.
+                    @SettingsStoreText.Enablement(Enablement.LegacyImportFailed)
                 </div>
             }
             else
@@ -601,7 +600,7 @@
             if (Enablement.IsStoreCorrupt())
             {
                 enablementStoreCorrupt = true;
-                statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
+                statusMessage = EnablementRefusal();
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreCorrupt", statusMessage, PendingEnablementSections());
                 return;
@@ -619,7 +618,7 @@
             if (outcome.StoreCorrupt)
             {
                 enablementStoreCorrupt = true;
-                statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
+                statusMessage = EnablementRefusal();
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreCorrupt", statusMessage, PendingEnablementSections());
                 return;
@@ -669,6 +668,10 @@
     // section for an attempt that did not land: its one record is filed under the save as a whole and
     // lists the module sections it was changing (aud-a28h).
     private const string EnablementSection = "ModuleEnablement";
+
+    private string EnablementRefusal() =>
+        "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
+        + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
 
     /// <summary>The <c>Module:{id}</c> section of each toggle that differs from what the page loaded.</summary>
     private string[] PendingEnablementSections() =>
@@ -724,7 +727,14 @@
     private void LoadProtectedPrincipals()
     {
         var (cfg, _, error) = ProtectedPrincipalService.LoadEffectiveConfig();
-        if (error != null) { ppLoadError = error; ppLoaded = false; return; }
+        if (error != null)
+        {
+            ppLoadError = "The protection rules could not be read, so the lists below are empty and saving is disabled. "
+                + SettingsStoreText.ProtectedPrincipals(
+                    ProtectedPrincipalService.LegacyImportFailed, ModuleConfigSvc.IsModuleCorrupt("MailboxPermissions"));
+            ppLoaded = false;
+            return;
+        }
         if (cfg != null)
         {
             ppUsers = cfg.Users.ToList();
@@ -1027,7 +1037,7 @@
 
             if (!ppLoaded)
             {
-                statusMessage = "Refusing to save: the protected principals could not be read when this page loaded, so the lists shown are not the stored rules and saving would replace every rule with them. Nothing was changed. Reload the page once the problem shown above is fixed.";
+                statusMessage = "Refusing to save: the protected principals could not be read when this page loaded, so the lists shown are not the stored rules and saving would replace every rule with them. Nothing was changed. Reload the page once the problem shown on this tab is fixed.";
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
                 return;
@@ -1037,7 +1047,8 @@
             var secretChanged = SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline) > 0;
             if (secretChanged && ModuleConfigSvc.IsModuleCorrupt(ProtectedPrincipalService.ProtectedPrincipalsModuleKey))
             {
-                statusMessage = "Refusing to save: the directory-read credential's setting (the ProtectedPrincipals rows of the module_config table in the config database) cannot be read. Nothing was changed. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
+                statusMessage = "Refusing to save: the directory-read credential's setting cannot be read. Nothing was changed. "
+                    + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
@@ -1055,7 +1066,8 @@
             var outcome = ProtectedPrincipalService.ReplaceConfig(newConfig, pageLoadedRules: LoadedRuleCount() > 0);
             if (outcome.Status == ProtectedPrincipalSaveStatus.StoreCorrupt)
             {
-                statusMessage = "Refusing to save: the protection rules in the config database (the protected_principal table) could not be read when this save went to replace them. Nothing was changed. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
+                statusMessage = "Refusing to save: the protection rules could not be read when this save went to replace them. Nothing was changed. "
+                    + SettingsStoreText.ProtectedPrincipals(ProtectedPrincipalService.LegacyImportFailed, exclusionsUnreadable: false);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;

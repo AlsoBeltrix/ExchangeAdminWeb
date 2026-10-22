@@ -180,6 +180,9 @@ public class SectionAccessService
         return !_repository.TryRead(out _, out _);
     }
 
+    /// <summary>True when a legacy sectionaccess.json was not imported and keeps the store fail-closed (aud-a26h).</summary>
+    public bool LegacyImportFailed => _legacyFileCorrupt;
+
     private enum SectionAccessSource { None, Fragment, AppSettings }
 
     private (Dictionary<string, string[]> data, SectionAccessSource source) ReadSectionAccess()

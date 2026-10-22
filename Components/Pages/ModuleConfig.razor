@@ -108,7 +108,7 @@
                 @if (enablementStoreCorrupt)
                 {
                     <div class="alert alert-danger py-2 mb-2">
-                        <small><strong>Module enablement store is corrupt</strong> — config\modules-enabled.json cannot be read, so the state shown below is the fallback, not the stored state. Saving is disabled until the file is fixed or restored.</small>
+                        <small><strong>Module enablement store is corrupt.</strong> The state shown below is the fallback, not the stored state, and saving is disabled. @SettingsStoreText.Enablement(Enablement.LegacyImportFailed)</small>
                     </div>
                 }
                 <div class="form-check form-switch mb-2">
@@ -148,10 +148,9 @@
                 {
                     <div class="alert alert-danger mb-0">
                         <strong>Section access store is corrupt.</strong>
-                        config\sectionaccess.json exists but cannot be read, so the group lists cannot
-                        be shown and saving is disabled — saving now would replace the whole fragment,
-                        wiping every module's groups. Fix or restore the file (deploy backups:
-                        ConfigBackups\config.&lt;timestamp&gt;.bak), then reload this page.
+                        The group lists cannot be shown and saving is disabled - saving now would replace
+                        groups this page cannot see.
+                        @SettingsStoreText.SectionAccess(SectionAccess.LegacyImportFailed)
                     </div>
                 }
                 else
@@ -159,7 +158,7 @@
                 @if (sectionAccessUnconfigured)
                 {
                     <div class="alert alert-info py-2 mb-2">
-                        <small>Section access has never been configured on this server (no config\sectionaccess.json and no legacy appsettings block). Saving here creates the fragment and starts enforcing these lists for all fail-closed modules.</small>
+                        <small>Section access has never been configured on this server (none is stored in the config database, and appsettings.json holds no legacy Security:SectionAccess block). Saving here stores it and starts enforcing these lists for all fail-closed modules.</small>
                     </div>
                 }
 
@@ -350,10 +349,9 @@
                 {
                     <div class="alert alert-danger mb-0">
                         <strong>Module configuration is corrupt.</strong>
-                        config\module-config-@(module.Id).json exists but cannot be read, so the stored
-                        values cannot be shown and saving is disabled — saving now would overwrite them
-                        with the blank fields below. Fix or restore the file (deploy backups:
-                        ConfigBackups\config.&lt;timestamp&gt;.bak), then reload this page.
+                        The stored values cannot be shown and saving is disabled - saving now would
+                        overwrite them with blank fields.
+                        @SettingsStoreText.ModuleConfig(module.Id)
                     </div>
                 }
                 else
@@ -623,7 +621,7 @@
                 @if (moduleAdminsUnreadable)
                 {
                     <div class="alert alert-danger py-2 mb-2">
-                        <small><strong>Module admin groups cannot be read.</strong> The module_admins table in the config database could not be read, so the list below is not the stored groups and saving is disabled. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.</small>
+                        <small><strong>Module admin groups cannot be read.</strong> The list below is not the stored groups, and saving is disabled. @SettingsStoreText.ModuleAdmins()</small>
                     </div>
                 }
 
@@ -1151,7 +1149,8 @@
             if (ModuleConfigSvc.IsModuleCorrupt(module.Id))
             {
                 moduleConfigCorrupt = true;
-                statusMessage = "Refusing to save: this module's config file is corrupt and saving would overwrite it with the rendered fallback values. Fix or restore config\\module-config-" + module.Id + ".json first.";
+                statusMessage = "Refusing to save: saving would overwrite this module's stored configuration with the rendered fallback values. Nothing was changed. "
+                    + SettingsStoreText.ModuleConfig(module.Id);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
@@ -1222,7 +1221,8 @@
             if (Enablement.IsStoreCorrupt())
             {
                 enablementStoreCorrupt = true;
-                statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
+                statusMessage = "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
+                    + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
@@ -1242,7 +1242,8 @@
             if (outcome.StoreCorrupt)
             {
                 enablementStoreCorrupt = true;
-                statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
+                statusMessage = "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
+                    + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
@@ -1310,7 +1311,8 @@
             if (SectionAccess.IsFragmentCorrupt())
             {
                 sectionAccessCorrupt = true;
-                statusMessage = "Refusing to save: config\\sectionaccess.json is corrupt and saving would replace it, wiping every module's groups. Fix or restore the file first.";
+                statusMessage = "Refusing to save: saving would replace section-access groups this page cannot see. Nothing was changed. "
+                    + SettingsStoreText.SectionAccess(SectionAccess.LegacyImportFailed);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, PendingAccessSections());
                 return;
@@ -1351,7 +1353,8 @@
             if (outcome.Status == SectionAccessSaveStatus.StoreCorrupt)
             {
                 sectionAccessCorrupt = true;
-                statusMessage = "Refusing to save: config\\sectionaccess.json is corrupt and saving would replace it, wiping every module's groups. Fix or restore the file first.";
+                statusMessage = "Refusing to save: saving would replace section-access groups this page cannot see. Nothing was changed. "
+                    + SettingsStoreText.SectionAccess(SectionAccess.LegacyImportFailed);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, PendingAccessSections());
                 return;
@@ -1459,7 +1462,8 @@
             if (!ModuleAdmin.TryGetAllGrants(out var stored))
             {
                 moduleAdminsUnreadable = true;
-                statusMessage = "Refusing to save: the module admin groups cannot be read (the module_admins table in the config database), so saving would replace groups this page cannot see. Nothing was changed. Correct the table as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
+                statusMessage = "Refusing to save: saving would replace module admin groups this page cannot see. Nothing was changed. "
+                    + SettingsStoreText.ModuleAdmins();
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
