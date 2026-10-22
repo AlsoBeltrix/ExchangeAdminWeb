@@ -8,9 +8,9 @@ before the re-render can start two undos. (3) `ADAttributeEditorUndoService.Exec
 `BeginOperation` before the try and outside its catch; not known to throw, but if it did there would
 be no record. (4) An unconfirmed attribute save's record (aud-a26j) has no pre-write value and its
 trace step lists no changes, so a reviewer cannot see what the editor tried to set.
-**Status**: Plan written; in progress
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
 **Branch**: `worktree-agent-a6af37cca287ebc2c`
-**Commit**: -
+**Commit**: `6d4bd8c7` (comments `97592e99`; plan `4684d84d`)
 **Reviewer**: implementer (surfaced by the aud-a28m/a26j agent, 2026-10-22, candidates 1 to 4 of its hand-back)
 
 ## Evidence
@@ -164,3 +164,35 @@ browser and no live circuit was run. No coder self-review verdict is claimed.
 - ExecuteUndo and ShowUndoPreview are driven through the compiled page by reflection on a do-nothing renderer, not
   through a rendered circuit (aud-a28m's harness).
 - The trace seam is a virtual method on the undo service; production begins exactly the operation it began before.
+
+## Comments after the round
+
+Written after all three rounds, in their own commit (`97592e99`) with aud-a26l's and aud-a26m's; the same check (only
+comment and blank lines changed in `git diff -U0`). This record's files: `Components/Pages/AdminEventLog.razor`
+`24B3D9EB7303E3E70007015FC5131785` -> `33B6FC7ABDA35AC6F64C80752B36968C` (why each handler refuses while an undo runs;
+1,564 lines -> 1,571, still NotYetConverted, no key to move); `Services/ADAttributeEditorUndoService.cs`
+`D28863B61DF5580BBE92C1FA7313D288` -> `3FFC152A18B26FEE1E9C23A4D8B142BD` (why the operation begins inside the try, the
+seam's remarks); `Services/ADAttributeEditorService.cs` `8A8C96CCDDD10ECCF34A658693AC8582` ->
+`050D3F534AD1A4CBA9183F880805B977` (why an unconfirmed save records attempted_<name> and not a pair, why a nested
+object). The tests and the harness are unchanged (MD5s as in the guard proof).
+
+## Branch-tip gates - 2026-10-22 (`97592e99`: the three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count - none
+  in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,453 passed / 3 skipped (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`)
+  / 0 failed, 5,456 total, 5m12s; nothing hung, no Sequence file. Baseline at `4684d84d` (the code as at `afa9dbf6`):
+  5,427 / 3 / 0, 5,430 total; the twenty-six new cases are this branch's (aud-a26l seventeen, aud-a26m four,
+  aud-a28o five).
+- `ClickGate*` 316/316 and `ProgressRegistryTests` 35/35, also run alone (Release).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a6af37cca287ebc2c`, not merged, not pushed. Two module-scoped behaviour changes: the
+Admin Event Log (its two re-entry guards) and the AD Attribute Editor (an undo whose trace cannot begin is a recorded
+failure; an unconfirmed save's record names what it tried): both module versions are due. No shared code changed, so
+no base app bump. The version bumps are the supervisor's, at merge: `Modules/ModuleCatalog.cs` and
+`ExchangeAdminWeb.csproj` were outside this brief.

@@ -8,9 +8,9 @@ without leading zeros, some strings with the directory's own trimming. For those
 legitimate save now ends as a failed `ADAttributeEditor_Update` naming the value read and the value
 written, offers no Undo, and announces a failure to administrators, although the write landed. Loud,
 never a false success, but it blocks real edits until fixed.
-**Status**: Plan written; in progress - blocks the deploy of the attribute editor until landed
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review; dev acceptance owed - blocks the deploy of the attribute editor until landed
 **Branch**: `worktree-agent-a6af37cca287ebc2c`
-**Commit**: -
+**Commit**: `7b7acc41` (comments `97592e99`; plan `4684d84d`)
 **Reviewer**: implementer (surfaced by the aud-a28m/a26j agent, 2026-10-22, candidate 5 of its hand-back, recorded by it as a known gap)
 
 ## Evidence
@@ -213,6 +213,40 @@ claimed.
 - The lookup and the preview stay unrouted; only the save's re-read, write and read-back carry `-Server`.
 - Dev acceptance owed: edit a manager and a Boolean attribute on a test user; each save is recorded as a success
   with the directory's form.
+
+## Comments after the round
+
+Written after all three rounds, in their own commit (`97592e99`) with aud-a26m's and aud-a28o's. Checked by
+`check-comment-diff.ps1` (session scratchpad) over `git diff -U0` before that commit: every added or removed line of
+the three files is a comment or blank (115 lines), so each file's code lines are unchanged and in order. This record's
+file, `Services/ADAttributeEditorService.cs`: `A501418D27F3C0C5B7F8023E7DCFDAE5` at this record's commit,
+`8A8C96CCDDD10ECCF34A658693AC8582` after aud-a28o's code (the attempted values), `050D3F534AD1A4CBA9183F880805B977`
+after the comments - why one server for the chain and the DC-affinity assumption, why the read-back is judged in the
+attribute's syntax and what each rule assumes, why the allowlist arrives as Types, why the record takes the value
+read, the DN comparison's limits. Two comments this fix had made false are corrected: the read-back's, which said it
+carried no -Server because the write carried none, and UnconfirmedWrites', which said the comparison was ordinal. The
+harness and the tests carry their comments from their own commits.
+
+## Branch-tip gates - 2026-10-22 (`97592e99`: the three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count - none
+  in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,453 passed / 3 skipped (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`)
+  / 0 failed, 5,456 total, 5m12s; nothing hung, no Sequence file. Baseline at `4684d84d` (the code as at `afa9dbf6`):
+  5,427 / 3 / 0, 5,430 total; the twenty-six new cases are this branch's (aud-a26l seventeen, aud-a26m four,
+  aud-a28o five).
+- `ClickGate*` 316/316 and `ProgressRegistryTests` 35/35, also run alone (Release).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a6af37cca287ebc2c`, not merged, not pushed. A module-scoped behaviour change to the AD
+Attribute Editor (a read-back in the directory's own form confirms a save; the chain routed to the object's domain;
+the messages name the server): its module version is due. No shared code changed (`GroupManagementService.ServerFromDn`
+is called, not edited), so no base app bump. The version bumps are the supervisor's, at merge: `Modules/ModuleCatalog.cs`
+and `ExchangeAdminWeb.csproj` were outside this brief.
 
 ## Folded in: the read-back can be answered by a different, stale DC (codex, attr-batch-7, 2026-10-22) - LOW
 

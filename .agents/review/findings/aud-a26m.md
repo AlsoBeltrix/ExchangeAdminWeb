@@ -7,9 +7,9 @@ and `ADAttributeEditorUndoService.CanUndo` (around line 59) requires at least on
 setting a previously empty attribute - leaves a successful `ADAttributeEditor_Update` row with
 `changedAttributes` but no Undo button, although the preview/execute code already treats a missing
 side as null.
-**Status**: Plan written; in progress
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
 **Branch**: `worktree-agent-a6af37cca287ebc2c`
-**Commit**: -
+**Commit**: `d0edf1ea` (comments `97592e99`; plan `4684d84d`)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-7, `prompt-attr-batch-7.md`, 2026-10-22)
 
 ## Evidence
@@ -118,3 +118,32 @@ claimed.
   says the side was absent from the record rather than recorded empty - the writer never records an empty value.
 - A record written by hand with a side held as an empty string counts as a side, as the JSONL writer would have
   kept it.
+
+## Comments after the round
+
+Written after all three rounds, in their own commit (`97592e99`) with aud-a26l's and aud-a28o's; the same check (only
+comment and blank lines changed in `git diff -U0`). This record's file, `Services/ADAttributeEditorUndoService.cs`:
+`617C3F3F5A6B0DDA35EBC75824CCD56E` at this record's commit, `D28863B61DF5580BBE92C1FA7313D288` after aud-a28o's code
+(the trace begun inside the try), `3FFC152A18B26FEE1E9C23A4D8B142BD` after the comments - why each changed attribute
+needs one recorded side and not both, and why a key held null is no side. The tests carry their comments from this
+record's commit.
+
+## Branch-tip gates - 2026-10-22 (`97592e99`: the three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count - none
+  in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,453 passed / 3 skipped (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`)
+  / 0 failed, 5,456 total, 5m12s; nothing hung, no Sequence file. Baseline at `4684d84d` (the code as at `afa9dbf6`):
+  5,427 / 3 / 0, 5,430 total; the twenty-six new cases are this branch's (aud-a26l seventeen, aud-a26m four,
+  aud-a28o five).
+- `ClickGate*` 316/316 and `ProgressRegistryTests` 35/35, also run alone (Release).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a6af37cca287ebc2c`, not merged, not pushed. A module-scoped behaviour change to the AD
+Attribute Editor (one-sided edits offer their Undo): its module version is due. No shared code changed, so no base app
+bump. The version bumps are the supervisor's, at merge: `Modules/ModuleCatalog.cs` and `ExchangeAdminWeb.csproj` were
+outside this brief.
