@@ -85,9 +85,13 @@ jobs:
           }
           # Retried: a truncated Gallery download ("End of Central Directory record could not be
           # found") failed this step once with nothing wrong in the repo.
+          # Pinned and imported by version, like the analyzer (cdt-40): 6.2.0 is the dev host's
+          # Pester, so a new release cannot change CI's runner with nothing in the repo changing,
+          # and the import, not the install, decides which copy runs. To bump it, update the dev
+          # host, this step and the CI gates Pester test.
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             try {
-              Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.5 -SkipPublisherCheck -ErrorAction Stop
+              Install-Module Pester -Force -Scope CurrentUser -RequiredVersion 6.2.0 -SkipPublisherCheck -ErrorAction Stop
               break
             } catch {
               if ($attempt -eq 3) { throw }
@@ -95,6 +99,7 @@ jobs:
               Start-Sleep -Seconds (10 * $attempt)
             }
           }
+          Import-Module Pester -RequiredVersion 6.2.0 -ErrorAction Stop
           $result = Invoke-Pester tests/ps -CI -PassThru
 
           # No suite skips by design any more. A skip that creeps back would hide exactly the
