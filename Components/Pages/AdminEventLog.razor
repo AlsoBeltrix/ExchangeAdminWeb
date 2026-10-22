@@ -913,7 +913,7 @@
         // reachable by keyboard, and a preview opened mid-run replaced the panel the undo was confirmed on,
         // which then showed the first undo's outcome under another event. A guard, not a ClickGate
         // conversion: the page is NotYetConverted.
-        if (undoExecuting)
+        if (undoExecuting || undoLoading)
             return;
 
         undoTargetEvent = evt;
@@ -939,12 +939,15 @@
             // The same principal the execute call passes, so preview and execute agree about a
             // protected target this operator may service (pps-2).
             var previewAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
-            undoPreview = await handler.PreviewUndoAsync(evt.RawFields, previewAuthState.User);
+            var preview = await handler.PreviewUndoAsync(evt.RawFields, previewAuthState.User);
+            if (ReferenceEquals(undoTargetEvent, evt))
+                undoPreview = preview;
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to load undo preview for operation {OperationId}", evt.OperationId);
-            undoPreview = new UndoPreview(false, $"Failed to load undo preview: {ex.Message}", "", "", "", null, null, false, null);
+            if (ReferenceEquals(undoTargetEvent, evt))
+                undoPreview = new UndoPreview(false, $"Failed to load undo preview: {ex.Message}", "", "", "", null, null, false, null);
         }
         finally
         {

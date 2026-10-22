@@ -76,8 +76,27 @@ public sealed class EventLogUndoRefusalTests : IDisposable
     /// <summary>The page with the undo panel open on <paramref name="edit"/> and a ticket typed.</summary>
     private Page PageConfirming(Dictionary<string, object?> edit, UndoRegistry? registry = null)
     {
+        var page = Unattached(registry ?? new UndoRegistry([_h.CreateUndoService()]));
+        SetField(page, "undoTargetEvent", Entry(edit));
+        SetField(page, "undoPreview", PreviewOf(edit));
+        SetField(page, "undoTicket", Ticket);
+
+        _renderer.Dispatcher.InvokeAsync(() => _renderer.Attach(page)).GetAwaiter().GetResult();
+        return page;
+    }
+
+    /// <summary>The page with no undo panel open, its undo handlers <paramref name="registry"/>'s (aud-a26o).</summary>
+    private Page PageWithoutAPanel(UndoRegistry registry)
+    {
+        var page = Unattached(registry);
+        _renderer.Dispatcher.InvokeAsync(() => _renderer.Attach(page)).GetAwaiter().GetResult();
+        return page;
+    }
+
+    private Page Unattached(UndoRegistry registry)
+    {
         var page = new QuietEventLog();
-        SetProperty(page, "UndoRegistry", registry ?? new UndoRegistry([_h.CreateUndoService()]));
+        SetProperty(page, "UndoRegistry", registry);
         SetProperty(page, "Audit", _h.Audit);
         var authState = Substitute.For<AuthenticationStateProvider>();
         authState.GetAuthenticationStateAsync().Returns(new AuthenticationState(AttributeEditorHarness.Operator()));
@@ -86,16 +105,13 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         SetProperty(page, "ClientInfo", new ClientInfoService { IpAddress = Ip });
         SetProperty(page, "Progress", _progress);
         SetProperty(page, "Logger", NullLogger<Page>.Instance);
-
-        SetField(page, "undoTargetEvent", Entry(edit));
-        SetField(page, "undoPreview", new UndoPreview(
-            true, null, "ADAttributeEditor", "ADAttributeEditor_Update", (string)edit["target"]!,
-            (string)edit["operationId"]!, [], false, null));
-        SetField(page, "undoTicket", Ticket);
-
-        _renderer.Dispatcher.InvokeAsync(() => _renderer.Attach(page)).GetAwaiter().GetResult();
         return page;
     }
+
+    /// <summary>The undo preview a module would answer for <paramref name="edit"/>.</summary>
+    private static UndoPreview PreviewOf(Dictionary<string, object?> edit) =>
+        new(true, null, "ADAttributeEditor", "ADAttributeEditor_Update", (string)edit["target"]!,
+            (string)edit["operationId"]!, [], false, null);
 
     /// <summary>The page's log row for <paramref name="edit"/>, as LoadEvents builds it.</summary>
     private static object Entry(Dictionary<string, object?> edit)
@@ -420,6 +436,97 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         Assert.Contains(StoreUnreadable, shown, StringComparison.Ordinal);
         AssertEventLogRecord(Assert.Single(_h.AuditEvents()), shown!, alex);
         Assert.False(Field<bool>(page, "undoExecuting"));
+    }
+
+    // ---- aud-a26o: the panel's preview is its own event's -----------------------------------------------------
+
+    [Fact]
+    public async Task APreviewRequestedWhileAnotherLoads_IsRefused_AndTheFirstIsShownForItsOwnEvent()
+    {
+        // Two previews back to back used to both run: the later click set the target, and whichever answer came
+        // last filled the panel - one event's preview beside another event as the target that Confirm undoes.
+        var handler = new HeldPreviews();
+        var page = PageWithoutAPanel(new UndoRegistry([handler]));
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var first = AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst");
+        var second = AttributeEditorHarness.ForwardEdit(alex, "department", from: "Finance", to: "Audit");
+        second["operationId"] = "op-forward-2";
+        var firstEntry = Entry(first);
+
+        var loading = ShowUndoPreview(page, firstEntry);
+        Assert.False(loading.IsCompleted);
+        Assert.Single(handler.Requests);
+        var refused = ShowUndoPreview(page, Entry(second));
+        var settled = await Task.WhenAny(refused, Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        var refusedAtOnce = ReferenceEquals(settled, refused);
+
+        // Answered either way, so a second preview that did start cannot hang the test.
+        foreach (var (requested, answer) in handler.Requests)
+            answer.TrySetResult(PreviewOf(requested));
+        await Task.WhenAll(loading, refused);
+
+        Assert.True(refusedAtOnce, "the second preview started while the first was loading");
+        Assert.Single(handler.Requests);
+        Assert.Same(firstEntry, Field<object?>(page, "undoTargetEvent"));
+        Assert.Equal("op-forward-1", Field<UndoPreview?>(page, "undoPreview")!.OriginalOperationId);
+        Assert.False(Field<bool>(page, "undoLoading"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task APreviewThatFinishesAfterItsPanelWasClosed_IsDropped(bool previewFails)
+    {
+        // Closed while it loaded, the panel used to reopen with the answer - a preview, or the error preview a
+        // failure builds - beside no event at all.
+        var handler = new HeldPreviews();
+        var page = PageWithoutAPanel(new UndoRegistry([handler]));
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+
+        var loading = ShowUndoPreview(page, Entry(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst")));
+        var (requested, answer) = Assert.Single(handler.Requests);
+        await CloseUndoPanel(page);
+        if (previewFails)
+            answer.SetException(new InvalidOperationException(StoreUnreadable));
+        else
+            answer.SetResult(PreviewOf(requested));
+
+        Assert.Null(await Record.ExceptionAsync(() => loading));
+        Assert.Null(Field<object?>(page, "undoTargetEvent"));
+        Assert.Null(Field<UndoPreview?>(page, "undoPreview"));
+        Assert.False(Field<bool>(page, "undoLoading"));
+    }
+
+    /// <summary>An undo handler whose every preview waits for the test to answer it.</summary>
+    private sealed class HeldPreviews : IUndoableModule
+    {
+        private readonly List<(Dictionary<string, object?> Event, TaskCompletionSource<UndoPreview> Answer)> _requests = [];
+
+        public IReadOnlyList<(Dictionary<string, object?> Event, TaskCompletionSource<UndoPreview> Answer)> Requests
+        {
+            get { lock (_requests) return _requests.ToList(); }
+        }
+
+        public string ModuleId => "ADAttributeEditor";
+
+        public bool CanUndo(Dictionary<string, object?> auditEvent) => true;
+
+        public Task<UndoPreview> PreviewUndoAsync(Dictionary<string, object?> auditEvent, ClaimsPrincipal? actingUser)
+        {
+            var answer = new TaskCompletionSource<UndoPreview>(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_requests)
+                _requests.Add((auditEvent, answer));
+            return answer.Task;
+        }
+
+        public Task<UndoResult> ExecuteUndoAsync(
+            Dictionary<string, object?> auditEvent, string performedBy, string ip, string ticket, ClaimsPrincipal? actingUser) =>
+            throw new InvalidOperationException("no undo runs in these tests");
+
+        public void LogUndoRefused(
+            Dictionary<string, object?> auditEvent, string performedBy, string ip, string ticket, string refusedAt, string reason)
+        {
+        }
     }
 
     private sealed class QuietEventLog : Page

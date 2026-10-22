@@ -13,7 +13,7 @@ harness and may ask a different DC than the save (aud-a26l routed the save chain
 pre-write re-read uses `.Value?.ToString()`, so a collection-valued attribute reads as its type name
 while the read-back takes its element; v1 excludes multi-valued attributes but the allowlist does not
 enforce that.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan below)
+**Status**: Fixed on branch; not merged, not pushed; awaiting review
 **Branch**: `worktree-agent-aa41f72251493711c`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a26l/a26m/a28o agent, 2026-10-22, candidates 1, 2, 3, 5 and 6 of its hand-back)
@@ -115,6 +115,103 @@ Files: `Components/Pages/AdminEventLog.razor`, `Services/ADAttributeEditorServic
 `Services/ADAttributeEditorUndoService.cs`, `ExchangeAdminWeb.Tests/EventLogUndoRefusalTests.cs`,
 `ExchangeAdminWeb.Tests/ADAttributeEditorSaveTests.cs`, this record.
 
+## Fix
+
+- `Components/Pages/AdminEventLog.razor` ShowUndoPreview: `if (undoExecuting || undoLoading) return;` first; the
+  handler's answer is assigned only `if (ReferenceEquals(undoTargetEvent, evt))`, and the catch's error preview the
+  same. NotYetConverted in ClickGateRegistry, no line-keyed entry, so nothing re-anchors (1,571 lines before, 1,574
+  after); the guard returns before `Progress.Begin` and the pinned `handler.PreviewUndoAsync` stays in its window.
+- `Services/ADAttributeEditorService.cs`:
+  - ComputeChanges takes `IReadOnlyDictionary<string, object?>` - the values as read - and keeps a proposed value as
+    a change only when `ReadsAsWritten(SyntaxOf(attr.Type, attr.Name, read), proposed, current, read)` is false.
+  - PerformSave's pre-write re-read: `SeveralValuedRefusal` first - a failed `ADAttributeEditor_Update` with its
+    message, returned as a failed save, when an attribute the save would write holds several values - then
+    `ComputeChanges(proposedValues, CurrentValues(reReadUser, allowlist), allowlist)`.
+  - PreviewAsync takes its credentials through `GetCredentialsAsync("attribute preview")`. ReReadCurrentValues opens
+    its session through `CreateDirectoryRunspace()`, sends `-Server` from `GroupManagementService.ServerFromDn(
+    target.DistinguishedName)` (a warning when the DN names no domain, as the save logs), and returns the values as
+    read, or the several-valued refusal; ComputePreview returns that refusal as the preview's error.
+  - New private statics beside ReadDirectoryValue: `DirectoryValues` (an attribute's values, read; ReadDirectoryValue
+    is now built on it, its answers unchanged), `CurrentValues` and `SeveralValuedRefusal`. All take the allowlist as
+    rows and are private, outside the aud-a28l writer tripwire.
+- `Services/ADAttributeEditorUndoService.cs` GetString: a JsonElement of kind Null or Undefined is null.
+
+Tests: `EventLogUndoRefusalTests` +3 - `APreviewRequestedWhileAnotherLoads_IsRefused_AndTheFirstIsShownForItsOwnEvent`,
+`APreviewThatFinishesAfterItsPanelWasClosed_IsDropped` (its answer a preview, or a failure); a `HeldPreviews` stand-in
+handler whose previews wait for the test, and the page's set-up shared by `PageConfirming` and the new
+`PageWithoutAPanel`. `ADAttributeEditorSaveTests` +8 - `AnEditThatDiffersOnlyInForm_IsNoChange_AndNothingIsWritten`
+(a Boolean "FALSE" against False, the manager DN in another case and spacing, the title with spaces round it; the
+preview finds the same), `ThePreview_ReReadsThroughTheSessionSeam_FromTheObjectsOwnDomain`,
+`ThePreviewOfADnThatNamesNoDomain_GoesToTheDefaultDomainController_AndSaysSo`,
+`AnAttributeHoldingSeveralValues_IsRefusedByName_AndNothingIsWritten` (the save and the preview),
+`AnAttributeReadAsAOneElementCollection_IsItsElement_BeforeTheWriteAsAfterIt`,
+`ARecordedSideThatIsAJsonNull_ReadsAsNotSet_SoTheUndoClearsTheAttribute`.
+
+Caller-visible change, by design: the event log refuses a second Undo preview while one loads, and drops an answer
+for an entry that is no longer the panel's (a closed panel stays closed). An attribute edit that differs from the
+directory's value only in form - a Boolean's case, a DN's case and spacing, a string's surrounding spaces - is no
+change: nothing is written and the save is recorded as nothing needing changing, as an identical value is. A
+recorded side that is a JSON null reads as not set, so an undo clears the attribute instead of writing "null". The
+editor's preview (PreviewAsync, which no page calls yet) re-reads through the save's session and server. A save or
+preview of an attribute that holds several values is refused, naming it; one read as a one-element collection is its
+element before the write as after it.
+
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: each mutation puts one part back as at `89096ac9`, at its call site - M5 and E9
+the two assignments without their target check, E4 the guard without `undoLoading`, M6 the ordinal comparison, E5
+and E6 the preview's re-read unrouted and its credentials unseamed, E7 and E8 the pre-write re-read without the
+refusal and by ToString. M7's mutant is byte-identical to `ADAttributeEditorUndoService.cs` at `89096ac9` (MD5
+`3FFC152A18B26FEE1E9C23A4D8B142BD`, the file at aud-a28o's comments commit), so its failure is the record's own
+reproduction of part 3.
+
+Same driver and conditions as aud-a28q (`round-a26o.ps1`, log `a26o-mutations.log`), the filter
+`FullyQualifiedName~EventLogUndoRefusalTests|FullyQualifiedName~ADAttributeEditorSaveTests|FullyQualifiedName~ADAttributeEditorUndoRefusalTests|FullyQualifiedName~ADAttributeEditorLookupTests|FullyQualifiedName~ReversedOperationsTests|FullyQualifiedName~UndoNotificationTests|FullyQualifiedName~UndoIdentityTests|FullyQualifiedName~AttributeEditorPageSaveAuditTests|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~ClickGate|FullyQualifiedName~DirectoryModuleImportTests`
+(486 tests). Every mutant built with 0 errors; each restore matched its original MD5. After the round, a rebuild on
+the restored bytes and the filter: 486/486 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M5 a stale preview applied again (`undoPreview = preview;` without its target check) | `AdminEventLog.razor`, `5B35C3695508B525655EED7105BAF603` | `8D1DEBE5156C2A93309D39147411982E` | 1 of 486: `APreviewThatFinishesAfterItsPanelWasClosed_IsDropped(previewFails: False)` - the panel reopens with the answer, beside no event |
+| M6 ComputeChanges ordinal again (`!string.Equals(oldValue, newValue, Ordinal)`) | `ADAttributeEditorService.cs`, `F91DC378E5BB16F3AD8BF2E2DA4D07A6` | `6182D4D69421ADCCCFB7A2F5517BBCCE` | 3 of 486: `AnEditThatDiffersOnlyInForm_IsNoChange_AndNothingIsWritten`, all three forms - each written |
+| M7 GetString returning "null" again (the file as at `89096ac9`) | `ADAttributeEditorUndoService.cs`, `5CB73E0C79682EA89BED4D7DBF1273AC` | `3FFC152A18B26FEE1E9C23A4D8B142BD` | 1 of 486: `ARecordedSideThatIsAJsonNull_ReadsAsNotSet_SoTheUndoClearsTheAttribute` - the preview's revert-to is "null" and the undo writes it |
+| extra E4 the loading guard dropped (`if (undoExecuting)`) | `AdminEventLog.razor`, `5B35C3695508B525655EED7105BAF603` | `2CE42A8377A53AA7CD04971B344C5D14` | 1 of 486: `APreviewRequestedWhileAnotherLoads_IsRefused_AndTheFirstIsShownForItsOwnEvent` - the second preview starts and takes the target |
+| extra E5 `-Server` dropped from the preview's re-read | `ADAttributeEditorService.cs`, `F91DC378E5BB16F3AD8BF2E2DA4D07A6` | `0BBE1E83415308F6F1BB7EFE57A9C263` | 1 of 486: `ThePreview_ReReadsThroughTheSessionSeam_FromTheObjectsOwnDomain` - read unrouted |
+| extra E6 PreviewAsync's credentials from `_moduleCredentials` again | `ADAttributeEditorService.cs`, `F91DC378E5BB16F3AD8BF2E2DA4D07A6` | `2ED697B40B86CA9D493204E04607F506` | 6 of 486: every test that previews - the two preview tests, the three form-only cases and the several-valued one - "AD credentials unavailable." (the harness configures no secret, so this mutant stops before any session) |
+| extra E7 the save's several-valued refusal dropped (`string? severalValued = null;`) | `ADAttributeEditorService.cs`, `F91DC378E5BB16F3AD8BF2E2DA4D07A6` | `E973F2B3DBF2F9209373E24C367F2EEA` | 1 of 486: `AnAttributeHoldingSeveralValues_IsRefusedByName_AndNothingIsWritten` - one value written over two |
+| extra E8 the values read by ToString again (in CurrentValues) | `ADAttributeEditorService.cs`, `F91DC378E5BB16F3AD8BF2E2DA4D07A6` | `8DF00F8C1B0725D0F7096C2A2E069ED6` | 2 of 486: `AnAttributeReadAsAOneElementCollection_IsItsElement_BeforeTheWriteAsAfterIt` (the type name never equals the value, so an unchanged value is written) and the Boolean form-only case (read as text, a Boolean's syntax is lost) |
+| extra E9 a stale preview failure applied again (the catch's target check dropped) | `AdminEventLog.razor`, `5B35C3695508B525655EED7105BAF603` | `4BB607AF7907FBCBB18A45FA97E1616F` | 1 of 486: `APreviewThatFinishesAfterItsPanelWasClosed_IsDropped(previewFails: True)` |
+
+Not run, by design: the preview's runspace back to its own - a real session importing the real module, a directory
+probe the owner forbids.
+
+Unchanged through the round: `EventLogUndoRefusalTests.cs` `974A9C133750006EC7EFC3DB8DD591BD`,
+`ADAttributeEditorSaveTests.cs` `9A4D0115060052E7E7EBC3742D54E271`. The code comments are written after the round, in
+their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count - none
+  in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0, 5,604 passed / 3 skipped
+  (the three known AD skips) / 0 failed, 5,607 total, 5m19s; nothing hung, no Sequence file. psl-7's tree: 5,593 / 3 /
+  0, 5,596 total; the eleven new cases are this record's.
+- `ClickGate*` 316/316 and `ProgressRegistryTests` 35/35, each also run alone (Release).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No PowerShell source, real module, directory, Delinea, SMTP, push or deployment. The page was not rendered in a
+browser and no live circuit was run: ShowUndoPreview is driven through the compiled page by reflection on a
+do-nothing renderer (aud-a28m's harness). No coder self-review verdict is claimed.
+
+## Known gaps
+
+- *Assumption, not probed*: the module answers a multi-valued attribute holding several values as a collection, and
+  one holding a single value as that value or a one-element collection. A byte array, being a collection, reads as
+  several values and is refused with a count of its bytes - a misleading message for a binary attribute, which the
+  editor does not edit; refusing it is the safe side.
+- The lookup (PerformLookup, which fills the editor's form and the undo's conflict check) still reads each value by
+  ToString, so a one-element collection shows there as its type name; only the save's and the preview's re-reads,
+  and the read-back, take its element. Outside this record's five parts; a candidate.
+- The event log's preview guard refuses a second preview until the first answers, a closed panel included: an
+  operator who closes a loading panel and asks for another preview at once is refused until the first returns.

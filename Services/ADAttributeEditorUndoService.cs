@@ -540,7 +540,12 @@ public class ADAttributeEditorUndoService : IUndoableModule
 
         if (value is JsonElement je)
         {
-            return je.ValueKind == JsonValueKind.String ? je.GetString() : je.GetRawText();
+            return je.ValueKind switch
+            {
+                JsonValueKind.String => je.GetString(),
+                JsonValueKind.Null or JsonValueKind.Undefined => null,
+                _ => je.GetRawText(),
+            };
         }
 
         return value.ToString();

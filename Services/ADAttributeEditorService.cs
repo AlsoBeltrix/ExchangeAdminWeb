@@ -1006,7 +1006,7 @@ public class ADAttributeEditorService
         if (validationError != null)
             return new(false, validationError, null);
 
-        var creds = await _moduleCredentials.GetCredentialsAsync("ADAttributeEditor", "attribute preview");
+        var creds = await GetCredentialsAsync("attribute preview");
         if (creds == null)
             return new(false, "AD credentials unavailable.", null);
 
@@ -1312,7 +1312,9 @@ public class ADAttributeEditorService
         (string username, string password, string domain) creds,
         List<EditableAttribute> allowlist)
     {
-        var currentValues = ReReadCurrentValues(target, creds, allowlist);
+        var (currentValues, refusal) = ReReadCurrentValues(target, proposedValues, creds, allowlist);
+        if (refusal != null)
+            return new(false, refusal, null);
         if (currentValues == null)
             return new(false, "Failed to re-read target object for preview.", null);
 
@@ -1407,11 +1409,14 @@ public class ADAttributeEditorService
             return new(false, boundaryMsg, null);
         }
 
-        var currentValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var attr in allowlist)
-            currentValues[attr.Name] = reReadUser.Properties[attr.Name]?.Value?.ToString();
+        var severalValued = SeveralValuedRefusal(reReadUser, proposedValues, allowlist);
+        if (severalValued != null)
+        {
+            LogAudit(target, [], performedBy, ip, ticket, false, severalValued);
+            return new(false, severalValued, null);
+        }
 
-        var changes = ComputeChanges(proposedValues, currentValues, allowlist);
+        var changes = ComputeChanges(proposedValues, CurrentValues(reReadUser, allowlist), allowlist);
         if (changes.Count == 0)
         {
             // aud-a26d: SaveAsync announces this result too, so it needs a record to answer to.
@@ -1720,35 +1725,74 @@ public class ADAttributeEditorService
     // told as a difference; several values, joined, are not the one written.
     private static object? ReadDirectoryValue(PSObject read, string name)
     {
-        var value = Unwrapped(read.Properties[name]?.Value);
-        if (value is null or string)
-            return value;
-        if (value is System.Collections.IEnumerable values)
+        var items = DirectoryValues(read, name);
+        return items.Count switch
         {
-            var items = values.Cast<object?>().Select(Unwrapped).ToList();
-            return items.Count switch
-            {
-                0 => null,
-                1 => items[0],
-                _ => string.Join("; ", items.Select(v => v?.ToString())),
-            };
+            0 => null,
+            1 => items[0],
+            _ => string.Join("; ", items.Select(v => v?.ToString())),
+        };
+    }
+
+    private static List<object?> DirectoryValues(PSObject read, string name)
+    {
+        var value = Unwrapped(read.Properties[name]?.Value);
+        if (value is null)
+            return [];
+        if (value is string)
+            return [value];
+        if (value is System.Collections.IEnumerable values)
+            return values.Cast<object?>().Select(Unwrapped).ToList();
+
+        return [value];
+    }
+
+    private static Dictionary<string, object?> CurrentValues(PSObject read, List<EditableAttribute> allowlist)
+    {
+        var current = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var attr in allowlist)
+            current[attr.Name] = ReadDirectoryValue(read, attr.Name);
+        return current;
+    }
+
+    private static string? SeveralValuedRefusal(PSObject read, Dictionary<string, string?> proposedValues, List<EditableAttribute> allowlist)
+    {
+        var several = new List<string>();
+        foreach (var name in proposedValues.Keys)
+        {
+            var attr = allowlist.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (attr == null)
+                continue;
+
+            var count = DirectoryValues(read, attr.Name).Count;
+            if (count > 1)
+                several.Add($"'{attr.Label}' ({attr.Name}) holds {count} values in the directory");
         }
 
-        return value;
+        return several.Count == 0
+            ? null
+            : $"{string.Join("; ", several)}; the attribute editor writes single-valued attributes only. Nothing was written.";
     }
 
     private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
 
-    private Dictionary<string, string?>? ReReadCurrentValues(
+    private (Dictionary<string, object?>? Current, string? Refusal) ReReadCurrentValues(
         ResolvedDirectoryPrincipal target,
+        Dictionary<string, string?> proposedValues,
         (string username, string password, string domain) creds,
         List<EditableAttribute> allowlist)
     {
+        var server = GroupManagementService.ServerFromDn(target.DistinguishedName);
+        if (server is null)
+        {
+            _logger.LogWarning(
+                "AD attribute preview for {Target}: its distinguished name names no domain, so the re-read goes to the default domain controller",
+                target.UserPrincipalName);
+        }
+
         try
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            using var runspace = CreateDirectoryRunspace();
             runspace.Open();
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
@@ -1762,30 +1806,30 @@ public class ADAttributeEditorService
               .AddParameter("Properties", GetPropertiesToLoad(allowlist))
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
+            if (server is not null)
+                ps.AddParameter("Server", server);
             var result = ps.Invoke();
             ps.Commands.Clear();
 
-            if (result.Count == 0) return null;
+            if (result.Count == 0) return (null, null);
 
             var reReadDn = result[0].Properties["DistinguishedName"]?.Value?.ToString();
             if (!IsWithinSearchBases(reReadDn, GetConfiguredSearchBases()))
-                return null;
+                return (null, null);
 
-            var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var attr in allowlist)
-                values[attr.Name] = result[0].Properties[attr.Name]?.Value?.ToString();
-            return values;
+            var refusal = SeveralValuedRefusal(result[0], proposedValues, allowlist);
+            return refusal is null ? (CurrentValues(result[0], allowlist), null) : (null, refusal);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to re-read current values for {Target}", target.UserPrincipalName);
-            return null;
+            return (null, null);
         }
     }
 
     private static List<AttributeChange> ComputeChanges(
         Dictionary<string, string?> proposed,
-        Dictionary<string, string?> current,
+        IReadOnlyDictionary<string, object?> current,
         List<EditableAttribute> allowlist)
     {
         var changes = new List<AttributeChange>();
@@ -1794,12 +1838,12 @@ public class ADAttributeEditorService
             var attr = allowlist.FirstOrDefault(a => string.Equals(a.Name, kv.Key, StringComparison.OrdinalIgnoreCase));
             if (attr == null) continue;
 
-            current.TryGetValue(kv.Key, out var oldValue);
-            var newValue = string.IsNullOrEmpty(kv.Value) ? null : kv.Value;
-            var oldNorm = string.IsNullOrEmpty(oldValue) ? null : oldValue;
+            current.TryGetValue(kv.Key, out var read);
+            var newValue = EmptyAsAbsent(kv.Value);
+            var oldValue = EmptyAsAbsent(read?.ToString());
 
-            if (!string.Equals(oldNorm, newValue, StringComparison.Ordinal))
-                changes.Add(new AttributeChange(attr.Name, attr.Label, oldNorm, newValue));
+            if (!ReadsAsWritten(SyntaxOf(attr.Type, attr.Name, read), newValue, oldValue, read))
+                changes.Add(new AttributeChange(attr.Name, attr.Label, oldValue, newValue));
         }
         return changes;
     }
