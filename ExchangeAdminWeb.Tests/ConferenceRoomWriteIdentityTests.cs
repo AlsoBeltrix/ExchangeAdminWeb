@@ -133,8 +133,11 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
 
         var result = await Finder(new Service(_h), Room());
 
+        // Since aud-a2j the add writes the group's member attribute, so the member is a DN: the DN of the
+        // object read by the proven objectGUID - every Get-ADUser asked for that GUID and nothing else.
         Assert.True(result.Success, result.Message);
-        Assert.Equal(CheckedObject, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Add-ADGroupMember")), "Members"));
+        Assert.Equal("CN=Room 1,OU=Rooms,DC=contoso,DC=test", ExchangeWriteHarness.AddedMember(Assert.Single(_h.CallsTo("Set-ADGroup"))));
+        Assert.All(_h.CallsTo("Get-ADUser"), c => Assert.Equal(CheckedObject, ExchangeWriteHarness.Bound(c, "Identity")));
     }
 
     [Theory]

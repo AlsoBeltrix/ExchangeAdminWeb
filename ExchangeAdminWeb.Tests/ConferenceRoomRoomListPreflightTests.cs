@@ -162,7 +162,8 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     public async Task AProvableRow_ForASyncedRoomList_WritesInTheSameOrderAsBefore()
     {
         // Everything the on-prem add needs is there: the row writes what it always wrote, in the
-        // order it always wrote it - the cloud add is still tried first and refused.
+        // order it always wrote it - the cloud add is still tried first and refused. Since aud-a2j the
+        // on-prem add writes the group's member attribute (Set-ADGroup), not Add-ADGroupMember.
         _h.ListSyncState[List] = true;
         _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
 
@@ -171,7 +172,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         Assert.True(result.Success, result.Message);
         Assert.Equal(
             ["Set-Place", "Set-ADUser", "Set-MailboxRegionalConfiguration", "Set-MailboxCalendarConfiguration",
-             "Add-DistributionGroupMember", "Add-ADGroupMember"],
+             "Add-DistributionGroupMember", "Set-ADGroup"],
             _h.Writes);
     }
 
@@ -204,7 +205,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         Assert.True(result.Partial);
         Assert.Contains("not synchronized from on-premises", result.Message, StringComparison.Ordinal);
         Assert.Empty(_h.CallsTo("Get-ADGroup"));
-        Assert.Empty(_h.CallsTo("Add-ADGroupMember"));
+        Assert.Empty(_h.CallsTo("Set-ADGroup"));
     }
 
     [Fact]
@@ -320,14 +321,21 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
     }
 
-    // The positions in the call log of every on-prem membership read: Get-ADGroup by -Identity.
+    // The positions in the call log of every on-prem membership read: Get-ADGroup by -Identity, asking
+    // for the member attribute. (aud-a2j: the re-read of the group in its own domain, which comes just
+    // before, is a read by -Identity too, and is not one.)
     private List<int> MembershipReads()
     {
         var calls = _h.Calls.Cast<Hashtable>().ToList();
         return Enumerable.Range(0, calls.Count)
-            .Where(i => (string)calls[i]["__Command"]! == "Get-ADGroup" && calls[i].ContainsKey("Identity"))
+            .Where(i => (string)calls[i]["__Command"]! == "Get-ADGroup" && calls[i].ContainsKey("Identity") && ReadsMember(calls[i]))
             .ToList();
     }
+
+    // Whether a Get-ADGroup call asked for the group's member attribute.
+    private static bool ReadsMember(Hashtable call) =>
+        ExchangeWriteHarness.Bound(call, "Properties") is IEnumerable properties
+        && properties.Cast<object>().Any(p => string.Equals(p?.ToString(), "member", StringComparison.OrdinalIgnoreCase));
 
     // The repo's membership read: the group's member attribute, by the group's DN, on the domain the DN names.
     private static void AssertReadsTheGroupsMemberAttributeInItsDomain(Hashtable read)
@@ -355,7 +363,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
 
         Assert.True(result.Success, result.Message);
         Assert.False(result.Partial);
-        Assert.Empty(_h.CallsTo("Add-ADGroupMember"));
+        Assert.Empty(_h.CallsTo("Set-ADGroup"));
         Assert.Empty(_h.CallsTo("Get-ADGroupMember"));
         var calls = _h.Calls.Cast<Hashtable>().ToList();
         var setPlace = calls.FindIndex(c => (string)c["__Command"]! == "Set-Place");
@@ -397,9 +405,9 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         Assert.True(result.Success, result.Message);
         Assert.False(result.Partial);
         if (alreadyAMember)
-            Assert.Empty(_h.CallsTo("Add-ADGroupMember"));
+            Assert.Empty(_h.CallsTo("Set-ADGroup"));
         else
-            Assert.Equal(CheckedObject, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Add-ADGroupMember")), "Members"));
+            Assert.Equal(RoomDn, ExchangeWriteHarness.AddedMember(Assert.Single(_h.CallsTo("Set-ADGroup"))));
     }
 
     [Fact]
@@ -413,7 +421,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         var result = await Apply(new Service(_h), Room());
 
         Assert.True(result.Success, result.Message);
-        Assert.Equal(CheckedObject, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Add-ADGroupMember")), "Members"));
+        Assert.Equal(RoomDn, ExchangeWriteHarness.AddedMember(Assert.Single(_h.CallsTo("Set-ADGroup"))));
     }
 
     [Theory]
@@ -425,12 +433,14 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         // aud-a2i. Whether the on-prem add will write is settled before any write. A membership that
         // cannot be read - the read fails, the group answers as another object, or the room's object has
         // no DN to compare - refuses the row, not partial, nothing written. It used to surface only at the
-        // add, after Set-Place and the timezone.
+        // add, after Set-Place and the timezone. (aud-a2j: a failing read by identity now fails the re-read
+        // of the group first, which refuses as well; "another object" answers the member read only, so the
+        // re-read passes and the membership read's own objectGUID check is the one that refuses.)
         SyncedListTheRoomIsNotOnInExchange();
         switch (problem)
         {
             case "the membership read fails": _h.Failures["Get-ADGroup -Identity"] = "Unable to contact the server."; break;
-            case "the group answers as another object": _h.DirectoryGroupReadBack[GroupDn] = "77777777-7777-7777-7777-777777777777"; break;
+            case "the group answers as another object": _h.DirectoryGroupMemberReadBack[GroupDn] = "77777777-7777-7777-7777-777777777777"; break;
             case "the room's object has no DN": ((Hashtable)_h.DirectoryObjects[CheckedObject]!).Remove("DistinguishedName"); break;
         }
 
@@ -473,6 +483,260 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         ps.Commands.Clear();
         ps.Streams.Error.Clear();
         ps.AddCommand("Get-ADGroupMember").AddParameter("Identity", GroupDn).AddParameter("ErrorAction", "Stop");
+        return ps.Invoke();
+    }
+
+    // aud-a2j. The room list's on-prem group was searched with no -Server, so only the default domain
+    // answered and a synced list whose group lives in another domain of the forest was refused as "No
+    // on-prem AD group found". These pin the forest search through the global catalog, the refusals
+    // that come with it, the re-read in the group's own domain, and the write routed there. The room's
+    // object is in the default domain (RoomDn), where the protection gate proves it; the list's group,
+    // in these, is in the forest's other one.
+    private const string OtherDomainGroupGuid = "66666666-6666-6666-6666-666666666666";
+    private static readonly string OtherDomainGroupDn =
+        ExchangeWriteHarness.DirectoryGroupDn(OtherDomainGroupGuid, ExchangeWriteHarness.OtherDirectoryDomainDn);
+    private const string OtherDomainName = "fabrikam.test";
+
+    // The list's group in the other domain - the only one unless the default domain's is kept too, which
+    // makes the list's name match a group in each.
+    private void PlaceAGroupInTheOtherDomain(bool keepTheDefaultGroup = false)
+    {
+        if (!keepTheDefaultGroup)
+            _h.DirectoryGroupGuids.Clear();
+        _h.DirectoryGroupGuids.Add(OtherDomainGroupGuid);
+        _h.DirectoryGroupDomains[OtherDomainGroupGuid] = ExchangeWriteHarness.OtherDirectoryDomainDn;
+    }
+
+    // The list's group searched for by name (no -Identity), and re-read by its DN without the member
+    // attribute - the membership read is the other read by -Identity.
+    private static bool IsGroupSearch(Hashtable call) =>
+        (string)call["__Command"]! == "Get-ADGroup" && !call.ContainsKey("Identity");
+
+    private static bool IsGroupReRead(Hashtable call) =>
+        (string)call["__Command"]! == "Get-ADGroup" && call.ContainsKey("Identity") && !ReadsMember(call);
+
+    // The positions in the call log of the calls that match.
+    private List<int> CallsWhere(Func<Hashtable, bool> match)
+    {
+        var calls = _h.Calls.Cast<Hashtable>().ToList();
+        return Enumerable.Range(0, calls.Count).Where(i => match(calls[i])).ToList();
+    }
+
+    [Fact]
+    public async Task ARoomListGroupInAnotherDomain_IsFoundThroughTheForestGlobalCatalog()
+    {
+        // The finding. A synced list the room is not on in Exchange, its group in the other domain: found
+        // by searching the forest's global catalog - the preflight's search and the add's - and written on
+        // the group's own domain, the room's DN on its member attribute. Not partial, nothing refused.
+        // Add-ADGroupMember could not do it (it resolves the room on the group's domain), so it is not used.
+        SyncedListTheRoomIsNotOnInExchange();
+        PlaceAGroupInTheOtherDomain();
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        Assert.Contains(result.Steps, s => s.Success && s.Stage == $"Add to '{List}' (on-prem)");
+        var searches = _h.CallsTo("Get-ADGroup").Where(IsGroupSearch).ToList();
+        Assert.Equal(2, searches.Count);
+        Assert.All(searches, c => Assert.Equal(ExchangeWriteHarness.GlobalCatalogEndpoint, ExchangeWriteHarness.Bound(c, "Server")));
+        var write = Assert.Single(_h.CallsTo("Set-ADGroup"));
+        Assert.Equal(OtherDomainGroupGuid, ExchangeWriteHarness.Bound(write, "Identity"));
+        Assert.Equal(OtherDomainName, ExchangeWriteHarness.Bound(write, "Server"));
+        Assert.Equal(RoomDn, ExchangeWriteHarness.AddedMember(write));
+        Assert.Empty(_h.CallsTo("Add-ADGroupMember"));
+    }
+
+    [Fact]
+    public void TheHarness_AnswersAGroupSearchOnlyFromTheDomainsItsServerReaches()
+    {
+        // The default-domain shape, as the stand-in reproduces it: a search with no -Server sees only the
+        // default domain's group - the old search would have missed the other domain's - and so does one
+        // sent to a bare ":3268", which the real cmdlet accepts and answers from the local domain. The
+        // catalog endpoint sees both; a domain's own name sees only its own; an unknown server answers
+        // nothing but an error.
+        PlaceAGroupInTheOtherDomain(keepTheDefaultGroup: true);
+        using var rs = _h.OpenDirectoryRunspace();
+        using var ps = PowerShell.Create();
+        ps.Runspace = rs;
+
+        Assert.Equal([ExchangeWriteHarness.DefaultDirectoryGroupGuid], SearchGroups(ps, server: null));
+        Assert.Equal([ExchangeWriteHarness.DefaultDirectoryGroupGuid], SearchGroups(ps, server: ":3268"));
+        Assert.Equal([ExchangeWriteHarness.DefaultDirectoryGroupGuid, OtherDomainGroupGuid],
+            SearchGroups(ps, server: ExchangeWriteHarness.GlobalCatalogEndpoint));
+        Assert.Equal([OtherDomainGroupGuid], SearchGroups(ps, server: OtherDomainName));
+        Assert.ThrowsAny<RuntimeException>(() => SearchGroups(ps, server: "elsewhere.test"));
+    }
+
+    // The objectGUIDs a stand-in Get-ADGroup search answers with, sent to that server (or none).
+    private static List<string> SearchGroups(PowerShell ps, string? server)
+    {
+        ps.Commands.Clear();
+        ps.Streams.Error.Clear();
+        var search = ps.AddCommand("Get-ADGroup").AddParameter("Filter", $"name -eq '{List}'");
+        if (server is not null)
+            search.AddParameter("Server", server);
+        search.AddParameter("ErrorAction", "Stop");
+        return ps.Invoke().Select(g => g.Properties["ObjectGUID"]?.Value?.ToString() ?? "").ToList();
+    }
+
+    [Fact]
+    public async Task ARoomListNameMatchingAGroupInEachDomain_IsRefusedBeforeAnyWrite()
+    {
+        // The catalog widens what can match, and the exactly-one rule holds across it: the list's name
+        // matching a group in each domain refuses before any write. The default-domain search saw one of
+        // them and wrote it.
+        SyncedListTheRoomIsNotOnInExchange();
+        PlaceAGroupInTheOtherDomain(keepTheDefaultGroup: true);
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Contains(List, result.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+        var search = Assert.Single(_h.CallsTo("Get-ADGroup"), IsGroupSearch);
+        Assert.Equal(ExchangeWriteHarness.GlobalCatalogEndpoint, ExchangeWriteHarness.Bound(search, "Server"));
+        Assert.DoesNotContain(_h.CallsTo("Get-ADGroup"), c => c.ContainsKey("Identity"));
+    }
+
+    [Theory]
+    [InlineData("Get-ADForest fails")]
+    [InlineData("the forest reports no catalog")]
+    [InlineData("the forest reports a blank catalog host")]
+    public async Task AForestWhoseGlobalCatalogCannotBeResolved_IsRefusedBeforeAnyWrite(string problem)
+    {
+        // No catalog - the forest read fails, names none, or names a blank host, the lookup that once
+        // produced a bare ":3268" - refuses the row before any write, and no group is searched for at all.
+        // The group is in the default domain, so a fallback to a one-domain search would have found it and
+        // written: that is what the refusal rules out.
+        SyncedListTheRoomIsNotOnInExchange();
+        switch (problem)
+        {
+            case "Get-ADForest fails": _h.Failures["Get-ADForest"] = "The server has rejected the client credentials."; break;
+            case "the forest reports no catalog": _h.GlobalCatalogs.Clear(); break;
+            case "the forest reports a blank catalog host": _h.GlobalCatalogs.Clear(); _h.GlobalCatalogs.Add(""); break;
+        }
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Contains(List, result.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+        Assert.Single(_h.CallsTo("Get-ADForest"));
+        Assert.Empty(_h.CallsTo("Get-ADGroup"));
+    }
+
+    // The endpoint is a real host and the catalog port, or nothing - never a bare ":3268".
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    [InlineData("gc01.contoso.test", "gc01.contoso.test:3268")]
+    [InlineData(" gc01.contoso.test ", "gc01.contoso.test:3268")]
+    public void AGlobalCatalogEndpoint_IsAHostAndItsPort_NeverABarePort(string? host, string? endpoint) =>
+        Assert.Equal(endpoint, ConferenceRoomService.GlobalCatalogEndpoint(host));
+
+    [Fact]
+    public async Task TheGroupFoundInTheForest_IsReReadInItsOwnDomain_SoThePreflightAndTheAddResolveTheSameObject()
+    {
+        // Both phases resolve the group the same way: the catalog search, then a re-read of the DN it found
+        // on the domain that DN names, then the membership read of that DN there - the preflight before
+        // Set-Place, the add after - and the write names the objectGUID those re-reads answered, on the
+        // same domain.
+        SyncedListTheRoomIsNotOnInExchange();
+        PlaceAGroupInTheOtherDomain();
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        var calls = _h.Calls.Cast<Hashtable>().ToList();
+        var setPlace = calls.FindIndex(c => (string)c["__Command"]! == "Set-Place");
+        var searches = CallsWhere(IsGroupSearch);
+        var reReads = CallsWhere(IsGroupReRead);
+        var memberReads = MembershipReads();
+        Assert.Equal(2, searches.Count);
+        Assert.Equal(2, reReads.Count);
+        Assert.Equal(2, memberReads.Count);
+        for (var phase = 0; phase < 2; phase++)
+        {
+            Assert.True(searches[phase] < reReads[phase] && reReads[phase] < memberReads[phase],
+                $"phase {phase}: search at {searches[phase]}, re-read at {reReads[phase]}, membership read at {memberReads[phase]}");
+            Assert.Equal(OtherDomainGroupDn, ExchangeWriteHarness.Bound(calls[reReads[phase]], "Identity"));
+            Assert.Equal(OtherDomainName, ExchangeWriteHarness.Bound(calls[reReads[phase]], "Server"));
+            Assert.Equal(OtherDomainGroupDn, ExchangeWriteHarness.Bound(calls[memberReads[phase]], "Identity"));
+            Assert.Equal(OtherDomainName, ExchangeWriteHarness.Bound(calls[memberReads[phase]], "Server"));
+        }
+        Assert.True(memberReads[0] < setPlace && setPlace < searches[1],
+            $"the preflight's membership read at {memberReads[0]}, Set-Place at {setPlace}, the add's search at {searches[1]}");
+        var write = Assert.Single(_h.CallsTo("Set-ADGroup"));
+        Assert.Equal(OtherDomainGroupGuid, ExchangeWriteHarness.Bound(write, "Identity"));
+        Assert.Equal(OtherDomainName, ExchangeWriteHarness.Bound(write, "Server"));
+    }
+
+    [Fact]
+    public async Task AGroupItsOwnDomainHoldsAsAnotherObject_IsRefusedBeforeAnyWrite()
+    {
+        // The catalog is a partial copy that can lag its domain. When the group's own domain answers the DN
+        // the catalog found with another objectGUID, the row is refused at the re-read - before any write,
+        // and before its membership is even read.
+        SyncedListTheRoomIsNotOnInExchange();
+        PlaceAGroupInTheOtherDomain();
+        _h.DirectoryGroupReadBack[OtherDomainGroupDn] = "77777777-7777-7777-7777-777777777777";
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Contains(List, result.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+        Assert.Empty(MembershipReads());
+    }
+
+    [Fact]
+    public void TheHarness_AWriteFindsItsGroupAndMembersOnlyInTheDomainItReaches()
+    {
+        // The stand-in writes behave as the real ones do, so a restored Add-ADGroupMember fails the rows
+        // above for the reason it fails live. Add-ADGroupMember takes a member of the domain it reaches and
+        // refuses one from another - routed to the other domain's group, the default domain's room is not
+        // found there (the 2026-09-03 failure) - and with no -Server cannot find that group at all.
+        // Set-ADGroup finds the group only when routed to its domain.
+        const string OtherDomainRoom = "5a5a5a5a-0000-4000-8000-000000000002";
+        _h.DirectoryObjects[OtherDomainRoom] = new Hashtable
+        {
+            ["ObjectGUID"] = Guid.Parse(OtherDomainRoom),
+            ["DistinguishedName"] = "CN=Room 2,OU=Rooms," + ExchangeWriteHarness.OtherDirectoryDomainDn,
+        };
+        PlaceAGroupInTheOtherDomain(keepTheDefaultGroup: true);
+        using var rs = _h.OpenDirectoryRunspace();
+        using var ps = PowerShell.Create();
+        ps.Runspace = rs;
+
+        Run(ps, "Add-ADGroupMember", ("Identity", ExchangeWriteHarness.DefaultDirectoryGroupGuid), ("Members", CheckedObject));
+        Run(ps, "Add-ADGroupMember", ("Identity", OtherDomainGroupGuid), ("Members", OtherDomainRoom), ("Server", OtherDomainName));
+        Assert.ThrowsAny<RuntimeException>(() =>
+            Run(ps, "Add-ADGroupMember", ("Identity", OtherDomainGroupGuid), ("Members", CheckedObject), ("Server", OtherDomainName)));
+        Assert.ThrowsAny<RuntimeException>(() =>
+            Run(ps, "Add-ADGroupMember", ("Identity", OtherDomainGroupGuid), ("Members", OtherDomainRoom)));
+
+        var addTheRoom = GroupManagementService.BuildMemberAttributeWrite(RoomDn);
+        Run(ps, "Set-ADGroup", ("Identity", OtherDomainGroupGuid), ("Add", addTheRoom), ("Server", OtherDomainName));
+        Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Set-ADGroup", ("Identity", OtherDomainGroupGuid), ("Add", addTheRoom)));
+    }
+
+    // One stand-in command with these parameters, -ErrorAction Stop, so a refusal throws.
+    private static Collection<PSObject> Run(PowerShell ps, string command, params (string Name, object Value)[] parameters)
+    {
+        ps.Commands.Clear();
+        ps.Streams.Error.Clear();
+        var invocation = ps.AddCommand(command);
+        foreach (var (name, value) in parameters)
+            invocation.AddParameter(name, value);
+        invocation.AddParameter("ErrorAction", "Stop");
         return ps.Invoke();
     }
 }
