@@ -521,7 +521,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // Step 2: Set-ADUser (on-prem AD) - City/State/Country are dir-synced AD attributes
         // that EXO Set-User rejects. Written on the on-prem object instead (the bug fix).
         _operationTrace?.Step("SetADUser", backend: "AD", command: "Set-ADUser", target: room.DirectoryObjectGuid ?? roomEmail);
-        var adError = await SetSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion);
+        var (adError, adWritten) = await SetSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion);
+        // aud-a2g. The object Set-ADUser wrote, if it wrote one - recorded now, so a later step
+        // failing cannot hide it, and only from the write itself, so a row that wrote nothing in
+        // Active Directory cannot claim it did.
+        result.WrittenDirectoryObject = adWritten;
         if (adError != null)
         {
             // Set-Place already committed EXO metadata; this row is now half-configured.
@@ -571,6 +575,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (roomList is not null)
         {
             var listResult = await AddToRoomListAsync(room, roomInfo.Email, roomEmail, roomList);
+            result.WrittenDirectoryObject ??= listResult.WrittenDirectoryObject; // the on-prem add's (aud-a2g)
             result.Steps.AddRange(listResult.Steps);
             if (!listResult.Success)
             {
@@ -697,10 +702,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                     }
 
                     _operationTrace?.Step("AddToRoomListOnPrem", backend: "AD", command: "Add-ADGroupMember", target: room.DirectoryObjectGuid ?? roomEmail);
-                    var adError = await AddToRoomListViaAdAsync(room, roomEmail, roomListName);
+                    var (adError, adWritten) = await AddToRoomListViaAdAsync(room, roomEmail, roomListName);
                     if (adError == null)
                     {
                         result.Success = true;
+                        result.WrittenDirectoryObject = adWritten; // null when it was already a member (aud-a2g)
                         result.Steps.Add(new RoomOperationStep { Stage = $"Add to '{roomListName}' (on-prem)", Success = true });
                         result.Message = BuildRoomListAddedMessage(roomListName, viaOnPrem: true);
                         return result;
@@ -1388,7 +1394,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // object via Set-ADUser. These attributes are AD-mastered, so EXO Set-User rejects them
     // ("being synchronized from your on-premises organization") - the root cause of the
     // Room Finder apply failure (docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md).
-    // Returns null on success; a non-null string is the failure message for the row.
+    // Returns (null, the objectGUID written) once Set-ADUser has succeeded, (null, null) when
+    // there is nothing to write, and (the failure message for the row, null) otherwise - the
+    // object is reported only by a write that happened (aud-a2g).
     // Runs in its own AD runspace (mirrors Comms10k / CheckAdGroupMembership), not through
     // the EXO pool.
     //
@@ -1454,7 +1462,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         });
     }
 
-    private async Task<string?> SetSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion)
+    private async Task<(string? error, string? written)> SetSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion)
     {
         Dictionary<string, object> attrs;
         try
@@ -1463,20 +1471,20 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
         catch (ArgumentException ex)
         {
-            return ex.Message; // unmappable country - fail the row closed
+            return (ex.Message, null); // unmappable country - fail the row closed
         }
 
         if (attrs.Count == 0)
-            return null; // nothing synced to write for this row
+            return (null, null); // nothing synced to write for this row - and nothing written
 
         if (room.DirectoryObjectGuid is not { } objectGuid)
-            return NoDirectoryObject(roomEmail, "City/State/Country could not be written");
+            return (NoDirectoryObject(roomEmail, "City/State/Country could not be written"), null);
 
         var creds = await GetModuleCredentialsAsync($"Set-ADUser synced attributes for {roomEmail}");
         if (creds is null)
-            return "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.";
+            return ("On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.", null);
 
-        return await Task.Run(() =>
+        return await Task.Run<(string? error, string? written)>(() =>
         {
             try
             {
@@ -1487,14 +1495,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
                 ps.Invoke();
                 if (ps.HadErrors)
-                    return FirstError(ps) ?? "Failed to load the ActiveDirectory module.";
+                    return (FirstError(ps) ?? "Failed to load the ActiveDirectory module.", null);
                 ps.Commands.Clear();
 
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
                 var confirmError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential);
                 if (confirmError != null)
-                    return confirmError;
+                    return (confirmError, null);
 
                 // Write by the validated objectGUID (immutable identity), never by a name.
                 ps.AddCommand("Set-ADUser")
@@ -1504,14 +1512,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                   .AddParameter("ErrorAction", "Stop");
                 ps.Invoke();
                 if (ps.HadErrors)
-                    return FirstError(ps) ?? $"Set-ADUser failed for {roomEmail}.";
+                    return (FirstError(ps) ?? $"Set-ADUser failed for {roomEmail}.", null);
 
-                return null;
+                return (null, objectGuid);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Set-ADUser synced-attribute write failed for {Room}", roomEmail);
-                return $"Failed to write City/State/Country on the AD object: {ex.Message}";
+                return ($"Failed to write City/State/Country on the AD object: {ex.Message}", null);
             }
         });
     }
@@ -1581,22 +1589,23 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // AD object. Exchange Online refuses Add-DistributionGroupMember against a synced group
     // ("out of the current user's write scope ... being synchronized from your on-premises
     // organization"), so membership must be written on-prem and then syncs up (~30 min) - the
-    // same shape as the Set-ADUser City/State/Country handling. Returns null on success (incl.
-    // already-a-member no-op), or a non-null failure message. See
+    // same shape as the Set-ADUser City/State/Country handling. Returns (null, the room's
+    // objectGUID) once Add-ADGroupMember has succeeded, (null, null) for the already-a-member
+    // no-op - nothing was written - and (a failure message, null) otherwise (aud-a2g). See
     // docs/ConferenceRooms-OnPremRoomListAdd-Plan.md.
     //
     // aud-a2d. The member added is the AD object the protection gate proved owns the room's
     // mailbox, by objectGUID - not a userPrincipalName match of the typed string.
-    private async Task<string?> AddToRoomListViaAdAsync(ValidatedMailbox room, string roomEmail, string roomListName)
+    private async Task<(string? error, string? written)> AddToRoomListViaAdAsync(ValidatedMailbox room, string roomEmail, string roomListName)
     {
         if (room.DirectoryObjectGuid is not { } roomGuid)
-            return NoDirectoryObject(roomEmail, "the room could not be added to the on-prem room list");
+            return (NoDirectoryObject(roomEmail, "the room could not be added to the on-prem room list"), null);
 
         var creds = await GetModuleCredentialsAsync($"Add-ADGroupMember on-prem room list for {roomEmail}");
         if (creds is null)
-            return "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). The room could not be added to the on-prem room list.";
+            return ("On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). The room could not be added to the on-prem room list.", null);
 
-        return await Task.Run(() =>
+        return await Task.Run<(string? error, string? written)>(() =>
         {
             try
             {
@@ -1607,7 +1616,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
                 ps.Invoke();
                 if (ps.HadErrors)
-                    return FirstError(ps) ?? "Failed to load the ActiveDirectory module.";
+                    return (FirstError(ps) ?? "Failed to load the ActiveDirectory module.", null);
                 ps.Commands.Clear();
 
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
@@ -1616,11 +1625,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // member is never added to the wrong group. The room's is the validated one.
                 var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential);
                 if (roomError != null)
-                    return roomError;
+                    return (roomError, null);
 
                 var (groupError, groupGuid) = ResolveAdGroupGuid(ps, roomListName, credential);
                 if (groupError != null)
-                    return groupError;
+                    return (groupError, null);
 
                 // Idempotency: skip the add if the room is already a member (matches the cloud
                 // path's already-member no-op so a re-run is safe).
@@ -1630,13 +1639,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                   .AddParameter("ErrorAction", "Stop");
                 var members = ps.Invoke();
                 if (ps.HadErrors)
-                    return FirstError(ps) ?? $"Failed to read membership of on-prem room list '{roomListName}'.";
+                    return (FirstError(ps) ?? $"Failed to read membership of on-prem room list '{roomListName}'.", null);
                 ps.Commands.Clear();
 
                 var alreadyMember = members.Any(m =>
                     string.Equals(m.Properties["ObjectGUID"]?.Value?.ToString(), roomGuid, StringComparison.OrdinalIgnoreCase));
                 if (alreadyMember)
-                    return null;
+                    return (null, null);
 
                 // Add by GUID on both sides (immutable identity), not by name/UPN.
                 ps.AddCommand("Add-ADGroupMember")
@@ -1646,14 +1655,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                   .AddParameter("ErrorAction", "Stop");
                 ps.Invoke();
                 if (ps.HadErrors)
-                    return FirstError(ps) ?? $"Add-ADGroupMember failed for {roomEmail} on '{roomListName}'.";
+                    return (FirstError(ps) ?? $"Add-ADGroupMember failed for {roomEmail} on '{roomListName}'.", null);
 
-                return null;
+                return (null, roomGuid);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Add-ADGroupMember on-prem room-list write failed for {Room} on {List}", roomEmail, roomListName);
-                return $"Failed to add the room to the on-prem room list on the AD object: {ex.Message}";
+                return ($"Failed to add the room to the on-prem room list on the AD object: {ex.Message}", null);
             }
         });
     }

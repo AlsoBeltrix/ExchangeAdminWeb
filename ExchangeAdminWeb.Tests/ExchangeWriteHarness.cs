@@ -64,6 +64,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <summary>The objectGUIDs the stand-in <c>Get-ADGroup</c> returns for any filter: one group unless a test changes it.</summary>
     public IList DirectoryGroupGuids { get; } = ArrayList.Synchronized(new ArrayList { "99999999-9999-9999-9999-999999999999" });
 
+    /// <summary>The member objectGUIDs the stand-in <c>Get-ADGroupMember</c> reports on any group: none unless a test adds them.</summary>
+    public IList DirectoryGroupMembers { get; } = ArrayList.Synchronized(new ArrayList());
+
     private int _connects;
 
     /// <summary>How many Exchange connections the pool opened - zero proves nothing was borrowed.</summary>
@@ -258,6 +261,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("ListMembers", ListMembers);
         rs.SessionStateProxy.SetVariable("ListSyncState", ListSyncState);
         rs.SessionStateProxy.SetVariable("DirectoryGroupGuids", DirectoryGroupGuids);
+        rs.SessionStateProxy.SetVariable("DirectoryGroupMembers", DirectoryGroupMembers);
         using var init = PowerShell.Create();
         init.Runspace = rs;
         init.AddScript(definitions);
@@ -462,6 +466,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         function global:Get-ADGroupMember {
             [CmdletBinding()] param($Identity, $Credential)
             Write-StandInCall 'Get-ADGroupMember' $PSBoundParameters
+            foreach ($member in $global:DirectoryGroupMembers) { [pscustomobject]@{ ObjectGUID = [guid]"$member" } }
         }
         function global:Add-ADGroupMember {
             [CmdletBinding()] param($Identity, $Members, $Credential)

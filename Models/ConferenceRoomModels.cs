@@ -187,6 +187,13 @@ public class RoomOperationResult
     public List<RoomOperationStep> Steps { get; set; } = [];
     public bool AdAttributeFixRequired { get; set; }
     public string? AdAttributeDetail { get; set; }
+
+    // The objectGUID of the Active Directory object an AD write in this operation changed -
+    // Set-ADUser for City/State/Country, or Add-ADGroupMember on the on-prem room-list add - or
+    // null when no AD write ran or none succeeded (aud-a2g). Set by the service the moment the
+    // write succeeds, so a later step failing (Partial) does not hide it. The audit names a
+    // written directory object only from this; it used to name one on every Room Finder row.
+    public string? WrittenDirectoryObject { get; set; }
 }
 
 public class RoomOperationStep

@@ -84,21 +84,23 @@ public sealed record ValidatedMailbox
     /// <c>target</c> stays the operator's typed string; this records what the write was bound to.
     /// A null <paramref name="mailbox"/> leaves <paramref name="extra"/> as it is.
     /// </summary>
-    /// <param name="includeDirectoryObject">
-    /// True only for an operation whose Active Directory steps are bound to
-    /// <see cref="DirectoryObjectGuid"/> (Conference Rooms). An Exchange-only write records the
-    /// Exchange identity alone, because that is all it wrote.
+    /// <param name="writtenDirectoryObject">
+    /// The Active Directory object the operation reports it actually wrote (Conference Rooms Room
+    /// Finder: <c>RoomOperationResult.WrittenDirectoryObject</c>), or null when it wrote none -
+    /// recorded under <see cref="DirectoryAuditKey"/> only when given. It was a flag the caller set
+    /// for the kind of operation, so every Room Finder row named an object whether or not Active
+    /// Directory was written (aud-a2g). An Exchange-only write passes nothing.
     /// </param>
     public static Dictionary<string, object?>? WithWrittenIdentity(
-        Dictionary<string, object?>? extra, ValidatedMailbox? mailbox, bool includeDirectoryObject = false)
+        Dictionary<string, object?>? extra, ValidatedMailbox? mailbox, string? writtenDirectoryObject = null)
     {
         if (mailbox is null)
             return extra;
 
         extra ??= new Dictionary<string, object?>();
         extra[AuditKey] = mailbox.Identity;
-        if (includeDirectoryObject && mailbox.DirectoryObjectGuid is not null)
-            extra[DirectoryAuditKey] = mailbox.DirectoryObjectGuid;
+        if (writtenDirectoryObject is not null)
+            extra[DirectoryAuditKey] = writtenDirectoryObject;
         return extra;
     }
 }

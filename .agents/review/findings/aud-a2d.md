@@ -173,6 +173,8 @@ Conference Rooms. Gates before each.
 - `Services/ValidatedMailbox.cs` as planned. `WithWrittenIdentity` records `writtenIdentity`
   always and `writtenDirectoryObject` only when the caller says its operation wrote Active
   Directory by that object (Conference Rooms) - an Exchange-only write records only what it wrote.
+  (Correction: every Room Finder caller said so, whether or not Active Directory was written; since
+  aud-a2g the key records only an object the service reports written.)
 - `PermissionValidator`: `TargetValidation` is a record with a private constructor and three
   factories; `Allow` and `Serviced` require a mailbox, `Deny` carries none. Every allowing exit -
   the central check serviced, the typed-literal check serviced, the legacy list serviced, and the
@@ -506,7 +508,7 @@ audit site records it). A page passing the wrong validation's mailbox is caught 
 **Messages that changed:** the Calendar result message names the mailbox's primary address and
 the identity written (`<GUID>:\Calendar`) instead of `<typed primary>:\Calendar`. Audit `target`
 fields are unchanged; every write row gains `writtenIdentity` (Conference Rooms Finder rows also
-`writtenDirectoryObject`).
+`writtenDirectoryObject` - since aud-a2g, only those whose Active Directory write succeeded).
 
 **Residuals, recorded so nobody reads them as covered:**
 
