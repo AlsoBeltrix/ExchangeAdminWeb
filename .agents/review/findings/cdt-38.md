@@ -6,10 +6,10 @@ case-insensitively. So a forward-slash path the app opens and the read side read
 a mixed-separator UNC path is refused for the wrong reason, and a Kelvin-sign "drive letter" the
 app refuses is accepted - under PowerShell 7 the plan then names it as the `ConfigStore:Path` to
 write into both instances. Same class as `cdt-37`; admitted with it.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Fixed on master `2639a5a8` (patch applied by the supervisor); closed on guard proof; codex ops review pending
 **Branch**: -- (delivered as a patch against `master` `1c6038d` with `aud-a38g`'s patch applied
 first, from the worktree `agent-af538bba9cd55306a`; the coordinator applies and commits it)
-**Commit**: `<pending>`
+**Commit**: `2639a5a8`
 **Reviewer**: implementer (cdt-37 agent)
 
 ## Evidence
