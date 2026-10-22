@@ -12,9 +12,9 @@ SQLite's WAL locking is not reliable over a share). The ops scripts' copy of the
 starts on a database every deploy script refuses to back up. The app also keeps a `D:/...` value
 as spelled, while the scripts back up and compare `D:\...`. Found by the cdt-30 implementer while
 aligning the module with the app (cdt-30's "Found while fixing this"), admitted by the supervisor.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-ae79adccaaf3eeb47` (worktree `agent-ae79adccaaf3eeb47`)
-**Commit**: `<pending>`
+**Commit**: `c73e51c`; record fix `9c35489` (merged)
 **Reviewer**: implementer (cdt-30 agent, verified against the real Resolve)
 
 ## Evidence
