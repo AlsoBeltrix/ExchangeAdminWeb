@@ -134,10 +134,11 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                     op.Complete(r.Success, r.Message);
 
                     // 5) Per-row audit with captured actor/ip/ticket (same as the live page), plus
-                    // the identity written; `target` stays the row as typed.
+                    // the identity written and - only when the service reports one written - the
+                    // Active Directory object (aud-a2g); `target` stays the row as typed.
                     Audit(job, actionAudit, target, r.Success, ticket, r.Success ? null : r.Message,
                         newValues: isFinder ? FinderNewValues(payload.FinderRows![rowIndex]) : TypeNewValues(payload.TypeRows![rowIndex]),
-                        room: room, directoryWritten: isFinder);
+                        room: room, writtenDirectoryObject: r.WrittenDirectoryObject);
 
                     return new BulkJobRowOutcome
                     {
@@ -149,7 +150,8 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                 catch (Exception ex)
                 {
                     op.Complete(false, ex.Message, ex);
-                    Audit(job, actionAudit, target, success: false, ticket, ex.Message, room: room, directoryWritten: isFinder);
+                    // No result, so no Active Directory object reported written (aud-a2g).
+                    Audit(job, actionAudit, target, success: false, ticket, ex.Message, room: room);
                     return Failed(target, ex.Message);
                 }
             });
@@ -208,15 +210,16 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
 
     private void Audit(BulkJob job, string action, string target, bool success, string ticket,
         string? error = null, Dictionary<string, object?>? newValues = null, ValidatedMailbox? room = null,
-        bool directoryWritten = false)
+        string? writtenDirectoryObject = null)
     {
         try
         {
-            // The identity the row's writes were bound to (aud-a2d); the Finder row also writes
-            // Active Directory by the validated object, so it records that too.
+            // The identity the row's writes were bound to (aud-a2d), and the Active Directory
+            // object the service reports it wrote, when it wrote one (aud-a2g). That used to be
+            // recorded on every Finder row, whether or not Active Directory was written.
             _audit.LogConferenceRoomAction(job.SubmittedBy, job.SubmittedIp, action, target, success, ticket,
                 errorDetail: error, newValues: newValues,
-                extra: ValidatedMailbox.WithWrittenIdentity(null, room, includeDirectoryObject: directoryWritten));
+                extra: ValidatedMailbox.WithWrittenIdentity(null, room, writtenDirectoryObject));
         }
         catch (Exception ex)
         {

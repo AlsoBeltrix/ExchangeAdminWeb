@@ -1076,7 +1076,7 @@
 
                     op.Complete(r.Success, r.Message);
 
-                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced, room);
+                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced, room, r.WrittenDirectoryObject);
                     await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message);
                     return r;
                 });
@@ -1717,9 +1717,9 @@
 
     private void AuditFinderAction(string target, bool success, string ticket, string? error = null,
         Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null,
-        string? servicedAuditDetail = null, ValidatedMailbox? room = null)
+        string? servicedAuditDetail = null, ValidatedMailbox? room = null, string? writtenDirectoryObject = null)
     {
-        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room, includeDirectoryObject: true)); }
+        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room, writtenDirectoryObject)); }
         catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
     }
 
