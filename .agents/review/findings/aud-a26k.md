@@ -8,9 +8,9 @@ write whole maps. (3) Admin Settings shows the directory-read secret id from a f
 unreadable store looks the same as an unset one (it is no longer written back blank since aud-a28j,
 so the harm is display). (4) The drain-failure record (aud-a26h) uses the generic settings-change
 action; a reviewer filtering by action cannot tell it from a settings change.
-**Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
+**Status**: Merged to master (`3ef12e60`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a5f93bbf442feb5e2`
-**Commit**: `a4115132` (plan `738cef45`; comments `639d721b`)
+**Commit**: `a4115132` (plan `738cef45`; comments `639d721b`; merged `3ef12e60`)
 **Reviewer**: implementer (surfaced by the aud-a28j/a28k/a26h agent, 2026-10-22, candidates 3 to 6 of its hand-back)
 
 ## Evidence
