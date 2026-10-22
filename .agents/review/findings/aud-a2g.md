@@ -2,9 +2,9 @@
 
 **Severity**: MEDIUM - the audit row overstates what was written, which weakens the
 protected-principal and audit trace aud-a2d added it for.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending; dev acceptance owed
 **Branch**: `worktree-agent-a0c2a0143143dd6e1`
-**Commit**: `<pending>`
+**Commit**: `f7a364e` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh over 3562cf08..7ae55b9a, 2026-10-21
 
 ## Evidence
