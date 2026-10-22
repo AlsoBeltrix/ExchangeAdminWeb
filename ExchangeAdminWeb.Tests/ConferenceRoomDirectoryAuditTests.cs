@@ -55,6 +55,9 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
     // aud-a2o. The row the bulk surface returned - what a job's row table shows - on the last bulk apply.
     private BulkJobRowOutcome? _bulkRow;
 
+    // aud-a2r. The email service the page was built with, so a test can read the admin notification it sent.
+    private EmailService? _pageEmail;
+
     public ConferenceRoomDirectoryAuditTests()
     {
         _h.AddMailbox(Typed, Checked, recipientTypeDetails: "RoomMailbox");
@@ -335,7 +338,79 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         Assert.False(row.TryGetProperty(ValidatedMailbox.DirectoryAuditKey, out _), row.ToString());
     }
 
+    [Theory]
+    [InlineData("clean")]
+    [InlineData("attributes")]
+    [InlineData("membership")]
+    [InlineData("both")]
+    [InlineData("partial")]
+    public async Task TheAdminNotification_CarriesWhatTheReadBackConfirmedAfterAnError_OnARowOfItsOwn(string apply)
+    {
+        // aud-a2r, folded in from codex's a2q review. A directory write that reported an error and was then confirmed by
+        // its read-back - City/State/Country (aud-a2q), the room-list membership (aud-a2n) - was recorded so on the page,
+        // the result and the audit, but the admin notification was the generic success: the page passed the row's message
+        // only as the error of a failure. Each detail is now a row of the notification's own, the text the audit records,
+        // never the error field; a clean apply's notification is the room alone, as before; and a partial whose
+        // City/State/Country were confirmed before a later step failed carries the row beside its error, as its audit does.
+        if (apply is "attributes" or "both" or "partial")
+            _h.SetAdUserFailsAfterApplying = TimedOut;
+        if (apply is "clean" or "membership" or "both")
+        {
+            _h.ListSyncState[ConferenceRoomService.BuildRoomListName(Building)] = true;
+            _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
+        }
+        if (apply is "membership" or "both")
+            _h.SetAdGroupFailsAfterApplying = TimedOut;
+        if (apply == "partial")
+            _h.Failures["Set-MailboxRegionalConfiguration"] = "The time zone could not be set.";
+
+        var audit = await ApplyAndReadAudit("page", city: apply == "membership" ? "" : "Dublin");
+        var (success, details, error) = AdminNotification();
+
+        var rows = new List<string> { "Room" };
+        if (apply is "attributes" or "both" or "partial")
+            rows.Add(ConferenceRoomService.AttributesConfirmedNotificationRow);
+        if (apply is "membership" or "both")
+            rows.Add(ConferenceRoomService.MembershipConfirmedNotificationRow);
+        Assert.Equal(rows, details.Keys);
+        Assert.Equal(Typed, details["Room"]);
+        if (details.TryGetValue(ConferenceRoomService.AttributesConfirmedNotificationRow, out var attributes))
+        {
+            Assert.StartsWith(ConferenceRoomService.AttributesConfirmedAfterWriteError, attributes, StringComparison.Ordinal);
+            Assert.Contains(TimedOut, attributes, StringComparison.Ordinal);
+            Assert.Equal(audit.GetProperty(ConferenceRoomService.AttributesConfirmedAuditKey).GetString(), attributes);
+        }
+        if (details.TryGetValue(ConferenceRoomService.MembershipConfirmedNotificationRow, out var membership))
+        {
+            Assert.StartsWith(ConferenceRoomService.ConfirmedAfterWriteError, membership, StringComparison.Ordinal);
+            Assert.Equal(audit.GetProperty(ConferenceRoomService.MembershipConfirmedAuditKey).GetString(), membership);
+        }
+        if (apply == "partial")
+        {
+            Assert.False(success);
+            Assert.Equal("Failed", audit.GetProperty("result").GetString());
+            Assert.NotNull(error);
+            Assert.StartsWith("Partial: ", error, StringComparison.Ordinal);
+            Assert.DoesNotContain(ConferenceRoomService.AttributesConfirmedAfterWriteError, error, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.True(success);
+            Assert.Equal("Success", audit.GetProperty("result").GetString());
+            Assert.Null(error);
+        }
+    }
+
     // ---- the harness ---------------------------------------------------------------------------
+
+    // aud-a2r. The one admin notification the page's Room Finder apply sent: its outcome, its detail rows and its error.
+    private (bool Success, IReadOnlyDictionary<string, string> Details, string? Error) AdminNotification()
+    {
+        var call = Assert.Single(_pageEmail!.ReceivedCalls(), c => c.GetMethodInfo().Name == nameof(EmailService.SendAdminNotificationAsync)
+            && (c.GetArguments()[2] as string) == "ConferenceRooms_SetMetadata");
+        var arguments = call.GetArguments();
+        return ((bool)arguments[3]!, (IReadOnlyDictionary<string, string>)arguments[5]!, (string?)arguments[6]);
+    }
 
     private async Task<JsonElement> ApplyAndReadAudit(string surface, string city = "")
     {
@@ -410,7 +485,8 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         var page = new Page();
         SetProperty(page, "RoomService", service);
         SetProperty(page, "Audit", _h.Audit);
-        SetProperty(page, "Email", Substitute.For<EmailService>(_h.Config, NullLogger<EmailService>.Instance));
+        _pageEmail = Substitute.For<EmailService>(_h.Config, NullLogger<EmailService>.Instance);
+        SetProperty(page, "Email", _pageEmail);
         SetProperty(page, "ServiceNow", new ServiceNowService(_h.Config, NullLogger<ServiceNowService>.Instance, HttpClients()));
         SetProperty(page, "AuthStateProvider", Authentication());
         SetProperty(page, "AuthorizationService", Authorization());

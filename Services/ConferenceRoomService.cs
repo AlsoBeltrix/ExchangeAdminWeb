@@ -650,7 +650,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         result.Success = true;
         // aud-a2q. Values the read-back found in place after Set-ADUser reported an error are not
-        // claimed as written by this row; the admin notification carries this message.
+        // claimed as written by this row. The admin notification does not carry a success's message:
+        // since aud-a2r it carries the detail, on a row of its own (NotificationDetails).
         result.Message = string.IsNullOrWhiteSpace(city) && string.IsNullOrWhiteSpace(state) && string.IsNullOrWhiteSpace(countryOrRegion)
             ? "Room metadata and room list configured."
             : adConfirmed is null
@@ -1569,22 +1570,28 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         return await Task.Run<(string? error, string? server)>(() =>
         {
+            // aud-a2r. The step under way, for the catch at the end, as the write below keeps it (aud-a2q): a failure of
+            // any step here read "Failed to validate the AD object before writing" with no step named. Only the steps up
+            // to the object read reach that catch - the routed read further down settles its own error, in a refusal
+            // naming the server - and every one of them runs before Set-Place, so nothing was written.
+            var step = "opening the directory runspace";
             try
             {
                 using var runspace = OpenDirectoryRunspace();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
-                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                if (ps.HadErrors)
-                    return (FirstError(ps) ?? "Failed to load the ActiveDirectory module.", null);
-                ps.Commands.Clear();
+                step = "importing the ActiveDirectory module";
+                ImportActiveDirectoryModule(ps);
 
+                step = "preparing the module's AD credential";
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+                step = "reading the AD object";
                 var objectError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential, out var roomDn);
+                // Before any write, so the refusal says nothing was written: ConfirmDirectoryObject leaves that to its
+                // caller (aud-a2r), its callers on the write paths coming after Set-Place.
                 if (objectError != null)
-                    return (objectError, null);
+                    return ($"{Sentence(objectError)} Nothing was written.", null);
 
                 // aud-a2q. The server the write and its read-back will use, derived here, once.
                 var server = GroupManagementService.ServerFromDn(roomDn);
@@ -1618,8 +1625,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Set-ADUser preflight failed for {Room}", roomEmail);
-                return ($"Failed to validate the AD object before writing: {ex.Message}", null);
+                _logger.LogError(ex, "Set-ADUser preflight for {Room} on the AD object {Object}: {Step} failed; nothing was written", roomEmail, objectGuid, step);
+                return ($"City/State/Country could not be validated before writing on the AD object {objectGuid}: {step} failed: {Sentence(ex.Message)} Nothing was written.", null);
             }
         });
     }
@@ -1662,18 +1669,15 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 ps.Runspace = runspace;
 
                 step = "importing the ActiveDirectory module";
-                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                if (ps.HadErrors)
-                    return (FirstError(ps) ?? "Failed to load the ActiveDirectory module.", null, null);
-                ps.Commands.Clear();
+                ImportActiveDirectoryModule(ps);
 
                 step = "preparing the module's AD credential";
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
                 // aud-a2d's read of the object before writing, unchanged. Not the route: the server is the
                 // one the preflight proved (aud-a2q), and this read's DN is not consulted, so the write
-                // cannot move to a domain nothing proved.
+                // cannot move to a domain nothing proved. Its refusal is returned as it is (aud-a2r): this
+                // comes after Set-Place, inside the row's partial, where "Nothing was written." would be false.
                 step = "reading the AD object";
                 var confirmError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential);
                 if (confirmError != null)
@@ -1828,19 +1832,26 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
-                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                if (ps.HadErrors)
-                    return FirstError(ps) ?? "Failed to load the ActiveDirectory module.";
-                ps.Commands.Clear();
+                // aud-a2r. The import's error is the one it throws (ImportActiveDirectoryModule). This method keeps no
+                // step for its catch at the end to name, so the import's is named here, before anything is written.
+                try
+                {
+                    ImportActiveDirectoryModule(ps);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "On-prem room-list preflight for {Room} on {List}: importing the ActiveDirectory module failed; nothing was written", roomEmail, list.Name);
+                    return $"Failed to validate the on-prem room list '{list.Name}' before writing: importing the ActiveDirectory module failed: {Sentence(ex.Message)} Nothing was written.";
+                }
 
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
                 // The two objects the on-prem add names - the room's proven object and the list's
                 // group - each read here exactly as the add will read them, without writing.
                 var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential, out var roomDn);
+                // Before any write: the refusal says so, as the resolver's and the membership read's below do (aud-a2r).
                 if (roomError != null)
-                    return roomError;
+                    return $"{Sentence(roomError)} Nothing was written.";
 
                 // The resolver's refusals are shared with the add, which meets them after the writes,
                 // so here, as for the membership read below, the preflight says nothing was written.
@@ -1897,17 +1908,25 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
-                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                if (ps.HadErrors)
-                    return (FirstError(ps) ?? "Failed to load the ActiveDirectory module.", null, null);
-                ps.Commands.Clear();
+                // aud-a2r. As in the preflight, the import's error is named here: the catch at the end would log the
+                // write, Set-ADGroup, as what failed.
+                try
+                {
+                    ImportActiveDirectoryModule(ps);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "On-prem room-list add for {Room} on {List}: importing the ActiveDirectory module failed", roomEmail, roomListName);
+                    return ($"Failed to add the room to the on-prem room list '{roomListName}': importing the ActiveDirectory module failed: {ex.Message}", null, null);
+                }
 
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
                 // BOTH objects by immutable GUID, fail-closed, before any write - so the wrong
                 // member is never added to the wrong group. The room's is the validated one.
                 var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential, out var roomDn);
+                // After Set-Place and the timezone, inside the row's partial: the refusal is returned as it is, with no
+                // "Nothing was written." (aud-a2r).
                 if (roomError != null)
                     return (roomError, null, null);
 
@@ -2043,11 +2062,40 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         });
     }
 
+    // aud-a2r. Imports the ActiveDirectory module into a directory runspace, as its first command; the callers name the
+    // step - the City/State/Country paths through their step, the room-list paths in a catch of their own. The import's
+    // error is the one it throws. Under -ErrorAction Stop the cmdlet's own error is thrown from Invoke and leaves no record
+    // in the stream (measured on this SDK: TheRealImportModule_ThrowsItsOwnErrorUnderStop_AndLeavesNoRecord), so the
+    // HadErrors check each of the four AD paths made after its import never saw that error. It saw only an error written
+    // past the preference, and returned that, in no step's name, as the row's refusal though the module had loaded. Every
+    // other directory import in the app is judged by its throw alone (GroupManagementService, ADAttributeEditorService,
+    // Comms10kService), as aud-a2o and aud-a26g judged the writes. That makes -ErrorAction Stop load-bearing: without it a
+    // module that cannot load is a record, cleared below unread, and the failure surfaces at the next step, in that
+    // step's name. The finally clears the error stream as well as the commands, so a record left past the preference is
+    // not taken by the next read's own error check (ConfirmDirectoryObject's HadErrors, psl-2) for that read's error.
+    private static void ImportActiveDirectoryModule(PowerShell ps)
+    {
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        try
+        {
+            ps.Invoke();
+        }
+        finally
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+        }
+    }
+
     // Confirms the validated room's AD object can be read, by its objectGUID, before an AD write
     // (aud-a2d). Shared by the pre-mutation preflight and the writes, so they read the same object.
     // Returns an error message, or null when exactly that object answered. It replaced a lookup
     // of the typed string by userPrincipalName, which found whichever object held that UPN.
     // Assumes the ActiveDirectory module is already imported into the runspace.
+    // aud-a2r. Its refusals say nothing of what was or was not written - the caller knows, as with
+    // ResolveAdGroupGuid's. The two preflights, before any write, add "Nothing was written."; the
+    // City/State/Country write and the room-list add, after Set-Place, add nothing, their refusal shown
+    // inside the row's partial, which says what was written. It used to end every refusal so.
     private static string? ConfirmDirectoryObject(PowerShell ps, string objectGuid, string roomEmail, PSCredential credential) =>
         ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential, out _);
 
@@ -2066,11 +2114,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         ps.Commands.Clear();
 
         if (found.Count != 1)
-            return $"The AD object validated for '{roomEmail}' ({objectGuid}) could not be read ({found.Count} found). Nothing was written.";
+            return $"The AD object validated for '{roomEmail}' ({objectGuid}) could not be read ({found.Count} found).";
 
         var readGuid = found[0].Properties["ObjectGUID"]?.Value?.ToString();
         if (!string.Equals(readGuid, objectGuid, StringComparison.OrdinalIgnoreCase))
-            return $"Active Directory answered {objectGuid} with a different object ({readGuid ?? "no ObjectGUID"}). Nothing was written.";
+            return $"Active Directory answered {objectGuid} with a different object ({readGuid ?? "no ObjectGUID"}).";
 
         distinguishedName = found[0].Properties["DistinguishedName"]?.Value?.ToString();
         return null;
@@ -2504,6 +2552,41 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         extra ??= new Dictionary<string, object?>();
         extra[AttributesConfirmedAuditKey] = attributesConfirmed;
         return extra;
+    }
+
+    /// <summary>
+    /// aud-a2r. The admin notification's row carrying <see cref="RoomOperationResult.DirectoryAttributesConfirmed"/>
+    /// (<see cref="NotificationDetails"/>).
+    /// </summary>
+    public const string AttributesConfirmedNotificationRow = "City/State/Country";
+
+    /// <summary>
+    /// aud-a2r. The admin notification's row carrying <see cref="RoomOperationResult.DirectoryMembershipConfirmed"/>
+    /// (<see cref="NotificationDetails"/>).
+    /// </summary>
+    public const string MembershipConfirmedNotificationRow = "Room list membership";
+
+    /// <summary>
+    /// aud-a2r. The detail rows of a Room Finder apply's admin notification: the room, then each directory write the
+    /// read-back confirmed after the write reported an error, on a row of its own.
+    /// </summary>
+    /// <remarks>
+    /// The page hands the notification a failure's message as its error and a success's as nothing, so a row the
+    /// read-back settled after Set-ADUser or Set-ADGroup reported an error reached the administrators as a plain success,
+    /// though the page, the result and the audit all said otherwise. The rows carry the text the audit records under
+    /// <see cref="AttributesConfirmedAuditKey"/> and <see cref="MembershipConfirmedAuditKey"/>, by the audit's rule:
+    /// whenever the result carries the detail, whatever the outcome - a partial whose City/State/Country were confirmed
+    /// before a later step failed carries it beside its error. Never in the error field, which a success does not
+    /// fill. A clean apply's rows are the room alone, as before. Pure, for testing.
+    /// </remarks>
+    public static Dictionary<string, string> NotificationDetails(string room, string? attributesConfirmed, string? membershipConfirmed)
+    {
+        var details = new Dictionary<string, string> { ["Room"] = room };
+        if (attributesConfirmed is not null)
+            details[AttributesConfirmedNotificationRow] = attributesConfirmed;
+        if (membershipConfirmed is not null)
+            details[MembershipConfirmedNotificationRow] = membershipConfirmed;
+        return details;
     }
 
     private static string? FirstError(PowerShell ps) =>
