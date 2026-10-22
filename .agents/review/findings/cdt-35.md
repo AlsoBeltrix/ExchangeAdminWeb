@@ -186,8 +186,11 @@ to hear for those spellings, and it is the module's split.
 
 Comment pass after the round (the tripwire and summary comments in `ConfigStorePath.cs`, the
 module's comment), then the guards rerun green: `ConfigStorePathTests` 57 passed,
-`SqliteConfigBackup.Tests.ps1` 49 passed. Post-comment md5s (LF): `ConfigStorePath.cs`
-`FDC3A5F491157686B1C90426CBA13D9A`, `tools/SqliteConfigBackup.psm1`
+`SqliteConfigBackup.Tests.ps1` 49 passed. Post-comment md5s (LF, as committed in `c73e51c`):
+`ConfigStorePath.cs` `CBAC08792F931B75FE8905F88714D6B9` (corrected in a follow-up commit: the record
+first carried `FDC3A5F491157686B1C90426CBA13D9A`, taken before the tripwire comment's last wording
+change - it names the module by file rather than by function - which the gates below ran after),
+`tools/SqliteConfigBackup.psm1`
 `4412D7BFC9A5F153EAB9E3456C5893F0`, `ExchangeAdminWeb.Tests/ConfigStorePathTests.cs`
 `83E4A0EC357D106C96B852C510D746C3`, `tests/ps/SqliteConfigBackup.Tests.ps1`
 `B410AFC85E661DAB4225266F2B44C676`.
