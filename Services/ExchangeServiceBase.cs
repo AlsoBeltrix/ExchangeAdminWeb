@@ -329,6 +329,17 @@ public abstract class ExchangeServiceBase
     /// </remarks>
     protected static string BindValidatedMailbox(PowerShell ps, ConnectionErrorTracker tracker, ValidatedMailbox mailbox)
     {
+        var found = ReadValidatedMailbox(ps, tracker, mailbox);
+        var primary = found.Properties["PrimarySmtpAddress"]?.Value?.ToString();
+        return string.IsNullOrWhiteSpace(primary) ? mailbox.Identity : primary;
+    }
+
+    /// <summary>
+    /// <see cref="BindValidatedMailbox"/>'s read, returning the mailbox object itself for callers
+    /// that need more of it than the address (the Conference Rooms room read). Same refusals.
+    /// </summary>
+    protected static PSObject ReadValidatedMailbox(PowerShell ps, ConnectionErrorTracker tracker, ValidatedMailbox mailbox)
+    {
         ps.AddCommand("Get-Mailbox")
           .AddParameter("Identity", mailbox.Identity)
           .AddParameter("ErrorAction", "Stop");
@@ -348,8 +359,7 @@ public abstract class ExchangeServiceBase
                 + $"({exchangeGuid?.ToString("D") ?? "no mailbox GUID"}) - nothing was written.");
         }
 
-        var primary = found[0].Properties["PrimarySmtpAddress"]?.Value?.ToString();
-        return string.IsNullOrWhiteSpace(primary) ? mailbox.Identity : primary;
+        return found[0];
     }
 
     protected static void ValidateRecipient(PowerShell ps, string identity)

@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM - after aud-a2b and aud-a2c the check names the right object, but every write
 hands Exchange the typed string again, so check and write can still name different objects.
-**Status**: Plan written; implementation in progress
+**Status**: Fixed on branch; awaiting merge
 **Branch**: `worktree-agent-ab74b77ad109ec5f3`
 **Commit**: `<pending>`
 **Reviewer**: implementer (gap recorded in aud-a2b; admitted by the supervisor 2026-10-21)
@@ -229,6 +229,34 @@ Conference Rooms. Gates before each.
 - Page: `SetOof` passes `protectedValidation.Mailbox` to both; the audit `extra` gains
   `writtenIdentity` beside `previousState`/`newState`. The page is not ClickGate-registered.
 
+### Conference Rooms
+
+- Gate: `ProtectionOutcome` carries `Room`; both allow factories require one. The room is bound
+  after the protection verdict (`ValidatedMailbox.From(resolved)`), so a protected room keeps its
+  refusal; an ordinary or serviced allow with no mailbox GUID - NotFound included - is refused
+  ("cannot be bound"). `onAllowed` is now `(servicedNote, room)` (and `room` on the no-user
+  overload). NotFound used to be an allow; the test that pinned that is rewritten to the opposite.
+- `GetRoomInfoAsync(ValidatedMailbox)`: `ReadValidatedMailbox` (the read-back, factored out of
+  `BindValidatedMailbox` in `ExchangeServiceBase`) then `Get-Place` / `Get-MailboxRegionalConfiguration`
+  by the GUID. The string overload stays for previews and is unchanged in behaviour.
+- `SetRoomMetadataAndListAsync` and `SetRoomTypeAsync` take the room: null refused before any read;
+  every Exchange write takes the GUID; the Type calendar folder is `<GUID>:\<folder>`.
+  `AddToRoomListAsync` (now private) adds `-Member <GUID>` and compares the list's members with the
+  primary address Exchange returned for the GUID (it compared the typed string).
+- Active Directory steps: City/State/Country (`Set-ADUser`) and the on-prem room-list fallback
+  (`Add-ADGroupMember -Members`) write the objectGUID the gate PROVED owns the mailbox
+  (`ValidatedMailbox.DirectoryObjectGuid`). `ResolveAdObjectGuid` - a `UserPrincipalName -eq
+  '<typed>'` search - is replaced by `ConfirmDirectoryObject` (`Get-ADUser -Identity <objectGUID>`,
+  exactly that object or refuse). A cloud-only room has no proven object: a row with
+  City/State/Country, or one needing the on-prem list fallback, is refused before any write and
+  before a credential is fetched. The removed comment's safety argument ("userPrincipalName ==
+  email in this environment") rested on this environment's shape (Architectural Invariant 7).
+  `OpenDirectoryRunspace` is a new `virtual` test seam, no behaviour change.
+- Bulk processor: each row's operation is handed the gate's room for that row; its audit adds
+  `writtenIdentity` (and `writtenDirectoryObject` on Finder rows, which write AD by it).
+- Page: both handlers' `onAllowed` pass the room to the write and to the old-values read; both
+  audit helpers add the identity. Line count unchanged (1758); no ClickGate entry moved.
+
 ## Guard proof
 
 | Test | What it pins |
@@ -351,3 +379,153 @@ mailbox whose calendar folder is "Kalender"):
 | OP1 | page: the write handed null | `OutOfOffice.razor` `0af66f3898ed894f03a548698aaf6d7b` | `b0da1605c3363c8d492cc3a81c9949e7` | `OutOfOfficeRequestCaptureTests.AnEditDuringTheOperation_...` | FAIL (all three holds) |
 | OP2 | page: previous-state read by the typed string | same | `64b2397512a86eb08ce18794fdf41f30` | same | FAIL (all three holds) |
 | OP3 | page: audit drops `writtenIdentity` | same | `082b6337533c9e36248ca79ccd3cbea9` | same | FAIL (all three holds) |
+
+**Conference Rooms tests** (`ConferenceRoomWriteIdentityTests` drive the real service through the
+harness, with the credential and the AD runspace replaced by stand-ins; the typed string is an
+alias of a DIFFERENT room):
+
+| Test | What it pins |
+| --- | --- |
+| `TheFinderWrites_AreBoundToTheValidatedRoom_NotTheStringTyped` | every room read, `Set-Place`, both timezone cmdlets and `Add-DistributionGroupMember -Member` take the GUID |
+| `CityStateAndCountry_AreWrittenToTheProvenDirectoryObject_NotAUserPrincipalNameMatch` | `Set-ADUser` writes the proven objectGUID; every AD read is `-Identity <objectGUID>`, none a `-Filter` |
+| `ACloudOnlyRoomWithLocationFields_IsRefusedBeforeAnyWrite` | no proven AD object: refused before Set-Place, no credential fetched |
+| `ARoomAlreadyOnTheList_ByItsValidatedAddress_IsNotAddedAgain` | the already-member test uses the validated room's address |
+| `TheOnPremRoomListFallback_AddsTheProvenDirectoryObject` | the on-prem fallback adds the proven objectGUID |
+| `TheTypeWrites_AreBoundToTheValidatedRoom_NotTheStringTyped` (2) | read-back, folder lookup, `Set-CalendarProcessing`, `Set-Mailbox`, every folder permission (`<GUID>:\Calendar`), the existing-permission removal and both timezone cmdlets |
+| `WithoutAValidatedRoom_NothingIsWritten_AndNothingIsAsked` (Finder, Type) | null refuses before any read, connection or credential |
+| `AReadBackOfADifferentMailbox_RefusesBeforeAnyWrite` (Finder, Type) | read-back mismatch stops both operations before a write |
+| `ConferenceRoomProtectionGateTests.TheWrite_IsHandedTheRoomTheGateResolved` | `onAllowed` receives the resolved principal's GUID and proven objectGUID |
+| `NotFound_HasNoRoomToBindTheWriteTo_WriteNotInvoked` | **rewritten from `NotFound_TreatedAsAllow_InvokesWrite`** - NotFound is now refused |
+| `AResolvedTargetWithNoMailboxGuid_IsDenied_WriteNotInvoked` | an AD object Exchange has no mailbox for is refused |
+| `ConferenceRoomServicerTests.AServicedAllow_IsBoundToTheRoomTheGateResolved`, `AServicedTargetWithNoMailbox_IsRefused` | the serviced allow is bound too |
+| `ConferenceRoomBulkProcessorTests.ARow_IsWrittenToTheRoomTheGateResolvedForIt_AndTheAuditRecordsIt` (Finder, Type) | each bulk row hands its room operation the gate's room and audits `writtenIdentity` with the typed target |
+| `ARowNeitherDirectoryKnows_HasNoRoomToBindTo_IsDeniedAndNotApplied` | a NotFound row is denied and audited, never applied |
+
+Existing tests changed: the gate, servicer and bulk-processor fakes give the resolved principal a
+mailbox GUID (an allow now needs one); the bulk fake's default status moved from NotFound to
+Resolved for the same reason; the processor's happy-path audit assertion accepts the new `extra`.
+
+**Mutations, round 4** (Conference Rooms):
+
+| # | Mutation | File, md5 before (= restored) | md5 mutated | Named test | Result |
+| --- | --- | --- | --- | --- | --- |
+| R1 | `Set-Place -Identity` typed string | `ConferenceRoomService.cs` `91926ed347c6a362349979d1a0ea0b68` | `484d587457ad6874ccae416679735c0a` | `TheFinderWrites_AreBoundToTheValidatedRoom_NotTheStringTyped` | FAIL |
+| R2 | Finder `Set-MailboxRegionalConfiguration` typed string | same | `efbff938c3225de39a2136a0d0f01185` | same | FAIL |
+| R3 | Finder `Set-MailboxCalendarConfiguration` typed string | same | `65e3123cd2efa7b62bc95f45077518bf` | same | FAIL |
+| R4 | `Add-DistributionGroupMember -Member` typed string | same | `15b763851ce0a6da42ae4904ef3cfc2c` | same | FAIL |
+| R5 | already-member compared with the typed string | same | `534e4a1e65c9c6bfa720970c96ce6af7` | `ARoomAlreadyOnTheList_ByItsValidatedAddress_IsNotAddedAgain` | FAIL |
+| R6 | `Set-ADUser -Identity` typed string | same | `5d4986b769b65633ee0b294b7b37d39f` | `CityStateAndCountry_AreWrittenToTheProvenDirectoryObject_NotAUserPrincipalNameMatch` | FAIL |
+| R7 | AD object found by a UPN match of the typed string again | same | `f9712f05a7e2024ab9202a83e92c36e1` | same | FAIL |
+| R8 | preflight falls back to the typed string with no proven object | same | `e499e96fe4793344a197969b687053d6` | `ACloudOnlyRoomWithLocationFields_IsRefusedBeforeAnyWrite` | FAIL |
+| R9 | `Add-ADGroupMember -Members` typed string | same | `a7309b1cb3949bb0bdca2b7a131d0d1f` | `TheOnPremRoomListFallback_AddsTheProvenDirectoryObject` | FAIL |
+| R10 | Finder: null refusal dropped | same | `45947a17be2b14db5740a6dce14e6dc8` | `WithoutAValidatedRoom_NothingIsWritten_AndNothingIsAsked` (Finder) | FAIL |
+| R11 | Type: null refusal dropped | same | `23b45de46841525b35fbabd4b9a0af7e` | same (Type) | FAIL |
+| R12 | room read by the typed string instead of the GUID | same | `4f1764dd6eb33d72dfb0ba46ddbc2a29` | `TheFinderWrites_AreBoundToTheValidatedRoom_NotTheStringTyped` | FAIL |
+| R14 | Type: folder looked up by the typed string | same | `ae3d574df2d55826f8f125da5e4d5dd1` | `TheTypeWrites_AreBoundToTheValidatedRoom_NotTheStringTyped` | FAIL (both) |
+| R15 | Type: folder identity built from the typed string | same | `ab1d5b1aa4f94187a84ad2e9e8ef6c43` | same | FAIL (both) |
+| R16 | `Set-CalendarProcessing -Identity` typed string | same | `ab69fe6c53faf1cadb3dc1809eb0e0f2` | same | FAIL (both) |
+| R17 | `Set-Mailbox -Identity` typed string | same | `bcb5150d34000746172a9596cfc13254` | same | FAIL (both) |
+| R18 | Type `Set-MailboxRegionalConfiguration` typed string | same | `971bfe16a57a94497ceee4c8741b97ba` | same | FAIL (both) |
+| R19 | gate: no-room refusal dropped | `ConferenceRoomProtectionGate.cs` `0aa3f7d67829af0812abb10d1fcd58ec` | `34bb23ff0f433bd51fffd1adde5ac74f` | `NotFound_HasNoRoomToBindTheWriteTo_WriteNotInvoked` | FAIL |
+| R21 | gate: the resolved room not carried | same | `261473b4ee227be8e1a2f1623934871c` | `TheWrite_IsHandedTheRoomTheGateResolved` | FAIL |
+| R22 | bulk row handed no room | `ConferenceRoomBulkProcessor.cs` `12d4e2e71c36546d7cb6d0bb374b7b69` | `3b74d2b1f9132c3d6766024155c33ff0` | `ARow_IsWrittenToTheRoomTheGateResolvedForIt_AndTheAuditRecordsIt` | FAIL (Finder; the mutation is on the Finder branch) |
+| R23 | bulk row audit drops `writtenIdentity` | same | `58ede47d3698ec3e05c9b23c1951dea5` | same | FAIL (both) |
+| R24 | page: old-values read by the typed string | `ConferenceRooms.razor` `de5ae5ce52362f4ea943fa2494993a99` | `da673853beff33f034c18e6f9c931245` | `ValidatedWriteCallSiteTests.EveryPageWrite_IsBoundToItsOwnValidation` | FAIL |
+| R25 | page: Finder write handed null | same | `30880e759fab2be11053d1165f557f6f` | same | FAIL |
+| R26 | page: Finder audit drops `writtenIdentity` | same | `c051de1a41b005eb9e23430007aeee4f` | `ValidatedWriteCallSiteTests.EveryPageWriteAudit_RecordsTheIdentityWritten` | FAIL |
+
+In all four rounds: 73 mutations, 73 named-test failures, every restored md5 equal to "before",
+every final rebuild and named-test run green. The md5s are of the files as committed (comments were
+written before the rounds, not after).
+
+## Known gaps
+
+**Source-level and fake-driven, not live.** Probing Exchange, Active Directory or Graph is
+forbidden without a direct owner go. The stand-ins bind parameters the way the cmdlets declare
+them; they do not prove how the real cmdlets resolve a GUID string. Each assumption below fails
+CLOSED - the cmdlet reports the identity "couldn't be found" and nothing is written - and each
+needs the dev acceptance check before this ships:
+
+- *Assumption:* MailboxIdParameter resolves a mailbox's ExchangeGuid string, in Exchange Online
+  and on-premises: `Get-Mailbox`, `Add-/Remove-MailboxPermission`, `Get-/Set-MailboxAutoReplyConfiguration`,
+  `Set-CalendarProcessing`, `Set-Mailbox`, `Set-MailboxRegionalConfiguration`,
+  `Set-MailboxCalendarConfiguration`, `Get-MailboxFolderStatistics`, and the mailbox part of
+  `<mailbox>:\<folder>` for `Set-/Add-/Remove-/Get-MailboxFolderPermission`. Microsoft documents
+  "GUID" for all of them without saying which GUID; aud-a2c's design rests on the same assumption.
+  The read-back (`BindValidatedMailbox`) at least proves that what `Get-Mailbox` returns for the
+  string carries the validated ExchangeGuid.
+- *Assumption, lower confidence:* RecipientIdParameter-typed identities resolve it too -
+  `Add-/Remove-RecipientPermission -Identity`, `Set-Place -Identity`, `Get-Place`, and
+  `Add-DistributionGroupMember -Member`. Documented as "GUID" only (learn.microsoft.com, read
+  2026-10-21). If they do not, Send As grants/revokes, Room Finder metadata and room-list adds
+  refuse with "couldn't be found" until bound another way (the recorded fallback: pass the
+  mailbox's own directory `Guid` read back in the same session).
+- *Assumption:* on-prem `Add-ADPermission` / `Remove-ADPermission` bind `-Identity` from a piped
+  `Get-Mailbox` object (`ValueFromPipelineByPropertyName` is documented True; the documented
+  direct forms are DN or name only). The pipeline is one statement, the shape the restricted
+  remote endpoint already runs for `OnPremRecipientExists`.
+- *Assumption:* `Get-ADUser -Identity <objectGUID>` - documented for the AD module.
+
+**Dev acceptance check owed** (operator workflow, not automatable here): on dev, for one ordinary
+cloud mailbox, grant and revoke FullAccess and Send As; set and remove a calendar permission; set
+and disable Out of Office; apply Room Finder metadata (with and without City/State/Country) and a
+room type to one room. Each should succeed and its audit row show `writtenIdentity`. A refusal
+names the identity in its message.
+
+**Page handlers** have no behavioural harness except Out of Office's. The other three are pinned by
+types (no write method takes a string identity, so the typed address cannot be passed) and by
+`ValidatedWriteCallSiteTests` (source-level: each write takes its own validation's mailbox, each
+audit site records it). A page passing the wrong validation's mailbox is caught only by that scan.
+
+**Who this refuses that a2c did not - operator-visible, refusing direction:**
+
+- Mailbox Permissions, Calendar Permissions, Out of Office: a target Exchange reports no mailbox
+  for (no recipient; a contact, distribution group or mail user without a mailbox GUID) is denied
+  at validation with "Exchange Online reports no mailbox for '<x>'". Before, it was allowed and the
+  write failed inside Exchange.
+- With no protection configured at all, validation now asks Exchange once per target (for the
+  mailbox to bind to) and refuses when Exchange cannot be asked. Before, it asked nothing.
+- Conference Rooms: a room neither directory knows (NotFound) is denied at the gate rather than
+  failing at the room read; a cloud-only room with City/State/Country refuses before Set-Place
+  ("no on-premises Active Directory object was validated").
+- The other direction, also operator-visible: a synced room typed by an address that is not its
+  userPrincipalName used to fail the City/State/Country step ("No AD object found with
+  userPrincipalName"); it now writes the room's own proven object. A room typed by an alias that is
+  already on its room list is no longer re-added (and no longer fails as "already a member").
+
+**Messages that changed:** the Calendar result message names the mailbox's primary address and
+the identity written (`<GUID>:\Calendar`) instead of `<typed primary>:\Calendar`. Audit `target`
+fields are unchanged; every write row gains `writtenIdentity` (Conference Rooms Finder rows also
+`writtenDirectoryObject`).
+
+**Residuals, recorded so nobody reads them as covered:**
+
+- The Conference Rooms Type path reads the room back twice (the recipient check and Step 1); the
+  second read is redundant with the first and was not mutation-proven separately.
+- `BindValidatedMailbox`'s "exactly one result" branch is not reached by any test (the stand-in
+  returns one object); its GUID comparison is (MB1).
+- The trustee (`-User`/`-Trustee`) is still the typed string, by design: it is not a protected
+  target. `ValidateSelfGrantAsync` still compares typed strings.
+
+**Observed, not admitted (reported for admission):**
+
+- *Candidate:* Conference Rooms writes room mailboxes INTO a room-list group (`Add-DistributionGroupMember
+  -Identity <list>`, and `Add-ADGroupMember -Identity <group objectGUID>` on the on-prem fallback),
+  and that group is never put through the Protected Group Targets check. The list is named from the
+  operator's Building field (`"<building> Conference Rooms"`, or legacy `RoomList-<building>`), so the
+  operator chooses, within that naming, which existing group is written into.
+  `docs/ProtectedGroupWriteTarget-Plan.md` scoped Conference Rooms out because "their write target is
+  a mailbox"; this write's target is a group. Not fixed here: it reverses a recorded owner-approved
+  scope (and the target check is AD-only, while most room lists are cloud groups).
+
+## Reviewer comments
+
+Implemented under the owner's 2026-10-21 go by an Opus 5.5 implementation agent on
+`worktree-agent-ab74b77ad109ec5f3`. Independent review pending.
+
+## Closeout
+
+Fixed on branch, not merged, not pushed. Shared infrastructure (`ValidatedMailbox`,
+`PermissionValidator`, `ExchangeServiceBase`, `ExchangeIdentityResolver`) moves the base app version
+at merge. Module behaviour changes, version bumps due at merge: Mailbox Permissions, Calendar
+Permissions, Out of Office, Conference Rooms.

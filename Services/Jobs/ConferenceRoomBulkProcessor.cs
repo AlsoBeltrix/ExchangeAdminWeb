@@ -119,22 +119,25 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                 Audit(job, actionAudit, target, success: false, ticket, denial.AuditDetail);
                 return Failed(target, denial.Message);
             },
-            onAllowed: async _ =>
+            onAllowed: async (_, room) =>
             {
-                // 3) Clean-root trace scope + 4) same ConferenceRoomService methods the live page uses.
+                // 3) Clean-root trace scope + 4) same ConferenceRoomService methods the live page uses,
+                // bound to the room the gate validated for THIS row (aud-a2d), never the row's string.
                 var traceAction = isFinder ? "SetMetadata_Bulk" : "SetType_Bulk";
                 using var op = _trace.BeginRootOperation(ModuleName, traceAction, job.SubmittedBy, job.SubmittedIp, target, ticket);
                 try
                 {
                     RoomOperationResult r = isFinder
-                        ? await ApplyFinderRowAsync(payload.FinderRows![rowIndex])
-                        : await ApplyTypeRowAsync(payload.TypeRows![rowIndex]);
+                        ? await ApplyFinderRowAsync(payload.FinderRows![rowIndex], room)
+                        : await ApplyTypeRowAsync(payload.TypeRows![rowIndex], room);
 
                     op.Complete(r.Success, r.Message);
 
-                    // 5) Per-row audit with captured actor/ip/ticket (same as the live page).
+                    // 5) Per-row audit with captured actor/ip/ticket (same as the live page), plus
+                    // the identity written; `target` stays the row as typed.
                     Audit(job, actionAudit, target, r.Success, ticket, r.Success ? null : r.Message,
-                        newValues: isFinder ? FinderNewValues(payload.FinderRows![rowIndex]) : TypeNewValues(payload.TypeRows![rowIndex]));
+                        newValues: isFinder ? FinderNewValues(payload.FinderRows![rowIndex]) : TypeNewValues(payload.TypeRows![rowIndex]),
+                        room: room, directoryWritten: isFinder);
 
                     return new BulkJobRowOutcome
                     {
@@ -146,7 +149,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                 catch (Exception ex)
                 {
                     op.Complete(false, ex.Message, ex);
-                    Audit(job, actionAudit, target, success: false, ticket, ex.Message);
+                    Audit(job, actionAudit, target, success: false, ticket, ex.Message, room: room, directoryWritten: isFinder);
                     return Failed(target, ex.Message);
                 }
             });
@@ -182,19 +185,19 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     // Per-row application - delegates to the unchanged ConferenceRoomService methods.
     // -------------------------------------------------------------------------
 
-    private async Task<RoomOperationResult> ApplyFinderRowAsync(FinderCsvRow row) =>
+    private async Task<RoomOperationResult> ApplyFinderRowAsync(FinderCsvRow row, ValidatedMailbox room) =>
         await _rooms.SetRoomMetadataAndListAsync(
-            row.Email, row.City, row.Building, row.Capacity,
+            row.Email, room, row.City, row.Building, row.Capacity,
             row.Floor, row.FloorLabel, row.DisplayDeviceName, row.VideoDeviceName,
             row.CountryOrRegion, row.State, row.TimeZone);
 
-    private async Task<RoomOperationResult> ApplyTypeRowAsync(TypeCsvRow row)
+    private async Task<RoomOperationResult> ApplyTypeRowAsync(TypeCsvRow row, ValidatedMailbox room)
     {
         if (!Enum.TryParse<RoomType>(row.Type, ignoreCase: true, out var roomType))
             return new RoomOperationResult { Email = row.Email, Success = false, Message = $"Invalid type: {row.Type}" };
 
         return await _rooms.SetRoomTypeAsync(
-            row.Email, roomType, row.TimeZone,
+            row.Email, room, roomType, row.TimeZone,
             row.Site, string.IsNullOrWhiteSpace(row.Arbiter) ? null : row.Arbiter,
             row.RemoveExistingPermissions);
     }
@@ -204,12 +207,16 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     // -------------------------------------------------------------------------
 
     private void Audit(BulkJob job, string action, string target, bool success, string ticket,
-        string? error = null, Dictionary<string, object?>? newValues = null)
+        string? error = null, Dictionary<string, object?>? newValues = null, ValidatedMailbox? room = null,
+        bool directoryWritten = false)
     {
         try
         {
+            // The identity the row's writes were bound to (aud-a2d); the Finder row also writes
+            // Active Directory by the validated object, so it records that too.
             _audit.LogConferenceRoomAction(job.SubmittedBy, job.SubmittedIp, action, target, success, ticket,
-                errorDetail: error, newValues: newValues);
+                errorDetail: error, newValues: newValues,
+                extra: ValidatedMailbox.WithWrittenIdentity(null, room, includeDirectoryObject: directoryWritten));
         }
         catch (Exception ex)
         {

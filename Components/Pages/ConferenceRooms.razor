@@ -1050,13 +1050,13 @@
                     AuditFinderAction(email, false, ticket, denial.AuditDetail);
                     return new RoomOperationResult { Email = email, Success = false, Message = denial.Message };
                 },
-                onAllowed: async serviced =>
+                onAllowed: async (serviced, room) =>
                 {
-                    // Capture old values
+                    // Capture old values - of the room the gate validated, which is the room written (aud-a2d)
                     Dictionary<string, object?>? oldValues = null;
                     try
                     {
-                        var existing = await RoomService.GetRoomInfoAsync(email);
+                        var existing = await RoomService.GetRoomInfoAsync(room);
                         if (existing != null)
                             oldValues = new() { ["city"] = existing.City, ["building"] = existing.Building, ["capacity"] = existing.Capacity, ["floor"] = existing.Floor, ["timezone"] = existing.TimeZone };
                     }
@@ -1070,13 +1070,13 @@
                     using var op = OpTrace.BeginOperation("ConferenceRooms", "SetMetadata", currentUser, clientIpAddress, email, ticket);
 
                     var r = await RoomService.SetRoomMetadataAndListAsync(
-                        email, cityName, buildingName, seats,
+                        email, room, cityName, buildingName, seats,
                         floorName, floorText, display, video,
                         country, stateName, tz);
 
                     op.Complete(r.Success, r.Message);
 
-                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced);
+                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced, room);
                     await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message);
                     return r;
                 });
@@ -1410,12 +1410,12 @@
                     AuditTypeAction(email, false, ticket, denial.AuditDetail);
                     return new RoomOperationResult { Email = email, Success = false, Message = denial.Message };
                 },
-                onAllowed: async serviced =>
+                onAllowed: async (serviced, room) =>
                 {
                     using var op = OpTrace.BeginOperation("ConferenceRooms", "SetType", currentUser, clientIpAddress, email, ticket);
 
                     activity.Step("setting the room type");
-                    var r = await RoomService.SetRoomTypeAsync(email, roomType, tz,
+                    var r = await RoomService.SetRoomTypeAsync(email, room, roomType, tz,
                         typeName == "Restricted" ? site : "none",
                         string.IsNullOrWhiteSpace(arbiter) ? null : arbiter,
                         removePerms);
@@ -1426,7 +1426,7 @@
                         ["roomType"] = typeName, ["timezone"] = tz,
                         ["site"] = site, ["removePerms"] = removePerms
                     };
-                    AuditTypeAction(email, r.Success, ticket, r.Success ? null : r.Message, newValues: newValues, servicedAuditDetail: serviced);
+                    AuditTypeAction(email, r.Success, ticket, r.Success ? null : r.Message, newValues: newValues, servicedAuditDetail: serviced, room: room);
 
                     activity.Step("notifying the administrators");
                     await NotifyRoomAdminAsync("ConferenceRooms_SetType", email, r.Success, ticket, r.Message);
@@ -1717,17 +1717,17 @@
 
     private void AuditFinderAction(string target, bool success, string ticket, string? error = null,
         Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null,
-        string? servicedAuditDetail = null)
+        string? servicedAuditDetail = null, ValidatedMailbox? room = null)
     {
-        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ServicedExtra(servicedAuditDetail)); }
+        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room, includeDirectoryObject: true)); }
         catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
     }
 
     private void AuditTypeAction(string target, bool success, string ticket, string? error = null,
         Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null,
-        string? servicedAuditDetail = null)
+        string? servicedAuditDetail = null, ValidatedMailbox? room = null)
     {
-        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ServicedExtra(servicedAuditDetail)); }
+        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room)); }
         catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
     }
 

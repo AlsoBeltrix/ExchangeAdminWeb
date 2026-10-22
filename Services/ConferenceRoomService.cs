@@ -69,6 +69,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // Resolve / Preview
     // -------------------------------------------------------------------------
 
+    /// <summary>A room by the string given - for previews and lookups that no write follows.</summary>
     public async Task<RoomInfo?> GetRoomInfoAsync(string roomEmail)
     {
         // Read-only: safe to retry on a dead pooled session.
@@ -77,46 +78,61 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             ps.AddCommand("Get-Mailbox")
               .AddParameter("Identity", roomEmail)
               .AddParameter("ErrorAction", "Stop");
-            var mbxResults = Invoke(ps, tracker);
-            var mbx = mbxResults.FirstOrDefault();
-            if (mbx == null) return null;
-
-            ps.AddCommand("Get-Place")
-              .AddParameter("Identity", roomEmail)
-              .AddParameter("ErrorAction", "SilentlyContinue");
-            var placeResults = InvokeOptional(ps, tracker);
-            var place = placeResults.FirstOrDefault();
-
-            string timezone = "";
-            try
-            {
-                ps.AddCommand("Get-MailboxRegionalConfiguration")
-                  .AddParameter("Identity", roomEmail)
-                  .AddParameter("ErrorAction", "SilentlyContinue");
-                var regionalResults = InvokeOptional(ps, tracker);
-                var regional = regionalResults.FirstOrDefault();
-                timezone = regional?.Properties["TimeZone"]?.Value?.ToString() ?? "";
-            }
-            catch { /* best-effort */ }
-
-            return new RoomInfo
-            {
-                Email = mbx.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? roomEmail,
-                DisplayName = mbx.Properties["DisplayName"]?.Value?.ToString() ?? "",
-                RecipientTypeDetails = mbx.Properties["RecipientTypeDetails"]?.Value?.ToString() ?? "",
-                CustomAttribute9 = mbx.Properties["CustomAttribute9"]?.Value?.ToString(),
-                City = place?.Properties["City"]?.Value?.ToString() ?? "",
-                Building = place?.Properties["Building"]?.Value?.ToString() ?? "",
-                Capacity = int.TryParse(place?.Properties["Capacity"]?.Value?.ToString(), out var cap) ? cap : 0,
-                Floor = place?.Properties["Floor"]?.Value?.ToString() ?? "",
-                FloorLabel = place?.Properties["FloorLabel"]?.Value?.ToString() ?? "",
-                DisplayDeviceName = place?.Properties["DisplayDeviceName"]?.Value?.ToString() ?? "",
-                VideoDeviceName = place?.Properties["VideoDeviceName"]?.Value?.ToString() ?? "",
-                CountryOrRegion = place?.Properties["CountryOrRegion"]?.Value?.ToString() ?? "",
-                State = place?.Properties["State"]?.Value?.ToString() ?? "",
-                TimeZone = timezone
-            };
+            var mbx = Invoke(ps, tracker).FirstOrDefault();
+            return mbx == null ? null : ReadRoomDetails(ps, tracker, mbx, roomEmail);
         }, allowRetry: true);
+    }
+
+    /// <summary>
+    /// The room the protection gate validated, read by its GUID (aud-a2d) - the room every write
+    /// of the operation is bound to. Throws unless Exchange returns exactly that mailbox.
+    /// </summary>
+    public async Task<RoomInfo?> GetRoomInfoAsync(ValidatedMailbox room)
+    {
+        // Read-only: safe to retry on a dead pooled session.
+        return await RunPooledQueryAsync(
+            (ps, tracker) => ReadRoomDetails(ps, tracker, ReadValidatedMailbox(ps, tracker, room), room.Identity),
+            allowRetry: true);
+    }
+
+    /// <summary>The rest of a room read, for the mailbox <paramref name="mbx"/> already read by <paramref name="identity"/>.</summary>
+    private static RoomInfo ReadRoomDetails(PowerShell ps, ConnectionErrorTracker tracker, PSObject mbx, string identity)
+    {
+        ps.AddCommand("Get-Place")
+          .AddParameter("Identity", identity)
+          .AddParameter("ErrorAction", "SilentlyContinue");
+        var placeResults = InvokeOptional(ps, tracker);
+        var place = placeResults.FirstOrDefault();
+
+        string timezone = "";
+        try
+        {
+            ps.AddCommand("Get-MailboxRegionalConfiguration")
+              .AddParameter("Identity", identity)
+              .AddParameter("ErrorAction", "SilentlyContinue");
+            var regionalResults = InvokeOptional(ps, tracker);
+            var regional = regionalResults.FirstOrDefault();
+            timezone = regional?.Properties["TimeZone"]?.Value?.ToString() ?? "";
+        }
+        catch { /* best-effort */ }
+
+        return new RoomInfo
+        {
+            Email = mbx.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? identity,
+            DisplayName = mbx.Properties["DisplayName"]?.Value?.ToString() ?? "",
+            RecipientTypeDetails = mbx.Properties["RecipientTypeDetails"]?.Value?.ToString() ?? "",
+            CustomAttribute9 = mbx.Properties["CustomAttribute9"]?.Value?.ToString(),
+            City = place?.Properties["City"]?.Value?.ToString() ?? "",
+            Building = place?.Properties["Building"]?.Value?.ToString() ?? "",
+            Capacity = int.TryParse(place?.Properties["Capacity"]?.Value?.ToString(), out var cap) ? cap : 0,
+            Floor = place?.Properties["Floor"]?.Value?.ToString() ?? "",
+            FloorLabel = place?.Properties["FloorLabel"]?.Value?.ToString() ?? "",
+            DisplayDeviceName = place?.Properties["DisplayDeviceName"]?.Value?.ToString() ?? "",
+            VideoDeviceName = place?.Properties["VideoDeviceName"]?.Value?.ToString() ?? "",
+            CountryOrRegion = place?.Properties["CountryOrRegion"]?.Value?.ToString() ?? "",
+            State = place?.Properties["State"]?.Value?.ToString() ?? "",
+            TimeZone = timezone
+        };
     }
 
     // Room-list naming. The room list IS the building in Microsoft Room Finder; the
@@ -343,26 +359,42 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         "RoomMailbox", "RemoteRoomMailbox"
     };
 
-    public async Task<string?> ValidateRoomRecipientAsync(string roomEmail)
+    /// <summary>
+    /// The validated room read back by its GUID, and refused unless it is a room mailbox. Returns
+    /// the room's details for the operation (its primary address included), or the refusal.
+    /// </summary>
+    private async Task<(RoomInfo? info, string? error)> ValidateRoomRecipientAsync(ValidatedMailbox room, string roomEmail)
     {
-        var info = await GetRoomInfoAsync(roomEmail);
+        var info = await GetRoomInfoAsync(room);
         if (info == null)
-            return $"Room '{roomEmail}' not found.";
+            return (null, $"Room '{roomEmail}' not found.");
         if (!ValidRoomRecipientTypes.Contains(info.RecipientTypeDetails))
-            return $"'{roomEmail}' is a {info.RecipientTypeDetails}, not a room mailbox. Conference Room operations require RoomMailbox or RemoteRoomMailbox.";
-        return null;
+            return (null, $"'{roomEmail}' is a {info.RecipientTypeDetails}, not a room mailbox. Conference Room operations require RoomMailbox or RemoteRoomMailbox.");
+        return (info, null);
     }
 
     // -------------------------------------------------------------------------
     // Room Finder - set metadata + add to room list
     // -------------------------------------------------------------------------
 
+    /// <param name="roomEmail">The operator's input, for the result and messages only.</param>
+    /// <param name="room">
+    /// The room the protection gate validated (aud-a2d): every Exchange write takes its GUID and the
+    /// Active Directory steps its proven objectGUID. Null refuses before anything is read or written.
+    /// </param>
     public async Task<RoomOperationResult> SetRoomMetadataAndListAsync(
-        string roomEmail, string city, string building, int capacity,
+        string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
         string floor, string floorLabel, string displayDevice, string videoDevice,
         string countryOrRegion, string state, string timezone)
     {
         var result = new RoomOperationResult { Email = roomEmail };
+
+        if (room is null)
+        {
+            result.Success = false;
+            result.Message = ValidatedMailbox.Refusal(roomEmail);
+            return result;
+        }
 
         if (!string.IsNullOrWhiteSpace(timezone))
         {
@@ -375,20 +407,20 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             }
         }
 
-        var recipientError = await ValidateRoomRecipientAsync(roomEmail);
-        if (recipientError != null)
+        var (roomInfo, recipientError) = await ValidateRoomRecipientAsync(room, roomEmail);
+        if (recipientError != null || roomInfo == null)
         {
             result.Success = false;
-            result.Message = recipientError;
+            result.Message = recipientError ?? $"Room '{roomEmail}' not found.";
             return result;
         }
 
         // Preflight the AD step BEFORE any mutation. Set-Place (Step 1) commits EXO-side
         // metadata; if the AD prerequisites for Step 2 are bad (unmappable country, missing/
-        // unavailable credential, no/ambiguous AD object) we must fail the row here so EXO is
+        // unavailable credential, no validated AD object) we must fail the row here so EXO is
         // never partially written. Without this guard a bad-AD row was reported failed but had
         // already committed Set-Place - the partial-apply defect from the 2026-06-17 review.
-        var adPreflightError = await PreflightSyncedAttributesViaAdAsync(roomEmail, city, state, countryOrRegion);
+        var adPreflightError = await PreflightSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion);
         if (adPreflightError != null)
         {
             result.Success = false;
@@ -404,9 +436,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // that failed mid-batch in the observed bug (CR-BUG-1) before any cmdlet committed.
         var placeResult = await RunAsync((ps, tracker) =>
         {
-            _operationTrace?.Step("SetPlace", backend: "EXO", command: "Set-Place", target: roomEmail);
+            _operationTrace?.Step("SetPlace", backend: "EXO", command: "Set-Place", target: room.Identity);
             var placeCmd = ps.AddCommand("Set-Place")
-              .AddParameter("Identity", roomEmail)
+              .AddParameter("Identity", room.Identity)
               .AddParameter("Building", building)
               .AddParameter("Capacity", capacity)
               .AddParameter("Floor", floor)
@@ -431,8 +463,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         // Step 2: Set-ADUser (on-prem AD) - City/State/Country are dir-synced AD attributes
         // that EXO Set-User rejects. Written on the on-prem object instead (the bug fix).
-        _operationTrace?.Step("SetADUser", backend: "AD", command: "Set-ADUser", target: roomEmail);
-        var adError = await SetSyncedAttributesViaAdAsync(roomEmail, city, state, countryOrRegion);
+        _operationTrace?.Step("SetADUser", backend: "AD", command: "Set-ADUser", target: room.DirectoryObjectGuid ?? roomEmail);
+        var adError = await SetSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion);
         if (adError != null)
         {
             // Set-Place already committed EXO metadata; this row is now half-configured.
@@ -449,15 +481,15 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         {
             var tzResult = await RunAsync((ps, tracker) =>
             {
-                _operationTrace?.Step("SetTimezone", backend: "EXO", command: "Set-MailboxRegionalConfiguration", target: roomEmail);
+                _operationTrace?.Step("SetTimezone", backend: "EXO", command: "Set-MailboxRegionalConfiguration", target: room.Identity);
                 ps.AddCommand("Set-MailboxRegionalConfiguration")
-                  .AddParameter("Identity", roomEmail)
+                  .AddParameter("Identity", room.Identity)
                   .AddParameter("TimeZone", timezone)
                   .AddParameter("ErrorAction", "Stop");
                 Invoke(ps, tracker);
 
                 ps.AddCommand("Set-MailboxCalendarConfiguration")
-                  .AddParameter("Identity", roomEmail)
+                  .AddParameter("Identity", room.Identity)
                   .AddParameter("WorkingHoursTimeZone", timezone)
                   .AddParameter("WorkDays", "None")
                   .AddParameter("ErrorAction", "Stop");
@@ -480,7 +512,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // metadata only). A room with no building is not added to any list.
         if (!string.IsNullOrWhiteSpace(building))
         {
-            var listResult = await AddToRoomListAsync(roomEmail, building, city);
+            var listResult = await AddToRoomListAsync(room, roomInfo.Email, roomEmail, building, city);
             result.Steps.AddRange(listResult.Steps);
             if (!listResult.Success)
             {
@@ -505,7 +537,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         return result;
     }
 
-    public async Task<RoomOperationResult> AddToRoomListAsync(string roomEmail, string building, string city = "")
+    /// <param name="room">The validated room (aud-a2d): the member added, by GUID or proven objectGUID.</param>
+    /// <param name="roomPrimary">
+    /// The room's primary address as Exchange returned it for <paramref name="room"/> - compared
+    /// against the list's members only, never written.
+    /// </param>
+    /// <param name="roomEmail">The operator's input, for the result only.</param>
+    private async Task<RoomOperationResult> AddToRoomListAsync(
+        ValidatedMailbox room, string roomPrimary, string roomEmail, string building, string city = "")
     {
         var result = new RoomOperationResult { Email = roomEmail };
 
@@ -545,15 +584,17 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
               .AddParameter("Identity", roomListName)
               .AddParameter("ErrorAction", "SilentlyContinue");
             var members = InvokeOptional(ps, tracker);
+            // Compared with the address Exchange returned for the validated room, not the typed
+            // string: an alias typed for a room already on the list used to read as "not a member".
             var alreadyMember = members.Any(m =>
-                string.Equals(m.Properties["PrimarySmtpAddress"]?.Value?.ToString(), roomEmail, StringComparison.OrdinalIgnoreCase));
+                string.Equals(m.Properties["PrimarySmtpAddress"]?.Value?.ToString(), roomPrimary, StringComparison.OrdinalIgnoreCase));
 
             if (!alreadyMember)
             {
-                _operationTrace?.Step("AddToRoomList", backend: "EXO", command: "Add-DistributionGroupMember", target: roomEmail);
+                _operationTrace?.Step("AddToRoomList", backend: "EXO", command: "Add-DistributionGroupMember", target: room.Identity);
                 ps.AddCommand("Add-DistributionGroupMember")
                   .AddParameter("Identity", roomListName)
-                  .AddParameter("Member", roomEmail)
+                  .AddParameter("Member", room.Identity)
                   .AddParameter("ErrorAction", "Stop");
                 Invoke(ps, tracker);
                 result.Steps.Add(new RoomOperationStep { Stage = $"Add to '{roomListName}'", Success = true });
@@ -590,8 +631,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // to adding the membership on-prem, exactly as City/State/Country are written
                 // on-prem and synced up.
                 case RoomListAddAction.OnPremFallback:
-                    _operationTrace?.Step("AddToRoomListOnPrem", backend: "AD", command: "Add-ADGroupMember", target: roomEmail);
-                    var adError = await AddToRoomListViaAdAsync(roomEmail, roomListName);
+                    _operationTrace?.Step("AddToRoomListOnPrem", backend: "AD", command: "Add-ADGroupMember", target: room.DirectoryObjectGuid ?? roomEmail);
+                    var adError = await AddToRoomListViaAdAsync(room, roomEmail, roomListName);
                     if (adError == null)
                     {
                         result.Success = true;
@@ -623,12 +664,24 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // Room Type - full 6-type implementation matching PS script
     // -------------------------------------------------------------------------
 
+    /// <param name="roomEmail">The operator's input, for the result and messages only.</param>
+    /// <param name="room">
+    /// The room the protection gate validated (aud-a2d): every cmdlet below takes its GUID and the
+    /// calendar folder is <c>&lt;GUID&gt;:\&lt;folder&gt;</c>. Null refuses before anything is read.
+    /// </param>
     public async Task<RoomOperationResult> SetRoomTypeAsync(
-        string roomEmail, RoomType roomType, string timezone,
+        string roomEmail, ValidatedMailbox? room, RoomType roomType, string timezone,
         string site = "none", string? arbiter = null,
         bool removeExistingPermissions = false)
     {
         var result = new RoomOperationResult { Email = roomEmail };
+
+        if (room is null)
+        {
+            result.Success = false;
+            result.Message = ValidatedMailbox.Refusal(roomEmail);
+            return result;
+        }
 
         if (!string.IsNullOrWhiteSpace(timezone))
         {
@@ -641,7 +694,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             }
         }
 
-        var recipientError = await ValidateRoomRecipientAsync(roomEmail);
+        var (_, recipientError) = await ValidateRoomRecipientAsync(room, roomEmail);
         if (recipientError != null)
         {
             result.Success = false;
@@ -673,26 +726,23 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         var opResult = await RunAsync((ps, tracker) =>
         {
-            // Step 1: Resolve room and calendar folder
-            _operationTrace?.Step("ResolveRoom", backend: "EXO", command: "Get-Mailbox", target: roomEmail);
-            ps.AddCommand("Get-Mailbox")
-              .AddParameter("Identity", roomEmail)
-              .AddParameter("ErrorAction", "Stop");
-            var mbx = Invoke(ps, tracker).FirstOrDefault()
-                ?? throw new InvalidOperationException($"Room '{roomEmail}' not found.");
-            var roomPrimary = mbx.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? roomEmail;
+            // Step 1: Read the validated room back by its GUID, refusing unless Exchange returns that
+            // mailbox (aud-a2d). Every step below writes room.Identity; this resolved the typed
+            // string and wrote its primary address, which Exchange resolved again per cmdlet.
+            _operationTrace?.Step("ResolveRoom", backend: "EXO", command: "Get-Mailbox", target: room.Identity);
+            ReadValidatedMailbox(ps, tracker, room);
             result.Steps.Add(new RoomOperationStep { Stage = "Resolve room", Success = true });
 
-            // Get calendar folder name
-            _operationTrace?.Step("GetCalendarFolder", backend: "EXO", command: "Get-MailboxFolderStatistics", target: roomPrimary);
+            // Get calendar folder name - of the validated room
+            _operationTrace?.Step("GetCalendarFolder", backend: "EXO", command: "Get-MailboxFolderStatistics", target: room.Identity);
             ps.AddCommand("Get-MailboxFolderStatistics")
-              .AddParameter("Identity", roomPrimary)
+              .AddParameter("Identity", room.Identity)
               .AddParameter("ErrorAction", "Stop");
             var folderStats = Invoke(ps, tracker);
             var calFolder = folderStats
                 .FirstOrDefault(f => f.Properties["FolderType"]?.Value?.ToString() == "Calendar");
             var calFolderName = calFolder?.Properties["Name"]?.Value?.ToString() ?? "Calendar";
-            var calFolderPath = $"{roomPrimary}:\\{calFolderName}";
+            var calFolderPath = $"{room.Identity}:\\{calFolderName}";
             result.Steps.Add(new RoomOperationStep { Stage = "Get calendar folder", Success = true });
 
             // Step 2: Resolve arbiter group
@@ -747,9 +797,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             }
 
             // Step 4: Calendar processing settings
-            _operationTrace?.Step("SetCalendarProcessing", backend: "EXO", command: "Set-CalendarProcessing", target: roomPrimary);
+            _operationTrace?.Step("SetCalendarProcessing", backend: "EXO", command: "Set-CalendarProcessing", target: room.Identity);
             var procCmd = ps.AddCommand("Set-CalendarProcessing")
-              .AddParameter("Identity", roomPrimary)
+              .AddParameter("Identity", room.Identity)
               .AddParameter("AllowConflicts", false)
               .AddParameter("AutomateProcessing", "AutoAccept")
               .AddParameter("DeleteSubject", true)
@@ -775,9 +825,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             // result. The cloud rejection is expected and informational; any OTHER error is a
             // real failure and is surfaced as such. Best-effort also avoids leaving a failed
             // command queued on the shared pipeline (which previously poisoned later steps).
-            _operationTrace?.Step("SetMailbox", backend: "EXO", command: "Set-Mailbox", target: roomPrimary);
+            _operationTrace?.Step("SetMailbox", backend: "EXO", command: "Set-Mailbox", target: room.Identity);
             var mbxCmd = ps.AddCommand("Set-Mailbox")
-              .AddParameter("Identity", roomPrimary)
+              .AddParameter("Identity", room.Identity)
               .AddParameter("CustomAttribute9", customAttr9)
               .AddParameter("ErrorAction", "SilentlyContinue");
             if (mailTip != null)
@@ -824,15 +874,15 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             // Step 8: Timezone + WorkDays
             if (!string.IsNullOrWhiteSpace(timezone))
             {
-                _operationTrace?.Step("SetTimezone", backend: "EXO", command: "Set-MailboxRegionalConfiguration", target: roomPrimary);
+                _operationTrace?.Step("SetTimezone", backend: "EXO", command: "Set-MailboxRegionalConfiguration", target: room.Identity);
                 ps.AddCommand("Set-MailboxRegionalConfiguration")
-                  .AddParameter("Identity", roomPrimary)
+                  .AddParameter("Identity", room.Identity)
                   .AddParameter("TimeZone", timezone)
                   .AddParameter("ErrorAction", "Stop");
                 Invoke(ps, tracker);
 
                 ps.AddCommand("Set-MailboxCalendarConfiguration")
-                  .AddParameter("Identity", roomPrimary)
+                  .AddParameter("Identity", room.Identity)
                   .AddParameter("WorkingHoursTimeZone", timezone)
                   .AddParameter("WorkDays", "None")
                   .AddParameter("ErrorAction", "Stop");
@@ -1251,25 +1301,48 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         return Task.CompletedTask;
     }
 
+    // virtual: a test seam (aud-a2d) so the Active Directory steps can be driven against an
+    // in-process runspace of stand-ins. No behaviour change: this is the runspace the three AD
+    // steps below opened for themselves.
+    protected virtual Runspace OpenDirectoryRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        return runspace;
+    }
+
+    // Refusal for an AD step with no validated object to write. A cloud-only room has none: the
+    // gate found no on-premises object behind it, so there is nothing City/State/Country or an
+    // on-prem list membership could be written to.
+    private static string NoDirectoryObject(string roomEmail, string what) =>
+        $"No on-premises Active Directory object was validated for '{roomEmail}' (a cloud-only room has none), so {what}.";
+
     // Writes the dir-synced location attributes (City/State/Country) on the on-prem AD
     // object via Set-ADUser. These attributes are AD-mastered, so EXO Set-User rejects them
     // ("being synchronized from your on-premises organization") - the root cause of the
     // Room Finder apply failure (docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md).
     // Returns null on success; a non-null string is the failure message for the row.
     // Runs in its own AD runspace (mirrors Comms10k / CheckAdGroupMembership), not through
-    // the EXO pool. Resolves the object by userPrincipalName (== email in this environment,
-    // forest-unique), asserts EXACTLY ONE match, and writes by the returned objectGUID so the
-    // mutation targets an immutable identity and can never hit the wrong object.
+    // the EXO pool.
+    //
+    // aud-a2d. The object is the one the protection gate PROVED owns the room's mailbox - the
+    // only AD object holding its ExchangeGuid in msExchMailboxGuid (aud-a2c) - written by that
+    // objectGUID. It used to be found by matching the TYPED string against userPrincipalName, on
+    // the reasoning that UPN equals the address "in this environment"; a different object holding
+    // the typed string as its UPN was written, and nothing had checked it.
+    //
     // Pre-mutation validation for the AD step. Runs every check that can be made WITHOUT
-    // mutating anything - country mapping, credential availability, and resolving the AD
-    // object to exactly one ObjectGUID - so the caller can fail the row BEFORE the EXO
-    // Set-Place write commits. This is the all-or-nothing guard: without it, a row whose
-    // AD prerequisites are bad (unmappable country, missing/unavailable credential, no/
-    // ambiguous AD object) would already have committed EXO metadata before failing.
+    // mutating anything - country mapping, a validated object to write, credential
+    // availability, and that object being readable - so the caller can fail the row BEFORE the
+    // EXO Set-Place write commits. This is the all-or-nothing guard: without it, a row whose
+    // AD prerequisites are bad (unmappable country, no validated object, missing/unavailable
+    // credential) would already have committed EXO metadata before failing.
     // Returns an error message to abort the row, or null when the AD write is expected to
     // succeed. (Two-system writes can never be fully atomic; a genuine Set-ADUser failure
     // after a passing preflight remains an inherent, accepted residual.)
-    private async Task<string?> PreflightSyncedAttributesViaAdAsync(string roomEmail, string city, string state, string countryOrRegion)
+    private async Task<string?> PreflightSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion)
     {
         Dictionary<string, object> attrs;
         try
@@ -1284,6 +1357,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (attrs.Count == 0)
             return null; // nothing synced to write for this row - AD step will be a no-op
 
+        if (room.DirectoryObjectGuid is not { } objectGuid)
+            return NoDirectoryObject(roomEmail, "City/State/Country could not be written");
+
         var creds = await GetModuleCredentialsAsync($"Set-ADUser preflight for {roomEmail}");
         if (creds is null)
             return "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.";
@@ -1292,10 +1368,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         {
             try
             {
-                var iss = InitialSessionState.CreateDefault();
-                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-                using var runspace = RunspaceFactory.CreateRunspace(iss);
-                runspace.Open();
+                using var runspace = OpenDirectoryRunspace();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
@@ -1306,8 +1379,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 ps.Commands.Clear();
 
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-                var (resolveError, _) = ResolveAdObjectGuid(ps, roomEmail, credential);
-                return resolveError; // null = unique object resolved, AD write expected to succeed
+                return ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential); // null = readable, AD write expected to succeed
             }
             catch (Exception ex)
             {
@@ -1317,7 +1389,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         });
     }
 
-    private async Task<string?> SetSyncedAttributesViaAdAsync(string roomEmail, string city, string state, string countryOrRegion)
+    private async Task<string?> SetSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion)
     {
         Dictionary<string, object> attrs;
         try
@@ -1332,6 +1404,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (attrs.Count == 0)
             return null; // nothing synced to write for this row
 
+        if (room.DirectoryObjectGuid is not { } objectGuid)
+            return NoDirectoryObject(roomEmail, "City/State/Country could not be written");
+
         var creds = await GetModuleCredentialsAsync($"Set-ADUser synced attributes for {roomEmail}");
         if (creds is null)
             return "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.";
@@ -1340,10 +1415,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         {
             try
             {
-                var iss = InitialSessionState.CreateDefault();
-                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-                using var runspace = RunspaceFactory.CreateRunspace(iss);
-                runspace.Open();
+                using var runspace = OpenDirectoryRunspace();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
@@ -1355,11 +1427,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
-                var (resolveError, objectGuid) = ResolveAdObjectGuid(ps, roomEmail, credential);
-                if (resolveError != null)
-                    return resolveError;
+                var confirmError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential);
+                if (confirmError != null)
+                    return confirmError;
 
-                // Write by objectGUID (immutable identity), not by UPN.
+                // Write by the validated objectGUID (immutable identity), never by a name.
                 ps.AddCommand("Set-ADUser")
                   .AddParameter("Identity", objectGuid)
                   .AddParameter("Replace", new System.Collections.Hashtable(attrs))
@@ -1386,8 +1458,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // same shape as the Set-ADUser City/State/Country handling. Returns null on success (incl.
     // already-a-member no-op), or a non-null failure message. See
     // docs/ConferenceRooms-OnPremRoomListAdd-Plan.md.
-    private async Task<string?> AddToRoomListViaAdAsync(string roomEmail, string roomListName)
+    //
+    // aud-a2d. The member added is the AD object the protection gate proved owns the room's
+    // mailbox, by objectGUID - not a userPrincipalName match of the typed string.
+    private async Task<string?> AddToRoomListViaAdAsync(ValidatedMailbox room, string roomEmail, string roomListName)
     {
+        if (room.DirectoryObjectGuid is not { } roomGuid)
+            return NoDirectoryObject(roomEmail, "the room could not be added to the on-prem room list");
+
         var creds = await GetModuleCredentialsAsync($"Add-ADGroupMember on-prem room list for {roomEmail}");
         if (creds is null)
             return "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). The room could not be added to the on-prem room list.";
@@ -1396,10 +1474,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         {
             try
             {
-                var iss = InitialSessionState.CreateDefault();
-                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-                using var runspace = RunspaceFactory.CreateRunspace(iss);
-                runspace.Open();
+                using var runspace = OpenDirectoryRunspace();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
@@ -1411,9 +1486,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
-                // Resolve BOTH objects to immutable GUIDs, fail-closed on not-found/ambiguous,
-                // before any write - so we never add the wrong member to the wrong group.
-                var (roomError, roomGuid) = ResolveAdObjectGuid(ps, roomEmail, credential);
+                // BOTH objects by immutable GUID, fail-closed, before any write - so the wrong
+                // member is never added to the wrong group. The room's is the validated one.
+                var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential);
                 if (roomError != null)
                     return roomError;
 
@@ -1457,33 +1532,30 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         });
     }
 
-    // Resolve a room's AD object by userPrincipalName to exactly one immutable
-    // ObjectGUID. Shared by the pre-mutation preflight and the actual Set-ADUser write
-    // so the two can never disagree about which object (or whether one exists). Returns
-    // (errorMessage, null) on any failure, or (null, objectGuid) on a unique match.
+    // Confirms the validated room's AD object can be read, by its objectGUID, before an AD write
+    // (aud-a2d). Shared by the pre-mutation preflight and the writes, so they read the same object.
+    // Returns an error message, or null when exactly that object answered. It replaced a lookup
+    // of the typed string by userPrincipalName, which found whichever object held that UPN.
     // Assumes the ActiveDirectory module is already imported into the runspace.
-    private static (string? error, string? objectGuid) ResolveAdObjectGuid(PowerShell ps, string roomEmail, PSCredential credential)
+    private static string? ConfirmDirectoryObject(PowerShell ps, string objectGuid, string roomEmail, PSCredential credential)
     {
-        var upn = roomEmail.Replace("'", "''");
         ps.AddCommand("Get-ADUser")
-          .AddParameter("Filter", $"UserPrincipalName -eq '{upn}'")
+          .AddParameter("Identity", objectGuid)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         var found = ps.Invoke();
         if (ps.HadErrors)
-            return (FirstError(ps) ?? $"AD lookup failed for {roomEmail}.", null);
+            return FirstError(ps) ?? $"AD lookup of the validated object {objectGuid} for {roomEmail} failed.";
         ps.Commands.Clear();
 
-        if (found.Count == 0)
-            return ($"No AD object found with userPrincipalName '{roomEmail}'. City/State/Country not written.", null);
-        if (found.Count > 1)
-            return ($"Multiple AD objects ({found.Count}) match userPrincipalName '{roomEmail}'. Refusing to write to avoid the wrong object.", null);
+        if (found.Count != 1)
+            return $"The AD object validated for '{roomEmail}' ({objectGuid}) could not be read ({found.Count} found). Nothing was written.";
 
-        var objectGuid = found[0].Properties["ObjectGUID"]?.Value;
-        if (objectGuid is null)
-            return ($"Resolved AD object for '{roomEmail}' has no ObjectGUID; refusing to write.", null);
+        var readGuid = found[0].Properties["ObjectGUID"]?.Value?.ToString();
+        if (!string.Equals(readGuid, objectGuid, StringComparison.OrdinalIgnoreCase))
+            return $"Active Directory answered {objectGuid} with a different object ({readGuid ?? "no ObjectGUID"}). Nothing was written.";
 
-        return (null, objectGuid.ToString());
+        return null;
     }
 
     // Resolve a room list (distribution group) to exactly one immutable on-prem ObjectGUID.

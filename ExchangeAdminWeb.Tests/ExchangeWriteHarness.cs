@@ -52,6 +52,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <summary>Command name to error message: that stand-in records its call, then throws the message.</summary>
     public Hashtable Failures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>The primary addresses the stand-in <c>Get-DistributionGroupMember</c> reports on any list.</summary>
+    public IList ListMembers { get; } = ArrayList.Synchronized(new ArrayList());
+
     private int _connects;
 
     /// <summary>How many Exchange connections the pool opened - zero proves nothing was borrowed.</summary>
@@ -243,6 +246,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("Mailboxes", Mailboxes);
         rs.SessionStateProxy.SetVariable("DirectoryObjects", DirectoryObjects);
         rs.SessionStateProxy.SetVariable("Failures", Failures);
+        rs.SessionStateProxy.SetVariable("ListMembers", ListMembers);
         using var init = PowerShell.Create();
         init.Runspace = rs;
         init.AddScript(definitions);
@@ -380,6 +384,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         function global:Get-DistributionGroupMember {
             [CmdletBinding()] param($Identity)
             Write-StandInCall 'Get-DistributionGroupMember' $PSBoundParameters
+            foreach ($member in $global:ListMembers) { [pscustomobject]@{ PrimarySmtpAddress = $member } }
         }
         function global:Add-DistributionGroupMember {
             [CmdletBinding()] param($Identity, $Member)

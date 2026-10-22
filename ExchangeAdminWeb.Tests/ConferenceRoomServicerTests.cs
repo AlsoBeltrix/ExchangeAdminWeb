@@ -103,17 +103,53 @@ public sealed class ConferenceRoomServicerTests : IDisposable
     private static async Task<(bool denied, string? serviced)> RunAsync(
         ConferenceRoomProtectionGate gate, ClaimsPrincipal? user)
     {
+        var (denied, serviced, _) = await RunWithRoomAsync(gate, user);
+        return (denied, serviced);
+    }
+
+    private static async Task<(bool denied, string? serviced, ValidatedMailbox? room)> RunWithRoomAsync(
+        ConferenceRoomProtectionGate gate, ClaimsPrincipal? user)
+    {
         string? captured = null;
+        ValidatedMailbox? handed = null;
         var denied = await gate.GuardThenRunAsync("room@x", user,
             onDenied: _ => true,
-            onAllowed: serviced => { captured = serviced; return Task.FromResult(false); });
+            onAllowed: (serviced, room) => { captured = serviced; handed = room; return Task.FromResult(false); });
 
-        return (denied, captured);
+        return (denied, captured, handed);
+    }
+
+    [Fact]
+    public async Task AServicedAllow_IsBoundToTheRoomTheGateResolved()
+    {
+        // aud-a2d: a servicer override does not loosen the binding - the write still gets the room
+        // the gate resolved, never the string.
+        var gate = CreateGate(servicerGroups: [ServicerSid]);
+
+        var (denied, serviced, room) = await RunWithRoomAsync(gate, UserIn(ServicerSid));
+
+        Assert.False(denied);
+        Assert.NotNull(serviced);
+        Assert.Equal(ProtectedFakePpService.RoomGuid, room!.ExchangeGuid);
+    }
+
+    [Fact]
+    public async Task AServicedTargetWithNoMailbox_IsRefused()
+    {
+        // The servicer may act on the protected target, but there is no mailbox to bind the write to.
+        var gate = CreateGate(servicerGroups: [ServicerSid], hasMailbox: false);
+
+        var (denied, serviced, room) = await RunWithRoomAsync(gate, UserIn(ServicerSid));
+
+        Assert.True(denied);
+        Assert.Null(serviced);
+        Assert.Null(room);
     }
 
     private ConferenceRoomProtectionGate CreateGate(
         string[]? servicerGroups,
-        string[]? otherModuleServicerGroups = null)
+        string[]? otherModuleServicerGroups = null,
+        bool hasMailbox = true)
     {
         Directory.CreateDirectory(_tempDir);
 
@@ -154,13 +190,21 @@ public sealed class ConferenceRoomServicerTests : IDisposable
         var trace = new OperationTraceService(config, jsonlLog);
         var delinea = new DelineaService(httpClientFactory, config, NullLogger<DelineaService>.Instance, extLog, trace);
 
-        var pp = new ProtectedFakePpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea);
+        var pp = new ProtectedFakePpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea)
+        {
+            ExchangeGuid = hasMailbox ? ProtectedFakePpService.RoomGuid : null,
+        };
         return new ConferenceRoomProtectionGate(pp, servicers, NullLogger<ConferenceRoomProtectionGate>.Instance);
     }
 
     /// <summary>Resolves any identity and reports it protected, so the servicer path is reachable.</summary>
     private sealed class ProtectedFakePpService : ProtectedPrincipalService
     {
+        public static readonly Guid RoomGuid = Guid.Parse("4f4f4f4f-0000-4000-8000-000000000001");
+
+        /// <summary>aud-a2d: the mailbox GUID the resolved principal carries; null is no mailbox.</summary>
+        public Guid? ExchangeGuid = RoomGuid;
+
         public ProtectedFakePpService(Microsoft.AspNetCore.Hosting.IWebHostEnvironment env, IConfiguration config,
             ModuleConfigService moduleConfig, ProtectedPrincipalRepository repo, DelineaService delinea)
             : base(env, config, moduleConfig, repo, delinea, NullLogger<ProtectedPrincipalService>.Instance)
@@ -169,7 +213,7 @@ public sealed class ConferenceRoomServicerTests : IDisposable
         // The room gate resolves through ResolveExchangeTargetAsync since aud-a2b.
         public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
             => Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus)>(
-                (new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, "guid", null),
+                (new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, "guid", null, ExchangeGuid),
                  ResolutionStatus.Resolved));
 
         public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
