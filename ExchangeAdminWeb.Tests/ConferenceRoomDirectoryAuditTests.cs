@@ -52,6 +52,9 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
     private readonly ActivityProgressService _progress = new();
     private readonly SectionAccessService _sectionAccess;
 
+    // aud-a2o. The row the bulk surface returned - what a job's row table shows - on the last bulk apply.
+    private BulkJobRowOutcome? _bulkRow;
+
     public ConferenceRoomDirectoryAuditTests()
     {
         _h.AddMailbox(Typed, Checked, recipientTypeDetails: "RoomMailbox");
@@ -247,6 +250,30 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
     }
 
     [Theory]
+    [InlineData("refused, the room there")]
+    [InlineData("applied, then failed")]
+    public async Task ABulkRowConfirmedNotWritten_SaysSoInItsMessage_AsItsAuditDoes(string write)
+    {
+        // aud-a2o. A bulk job shows each row's message and not its steps, where the page shows a membership the
+        // read-back confirmed rather than this row's write (aud-a2n), so such a row read as any applied add. Its
+        // message now carries the detail its audit records.
+        _h.ListSyncState[ConferenceRoomService.BuildRoomListName(Building)] = true;
+        _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
+        if (write == "refused, the room there")
+            _h.AnotherAddLandsFirst = true;
+        else
+            _h.SetAdGroupFailsAfterApplying = TimedOut;
+
+        var row = await ApplyAndReadAudit("bulk");
+
+        var confirmed = row.GetProperty(ConferenceRoomService.MembershipConfirmedAuditKey).GetString();
+        Assert.NotNull(confirmed);
+        var outcome = Assert.IsType<BulkJobRowOutcome>(_bulkRow);
+        Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
+        Assert.Contains(confirmed, outcome.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("page")]
     [InlineData("bulk")]
     public async Task AnApplyThatThrows_IsNotRecordedAsWritten(string surface)
@@ -277,7 +304,7 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
 
         var processor = new ConferenceRoomBulkProcessor(service, Gate(), _sectionAccess, _h.Enablement, _h.Trace, _h.Audit,
             Substitute.For<EmailService>(_h.Config, NullLogger<EmailService>.Instance), NullLogger<ConferenceRoomBulkProcessor>.Instance);
-        await processor.ProcessRowAsync(FinderJob(city), 0, CancellationToken.None);
+        _bulkRow = await processor.ProcessRowAsync(FinderJob(city), 0, CancellationToken.None);
         return Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == "ConferenceRooms_SetMetadata_Bulk");
     }
 

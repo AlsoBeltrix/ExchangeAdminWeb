@@ -755,7 +755,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                         // aud-a2n. Confirmed only by the read-back, after the write was refused or erred: no
                         // object written, and the detail, with the write's error, on the step and the row.
                         result.DirectoryMembershipConfirmed = adConfirmed;
-                        result.Steps.Add(new RoomOperationStep { Stage = $"Add to '{roomListName}' (on-prem)", Success = true, Error = adConfirmed });
+                        // aud-a2o. Neither a written object nor a confirmed membership is the add's already-a-member
+                        // no-op, which wrote nothing: its step says the room was already there - the cloud no-op's
+                        // label, on-prem - rather than reading as the add it used to share a label with.
+                        var alreadyMember = adWritten is null && adConfirmed is null;
+                        result.Steps.Add(new RoomOperationStep { Stage = alreadyMember ? $"Already in '{roomListName}' (on-prem)" : $"Add to '{roomListName}' (on-prem)", Success = true, Error = adConfirmed });
                         result.Message = BuildRoomListAddedMessage(roomListName, viaOnPrem: true);
                         return result;
                     }
@@ -1768,15 +1772,17 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // Class 2 - both group modules settle their writes this way). A write the server took and then
                 // failed to answer for - a timeout after the commit - used to come back partial with the room in
                 // place; one refused or failing without effect is still a failed row, now carrying its error.
-                // -ErrorAction Stop makes a write error a thrown one; an error reported without a throw is held
-                // the same way, its first error record's exception.
+                // aud-a2o. The write's error is the one it throws, as GroupManagementService takes its two Set-ADGroup
+                // member writes. Under -ErrorAction Stop an error the cmdlet writes is thrown from Invoke and leaves no
+                // record in the stream, so it has no error-without-a-throw to report: the HadErrors check that took
+                // one was unreachable for it, and would have taken any record an earlier command left in this shared
+                // stream - HadErrors is true while any record remains (psl-2) - for this write's error, telling a
+                // clean write as a failing one. That makes -ErrorAction Stop load-bearing: without it a refusal would
+                // be a record, cleared below unread, and a raced add reported as written.
                 Exception? writeError = null;
                 try
                 {
                     ps.Invoke();
-                    if (ps.HadErrors)
-                        writeError = ps.Streams.Error.Select(e => e.Exception).FirstOrDefault(e => e is not null)
-                            ?? new InvalidOperationException($"Adding {roomEmail} to on-prem room list '{roomListName}' failed.");
                 }
                 catch (Exception ex)
                 {
@@ -1785,7 +1791,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 finally
                 {
                     // The read-back below runs on this pipeline: the write must not stay queued before it,
-                    // nor its error be the one the read reports.
+                    // nor its error be the one the read reports - a record left here would make the read's
+                    // HadErrors true (psl-2) and fail a read that succeeded.
                     ps.Commands.Clear();
                     ps.Streams.Error.Clear();
                 }
