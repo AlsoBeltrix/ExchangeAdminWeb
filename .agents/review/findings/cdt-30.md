@@ -209,3 +209,46 @@ accepts `\/server/share/...`, `/\server\share\...` and `\??\UNC\server\share\...
 Windows (reproduced above with the built app's `Resolve`). Assumption, not tried: the app would then
 open the database over the network share, which the check exists to prevent. The module refuses all
 of them, so the scripts do not act on such a key.
+
+## Correction: the agreement test loaded a .NET 10 assembly into pwsh (found after commit; fixed in its own commit)
+
+The rewritten cdt-17 agreement test above loaded the built `ExchangeAdminWeb.dll` into the Pester
+process and called `ConfigStorePath.Resolve` by reflection. That assembly targets .NET 10
+(`System.Runtime 10.0.0.0`); the assemblies the suites already load in-process target .NET 8 or
+.NET Standard 2.0 (`Microsoft.Data.Sqlite.dll`: `.NETCoreApp,Version=v8.0`; `SQLitePCLRaw.core.dll`:
+`.NETStandard,Version=v2.0`), so they load in any pwsh 7.4 or later. Under a pwsh on .NET 8 or 9 the
+type load fails, and CI's Pester job runs under whatever pwsh the runner image carries - so the test
+could fail CI for a reason unrelated to the rule. It passed here only because this host's pwsh is
+7.6.6 on .NET 10.0.12.
+
+The test now pins the rule in the app's source and emulates it line for line: it asserts that
+`Services/Storage/ConfigStorePath.cs` still contains `var value = configured.Trim();`, the `\\`/`//`
+`StartsWith(..., StringComparison.Ordinal)` refusal, `if (!System.IO.Path.IsPathFullyQualified(value))`
+and `return new Resolution(value, MustExist: true);`, with exactly two `throw new
+InvalidOperationException(`; and computes the app's decision as trim, refuse an ordinal `\\` or `//`
+prefix, then `[System.IO.Path]::IsPathFullyQualified`. Before switching, the emulation was checked
+against the real `Resolve` (the built assembly, loaded locally): the same decision on all 24 values
+of the test (the nineteen, the four stricter forms and the Kelvin-sign drive). The tripwire comments
+in the module and in `ConfigStorePath.cs`, which said the test calls the built app's `Resolve`, now
+say it pins the rule's lines.
+
+md5s (LF) after the correction: `tools/SqliteConfigBackup.psm1` `C46340FB626DA6B36C11CE00ABFC6447`,
+`Services/Storage/ConfigStorePath.cs` `42032B7F3D5AB9D1D8D5E93BCCDAA12F`,
+`tests/ps/SqliteConfigBackup.Tests.ps1` `53BD77BFC019B30D9C1EAAC598E8FA2C`. `dotnet build
+ExchangeAdminWeb.slnx -c Release` (0 errors, 61 warnings, as before) and `dotnet format
+ExchangeAdminWeb.slnx --verify-no-changes --no-restore` (exit 0) after the comment change.
+
+Mutations rerun against the corrected test, each against `SqliteConfigBackup.Tests.ps1`, restored,
+touched, md5 re-confirmed, and rerun green (49 passed):
+
+| Mutation | md5 after mutation | Failed |
+| --- | --- | --- |
+| V1 forward slashes refused again | `8A44F0B9518CB54E1E6F75DB848BC4A7` | 4: the agreement test ("Expected $true, because the module and the app must make the same call on 'D:/shared/x.db', but got $false"), the forward-slash and blank-padded acceptance cases, the real backup case |
+| V2 the drive test case-insensitive again | `F0642AA8F1F19B55CD467649DCBCAAC3` | 2: the agreement test ("... the same call on '<U+212A>:\x.db', but got $true") and the Kelvin-sign refusal case |
+| V5 the module replaced by its `2478ede` file (byte-identical) | `7E9CE5F00E597665947B03CD048F5414` | 8, as before |
+| T1 the app's rule changed in `ConfigStorePath.cs` (a third `StartsWith(@"\/", ...)` added to the UNC refusal, as a fix of its gap would) | `E1B8A9C2E5543AC3BCC1D179B3954227` (`ConfigStorePath.cs`) | 1: the agreement test ("Expected $true, because ConfigStorePath.Resolve's rule is what the module mirrors and this test emulates (if (value.StartsWith(@"\\", ...) || value.StartsWith("//", ...))); if it changed, change both with it") |
+
+Also run before the correction, with the first version of the test: `dotnet test
+ExchangeAdminWeb.slnx -c Release --no-build` - 4834 passed, 0 failed, 3 skipped (the three
+`ADDirectorySearchServiceTests` that need Active Directory), after the first comment-only change to
+`ConfigStorePath.cs`.

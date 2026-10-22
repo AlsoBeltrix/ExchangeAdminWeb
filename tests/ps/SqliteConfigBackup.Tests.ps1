@@ -231,17 +231,29 @@ Describe 'SqliteConfigBackup module' {
         It 'accepts what the app accepts, refuses what it refuses, and reads back whatever the installer and the cutover write (cdt-17, cdt-30)' {
             # One rule in three places: the app's ConfigStorePath.Resolve decides what an instance
             # opens, this module mirrors it for what the scripts READ, and the two scripts that WRITE
-            # the key keep a stricter copy of their own (X:\ only). The app's rule is the one in the
-            # build: Resolve is loaded from the built ExchangeAdminWeb.dll and called, so a change
-            # there that the module does not follow fails here (cdt-30). It used to compare the module
-            # with the writers only, which refused D:/... that the app accepts.
-            $asm = [System.Reflection.Assembly]::LoadFrom((Join-Path $script:AppPath 'ExchangeAdminWeb.dll'))
-            $resolve = $asm.GetType('ExchangeAdminWeb.Services.Storage.ConfigStorePath', $true).GetMethod('Resolve')
+            # the key keep a stricter copy of their own (X:\ only). It used to compare the module with
+            # the writers only, which refused D:/... that the app accepts (cdt-30).
+            #
+            # The app's rule is pinned in its source and emulated line for line, rather than called:
+            # the built app targets .NET 10, which a pwsh on an older runtime cannot load, and the
+            # suites run under whatever pwsh CI has. A change to the rule fails the pin below, so the
+            # module and this emulation are revisited with it.
+            $repo = Join-Path $PSScriptRoot '..\..'
+            $source = Get-Content -LiteralPath (Join-Path $repo 'Services\Storage\ConfigStorePath.cs') -Raw
+            foreach ($line in @(
+                    'var value = configured.Trim();',
+                    'if (value.StartsWith(@"\\", StringComparison.Ordinal) || value.StartsWith("//", StringComparison.Ordinal))',
+                    'if (!System.IO.Path.IsPathFullyQualified(value))',
+                    'return new Resolution(value, MustExist: true);')) {
+                $source.Contains($line) | Should -BeTrue -Because "ConfigStorePath.Resolve's rule is what the module mirrors and this test emulates ($line); if it changed, change both with it"
+            }
+            ([regex]::Matches($source, 'throw new InvalidOperationException\(')).Count | Should -Be 2 -Because 'the rule refuses two things: a UNC path, and a path that is not fully qualified'
             $appAccepts = {
                 param([string]$Value)
-                try { $null = $resolve.Invoke($null, @($Value, 'C:\content-root')); $true } catch { $false }
+                $t = $Value.Trim()
+                if ($t.StartsWith('\\', [System.StringComparison]::Ordinal) -or $t.StartsWith('//', [System.StringComparison]::Ordinal)) { return $false }
+                return [System.IO.Path]::IsPathFullyQualified($t)
             }
-            $repo = Join-Path $PSScriptRoot '..\..'
             $validators = @{}
             foreach ($entry in @(@('installer', 'tools\Install-ExchangeAdminWeb.ps1', 'Assert-LocalAbsoluteFilePath'), @('cutover', 'tools\Move-ConfigDbToShared.ps1', 'Assert-LocalAbsolutePath'))) {
                 $tokens = $null

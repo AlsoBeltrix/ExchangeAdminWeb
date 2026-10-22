@@ -200,8 +200,8 @@ function Assert-ConfigStorePathValue {
     # verified backup of the wrong file, then an outage.
     #
     # TRIPWIRE: this mirrors Services/Storage/ConfigStorePath.cs (Resolve). Change one, change the
-    # other - tests/ps/SqliteConfigBackup.Tests.ps1 calls the built app's Resolve to hold them
-    # together. Mirrored: the trim, and the drive form - an ASCII letter (the app's IsValidDriveChar),
+    # other - tests/ps/SqliteConfigBackup.Tests.ps1 pins that method's rule in its source and holds
+    # this module to it. Mirrored: the trim, and the drive form - an ASCII letter (the app's IsValidDriveChar),
     # a colon, then \ or / - matched case-SENSITIVELY, because a case-insensitive match folds the
     # Kelvin sign (U+212A) onto k, a letter the app refuses. Stricter than the app, on purpose: any
     # two leading separators are refused as a network share (Windows reads \/ and /\ as UNC too; the
