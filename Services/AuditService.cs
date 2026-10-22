@@ -480,6 +480,11 @@ public class AuditService
         {
             evt["eventType"] = "audit";
             evt["operationId"] = _operationTrace.CurrentOperationId;
+
+            // aud-a28u. The step says whether the row was written. It read Success whatever became of the row, so after
+            // a drop the trace claimed an audit row the log did not have. A dropped row is a Failed step that says why;
+            // the operation's own completion below stays the audit result's - an audit failure is logged separately
+            // and never makes the operation appear to have failed (Constitution, Auditing And Tracing).
             outcome = _log.Write(evt);
             _operationTrace.Step(
                 "AuditWritten",
@@ -498,8 +503,10 @@ public class AuditService
         // Anonymous usage telemetry (docs/UsageTelemetry-Plan.md, AC5). Deliberately the LAST
         // statement and OUTSIDE the try/finally: the audit row has been handed to the writer and
         // the operation scope already closed, so a telemetry call cannot mask an audit failure.
-        // The writer logs its own failure and never throws (aud-a28q), so the action is counted
-        // whether or not its row could be written - it happened. RecordAction never throws.
+        // The writer never throws (aud-a28q) and says whether it wrote the row; the action is
+        // counted only when it did (aud-a28u) - a usage count is a claim that an audited action
+        // happened, and one whose row the audit log does not have is not a count it may claim.
+        // RecordAction never throws.
         // Hooked here rather than in LogModuleAction because this is the ONE method every
         // public audit method ends in (review finding ute-2).
         if (outcome == JsonlWriteOutcome.Written)
@@ -509,6 +516,8 @@ public class AuditService
                 IsSuccessfulAuditResult(GetString(evt, "result")));
     }
 
+    // The "AuditWritten" step's details (aud-a28u): the audit's category, action and result, as before, and - when the row
+    // was not written - why, in words, the writer's outcome being a category rather than a message.
     private static Dictionary<string, object?> AuditWrittenDetails(IReadOnlyDictionary<string, object?> evt, JsonlWriteOutcome outcome)
     {
         var details = new Dictionary<string, object?>

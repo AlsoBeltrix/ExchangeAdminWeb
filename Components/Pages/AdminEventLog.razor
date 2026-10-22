@@ -465,6 +465,8 @@
     private string? undoError;
     private string? undoSuccess;
     private MergedLogEntry? undoTargetEvent;
+    // aud-a26r. The preview the panel is waiting for: a new token per ShowUndoPreview, cleared by CloseUndoPanel. Only
+    // that request's answer fills the panel, and only it lowers undoLoading.
     private object? undoPreviewRequest;
     private HashSet<string> reversedOperationIds = new(StringComparer.OrdinalIgnoreCase);
 
@@ -947,9 +949,11 @@
             // protected target this operator may service (pps-2).
             var previewAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
             var preview = await handler.PreviewUndoAsync(evt.RawFields, previewAuthState.User);
-            // aud-a26o: shown only while the entry it was asked for is still the panel's. A close while it
-            // loaded clears the target, and the answer must not reopen the panel beside no event. The entry
-            // itself, not its operation id, which can be blank and is not the entry.
+            // aud-a26o, aud-a26r: shown only while its request is still the panel's. A close while it loaded
+            // clears the request, and the answer must not reopen the panel beside no event - nor, now that the
+            // close lowers the loading flag and the next preview can start at once, land on a new panel opened
+            // for the same entry, which the entry check this replaces would let it do. The request itself, not
+            // the entry or its operation id.
             if (ReferenceEquals(undoPreviewRequest, request))
                 undoPreview = preview;
         }
@@ -963,6 +967,8 @@
         finally
         {
             activity.Complete(undoError == null);
+            // The flag is the panel's request's (aud-a26r): a request a close made stale must not lower it under the
+            // next one, which is still loading.
             if (ReferenceEquals(undoPreviewRequest, request))
                 undoLoading = false;
             StateHasChanged();
@@ -979,6 +985,9 @@
         if (undoExecuting)
             return;
 
+        // aud-a26r: a preview still loading is made stale - its answer dropped - and the loading flag lowered with it,
+        // so the next preview starts at once. Left up, it refused every preview until the closed one's handler
+        // returned.
         undoPreviewRequest = null;
         undoLoading = false;
         undoPreview = null;
