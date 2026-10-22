@@ -46,7 +46,10 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// </summary>
     public Hashtable Mailboxes { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
-    /// <summary>What the stand-in <c>Get-ADUser -Identity</c> answers, keyed by objectGUID.</summary>
+    /// <summary>
+    /// What the stand-in <c>Get-ADUser -Identity</c> answers, keyed by objectGUID - and, since aud-a2p, what the
+    /// stand-in <c>Set-ADUser</c>'s <c>-Replace</c> changes, so a read-back sees what a write did.
+    /// </summary>
     public Hashtable DirectoryObjects { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
@@ -266,6 +269,34 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// opens.
     /// </summary>
     public bool SetAdGroupChangesNothing { get; set; }
+
+    /// <summary>
+    /// aud-a2p. The stand-in <c>Set-ADUser</c> reports success and changes nothing - the City/State/Country write a
+    /// domain controller dropped without saying, which only a read-back can catch. Read when a directory runspace opens.
+    /// </summary>
+    public bool SetAdUserChangesNothing { get; set; }
+
+    /// <summary>
+    /// aud-a2p. After applying its <c>-Replace</c>, the stand-in <c>Set-ADUser</c> reports this as an error that
+    /// <c>-ErrorAction Stop</c> does not throw - written with its own <c>-ErrorAction Continue</c> - and carries on:
+    /// aud-a2o's knob, on this write, so that the service can be shown to leave it unread. Null, the default, reports
+    /// nothing. Read when a directory runspace opens.
+    /// </summary>
+    public string? SetAdUserReportsErrorWithoutThrowing { get; set; }
+
+    /// <summary>
+    /// aud-a2p. Once a <c>Set-ADUser</c> has been called, a <c>Get-ADUser</c> asking for <c>-Properties</c> - the
+    /// read-back - fails with this message; a read before any write, or one without <c>-Properties</c> (the reads that
+    /// prove the object), is unaffected. Null, the default, fails nothing. Read when a directory runspace opens.
+    /// </summary>
+    public string? AttributeReadBackFailure { get; set; }
+
+    /// <summary>
+    /// aud-a2p. Once a <c>Set-ADUser</c> has been called, a <c>Get-ADUser</c> asking for <c>-Properties</c> answers with
+    /// this objectGUID - another object answering the read-back; the reads that prove the object are unaffected. Null,
+    /// the default, answers as the object asked for. Read when a directory runspace opens.
+    /// </summary>
+    public string? AttributeReadBackAnswersAs { get; set; }
 
     /// <summary>
     /// aud-a2l. Another actor's add of the same DN lands just before the stand-in <c>Set-ADGroup</c>'s:
@@ -514,6 +545,10 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("MemberReadBackFailure", MemberReadBackFailure);
         rs.SessionStateProxy.SetVariable("SetAdGroupReportsErrorWithoutThrowing", SetAdGroupReportsErrorWithoutThrowing);
         rs.SessionStateProxy.SetVariable("SetAdGroupChangesNothing", SetAdGroupChangesNothing);
+        rs.SessionStateProxy.SetVariable("SetAdUserChangesNothing", SetAdUserChangesNothing);
+        rs.SessionStateProxy.SetVariable("SetAdUserReportsErrorWithoutThrowing", SetAdUserReportsErrorWithoutThrowing);
+        rs.SessionStateProxy.SetVariable("AttributeReadBackFailure", AttributeReadBackFailure);
+        rs.SessionStateProxy.SetVariable("AttributeReadBackAnswersAs", AttributeReadBackAnswersAs);
         rs.SessionStateProxy.SetVariable("AnotherAddLandsFirst", AnotherAddLandsFirst);
         using var init = PowerShell.Create();
         init.Runspace = rs;
@@ -738,18 +773,34 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if ($failure) { throw $failure }
         }
         function global:Import-Module { param($Name, $ErrorAction) }
+        # aud-a2p. Set-ADUser applies its -Replace to the object in DirectoryObjects, so a read-back sees what it changed -
+        # unless SetAdUserChangesNothing, a write that reports success and changes nothing - and, told to
+        # (SetAdUserReportsErrorWithoutThrowing), then reports an error the caller's -ErrorAction Stop does not throw: its
+        # own -ErrorAction Continue. An object it does not hold is refused (Write-Error then return, so it stays refused
+        # under any -ErrorAction); Failures['Set-ADUser'] throws before anything is applied. A Get-ADUser asking for
+        # -Properties after a Set-ADUser is the read-back: AttributeReadBackFailure fails it, AttributeReadBackAnswersAs
+        # makes another object answer it. Both take -Server, which the code passes for the write and the read-back; they
+        # do not route by it (the room's object answers on any) - the tests pin what is passed.
         function global:Get-ADUser {
-            [CmdletBinding()] param($Identity, $Filter, $Credential, $Properties)
+            [CmdletBinding()] param($Identity, $Filter, $Credential, $Properties, $Server)
             Write-StandInCall 'Get-ADUser' $PSBoundParameters
             if ($PSBoundParameters.ContainsKey('Identity')) {
                 $entry = $global:DirectoryObjects["$Identity"]
                 if ($null -eq $entry) { throw "Cannot find an object with identity: '$Identity'" }
-                New-Object psobject -Property $entry
+                $readBack = $PSBoundParameters.ContainsKey('Properties') -and @($global:Calls | Where-Object { $_['__Command'] -eq 'Set-ADUser' }).Count -gt 0
+                if ($readBack -and $global:AttributeReadBackFailure) { Write-Error "$($global:AttributeReadBackFailure)"; return }
+                $answer = New-Object psobject -Property $entry
+                if ($readBack -and $global:AttributeReadBackAnswersAs) { $answer.ObjectGUID = [guid]"$($global:AttributeReadBackAnswersAs)" }
+                $answer
             }
         }
         function global:Set-ADUser {
-            [CmdletBinding()] param($Identity, $Replace, $Credential)
+            [CmdletBinding()] param($Identity, $Replace, $Server, $Credential)
             Write-StandInCall 'Set-ADUser' $PSBoundParameters
+            $entry = $global:DirectoryObjects["$Identity"]
+            if ($null -eq $entry) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
+            if (-not $global:SetAdUserChangesNothing -and $null -ne $Replace) { foreach ($key in @($Replace.Keys)) { $entry["$key"] = $Replace[$key] } }
+            if ($global:SetAdUserReportsErrorWithoutThrowing) { Write-Error "$($global:SetAdUserReportsErrorWithoutThrowing)" -ErrorAction Continue }
         }
         # aud-a2j. The forest: what it reports as its global catalogs (GlobalCatalogs);
         # Failures['Get-ADForest'] fails the read.
