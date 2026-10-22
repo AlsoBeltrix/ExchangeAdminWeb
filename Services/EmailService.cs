@@ -413,9 +413,17 @@ public class EmailService
         };
         var window = request.State == "Scheduled" && request.StartTime is { } start && request.EndTime is { } end
             ? $@"
-            <p><strong>From:</strong> {h(start.ToString("MMMM dd, yyyy 'at' h:mm tt"))}<br>
-               <strong>Until:</strong> {h(end.ToString("MMMM dd, yyyy 'at' h:mm tt"))}</p>"
+            <p><strong>From:</strong> {h(When(start, request.ScheduleZone))}<br>
+               <strong>Until:</strong> {h(When(end, request.ScheduleZone))}</p>"
             : "";
+
+        // aud-a7e. Each time with the zone it was entered in and that zone's offset at that time, so the
+        // owner - who may be in another zone - can tell which moment is meant. The zone's name comes from
+        // the same helper the page's label uses. A Scheduled write without a zone is refused before it
+        // is made, so the first arm is not expected to run; it says so rather than drop the zone silently.
+        static string When(DateTime wallClock, TimeZoneInfo? zone) => zone is null
+            ? $"{wallClock:MMMM dd, yyyy 'at' h:mm tt} (time zone not recorded)"
+            : $"{wallClock:MMMM dd, yyyy 'at' h:mm tt} ({OutOfOfficeRequest.ZoneName(zone)}, {OutOfOfficeRequest.OffsetAt(wallClock, zone)})";
 
         var body = $@"<!DOCTYPE html>
 <html>

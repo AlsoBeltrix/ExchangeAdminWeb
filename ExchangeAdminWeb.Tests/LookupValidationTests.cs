@@ -74,21 +74,21 @@ public class OofScheduleValidationTests
     [Fact]
     public void NonScheduled_ReturnsNull()
     {
-        var result = OutOfOffice.ValidateOofSchedule("Enabled", null, null);
+        var result = OutOfOffice.ValidateOofSchedule("Enabled", null, null, null);
         Assert.Null(result);
     }
 
     [Fact]
     public void Disabled_ReturnsNull()
     {
-        var result = OutOfOffice.ValidateOofSchedule("Disabled", null, null);
+        var result = OutOfOffice.ValidateOofSchedule("Disabled", null, null, null);
         Assert.Null(result);
     }
 
     [Fact]
     public void Scheduled_MissingTimes_ReturnsError()
     {
-        var result = OutOfOffice.ValidateOofSchedule("Scheduled", null, null);
+        var result = OutOfOffice.ValidateOofSchedule("Scheduled", null, null, TimeZoneInfo.Utc);
         Assert.Contains("required", result);
     }
 
@@ -97,7 +97,7 @@ public class OofScheduleValidationTests
     {
         var start = DateTime.Now.AddDays(1);
         var end = DateTime.Now;
-        var result = OutOfOffice.ValidateOofSchedule("Scheduled", start, end);
+        var result = OutOfOffice.ValidateOofSchedule("Scheduled", start, end, TimeZoneInfo.Utc);
         Assert.Contains("after start", result);
     }
 
@@ -106,8 +106,27 @@ public class OofScheduleValidationTests
     {
         var start = DateTime.Now;
         var end = DateTime.Now.AddDays(7);
-        var result = OutOfOffice.ValidateOofSchedule("Scheduled", start, end);
+        var result = OutOfOffice.ValidateOofSchedule("Scheduled", start, end, TimeZoneInfo.Utc);
         Assert.Null(result);
+    }
+
+    // aud-a7e. A schedule is wall-clock time in a zone; without the zone, or at a time the zone skips,
+    // it names no moment, and the page refuses it before anything is audited or written.
+    [Fact]
+    public void Scheduled_WithNoTimeZone_ReturnsError()
+    {
+        var result = OutOfOffice.ValidateOofSchedule("Scheduled", new DateTime(2026, 11, 2, 9, 0, 0),
+            new DateTime(2026, 11, 6, 17, 0, 0), null);
+        Assert.Contains("time zone", result);
+    }
+
+    [Fact]
+    public void Scheduled_AtATimeTheZoneSkips_ReturnsError()
+    {
+        var newYork = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+        var result = OutOfOffice.ValidateOofSchedule("Scheduled", new DateTime(2026, 3, 8, 2, 30, 0),
+            new DateTime(2026, 3, 9, 9, 0, 0), newYork);
+        Assert.Contains("does not exist in America/New_York", result);
     }
 }
 

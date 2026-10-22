@@ -68,10 +68,30 @@ public class OutOfOfficeService : ExchangeServiceBase
     /// </param>
     public Task<PermissionResult> SetOutOfOfficeAsync(OutOfOfficeRequest request, ValidatedMailbox? mailbox)
     {
-        var (emailAddress, state, internalMessage, externalMessage, startTime, endTime, _) = request;
+        var (emailAddress, state, internalMessage, externalMessage, startTime, endTime, zone, _) = request;
 
         if (mailbox is null)
             return Task.FromResult(PermissionResult.Fail(ValidatedMailbox.Refusal(emailAddress)));
+
+        // aud-a7e. The schedule is wall-clock time in the zone it was entered in, and Exchange is handed
+        // the instant that names, as a DateTime of Kind Utc. It used to be handed the unzoned value,
+        // which left the moment to however the Exchange session reads one (assumed, never verified
+        // here: the session's own zone, UTC). Converted before a connection is borrowed, and refused
+        // rather than guessed when there is no zone or the zone skips the time: this boundary does not
+        // rely on the page having checked.
+        DateTime? startUtc = null, endUtc = null;
+        if (state == "Scheduled")
+        {
+            if (zone is null)
+                return Task.FromResult(PermissionResult.Fail(
+                    $"The schedule for {emailAddress} names no time zone, so its times name no moment. Nothing was written."));
+
+            startUtc = startTime.HasValue ? OutOfOfficeRequest.ToUtc(startTime.Value, zone) : null;
+            endUtc = endTime.HasValue ? OutOfOfficeRequest.ToUtc(endTime.Value, zone) : null;
+            if ((startTime.HasValue && startUtc is null) || (endTime.HasValue && endUtc is null))
+                return Task.FromResult(PermissionResult.Fail(
+                    $"The schedule for {emailAddress} has a time that does not exist in {OutOfOfficeRequest.ZoneName(zone)}: the clocks skip it. Nothing was written."));
+        }
 
         // Single-write (Set-MailboxAutoReplyConfiguration): safe to retry on a dead session.
         return RunAsync((ps, tracker) =>
@@ -91,10 +111,10 @@ public class OutOfOfficeService : ExchangeServiceBase
 
             if (state == "Scheduled")
             {
-                if (startTime.HasValue)
-                    ps.AddParameter("StartTime", startTime.Value);
-                if (endTime.HasValue)
-                    ps.AddParameter("EndTime", endTime.Value);
+                if (startUtc.HasValue)
+                    ps.AddParameter("StartTime", startUtc.Value);
+                if (endUtc.HasValue)
+                    ps.AddParameter("EndTime", endUtc.Value);
             }
 
             Invoke(ps, tracker);

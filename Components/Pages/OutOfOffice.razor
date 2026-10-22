@@ -13,6 +13,7 @@
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
+@inject IJSRuntime JS
 @inject ILogger<ExchangeAdminWeb.Components.Pages.OutOfOffice> Logger
 
 <PageTitle>Out of Office</PageTitle>
@@ -117,16 +118,30 @@
 
                 @if (oofState == "Scheduled")
                 {
-                    <div class="row g-3 mb-3">
-                        <div class="col-md-3">
-                            <label class="form-label">Start Date/Time</label>
-                            <input type="datetime-local" class="form-control" @bind="startTime" disabled="@isSetting" />
+                    @* aud-a7e. The times are wall clock in the operator's browser's zone, and the zone is
+                       stated beside them - the operator must know what they are entering. Until the
+                       browser has said which zone it is in, or if it cannot, there is nothing to enter:
+                       a time with no zone names no moment, and the page does not guess one. *@
+                    if (scheduleZone is null)
+                    {
+                        <div class="alert alert-warning py-2 mb-3"><small>@(scheduleZoneError ?? "Reading your browser's time zone...")</small></div>
+                    }
+                    else
+                    {
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-3">
+                                <label class="form-label">Start Date/Time</label>
+                                <input type="datetime-local" class="form-control" @bind="startTime" disabled="@isSetting" />
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">End Date/Time</label>
+                                <input type="datetime-local" class="form-control" @bind="endTime" disabled="@isSetting" />
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <small class="text-muted">@ScheduleZoneLabel</small>
+                            </div>
                         </div>
-                        <div class="col-md-3">
-                            <label class="form-label">End Date/Time</label>
-                            <input type="datetime-local" class="form-control" @bind="endTime" disabled="@isSetting" />
-                        </div>
-                    </div>
+                    }
                 }
 
                 @if (oofState != "Disabled")
@@ -182,6 +197,13 @@
     private string externalMessage = "";
     private DateTime startTime = DateTime.Now;
     private DateTime endTime = DateTime.Now.AddDays(7);
+
+    // aud-a7e. The zone startTime and endTime are entered in: the browser's own, read once by
+    // ReadScheduleZoneAsync. Null until then and null for good if it cannot be read - never a fallback
+    // to the server's zone, which the operator would have no way to know. No control binds it, but it
+    // is an input to SetOof's one capture like the bound fields, and read only there.
+    private TimeZoneInfo? scheduleZone;
+    private string? scheduleZoneError;
     private bool isSetting = false;
 
     /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
@@ -197,6 +219,9 @@
         !string.IsNullOrWhiteSpace(setEmail)
         && !string.IsNullOrWhiteSpace(ticketNumber)
         && (oofState == "Disabled" || !string.IsNullOrWhiteSpace(internalMessage));
+
+    private string ScheduleZoneLabel =>
+        scheduleZone is null ? "" : $"Times are in your browser's time zone, {OutOfOfficeRequest.ZoneName(scheduleZone)}.";
 
     protected override async Task OnInitializedAsync()
     {
@@ -214,6 +239,39 @@
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
+    }
+
+    // aud-a7e. After the first interactive render, because JS interop does not exist before it
+    // (prerendering included). One read per page.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await ReadScheduleZoneAsync();
+        StateHasChanged();
+    }
+
+    // Kept apart from OnAfterRenderAsync so it runs without a renderer (StateHasChanged needs one).
+    // The IANA id is resolved with FindSystemTimeZoneById, which takes IANA ids through ICU: an id
+    // this server cannot resolve is a failure like any other, not a reason to pick another zone.
+    private async Task ReadScheduleZoneAsync()
+    {
+        try
+        {
+            var id = await JS.InvokeAsync<string>("getBrowserTimeZone");
+            var zone = TimeZoneInfo.FindSystemTimeZoneById(id);
+            // The defaults were DateTime.Now - the server's clock. Re-based to the browser's before the
+            // fields are shown, so an untouched default is "now" in the zone the label states.
+            var now = DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, zone), DateTimeKind.Unspecified);
+            startTime = now;
+            endTime = now.AddDays(7);
+            scheduleZone = zone;
+        }
+        catch (Exception ex)
+        {
+            scheduleZoneError = "Your browser's time zone could not be read, so a schedule cannot be set here: its times "
+                + "would name no moment. Enable and Disable still work; reload the page to try again.";
+            Logger.LogWarning(ex, "Could not read the browser's time zone for the Out of Office schedule");
+        }
     }
 
     private async Task HandleCheckKeyDown(KeyboardEventArgs e)
@@ -252,12 +310,20 @@
         }
     }
 
-    public static string? ValidateOofSchedule(string state, DateTime? start, DateTime? end)
+    public static string? ValidateOofSchedule(string state, DateTime? start, DateTime? end, TimeZoneInfo? zone)
     {
         if (state != "Scheduled") return null;
         if (!start.HasValue || !end.HasValue)
             return "Start and end times are required for scheduled auto-reply.";
-        if (end.Value <= start.Value)
+        // aud-a7e. Refused here, before anything is audited, notified or written; the service refuses
+        // the same request again at the write. Order is compared on the instants the write will send.
+        if (zone is null)
+            return "The schedule's time zone is not known, so its times name no moment. Reload the page so your browser's time zone can be read.";
+        var startUtc = OutOfOfficeRequest.ToUtc(start.Value, zone);
+        var endUtc = OutOfOfficeRequest.ToUtc(end.Value, zone);
+        if (startUtc is null || endUtc is null)
+            return $"The {(startUtc is null ? "start" : "end")} time does not exist in {OutOfOfficeRequest.ZoneName(zone)}: the clocks skip it.";
+        if (endUtc.Value <= startUtc.Value)
             return "End time must be after start time.";
         return null;
     }
@@ -284,14 +350,15 @@
         // not made under. Every input is now captured here, once, before the first await, into one
         // immutable request - the Comms-10k C7 shape - and nothing below this line may read a bound
         // field. The service takes the request itself, so the write cannot be handed anything else.
+        // aud-a7e: the schedule's zone is captured with the times it belongs to.
         var request = OutOfOfficeRequest.FromForm(
-            setEmail, oofState, internalMessage, externalMessage, startTime, endTime, ticketNumber);
+            setEmail, oofState, internalMessage, externalMessage, startTime, endTime, scheduleZone, ticketNumber);
         var target = request.Mailbox;
 
         setValidationError = null;
         setResult = null;
 
-        setValidationError = ValidateOofSchedule(request.State, request.StartTime, request.EndTime);
+        setValidationError = ValidateOofSchedule(request.State, request.StartTime, request.EndTime, request.ScheduleZone);
         if (setValidationError != null)
         {
             isSetting = false;

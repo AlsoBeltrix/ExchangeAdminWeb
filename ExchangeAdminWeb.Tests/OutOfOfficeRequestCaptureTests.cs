@@ -1,10 +1,13 @@
 using System.Collections;
+using System.Globalization;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Net;
 using System.Reflection;
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
@@ -12,11 +15,14 @@ using ExchangeAdminWeb.Services.Progress;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Components.Rendering;
+using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.JSInterop;
 using NSubstitute;
 using Page = ExchangeAdminWeb.Components.Pages.OutOfOffice;
 
@@ -34,7 +40,8 @@ namespace ExchangeAdminWeb.Tests;
 /// nothing protected - it still asks a substituted resolver which mailbox the target is, because
 /// the write is bound to that mailbox (aud-a2d) - the audit is real over a temp JSONL root and is
 /// read back, and the email service is a substitute whose virtual admin and mailbox-owner
-/// notifications are captured (the owner's since aud-a7d).
+/// notifications are captured (the owner's since aud-a7d). The browser is a fake
+/// <see cref="Microsoft.JSInterop.IJSRuntime"/> answering the page's time-zone read (aud-a7e).
 /// No Exchange, no Graph.
 /// </remarks>
 public sealed class OutOfOfficeRequestCaptureTests : IDisposable
@@ -45,6 +52,12 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     private const string ExternalText = "Away until Friday (external)";
     private static readonly DateTime Start = new(2026, 11, 2, 9, 0, 0);
     private static readonly DateTime End = new(2026, 11, 6, 17, 0, 0);
+    // aud-a7e. The browser's zone in every harness run unless a test names another. A fixed +05:30
+    // offset, so a write that forgot to convert is off by hours, and not the zone of any server this is
+    // likely to run on - the server's zone must play no part.
+    private const string BrowserZone = "Asia/Kolkata";
+    private static readonly DateTime StartUtc = new(2026, 11, 2, 3, 30, 0, DateTimeKind.Utc);
+    private static readonly DateTime EndUtc = new(2026, 11, 6, 11, 30, 0, DateTimeKind.Utc);
     private static readonly Guid AliceGuid = Guid.Parse("3c3c3c3c-0000-4000-8000-00000000a11c");
     private static readonly Guid MalloryGuid = Guid.Parse("3c3c3c3c-0000-4000-8000-0000000ba11d");
 
@@ -73,7 +86,7 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     /// Where the operation pauses: "auth" (its first await), "read" (the previous-state read) or
     /// "write" (inside Set-MailboxAutoReplyConfiguration). Anything else never pauses.
     /// </param>
-    private (Page Page, EmailService Email) BuildPage(string holdAt, bool authorized = true)
+    private (Page Page, EmailService Email) BuildPage(string holdAt, bool authorized = true, string? browserZone = BrowserZone)
     {
         Directory.CreateDirectory(_dir);
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -109,6 +122,12 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         SetProperty(page, "AuthStateProvider", Authentication(holdFirstCall: holdAt == "auth"));
         SetProperty(page, "AuthorizationService", Authorization(authorized));
         SetProperty(page, "Logger", NullLogger<Page>.Instance);
+        // aud-a7e: what the first interactive render does - ask the browser for its zone. The schedule
+        // fields are set after it, because the read re-bases them to the browser's clock.
+        SetProperty(page, "JS", new Browser(browserZone));
+        var read = (Task)typeof(Page).GetMethod("ReadScheduleZoneAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(page, null)!;
+        Assert.True(read.IsCompletedSuccessfully, "The page's time-zone read must finish without a renderer.");
 
         SetField(page, "currentUser", @"CONTOSO\operator");
         SetField(page, "clientIpAddress", "10.0.0.5");
@@ -132,7 +151,24 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         SetField(page, "startTime", new DateTime(2027, 1, 4, 8, 0, 0));
         SetField(page, "endTime", new DateTime(2027, 1, 8, 8, 0, 0));
         SetField(page, "ticketNumber", "INC999");
+        // Not bound to a control, but an input to the same capture (aud-a7e): moving it proves the
+        // write and the notice use the zone the times were captured with.
+        SetField(page, "scheduleZone", TimeZoneInfo.FindSystemTimeZoneById("America/New_York"));
     }
+
+    /// <summary>The browser, as far as the page asks it anything: its time zone, or a failure to give one.</summary>
+    private sealed class Browser(string? zone) : IJSRuntime
+    {
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) =>
+            InvokeAsync<TValue>(identifier, CancellationToken.None, args);
+
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args) =>
+            identifier == "getBrowserTimeZone" && zone is not null
+                ? ValueTask.FromResult((TValue)(object)zone)
+                : ValueTask.FromException<TValue>(new JSException($"{identifier} could not answer"));
+    }
+
+    private static DateTime Parse(string value) => DateTime.Parse(value, CultureInfo.InvariantCulture);
 
     private PooledRunspace ExchangeRunspace(long generation, string holdAt)
     {
@@ -283,6 +319,31 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         Assert.Single(email.ReceivedCalls(), call => call.GetMethodInfo().Name == nameof(EmailService.SendOofNotificationAsync))
             .GetArguments();
 
+#pragma warning disable BL0006 // the page's compiled render tree is read directly; no renderer is involved
+    /// <summary>The page as it renders now: its text, and how many schedule (datetime-local) inputs it offers.</summary>
+    private static (string Text, int ScheduleInputs) Rendered(Page page)
+    {
+        using var builder = new RenderTreeBuilder();
+        typeof(Page).GetMethod("BuildRenderTree", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [builder]);
+        var frames = builder.GetFrames();
+        var text = new StringBuilder();
+        var inputs = 0;
+        for (var i = 0; i < frames.Count; i++)
+        {
+            var frame = frames.Array[i];
+            if (frame.FrameType == RenderTreeFrameType.Text)
+                text.Append(frame.TextContent);
+            else if (frame.FrameType == RenderTreeFrameType.Markup)
+                text.Append(frame.MarkupContent);
+            else if (frame.FrameType == RenderTreeFrameType.Attribute && frame.AttributeName == "type"
+                     && Equals(frame.AttributeValue, "datetime-local"))
+                inputs++;
+        }
+
+        return (text.ToString(), inputs);
+    }
+#pragma warning restore BL0006
+
     // ---- the guards -------------------------------------------------------------------------
 
     [Theory]
@@ -304,8 +365,9 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         Assert.Equal("Scheduled", Unwrap(write["AutoReplyState"]));
         Assert.Equal(InternalText, Unwrap(write["InternalMessage"]));
         Assert.Equal(ExternalText, Unwrap(write["ExternalMessage"]));
-        Assert.Equal(Start, Unwrap(write["StartTime"]));
-        Assert.Equal(End, Unwrap(write["EndTime"]));
+        // aud-a7e: the captured times, as the instants they name in the captured zone.
+        Assert.Equal(StartUtc, Unwrap(write["StartTime"]));
+        Assert.Equal(EndUtc, Unwrap(write["EndTime"]));
 
         var row = SingleRow(AuditRows(), "OutOfOffice_Set");
         Assert.Equal(Mailbox, row.GetProperty("target").GetString());
@@ -433,7 +495,8 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     [InlineData("Disabled", false, false)]
     public void TheRequestKeepsOnlyWhatItsStateWrites(string state, bool messages, bool schedule)
     {
-        var request = OutOfOfficeRequest.FromForm(" " + Mailbox + " ", state, InternalText, ExternalText, Start, End, " " + Ticket + " ");
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(BrowserZone);
+        var request = OutOfOfficeRequest.FromForm(" " + Mailbox + " ", state, InternalText, ExternalText, Start, End, zone, " " + Ticket + " ");
 
         Assert.Equal(Mailbox, request.Mailbox);
         Assert.Equal(Ticket, request.Ticket);
@@ -442,5 +505,105 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         Assert.Equal(messages ? ExternalText : null, request.ExternalMessage);
         Assert.Equal(schedule ? Start : null, request.StartTime);
         Assert.Equal(schedule ? End : null, request.EndTime);
+        Assert.Equal(schedule ? zone : null, request.ScheduleZone);
+    }
+
+    // aud-a7e. The times are typed as wall clock in the browser's zone; Exchange must be handed the
+    // instants they name, as UTC, not the unzoned values it would read in a zone of its own. New York's
+    // window crosses the end of daylight saving (1 November 2026), so its two ends convert at different
+    // offsets - one offset applied to both would get one of them wrong by an hour. The expected values
+    // are literals, not computed by the code under test.
+    [Theory]
+    [InlineData("Asia/Kolkata", "2026-11-02T09:00", "2026-11-06T17:00", "2026-11-02T03:30", "2026-11-06T11:30")]
+    [InlineData("America/New_York", "2026-10-30T09:00", "2026-11-06T17:00", "2026-10-30T13:00", "2026-11-06T22:00")]
+    public async Task AScheduleEnteredInTheBrowsersZone_IsWrittenAsTheSameInstant_InUtc(
+        string zone, string start, string end, string startUtc, string endUtc)
+    {
+        var (page, _) = BuildPage("none", browserZone: zone);
+        SetField(page, "startTime", Parse(start));
+        SetField(page, "endTime", Parse(end));
+
+        await SetOof(page);
+
+        var write = SingleWrite();
+        var writtenStart = Assert.IsType<DateTime>(Unwrap(write["StartTime"]));
+        var writtenEnd = Assert.IsType<DateTime>(Unwrap(write["EndTime"]));
+        // DateTime equality ignores Kind, so the Kind is asserted on its own.
+        Assert.Equal(DateTimeKind.Utc, writtenStart.Kind);
+        Assert.Equal(DateTimeKind.Utc, writtenEnd.Kind);
+        Assert.Equal(Parse(startUtc), writtenStart);
+        Assert.Equal(Parse(endUtc), writtenEnd);
+    }
+
+    // aud-a7e, the finding as reported: the owner's notice printed From and Until as bare clock times.
+    // Each now carries the zone it was entered in and that zone's offset at that time.
+    [Theory]
+    [InlineData("Asia/Kolkata", "2026-11-02T09:00", "2026-11-06T17:00", "UTC+05:30", "UTC+05:30")]
+    [InlineData("America/New_York", "2026-10-30T09:00", "2026-11-06T17:00", "UTC-04:00", "UTC-05:00")]
+    public async Task TheOwnersNotice_NamesTheZone_AndTheOffsetOfEachTime(
+        string zone, string start, string end, string startOffset, string endOffset)
+    {
+        var (page, email) = BuildPage("none", browserZone: zone);
+        SetField(page, "startTime", Parse(start));
+        SetField(page, "endTime", Parse(end));
+
+        await SetOof(page);
+
+        var request = Assert.IsType<OutOfOfficeRequest>(UserNotification(email)[2]);
+        var (_, body) = EmailService.BuildOofNotification(@"CONTOSO\operator", request, DateTime.Now);
+        Assert.Contains("<strong>From:</strong> "
+            + WebUtility.HtmlEncode($"{Parse(start):MMMM dd, yyyy 'at' h:mm tt} ({zone}, {startOffset})"), body);
+        Assert.Contains("<strong>Until:</strong> "
+            + WebUtility.HtmlEncode($"{Parse(end):MMMM dd, yyyy 'at' h:mm tt} ({zone}, {endOffset})"), body);
+    }
+
+    // aud-a7e. What the operator is told the times mean, beside the fields, and what the owner is told
+    // afterwards must be the same zone - and the one the browser reported, not the server's.
+    [Fact]
+    public async Task ThePageLabelAndTheNotice_NameTheSameZone_TheOneTheTimesWereEnteredIn()
+    {
+        var (page, email) = BuildPage("none");
+        SetField(page, "tabIndex", 1);
+
+        var (text, inputs) = Rendered(page);
+        Assert.Equal(2, inputs);
+        var stated = Assert.Single(Regex.Matches(text, @"Times are in your browser's time zone, (?<zone>[^\s]+)\."))
+            .Groups["zone"].Value;
+        Assert.Equal(BrowserZone, stated);
+
+        await SetOof(page);
+
+        var request = Assert.IsType<OutOfOfficeRequest>(UserNotification(email)[2]);
+        var (_, body) = EmailService.BuildOofNotification(@"CONTOSO\operator", request, DateTime.Now);
+        var from = Regex.Match(body, "<strong>From:</strong> (?<when>[^<]+)<br>").Groups["when"].Value;
+        var until = Regex.Match(body, "<strong>Until:</strong> (?<when>[^<]+)</p>").Groups["when"].Value;
+        Assert.Contains($"({stated}, ", WebUtility.HtmlDecode(from), StringComparison.Ordinal);
+        Assert.Contains($"({stated}, ", WebUtility.HtmlDecode(until), StringComparison.Ordinal);
+    }
+
+    // aud-a7e, fail closed. A browser that cannot say which zone it is in leaves the schedule with no
+    // moment to name: the fields are not offered, the page says why, and a Scheduled submit is refused
+    // before the first await - nothing read, written, audited or sent - with the form left usable.
+    [Fact]
+    public async Task WithoutTheBrowsersZone_AScheduleIsRefused_BeforeAnythingIsAuditedNotifiedOrWritten()
+    {
+        var (page, email) = BuildPage("none", browserZone: null);
+        SetField(page, "tabIndex", 1);
+
+        var (text, inputs) = Rendered(page);
+        Assert.Equal(0, inputs);
+        var reason = GetField<string?>(page, "scheduleZoneError");
+        Assert.False(string.IsNullOrEmpty(reason));
+        Assert.Contains(reason, text, StringComparison.Ordinal);
+
+        await SetOof(page);
+
+        Assert.NotNull(GetField<string?>(page, "setValidationError"));
+        Assert.Empty(_setCalls);
+        Assert.Empty(_getCalls);
+        Assert.Empty(AuditRows());
+        Assert.DoesNotContain(email.ReceivedCalls(), call => call.GetMethodInfo().Name
+            is nameof(EmailService.SendAdminNotificationAsync) or nameof(EmailService.SendOofNotificationAsync));
+        Assert.False(GetField<bool>(page, "isSetting"));
     }
 }

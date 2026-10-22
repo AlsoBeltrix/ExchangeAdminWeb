@@ -755,16 +755,6 @@ Describe 'Assert-AppPoolServesPath' {
             } | Should -Throw -ExpectedMessage "*'D:\sites\App'*Web/App/Admin runs under 'OtherPool', with its files at 'D:\sites\App\Admin'*"
         }
 
-        It 'passes when everything inside the folder runs under the named pool, and returns all of it' {
-            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
-                    Get-IisEntry -Location 'Web/' -ApplicationPool 'DefaultAppPool' -PhysicalPath 'D:\sites'
-                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
-                    Get-IisEntry -Location 'Web/App/Admin' -ApplicationPool 'ProdPool' -PhysicalPath 'd:/SITES/app/admin/'
-                })
-
-            ($result | ForEach-Object Location) -join ',' | Should -Be 'Web/App,Web/App/Admin'
-        }
-
         It 'does not count a folder that only shares the prefix as inside the folder' {
             $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
                     Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
@@ -793,6 +783,47 @@ Describe 'Assert-AppPoolServesPath' {
                     Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
                 }
             } | Should -Throw -ExpectedMessage "*No IIS site or application has its files at 'D:\sites'*"
+        }
+    }
+
+    Context 'aud-a38i: nothing may be rooted inside the folder, whatever pool serves it' {
+
+        # Under aud-a38f a node nested inside the folder passed when it ran under the named pool.
+        # Stopping that pool stops the node too, which is why it looked safe, but robocopy /MIR then
+        # replaces the node's files with the publish output, or purges them because the output does
+        # not have them - and the run reports success. The same-pool-at-the-folder pass is the first
+        # test of this Describe, unchanged; siblings sharing the prefix are not inside (aud-a38f).
+
+        It 'refuses an application nested inside the folder under the same pool, and says the mirror would replace or purge it' {
+            # THE FINDING. This passed under aud-a38f.
+            {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/' -ApplicationPool 'DefaultAppPool' -PhysicalPath 'D:\sites'
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                    Get-IisEntry -Location 'Web/App/Admin' -ApplicationPool 'ProdPool' -PhysicalPath 'd:/SITES/app/admin/'
+                }
+            } | Should -Throw -ExpectedMessage "*inside 'D:\sites\App'*Web/App/Admin runs under 'ProdPool', with its files at 'd:/SITES/app/admin/'*replace or purge*"
+        }
+
+        It 'refuses a virtual directory nested inside the folder under the same pool' {
+            {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                    Get-IisEntry -Location 'Web/App/assets' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App\wwwroot\assets'
+                }
+            } | Should -Throw -ExpectedMessage "*Web/App/assets runs under 'ProdPool', with its files at 'D:\sites\App\wwwroot\assets'*replace or purge*"
+        }
+
+        It 'names every node inside the folder in one refusal, whatever pool each runs under' {
+            # One refusal for all of them: told only about the node under another pool, an operator
+            # would move it to the named pool and be refused again for the same folder.
+            {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                    Get-IisEntry -Location 'Web/App/Admin' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App\Admin'
+                    Get-IisEntry -Location 'Web/media' -ApplicationPool 'SitePool' -PhysicalPath 'D:\sites\App\wwwroot\media'
+                }
+            } | Should -Throw -ExpectedMessage "*Web/App/Admin runs under 'ProdPool', with its files at 'D:\sites\App\Admin'; Web/media runs under 'SitePool', with its files at 'D:\sites\App\wwwroot\media'*"
         }
     }
 
@@ -855,13 +886,26 @@ Describe 'Assert-AppPoolServesPath' {
         }
 
         It 'reads an application''s own virtual directories under that application''s pool' {
+            # The virtual directory points AT the folder, so it passes only when it is held to the
+            # application's pool and not the site's. Until aud-a38i it pointed inside the folder;
+            # that now refuses whatever the pool (the next test).
+            Initialize-IisDirectory @{
+                $script:RootDirectories = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites' })
+                $script:AppDirectories  = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites\App' }, [pscustomobject]@{ path = '/assets'; physicalPath = 'D:\sites\App' })
+            }
+
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App')
+            ($result | ForEach-Object Location) -join ',' | Should -Be 'Web/App,Web/App/assets'
+        }
+
+        It 'aud-a38i: refuses an application''s own virtual directory inside the folder, though it runs under the named pool' {
             Initialize-IisDirectory @{
                 $script:RootDirectories = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites' })
                 $script:AppDirectories  = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites\App' }, [pscustomobject]@{ path = '/assets'; physicalPath = 'D:\sites\App\assets' })
             }
 
-            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App')
-            ($result | ForEach-Object Location) -join ',' | Should -Be 'Web/App,Web/App/assets'
+            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' } |
+                Should -Throw -ExpectedMessage "*Web/App/assets runs under 'ProdPool', with its files at 'D:\sites\App\assets'*replace or purge*"
         }
 
         It 'refuses when an application''s virtual directories cannot be shown to have been read' {

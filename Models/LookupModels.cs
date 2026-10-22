@@ -153,6 +153,14 @@ public class OutOfOfficeResult
 /// so an edit to the form while the operation is in flight cannot reach any of them.
 /// <see cref="FromForm"/> applies the page's own rules exactly once - messages only when the state
 /// is not Disabled, a schedule only when it is Scheduled, mailbox and ticket trimmed.
+/// <para>
+/// aud-a7e. <see cref="StartTime"/> and <see cref="EndTime"/> are wall-clock times as the operator
+/// typed them, and <see cref="ScheduleZone"/> is the zone they were typed in - the operator's
+/// browser's. A wall-clock time alone names no moment: the write used to hand it to Exchange
+/// unzoned, and the owner's notice printed it with no zone, so neither could say which 9 AM was
+/// meant. The zone travels in the same captured request, so the write and the notice cannot be
+/// handed a different one.
+/// </para>
 /// </remarks>
 public sealed record OutOfOfficeRequest(
     string Mailbox,
@@ -161,6 +169,7 @@ public sealed record OutOfOfficeRequest(
     string? ExternalMessage,
     DateTime? StartTime,
     DateTime? EndTime,
+    TimeZoneInfo? ScheduleZone,
     string Ticket)
 {
     public static OutOfOfficeRequest FromForm(
@@ -170,12 +179,47 @@ public sealed record OutOfOfficeRequest(
         string? externalMessage,
         DateTime startTime,
         DateTime endTime,
+        TimeZoneInfo? scheduleZone,
         string? ticket) => new(
             Mailbox: (mailbox ?? "").Trim(),
             State: state,
             InternalMessage: state != "Disabled" ? internalMessage : null,
             ExternalMessage: state != "Disabled" ? externalMessage : null,
-            StartTime: state == "Scheduled" ? startTime : null,
-            EndTime: state == "Scheduled" ? endTime : null,
+            StartTime: state == "Scheduled" ? WallClock(startTime) : null,
+            EndTime: state == "Scheduled" ? WallClock(endTime) : null,
+            ScheduleZone: state == "Scheduled" ? scheduleZone : null,
             Ticket: (ticket ?? "").Trim());
+
+    /// <summary>
+    /// The instant a wall-clock time names in <paramref name="zone"/>, as UTC - or null for a time the
+    /// zone skips when its clocks go forward, which names no instant at all. (An hour the clocks
+    /// repeat is read as standard time, as <see cref="TimeZoneInfo.ConvertTimeToUtc(DateTime, TimeZoneInfo)"/> does.)
+    /// </summary>
+    public static DateTime? ToUtc(DateTime wallClock, TimeZoneInfo zone)
+    {
+        var local = WallClock(wallClock);
+        return zone.IsInvalidTime(local) ? null : TimeZoneInfo.ConvertTimeToUtc(local, zone);
+    }
+
+    /// <summary>
+    /// The zone's name as the page's label and the owner's notice both print it - one definition, so
+    /// the two cannot name the zone differently. For a browser's zone this is its IANA id.
+    /// </summary>
+    public static string ZoneName(TimeZoneInfo zone) => zone.Id;
+
+    /// <summary>
+    /// The zone's offset from UTC at that wall-clock time, as <c>UTC+05:30</c>. Per time, not per zone:
+    /// a window that crosses a daylight-saving change has two.
+    /// </summary>
+    public static string OffsetAt(DateTime wallClock, TimeZoneInfo zone)
+    {
+        var offset = zone.GetUtcOffset(WallClock(wallClock));
+        return "UTC" + (offset < TimeSpan.Zero ? "-" : "+")
+            + offset.Duration().ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    // Unspecified, whatever the form handed over: the page's defaults start life as DateTime.Now, of
+    // Kind Local - the SERVER's zone - and TimeZoneInfo would convert a Local value out of the server's
+    // zone (or refuse it) instead of reading it as a time in ScheduleZone.
+    private static DateTime WallClock(DateTime value) => DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
 }

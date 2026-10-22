@@ -28,7 +28,8 @@ public sealed class OutOfOfficeWriteIdentityTests : IDisposable
     private OutOfOfficeService Service() => new(_h.Pool, null!, NullLogger<OutOfOfficeService>.Instance, _h.Config);
 
     private static OutOfOfficeRequest Request(string state = "Enabled") =>
-        OutOfOfficeRequest.FromForm(Typed, state, "Away", "Away (external)", DateTime.Today, DateTime.Today.AddDays(1), "INC100");
+        OutOfOfficeRequest.FromForm(Typed, state, "Away", "Away (external)", DateTime.Today, DateTime.Today.AddDays(1),
+            TimeZoneInfo.Utc, "INC100");
 
     [Theory]
     [InlineData("Enabled")]
@@ -51,6 +52,26 @@ public sealed class OutOfOfficeWriteIdentityTests : IDisposable
 
         Assert.False(result.Success);
         Assert.Equal(ValidatedMailbox.Refusal(Typed), result.Message);
+        Assert.Empty(_h.Calls);
+        Assert.Equal(0, _h.Connects);
+    }
+
+    // aud-a7e. The write boundary does not trust the page to have refused: a schedule with no zone, or
+    // with a time its zone skips (02:30 on 8 March 2026 in New York, when the clocks go forward), names
+    // no instant, so nothing is written and no connection is borrowed. Not guessed as UTC.
+    [Theory]
+    [InlineData(null, "2026-11-02T09:00:00")]
+    [InlineData("America/New_York", "2026-03-08T02:30:00")]
+    public async Task AScheduleThatNamesNoInstant_WritesNothing_AndBorrowsNoConnection(string? zoneId, string start)
+    {
+        var zone = zoneId is null ? null : TimeZoneInfo.FindSystemTimeZoneById(zoneId);
+        var startTime = DateTime.Parse(start, System.Globalization.CultureInfo.InvariantCulture);
+        var request = OutOfOfficeRequest.FromForm(Typed, "Scheduled", "Away", "Away (external)",
+            startTime, startTime.AddDays(4), zone, "INC100");
+
+        var result = await Service().SetOutOfOfficeAsync(request, ExchangeWriteHarness.Validated(Checked));
+
+        Assert.False(result.Success);
         Assert.Empty(_h.Calls);
         Assert.Equal(0, _h.Connects);
     }

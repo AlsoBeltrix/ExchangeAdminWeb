@@ -118,6 +118,13 @@
             window.URL.revokeObjectURL(url);
         }
     </script>
+    <script>
+        // aud-a7e. The browser's own time zone, as an IANA id (Europe/Dublin, Asia/Kolkata). Out of
+        // Office reads it so a schedule typed as wall-clock time names one instant, and says which.
+        function getBrowserTimeZone() {
+            return Intl.DateTimeFormat().resolvedOptions().timeZone;
+        }
+    </script>
     @*
         There is deliberately no navigation-progress script here. One existed and was deleted:
         it tried to work out in the browser when a page had arrived, through two Blazor events,

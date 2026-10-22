@@ -299,22 +299,25 @@ function Assert-AppPoolServesPath {
 
         So, before the stop, ask IIS for every site root, application and virtual directory,
         keep those whose files are at the folder or inside it, and refuse unless at least one is
-        AT the folder and every one of them runs under the named pool. aud-a38f: robocopy /MIR
-        replaces the whole tree, so an application or virtual directory rooted inside the folder
-        and served by another pool would keep running while its files are replaced; and a
-        nested match alone is not "what serves the folder" - a parent folder named by mistake
-        would have its other children replaced too. An answer that cannot be read, or that has
-        nothing at the folder, is a refusal as well: if nothing can be shown to serve the
-        folder, stopping the named pool cannot be shown to stop what runs from it. The refusal
-        lists what IIS reported, so a folder that IIS spells differently is visible in the
-        message itself.
+        AT the folder, everything at the folder runs under the named pool, and nothing is rooted
+        inside it. aud-a38f: robocopy /MIR replaces the whole tree, so an application or virtual
+        directory rooted inside the folder and served by another pool would keep running while
+        its files are replaced; and a nested match alone is not "what serves the folder" - a
+        parent folder named by mistake would have its other children replaced too. aud-a38i: the
+        same pool does not make a nested node safe either. Stopping it stops the node, but the
+        mirror still replaces the node's files with the publish output, or purges them because
+        that output does not have them, so a node rooted inside the folder is refused whatever
+        its pool. An answer that cannot be read, or that has nothing at the folder, is a refusal
+        as well: if nothing can be shown to serve the folder, stopping the named pool cannot be
+        shown to stop what runs from it. The refusal lists what IIS reported, so a folder that
+        IIS spells differently is visible in the message itself.
 
         Folders compare after normalisation, by equality or at a directory boundary, never by
         bare prefix - one instance's folder is easily a prefix of a sibling's.
 
     .OUTPUTS
-        Everything IIS serves at or inside the folder (Location, ApplicationPool,
-        PhysicalPath) when all of it runs under the named pool. Throws otherwise.
+        What IIS serves at the folder (Location, ApplicationPool, PhysicalPath) when all of it
+        runs under the named pool and nothing is rooted inside the folder. Throws otherwise.
     #>
     [CmdletBinding()]
     param(
@@ -377,13 +380,26 @@ function Assert-AppPoolServesPath {
         throw "No IIS site or application has its files at '$PhysicalPath', so it cannot be confirmed that stopping app pool '$Name' stops what runs from them. $reported. Refusing to replace files that may still be served."
     }
 
-    $elsewhere = @($inside | Where-Object { -not [string]::Equals([string]$_.ApplicationPool, $Name, [System.StringComparison]::OrdinalIgnoreCase) })
+    # The pool check covers the folder's own nodes only. A node inside the folder is refused below
+    # whatever its pool, and in the same refusal as every other nested node: "name the pool that
+    # serves them" would be the wrong advice for it, since no pool makes it safe to mirror over.
+    $elsewhere = @($serving | Where-Object { -not [string]::Equals([string]$_.ApplicationPool, $Name, [System.StringComparison]::OrdinalIgnoreCase) })
     if ($elsewhere.Count -gt 0) {
         $named = @($elsewhere | ForEach-Object { "$($_.Location) runs under '$($_.ApplicationPool)', with its files at '$($_.PhysicalPath)'" }) -join '; '
-        throw "Files at or under '$PhysicalPath' are served by an app pool other than '$Name': $named. Stopping '$Name' would leave that application running while its files are replaced. Name the pool that serves them, or fix the binding."
+        throw "Files at '$PhysicalPath' are served by an app pool other than '$Name': $named. Stopping '$Name' would leave that application running while its files are replaced. Name the pool that serves them, or fix the binding."
     }
 
-    return $inside
+    # aud-a38i. Strictly inside: in the tree by the aud-a38f boundary match, and not the folder
+    # itself. No pool filter, deliberately - under aud-a38f a nested node under the named pool
+    # passed, its pool was stopped, and the mirror then replaced or purged its files while the run
+    # reported success. There is no allow-list or override; one would be an owner decision.
+    $nested = @($inside | Where-Object { -not [string]::Equals((ConvertTo-ComparablePhysicalPath $_.PhysicalPath), $target, [System.StringComparison]::OrdinalIgnoreCase) })
+    if ($nested.Count -gt 0) {
+        $named = @($nested | ForEach-Object { "$($_.Location) runs under '$($_.ApplicationPool)', with its files at '$($_.PhysicalPath)'" }) -join '; '
+        throw "IIS serves content from inside '$PhysicalPath': $named. The mirror replaces '$PhysicalPath' with the publish output and purges whatever that output lacks, so it would replace or purge those files, whatever pool serves them. Move each out of '$PhysicalPath', or remove it from IIS."
+    }
+
+    return $serving
 }
 
 Export-ModuleMember -Function Assert-AppPoolServesPath
