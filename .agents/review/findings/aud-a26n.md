@@ -14,7 +14,7 @@ again, so the admin cannot tell the clear took. (6) Comments in `ModuleConfig.ra
 .NET 10 they do not (harmless today).
 **Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
 **Branch**: `worktree-agent-a3c115693e85a6623`
-**Commit**: -
+**Commit**: `bec91eeb` (plan `ff78ff27`; comments `389a34a2`)
 **Reviewer**: implementer (surfaced by the aud-a28n/a26k agent, 2026-10-22, candidates 2 to 7 of its hand-back)
 
 ## Evidence
@@ -283,6 +283,14 @@ pool that holds no runspace. The pages were not rendered in a browser. No coder 
   it already holds for that SID. Before, the page's loaded name could be written back over a newer one.
 - After an already-applied rules save the lists take the store's order and casing.
 - Two in-process stores on one temp file stand in for the two instances; nothing ran against the shared database.
+
+## Branch-tip gates - 2026-10-22 (`389a34a2`: both fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,495 passed / 3 skipped (the three known AD skips) / 0 failed, 5,498 total, 5m15s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
 
 ## Folded in: two LOW items from the codex review of aud-a28n/a26k (attr-batch-8, 2026-10-22)
 

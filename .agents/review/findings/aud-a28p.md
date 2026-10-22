@@ -7,7 +7,7 @@ has passed; a read failure between the probe and this read returns an empty list
 that list protects are un-protected for that check and a write against them goes through.
 **Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
 **Branch**: `worktree-agent-a3c115693e85a6623`
-**Commit**: -
+**Commit**: `0b92c35f` (plan `ff78ff27`; comments `389a34a2`)
 **Reviewer**: implementer (surfaced by the aud-a28n/a26k agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence
@@ -149,3 +149,11 @@ verdict is claimed.
 - The list stays a comma-separated value in the Mailbox Permissions module config, a key the Module Configuration
   page does not show (aud-a28n); unchanged.
 - The switch store stands in for a store fault; nothing ran against a damaged database.
+
+## Branch-tip gates - 2026-10-22 (`389a34a2`: both fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,495 passed / 3 skipped (the three known AD skips) / 0 failed, 5,498 total, 5m15s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
