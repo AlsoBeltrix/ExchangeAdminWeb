@@ -6,7 +6,7 @@ fixed the pre-write re-read and the preview, not the lookup). (2) A binary (byte
 refused as "holds N values", where N is the byte count: the outcome is safe, the message misleads.
 (3) After a still-loading preview panel is closed, a new preview is refused until the first one
 returns (the aud-a26o loading guard outlives the panel).
-**Status**: Fixed on branch; not merged, not pushed; awaiting review
+**Status**: Merged `172902c2`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a906aa98bce748ee5`
 **Commit**: `00e71f2d` (fix, tests, record; comments `258e8b96`; plan `7dcf2815`)
 **Reviewer**: implementer (surfaced by the psl-7/a28q/a26o agent, 2026-10-22, candidates 4, 6 and 7 of its hand-back)

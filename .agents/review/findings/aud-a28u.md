@@ -5,7 +5,7 @@ write (an unserialisable value, an IO failure) and logs one error; `AuditService
 still runs its "AuditWritten" trace step as Success and its usage-telemetry call, because the writer
 returns no outcome. The operation trace therefore says an audit row was written when none was, and a
 reviewer reconciling trace to audit finds a step with no row.
-**Status**: Fixed on branch; not merged, not pushed; awaiting review
+**Status**: Merged `172902c2`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a906aa98bce748ee5`
 **Commit**: `23a88f20` (fix, tests, record; comments `258e8b96`; plan `7dcf2815`)
 **Reviewer**: implementer (surfaced by the psl-7/a28q/a26o agent, 2026-10-22, candidate 3 of its hand-back)
