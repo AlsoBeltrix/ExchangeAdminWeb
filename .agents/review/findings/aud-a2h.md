@@ -3,9 +3,9 @@
 **Severity**: MEDIUM - no wrong object is written, but a legitimate Room Finder row is refused before
 any write (synced list, Active Directory unprovable) or comes back partial after Set-Place and the
 timezone committed (cloud list).
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; closed on coder-side guard proof (MEDIUM; the fix is the repo's existing idiom, codex-specified); dev acceptance needs a list over 1000 members
 **Branch**: `worktree-agent-a24bdc2542a9c48b7`
-**Commit**: `<pending>`
+**Commit**: `fdf2923` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh, batch-5, 2026-10-21
 
 ## Evidence
