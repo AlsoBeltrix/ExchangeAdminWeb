@@ -8,9 +8,9 @@ corruption reads (around lines 637-638) and then reads the list through `GetConf
 returns an empty dictionary. The validator initialises with an empty excluded-user set, so a mailbox
 listed in `ExcludedUsers` is treated as not protected and Mailbox Permissions, Calendar Permissions
 and Out of Office writes can proceed until the cache is invalidated.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
-**Commit**: -
+**Status**: Fixed on its branch, not merged; guard proof below; approved under the owner's 2026-10-21 "EVERYTHING" go
+**Branch**: `worktree-agent-aaa429d3a8979950e`
+**Commit**: plan `6a2bb13f`; the fix and comments commits follow it on the branch
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-10, `prompt-attr-batch-10.md`, 2026-10-22)
 
 ## Evidence
@@ -85,6 +85,77 @@ it not at all. Mutations at the call site: (1) `EnsureInitializedAsync` reads th
 kept as the probe and the list read through `GetValue` after it; extra (E1) `TryGetConfiguredExclusions` takes rows it
 could not read as an empty list. Plus an executed reproduction against `ce8b3bce`'s file.
 
+## Executed reproduction - 2026-10-22
+
+Branch `worktree-agent-aaa429d3a8979950e`, the fix's tests in place and `Services/PermissionValidator.cs` as it is at
+`ce8b3bce` (`git hash-object` equal to the blob `2b571b58`, MD5 `8E28690F2ADC523A18A25D868C9237AB`), build 0 errors:
+`PermissionValidatorExclusionsReadTests` 3 failed / 2 passed. The bulk grant against a mailbox on ExcludedUsers, with the
+store answering two reads (the presence read and the probe) and failing the list's, was written (`SuccessCount` 1: the
+list's read failed open to "no protected users"); with the store answering one read it was refused, but as the list
+unavailable (the probe's read was the one that failed), not as protected; and one load read the store three times. The
+store unreadable from its first read was refused and the empty-list control passed - both as they must against the old
+code too, which refused a store whose presence read failed. The fix was then written over that file.
+
+## Fix
+
+`Services/PermissionValidator.cs`: `TryGetConfiguredExclusions(out string[] exclusions)` replaces
+`GetConfiguredExclusions` - one read of the MailboxPermissions rows through `ModuleConfigService.TryGetModuleConfig`,
+false when they cannot be read, otherwise the `ExcludedUsers` value split as before. `EnsureInitializedAsync` calls it
+once, in place of the `HasModuleConfigFile` presence read and the `IsModuleCorrupt` probe: false takes the corrupt branch
+unchanged (`_initFailed`, so every validation refuses); true carries the list into the load. No caller changed.
+
+Tests: new `ExchangeAdminWeb.Tests/PermissionValidatorExclusionsReadTests.cs` (5 cases): the store answering its first one
+or two reads and failing every later one, each through the Mailbox Permissions CSV bulk loop (refused as protected, one
+`BulkAdd_ExcludedTarget` record carrying that refusal, no `Add-MailboxPermission`, no connection borrowed); the store
+unreadable from its first read (an unlisted target refused as the list unavailable, `IsUserExcludedAsync` true); the empty
+list over a healthy store (allowed, bound to the mailbox Exchange names); one module-config read per load and none from
+the cache. As planned, no departure.
+
+Caller-visible change, by design: none while the store reads. When the MailboxPermissions rows cannot be read the
+validator refuses every target as the protected-user list unavailable, as it did whenever the probe caught it; the window
+in which the presence read and the probe answered and the list's read did not - which left every listed mailbox
+unprotected for the cache lifetime - is gone. A module with no MailboxPermissions rows still reads as an empty list.
+
 ## Guard proof
 
-Pending.
+Session-local driver (`mutate.ps1` in the scratchpad's `a28s-work`): back up, mutate by exact text (one match required),
+MD5, `dotnet build` of the test project, `dotnet test` filtered to
+`FullyQualifiedName~PermissionValidator|FullyQualifiedName~WriteIdentityTests|FullyQualifiedName~OutOfOfficeRequestCaptureTests|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~ProtectedPrincipalExclusionsReadTests`
+(224 tests), restore from the backup, set the write time, MD5 re-confirmed. Fixed-file MD5: `Services/PermissionValidator.cs`
+`2457C3EC5269C8C488A4F4C5AFE92CDD`; every mutant built with 0 errors and the file was restored to that MD5 each time. After
+the round, the restored tree rebuilt and the same filter: 224/224 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| 1 | `EnsureInitializedAsync`: the list read fail-open again - the one read kept as the probe, the list read through `GetValue` after it | `379B73AA54C5412EE5CBB441A05D59A3` | `AStoreThatFailsAfterItsFirstReads_DoesNotUnprotectAListedMailbox(answered: 1)` (the row written: `SuccessCount` 1), `OneLoad_ReadsTheModuleConfigOnce_AndACachedValidationNotAtAll` (2 reads, 1 expected) |
+| E1 | extra, `TryGetConfiguredExclusions`: rows that cannot be read taken as an empty list (`return true`) | `670030FD7787DA1DFF6B99125619E8A9` | `AStoreThatCannotBeRead_RefusesEveryTarget_AsTheListUnavailable` (an unlisted target allowed: `Error` null) |
+
+The code comments are written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors; 61 warnings, all pre-existing, none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,623 passed / 3 skipped (the three known AD skips) / 0 failed, 5,626 total, 5m10s. No hang. (Baseline at
+  `ce8b3bce`: 5,618 / 3 / 0, 5,621, 5m4s; the five added are this class's.)
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No PowerShell source, AD module, directory, Exchange Online, Delinea, SMTP, push or deployment: Exchange is the harness's
+stand-in cmdlets and a stand-in resolver, and no case here opens a session in its passing state. No coder self-review
+verdict is claimed.
+
+## Known gaps
+
+- The list is cached for the 30-minute lifetime or until the change token moves, and a failed load is retried after
+  `FailedLoadRetry`, as before.
+- `TryExpandGroupAsync` asks `ExoConnectionPool.IsConfigured`, whose ExchangeOnline config reads are fail-open `GetValue`s
+  in another file: a failure confined to that read keeps a listed group a literal for the load (its members unprotected)
+  while the resolver's later read of the same config answers. Handed back as a candidate, not fixed here.
+- `GetPreventSelfGrant` reads `PreventSelfGrant` through the fail-open `GetValue` and on a read failure falls back to
+  appsettings `Security:PreventSelfGrant`, a fallback the Constitution allows only when the module config is absent. It
+  is the self-grant gate, not this one; handed back as a candidate.
+- Only the Mailbox Permissions write is driven. Calendar Permissions (its bulk loop, its page) and Out of Office (its
+  page) reach the same `ValidateTargetMailboxAsync` and its one load, so the refusal is theirs too, but no test here
+  drives their writes.
+- The failing store stands in for a store fault; nothing ran against a damaged database.

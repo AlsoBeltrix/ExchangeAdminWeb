@@ -60,15 +60,19 @@ public class PermissionValidator
     // The appsettings Security:ExcludedUsers fallback was retired 2026-07-28: it was
     // invisible to the Protected Principals admin UI, so principals could be blocked
     // with no visible cause.
-    private string[] GetConfiguredExclusions()
+    private bool TryGetConfiguredExclusions(out string[] exclusions)
     {
-        var excluded = _moduleConfig.GetValue("MailboxPermissions", "ExcludedUsers");
-        if (!string.IsNullOrEmpty(excluded))
+        if (!_moduleConfig.TryGetModuleConfig("MailboxPermissions", out var values))
         {
-            return excluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            exclusions = [];
+            return false;
         }
 
-        return Array.Empty<string>();
+        var excluded = values.GetValueOrDefault("ExcludedUsers");
+        exclusions = string.IsNullOrEmpty(excluded)
+            ? []
+            : excluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return true;
     }
 
     private bool GetPreventSelfGrant()
@@ -634,7 +638,7 @@ public class PermissionValidator
 
             token = _changeWatcher.CurrentToken();
 
-            if (_moduleConfig.HasModuleConfigFile("MailboxPermissions") && _moduleConfig.IsModuleCorrupt("MailboxPermissions"))
+            if (!TryGetConfiguredExclusions(out var exclusions))
             {
                 _excludedUsers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
                 _excludedObjectIds = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
@@ -646,7 +650,7 @@ public class PermissionValidator
                 return;
             }
 
-            var configuredExclusions = GetConfiguredExclusions()
+            var configuredExclusions = exclusions
                 .Select(e => e.Trim())
                 .Where(e => !string.IsNullOrWhiteSpace(e))
                 .ToList();
