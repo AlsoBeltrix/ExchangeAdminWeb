@@ -89,6 +89,15 @@ public sealed class AttributeEditorRepository
     /// store nothing - in which case the transaction is rolled back and nothing, not even the change
     /// token, is written.
     /// </summary>
+    /// <remarks>
+    /// The save used to read in one transaction and replace in another (<see cref="SaveAllowlist"/>),
+    /// and dev and prod share this database: a save by the other instance, or another admin, could
+    /// commit in between and be wiped by a whole-table replace decided from rows that were no longer
+    /// there. <c>SqliteConfigStore.Write</c> opens BEGIN IMMEDIATE, so the read here already
+    /// holds the write lock the replace needs, and no other writer commits between them (the shape of
+    /// aud-a33b's ConvertToSids). The rows are read back before the commit so the caller knows exactly
+    /// what it left.
+    /// </remarks>
     public AllowlistReplaceOutcome ReplaceAllowlist(Func<AllowlistSnapshot, IReadOnlyList<AttributeRow>?> decide)
     {
         ArgumentNullException.ThrowIfNull(decide);
@@ -117,6 +126,9 @@ public sealed class AttributeEditorRepository
         }
     }
 
+    // A read that throws - a damaged or missing table - is a snapshot that says it could not be read,
+    // which the service treats as a corrupt store and refuses on; inside a write it must not escape
+    // as an exception the caller would record as a failed write.
     private static AllowlistSnapshot ReadSnapshot(SqliteConnection connection, SqliteTransaction? transaction)
     {
         try
@@ -130,6 +142,9 @@ public sealed class AttributeEditorRepository
         }
     }
 
+    // Thrown out of the write when decide stores nothing, because IConfigStore.Write commits - and bumps
+    // the change token every cache on both instances watches - whenever its callback returns. An
+    // exception is its documented rollback. Caught in ReplaceAllowlist; it never leaves this class.
     private sealed class NothingWritten(AllowlistSnapshot before) : Exception
     {
         public AllowlistSnapshot Before { get; } = before;

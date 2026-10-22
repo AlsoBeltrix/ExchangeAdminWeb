@@ -563,6 +563,9 @@
         statusMessage = null;
         await Task.Yield();
 
+        // aud-a28h. Every save on this page records each refusal and its catch, not only a success:
+        // a refused or failed attempt to change who can use a module, or who is protected, left no
+        // trace. Read above the try, so the catch has the ip too.
         var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
@@ -633,8 +636,12 @@
         }
     }
 
+    // A successful enablement save records one change per module it switched, so there is no one
+    // section for an attempt that did not land: its one record is filed under the save as a whole and
+    // lists the module sections it was changing (aud-a28h).
     private const string EnablementSection = "ModuleEnablement";
 
+    /// <summary>The <c>Module:{id}</c> section of each toggle that differs from what the page loaded.</summary>
     private string[] PendingEnablementSections() =>
         moduleEnablement
             .Where(kv => !moduleEnablementBaseline.TryGetValue(kv.Key, out var loaded) || loaded != kv.Value)

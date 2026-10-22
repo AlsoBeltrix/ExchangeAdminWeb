@@ -507,6 +507,11 @@
             </div>
                 <p class="text-muted mb-3"><small>Configure which AD attributes users can edit. Attributes on the hard denylist (security-sensitive attributes like userAccountControl, memberOf, etc.) are automatically blocked.</small></p>
 
+                @* aud-a26f. Two causes, two fixes, and the banner names the right one: the legacy import
+                   refused its file - the one case where the file is the thing to fix, shown with the
+                   import's reason, which used to reach only the log - or the table in the config
+                   database cannot be read, fixed as the operations doc says. It used to name the file in
+                   both, and an admin following it edited a file nothing reads. *@
                 @if (allowlistCorrupt)
                 {
                     <div class="alert alert-danger mb-3">
@@ -1104,6 +1109,10 @@
         statusMessage = null;
         await Task.Yield();
 
+        // aud-a28h. Every save on this page records each refusal and its catch under the section its
+        // success files under, not only a success: a refused or failed attempt on section access or
+        // module admins - who can reach and run a module - used to leave no trace. The section and ip
+        // are worked out above the try so the catch has them.
         var section = $"ModuleConfig:{module.Id}";
         var ip = ClientInfo.GetIpForUser(currentUser);
         try
@@ -1330,6 +1339,9 @@
         finally { saving = false; }
     }
 
+    // A successful access save records one change per alias it changed, so there is no one section
+    // for an attempt that did not land: its one record is filed under the module's main grant and
+    // lists the aliases whose working list differs from the one the page loaded (aud-a28h).
     private string[] PendingAccessSections() =>
         policyAliases
             .Where(a => GroupDelta(
@@ -1634,10 +1646,17 @@
     private bool allowlistSaved;
     private bool allowlistCorrupt;
     private string? allowlistImportRefusal;
+
+    // What the save is checked against (aud-a28i): the version of the rows this page loaded. A save
+    // made after anyone else saved the allowlist - another admin, or either instance on the shared
+    // database - is refused rather than allowed to replace their change, and the admin reloads. The
+    // page's own successful save replaces it with the version that save left, so saving twice from
+    // one page is not a conflict.
     private string allowlistVersion = "";
 
     private void LoadAllowlist()
     {
+        // Fresh, not the cached GetAllowlist, and one read for both the rows and their version.
         var loaded = AttrEditorService.LoadAllowlistForEditing();
         allowlistVersion = loaded.Version;
         var list = loaded.Attributes;
@@ -1737,6 +1756,8 @@
                 return;
             }
 
+            // Every row, as it is in the table: a row with a blank name or label used to be filtered
+            // out here and vanish without a word. The save refuses it by its position (aud-a26f).
             var rows = allowlistAttributes
                 .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level))
                 .ToList();
@@ -1746,6 +1767,8 @@
             {
                 if (result.StoreCorrupt)
                 {
+                    // The banner names the store at fault; refreshed here because the store can have
+                    // turned corrupt after the page loaded.
                     allowlistCorrupt = true;
                     allowlistImportRefusal = AttrEditorService.LegacyAllowlistImportRefusal;
                 }
@@ -1753,6 +1776,8 @@
                 return;
             }
 
+            // The version the save left is what this page now shows; without it the page's next save
+            // would be refused as someone else's change (aud-a28i).
             allowlistVersion = result.Version ?? "";
             dirty.ClearSection(SecAttrs);
             allowlistSaved = true;

@@ -145,12 +145,17 @@ public class ADAttributeEditorService
 
     private readonly AttributeEditorRepository _repository;
 
-    // Set when a legacy ad-editable-attributes.json exists but is unparseable / missing the
-    // Attributes section, and the DB allowlist is not yet configured. The allowlist's fail-closed
-    // signal is NULL (distinct from the valid empty []), so during the upgrade window a corrupt
-    // file must make the load return null until it is repaired/removed - never silently degrade
-    // to an empty allowlist. The file stays on disk, so this re-trips every startup.
+    // Set when a legacy ad-editable-attributes.json exists, the DB allowlist is not yet configured,
+    // and the import refused the file - unparseable, no Attributes section, a row that fails
+    // validation, a pattern that does not compile (aud-a26e), or a store that would not take it. The
+    // allowlist's fail-closed signal is NULL (distinct from the valid empty []), so during the
+    // upgrade window a refused file must make the load return null until it is repaired/removed -
+    // never silently degrade to an empty allowlist. The file stays on disk, so this re-trips on every
+    // construction.
     private readonly bool _legacyAllowlistCorrupt;
+
+    // Why the import refused the file, in words an administrator can act on (aud-a26f). The log was
+    // the only place that named the attribute; the Module Configuration page now shows this.
     private readonly string? _legacyImportRefusal;
 
     public ADAttributeEditorService(
@@ -231,13 +236,12 @@ public class ADAttributeEditorService
     }
 
     /// <summary>
-    /// True when config/ad-editable-attributes.json exists but cannot be parsed or fails
-    /// validation. Reads disk fresh on every call - it does NOT consult the 30-second
-    /// cache - so admin pages can use it as the authoritative pre-save corruption gate.
-    /// GetAllowlist() can return a stale-but-valid cached list for up to the TTL after the
-    /// file becomes corrupt; saving over the file in that window would discard whatever it
-    /// currently holds. This gate observes the actual disk state instead. Mirrors
-    /// SectionAccessService.IsFragmentCorrupt (incident 2026-06-12 corrupt-store class).
+    /// True when the allowlist in the config database (<c>editable_attribute</c>) cannot be read or
+    /// fails validation, or when the legacy import refused its file (aud-a26f). Reads the store
+    /// fresh on every call - it does NOT consult the 30-second cache - because GetAllowlist() can
+    /// return a stale-but-valid cached list for up to the TTL after the store becomes corrupt.
+    /// Mirrors SectionAccessService.IsFragmentCorrupt (incident 2026-06-12 corrupt-store class). The
+    /// allowlist save no longer calls this: it decides inside its own write (aud-a28i).
     /// </summary>
     public bool IsAllowlistCorrupt() => LoadAllowlistFromDisk() == null;
 
@@ -259,6 +263,11 @@ public class ADAttributeEditorService
     /// The allowlist a read of the store describes: empty when nothing is configured, null when the
     /// store is unreadable or its rows fail to project or validate - the fail-closed signal.
     /// </summary>
+    /// <remarks>
+    /// One judgement for every reader - the cached load, the editing load and the save, which calls it
+    /// on the rows its own write read (aud-a28i) - so the save can never call corrupt a store the page
+    /// was shown as valid, or the reverse.
+    /// </remarks>
     private List<EditableAttribute>? Evaluate(AllowlistSnapshot snapshot)
     {
         if (_legacyAllowlistCorrupt)
@@ -294,6 +303,11 @@ public class ADAttributeEditorService
     /// The allowlist as the Module Configuration page edits it, read fresh, with the version a save
     /// from that page is checked against (aud-a28i).
     /// </summary>
+    /// <remarks>
+    /// The list and the version come from the same single read. Two reads could straddle another
+    /// admin's save, and the page would show the old rows with the new version - which is exactly
+    /// the save the version exists to refuse. Not the cache, for the same reason.
+    /// </remarks>
     public AllowlistForEditing LoadAllowlistForEditing()
     {
         var snapshot = _repository.ReadAllowlistSnapshot();
@@ -301,6 +315,13 @@ public class ADAttributeEditorService
     }
 
     /// <summary>The allowlist's own content as a version: every stored row in name order, and the presence marker.</summary>
+    /// <remarks>
+    /// Not the store's change token. The token moves on every config write by either instance on the
+    /// shared database - a section-access save would make every open allowlist page refuse - and it
+    /// misses a writer that bypasses the store (aud-a33b's reasons). The rows themselves are exact: a
+    /// save is refused only when the allowlist itself changed. The marker is in it so that an empty
+    /// allowlist someone configured is not the same version as one never configured.
+    /// </remarks>
     internal static string AllowlistVersion(AllowlistSnapshot snapshot)
     {
         if (!snapshot.Readable)
@@ -388,8 +409,9 @@ public class ADAttributeEditorService
         // aud-a28e. A pattern that does not compile is refused where the allowlist is saved, before
         // the store is touched, rather than found by the first operator to save that attribute. It
         // throws, so no caller can carry on as if the save happened. The Module Configuration page's
-        // save refuses such a pattern itself, as an audited refusal, before it calls this
-        // (SaveAllowlistAndAudit, aud-a28f); this throw is the backstop for any other caller.
+        // save does not come through here: it refuses such a pattern itself, as an audited refusal,
+        // and writes inside one transaction with its other checks (SaveAllowlistAndAudit, aud-a28f,
+        // aud-a28i). This throw is the backstop for any other caller.
         // ValidateProposedValues keeps its own catch: a pattern already stored - edited into the
         // database, or imported before the legacy import checked patterns (aud-a26e) - never passes
         // through here, and a timeout depends on the value being checked, so it cannot be judged here.
@@ -415,15 +437,24 @@ public class ADAttributeEditorService
     /// re-checks the store, refuses what must not be written, writes, and leaves exactly one audit
     /// record however it ends (aud-a28f).
     /// </summary>
+    /// <param name="loadedVersion">The version the page's load returned (<see cref="LoadAllowlistForEditing"/>).</param>
     /// <remarks>
     /// The save used to run in the page. Its refusals and its catch wrote no record, and its one
     /// record - on success - passed an empty list as the previous allowlist, so every save read as
     /// adding every attribute and removing none. It lives here so every one of those paths can be
     /// driven by a test; the page keeps only the re-check, which needs the principal and the policies.
     ///
+    /// Every decision is made inside one write (aud-a28i). It used to read the store, decide, and
+    /// replace the table in a later transaction, so a save landing in between - another admin's, or
+    /// the other instance's on the shared database - was overwritten, and the success record's
+    /// before-state was the stale read. Now the rows are read under the write lock the replace holds,
+    /// and a page whose load is older than those rows is refused rather than allowed to replace them:
+    /// the admin reloads and re-applies, and nothing is merged or guessed. The lock alone would still
+    /// let a stale page overwrite; a compare made outside the write would leave the window open.
+    ///
     /// It does not throw. Every outcome is recorded here and returned, which is what lets the page's
     /// catch write the one record for an attempt that failed before reaching this method without
-    /// risking a second.
+    /// risking a second. The records are written after the transaction, which a refusal rolls back.
     /// </remarks>
     public AllowlistSaveResult SaveAllowlistAndAudit(
         List<EditableAttribute> attributes, string loadedVersion, string performedBy, string ip)
@@ -496,8 +527,17 @@ public class ADAttributeEditorService
     /// or null when it may be. Called inside the save's write, so the store it judges is the one the
     /// write replaces.
     /// </summary>
+    /// <remarks>
+    /// The store comes first: whether a save can be made at all - it is not corrupt, and it is still
+    /// what the page loaded - and then what this admin's rows hold. A corrupt store is reported even
+    /// when the rows are also wrong, because that refusal is the one that tells the page to show its
+    /// corrupt banner and stop offering a save; and a row problem found on a stale page would only be
+    /// found again after the reload the conflict asks for.
+    /// </remarks>
     private AllowlistRefusal? Refuse(AllowlistSnapshot stored, List<EditableAttribute> attributes, string loadedVersion)
     {
+        // The store's own judgement on the rows read under the lock: the authoritative gate. Saving
+        // over a corrupt store would discard whatever it holds, so it fails closed.
         if (Evaluate(stored) is null)
             return new("AllowlistConfig", DescribeCorruptStore(), StoreCorrupt: true);
 
@@ -556,6 +596,14 @@ public class ADAttributeEditorService
     }
 
     /// <summary>The corrupt-store refusal, naming the store that holds the problem and its fix (aud-a26f).</summary>
+    /// <remarks>
+    /// It used to send every administrator to <c>config/ad-editable-attributes.json</c>, which nothing
+    /// has read since the legacy import: an admin following it edited a file to no effect. The file is
+    /// named only where it is the thing to fix - the import refused it - and then with the import's
+    /// reason. Otherwise the problem is in the database, and the page's table is disabled in this
+    /// state, so the fix named is the documented database repair, with both pools stopped because
+    /// they share the file.
+    /// </remarks>
     private string DescribeCorruptStore() =>
         _legacyImportRefusal is { } import
             ? "Allowlist store is corrupt; refusing to save over it. The legacy file config/ad-editable-attributes.json "
@@ -568,6 +616,13 @@ public class ADAttributeEditorService
     /// Every row without an LDAP name or a label, by its position in the table (aud-a26f); null when
     /// there is none.
     /// </summary>
+    /// <remarks>
+    /// The page used to filter such a row out before the save, so it vanished from the allowlist
+    /// without a word - an attribute the admin had half entered, or one whose label was cleared. It is
+    /// refused instead, and the admin fills it in or removes it: nothing is dropped, and nothing is
+    /// guessed for them. The position is the table's, counted from 1, because a blank row has nothing
+    /// else to be known by.
+    /// </remarks>
     private static string? DescribeBlankRows(List<EditableAttribute> attributes)
     {
         var blank = new List<string>();
@@ -592,6 +647,11 @@ public class ADAttributeEditorService
     /// Every LDAP name on more than one row, compared as the store compares them, ignoring case
     /// (aud-a26f); null when there is none.
     /// </summary>
+    /// <remarks>
+    /// The store keeps one row per name (its key is NOCASE), so the save used to merge the second row
+    /// into the first - its values winning - without saying so. Which of two rows the admin meant is
+    /// not the save's to decide; it refuses and names both.
+    /// </remarks>
     private static string? DescribeRepeatedNames(List<EditableAttribute> attributes)
     {
         var repeated = attributes
@@ -610,7 +670,8 @@ public class ADAttributeEditorService
     /// The rows a save of <paramref name="attributes"/> leaves in the store, so the record describes
     /// the store rather than the request. The repository's insert skips a blank name and upserts a
     /// repeated one (names compare case-insensitively): the first spelling stays, the later row's
-    /// values win.
+    /// values win. The allowlist save refuses both before it gets here (aud-a26f); this stays exact
+    /// for what the repository does.
     /// </summary>
     private static List<AttributeRow> RowsAsWritten(List<EditableAttribute> attributes) =>
         attributes
@@ -735,6 +796,8 @@ public class ADAttributeEditorService
     // Allowlist: an unparseable/invalid file is left in place and NOT marked configured, so the
     // store stays at the empty/null-on-load fail-closed state until repaired - we do not import
     // partial/garbage rows. Legend is fail-open: an unparseable legend is skipped (left in place).
+    // Returns why the allowlist file was refused, or null: each refusal says what an administrator
+    // must correct, because the page that shows it has nothing else to go on (aud-a26f).
     private string? ImportLegacyIfPresent()
     {
         var configDir = Path.Combine(_env.ContentRootPath, "config");
@@ -785,9 +848,10 @@ public class ADAttributeEditorService
                         // Refused like the file's other validation failures: the whole file or none
                         // of it, the file left for an administrator to correct, the allowlist failing
                         // closed meanwhile. Every row is checked, not just the ones ValidateRows
-                        // keeps, because the import stores them all. The log is the only place this
-                        // can name the attribute: the import runs as the service is constructed, with
-                        // no page to tell, and repeats on each construction until the file is fixed.
+                        // keeps, because the import stores them all. The import runs as the service
+                        // is constructed, with no page to tell, and repeats on each construction until
+                        // the file is fixed, so the reason is both logged and returned: the Module
+                        // Configuration page shows it in its corrupt banner (aud-a26f).
                         _logger.LogError(
                             "Legacy ad-editable-attributes.json was not imported: {Problem} It is left in place, and the allowlist fails closed until an administrator corrects the pattern.",
                             uncompilable);
@@ -822,7 +886,7 @@ public class ADAttributeEditorService
         catch (Exception ex)
         {
             // A valid file we could not even read must also fail closed (parse errors are handled
-            // above and already set allowlistCorrupt).
+            // above and already set allowlistRefusal).
             _logger.LogError(ex, "Failed to process legacy ad-editable-attributes.json - failing closed");
             allowlistRefusal = $"It could not be read: {ex.Message}";
         }
@@ -1026,6 +1090,11 @@ public class ADAttributeEditorService
         // If a maxLevel is provided, filter the allowlist to enforce server-side level restrictions
         if (maxLevel.HasValue)
         {
+            // aud-a28g. The editor page used to refuse an attribute above the operator's level itself,
+            // before calling here, with no record. It is refused here, recorded and announced like any
+            // other result, in the page's words: the attribute IS allowlisted, just not at this level.
+            // A name the allowlist does not hold at all is not a level question, and stays the
+            // Validation refusal below ("not in the allowlist").
             var reachable = allowlist.Where(a => a.Level <= maxLevel.Value).ToList();
             var aboveLevel = proposedValues.Keys
                 .Where(name => !reachable.Any(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase))
@@ -1534,10 +1603,10 @@ public class ADAttributeEditorService
     /// Records an attempt that was refused before any write was tried.
     /// </summary>
     /// <remarks>
-    /// Audit finding A28. Every refusal in <c>SaveAsync</c> - corrupt allowlist, failed
-    /// validation, a denylisted attribute, a failed or blocking protected-principal check,
-    /// missing credentials, a busy throttle - returned before <see cref="LogAudit"/> and so
-    /// left nothing in the audit log. The operation trace saw them; the trace is diagnostic,
+    /// Audit finding A28. Every refusal in <c>SaveAsync</c> - corrupt allowlist, an attribute above
+    /// the caller's level (aud-a28g), failed validation, a denylisted attribute, a failed or blocking
+    /// protected-principal check, missing credentials, a busy throttle - returned before
+    /// <see cref="LogAudit"/> and so left nothing in the audit log. The operation trace saw them; the trace is diagnostic,
     /// with different retention and different readers. "Who tried to edit this protected
     /// account and was stopped?" is asked of the audit log, which did not know.
     ///
@@ -1570,6 +1639,14 @@ public class ADAttributeEditorService
     /// <summary>
     /// Records a save the editor page refused before it called <see cref="SaveAsync"/> (aud-a28g).
     /// </summary>
+    /// <remarks>
+    /// The record <see cref="LogRefusal"/> writes, so a page refusal and a service refusal read the same
+    /// in the Admin Event Log. Public because the page writes it: its authorization re-check and its
+    /// no-looked-up-user check stay on the page, which holds the principal and the panel, and SaveAsync
+    /// - which records everything it returns - is never reached. A null target is recorded as
+    /// <c>(none)</c>. Never throws: an audit sink that fails is logged, and must not turn a refusal into
+    /// an exception the page's catch would then record a second time.
+    /// </remarks>
     public void LogSaveRefused(
         ResolvedDirectoryPrincipal? target, string performedBy, string ip, string ticket, string refusedAt, string reason)
     {
@@ -1586,6 +1663,13 @@ public class ADAttributeEditorService
     /// <summary>
     /// Records a save that ended in an exception <see cref="SaveAsync"/> did not return (aud-a28g).
     /// </summary>
+    /// <remarks>
+    /// The failed <c>ADAttributeEditor_Update</c> the aud-a28c catch writes, with no changes and the
+    /// target's GUID when known, but not its write-completed trace step: the page cannot know how far
+    /// the save got. For the same reason it carries neither refusal field - the write may have been
+    /// reached - so it can never be read as "nothing was tried". Never throws, like
+    /// <see cref="LogSaveRefused"/>.
+    /// </remarks>
     public void LogSaveFailed(ResolvedDirectoryPrincipal target, string performedBy, string ip, string ticket, string reason)
     {
         try

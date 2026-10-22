@@ -492,14 +492,17 @@
         {
             isSaving = false;
             operationResult = (false, "Look the user up again before saving.");
+            // aud-a28g. A refused attempt like any other, and one SaveAsync - which records every
+            // result it returns - never sees, so the page records it. There is no principal to name,
+            // hence "(none)", as aud-a28d's undo refusals without a target record it.
             EditorService.LogSaveRefused(null, currentUser, clientIpAddress, ticketNumber.Trim(), "Lookup", operationResult.Value.message);
             return;
         }
 
         await Task.Yield();
 
-        // Opened HERE, above the try, so the authorization and allowlist refusals inside it are
-        // covered too, and completed in the finally, after SaveAsync - which sends the
+        // Opened HERE, above the try, so the authorization refusal inside it is covered too, and
+        // completed in the finally, after SaveAsync - which sends the
         // notification email itself (aud-a26b) - so the bar does not read Idle while an email is
         // still in flight. NamedLocations.SaveLocation is the shape this copies.
         //
@@ -528,10 +531,15 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = (false, "Authorization denied.");
+                // aud-a28g. The re-check stays here because the page holds the principal, so the
+                // page records its refusal: SaveAsync is never reached.
                 EditorService.LogSaveRefused(target, currentUser, clientIpAddress, ticketNumber.Trim(), "Authorization", operationResult.Value.message);
                 return;
             }
 
+            // The level is worked out here and enforced by SaveAsync. The corrupt-allowlist and
+            // above-level refusals the page used to make itself, with no record, are SaveAsync's
+            // (aud-a28g): it sees the same allowlist and level, records the refusal and announces it.
             var saveMaxLevel = await DetermineMaxLevelAsync();
 
             var proposedValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
@@ -585,6 +593,9 @@
         {
             operationResult = completed = (false, ex.Message);
             Logger.LogError(ex, "AD attribute save failed");
+            // aud-a28g. The record for an exception SaveAsync did not return - it records every result
+            // it does return, so this is never a second record for one attempt. Not a refusal: the
+            // write may have been reached.
             EditorService.LogSaveFailed(target, currentUser, clientIpAddress, ticketNumber.Trim(), ex.Message);
             // The page's one remaining notice: an exception, which SaveAsync never returns.
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Target"] = target.UserPrincipalName }, ex.Message); } catch { }
