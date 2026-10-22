@@ -9,7 +9,7 @@ confirming read), the log-line class aud-a2n fixed for the group add. (3) A `Set
 commits and then throws (a timeout) still leaves a partial row though the values are in place;
 aud-a2n reconciles the group write by read-back after any error, aud-a2p's read-back runs only after
 a clean return.
-**Status**: Merged to master (`f4de7909`); closed on guard proof; codex review pending; dev acceptance owed
+**Status**: Merged to master (`f4de7909`); closed on guard proof; codex clean (one LOW folded into aud-a2r); dev acceptance owed
 **Branch**: `worktree-agent-a69863ec13d81b5ba`
 **Commit**: `df084c68` (fix, tests, comments, record); plan `a37754c4`; merged `f4de7909`
 **Reviewer**: implementer (surfaced by the aud-a2p agent, 2026-10-22, its three candidates)

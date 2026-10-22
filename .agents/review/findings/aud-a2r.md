@@ -39,3 +39,15 @@ suffix; `ExchangeAdminWeb.Tests/ExchangeWriteHarness.cs` user stand-ins (compare
 ## Guard proof
 
 Pending.
+
+## Folded in: the success-after-error detail is dropped from the admin notification (codex, a2q review, 2026-10-22)
+
+`Components/Pages/ConferenceRooms.razor` around line 1669: `NotifyRoomAdminAsync` passes
+`success ? null : errorDetail` to `EmailService`, so when `Set-ADUser` applied City/State/Country, then
+threw, and the read-back confirmed the values (aud-a2q), the page, result and audit say so
+(`attributesConfirmedPresent`, no `writtenDirectoryObject`) but the admin notification is a generic
+SUCCESS email with the room only. Carry the `DirectoryAttributesConfirmed` (and the aud-a2n
+`DirectoryMembershipConfirmed`) detail into the success notification as its own line, not through the
+error field; the page has line-keyed `ClickGateRegistry` entries, so edit in place. Test: the
+confirmed-after-error case's notification names the condition; a clean success's does not. Mutation
+at the call site: drop the detail from the notification.
