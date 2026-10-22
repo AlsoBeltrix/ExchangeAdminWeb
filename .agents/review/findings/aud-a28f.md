@@ -6,7 +6,7 @@ authorised, corrupt store, denylisted attribute name, and since aud-a28e an unco
 for its exception path, and the one record it does write on success carries an empty "before"
 state, so every allowlist save is audited as adding every attribute and removing none. An admin
 cannot reconstruct from the Admin Event Log what the allowlist change actually was.
-**Status**: Merged to master (`488e535e`); closed on guard proof; codex review pending
+**Status**: Merged to master (`488e535e`); closed on guard proof; codex attr-batch-3 clean (raised aud-a28i; one LOW folded into aud-a26f)
 **Branch**: `worktree-agent-a0e4f589237f5b88c`
 **Commit**: `07c366ef` (merged `488e535e`)
 **Reviewer**: implementer (surfaced by the aud-a28e/a26d agent, 2026-10-22, candidates 1 and 2 of its hand-back)

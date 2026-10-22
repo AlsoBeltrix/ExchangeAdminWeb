@@ -40,3 +40,13 @@ an import source that is archived after a successful import.
 ## Guard proof
 
 Pending.
+
+## Folded in: the import refusal names the attribute only in the log (codex, attr-batch-3, 2026-10-22)
+
+When the legacy import refuses a file for an uncompilable pattern (aud-a26e), the allowlist loads
+as corrupt and the Module Configuration page shows only the generic corrupt banner; the offending
+attribute is named only in the application log (`ADAttributeEditorService.cs` around 658/671,
+`ModuleConfig.razor` around 1606). Keep the import's validation detail in the service (a safe,
+attribute-naming reason beside the corrupt flag) and surface it in the banner, still leaving the
+file in place and failing closed. Test: a refused import's reason reaches the page's banner text and
+names the attribute; mutation at the call site: drop the detail from the banner.
