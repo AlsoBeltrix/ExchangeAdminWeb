@@ -546,8 +546,15 @@
     // offered and the save refuses on its own: the button is not the guard.
     private bool ppLoaded;
 
+    // aud-a28n. The version of the rules this page loaded - from the same read as its lists - which the save
+    // compares under the write lock. The save replaces every rule with the page's lists, so a rule added or
+    // removed elsewhere since the load has to refuse it rather than be undone by it. A save that lands keeps the
+    // version it returns, so a second save from the same page is not refused.
     private string ppRulesVersion = "";
 
+    // aud-a26k. The directory-read secret could not be read when the page loaded. The fail-open read showed an
+    // unreadable store as an unset id, and a changed id saved from there wrote over a value never shown. The
+    // field is disabled, and a save that would change the id refuses on its own: the field is not the guard.
     private bool ppSecretUnreadable;
 
     private string SecretUnreadableText =>
@@ -789,6 +796,11 @@
         ppLoaded = true;
     }
 
+    /// <summary>Loads the directory-read secret id, telling an unreadable store from an unset id (aud-a26k).</summary>
+    /// <remarks>
+    /// Its own step, and first: the id lives in the ProtectedPrincipals module config, not with the rules, so it
+    /// is shown - or shown as unreadable - whether or not the rules load.
+    /// </remarks>
     private void LoadDirectoryReadSecret()
     {
         ppSecretUnreadable = !ProtectedPrincipalService.TryGetDirectoryReadSecretId(out var secretId);
@@ -1095,7 +1107,9 @@
 
             // The directory-read secret is written only when the admin changed it. Rewriting the loaded value
             // on every save reverted a change made elsewhere, and a value the page could not load went back
-            // blank. When it is changing, its store is checked before anything is written.
+            // blank. When it is changing, two checks before anything is written, as for the rules: the page's
+            // own load (aud-a26k) - the store may read again by now, and the value shown is still not the one the
+            // save would replace - and the store as it is now (aud-a28j).
             var secretId = ppDirectoryReadSecretId.Trim();
             var secretChanged = SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline) > 0;
             if (secretChanged && ppSecretUnreadable)
@@ -1125,8 +1139,10 @@
                 GroupTargets = ppTargets.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
             };
 
-            // Decided under the write lock from the rules as they are: a store that cannot be read, and a save
-            // holding no rules over rules this page never loaded, are refused there and write nothing.
+            // Decided under the write lock from the rules as they are: a store that cannot be read, a save holding
+            // no rules over rules this page never loaded, and rules changed since this page loaded them (its
+            // version, aud-a28n) are refused there and write nothing. Rules already changed elsewhere to exactly
+            // these come back as already applied, and nothing is written either.
             var outcome = ProtectedPrincipalService.ReplaceConfig(newConfig, pageLoadedRules: LoadedRuleCount() > 0, loadedVersion: ppRulesVersion);
             if (outcome.Status == ProtectedPrincipalSaveStatus.StoreCorrupt)
             {
@@ -1155,7 +1171,9 @@
 
             // The rules are saved and in effect from here, so their record is written now - with the rows the
             // write replaced as its before-state (aud-a28k), not an empty one - and before the secret, whose
-            // failure must not hide that they landed (aud-a28j's folded-in partial save).
+            // failure must not hide that they landed (aud-a28j's folded-in partial save). Already applied is
+            // recorded the same way, nothing added or removed and the admin's own entries named, so the attempt
+            // leaves its trace.
             var alreadyApplied = outcome.Status == ProtectedPrincipalSaveStatus.AlreadyApplied;
             try
             {

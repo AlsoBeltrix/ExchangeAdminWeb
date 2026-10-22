@@ -159,6 +159,15 @@ public class ModuleEnablementService
     /// <summary>True when a legacy modules-enabled.json was not imported and keeps the store fail-closed (aud-a26h).</summary>
     public bool LegacyImportFailed => _legacyFileCorrupt;
 
+    /// <summary>
+    /// Replaces the whole enablement map, defaults for every module not named. A test fixture: it compares
+    /// nothing and records nothing, so the admin pages save through <see cref="SetModulesEnabled"/> (aud-a26k).
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than removed because the suite seeds enablement through it. A production caller would be
+    /// the whole-map overwrite aud-a28k took out of the pages, which switched back toggles changed elsewhere;
+    /// WholeStoreWriterTripwireTests refuses one.
+    /// </remarks>
     internal void SaveEnablement(Dictionary<string, bool> enablement)
     {
         lock (_writeLock)
@@ -220,8 +229,8 @@ public class ModuleEnablementService
         }
     }
 
-    // Read-only startup check. Enablement state is written ONLY by SaveEnablement from
-    // Admin Settings - never at startup (owner direction, incident 2026-06-12).
+    // Read-only startup check. Enablement state is written ONLY by an administrator's save on the
+    // admin pages (SetModulesEnabled) - never at startup (owner direction, incident 2026-06-12).
     private void WarnIfExchangeOnlineUnset()
     {
         if (_startupCheckDone) return;

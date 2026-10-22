@@ -86,6 +86,15 @@ public class ModuleConfigService
             .All(f => config.TryGetValue(f.Key, out var val) && !string.IsNullOrWhiteSpace(val));
     }
 
+    /// <summary>
+    /// Replaces a module's whole config with <paramref name="values"/>. A test fixture: it compares nothing, so
+    /// the app writes through <see cref="UpdateModuleValues"/> and <see cref="SaveChangedValues"/> (aud-a26k).
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than removed because the suite seeds module config through it. A production caller would
+    /// be the whole-config overwrite aud-a28n took out of the Module Configuration page; WholeStoreWriterTripwireTests
+    /// refuses one.
+    /// </remarks>
     internal void SaveModuleConfig(string moduleId, Dictionary<string, string> values)
     {
         lock (_writeLock)
@@ -128,6 +137,16 @@ public class ModuleConfigService
     /// page loaded (<paramref name="loaded"/>; a key absent from either reads as empty). Throws when the
     /// write fails.
     /// </summary>
+    /// <remarks>
+    /// The page used to replace the module's whole config with the values it loaded plus the admin's edits,
+    /// so a key changed elsewhere since it loaded was written back - including keys the page does not show,
+    /// such as Mailbox Permissions' ExcludedUsers protection list. Now a key the admin did not change is never
+    /// written. A changed key is written only while its row still holds what the page loaded; one that already
+    /// holds the wanted value was changed the same way elsewhere and is reported as already applied, not
+    /// refused (the aud-a26k rule); anything else refuses the whole save, naming the key - nothing is merged
+    /// or guessed. The decision is made inside the write because the other instance shares the database and
+    /// could land between a read and a later write.
+    /// </remarks>
     public ModuleConfigSaveOutcome SaveChangedValues(
         string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted)
     {

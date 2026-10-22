@@ -427,6 +427,11 @@ public class AuditService
     /// A connection-pool drain that failed after the Exchange Online connection settings were saved
     /// (aud-a26k): result Failed, its own action, filed in the settings category beside the save it follows.
     /// </summary>
+    /// <remarks>
+    /// It used the settings-change action, so an administrator filtering the Admin Event Log by action could not
+    /// tell a failed drain - the settings saved, old connections still open - from a failed settings change. The
+    /// category stays the settings one so the drain sits beside the save it follows.
+    /// </remarks>
     public void LogConnectionPoolDrainFailed(
         string performedBy,
         string ipAddress,

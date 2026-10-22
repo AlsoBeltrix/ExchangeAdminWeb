@@ -1002,10 +1002,10 @@
             policyAliases.Add(gp.PolicyAlias);
 
         // The servicer alias joins policyAliases so it inherits the EXISTING load and save path
-        // rather than adding a second one. That is not tidiness: SectionAccessService.SaveSectionAccess
-        // -> SaveAll -> ClearAndInsert REPLACES the whole store, so this page is safe only because
-        // it reads every alias, merges its own, and writes the lot back. A separate save for this
-        // grant would silently erase the ordinary grants, or be erased by them.
+        // rather than adding a second one: it is loaded, confirmed against the directory, compared
+        // under the write lock with what the page loaded, and recorded exactly as the module's other
+        // grants are, by the one save of this tab (SectionAccessService.SaveEditedAliases). A second
+        // path would have to repeat every one of those guards to be as safe.
         ServicerAlias = ModulesWithProtectedPrincipalServicing.Contains(module.Id)
             ? ProtectedPrincipalServicerService.SectionKeyFor(module.Id)
             : null;
@@ -1181,6 +1181,10 @@
                 return;
             }
 
+            // aud-a28n. Only the keys the admin changed, each decided under the write lock against its row and the
+            // value this page loaded. Replacing the whole config from the page's copy wrote back every key changed
+            // elsewhere since the load - keys the page does not show, such as the ExcludedUsers protection list,
+            // included.
             var changed = ChangedConfigKeys();
             var outcome = ModuleConfigSvc.SaveChangedValues(
                 module.Id,
@@ -1428,6 +1432,8 @@
             foreach (var (alias, curr) in edited)
             {
                 var prev = outcome.Before.TryGetValue(alias, out var stored) ? stored : Array.Empty<string>();
+                // aud-a26k. An alias changed elsewhere to exactly what this save wanted was not written; it is
+                // recorded as already applied, so the attempt still leaves its trace.
                 if (outcome.AlreadyApplied.Contains(alias, StringComparer.OrdinalIgnoreCase))
                 {
                     try
@@ -1535,6 +1541,9 @@
                 return;
             }
 
+            // aud-a28n. Only the groups the admin added and removed - from the confirmed snapshot, never the live
+            // list - each decided under the write lock against its row. Replacing the module's whole list from the
+            // snapshot dropped a group added elsewhere since the load and restored one removed elsewhere.
             var added = snapshot.Except(moduleAdminGroupsBaseline, StringComparer.OrdinalIgnoreCase).ToArray();
             var removed = moduleAdminGroupsBaseline.Except(snapshot, StringComparer.OrdinalIgnoreCase).ToArray();
             var outcome = added.Length + removed.Length == 0 ? null : ModuleAdmin.ApplyAdminChanges(module.Id, added, removed);

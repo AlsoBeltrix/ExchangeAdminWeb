@@ -122,6 +122,8 @@ public sealed class ModuleConfigRepository
         {
             return _store.Write((connection, transaction) =>
             {
+                // A read that throws is handed to decide as null, so the caller refuses on it rather than the
+                // exception reaching the page as a failed write when nothing was written.
                 Dictionary<string, string>? before;
                 try
                 {
@@ -144,6 +146,9 @@ public sealed class ModuleConfigRepository
         }
     }
 
+    // Thrown out of the write when decide stores nothing, because IConfigStore.Write commits - and bumps the
+    // change token both instances watch - whenever its callback returns. An exception is its documented
+    // rollback. Caught in UpdateModuleIf; it never leaves this class.
     private sealed class NothingWritten(Dictionary<string, string>? before) : Exception
     {
         public Dictionary<string, string>? Before { get; } = before;

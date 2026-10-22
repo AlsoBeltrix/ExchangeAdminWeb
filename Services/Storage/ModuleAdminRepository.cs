@@ -65,6 +65,14 @@ public sealed class ModuleAdminRepository
     /// not touched. Nothing to write - or rows that cannot be read - rolls the transaction back, so nothing,
     /// not even the change token, is written.
     /// </summary>
+    /// <remarks>
+    /// The page used to replace the module's whole admin list with its snapshot, so a group added elsewhere
+    /// since it loaded was dropped and one removed elsewhere came back. Each named group is decided on its own
+    /// row under the write lock instead, and no other group is touched. There is no conflict to refuse: a
+    /// membership has two states, the one the page loaded and the one it wants, so the row is always one or the
+    /// other - unchanged, and written, or already as wanted, and reported (aud-a28k's enablement reasoning, and
+    /// the aud-a26k rule).
+    /// </remarks>
     public ModuleAdminChangeOutcome ApplyChanges(string moduleId, IReadOnlyCollection<string> add, IReadOnlyCollection<string> remove)
     {
         ArgumentNullException.ThrowIfNull(add);
@@ -118,6 +126,9 @@ public sealed class ModuleAdminRepository
         }
     }
 
+    // Thrown out of the write when there is nothing to write, or the rows cannot be read (a null Before):
+    // IConfigStore.Write commits, and bumps the change token both instances watch, whenever its callback
+    // returns, and an exception is its documented rollback. Caught in ApplyChanges; it never leaves this class.
     private sealed class NothingWritten(string[]? before, IReadOnlyList<string> alreadyApplied) : Exception
     {
         public string[]? Before { get; } = before;

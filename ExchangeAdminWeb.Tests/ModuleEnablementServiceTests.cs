@@ -339,7 +339,7 @@ public class ModuleEnablementServiceTests : IDisposable
     }
 
     // --- Startup must never write enablement state (incident 2026-06-12, fix #1) ---
-    // Enablement is written ONLY by SaveEnablement from Admin Settings.
+    // Enablement is written ONLY by an administrator's save on the admin pages (SetModulesEnabled).
 
     [Fact]
     public void Startup_NoState_ReadsDoNotWriteAnything()

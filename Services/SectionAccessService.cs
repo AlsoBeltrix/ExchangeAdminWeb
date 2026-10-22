@@ -226,6 +226,16 @@ public class SectionAccessService
         return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.None, true);
     }
 
+    /// <summary>
+    /// Replaces the whole section-access table with <paramref name="sectionAccess"/>. A test fixture: it
+    /// compares nothing and records nothing, so the access page saves through <see cref="SaveEditedAliases"/>
+    /// (aud-a26k).
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than removed because the suite seeds grants through it. A production caller would be the
+    /// whole-table overwrite aud-a28k took out of the page, which lost grants made or revoked elsewhere;
+    /// WholeStoreWriterTripwireTests refuses one, and refuses the repository's SaveAll outside this fixture.
+    /// </remarks>
     internal void SaveSectionAccess(Dictionary<string, string[]> sectionAccess)
     {
         lock (_writeLock)
@@ -238,8 +248,9 @@ public class SectionAccessService
     /// <summary>
     /// The Module Configuration page's access save (aud-a28k): replaces only the aliases in
     /// <paramref name="edited"/>, inside one write, after comparing each with what the page loaded
-    /// (<paramref name="loaded"/>) against the table as it is under the write lock. Any alias that
-    /// differs refuses the whole save. Throws when the write fails.
+    /// (<paramref name="loaded"/>) against the table as it is under the write lock. An alias that has since
+    /// changed to what the save wants is already applied and not written; one that differs from both refuses
+    /// the whole save. Throws when the write fails.
     /// </summary>
     /// <remarks>
     /// The page used to overwrite every alias of its module with the lists it loaded and replace the whole
@@ -249,6 +260,10 @@ public class SectionAccessService
     /// refused rather than merged: the admin reloads and re-applies, and nothing is guessed. Section access
     /// never configured is compared, and written, as the fallback the gates read today, so the first save
     /// starts enforcement without moving anyone's effective access, as the whole-table save did.
+    ///
+    /// The one change that is not refused is a change to exactly the groups this save wants (aud-a26k): the
+    /// admin's intent is already in place, so refusing it only told them to reload and re-apply what was
+    /// there. Nothing is written for that alias, and the page records it as already applied.
     /// </remarks>
     public SectionAccessSaveOutcome SaveEditedAliases(
         IReadOnlyDictionary<string, string[]> loaded, IReadOnlyDictionary<string, string[]> edited)
