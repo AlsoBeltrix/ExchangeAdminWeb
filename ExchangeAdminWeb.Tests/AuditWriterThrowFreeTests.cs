@@ -1,8 +1,13 @@
 using System.Reflection;
 using System.Text.Json;
+using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -71,22 +76,7 @@ public sealed class AuditWriterThrowFreeTests : IDisposable
     [MemberData(nameof(PublicMethods))]
     public void EveryPublicAuditAndTraceMethod_GivenANullActorAndAValueItCannotWrite_ReturnsAndLogsOneError(string key)
     {
-        var method = Writers().Single(m => Key(m) == key);
-        using var scope = method.DeclaringType == typeof(OperationTraceService.OperationScope)
-            ? _trace.BeginOperation("TripwireModule", "TripwireAction", actor: null!, ipAddress: "10.0.0.5")
-            : null;
-        object target = method.DeclaringType == typeof(AuditService) ? _audit
-            : method.DeclaringType == typeof(OperationTraceService) ? _trace
-            : scope!;
-        var parameters = method.GetParameters();
-        var arguments = parameters.Select(Argument).ToArray();
-        var carriesAValue = parameters.Any(p => IsDictionary(p.ParameterType));
-
-        var thrown = Record.Exception(() =>
-        {
-            var returned = method.Invoke(target, BindingFlags.DoNotWrapExceptions, null, arguments, null);
-            (returned as IDisposable)?.Dispose();
-        });
+        var (thrown, carriesAValue) = CallWithANullActorAndAValueItCannotWrite(key);
 
         Assert.Null(thrown);
         if (carriesAValue)
@@ -101,6 +91,47 @@ public sealed class AuditWriterThrowFreeTests : IDisposable
             // Nothing this method takes can carry a value, so the null actor is the whole case: no error.
             Assert.Empty(_logger.Errors);
         }
+    }
+
+    /// <summary>
+    /// Calls the method <paramref name="key"/> names with a null actor and, in every dictionary, a value the writer
+    /// cannot write - on the audit service, the trace service, or a scope begun for the call - and returns what it
+    /// threw and whether it was handed a value at all.
+    /// </summary>
+    private (Exception? Thrown, bool CarriesAValue) CallWithANullActorAndAValueItCannotWrite(string key)
+    {
+        var method = Writers().Single(m => Key(m) == key);
+        using var scope = method.DeclaringType == typeof(OperationTraceService.OperationScope)
+            ? _trace.BeginOperation("TripwireModule", "TripwireAction", actor: null!, ipAddress: "10.0.0.5")
+            : null;
+        object target = method.DeclaringType == typeof(AuditService) ? _audit
+            : method.DeclaringType == typeof(OperationTraceService) ? _trace
+            : scope!;
+        var parameters = method.GetParameters();
+        var arguments = parameters.Select(Argument).ToArray();
+
+        var thrown = Record.Exception(() =>
+        {
+            var returned = method.Invoke(target, BindingFlags.DoNotWrapExceptions, null, arguments, null);
+            (returned as IDisposable)?.Dispose();
+        });
+
+        return (thrown, parameters.Any(p => IsDictionary(p.ParameterType)));
+    }
+
+    [Theory]
+    [MemberData(nameof(PublicMethods))]
+    public void EveryPublicAuditAndTraceMethod_GivenALoggerThatThrows_StillReturns(string key)
+    {
+        // aud-a28u, folded in from codex attr-batch-11: the writer's report of a record it dropped was itself
+        // unguarded, so a logger that throws took its exception out of the call the writer exists not to fail.
+        _logger.Throws = true;
+
+        var (thrown, carriesAValue) = CallWithANullActorAndAValueItCannotWrite(key);
+
+        Assert.Null(thrown);
+        // The one report the writer tried to make for the record it dropped; nothing else was reported.
+        Assert.Equal(carriesAValue ? 1 : 0, _logger.Errors.Count);
     }
 
     [Fact]
@@ -187,6 +218,116 @@ public sealed class AuditWriterThrowFreeTests : IDisposable
         Assert.Contains(trace, e => e.GetProperty("action").GetString() == "TripwireBegin");
     }
 
+    // ---- aud-a28u: the writer says whether it wrote the record, and the trace says so ----------------------
+
+    private const string CannotSerialise = "a value it cannot serialise";
+    private const string FileHeld = "its file held open";
+
+    [Theory]
+    [InlineData("audit", "written")]
+    [InlineData("audit", CannotSerialise)]
+    [InlineData("audit", FileHeld)]
+    [InlineData("trace", "written")]
+    [InlineData("trace", CannotSerialise)]
+    [InlineData("trace", FileHeld)]
+    public void TheWriter_SaysWhetherItWroteTheRecord(string stream, string cause)
+    {
+        var audit = stream == "audit";
+        var record = RecordFor(audit, cause);
+
+        JsonlWriteOutcome outcome;
+        using (cause == FileHeld ? HoldTheFile(audit) : null)
+            outcome = Write(audit, record);
+
+        var expected = cause switch
+        {
+            "written" => JsonlWriteOutcome.Written,
+            CannotSerialise => JsonlWriteOutcome.NotSerializable,
+            _ => JsonlWriteOutcome.FileWriteFailed,
+        };
+        Assert.Equal(expected, outcome);
+        Assert.Equal(cause == "written" ? 1 : 0, Lines(audit).Count);
+        Assert.Equal(cause == "written" ? 0 : 1, _logger.Errors.Count);
+    }
+
+    [Theory]
+    [InlineData(CannotSerialise, "the audit row was not written: the record could not be serialised")]
+    [InlineData(FileHeld, "the audit row was not written: the log file could not be written")]
+    public void ARecordTheWriterDrops_IsAFailedAuditWrittenStep_IsNotCounted_AndTheOperationKeepsItsOutcome(string cause, string reason)
+    {
+        // The step read Success and the action was counted whatever became of the row, so the trace claimed an audit
+        // row the log did not have.
+        var usage = new CountingTelemetry(_root);
+        var service = new AuditService(_writer, _trace, usage);
+        var extra = cause == CannotSerialise
+            ? new Dictionary<string, object?> { ["unwritable"] = new ThrowingGetter() }
+            : null;
+
+        Exception? thrown;
+        using (cause == FileHeld ? HoldTheFile(audit: true) : null)
+        {
+            thrown = Record.Exception(() => service.LogModuleAction(
+                "operator", "10.0.0.5", "TripwireAction", "TripwireCategory", "target", success: true, extra: extra));
+        }
+
+        Assert.Null(thrown);
+        Assert.Empty(Lines(audit: true));
+        var trace = Lines(audit: false);
+        var step = Assert.Single(trace, e => e.GetProperty("stage").GetString() == "AuditWritten");
+        Assert.Equal("Failed", step.GetProperty("result").GetString());
+        Assert.Equal(reason, step.GetProperty("details").GetProperty("reason").GetString());
+        Assert.Equal("Success", step.GetProperty("details").GetProperty("auditResult").GetString());
+
+        // The action succeeded, and its operation says so: the failure is the audit row's, not the action's.
+        var complete = Assert.Single(trace, e => e.GetProperty("eventType").GetString() == "operation.complete");
+        Assert.Equal("Success", complete.GetProperty("result").GetString());
+        Assert.Equal(0, usage.Actions);
+        Assert.Single(_logger.Errors);
+    }
+
+    [Fact]
+    public void ARecordTheWriterWrites_IsASuccessfulAuditWrittenStep_AndIsCounted()
+    {
+        var usage = new CountingTelemetry(_root);
+        var service = new AuditService(_writer, _trace, usage);
+
+        service.LogModuleAction("operator", "10.0.0.5", "TripwireAction", "TripwireCategory", "target", success: true);
+
+        Assert.Single(Lines(audit: true));
+        var step = Assert.Single(Lines(audit: false), e => e.GetProperty("stage").GetString() == "AuditWritten");
+        Assert.Equal("Success", step.GetProperty("result").GetString());
+        Assert.False(step.GetProperty("details").TryGetProperty("reason", out _));
+        Assert.Equal(1, usage.Actions);
+        Assert.Empty(_logger.Errors);
+    }
+
+    [Theory]
+    [InlineData("audit", CannotSerialise)]
+    [InlineData("audit", FileHeld)]
+    [InlineData("trace", CannotSerialise)]
+    [InlineData("trace", FileHeld)]
+    public void TheWriter_GivenALoggerThatThrows_StillReturnsItsOutcome(string stream, string cause)
+    {
+        // aud-a28u, folded in from codex attr-batch-11: the report of a dropped record, the writer's one recovery
+        // path for both streams, can itself fail.
+        _logger.Throws = true;
+        var audit = stream == "audit";
+
+        var outcome = JsonlWriteOutcome.Written;
+        Exception? thrown;
+        using (cause == FileHeld ? HoldTheFile(audit) : null)
+            thrown = Record.Exception(() => outcome = Write(audit, RecordFor(audit, cause)));
+
+        Assert.Null(thrown);
+        Assert.Equal(cause == CannotSerialise ? JsonlWriteOutcome.NotSerializable : JsonlWriteOutcome.FileWriteFailed, outcome);
+        Assert.Single(_logger.Errors);
+        Assert.Empty(Lines(audit));
+
+        // Nothing is left broken: the next record is written.
+        Assert.Equal(JsonlWriteOutcome.Written, Write(audit, RecordFor(audit, "written")));
+        Assert.Single(Lines(audit));
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------------
 
     /// <summary>An object System.Text.Json cannot write: reading its one property throws.</summary>
@@ -258,12 +399,76 @@ public sealed class AuditWriterThrowFreeTests : IDisposable
         Assert.DoesNotContain(Marker, string.Join("|", error.Values.Values), StringComparison.Ordinal);
     }
 
-    private void Write(bool audit, Dictionary<string, object?> record)
+    private JsonlWriteOutcome Write(bool audit, Dictionary<string, object?> record) =>
+        audit ? _writer.WriteAudit(record) : _writer.WriteTrace(record);
+
+    /// <summary>A plain record for the stream, carrying a value the writer cannot serialise when the cause is that.</summary>
+    private static Dictionary<string, object?> RecordFor(bool audit, string cause)
     {
-        if (audit)
-            _writer.WriteAudit(record);
-        else
-            _writer.WriteTrace(record);
+        var record = new Dictionary<string, object?>
+        {
+            ["eventType"] = audit ? "audit" : "operation.step",
+            ["action"] = "TripwireAction",
+            ["category"] = "TripwireCategory",
+        };
+        if (cause == CannotSerialise)
+            record["unwritable"] = new ThrowingGetter();
+        return record;
+    }
+
+    /// <summary>
+    /// Holds the stream's active log file open with no sharing, as another process can, so the writer cannot open it:
+    /// this minute's file and the next minute's, so a run across midnight still holds the one written to.
+    /// </summary>
+    private IDisposable HoldTheFile(bool audit)
+    {
+        var now = DateTime.Now;
+        var streams = new[] { now, now.AddMinutes(1) }
+            .Select(date => (audit ? _writer.GetAuditLogPaths(date) : _writer.GetTraceLogPaths(date)).Last())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            .ToList();
+        return new HeldFiles(streams);
+    }
+
+    private sealed class HeldFiles(List<FileStream> streams) : IDisposable
+    {
+        public void Dispose()
+        {
+            foreach (var stream in streams)
+                stream.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Counts the actions the audit service hands usage telemetry, at the service's write seam; the switch is on. Its
+    /// module config is a real store over the test's folder, which nothing here reads.
+    /// </summary>
+    private sealed class CountingTelemetry(string folder) : UsageTelemetryService(
+        new UsageEventRepository(new SqliteConnectionFactory(Path.Combine(folder, "usage.db"))),
+        ModuleConfigIn(folder),
+        new ModuleCatalog(),
+        NullLogger<UsageTelemetryService>.Instance)
+    {
+        private int _actions;
+
+        public int Actions => Volatile.Read(ref _actions);
+
+        public override bool Enabled() => true;
+
+        internal override void Enqueue(UsageEvent e)
+        {
+            if (e.Kind == "action")
+                Interlocked.Increment(ref _actions);
+        }
+
+        private static ModuleConfigService ModuleConfigIn(string folder)
+        {
+            var env = Substitute.For<IWebHostEnvironment>();
+            env.ContentRootPath.Returns(folder);
+            return new ModuleConfigService(
+                new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(folder), NullLogger<ModuleConfigService>.Instance);
+        }
     }
 
     private List<JsonElement> Lines(bool audit)
@@ -294,6 +499,9 @@ public sealed class AuditWriterThrowFreeTests : IDisposable
     {
         private readonly List<LogEntry> _entries = [];
 
+        /// <summary>When set, every Log call throws once it has recorded its entry, as a failing provider can (aud-a28u).</summary>
+        public bool Throws { get; set; }
+
         public IReadOnlyList<LogEntry> Errors
         {
             get { lock (_entries) return _entries.Where(e => e.Level >= LogLevel.Error).ToList(); }
@@ -311,6 +519,9 @@ public sealed class AuditWriterThrowFreeTests : IDisposable
                 .ToDictionary(g => g.Key, g => g.First().Value);
             lock (_entries)
                 _entries.Add(new LogEntry(logLevel, formatter(state, exception), exception, values));
+
+            if (Throws)
+                throw new InvalidOperationException("the logging provider failed");
         }
     }
 }

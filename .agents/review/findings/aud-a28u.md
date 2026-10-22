@@ -5,7 +5,7 @@ write (an unserialisable value, an IO failure) and logs one error; `AuditService
 still runs its "AuditWritten" trace step as Success and its usage-telemetry call, because the writer
 returns no outcome. The operation trace therefore says an audit row was written when none was, and a
 reviewer reconciling trace to audit finds a step with no row.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan below)
+**Status**: Fixed on branch; not merged, not pushed; awaiting review
 **Branch**: `worktree-agent-a906aa98bce748ee5`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the psl-7/a28q/a26o agent, 2026-10-22, candidate 3 of its hand-back)
@@ -93,7 +93,71 @@ again; extras E1 the telemetry call unguarded again, E2 the catch's verdict fixe
 Files: `Services/JsonlLogService.cs`, `Services/AuditService.cs`, `ExchangeAdminWeb.Tests/AuditWriterThrowFreeTests.cs`,
 this record.
 
+## Fix
+
+- `Services/JsonlLogService.cs`: new public enum `JsonlWriteOutcome` (`Written`, `NotSerializable`, `FileWriteFailed`)
+  after the class; `Write`, `WriteAudit` and `WriteTrace` return it. `WriteToFile` declares `string? json = null` before
+  its try and returns `Written` after the lock block - the line written and its stream closed. The catch takes
+  `json is null ? NotSerializable : FileWriteFailed`, makes its unchanged `_logger.LogError(...)` inside a nested
+  `try { ... } catch (Exception) { }` (the fold-in), and returns that outcome.
+- `Services/AuditService.cs` `WriteAuditEvent`: `JsonlWriteOutcome outcome;` before the try and
+  `outcome = _log.Write(evt);`; the step's `result: outcome == JsonlWriteOutcome.Written ? "Success" : "Failed"`, its
+  details from new private static `AuditWrittenDetails(evt, outcome)` - the three audit fields, and `reason` when the
+  row was not written; the telemetry call under `if (outcome == JsonlWriteOutcome.Written)`, still the last statement.
+
+Tests: `ExchangeAdminWeb.Tests/AuditWriterThrowFreeTests.cs` +31 - `TheWriter_SaysWhetherItWroteTheRecord` (6),
+`ARecordTheWriterDrops_IsAFailedAuditWrittenStep_IsNotCounted_AndTheOperationKeepsItsOutcome` (2),
+`ARecordTheWriterWrites_IsASuccessfulAuditWrittenStep_AndIsCounted`, and the fold-in's
+`EveryPublicAuditAndTraceMethod_GivenALoggerThatThrows_StillReturns` (18, the tripwire's methods) and
+`TheWriter_GivenALoggerThatThrows_StillReturnsItsOutcome` (4). The tripwire's call moved into a helper both theories
+use, its assertions unchanged; new `CapturingLogger.Throws`, a `CountingTelemetry` sink and `HoldTheFile`; the
+`Write` helper returns the outcome.
+
+Caller-visible change, by design: `JsonlLogService.Write`, `WriteAudit` and `WriteTrace` return a `JsonlWriteOutcome`;
+a caller that ignores it compiles and behaves as before. A row the writer drops leaves its "AuditWritten" trace step
+Failed, `details.reason` saying why, and is not counted as a usage action; the operation's own trace result and the
+caller's outcome are unchanged. A logger that throws while the writer reports a dropped record no longer takes its
+exception out of the write. A record that writes is unchanged.
+
 ## Guard proof
+
+No separate pre-fix reproduction: M1 is `WriteAuditEvent` as at `6fc94167` (no outcome to read - the step Success and
+the action counted whatever became of the row) and M2 the catch as at `6fc94167` (its report unguarded), each put back
+at its call site; each fails the tests named.
+
+Session-local driver (`mutate.ps1` and `round-a28u.ps1`, session scratchpad `a28u-a26r-work`, log
+`a28u-mutations.log`): the file's exact bytes saved, one literal replacement that must match exactly once, a Release
+build of the solution with 0 errors required, the filter
+`FullyQualifiedName~AuditWriterThrowFreeTests|FullyQualifiedName~AuditServiceTests|FullyQualifiedName~UsageTelemetryServiceTests`
+(105 tests) run with a TRX logger, the exact bytes restored in a `finally`, the MD5 re-checked and the mtime advanced
+so MSBuild rebuilds. Every mutant built with 0 errors; each restore matched its original MD5. After the round, a
+rebuild on the restored bytes and the filter: 105/105 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 the writer's outcome ignored again (`_log.Write(evt); outcome = JsonlWriteOutcome.Written;`) | `AuditService.cs`, `DFF50B115BE7BB56F9A98F8C51775E35` | `E68ACC76448A577698F4C76E309E1973` | 2 of 105: `ARecordTheWriterDrops_IsAFailedAuditWrittenStep_IsNotCounted_AndTheOperationKeepsItsOutcome`, both causes - the step Success and the action counted |
+| M2 (fold-in) the catch's report without its nested guard again | `JsonlLogService.cs`, `9B4D3FDC39F1DEFFFDBB219913C1033F` | `F0AE86B6D7CBDE35E43A25E964150B64` | 19 of 105: `EveryPublicAuditAndTraceMethod_GivenALoggerThatThrows_StillReturns` for the fifteen methods that carry a value (twelve audit methods, `BeginOperation`, `BeginRootOperation`, `Step`) and all four `TheWriter_GivenALoggerThatThrows_StillReturnsItsOutcome` cases - the provider's exception escapes the call |
+| extra E1 the telemetry call unguarded again | `AuditService.cs`, `DFF50B115BE7BB56F9A98F8C51775E35` | `8383736B9EDE423319E60DB649B1DC06` | 2 of 105: the same theory's two causes - an action counted for a row the log does not have |
+| extra E2 the catch's verdict fixed at `FileWriteFailed` | `JsonlLogService.cs`, `9B4D3FDC39F1DEFFFDBB219913C1033F` | `6C5A29BF76BC9D734259F0245D606B88` | 5 of 105: `TheWriter_SaysWhetherItWroteTheRecord` and `TheWriter_GivenALoggerThatThrows_StillReturnsItsOutcome` for the unserialisable value on both streams, and the drop theory's unserialisable cause (its reason names the file) |
+
+Unchanged through the round: `AuditWriterThrowFreeTests.cs` `5966420409A15944CF952123E08F2F14`. The code comments are
+written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count - none
+  in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,716 passed / 3 skipped (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`)
+  / 0 failed, 5,719 total, 5m23s; nothing hung, no Sequence file. Baseline at `6fc94167`: 5,685 / 3 / 0, 5,688 total,
+  5m16s; the thirty-one new cases are this record's.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No AD, EXO, Graph, DHCP or IIS call, no real module, no Delinea, SMTP, push or deployment: a real writer over a temp
+folder, a counting telemetry sink. No coder self-review verdict is claimed.
+
+## Codex review
 
 Pending.
 

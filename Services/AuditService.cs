@@ -475,20 +475,16 @@ public class AuditService
                 details: new Dictionary<string, object?> { ["source"] = "AuditService" });
         }
 
+        JsonlWriteOutcome outcome;
         try
         {
             evt["eventType"] = "audit";
             evt["operationId"] = _operationTrace.CurrentOperationId;
-            _log.Write(evt);
+            outcome = _log.Write(evt);
             _operationTrace.Step(
                 "AuditWritten",
-                result: "Success",
-                details: new Dictionary<string, object?>
-                {
-                    ["auditCategory"] = GetString(evt, "category"),
-                    ["auditAction"] = GetString(evt, "action"),
-                    ["auditResult"] = GetString(evt, "result")
-                });
+                result: outcome == JsonlWriteOutcome.Written ? "Success" : "Failed",
+                details: AuditWrittenDetails(evt, outcome));
 
             var operationSucceeded = IsSuccessfulAuditResult(GetString(evt, "result"));
             var operationMessage = operationSucceeded ? null : "Audit event recorded failure";
@@ -506,10 +502,30 @@ public class AuditService
         // whether or not its row could be written - it happened. RecordAction never throws.
         // Hooked here rather than in LogModuleAction because this is the ONE method every
         // public audit method ends in (review finding ute-2).
-        _usage?.RecordAction(
-            GetString(evt, "category") ?? string.Empty,
-            GetString(evt, "action") ?? string.Empty,
-            IsSuccessfulAuditResult(GetString(evt, "result")));
+        if (outcome == JsonlWriteOutcome.Written)
+            _usage?.RecordAction(
+                GetString(evt, "category") ?? string.Empty,
+                GetString(evt, "action") ?? string.Empty,
+                IsSuccessfulAuditResult(GetString(evt, "result")));
+    }
+
+    private static Dictionary<string, object?> AuditWrittenDetails(IReadOnlyDictionary<string, object?> evt, JsonlWriteOutcome outcome)
+    {
+        var details = new Dictionary<string, object?>
+        {
+            ["auditCategory"] = GetString(evt, "category"),
+            ["auditAction"] = GetString(evt, "action"),
+            ["auditResult"] = GetString(evt, "result")
+        };
+
+        if (outcome != JsonlWriteOutcome.Written)
+        {
+            details["reason"] = outcome == JsonlWriteOutcome.NotSerializable
+                ? "the audit row was not written: the record could not be serialised"
+                : "the audit row was not written: the log file could not be written";
+        }
+
+        return details;
     }
 
     private static string? GetAuditTarget(IReadOnlyDictionary<string, object?> evt)
