@@ -34,6 +34,12 @@ public interface IConfigStore
     /// committed only if <paramref name="write"/> returns without throwing; any exception rolls
     /// the whole unit (write + token bump) back. Returns the callback's result.
     /// </summary>
+    /// <remarks>
+    /// The transaction holds the write lock from the moment it opens, so anything the callback
+    /// reads through it is still true when it writes. A decision about what to write belongs
+    /// inside the callback, made from what it reads there: dev and prod share this database, and
+    /// a read made before the call can be overtaken by the other instance (aud-a33b, aud-a33c).
+    /// </remarks>
     T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write);
 
     /// <summary>Write overload for operations with no return value.</summary>

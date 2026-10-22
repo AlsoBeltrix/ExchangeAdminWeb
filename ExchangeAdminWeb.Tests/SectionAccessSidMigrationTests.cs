@@ -42,6 +42,12 @@ public class SectionAccessSidMigrationTests : IDisposable
 
         public Exception? ThrowOnLookup { get; set; }
 
+        /// <summary>
+        /// Runs once, inside the first lookup: after the migration has read the table and before
+        /// it writes - the window the real directory round trip opens.
+        /// </summary>
+        public Action? DuringFirstLookup { get; set; }
+
         public FakeDirectory Add(string name, string sid, string display)
         {
             if (!_byName.TryGetValue(name, out var list))
@@ -52,9 +58,33 @@ public class SectionAccessSidMigrationTests : IDisposable
 
         public IReadOnlyList<DirectoryGroupMatch> FindGroupsByName(string name, string? netBiosDomain)
         {
+            var during = DuringFirstLookup;
+            DuringFirstLookup = null;
+            during?.Invoke();
+
             if (ThrowOnLookup is not null)
                 throw ThrowOnLookup;
             return _byName.TryGetValue(name, out var list) ? list : [];
+        }
+    }
+
+    private sealed class CapturingLogger : ILogger<SectionAccessSidMigration>
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning)
+                Warnings.Add(formatter(state, exception));
         }
     }
 
@@ -360,5 +390,147 @@ public class SectionAccessSidMigrationTests : IDisposable
         CreateMigration(Directory2()).Run();
 
         Assert.False(_repository.GetDisplayNames().ContainsKey(IamSid));
+    }
+
+    // ---------------------------------------------------------------- Another writer in the window (aud-a33b)
+    //
+    // The resolution is a directory round trip made with no lock held, and dev and prod share this
+    // database, so the other instance can change grants while it runs. The fake directory makes
+    // that change from inside its first lookup - which is where the real window is. "The other
+    // instance" is a second store over its own connection factory on the same file.
+
+    private const string OtherSid = DomainSid + "-901234";
+
+    private SectionAccessRepository OtherInstance() =>
+        new(new SqliteConfigStore(new SqliteConnectionFactory(Path.Combine(_tempDir, "exchangeadmin.db"))));
+
+    private (SectionAccessMigrationStatus Status, CapturingLogger Log) RunWhileTheOtherInstanceWrites(
+        Action<SectionAccessRepository> otherInstanceWrites)
+    {
+        var directory = Directory2();
+        var other = OtherInstance();
+        var wrote = false;
+        directory.DuringFirstLookup = () =>
+        {
+            otherInstanceWrites(other);
+            wrote = true;
+        };
+
+        var log = new CapturingLogger();
+        var status = new SectionAccessSidMigration(_repository, directory, log).Run();
+
+        Assert.True(wrote, "The other instance never wrote inside the window - this test proves nothing.");
+        return (status, log);
+    }
+
+    [Fact]
+    public void AGrantRevokedAfterTheReadIsNotRestored()
+    {
+        // The finding. An administrator removes a grant through the other instance while this one
+        // is resolving names, and the migration completing must not write it back.
+        Seed(new() { ["BlockedSenders"] = ["IAM", "ExchangeWebAdmins"] });
+
+        var (status, _) = RunWhileTheOtherInstanceWrites(other =>
+            other.SaveAll(new Dictionary<string, string[]> { ["BlockedSenders"] = ["IAM"] }));
+
+        var after = Read()["BlockedSenders"];
+        Assert.DoesNotContain(WebAdminsSid, after);
+        Assert.DoesNotContain("ExchangeWebAdmins", after);
+        Assert.Equal(SectionAccessMigrationStatus.SkippedChangedRows, status);
+    }
+
+    [Fact]
+    public void ARevokedGrantAlreadyHeldAsASidIsNotRestoredEither()
+    {
+        // The likelier shape of the finding. While any name remains, the table is part SIDs - the
+        // admin page stores SIDs - and the old rewrite restored a revoked SID row just as readily,
+        // because it rewrote every row it had read, converted or not.
+        Seed(new() { ["BlockedSenders"] = [IamSid, "ExchangeWebAdmins"] });
+
+        var (status, _) = RunWhileTheOtherInstanceWrites(other =>
+            other.SaveAll(new Dictionary<string, string[]> { ["BlockedSenders"] = ["ExchangeWebAdmins"] }));
+
+        Assert.Equal([WebAdminsSid], Read()["BlockedSenders"]);
+        Assert.Equal(SectionAccessMigrationStatus.Migrated, status);
+    }
+
+    [Fact]
+    public void AGrantNobodyTouchedIsStillMigratedWhenAnotherRowChanged()
+    {
+        // The check is per row. Abandoning the whole conversion because one row moved would leave
+        // every untouched name inert - denied - until a restart that may be weeks away.
+        Seed(new() { ["SelfServiceGroups"] = ["IAM"], ["BlockedSenders"] = ["IAM", "ExchangeWebAdmins"] });
+
+        RunWhileTheOtherInstanceWrites(other => other.SaveAll(new Dictionary<string, string[]>
+        {
+            ["SelfServiceGroups"] = ["IAM"],
+            ["BlockedSenders"] = ["IAM"]
+        }));
+
+        var after = Read();
+        Assert.Equal([IamSid], after["SelfServiceGroups"]);
+        Assert.Equal([IamSid], after["BlockedSenders"]);
+        Assert.Equal("IAM", _repository.GetDisplayNames()[IamSid]);
+    }
+
+    [Fact]
+    public void ARowChangedToADifferentValueIsSkippedAndReported()
+    {
+        // A grant re-pointed at another group on the other instance's admin page. The row that was
+        // read no longer exists, so its conversion is dropped and named in the log; the replacement
+        // is left exactly as the administrator wrote it.
+        Seed(new() { ["BlockedSenders"] = ["IAM", "ExchangeWebAdmins"] });
+
+        var (status, log) = RunWhileTheOtherInstanceWrites(other =>
+            other.SaveAll(new Dictionary<string, string[]> { ["BlockedSenders"] = ["IAM", OtherSid] }));
+
+        var after = Read()["BlockedSenders"];
+        Assert.Equal(2, after.Length);
+        Assert.Contains(IamSid, after);
+        Assert.Contains(OtherSid, after);
+        Assert.Equal(SectionAccessMigrationStatus.SkippedChangedRows, status);
+        var warning = Assert.Single(log.Warnings);
+        Assert.Contains("BlockedSenders / 'ExchangeWebAdmins'", warning);
+    }
+
+    [Fact]
+    public void AGrantAddedAfterTheReadIsKept()
+    {
+        // The other half of replacing the table from an earlier read: it deleted whatever had been
+        // granted since.
+        Seed(new() { ["SelfServiceGroups"] = ["IAM"] });
+
+        var (status, _) = RunWhileTheOtherInstanceWrites(other => other.SaveAll(new Dictionary<string, string[]>
+        {
+            ["SelfServiceGroups"] = ["IAM", OtherSid]
+        }));
+
+        Assert.Equal(SectionAccessMigrationStatus.Migrated, status);
+        var after = Read()["SelfServiceGroups"];
+        Assert.Equal(2, after.Length);
+        Assert.Contains(IamSid, after);
+        Assert.Contains(OtherSid, after);
+    }
+
+    [Fact]
+    public void TwoInstancesMigratingTogether_TheLaterOneReportsNothingSkipped()
+    {
+        // Both instances restart together on a deploy, both read names, and the other converts
+        // first. Every row this one read is gone - but into exactly the state this one would have
+        // written, so there is no conflict, and telling an operator that grants changed under the
+        // migration would be false.
+        Seed(new() { ["SelfServiceGroups"] = ["IAM"], ["BlockedSenders"] = ["IAM", "ExchangeWebAdmins"] });
+
+        var (status, log) = RunWhileTheOtherInstanceWrites(other =>
+            Assert.Equal(
+                SectionAccessMigrationStatus.Migrated,
+                new SectionAccessSidMigration(other, Directory2(), Substitute.For<ILogger<SectionAccessSidMigration>>()).Run()));
+
+        Assert.Equal(SectionAccessMigrationStatus.AlreadyMigrated, status);
+        Assert.Empty(log.Warnings);
+        var after = Read();
+        Assert.Equal([IamSid], after["SelfServiceGroups"]);
+        Assert.Equal(2, after["BlockedSenders"].Length);
+        Assert.Contains(WebAdminsSid, after["BlockedSenders"]);
     }
 }

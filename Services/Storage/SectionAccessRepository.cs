@@ -245,51 +245,111 @@ public sealed class SectionAccessRepository
     }
 
     /// <summary>
-    /// Rewrites every row to its SID plus display name, in ONE transaction.
+    /// Converts each row the SID migration read to the SID it resolved, in ONE write transaction
+    /// that re-checks every row under the write lock before changing it.
     /// </summary>
     /// <remarks>
-    /// Delete-then-insert rather than per-row UPDATE, because two names can map to one SID
-    /// (<c>IAM</c> and <c>ANALOG\IAM</c> are both in the prod store) and updating them in place
-    /// would collide on the (policy_alias, group_value) primary key. Inserting into an emptied
-    /// table lets the ON CONFLICT clause merge them, which is the correct outcome: one grant.
+    /// <para><b>Only rows still exactly as read are converted (aud-a33b).</b> The resolution that
+    /// produced <paramref name="conversions"/> was a directory round trip made with no lock held,
+    /// and dev and prod share this database, so the other instance can change grants in that
+    /// window. This used to empty the table and refill it from the earlier read, which wrote back
+    /// a grant an administrator had just removed and deleted any grant added meanwhile. Now each
+    /// row is checked inside this transaction, which holds the write lock from BEGIN:</para>
+    /// <list type="bullet">
+    /// <item>(alias, value) still present: converted.</item>
+    /// <item>gone, but (alias, SID) present: already in the state this conversion produces - the
+    /// other instance's migration got there first, or an administrator re-picked the same group.
+    /// Nothing to write and nothing to report.</item>
+    /// <item>gone, and (alias, SID) absent: removed or changed by somebody after the read. Skipped
+    /// and returned, never re-inserted - a grant that is absent now was removed by somebody, and
+    /// re-adding it is the harm.</item>
+    /// </list>
+    /// <para>Rows the migration never read are never touched, so a grant written meanwhile
+    /// survives; a name among them is converted on a later start. The comparison is existence of
+    /// the key, in SQL under the columns' NOCASE collation: (policy_alias, group_value) is the
+    /// whole of a grant, the display name beside it is cosmetic, and rowids are reassigned by
+    /// every whole-table save, so they are no version. The change token is not used either - it
+    /// moves on any config write and misses a writer that bypasses the store.</para>
     ///
-    /// The presence marker is deliberately re-asserted. Emptying the table without it would, for
-    /// the instant before the insert, mean "never configured" - and if anything went wrong between
-    /// the two, the store would fall back to the permissive appsettings path rather than deny.
-    /// The transaction already prevents that being observable; the marker makes it true even in
-    /// the state the transaction is hiding.
+    /// <para><b>Delete-then-insert per row, not UPDATE</b>, because two names can resolve to one
+    /// SID (<c>IAM</c> and <c>ANALOG\IAM</c> are both in the prod store): updating the second in
+    /// place would collide on the primary key, while inserting lets the ON CONFLICT clause merge
+    /// them into one grant.</para>
+    ///
+    /// <para><b>The presence marker is re-asserted when anything converts.</b> Rows without the
+    /// marker read as "never configured", which falls back to the permissive appsettings path
+    /// rather than deny; a migration that rewrote rows and left that state would widen access.
+    /// When nothing converts the transaction carries only the change-token bump every store write
+    /// carries, as <see cref="ImportIfMissing"/> returning false already does.</para>
     /// </remarks>
-    public void ReplaceAllWithSids(IReadOnlyList<(string PolicyAlias, string Sid, string? DisplayName)> rows)
+    public SidConversionOutcome ConvertToSids(IReadOnlyList<SidConversion> conversions)
     {
-        _store.Write((connection, transaction) =>
-        {
-            using (var delete = connection.CreateCommand())
-            {
-                delete.Transaction = transaction;
-                delete.CommandText = "DELETE FROM section_access;";
-                delete.ExecuteNonQuery();
-            }
+        ArgumentNullException.ThrowIfNull(conversions);
 
-            foreach (var (alias, sid, display) in rows)
+        return _store.Write((connection, transaction) =>
+        {
+            var converted = 0;
+            var alreadyConverted = 0;
+            var skipped = new List<SidConversion>();
+
+            foreach (var conversion in conversions)
             {
-                if (string.IsNullOrWhiteSpace(alias) || string.IsNullOrWhiteSpace(sid))
+                if (string.IsNullOrWhiteSpace(conversion.PolicyAlias) || string.IsNullOrWhiteSpace(conversion.Sid))
                     continue;
 
-                using var insert = connection.CreateCommand();
-                insert.Transaction = transaction;
-                insert.CommandText =
-                    "INSERT INTO section_access (policy_alias, group_value, group_display_name) " +
-                    "VALUES ($alias, $group, $display) " +
-                    "ON CONFLICT(policy_alias, group_value) DO UPDATE SET " +
-                    "group_display_name = COALESCE(excluded.group_display_name, group_display_name);";
-                insert.Parameters.AddWithValue("$alias", alias);
-                insert.Parameters.AddWithValue("$group", sid);
-                insert.Parameters.AddWithValue("$display", (object?)display ?? DBNull.Value);
-                insert.ExecuteNonQuery();
+                // Compared against the table as it is now, under the lock - never the earlier read.
+                if (!RowExists(connection, transaction, conversion.PolicyAlias, conversion.Value))
+                {
+                    if (RowExists(connection, transaction, conversion.PolicyAlias, conversion.Sid))
+                        alreadyConverted++;
+                    else
+                        skipped.Add(conversion);
+                    continue;
+                }
+
+                using (var delete = connection.CreateCommand())
+                {
+                    delete.Transaction = transaction;
+                    delete.CommandText =
+                        "DELETE FROM section_access WHERE policy_alias = $alias AND group_value = $value;";
+                    delete.Parameters.AddWithValue("$alias", conversion.PolicyAlias);
+                    delete.Parameters.AddWithValue("$value", conversion.Value);
+                    delete.ExecuteNonQuery();
+                }
+
+                using (var insert = connection.CreateCommand())
+                {
+                    insert.Transaction = transaction;
+                    insert.CommandText =
+                        "INSERT INTO section_access (policy_alias, group_value, group_display_name) " +
+                        "VALUES ($alias, $group, $display) " +
+                        "ON CONFLICT(policy_alias, group_value) DO UPDATE SET " +
+                        "group_display_name = COALESCE(excluded.group_display_name, group_display_name);";
+                    insert.Parameters.AddWithValue("$alias", conversion.PolicyAlias);
+                    insert.Parameters.AddWithValue("$group", conversion.Sid);
+                    insert.Parameters.AddWithValue("$display", (object?)conversion.DisplayName ?? DBNull.Value);
+                    insert.ExecuteNonQuery();
+                }
+
+                converted++;
             }
 
-            MarkPresent(connection, transaction);
+            if (converted > 0)
+                MarkPresent(connection, transaction);
+
+            return new SidConversionOutcome(converted, alreadyConverted, skipped);
         });
+    }
+
+    private static bool RowExists(SqliteConnection connection, SqliteTransaction transaction, string alias, string value)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            "SELECT 1 FROM section_access WHERE policy_alias = $alias AND group_value = $value LIMIT 1;";
+        command.Parameters.AddWithValue("$alias", alias);
+        command.Parameters.AddWithValue("$value", value);
+        return command.ExecuteScalar() is not null;
     }
 
     private static void MarkPresent(SqliteConnection connection, SqliteTransaction transaction)
@@ -300,3 +360,16 @@ public sealed class SectionAccessRepository
         command.ExecuteNonQuery();
     }
 }
+
+/// <summary>One row the SID migration read, and the SID it resolved for it.</summary>
+/// <param name="PolicyAlias">The section the row grants.</param>
+/// <param name="Value">The stored value exactly as the migration read it.</param>
+/// <param name="Sid">The SID to store instead.</param>
+/// <param name="DisplayName">The friendly name to store beside it, for display only.</param>
+public sealed record SidConversion(string PolicyAlias, string Value, string Sid, string? DisplayName);
+
+/// <summary>What <see cref="SectionAccessRepository.ConvertToSids"/> did with its conversions.</summary>
+/// <param name="Converted">Rows still as read, now stored as their SID.</param>
+/// <param name="AlreadyConverted">Rows already in the converted state when the lock was held.</param>
+/// <param name="Skipped">Rows changed or removed after the read, left exactly as they were.</param>
+public sealed record SidConversionOutcome(int Converted, int AlreadyConverted, IReadOnlyList<SidConversion> Skipped);
