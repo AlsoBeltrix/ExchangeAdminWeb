@@ -189,11 +189,19 @@ public class RoomOperationResult
     public string? AdAttributeDetail { get; set; }
 
     // The objectGUID of the Active Directory object an AD write in this operation changed -
-    // Set-ADUser for City/State/Country, or Add-ADGroupMember on the on-prem room-list add - or
-    // null when no AD write ran or none succeeded (aud-a2g). Set by the service the moment the
-    // write succeeds, so a later step failing (Partial) does not hide it. The audit names a
-    // written directory object only from this; it used to name one on every Room Finder row.
+    // Set-ADUser for City/State/Country, or Set-ADGroup on the on-prem room-list group's member
+    // attribute (aud-a2j) - or null when no AD write ran or none succeeded (aud-a2g). Set by the
+    // service the moment the write succeeds, so a later step failing (Partial) does not hide it. The
+    // audit names a written directory object only from this; it used to name one on every Room
+    // Finder row. Since aud-a2n not set for a membership confirmed only by the read-back.
     public string? WrittenDirectoryObject { get; set; }
+
+    // aud-a2n. Set when the on-prem room-list add's own write was refused, or reported an error, and
+    // the group's member attribute read back afterwards held the room: the row succeeded on a
+    // membership this operation is not known to have written, so WrittenDirectoryObject names
+    // nothing for it and this says why, with the write's error text. The audit records it in that
+    // place (ConferenceRoomService.MembershipConfirmedAuditKey). Null otherwise.
+    public string? DirectoryMembershipConfirmed { get; set; }
 }
 
 public class RoomOperationStep

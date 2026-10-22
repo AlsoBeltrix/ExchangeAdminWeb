@@ -138,7 +138,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                     // Active Directory object (aud-a2g); `target` stays the row as typed.
                     Audit(job, actionAudit, target, r.Success, ticket, r.Success ? null : r.Message,
                         newValues: isFinder ? FinderNewValues(payload.FinderRows![rowIndex]) : TypeNewValues(payload.TypeRows![rowIndex]),
-                        room: room, writtenDirectoryObject: r.WrittenDirectoryObject);
+                        room: room, writtenDirectoryObject: r.WrittenDirectoryObject, membershipConfirmed: r.DirectoryMembershipConfirmed);
 
                     return new BulkJobRowOutcome
                     {
@@ -210,16 +210,18 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
 
     private void Audit(BulkJob job, string action, string target, bool success, string ticket,
         string? error = null, Dictionary<string, object?>? newValues = null, ValidatedMailbox? room = null,
-        string? writtenDirectoryObject = null)
+        string? writtenDirectoryObject = null, string? membershipConfirmed = null)
     {
         try
         {
             // The identity the row's writes were bound to (aud-a2d), and the Active Directory
             // object the service reports it wrote, when it wrote one (aud-a2g). That used to be
-            // recorded on every Finder row, whether or not Active Directory was written.
+            // recorded on every Finder row, whether or not Active Directory was written. And a
+            // room-list membership confirmed without this row's write, in that object's place
+            // (aud-a2n) - added as the page adds it, through the same helper.
             _audit.LogConferenceRoomAction(job.SubmittedBy, job.SubmittedIp, action, target, success, ticket,
                 errorDetail: error, newValues: newValues,
-                extra: ValidatedMailbox.WithWrittenIdentity(null, room, writtenDirectoryObject));
+                extra: ConferenceRoomService.WithMembershipConfirmed(ValidatedMailbox.WithWrittenIdentity(null, room, writtenDirectoryObject), membershipConfirmed));
         }
         catch (Exception ex)
         {

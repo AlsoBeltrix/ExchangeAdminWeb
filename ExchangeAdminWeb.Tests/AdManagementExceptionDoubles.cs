@@ -17,7 +17,18 @@ namespace Microsoft.ActiveDirectory.Management;
 
 /// <summary>Stands in for the base directory exception. The observed transient audit fault surfaces as exactly this.</summary>
 public class ADException(string message = "a required audit event could not be generated for the operation")
-    : System.Exception(message);
+    : System.Exception(message)
+{
+    /// <summary>
+    /// aud-a2n. With the code the server answered with, as the real type carries it in <c>ErrorCode</c>:
+    /// ConferenceRoomService reads that property, by reflection, to tell a refusal by its code rather than
+    /// its localised text.
+    /// </summary>
+    public ADException(string message, int errorCode) : this(message) => ErrorCode = errorCode;
+
+    /// <summary>The code the error was raised with; 0 when the double was given none.</summary>
+    public int ErrorCode { get; }
+}
 
 /// <summary>
 /// Stands in for the fault an OVERSIZED request produced during measurement. Deliberately NOT
