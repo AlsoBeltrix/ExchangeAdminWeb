@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Net;
 using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
@@ -32,7 +33,8 @@ namespace ExchangeAdminWeb.Tests;
 /// functions; the Set stub records the parameters it was bound with. The validator is real with
 /// nothing protected - it still asks a substituted resolver which mailbox the target is, because
 /// the write is bound to that mailbox (aud-a2d) - the audit is real over a temp JSONL root and is
-/// read back, and the email service is a substitute whose virtual admin notification is captured.
+/// read back, and the email service is a substitute whose virtual admin and mailbox-owner
+/// notifications are captured (the owner's since aud-a7d).
 /// No Exchange, no Graph.
 /// </remarks>
 public sealed class OutOfOfficeRequestCaptureTests : IDisposable
@@ -277,6 +279,10 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         Assert.Single(email.ReceivedCalls(), call => call.GetMethodInfo().Name == nameof(EmailService.SendAdminNotificationAsync))
             .GetArguments();
 
+    private static object?[] UserNotification(EmailService email) =>
+        Assert.Single(email.ReceivedCalls(), call => call.GetMethodInfo().Name == nameof(EmailService.SendOofNotificationAsync))
+            .GetArguments();
+
     // ---- the guards -------------------------------------------------------------------------
 
     [Theory]
@@ -312,6 +318,43 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         Assert.Equal("SetOutOfOffice_Scheduled", notice[2]);
         Assert.Equal(Mailbox, notice[3]);
         Assert.Equal(Ticket, notice[7]);
+    }
+
+    // aud-a7d. The mailbox owner's notification took a two-way word, "disabled" or "enabled", so a
+    // Scheduled write told the owner their auto-reply "has been enabled", with no window named. Every
+    // bound field moves while the write is in flight, so the owner must be told what was written,
+    // not what the form says afterwards (aud-a7b's rule). The notification is rendered through the
+    // service's own builder: what the page hands over is what the owner reads.
+    [Theory]
+    [InlineData("Scheduled")]
+    [InlineData("Enabled")]
+    [InlineData("Disabled")]
+    public async Task TheMailboxOwnerIsToldWhatWasWritten_AScheduleWithItsWindow(string state)
+    {
+        var (page, email) = BuildPage("write");
+        SetField(page, "oofState", state);
+
+        await PauseEditAndRelease(page, SetOof(page));
+
+        var notice = UserNotification(email);
+        Assert.Equal(Mailbox, notice[0]);
+        Assert.Equal(@"CONTOSO\operator", notice[1]);
+        var request = Assert.IsType<OutOfOfficeRequest>(notice[2]);
+        Assert.Equal(state, request.State);
+
+        var (subject, body) = EmailService.BuildOofNotification((string)notice[1]!, request, DateTime.Now);
+        Assert.Equal($"Your Auto-Reply Has Been {state}", subject);
+        Assert.Contains($"<h2>Auto-Reply {state}</h2>", body);
+        Assert.Contains($"has been <strong>{state.ToLowerInvariant()}</strong>", body);
+        if (state == "Scheduled")
+        {
+            Assert.Contains(WebUtility.HtmlEncode(Start.ToString("MMMM dd, yyyy 'at' h:mm tt")), body);
+            Assert.Contains(WebUtility.HtmlEncode(End.ToString("MMMM dd, yyyy 'at' h:mm tt")), body);
+        }
+        else
+        {
+            Assert.DoesNotContain("Until:", body);
+        }
     }
 
     [Fact]

@@ -437,9 +437,10 @@
             {
                 try
                 {
+                    // aud-a7d: the captured request, not a two-way "enabled"/"disabled" word - a
+                    // Scheduled write is reported to the mailbox owner as scheduled, with its window.
                     await Email.SendOofNotificationAsync(
-                        target, currentUser,
-                        request.State == "Disabled" ? "disabled" : "enabled");
+                        target, currentUser, request);
                 }
                 catch (Exception ex)
                 {

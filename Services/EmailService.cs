@@ -1,4 +1,5 @@
 using System.Net;
+using ExchangeAdminWeb.Models;
 using MailKit.Net.Smtp;
 using MailKit.Security;
 using MimeKit;
@@ -377,15 +378,44 @@ public class EmailService
         await SendEmailAsync(ownerEmail, subject, body);
     }
 
-    public async Task SendOofNotificationAsync(string targetEmail, string performedBy, string action)
+    /// <summary>
+    /// Tells the mailbox owner what an administrator did to their auto-reply: enabled, scheduled
+    /// (with its window) or disabled. Gated by the same <c>NotifyUsersOnPermissionGrant</c> switch
+    /// as the other affected-user notifications, and virtual so it is test-seamable like them.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding aud-a7d. This used to take a two-way word, "enabled" or "disabled", so a
+    /// Scheduled write told the owner their auto-reply "has been enabled" and named no window. It
+    /// takes the request that was written instead - the caller's captured request (aud-a7b), never
+    /// a re-read of the form.
+    /// </remarks>
+    public virtual async Task SendOofNotificationAsync(string targetEmail, string performedBy, OutOfOfficeRequest request)
     {
         if (!_notifyUsers)
             return;
 
+        var (subject, body) = BuildOofNotification(performedBy, request, DateTime.Now);
+        await SendEmailAsync(targetEmail, subject, body);
+    }
+
+    /// <summary>
+    /// The affected-user auto-reply notification for one written request. Extracted from the send
+    /// so it is assertable without SMTP. Every caller-supplied value is HTML-encoded.
+    /// </summary>
+    internal static (string Subject, string Body) BuildOofNotification(string performedBy, OutOfOfficeRequest request, DateTime changedAt)
+    {
         var h = (string s) => WebUtility.HtmlEncode(s ?? "");
-        var isEnabled = action != "disabled";
-        var headerText = isEnabled ? "Auto-Reply Enabled" : "Auto-Reply Disabled";
-        var headerColor = isEnabled ? "#0078d4" : "#28a745";
+        var (headerText, action, subjectWord, headerColor) = request.State switch
+        {
+            "Disabled" => ("Auto-Reply Disabled", "disabled", "Disabled", "#28a745"),
+            "Scheduled" => ("Auto-Reply Scheduled", "scheduled", "Scheduled", "#0078d4"),
+            _ => ("Auto-Reply Enabled", "enabled", "Enabled", "#0078d4"),
+        };
+        var window = request.State == "Scheduled" && request.StartTime is { } start && request.EndTime is { } end
+            ? $@"
+            <p><strong>From:</strong> {h(start.ToString("MMMM dd, yyyy 'at' h:mm tt"))}<br>
+               <strong>Until:</strong> {h(end.ToString("MMMM dd, yyyy 'at' h:mm tt"))}</p>"
+            : "";
 
         var body = $@"<!DOCTYPE html>
 <html>
@@ -406,9 +436,9 @@ public class EmailService
         </div>
         <div class=""content"">
             <p>Hello,</p>
-            <p>Your mailbox auto-reply (Out of Office) has been <strong>{h(action)}</strong> by an administrator.</p>
+            <p>Your mailbox auto-reply (Out of Office) has been <strong>{h(action)}</strong> by an administrator.</p>{window}
             <p><strong>Changed by:</strong> {h(performedBy)}<br>
-               <strong>Date:</strong> {DateTime.Now:MMMM dd, yyyy 'at' h:mm tt}</p>
+               <strong>Date:</strong> {changedAt:MMMM dd, yyyy 'at' h:mm tt}</p>
             <div class=""warning"">
                 <strong>Important:</strong> If you were unaware of this change or did not request it, please contact the IT Service Desk immediately.
             </div>
@@ -420,7 +450,7 @@ public class EmailService
 </body>
 </html>";
 
-        await SendEmailAsync(targetEmail, $"Your Auto-Reply Has Been {(isEnabled ? "Enabled" : "Disabled")}", body);
+        return ($"Your Auto-Reply Has Been {subjectWord}", body);
     }
 
     /// <summary>
