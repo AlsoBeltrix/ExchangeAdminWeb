@@ -78,7 +78,8 @@ public class OutOfOfficeService : ExchangeServiceBase
         // which left the moment to however the Exchange session reads one (assumed, never verified
         // here: the session's own zone, UTC). Converted before a connection is borrowed, and refused
         // rather than guessed when there is no zone or the zone skips the time: this boundary does not
-        // rely on the page having checked.
+        // rely on the page having checked. aud-a7g: or repeats it - a time the clocks pass twice names
+        // two instants, and the conversion would have picked one without asking.
         DateTime? startUtc = null, endUtc = null;
         if (state == "Scheduled")
         {
@@ -88,9 +89,12 @@ public class OutOfOfficeService : ExchangeServiceBase
 
             startUtc = startTime.HasValue ? OutOfOfficeRequest.ToUtc(startTime.Value, zone) : null;
             endUtc = endTime.HasValue ? OutOfOfficeRequest.ToUtc(endTime.Value, zone) : null;
-            if ((startTime.HasValue && startUtc is null) || (endTime.HasValue && endUtc is null))
+            var unnamed = startTime.HasValue && startUtc is null ? startTime
+                : endTime.HasValue && endUtc is null ? endTime
+                : null;
+            if (unnamed is { } time)
                 return Task.FromResult(PermissionResult.Fail(
-                    $"The schedule for {emailAddress} has a time that does not exist in {OutOfOfficeRequest.ZoneName(zone)}: the clocks skip it. Nothing was written."));
+                    $"The schedule for {emailAddress} has a time, {OutOfOfficeRequest.ClockText(time)}, that {OutOfOfficeRequest.NoInstantReason(time, zone)}. Nothing was written."));
         }
 
         // Single-write (Set-MailboxAutoReplyConfiguration): safe to retry on a dead session.

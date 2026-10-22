@@ -207,7 +207,7 @@ Describe 'deploy.ps1' {
         ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt19Calls.Add('stop'); $script:cdt19Stop }
         # Since cdt-28 the region also asks IIS which nodes serve the folder; that check has its own
         # test below, so here it passes and records nothing.
-        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath) $null = $Name, $PhysicalPath }
+        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath, $NestedNodes) $null = $Name, $PhysicalPath, $NestedNodes }
 
         $modeIf = (Get-FreshInstallBranch $s).Parent
         foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
@@ -268,7 +268,7 @@ Describe 'deploy.ps1' {
             $lookupAt | Should -BeGreaterOrEqual 0 -Because "the $($entry[0]) branch reads the alias binding"
             $stopAt | Should -BeGreaterThan $lookupAt
             # A statement of the branch itself, so nothing conditional or catching sits around it.
-            $statements[$stopAt - 1].Extent.Text | Should -BeExactly '$null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath' -Because "the folder the $($entry[0]) mirror replaces is checked right before the stop, not only the alias"
+            $statements[$stopAt - 1].Extent.Text | Should -BeExactly '$null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath -NestedNodes Refuse' -Because "the folder the $($entry[0]) mirror replaces is checked right before the stop, not only the alias, and nothing may be rooted inside it (aud-a38j)"
             ($stopAt - 1) | Should -BeGreaterThan ($lookupAt + 2) -Because 'the alias checks still run first; they catch a different mistake, with their own message'
         }
         $calls = @($s.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-AppPoolServesPath' }, $true))
@@ -290,8 +290,8 @@ Describe 'deploy.ps1' {
         }
         ${function:Get-WebApplication} = { $script:cdt28Calls.Add('lookup'); [pscustomobject]@{ applicationPool = $script:cdt28AliasPool } }
         ${function:Assert-AppPoolServesPath} = {
-            param($Name, $PhysicalPath)
-            $script:cdt28Calls.Add("serves($Name|$PhysicalPath)")
+            param($Name, $PhysicalPath, $NestedNodes)
+            $script:cdt28Calls.Add("serves($Name|$PhysicalPath|$NestedNodes)")
             if ($script:cdt28ServedElsewhere) {
                 throw "The files at '$PhysicalPath' are served by an app pool other than '$Name': Other Site/Copy runs under 'OtherPool'. Stopping '$Name' would leave that application running while its files are replaced. Name the pool that serves them, or fix the binding."
             }
@@ -326,7 +326,7 @@ Describe 'deploy.ps1' {
             }
 
             $elsewhere = & $run 'ExamplePool' $true 6>$null
-            $elsewhere.Calls | Should -BeExactly 'lookup,serves(ExamplePool|D:\example\publish)' -Because "a folder another pool also serves must stop the $($entry[0]) run before any pool is stopped"
+            $elsewhere.Calls | Should -BeExactly 'lookup,serves(ExamplePool|D:\example\publish|Refuse)' -Because "a folder another pool also serves must stop the $($entry[0]) run before any pool is stopped"
             $elsewhere.Thrown | Should -BeLike "*served by an app pool other than 'ExamplePool'*" -Because 'the refusal is the module''s own, unchanged'
 
             $aliasElsewhere = & $run 'SomeOtherPool' $false 6>$null
@@ -335,8 +335,69 @@ Describe 'deploy.ps1' {
 
             $good = & $run 'ExamplePool' $false 6>$null
             $good.Thrown | Should -BeNullOrEmpty
-            $good.Calls | Should -BeExactly 'lookup,serves(ExamplePool|D:\example\publish),stop(ExamplePool)' -Because "only a folder served by the named pool alone reaches the $($entry[0]) stop"
+            $good.Calls | Should -BeExactly 'lookup,serves(ExamplePool|D:\example\publish|Refuse),stop(ExamplePool)' -Because "only a folder served by the named pool alone reaches the $($entry[0]) stop"
             @($good.Output).Count | Should -Be 0 -Because 'what the check returns is discarded, not written to the deploy''s output'
+        }
+    }
+
+    It 'runs each branch''s real region over the real module: a node rooted inside the folder under the same pool is refused before the stop (aud-a38j)' {
+        # deploy.ps1 mirrors the folder, so it states -NestedNodes Refuse. Here the module decides,
+        # not a stand-in, through its one injection point; each run proves its probe was asked.
+        foreach ($name in 'Write-Success', 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Get-WebApplication} = { $script:a38jCalls.Add('lookup'); [pscustomobject]@{ applicationPool = 'ExamplePool' } }
+            ${function:Stop-AppPoolVerified} = { param($Name) $script:a38jCalls.Add("stop($Name)"); 'Stopped' }
+            # A script block value is evaluated to produce the default, so the probe is handed over
+            # wrapped in a block that returns it (the aud-a38b lesson).
+            $PSDefaultParameterValues = @{
+                'Assert-AppPoolServesPath:ApplicationsProbe' = {
+                    {
+                        $script:a38jCalls.Add('applications probe')
+                        [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = 'ExamplePool'; PhysicalPath = 'D:\example\publish' }
+                        if ($script:a38jNested) {
+                            [pscustomobject]@{ Location = 'Example Site/ExampleApp/reports'; ApplicationPool = 'ExamplePool'; PhysicalPath = 'D:\example\publish\reports' }
+                        }
+                    }
+                }
+            }
+
+            $modeIf = (Get-FreshInstallBranch $s).Parent
+            foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
+                $statements = @($entry[1].Statements)
+                $from = -1; $stopAt = -1
+                for ($i = 0; $i -lt $statements.Count; $i++) {
+                    if ($statements[$i].Extent.Text -like '$boundPool = *') { $from = $i }
+                    if ($statements[$i].Extent.Text -like '$poolState = Stop-AppPoolVerified*') { $stopAt = $i }
+                }
+                $region = ($statements[$from..($stopAt + 1)] | ForEach-Object { $_.Extent.Text }) -join "`n"
+                $run = {
+                    param([bool]$Nested)
+                    $script:a38jCalls = New-Object System.Collections.Generic.List[string]
+                    $script:a38jNested = $Nested
+                    # Read only by the lifted region.
+                    Set-Variable -Name AppAlias -Value 'ExampleApp'
+                    Set-Variable -Name ParentSite -Value 'Example Site'
+                    Set-Variable -Name AppPoolName -Value 'ExamplePool'
+                    Set-Variable -Name PublishPath -Value 'D:\example\publish'
+                    $ErrorActionPreference = 'Stop'
+                    $thrown = $null
+                    try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                    [pscustomobject]@{ Thrown = $thrown; Calls = ($script:a38jCalls -join ',') }
+                }
+
+                $nested = & $run $true 6>$null
+                $nested.Calls | Should -BeExactly 'lookup,applications probe' -Because "the $($entry[0]) mirror would replace or purge the nested node's files, so its pool must not be stopped and the mirror must not run"
+                $nested.Thrown | Should -BeLike '*Example Site/ExampleApp/reports*'
+
+                $alone = & $run $false 6>$null
+                $alone.Thrown | Should -BeNullOrEmpty
+                $alone.Calls | Should -BeExactly 'lookup,applications probe,stop(ExamplePool)'
+            }
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
         }
     }
 
