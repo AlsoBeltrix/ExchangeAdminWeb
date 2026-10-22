@@ -905,7 +905,21 @@ public class ADAttributeEditorService
 
         // If a maxLevel is provided, filter the allowlist to enforce server-side level restrictions
         if (maxLevel.HasValue)
-            allowlist = allowlist.Where(a => a.Level <= maxLevel.Value).ToList();
+        {
+            var reachable = allowlist.Where(a => a.Level <= maxLevel.Value).ToList();
+            var aboveLevel = proposedValues.Keys
+                .Where(name => !reachable.Any(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase))
+                               && allowlist.Any(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            if (aboveLevel.Count > 0)
+            {
+                var levelDenied = $"Access denied: you do not have permission to edit {string.Join(", ", aboveLevel)}.";
+                LogRefusal(target, performedBy, ip, ticket, "LevelCheck", levelDenied);
+                return new(false, levelDenied, null);
+            }
+
+            allowlist = reachable;
+        }
 
         var validationError = ValidateProposedValues(proposedValues, allowlist);
         if (validationError != null)
@@ -1416,18 +1430,55 @@ public class ADAttributeEditorService
         string ip,
         string ticket,
         string step,
-        string reason)
+        string reason) =>
+        WriteRefusal(target.UserPrincipalName, performedBy, ip, ticket, step, reason);
+
+    private void WriteRefusal(string target, string performedBy, string ip, string ticket, string step, string reason)
     {
         _audit.LogModuleAction(
             performedBy,
             ip,
             "ADAttributeEdit_Refused",
             "ADAttributeEditor",
-            target.UserPrincipalName,
+            target,
             false,
             ticket,
             reason,
             new Dictionary<string, object?> { ["refusedAt"] = step, ["mutationAttempted"] = false });
+    }
+
+    /// <summary>
+    /// Records a save the editor page refused before it called <see cref="SaveAsync"/> (aud-a28g).
+    /// </summary>
+    public void LogSaveRefused(
+        ResolvedDirectoryPrincipal? target, string performedBy, string ip, string ticket, string refusedAt, string reason)
+    {
+        try
+        {
+            WriteRefusal(target?.UserPrincipalName ?? "(none)", performedBy, ip, ticket, refusedAt, reason);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audit failed for an attribute save the editor page refused");
+        }
+    }
+
+    /// <summary>
+    /// Records a save that ended in an exception <see cref="SaveAsync"/> did not return (aud-a28g).
+    /// </summary>
+    public void LogSaveFailed(ResolvedDirectoryPrincipal target, string performedBy, string ip, string ticket, string reason)
+    {
+        try
+        {
+            var extra = string.IsNullOrWhiteSpace(target.ObjectGuid)
+                ? null
+                : new Dictionary<string, object?> { ["targetObjectGuid"] = target.ObjectGuid };
+            _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, [], false, ticket, reason, extra);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audit failed for an attribute save that threw");
+        }
     }
 
     private void LogAudit(ResolvedDirectoryPrincipal target, List<AttributeChange> changes, string performedBy, string ip, string ticket, bool success, string? errorDetail, string? servicedNote = null)

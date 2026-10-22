@@ -92,6 +92,81 @@ expects `LevelCheck`; a new case keeps Validation for a name the allowlist does 
 asserted, not wording. Mutations at the call site: the authorization refusal's `LogSaveRefused`
 deleted; the catch's `LogSaveFailed` deleted; extra - the service's LevelCheck refusal deleted.
 
+## Fix
+
+`Services/ADAttributeEditorService.cs`:
+
+- SaveAndAuditAsync: with a `maxLevel`, a proposed name the allowlist holds above that level is the
+  new `LevelCheck` refusal - "Access denied: you do not have permission to edit X." (the page's
+  wording), LogRefusal directly above the return - before ValidateProposedValues runs against the
+  level-filtered list. A name the allowlist does not hold stays the Validation refusal.
+- `LogSaveRefused(target, performedBy, ip, ticket, refusedAt, reason)`: the `ADAttributeEdit_Refused`
+  record LogRefusal writes (LogRefusal and it now share `WriteRefusal`), target `(none)` when the
+  page had no principal. `LogSaveFailed(target, performedBy, ip, ticket, reason)`: a failed
+  `ADAttributeEditor_Update` with no changes, the target's GUID when known, and neither refusal
+  field. Both public, both log an audit failure and never throw.
+
+`Components/Pages/ADAttributeEditor.razor`, ConfirmSave: the no-principal refusal records
+`LogSaveRefused(null, ..., "Lookup", ...)`; the authorization refusal records `LogSaveRefused(target,
+..., "Authorization", ...)`; the page's corrupt-allowlist and level checks are gone (SaveAsync makes
+both, recorded and announced); the catch records `LogSaveFailed` beside its notice.
+
+Tests: new `ExchangeAdminWeb.Tests/AttributeEditorPageSaveAuditTests.cs` (6 cases, ConfirmSave
+driven through the compiled page); `ADAttributeEditorSaveTests`: the level case expects
+`LevelCheck`, and a new case pins Validation for a name the allowlist does not hold.
+
+Caller-visible change, by design: every ConfirmSave attempt leaves exactly one audit record. A
+refusal for a corrupt allowlist reads "Attribute allowlist configuration is corrupt." (SaveAsync's
+wording) where the page said "Attribute allowlist is corrupt.", and it and the level refusal are now
+announced to administrators by SaveAsync; the authorization and no-principal refusals are recorded
+and, as before, not announced. A save naming an attribute the allowlist no longer holds at all is
+refused as "not in the allowlist" where the page said "Access denied". An undo of an attribute above
+the undoing operator's level is refused as LevelCheck with the access-denied wording.
+
 ## Guard proof
 
-Pending.
+No pre-fix reproduction: the paths this record is about ran only in the page, which no test drove.
+Each mutation below puts one of the original defects back at its call site instead.
+
+Session-local driver (`mutate.ps1`, session scratchpad `a28g-a28h-a26f-a28i-work`): exact bytes
+saved, one literal replacement that must match exactly once, Release build with `0 Error(s)`
+required, filter `FullyQualifiedName~AttributeEditorPageSaveAuditTests|FullyQualifiedName~ADAttributeEditorSaveTests|FullyQualifiedName~RefusalAuditTests`
+(29 tests), exact bytes restored in `finally`, MD5 re-checked, mtime advanced so MSBuild rebuilds.
+Fixed-file MD5s: `Components/Pages/ADAttributeEditor.razor` `586FDD85B37E14540BD5CD41A4D9BC98`,
+`Services/ADAttributeEditorService.cs` `E8C961B64BB4D625F1672B6945327254`; each restored to its MD5
+after every mutant, and every mutant built with 0 errors. After the round, a rebuild on the
+restored bytes and the filter: 29/29 green.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| page: the authorization refusal's `LogSaveRefused` deleted | `FBED09C22A3D823831E6411BA416BC9F` | `AnAuthorizationRefusal_LeavesOneRefusalRecord_AndOpensNoDirectorySession` |
+| page: the catch's `LogSaveFailed` deleted | `7049E3F560A20A97175492AA10EA1577` | `AnExceptionTheSaveDoesNotReturn_LeavesOneFailureRecord_AndTheCatchsOneNotice` |
+| extra, page: the no-principal refusal's `LogSaveRefused` deleted | `9D0FF707A6FD9E41B385691388486207` | `ASaveWithNoLookedUpUser_LeavesOneRefusalRecord_AndOpensNoDirectorySession` |
+| extra, service: the LevelCheck refusal disabled (`if (false && aboveLevel.Count > 0)`) | `CB9C9BBC5219F3315385CBD295C34E67` | `AnAttributeAboveTheCallersLevel_IsRefused`, `AnAttributeAboveTheOperatorsLevel_IsRefusedOnce_ByTheService` |
+
+Under the last mutant the attribute is still refused - by the Validation step, as "not in the
+allowlist" - so the two failures are the wording and step, not a write: the level boundary itself
+was never only the page's.
+
+The code comments are written after the round, in their own commit, so the MD5s above are this
+commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings (full build), all
+  pre-existing, none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx -c Release --no-build --blame-hang --blame-hang-timeout 10m`:
+  exit 0, 5,149 passed / 3 skipped / 0 failed, 5,152 total, 5m14s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0.
+  `git diff --check`: exit 0. `tools/Test-AsciiOnly.ps1` with the files staged: exit 0.
+
+No PowerShell source, AD module, directory, Delinea, SMTP, push or deployment. The page was not
+rendered and no live circuit was run. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- The two refusals that stay on the page (authorization, no looked-up user) are recorded, not
+  announced; SaveAsync's refusals are announced. Unchanged by this record: the page never announced
+  its own refusals.
+- ConfirmSave is driven through the compiled page by reflection, not through a rendered circuit:
+  no bUnit host exists, and the Save button's own gating is not exercised.

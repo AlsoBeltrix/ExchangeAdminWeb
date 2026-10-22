@@ -492,6 +492,7 @@
         {
             isSaving = false;
             operationResult = (false, "Look the user up again before saving.");
+            EditorService.LogSaveRefused(null, currentUser, clientIpAddress, ticketNumber.Trim(), "Lookup", operationResult.Value.message);
             return;
         }
 
@@ -527,23 +528,11 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = (false, "Authorization denied.");
+                EditorService.LogSaveRefused(target, currentUser, clientIpAddress, ticketNumber.Trim(), "Authorization", operationResult.Value.message);
                 return;
             }
 
             var saveMaxLevel = await DetermineMaxLevelAsync();
-            var authorizedAllowlist = EditorService.GetAllowlistForLevel(saveMaxLevel);
-            if (authorizedAllowlist == null)
-            {
-                operationResult = (false, "Attribute allowlist is corrupt.");
-                return;
-            }
-            var authorizedNames = authorizedAllowlist.Select(a => a.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var unauthorized = changes.Where(c => !authorizedNames.Contains(c.Name)).ToList();
-            if (unauthorized.Count > 0)
-            {
-                operationResult = (false, $"Access denied: you do not have permission to edit {string.Join(", ", unauthorized.Select(u => u.Name))}.");
-                return;
-            }
 
             var proposedValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
             foreach (var change in changes)
@@ -596,6 +585,7 @@
         {
             operationResult = completed = (false, ex.Message);
             Logger.LogError(ex, "AD attribute save failed");
+            EditorService.LogSaveFailed(target, currentUser, clientIpAddress, ticketNumber.Trim(), ex.Message);
             // The page's one remaining notice: an exception, which SaveAsync never returns.
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Target"] = target.UserPrincipalName }, ex.Message); } catch { }
         }
