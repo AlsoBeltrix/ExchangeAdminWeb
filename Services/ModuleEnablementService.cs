@@ -159,7 +159,7 @@ public class ModuleEnablementService
     /// <summary>True when a legacy modules-enabled.json was not imported and keeps the store fail-closed (aud-a26h).</summary>
     public bool LegacyImportFailed => _legacyFileCorrupt;
 
-    public void SaveEnablement(Dictionary<string, bool> enablement)
+    internal void SaveEnablement(Dictionary<string, bool> enablement)
     {
         lock (_writeLock)
         {

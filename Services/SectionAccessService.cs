@@ -226,7 +226,7 @@ public class SectionAccessService
         return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.None, true);
     }
 
-    public void SaveSectionAccess(Dictionary<string, string[]> sectionAccess)
+    internal void SaveSectionAccess(Dictionary<string, string[]> sectionAccess)
     {
         lock (_writeLock)
         {
@@ -258,8 +258,9 @@ public class SectionAccessService
 
         var before = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         var changed = new List<string>();
+        var alreadyApplied = new List<string>();
         if (_legacyFileCorrupt)
-            return new SectionAccessSaveOutcome(SectionAccessSaveStatus.StoreCorrupt, changed, before);
+            return new SectionAccessSaveOutcome(SectionAccessSaveStatus.StoreCorrupt, changed, before, alreadyApplied);
 
         var fallback = FallbackAccess();
         var status = SectionAccessSaveStatus.Saved;
@@ -274,11 +275,16 @@ public class SectionAccessService
                 }
 
                 var source = current.Configured ? current.Access : fallback;
-                foreach (var alias in edited.Keys)
+                foreach (var (alias, wanted) in edited)
                 {
                     var now = source.TryGetValue(alias, out var groups) ? groups : [];
                     before[alias] = now;
-                    if (!SameGroups(now, loaded.TryGetValue(alias, out var was) ? was : []))
+                    if (SameGroups(now, loaded.TryGetValue(alias, out var was) ? was : []))
+                        continue;
+
+                    if (SameGroups(now, wanted))
+                        alreadyApplied.Add(alias);
+                    else
                         changed.Add(alias);
                 }
 
@@ -296,7 +302,10 @@ public class SectionAccessService
                 }
 
                 foreach (var (alias, groups) in edited)
-                    replacement[alias] = groups;
+                {
+                    if (!alreadyApplied.Contains(alias, StringComparer.OrdinalIgnoreCase))
+                        replacement[alias] = groups;
+                }
 
                 if (replacement.Count == 0)
                 {
@@ -311,7 +320,7 @@ public class SectionAccessService
                 _logger.LogInformation("SectionAccess saved for {Count} alias(es)", edited.Count);
         }
 
-        return new SectionAccessSaveOutcome(status, changed, before);
+        return new SectionAccessSaveOutcome(status, changed, before, alreadyApplied);
     }
 
     // What the gates read while section access has never been configured in the store: the legacy
@@ -401,7 +410,10 @@ public enum SectionAccessSaveStatus
     /// <summary>The edited aliases were replaced.</summary>
     Saved,
 
-    /// <summary>Nothing written: no alias was edited and section access is already configured.</summary>
+    /// <summary>
+    /// Nothing written: section access is already configured and no alias was edited, or every edited alias
+    /// already held what the save wanted.
+    /// </summary>
     NothingToSave,
 
     /// <summary>Nothing written: the legacy file was not imported, or the table could not be read under the lock.</summary>
@@ -413,10 +425,12 @@ public enum SectionAccessSaveStatus
 
 /// <summary>
 /// The outcome of a section-access save: the edited aliases that had changed since the page loaded them
-/// (on <see cref="SectionAccessSaveStatus.ConcurrentChange"/>), and each edited alias's groups as they were
-/// under the write lock.
+/// (on <see cref="SectionAccessSaveStatus.ConcurrentChange"/>), each edited alias's groups as they were
+/// under the write lock, and the edited aliases that already held the groups the save wanted, which it did
+/// not write.
 /// </summary>
 public sealed record SectionAccessSaveOutcome(
     SectionAccessSaveStatus Status,
     IReadOnlyList<string> ChangedAliases,
-    IReadOnlyDictionary<string, string[]> Before);
+    IReadOnlyDictionary<string, string[]> Before,
+    IReadOnlyList<string> AlreadyApplied);

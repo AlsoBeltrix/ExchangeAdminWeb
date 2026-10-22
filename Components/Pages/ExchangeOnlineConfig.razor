@@ -479,7 +479,8 @@
                 statusMessage = $"{saved} The Exchange Online connection pool could not be drained: {drainEx.Message.TrimEnd('.')}. Connections opened before the save may still use the previous settings - recycle the application pool to close them.";
                 statusIsWarning = true;
                 completed = (false, statusMessage);
-                Audit.LogSettingsSaveFailed(Logger, currentUser, ip, PoolSection, statusMessage);
+                try { Audit.LogConnectionPoolDrainFailed(currentUser, ip, PoolSection, statusMessage); }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the connection pool drain"); }
             }
         }
         catch (Exception ex)

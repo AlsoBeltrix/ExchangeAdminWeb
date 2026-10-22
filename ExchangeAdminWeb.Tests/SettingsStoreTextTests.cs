@@ -241,6 +241,11 @@ public sealed class SettingsStoreTextTests : IDisposable
         Assert.Equal(new[] { "Org=fabrikam.onmicrosoft.com" }, Names(save, "added"));
         var drain = Assert.Single(records, r => Text(r, "section") == "ExchangeOnlineConfig:ConnectionPool");
         Assert.Equal("Failed", Text(drain, "result"));
+        // aud-a26k: its own action, so a reviewer filtering the Admin Event Log by action tells the failed drain
+        // from a failed settings change; filed beside the save it follows.
+        Assert.Equal("DrainConnectionPool", Text(drain, "action"));
+        Assert.Equal("AdminSettings", Text(drain, "category"));
+        Assert.Equal("UpdateSectionAccess", Text(save, "action"));
         Assert.False(drain.TryGetProperty("refusedAt", out _));
         Assert.Equal(Status(page), Text(drain, "error"));
 

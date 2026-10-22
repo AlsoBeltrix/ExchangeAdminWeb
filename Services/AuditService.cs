@@ -423,11 +423,37 @@ public class AuditService
         WriteAuditEvent(evt);
     }
 
+    /// <summary>
+    /// A connection-pool drain that failed after the Exchange Online connection settings were saved
+    /// (aud-a26k): result Failed, its own action, filed in the settings category beside the save it follows.
+    /// </summary>
+    public void LogConnectionPoolDrainFailed(
+        string performedBy,
+        string ipAddress,
+        string section,
+        string errorDetail)
+    {
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = ConnectionPoolDrainAction,
+            ["category"] = SettingsChangeCategory,
+            ["result"] = "Failed",
+            ["section"] = section,
+            ["error"] = errorDetail
+        };
+
+        WriteAuditEvent(evt);
+    }
+
     // Shared by LogSettingsChange and LogSettingsChangeFailed, so a refusal can never be filed apart
     // from the changes it would have made. "UpdateSectionAccess" is the historical action name for
     // every settings change, not only section access; renaming it would split the log in two.
     private const string SettingsChangeAction = "UpdateSectionAccess";
     private const string SettingsChangeCategory = "AdminSettings";
+    private const string ConnectionPoolDrainAction = "DrainConnectionPool";
 
     private void WriteAuditEvent(Dictionary<string, object?> evt)
     {

@@ -207,8 +207,15 @@ public class SectionAccessServiceTests : IDisposable
         Assert.True(CreateService(legacyConfig).IsSectionAccessConfigured());
     }
 
+    // aud-a26k: the save round trips run through SaveEditedAliases, the access page's save. The whole-table
+    // SaveSectionAccess is an internal fixture now, and what the app relies on is pinned on the path it uses.
+
+    /// <summary>Each alias as the gates read it now: what the access page loads before an edit.</summary>
+    private static Dictionary<string, string[]> Loaded(SectionAccessService service, params string[] aliases) =>
+        aliases.ToDictionary(a => a, service.GetGroupsForSection, StringComparer.OrdinalIgnoreCase);
+
     [Fact]
-    public void SaveSectionAccess_ReadsBackWhatWasSaved()
+    public void SaveEditedAliases_ReadsBackWhatWasSaved()
     {
         var service = CreateService();
         var data = new Dictionary<string, string[]>
@@ -217,24 +224,30 @@ public class SectionAccessServiceTests : IDisposable
             ["CalendarPermissions"] = new[] { "GroupC" }
         };
 
-        service.SaveSectionAccess(data);
+        var outcome = service.SaveEditedAliases(Loaded(service, "MailboxPermissions", "CalendarPermissions"), data);
         var result = service.GetSectionAccess();
 
-        Assert.Equal(2, result.Count);
-        Assert.Equal(new[] { "GroupA", "GroupB" }, result["MailboxPermissions"]);
+        Assert.Equal(SectionAccessSaveStatus.Saved, outcome.Status);
+        Assert.Equal(new[] { "GroupA", "GroupB" }, result["MailboxPermissions"].Order());
         Assert.Equal(new[] { "GroupC" }, result["CalendarPermissions"]);
     }
 
     [Fact]
-    public void SaveSectionAccess_OverwritesWholeSet()
+    public void SaveEditedAliases_ReplacesOnlyTheEditedAliases()
     {
         var service = CreateService();
-        service.SaveSectionAccess(new() { ["MailboxPermissions"] = new[] { "A" }, ["CalendarPermissions"] = new[] { "B" } });
-        service.SaveSectionAccess(new() { ["MailboxPermissions"] = new[] { "C" } });
+        service.SaveEditedAliases(
+            Loaded(service, "MailboxPermissions", "CalendarPermissions"),
+            new Dictionary<string, string[]> { ["MailboxPermissions"] = new[] { "A" }, ["CalendarPermissions"] = new[] { "B" } });
+
+        var outcome = service.SaveEditedAliases(
+            new Dictionary<string, string[]> { ["MailboxPermissions"] = new[] { "A" } },
+            new Dictionary<string, string[]> { ["MailboxPermissions"] = new[] { "C" } });
 
         var result = service.GetSectionAccess();
+        Assert.Equal(SectionAccessSaveStatus.Saved, outcome.Status);
         Assert.Equal(new[] { "C" }, result["MailboxPermissions"]);
-        Assert.False(result.ContainsKey("CalendarPermissions"));
+        Assert.Equal(new[] { "B" }, result["CalendarPermissions"]);
     }
 
     // --- Legacy import (one-time, DB-wins, archive) ---

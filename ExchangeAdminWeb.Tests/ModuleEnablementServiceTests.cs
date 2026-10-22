@@ -151,8 +151,11 @@ public class ModuleEnablementServiceTests : IDisposable
         Assert.True(result["CalendarPermissions"]);
     }
 
+    // aud-a26k: the save round trips run through SetModulesEnabled, the admin pages' save. The whole-map
+    // SaveEnablement is an internal fixture now, and what the app relies on is pinned on the path it uses.
+
     [Fact]
-    public void SaveEnablement_WritesValidJson_ThatCanBeReadBack()
+    public void SetModulesEnabled_WritesTheModulesItIsGiven_ThatCanBeReadBack()
     {
         var service = CreateService();
         var enablement = new Dictionary<string, bool>
@@ -166,34 +169,31 @@ public class ModuleEnablementServiceTests : IDisposable
             ["OutOfOffice"] = true
         };
 
-        service.SaveEnablement(enablement);
+        service.SetModulesEnabled(enablement);
 
-        // Read back from the store and verify it round-trips.
-        Assert.True(_repository.TryGetAll(out var readBack));
-        Assert.False(readBack["CalendarPermissions"]);
-        Assert.True(readBack["MailboxPermissions"]);
+        // Read back through a new instance, so nothing is answered from the one that wrote.
+        var readBack = CreateService();
+        foreach (var (moduleId, enabled) in enablement)
+            Assert.Equal(enabled, readBack.IsModuleRawEnabled(moduleId));
     }
 
     [Fact]
-    public void SaveEnablement_SecondSave_OverwritesFirst()
+    public void SetModulesEnabled_SecondSave_OverwritesFirst()
     {
         var service = CreateService();
 
-        var first = new Dictionary<string, bool>
+        service.SetModulesEnabled(new Dictionary<string, bool>
         {
             ["MailboxPermissions"] = true,
             ["CalendarPermissions"] = true
-        };
-        service.SaveEnablement(first);
-        Assert.True(_repository.TryGetAll(out var afterFirst));
-        Assert.True(afterFirst["MailboxPermissions"]);
+        });
+        Assert.True(CreateService().IsModuleRawEnabled("MailboxPermissions"));
 
-        var second = new Dictionary<string, bool>
+        service.SetModulesEnabled(new Dictionary<string, bool>
         {
             ["MailboxPermissions"] = false,
             ["CalendarPermissions"] = false
-        };
-        service.SaveEnablement(second);
+        });
 
         Assert.True(_repository.TryGetAll(out var readBack));
         Assert.False(readBack["MailboxPermissions"]);
@@ -224,7 +224,7 @@ public class ModuleEnablementServiceTests : IDisposable
     {
         var service = CreateService();
 
-        // Save with MailboxPermissions disabled
+        // Save with MailboxPermissions disabled, through the pages' save (aud-a26k).
         var enablement = new Dictionary<string, bool>
         {
             ["MailboxPermissions"] = false,
@@ -235,7 +235,7 @@ public class ModuleEnablementServiceTests : IDisposable
             ["RecipientLookup"] = true,
             ["OutOfOffice"] = true
         };
-        service.SaveEnablement(enablement);
+        service.SetModulesEnabled(enablement);
 
         // Create a new service instance to read from file (no caching)
         var service2 = CreateService();

@@ -1015,7 +1015,7 @@ public class ProtectedPrincipalService
             EntraObjectId: null);
     }
 
-    public void SaveConfig(ProtectedPrincipalConfig config)
+    internal void SaveConfig(ProtectedPrincipalConfig config)
     {
         _repository.Save(new ProtectedPrincipalData(
             config.Users ?? [],
@@ -1224,18 +1224,30 @@ public class ProtectedPrincipalService
         }
     }
 
-    public int? GetDirectoryReadSecretId()
+    public int? GetDirectoryReadSecretId() =>
+        PositiveId(_moduleConfig.GetValue(ProtectedPrincipalsModuleKey, DirectoryReadSecretConfigKey))
+        ?? PositiveId(_config["Security:ProtectedPrincipalDirectoryReadSecretId"]);
+
+    /// <summary>
+    /// The directory-read secret id as the admin page shows it (aud-a26k): false when the ProtectedPrincipals
+    /// module config cannot be read, so the page can say so rather than show the id as unset. Otherwise the
+    /// value <see cref="GetDirectoryReadSecretId"/> answers, appsettings fallback included.
+    /// </summary>
+    public bool TryGetDirectoryReadSecretId(out int? secretId)
     {
-        var fromModuleConfig = _moduleConfig.GetValue(ProtectedPrincipalsModuleKey, DirectoryReadSecretConfigKey);
-        if (int.TryParse(fromModuleConfig, out var moduleId) && moduleId > 0)
-            return moduleId;
+        if (!_moduleConfig.TryGetModuleConfig(ProtectedPrincipalsModuleKey, out var values))
+        {
+            secretId = null;
+            return false;
+        }
 
-        var fromAppSettings = _config["Security:ProtectedPrincipalDirectoryReadSecretId"];
-        if (int.TryParse(fromAppSettings, out var appId) && appId > 0)
-            return appId;
-
-        return null;
+        secretId = PositiveId(values.GetValueOrDefault(DirectoryReadSecretConfigKey))
+            ?? PositiveId(_config["Security:ProtectedPrincipalDirectoryReadSecretId"]);
+        return true;
     }
+
+    private static int? PositiveId(string? value) =>
+        int.TryParse(value, out var id) && id > 0 ? id : null;
 
     /// <summary>
     /// Stores the directory-read secret id and returns the ProtectedPrincipals module values as they

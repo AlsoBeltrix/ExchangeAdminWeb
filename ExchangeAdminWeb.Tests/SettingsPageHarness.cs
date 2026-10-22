@@ -343,6 +343,31 @@ internal sealed class SettingsPageHarness : IDisposable
         throw new InvalidOperationException($"no button labelled '{label}' is rendered - this harness is stale");
     }
 
+    /// <summary>
+    /// Whether the input whose placeholder is <paramref name="placeholder"/> renders disabled (aud-a26k).
+    /// </summary>
+    public static bool IsInputDisabled(ComponentBase page, string placeholder)
+    {
+        var frames = Frames(page);
+        for (var i = 0; i < frames.Count; i++)
+        {
+            var frame = frames[i];
+            if (frame.FrameType != RenderTreeFrameType.Element || frame.ElementName != "input")
+                continue;
+
+            var attributes = new List<RenderTreeFrame>();
+            for (var a = i + 1; a < frames.Count && frames[a].FrameType == RenderTreeFrameType.Attribute; a++)
+                attributes.Add(frames[a]);
+
+            if (!attributes.Any(a => a.AttributeName == "placeholder" && Equals(a.AttributeValue, placeholder)))
+                continue;
+
+            return attributes.Any(a => a.AttributeName == "disabled" && a.AttributeValue is not false);
+        }
+
+        throw new InvalidOperationException($"no input with placeholder '{placeholder}' is rendered - this harness is stale");
+    }
+
     // The handler shells render nothing to the renderer, so a save that calls StateHasChanged builds no
     // child component; they render their markup only here, when a test asks to read it.
     private static List<RenderTreeFrame> Frames(ComponentBase page)

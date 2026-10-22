@@ -68,6 +68,13 @@ public class ModuleConfigService
         return ReadModuleConfig(moduleId);
     }
 
+    /// <summary>
+    /// A module's config, and whether it could be read (aud-a26k): false when the store is unreadable, in
+    /// which case <paramref name="config"/> is empty and means nothing.
+    /// </summary>
+    public bool TryGetModuleConfig(string moduleId, out Dictionary<string, string> config) =>
+        _repository.TryReadModule(moduleId, out config);
+
     public bool IsModuleConfigured(string moduleId)
     {
         var module = _catalog.GetById(moduleId);
@@ -79,7 +86,7 @@ public class ModuleConfigService
             .All(f => config.TryGetValue(f.Key, out var val) && !string.IsNullOrWhiteSpace(val));
     }
 
-    public void SaveModuleConfig(string moduleId, Dictionary<string, string> values)
+    internal void SaveModuleConfig(string moduleId, Dictionary<string, string> values)
     {
         lock (_writeLock)
         {

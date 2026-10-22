@@ -277,9 +277,17 @@
                        back, so a secret-id-only edit read as "No unsaved changes". *@
                     <input type="text" class="form-control form-control-sm"
                            value="@ppDirectoryReadSecretId"
+                           disabled="@ppSecretUnreadable"
                            @oninput="(e) => SetPpDirectoryReadSecretId(e.Value?.ToString() ?? string.Empty)"
                            placeholder="Required when groups or OUs are configured" />
-                    <small class="text-muted">Read-only AD credential for group membership and OU checks.</small>
+                    @if (ppSecretUnreadable)
+                    {
+                        <small class="text-danger d-block">@SecretUnreadableText</small>
+                    }
+                    else
+                    {
+                        <small class="text-muted">Read-only AD credential for group membership and OU checks.</small>
+                    }
                 </div>
             </div>
         </div>
@@ -540,6 +548,12 @@
 
     private string ppRulesVersion = "";
 
+    private bool ppSecretUnreadable;
+
+    private string SecretUnreadableText =>
+        "The directory-read credential's setting could not be read, so it is not shown and cannot be changed here. "
+        + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey);
+
     // Surfaced next to the add controls, not through statusMessage: a refused Add must not
     // overwrite an unrelated save result.
     private string? ppAddError;
@@ -742,6 +756,8 @@
 
     private void LoadProtectedPrincipals()
     {
+        LoadDirectoryReadSecret();
+
         var (_, _, error) = ProtectedPrincipalService.LoadEffectiveConfig();
         if (error != null)
         {
@@ -769,9 +785,15 @@
         ppPatterns = editing.Config.SamAccountNamePatterns.ToList();
         ppTargets = editing.Config.GroupTargets.ToList();
         ppRulesVersion = editing.Version;
-        ppDirectoryReadSecretId = ProtectedPrincipalService.GetDirectoryReadSecretId()?.ToString() ?? "";
-        SnapshotProtectedBaseline();
+        SnapshotProtectedRulesBaseline();
         ppLoaded = true;
+    }
+
+    private void LoadDirectoryReadSecret()
+    {
+        ppSecretUnreadable = !ProtectedPrincipalService.TryGetDirectoryReadSecretId(out var secretId);
+        ppDirectoryReadSecretId = secretId?.ToString() ?? "";
+        ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;
     }
 
     // Only Patterns keeps a keydown handler. Users, Groups and OUs all use
@@ -1076,6 +1098,15 @@
             // blank. When it is changing, its store is checked before anything is written.
             var secretId = ppDirectoryReadSecretId.Trim();
             var secretChanged = SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline) > 0;
+            if (secretChanged && ppSecretUnreadable)
+            {
+                statusMessage = "Refusing to save: the directory-read credential (Delinea Secret ID) could not be read when this page loaded, so the value it holds is not the stored one and saving it would overwrite a value never shown. Nothing was changed. Reload the page once the problem is fixed. "
+                    + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey);
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
+                return;
+            }
+
             if (secretChanged && ModuleConfigSvc.IsModuleCorrupt(ProtectedPrincipalService.ProtectedPrincipalsModuleKey))
             {
                 statusMessage = "Refusing to save: the directory-read credential's setting cannot be read. Nothing was changed. "

@@ -133,7 +133,7 @@ public class ModuleAdminService
         return readable;
     }
 
-    public void SetModuleAdmins(string moduleId, string[] groups)
+    internal void SetModuleAdmins(string moduleId, string[] groups)
     {
         lock (_writeLock)
         {

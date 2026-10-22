@@ -1428,7 +1428,16 @@
             foreach (var (alias, curr) in edited)
             {
                 var prev = outcome.Before.TryGetValue(alias, out var stored) ? stored : Array.Empty<string>();
-                if (!prev.SequenceEqual(curr, StringComparer.OrdinalIgnoreCase))
+                if (outcome.AlreadyApplied.Contains(alias, StringComparer.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        Audit.LogSettingsChange(currentUser, ip, alias, prev, curr,
+                            new Dictionary<string, object?> { ["alreadyApplied"] = new[] { alias } });
+                    }
+                    catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for section access change"); }
+                }
+                else if (!prev.SequenceEqual(curr, StringComparer.OrdinalIgnoreCase))
                 {
                     try { Audit.LogSettingsChange(currentUser, ip, alias, prev, curr); }
                     catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for section access change"); }
@@ -1439,9 +1448,11 @@
             // unsaved edit rather than vanishing from the dirty count.
             accessBaseline = snapshot.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
             RecountAccess();
-            statusMessage = outcome.Status == SectionAccessSaveStatus.NothingToSave
-                ? "Section access is unchanged; there was nothing to save."
-                : "Section access saved.";
+            statusMessage = outcome.Status != SectionAccessSaveStatus.NothingToSave
+                ? "Section access saved."
+                : outcome.AlreadyApplied.Count > 0
+                    ? "Section access already held these changes - they were made the same way elsewhere after this page loaded - so nothing needed writing."
+                    : "Section access is unchanged; there was nothing to save.";
             statusIsError = false;
         }
         catch (Exception ex)

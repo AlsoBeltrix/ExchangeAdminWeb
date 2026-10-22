@@ -523,8 +523,10 @@ per-module JSON files. Access it through `ModuleConfigService`:
 ```csharp
 public string? GetValue(string moduleId, string key);
 public Dictionary<string, string> GetModuleConfig(string moduleId);
+public bool TryGetModuleConfig(string moduleId, out Dictionary<string, string> config);
 public bool IsModuleConfigured(string moduleId);
-public void SaveModuleConfig(string moduleId, Dictionary<string, string> values);
+public ModuleConfigUpdate UpdateModuleValues(string moduleId, IReadOnlyDictionary<string, string> values);
+public ModuleConfigSaveOutcome SaveChangedValues(string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted);
 public bool HasConfigFile { get; }
 public bool IsCorrupt { get; }
 public bool HasModuleConfigFile(string moduleId);
@@ -539,6 +541,12 @@ Rules:
   overloads `IsModuleCorrupt(moduleId)` and `HasModuleConfigFile(moduleId)`. Treat
   corrupt state as fail-closed for privileged operations.
 - Required config missing means the operation must not proceed.
+- Writes name their keys. `UpdateModuleValues` upserts only the keys given;
+  `SaveChangedValues` (the Module Configuration page's save) writes only the keys an admin
+  changed, each compared under the write lock with the value the page loaded. There is no
+  public whole-module replace: the shared config database is written by both instances, and
+  replacing a module's whole config from a caller's copy reverts what the other wrote
+  (aud-a28n, aud-a26k).
 - Do not store secrets in module config.
 - For values that need immediate runtime effect, read from `ModuleConfigService`
   at operation time or subscribe to `ConfigSaved` and invalidate caches.
