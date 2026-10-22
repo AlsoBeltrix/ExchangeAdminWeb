@@ -38,3 +38,24 @@ entries; edit in place); `Models/MigrationModels.cs` `ScheduledCompletionUtc`.
 ## Guard proof
 
 Pending.
+
+## Folded in: three LOW items from the codex review of aud-a23f/a23e (ops-batch-10, 2026-10-22)
+
+5. **Negative counts render as real counts.** `Models/ReportedCount.cs` `Read` (around 102) accepts any
+   whole number; `FailedCount = -1` or `"-1"` shows as a factual count, in the red failed cell, and sorts
+   before zero. Accept only `0..int.MaxValue`; negative numeric or text values are unreadable with the
+   same marker. Test: `-1` renders the marker. Mutation: accept negatives again.
+6. **Cancellation becomes an unreadable row.** `Services/MigrationService.cs` per-row catch (around 702)
+   turns `OperationCanceledException` / `PipelineStoppedException` thrown while reading a row into
+   "could not be read" and returns the rest as a valid partial result. Let cancellation-like exceptions
+   escape the per-row catch (exception filter) so a cancelled load is cancelled. Test: a cancellation
+   thrown from a row's getter propagates. Mutation: catch everything again.
+7. **A `DateTimeKind.Local` from Exchange is read in the web server's zone.** `Models/ReportedTime.cs`
+   (around 119) and `ShowReported` (`LookupModels.cs` around 259) call `ToUniversalTime()` on a `Local`
+   value, interpreting a clock that came from another origin in this server's zone, so instants, sorts
+   and labels can be wrong. Unless the live module contract proves `Local` means this server's zone
+   (label it an assumption either way), treat an externally reported `Local` like an unzoned value
+   ("time zone not reported"; grouped with `Unspecified`), or carry an explicit origin offset before
+   comparing or labelling. Test: a `Local` value is shown as reported with no zone label and sorts in
+   the zone-less group. Mutation: `ToUniversalTime()` again. The aud-a7f Check Status path shares
+   `ShowReported`; keep both consistent and say so.

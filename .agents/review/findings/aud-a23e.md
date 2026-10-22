@@ -8,7 +8,7 @@ which zone a time is in - the aud-a7f ambiguity in two more modules. (2) An abse
 ascending (`ReportedTime.Of(DateTime.MinValue)` preserved the old default). (3) Readable times are
 compared ignoring their Kind, so a list mixing kinds could sort wrongly (hypothetical; the live
 module's kind is unverified).
-**Status**: Merged to master (`90d57011`); closed on guard proof; codex review pending
+**Status**: Merged to master (`90d57011`); closed on guard proof; codex ops-batch-10 clean (three LOW folded into aud-a23g)
 **Branch**: `worktree-agent-a92cf96af45d6d9c6` (forked at `9ef0a225`)
 **Commit**: `022014aa` (merged `90d57011`)
 **Reviewer**: implementer (surfaced by the aud-a23d/a7i agent, 2026-10-22, candidates 1, 2 and 4 of its hand-back)

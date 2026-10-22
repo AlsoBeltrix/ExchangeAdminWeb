@@ -5,7 +5,7 @@ failures must be aggregated and shown, never swallowed). `GetMigrationBatchesAsy
 per-row exception (for example a count that `Convert.ToInt32` cannot read) and skips the batch,
 logging a warning; the page shows the remaining batches as if the list were complete, so an
 operator looking for that batch concludes it does not exist.
-**Status**: Merged to master (`90d57011`); closed on guard proof; codex review pending
+**Status**: Merged to master (`90d57011`); closed on guard proof; codex ops-batch-10 clean (three LOW folded into aud-a23g)
 **Branch**: `worktree-agent-a92cf96af45d6d9c6` (forked at `9ef0a225`)
 **Commit**: `73ba215d` (merged `90d57011`)
 **Reviewer**: implementer (surfaced by the aud-a23d/a7i agent, 2026-10-22, candidate 3 of its hand-back)
