@@ -91,6 +91,31 @@ public class ModuleConfigService
     }
 
     /// <summary>
+    /// Writes only the named keys of a module's config, leaving its other keys as they are, and
+    /// returns the module's values as read under the write lock and as the write left them
+    /// (aud-a28j). Throws when the write fails, like <see cref="SaveModuleConfig"/>.
+    /// </summary>
+    /// <remarks>
+    /// The directory-read secret and the Exchange Online connection used to read the module's whole
+    /// config, set their keys and replace the lot in a later transaction: a key the other instance changed
+    /// in between was overwritten, and a read that failed - the read is fail-open - wiped the module's other
+    /// keys. Upserting only the named keys inside one write leaves the rest alone, and the values read
+    /// under the lock are the honest before-state for the save's record (aud-a28k).
+    /// </remarks>
+    public ModuleConfigUpdate UpdateModuleValues(string moduleId, IReadOnlyDictionary<string, string> values)
+    {
+        ModuleConfigUpdate update;
+        lock (_writeLock)
+        {
+            update = _repository.UpdateModule(moduleId, values);
+            _logger.LogInformation("Module config for {Module} updated ({Count} key(s))", moduleId, values.Count);
+        }
+
+        ConfigSaved?.Invoke(moduleId);
+        return update;
+    }
+
+    /// <summary>
     /// One-time remap of the renamed Graph credential key: for every catalog module that declares
     /// a <c>GraphDelineaSecretId</c> ConfigField, move a value stranded under the old
     /// <c>DelineaSecretId</c> key to the new key (and drop the stale row). Catalog-driven so it is

@@ -70,10 +70,9 @@
             {
                 <div class="alert alert-danger mb-0">
                     <strong>Module enablement store is corrupt.</strong>
-                    config\modules-enabled.json exists but cannot be read, so the real enablement
-                    state cannot be shown and saving is disabled — saving now would overwrite the
-                    stored state with the all-disabled fallback. Fix or restore the file (deploy
-                    backups: ConfigBackups\config.&lt;timestamp&gt;.bak), then reload this page.
+                    The real enablement state cannot be shown and saving is disabled - saving now would
+                    overwrite the stored state with the all-disabled fallback.
+                    @SettingsStoreText.Enablement(Enablement.LegacyImportFailed)
                 </div>
             }
             else
@@ -322,7 +321,7 @@
         }
         <span class="adm-grow"></span>
         <button class="btn btn-outline-secondary btn-sm" @onclick="DiscardChanges" disabled="@(saving || !dirty.IsDirty)">Discard</button>
-        <button class="btn btn-primary btn-sm" @onclick="SaveCurrentTabAsync" disabled="@(saving || ppValidating)">Save</button>
+        <button class="btn btn-primary btn-sm" @onclick="SaveCurrentTabAsync" disabled="@(saving || ppValidating || !CanSaveCurrentTab())">Save</button>
     </div>
 </div>
 
@@ -379,6 +378,18 @@
             case SecLogging: await SaveLogLevel(); break;
         }
     }
+
+    /// <summary>Whether the visible tab's store was read when the page loaded, so Save is offered.</summary>
+    /// <remarks>
+    /// aud-a28j. A tab whose store did not load holds the fallback, not the stored state, and has nothing
+    /// to save over it. Withholding the button is the courtesy; each save refuses the same case itself.
+    /// </remarks>
+    private bool CanSaveCurrentTab() => tab switch
+    {
+        SecModules => !enablementStoreCorrupt,
+        SecProtected => ppLoaded,
+        _ => true,
+    };
 
     /// <summary>
     /// Discards by reloading from the store. Clears dirty state FIRST or the guard blocks the
@@ -489,13 +500,23 @@
     /// </remarks>
     private void SnapshotProtectedBaseline()
     {
+        SnapshotProtectedRulesBaseline();
+        ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;
+    }
+
+    /// <summary>Re-baselines the five rule lists only, leaving the directory-read secret id pending.</summary>
+    private void SnapshotProtectedRulesBaseline()
+    {
         ppUsersBaseline = new List<string>(ppUsers);
         ppGroupsBaseline = new List<string>(ppGroups);
         ppOusBaseline = new List<string>(ppOus);
         ppPatternsBaseline = new List<string>(ppPatterns);
         ppTargetsBaseline = new List<string>(ppTargets);
-        ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;
     }
+
+    /// <summary>How many rules of the five kinds the page last loaded or saved.</summary>
+    private int LoadedRuleCount() =>
+        ppUsersBaseline.Count + ppGroupsBaseline.Count + ppOusBaseline.Count + ppPatternsBaseline.Count + ppTargetsBaseline.Count;
 
     private List<string> ppUsers = new();
     private List<string> ppGroups = new();
@@ -511,6 +532,11 @@
     private string ppDirectoryReadSecretId = "";
     private string ppDirectoryReadSecretIdBaseline = "";
     private string? ppLoadError;
+
+    // aud-a28j. True only when the protection rules were read. A load that failed leaves the five lists
+    // empty, and a save from them used to replace every protection rule with nothing - so Save is not
+    // offered and the save refuses on its own: the button is not the guard.
+    private bool ppLoaded;
 
     // Surfaced next to the add controls, not through statusMessage: a refused Add must not
     // overwrite an unrelated save result.
@@ -582,29 +608,43 @@
             if (Enablement.IsStoreCorrupt())
             {
                 enablementStoreCorrupt = true;
-                statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
+                statusMessage = EnablementRefusal();
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreCorrupt", statusMessage, PendingEnablementSections());
                 return;
             }
 
-            var previous = Enablement.GetAllEnablement();
-            Enablement.SaveEnablement(moduleEnablement);
-
-            foreach (var module in Catalog.GetAll().Where(m => !m.IsSystemModule))
+            // aud-a28j. The check above says the store reads now; this one says the toggles came from it.
+            // They are the all-disabled fallback when the page's load, or an earlier save, could not read it.
+            if (enablementStoreCorrupt)
             {
-                var prev = previous.GetValueOrDefault(module.Id, module.EnabledByDefault);
-                var curr = moduleEnablement.GetValueOrDefault(module.Id, module.EnabledByDefault);
-                if (prev != curr)
+                statusMessage = "Refusing to save: this page's toggles are not the stored module enablement state (the store could not be read), so saving them could switch modules off. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreUnreadable", statusMessage, PendingEnablementSections());
+                return;
+            }
+
+            // aud-a28k. Only the toggles the admin changed, each decided against its row under the write lock:
+            // writing the whole loaded map switched back every toggle changed elsewhere since the page loaded.
+            var outcome = Enablement.SetModulesEnabled(ChangedToggles());
+            if (outcome.StoreCorrupt)
+            {
+                enablementStoreCorrupt = true;
+                statusMessage = EnablementRefusal();
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreCorrupt", statusMessage, PendingEnablementSections());
+                return;
+            }
+
+            foreach (var change in outcome.Written)
+            {
+                try
                 {
-                    try
-                    {
-                        Audit.LogSettingsChange(currentUser, ip, $"Module:{module.Id}",
-                            prev ? new[] { "Enabled" } : Array.Empty<string>(),
-                            curr ? new[] { "Enabled" } : Array.Empty<string>());
-                    }
-                    catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for enablement change"); }
+                    Audit.LogSettingsChange(currentUser, ip, $"Module:{change.ModuleId}",
+                        change.Before ? new[] { "Enabled" } : Array.Empty<string>(),
+                        change.After ? new[] { "Enabled" } : Array.Empty<string>());
                 }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for enablement change"); }
             }
 
             // Clear BEFORE the reload below, or the guard fires on our own navigation and asks
@@ -641,12 +681,19 @@
     // lists the module sections it was changing (aud-a28h).
     private const string EnablementSection = "ModuleEnablement";
 
+    private string EnablementRefusal() =>
+        "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
+        + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
+
     /// <summary>The <c>Module:{id}</c> section of each toggle that differs from what the page loaded.</summary>
     private string[] PendingEnablementSections() =>
+        ChangedToggles().Keys.Select(id => $"Module:{id}").ToArray();
+
+    /// <summary>The toggles that differ from what the page loaded, and the state each was switched to.</summary>
+    private Dictionary<string, bool> ChangedToggles() =>
         moduleEnablement
             .Where(kv => !moduleEnablementBaseline.TryGetValue(kv.Key, out var loaded) || loaded != kv.Value)
-            .Select(kv => $"Module:{kv.Key}")
-            .ToArray();
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
 
     private async Task SaveLogLevel()
     {
@@ -679,7 +726,9 @@
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save log level: {ex.Message}";
+            // aud-a28k. SetLevel throws when the store refuses the level, and leaves the level in effect
+            // unchanged; this used to report and record a level the store had not kept.
+            statusMessage = $"Failed to save log level: {ex.Message.TrimEnd('.')}. The extended log level is still {ExtendedLog.CurrentLevel}.";
             statusIsError = true;
             Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
@@ -692,7 +741,16 @@
     private void LoadProtectedPrincipals()
     {
         var (cfg, _, error) = ProtectedPrincipalService.LoadEffectiveConfig();
-        if (error != null) { ppLoadError = error; return; }
+        if (error != null)
+        {
+            // aud-a26h. The service's error is the text a module shows an operator ("Contact your
+            // administrator"); this is the administrator's page, so it names the cause and its fix.
+            ppLoadError = "The protection rules could not be read, so the lists below are empty and saving is disabled. "
+                + SettingsStoreText.ProtectedPrincipals(
+                    ProtectedPrincipalService.LegacyImportFailed, ModuleConfigSvc.IsModuleCorrupt("MailboxPermissions"));
+            ppLoaded = false;
+            return;
+        }
         if (cfg != null)
         {
             ppUsers = cfg.Users.ToList();
@@ -703,6 +761,7 @@
         }
         ppDirectoryReadSecretId = ProtectedPrincipalService.GetDirectoryReadSecretId()?.ToString() ?? "";
         SnapshotProtectedBaseline();
+        ppLoaded = true;
     }
 
     // Only Patterns keeps a keydown handler. Users, Groups and OUs all use
@@ -992,6 +1051,30 @@
                 return;
             }
 
+            // aud-a28j. What this save writes is the page's lists, so they must be the store's: after a failed
+            // load they are empty, and saving them - with an entry added, even - replaced every rule.
+            if (!ppLoaded)
+            {
+                statusMessage = "Refusing to save: the protected principals could not be read when this page loaded, so the lists shown are not the stored rules and saving would replace every rule with them. Nothing was changed. Reload the page once the problem shown on this tab is fixed.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
+                return;
+            }
+
+            // The directory-read secret is written only when the admin changed it. Rewriting the loaded value
+            // on every save reverted a change made elsewhere, and a value the page could not load went back
+            // blank. When it is changing, its store is checked before anything is written.
+            var secretId = ppDirectoryReadSecretId.Trim();
+            var secretChanged = SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline) > 0;
+            if (secretChanged && ModuleConfigSvc.IsModuleCorrupt(ProtectedPrincipalService.ProtectedPrincipalsModuleKey))
+            {
+                statusMessage = "Refusing to save: the directory-read credential's setting cannot be read. Nothing was changed. "
+                    + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey);
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
+
             var newConfig = new ProtectedPrincipalConfig
             {
                 Users = ppUsers.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
@@ -1001,21 +1084,51 @@
                 GroupTargets = ppTargets.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
             };
 
-            ProtectedPrincipalService.SaveConfig(newConfig);
-            ProtectedPrincipalService.SaveDirectoryReadSecretId(ppDirectoryReadSecretId.Trim());
+            // Decided under the write lock from the rules as they are: a store that cannot be read, and a save
+            // holding no rules over rules this page never loaded, are refused there and write nothing.
+            var outcome = ProtectedPrincipalService.ReplaceConfig(newConfig, pageLoadedRules: LoadedRuleCount() > 0);
+            if (outcome.Status == ProtectedPrincipalSaveStatus.StoreCorrupt)
+            {
+                statusMessage = "Refusing to save: the protection rules could not be read when this save went to replace them. Nothing was changed. "
+                    + SettingsStoreText.ProtectedPrincipals(ProtectedPrincipalService.LegacyImportFailed, exclusionsUnreadable: false);
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
 
+            if (outcome.Status == ProtectedPrincipalSaveStatus.EmptyOverNonEmpty)
+            {
+                statusMessage = $"Refusing to save: this page holds no protection rules - none were read when it loaded - but the store now holds {outcome.Before?.RuleCount ?? 0}. Saving would delete every one of them, so nothing was changed. Reload the page to see the current rules.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "EmptyOverNonEmpty", statusMessage);
+                return;
+            }
+
+            // The rules are saved and in effect from here, so their record is written now - with the rows the
+            // write replaced as its before-state (aud-a28k), not an empty one - and before the secret, whose
+            // failure must not hide that they landed (aud-a28j's folded-in partial save).
             try
             {
-                Audit.LogSettingsChange(currentUser, ip, section,
-                    Array.Empty<string>(),
-                    new[] { $"Users:{newConfig.Users.Length},Groups:{newConfig.Groups.Length},OUs:{newConfig.OrganizationalUnits.Length},Patterns:{newConfig.SamAccountNamePatterns.Length},Targets:{newConfig.GroupTargets.Length}" });
+                Audit.LogSettingsChange(currentUser, ip, section, RuleEntries(outcome.Before), RuleEntries(outcome.After),
+                    new Dictionary<string, object?> { ["counts"] = RuleCounts(outcome.After) });
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for protected principals change"); }
 
-            dirty.ClearSection(SectionProtected);
-            SnapshotProtectedBaseline();
-            statusMessage = "Protected principals saved. Changes are effective immediately.";
-            statusIsError = false;
+            var secretFailure = secretChanged ? SaveDirectoryReadSecret(secretId, ip) : null;
+            if (secretFailure is null)
+            {
+                dirty.ClearSection(SectionProtected);
+                SnapshotProtectedBaseline();
+                statusMessage = "Protected principals saved. Changes are effective immediately.";
+                statusIsError = false;
+            }
+            else
+            {
+                SnapshotProtectedRulesBaseline();
+                RecountProtected();
+                statusMessage = secretFailure;
+                statusIsError = true;
+            }
             ppLoadError = null;
         }
         catch (Exception ex)
@@ -1026,4 +1139,59 @@
         }
         finally { saving = false; }
     }
+
+    private const string SecretSection = "ProtectedPrincipals:DirectoryReadSecretId";
+
+    /// <summary>
+    /// Writes the directory-read secret id after the rules have been saved and records it. Null when it
+    /// was saved; otherwise what the admin is told.
+    /// </summary>
+    /// <remarks>
+    /// Its own records, under its own section, because it is a second store: the rules are in
+    /// protected_principal and the secret in module_config. A secret that failed after the rules saved used
+    /// to reach the save's catch, so the page said "Failed to save" over rules already in effect and the one
+    /// record said nothing of what had landed.
+    /// </remarks>
+    private string? SaveDirectoryReadSecret(string secretId, string ip)
+    {
+        try
+        {
+            var update = ProtectedPrincipalService.SaveDirectoryReadSecretId(secretId);
+            try
+            {
+                Audit.LogSettingsChange(currentUser, ip, SecretSection, SecretValue(update.Before), SecretValue(update.After));
+            }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the directory-read secret id change"); }
+
+            return null;
+        }
+        catch (Exception secretEx)
+        {
+            Logger.LogError(secretEx, "The directory-read secret id was not saved; the protection rules were");
+            var message = $"The protection rules were saved and are in effect, but the directory-read credential (Delinea Secret ID) was not saved: {secretEx.Message} Save again to retry it.";
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, SecretSection, message);
+            return message;
+        }
+    }
+
+    private static string[] SecretValue(IReadOnlyDictionary<string, string> values) =>
+        values.TryGetValue(ProtectedPrincipalService.DirectoryReadSecretConfigKey, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? [value.Trim()]
+            : [];
+
+    /// <summary>Every rule as <c>Kind:value</c>, so a settings-change record lists what was added and removed.</summary>
+    private static string[] RuleEntries(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData? rules) =>
+        rules is null
+            ? []
+            : rules.Users.Select(v => "Users:" + v)
+                .Concat(rules.Groups.Select(v => "Groups:" + v))
+                .Concat(rules.OrganizationalUnits.Select(v => "OUs:" + v))
+                .Concat(rules.SamAccountNamePatterns.Select(v => "Patterns:" + v))
+                .Concat(rules.GroupTargets.Select(v => "Targets:" + v))
+                .ToArray();
+
+    private static string RuleCounts(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData? rules) =>
+        rules is null
+            ? ""
+            : $"Users:{rules.Users.Length},Groups:{rules.Groups.Length},OUs:{rules.OrganizationalUnits.Length},Patterns:{rules.SamAccountNamePatterns.Length},Targets:{rules.GroupTargets.Length}";
 }

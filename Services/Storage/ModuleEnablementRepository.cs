@@ -1,3 +1,5 @@
+using Microsoft.Data.Sqlite;
+
 namespace ExchangeAdminWeb.Services.Storage;
 
 /// <summary>
@@ -80,6 +82,64 @@ public sealed class ModuleEnablementRepository
             }
         });
     }
+
+    /// <summary>
+    /// Sets only the given modules, in ONE write transaction, each decided against its row as it is
+    /// under the write lock (aud-a28k): a module already in the target state - its row, or
+    /// <paramref name="defaults"/> where it has none - is not written. Returns the modules written, each
+    /// with the state it replaced. Nothing to write rolls the transaction back, change token included.
+    /// </summary>
+    public IReadOnlyList<EnablementChange> SetModules(
+        IReadOnlyDictionary<string, bool> changes, IReadOnlyDictionary<string, bool> defaults)
+    {
+        try
+        {
+            return _store.Write((connection, transaction) =>
+            {
+                var written = new List<EnablementChange>();
+                foreach (var (moduleId, enabled) in changes)
+                {
+                    if (string.IsNullOrWhiteSpace(moduleId))
+                        continue;
+
+                    var before = ReadEnabled(connection, transaction, moduleId)
+                        ?? defaults.GetValueOrDefault(moduleId);
+                    if (before == enabled)
+                        continue;
+
+                    using var upsert = connection.CreateCommand();
+                    upsert.Transaction = transaction;
+                    upsert.CommandText =
+                        "INSERT INTO module_enablement (module_id, enabled, updated_at) VALUES ($id, $enabled, $ts) " +
+                        "ON CONFLICT(module_id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at;";
+                    upsert.Parameters.AddWithValue("$id", moduleId);
+                    upsert.Parameters.AddWithValue("$enabled", enabled ? 1 : 0);
+                    upsert.Parameters.AddWithValue("$ts", DateTime.UtcNow.ToString("o"));
+                    upsert.ExecuteNonQuery();
+                    written.Add(new EnablementChange(moduleId, before, enabled));
+                }
+
+                return written.Count > 0 ? written : throw new NothingWritten();
+            });
+        }
+        catch (NothingWritten)
+        {
+            return [];
+        }
+    }
+
+    private static bool? ReadEnabled(SqliteConnection connection, SqliteTransaction transaction, string moduleId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT enabled FROM module_enablement WHERE module_id = $id;";
+        command.Parameters.AddWithValue("$id", moduleId);
+        return command.ExecuteScalar() is { } value and not DBNull ? Convert.ToInt64(value) != 0 : null;
+    }
+
+    // Thrown when every module is already in its target state, so the write rolls back instead of
+    // committing a change-token bump that would make every cache on both instances reload for nothing.
+    private sealed class NothingWritten : Exception;
 
     /// <summary>
     /// Non-destructive startup seeding (SqliteConfigStore-Plan Section 3d): inserts a row for each
@@ -168,3 +228,6 @@ public sealed class ModuleEnablementRepository
         });
     }
 }
+
+/// <summary>One module a save switched: the state it replaced, as read under the write lock, and the state written.</summary>
+public sealed record EnablementChange(string ModuleId, bool Before, bool After);

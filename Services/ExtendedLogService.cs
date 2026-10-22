@@ -81,21 +81,31 @@ public class ExtendedLogService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Stores the extended-log level and applies it. Throws when it cannot be stored, leaving the level
+    /// in effect unchanged (aud-a28k).
+    /// </summary>
+    /// <remarks>
+    /// It used to apply the level first and swallow a store failure, so Admin Settings recorded and
+    /// reported a level the store had not kept - in effect on this instance only until the next config
+    /// write reloaded the stored one, and never on the other. Stored first, applied after, or neither.
+    /// </remarks>
     public void SetLevel(string level)
     {
-        _minimumLevel = ParseLevel(level);
-
         try
         {
             _settings.Set(LevelSettingKey, level);
-            // Our own write bumped the token; re-read (token first) so the next check does not
-            // count it as a foreign change.
-            LoadLevel();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to persist extended log level");
+            throw;
         }
+
+        _minimumLevel = ParseLevel(level);
+        // Our own write bumped the token; re-read (token first) so the next check does not
+        // count it as a foreign change.
+        LoadLevel();
     }
 
     private static LogEventLevel ParseLevel(string level) => level.ToLowerInvariant() switch

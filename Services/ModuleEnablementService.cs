@@ -156,6 +156,9 @@ public class ModuleEnablementService
         return _legacyFileCorrupt || !_repository.TryGetAll(out _);
     }
 
+    /// <summary>True when a legacy modules-enabled.json was not imported and keeps the store fail-closed (aud-a26h).</summary>
+    public bool LegacyImportFailed => _legacyFileCorrupt;
+
     public void SaveEnablement(Dictionary<string, bool> enablement)
     {
         lock (_writeLock)
@@ -171,6 +174,49 @@ public class ModuleEnablementService
 
             _repository.SaveAll(toSave);
             _logger.LogInformation("Module enablement saved");
+        }
+    }
+
+    /// <summary>
+    /// The admin pages' save (aud-a28k): sets only the modules in <paramref name="changes"/>, each
+    /// decided against its row under the write lock, and returns the modules it wrote with the state
+    /// each replaced. System modules and unknown ids are ignored. Writes nothing while the legacy file
+    /// is not imported. Throws when the write fails.
+    /// </summary>
+    /// <remarks>
+    /// The pages used to write the whole enablement map - Admin Settings the map it loaded, the two
+    /// one-module pages a map read just before - so a toggle changed elsewhere since that read, on the
+    /// other instance included, was switched back. Only the modules the admin changed are written, each
+    /// against its row under the write lock. A boolean cannot conflict: a row that already holds the target
+    /// was switched the same way elsewhere, is skipped, and is recorded by the save that switched it.
+    /// </remarks>
+    public EnablementSaveOutcome SetModulesEnabled(IReadOnlyDictionary<string, bool> changes)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+
+        if (_legacyFileCorrupt)
+            return new EnablementSaveOutcome(true, []);
+
+        var defaults = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var settable = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (moduleId, enabled) in changes)
+        {
+            var module = _catalog.GetById(moduleId);
+            if (module is null || module.IsSystemModule)
+                continue;
+
+            defaults[module.Id] = module.EnabledByDefault;
+            settable[module.Id] = enabled;
+        }
+
+        if (settable.Count == 0)
+            return new EnablementSaveOutcome(false, []);
+
+        lock (_writeLock)
+        {
+            var written = _repository.SetModules(settable, defaults);
+            _logger.LogInformation("Module enablement set for {Count} module(s)", written.Count);
+            return new EnablementSaveOutcome(false, written);
         }
     }
 
@@ -267,3 +313,9 @@ public class ModuleEnablementService
         }
     }
 }
+
+/// <summary>
+/// What <see cref="ModuleEnablementService.SetModulesEnabled"/> did: <paramref name="StoreCorrupt"/> when it
+/// wrote nothing because the store is not to be written, otherwise the modules it wrote.
+/// </summary>
+public sealed record EnablementSaveOutcome(bool StoreCorrupt, IReadOnlyList<EnablementChange> Written);

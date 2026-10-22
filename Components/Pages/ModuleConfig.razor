@@ -108,7 +108,7 @@
                 @if (enablementStoreCorrupt)
                 {
                     <div class="alert alert-danger py-2 mb-2">
-                        <small><strong>Module enablement store is corrupt</strong> — config\modules-enabled.json cannot be read, so the state shown below is the fallback, not the stored state. Saving is disabled until the file is fixed or restored.</small>
+                        <small><strong>Module enablement store is corrupt.</strong> The state shown below is the fallback, not the stored state, and saving is disabled. @SettingsStoreText.Enablement(Enablement.LegacyImportFailed)</small>
                     </div>
                 }
                 <div class="form-check form-switch mb-2">
@@ -148,10 +148,9 @@
                 {
                     <div class="alert alert-danger mb-0">
                         <strong>Section access store is corrupt.</strong>
-                        config\sectionaccess.json exists but cannot be read, so the group lists cannot
-                        be shown and saving is disabled — saving now would replace the whole fragment,
-                        wiping every module's groups. Fix or restore the file (deploy backups:
-                        ConfigBackups\config.&lt;timestamp&gt;.bak), then reload this page.
+                        The group lists cannot be shown and saving is disabled - saving now would replace
+                        groups this page cannot see.
+                        @SettingsStoreText.SectionAccess(SectionAccess.LegacyImportFailed)
                     </div>
                 }
                 else
@@ -159,7 +158,7 @@
                 @if (sectionAccessUnconfigured)
                 {
                     <div class="alert alert-info py-2 mb-2">
-                        <small>Section access has never been configured on this server (no config\sectionaccess.json and no legacy appsettings block). Saving here creates the fragment and starts enforcing these lists for all fail-closed modules.</small>
+                        <small>Section access has never been configured on this server (none is stored in the config database, and appsettings.json holds no legacy Security:SectionAccess block). Saving here stores it and starts enforcing these lists for all fail-closed modules.</small>
                     </div>
                 }
 
@@ -350,10 +349,9 @@
                 {
                     <div class="alert alert-danger mb-0">
                         <strong>Module configuration is corrupt.</strong>
-                        config\module-config-@(module.Id).json exists but cannot be read, so the stored
-                        values cannot be shown and saving is disabled — saving now would overwrite them
-                        with the blank fields below. Fix or restore the file (deploy backups:
-                        ConfigBackups\config.&lt;timestamp&gt;.bak), then reload this page.
+                        The stored values cannot be shown and saving is disabled - saving now would
+                        overwrite them with blank fields.
+                        @SettingsStoreText.ModuleConfig(module.Id)
                     </div>
                 }
                 else
@@ -620,6 +618,13 @@
 
                 <p class="text-muted mb-2"><small>Groups that can manage this module's configuration without global admin access.</small></p>
 
+                @if (moduleAdminsUnreadable)
+                {
+                    <div class="alert alert-danger py-2 mb-2">
+                        <small><strong>Module admin groups cannot be read.</strong> The list below is not the stored groups, and saving is disabled. @SettingsStoreText.ModuleAdmins()</small>
+                    </div>
+                }
+
                 @* Rows, not chips - same reasoning as the Access pane, and this is a list the
                    owner expects to reach 10-20 entries. *@
                 <table class="adm-tbl">
@@ -667,7 +672,7 @@
         }
         <span class="adm-grow"></span>
         <button class="btn btn-outline-secondary btn-sm" @onclick="ReloadAsync" disabled="@(saving || !dirty.IsDirty)">Discard</button>
-        <button class="btn btn-primary btn-sm" @onclick="SaveCurrentTabAsync" disabled="@saving">Save</button>
+        <button class="btn btn-primary btn-sm" @onclick="SaveCurrentTabAsync" disabled="@(saving || !CanSaveCurrentTab())">Save</button>
     </div>
 </div>
 
@@ -868,6 +873,21 @@
         }
     }
 
+    /// <summary>Whether the visible tab's store was read when the page loaded, so Save is offered.</summary>
+    /// <remarks>
+    /// aud-a28j. A tab whose store did not load holds the fallback, not the stored state, and has nothing
+    /// to save over it. Withholding the button is the courtesy; each save refuses the same case itself.
+    /// </remarks>
+    private bool CanSaveCurrentTab() => tab switch
+    {
+        SecStatus => !enablementStoreCorrupt,
+        SecAccess => !sectionAccessCorrupt,
+        SecConfig => !moduleConfigCorrupt,
+        SecAttrs => !allowlistCorrupt,
+        SecAdmins => !moduleAdminsUnreadable,
+        _ => true,
+    };
+
     /// <summary>
     /// Discards edits by reloading the page from the store. Clears dirty state FIRST, or the
     /// unsaved-changes guard blocks the very navigation the operator asked for.
@@ -907,6 +927,10 @@
     private bool moduleConfigCorrupt;
     private bool sectionAccessCorrupt;
     private bool sectionAccessUnconfigured;
+
+    // aud-a28j. GetModuleAdmins reads an unreadable store as no admins, with no banner, and a save from
+    // that empty list replaced the module's admin groups with it.
+    private bool moduleAdminsUnreadable;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -960,11 +984,14 @@
         enablementStoreCorrupt = Enablement.IsStoreCorrupt();
         moduleConfigCorrupt = ModuleConfigSvc.IsModuleCorrupt(module.Id);
         sectionAccessCorrupt = SectionAccess.IsFragmentCorrupt();
-        sectionAccessUnconfigured = !SectionAccess.IsSectionAccessConfigured();
+        // aud-a28j. Not asked of a store already known corrupt: that read throws, and the whole page failed
+        // to load instead of showing the access tab's banner.
+        sectionAccessUnconfigured = !sectionAccessCorrupt && !SectionAccess.IsSectionAccessConfigured();
 
         currentConfigState = ModuleConfigSvc.GetModuleConfig(module.Id);
         moduleEnabled = Enablement.IsModuleRawEnabled(module.Id);
-        moduleAdminGroups = ModuleAdmin.GetModuleAdmins(module.Id).ToList();
+        moduleAdminsUnreadable = !ModuleAdmin.TryGetAllGrants(out var adminGrants);
+        moduleAdminGroups = (adminGrants.TryGetValue(module.Id, out var admins) ? admins : Array.Empty<string>()).ToList();
 
         configBaseline = new Dictionary<string, string>(currentConfigState);
         moduleEnabledBaseline = moduleEnabled;
@@ -1131,9 +1158,20 @@
             if (ModuleConfigSvc.IsModuleCorrupt(module.Id))
             {
                 moduleConfigCorrupt = true;
-                statusMessage = "Refusing to save: this module's config file is corrupt and saving would overwrite it with the rendered fallback values. Fix or restore config\\module-config-" + module.Id + ".json first.";
+                statusMessage = "Refusing to save: saving would overwrite this module's stored configuration with the rendered fallback values. Nothing was changed. "
+                    + SettingsStoreText.ModuleConfig(module.Id);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
+
+            // aud-a28j. The check above says the store reads now; this one says the fields came from it. A
+            // load that could not read it left blank fields, and the check above passes once it reads again.
+            if (moduleConfigCorrupt)
+            {
+                statusMessage = "Refusing to save: this page does not hold the module's stored configuration (it could not be read), so saving would overwrite it with the blank fields shown. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
                 return;
             }
 
@@ -1194,24 +1232,45 @@
             if (Enablement.IsStoreCorrupt())
             {
                 enablementStoreCorrupt = true;
-                statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
+                statusMessage = "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
+                    + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
             }
 
-            var enablement = Enablement.GetAllEnablement();
-            var previous = enablement.GetValueOrDefault(module.Id, module.EnabledByDefault);
-            enablement[module.Id] = moduleEnabled;
-            Enablement.SaveEnablement(enablement);
+            // aud-a28j. The same for the toggle: it is the all-disabled fallback when the load could not read it.
+            if (enablementStoreCorrupt)
+            {
+                statusMessage = "Refusing to save: this page's toggle is not the stored module enablement state (the store could not be read), so saving it could switch the module off. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
+                return;
+            }
 
-            if (previous != moduleEnabled)
+            // aud-a28k. This module only, and only when toggled, decided against its row under the write lock:
+            // the whole-map write it replaces switched back any module changed elsewhere between its read and
+            // its write.
+            var outcome = Enablement.SetModulesEnabled(moduleEnabled == moduleEnabledBaseline
+                ? new Dictionary<string, bool>()
+                : new Dictionary<string, bool> { [module.Id] = moduleEnabled });
+            if (outcome.StoreCorrupt)
+            {
+                enablementStoreCorrupt = true;
+                statusMessage = "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
+                    + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
+
+            foreach (var change in outcome.Written)
             {
                 try
                 {
                     Audit.LogSettingsChange(currentUser, ip, section,
-                        previous ? new[] { "Enabled" } : Array.Empty<string>(),
-                        moduleEnabled ? new[] { "Enabled" } : Array.Empty<string>());
+                        change.Before ? new[] { "Enabled" } : Array.Empty<string>(),
+                        change.After ? new[] { "Enabled" } : Array.Empty<string>());
                 }
                 catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module status change"); }
             }
@@ -1267,9 +1326,20 @@
             if (SectionAccess.IsFragmentCorrupt())
             {
                 sectionAccessCorrupt = true;
-                statusMessage = "Refusing to save: config\\sectionaccess.json is corrupt and saving would replace it, wiping every module's groups. Fix or restore the file first.";
+                statusMessage = "Refusing to save: saving would replace section-access groups this page cannot see. Nothing was changed. "
+                    + SettingsStoreText.SectionAccess(SectionAccess.LegacyImportFailed);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, PendingAccessSections());
+                return;
+            }
+
+            // aud-a28j. The lists are this page's load: empty when it could not read the store. Asked before
+            // the directory confirmation below, which must not run for a save that cannot happen.
+            if (sectionAccessCorrupt)
+            {
+                statusMessage = "Refusing to save: this page does not hold the stored section access (it could not be read), so saving would replace the stored groups with the empty lists it has. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage, PendingAccessSections());
                 return;
             }
 
@@ -1290,32 +1360,42 @@
                 return;
             }
 
-            var allAccess = SectionAccess.GetSectionAccess();
+            // aud-a28k. Only the aliases the admin edited - from the confirmed snapshot, never the live lists -
+            // each compared under the write lock with what this page loaded; one changed elsewhere since
+            // refuses the whole save. Overwriting every alias of the module with the page's snapshot lost
+            // grants made or revoked elsewhere, edited or not.
+            var edited = policyAliases
+                .Where(a => GroupDelta(snapshot[a].ToList(), accessBaseline.GetValueOrDefault(a) ?? new List<string>()) > 0)
+                .ToDictionary(a => a, a => snapshot[a], StringComparer.OrdinalIgnoreCase);
+            var loaded = edited.Keys.ToDictionary(
+                a => a, a => (accessBaseline.GetValueOrDefault(a) ?? new List<string>()).ToArray(), StringComparer.OrdinalIgnoreCase);
 
-            if (allAccess.Count == 0)
+            var outcome = SectionAccess.SaveEditedAliases(loaded, edited);
+            if (outcome.Status == SectionAccessSaveStatus.StoreCorrupt)
             {
-                foreach (var alias in Catalog.GetConfigurablePolicyAliases())
-                {
-                    if (!allAccess.ContainsKey(alias))
-                        allAccess[alias] = SectionAccess.GetGroupsForSection(alias);
-                }
+                sectionAccessCorrupt = true;
+                statusMessage = "Refusing to save: saving would replace section-access groups this page cannot see. Nothing was changed. "
+                    + SettingsStoreText.SectionAccess(SectionAccess.LegacyImportFailed);
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, PendingAccessSections());
+                return;
             }
 
-            var previousGroups = new Dictionary<string, string[]>();
-            foreach (var alias in policyAliases)
+            if (outcome.Status == SectionAccessSaveStatus.ConcurrentChange)
             {
-                previousGroups[alias] = allAccess.TryGetValue(alias, out var prev) ? prev : Array.Empty<string>();
-                allAccess[alias] = snapshot[alias];
+                statusMessage = $"Refusing to save: the groups for {string.Join(", ", outcome.ChangedAliases.Select(AliasName))} were changed after this page loaded them - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage, PendingAccessSections());
+                return;
             }
-            SectionAccess.SaveSectionAccess(allAccess);
+
             // Persisted separately from the grants, and after them: a display name is cosmetic, so
             // failing to store one must never fail the access save that already succeeded.
             SectionAccess.SaveGroupDisplayNames(accessDisplayNames);
 
-            foreach (var alias in policyAliases)
+            foreach (var (alias, curr) in edited)
             {
-                var prev = previousGroups[alias];
-                var curr = snapshot[alias];
+                var prev = outcome.Before.TryGetValue(alias, out var stored) ? stored : Array.Empty<string>();
                 if (!prev.SequenceEqual(curr, StringComparer.OrdinalIgnoreCase))
                 {
                     try { Audit.LogSettingsChange(currentUser, ip, alias, prev, curr); }
@@ -1327,7 +1407,9 @@
             // unsaved edit rather than vanishing from the dirty count.
             accessBaseline = snapshot.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
             RecountAccess();
-            statusMessage = "Section access saved.";
+            statusMessage = outcome.Status == SectionAccessSaveStatus.NothingToSave
+                ? "Section access is unchanged; there was nothing to save."
+                : "Section access saved.";
             statusIsError = false;
         }
         catch (Exception ex)
@@ -1348,6 +1430,13 @@
                 accessState.GetValueOrDefault(a) ?? new List<string>(),
                 accessBaseline.GetValueOrDefault(a) ?? new List<string>()) > 0)
             .ToArray();
+
+    /// <summary>An alias as the admin reads it on the Access tab: its label, with the alias when they differ.</summary>
+    private string AliasName(string alias)
+    {
+        var label = PermissionLabelFor(alias);
+        return string.Equals(label, alias, StringComparison.Ordinal) ? alias : $"{label} ({alias})";
+    }
 
     private async Task SaveModuleAdminsAsync()
     {
@@ -1370,6 +1459,15 @@
                 return;
             }
 
+            // aud-a28j. The list is this page's load: empty, not the stored groups, when it could not be read.
+            if (moduleAdminsUnreadable)
+            {
+                statusMessage = "Refusing to save: the module admin groups could not be read when this page loaded, so the list shown is not the stored groups and saving would replace them with it. Nothing was changed. Reload the page.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
+                return;
+            }
+
             // aud-a1b, the same rule as the access save: confirm every grant this save adds, and
             // persist the snapshot that was confirmed, never the live list.
             var snapshot = moduleAdminGroups.ToArray();
@@ -1383,7 +1481,19 @@
                 return;
             }
 
-            var previous = ModuleAdmin.GetModuleAdmins(module.Id);
+            // aud-a28j. Re-read after the directory confirmation, immediately before the write; the same read
+            // is the record's before-state.
+            if (!ModuleAdmin.TryGetAllGrants(out var stored))
+            {
+                moduleAdminsUnreadable = true;
+                statusMessage = "Refusing to save: saving would replace module admin groups this page cannot see. Nothing was changed. "
+                    + SettingsStoreText.ModuleAdmins();
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
+
+            var previous = stored.TryGetValue(module.Id, out var storedAdmins) ? storedAdmins : Array.Empty<string>();
             ModuleAdmin.SetModuleAdmins(module.Id, snapshot);
 
             try

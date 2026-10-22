@@ -84,7 +84,7 @@ Each module has its own config page (linked in the sidebar) with:
 - **Configuration** — module-specific settings (config fields)
 - **Module Admins** — AD groups that can configure this module without global admin
 
-Changes are persisted to `config/modules-enabled.json`, `config/sectionaccess.json`, and `config/module-config-{ModuleId}.json` and take effect immediately.
+Changes are stored in the config database - the `module_enablement`, `section_access`, `module_config` and `module_admins` tables (`docs/ConfigDbOperations.md`) - and take effect immediately. The legacy `config/*.json` files are imported once and archived; a tab whose store cannot be read says which table, or which legacy file was not imported, and does not offer Save.
 Global admins see all module config links; module admins see only their delegated modules.
 
 ### Admin Event Log Page (`/admin-event-log`)
@@ -746,7 +746,7 @@ Set-WebConfigurationProperty -Filter '/system.webServer/security/authentication/
 
 ### Group-Based Authorization
 
-Each module is gated by its own section access groups. `Security:AllowedGroups` is only a backward-compatibility fallback for modules that are not fail-closed when no `config/sectionaccess.json` or legacy `Security:SectionAccess` block exists:
+Each module is gated by its own section access groups. `Security:AllowedGroups` is only a backward-compatibility fallback for modules that are not fail-closed while section access has never been saved to the config database and no legacy `Security:SectionAccess` block exists:
 
 ```json
 "AllowedGroups": [
@@ -773,7 +773,7 @@ Members of `Security:AdminGroups` can access Admin Settings. Admin Event Log is 
 
 ### Section-Level Access (SectionAccess)
 
-Each application feature is independently gated by AD group membership via its section access groups, managed on each module's config page (`/module-config/{ModuleId}`). The config is stored in `config/sectionaccess.json`:
+Each application feature is independently gated by AD group membership via its section access groups, managed on each module's config page (`/module-config/{ModuleId}`) and stored, as group SIDs, in the `section_access` table of the config database (`docs/ConfigDbOperations.md`). Until the first save, the legacy `Security:SectionAccess` block in `appsettings.json` applies, in this shape:
 
 ```json
 "SectionAccess": {

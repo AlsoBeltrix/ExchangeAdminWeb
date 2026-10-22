@@ -34,9 +34,12 @@ public sealed class SectionAccessRepository
         }
     }
 
-    private static Dictionary<string, string[]> ReadAll(SqliteConnection connection)
+    private static Dictionary<string, string[]> ReadAll(SqliteConnection connection) => ReadAll(connection, null);
+
+    private static Dictionary<string, string[]> ReadAll(SqliteConnection connection, SqliteTransaction? transaction)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT policy_alias, group_value FROM section_access;";
         var map = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         using var reader = command.ExecuteReader();
@@ -84,9 +87,12 @@ public sealed class SectionAccessRepository
         }
     }
 
-    private static bool ReadConfigured(SqliteConnection connection)
+    private static bool ReadConfigured(SqliteConnection connection) => ReadConfigured(connection, null);
+
+    private static bool ReadConfigured(SqliteConnection connection, SqliteTransaction? transaction)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT 1 FROM section_access_present LIMIT 1;";
         return command.ExecuteScalar() is not null;
     }
@@ -133,17 +139,7 @@ public sealed class SectionAccessRepository
         // Carry display names across the delete-and-reinsert. Without this, every admin save wipes
         // the names of groups it did not touch, and the page falls back to showing raw SIDs until
         // the next migration run - which, being idempotent, would never run again.
-        var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        using (var read = connection.CreateCommand())
-        {
-            read.Transaction = transaction;
-            read.CommandText =
-                "SELECT group_value, group_display_name FROM section_access " +
-                "WHERE group_display_name IS NOT NULL AND group_display_name <> '';";
-            using var reader = read.ExecuteReader();
-            while (reader.Read())
-                displayNames[reader.GetString(0)] = reader.GetString(1);
-        }
+        var displayNames = ReadDisplayNames(connection, transaction);
 
         using (var delete = connection.CreateCommand())
         {
@@ -153,24 +149,106 @@ public sealed class SectionAccessRepository
         }
 
         foreach (var (alias, groups) in access)
-        {
-            if (string.IsNullOrWhiteSpace(alias) || groups == null)
-                continue;
+            InsertGroups(connection, transaction, alias, groups, displayNames);
+    }
 
-            foreach (var group in groups.Where(g => !string.IsNullOrWhiteSpace(g)).Distinct(StringComparer.OrdinalIgnoreCase))
+    /// <summary>
+    /// Replaces the groups of some aliases in ONE write transaction (aud-a28k): <paramref name="decide"/>
+    /// is shown the table as it is under the write lock and returns the aliases to replace, each with its
+    /// groups, or null to store nothing - in which case the transaction is rolled back and nothing, not
+    /// even the change token, is written. Aliases it does not return are not touched. Display names are
+    /// carried across, and the presence marker is set.
+    /// </summary>
+    public SectionAccessReplaceOutcome ReplaceAliases(Func<SectionAccessSnapshot, IReadOnlyDictionary<string, string[]>?> decide)
+    {
+        ArgumentNullException.ThrowIfNull(decide);
+        try
+        {
+            return _store.Write((connection, transaction) =>
             {
-                using var insert = connection.CreateCommand();
-                insert.Transaction = transaction;
-                insert.CommandText =
-                    "INSERT INTO section_access (policy_alias, group_value, group_display_name) " +
-                    "VALUES ($alias, $group, $display) " +
-                    "ON CONFLICT(policy_alias, group_value) DO NOTHING;";
-                insert.Parameters.AddWithValue("$alias", alias);
-                insert.Parameters.AddWithValue("$group", group);
-                insert.Parameters.AddWithValue("$display",
-                    displayNames.TryGetValue(group, out var name) ? name : (object)DBNull.Value);
-                insert.ExecuteNonQuery();
-            }
+                var before = ReadSnapshot(connection, transaction);
+                var replacement = decide(before) ?? throw new NothingWritten(before);
+                var displayNames = ReadDisplayNames(connection, transaction);
+
+                foreach (var (alias, groups) in replacement)
+                {
+                    if (string.IsNullOrWhiteSpace(alias) || groups == null)
+                        continue;
+
+                    using (var delete = connection.CreateCommand())
+                    {
+                        delete.Transaction = transaction;
+                        delete.CommandText = "DELETE FROM section_access WHERE policy_alias = $alias;";
+                        delete.Parameters.AddWithValue("$alias", alias);
+                        delete.ExecuteNonQuery();
+                    }
+
+                    InsertGroups(connection, transaction, alias, groups, displayNames);
+                }
+
+                MarkPresent(connection, transaction);
+                return new SectionAccessReplaceOutcome(true, before);
+            });
+        }
+        catch (NothingWritten nothing)
+        {
+            return new SectionAccessReplaceOutcome(false, nothing.Before);
+        }
+    }
+
+    private static SectionAccessSnapshot ReadSnapshot(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        try
+        {
+            return new SectionAccessSnapshot(true, ReadAll(connection, transaction), ReadConfigured(connection, transaction));
+        }
+        catch
+        {
+            return SectionAccessSnapshot.Unreadable;
+        }
+    }
+
+    // Thrown out of the write when decide stores nothing - a refusal, or nothing to save - because
+    // IConfigStore.Write commits, and bumps the change token both instances watch, whenever its callback
+    // returns. An exception is its documented rollback. Caught in ReplaceAliases; it never leaves this class.
+    private sealed class NothingWritten(SectionAccessSnapshot before) : Exception
+    {
+        public SectionAccessSnapshot Before { get; } = before;
+    }
+
+    private static Dictionary<string, string> ReadDisplayNames(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        using var read = connection.CreateCommand();
+        read.Transaction = transaction;
+        read.CommandText =
+            "SELECT group_value, group_display_name FROM section_access " +
+            "WHERE group_display_name IS NOT NULL AND group_display_name <> '';";
+        using var reader = read.ExecuteReader();
+        while (reader.Read())
+            displayNames[reader.GetString(0)] = reader.GetString(1);
+        return displayNames;
+    }
+
+    private static void InsertGroups(SqliteConnection connection, SqliteTransaction transaction,
+        string alias, string[]? groups, IReadOnlyDictionary<string, string> displayNames)
+    {
+        if (string.IsNullOrWhiteSpace(alias) || groups == null)
+            return;
+
+        foreach (var group in groups.Where(g => !string.IsNullOrWhiteSpace(g)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            using var insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText =
+                "INSERT INTO section_access (policy_alias, group_value, group_display_name) " +
+                "VALUES ($alias, $group, $display) " +
+                "ON CONFLICT(policy_alias, group_value) DO NOTHING;";
+            insert.Parameters.AddWithValue("$alias", alias);
+            insert.Parameters.AddWithValue("$group", group);
+            insert.Parameters.AddWithValue("$display",
+                displayNames.TryGetValue(group, out var name) ? name : (object)DBNull.Value);
+            insert.ExecuteNonQuery();
         }
     }
 
@@ -373,3 +451,17 @@ public sealed record SidConversion(string PolicyAlias, string Value, string Sid,
 /// <param name="AlreadyConverted">Rows already in the converted state when the lock was held.</param>
 /// <param name="Skipped">Rows changed or removed after the read, left exactly as they were.</param>
 public sealed record SidConversionOutcome(int Converted, int AlreadyConverted, IReadOnlyList<SidConversion> Skipped);
+
+/// <summary>The section-access rows and presence marker, read together (aud-a28k).</summary>
+/// <param name="Readable">False when the read failed; <paramref name="Access"/> is then empty and means nothing.</param>
+public sealed record SectionAccessSnapshot(bool Readable, Dictionary<string, string[]> Access, bool Configured)
+{
+    public static SectionAccessSnapshot Unreadable { get; } =
+        new(false, new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), false);
+}
+
+/// <summary>
+/// What <see cref="SectionAccessRepository.ReplaceAliases"/> did: whether it wrote, and the table as it was
+/// under the write lock.
+/// </summary>
+public sealed record SectionAccessReplaceOutcome(bool Replaced, SectionAccessSnapshot Before);
