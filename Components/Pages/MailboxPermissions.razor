@@ -443,7 +443,7 @@
                         Audit.LogMailboxPermission(
                             currentUser, ipAddress, $"Add{permType}_SelfGrantAttempt", target, user, permType,
                             false, ticket, autoMap,
-                            errorDetail: "Self-grant blocked: User attempted to grant permissions to themselves");
+                            errorDetail: selfGrantError);
                     }
                     catch (Exception ex)
                     {

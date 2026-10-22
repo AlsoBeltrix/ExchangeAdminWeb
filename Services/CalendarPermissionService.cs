@@ -166,7 +166,7 @@ public class CalendarPermissionService : ExchangeServiceBase
                         audit.LogCalendarPermission(
                             currentUser, ipAddress, "BulkSetCalendar_SelfGrantAttempt",
                             row.Target, row.User, row.AccessRight, false, ticketNumber,
-                            errorDetail: "Self-grant blocked: User attempted to grant permissions to themselves");
+                            errorDetail: selfGrantError);
 
                         errors.Add($"{row.Target}/{row.User}: {selfGrantError}");
                         entries.Add(new BulkOperationEntry

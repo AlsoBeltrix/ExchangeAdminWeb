@@ -92,12 +92,25 @@ public class PermissionValidator
 
         var val = values.GetValueOrDefault("PreventSelfGrant");
         if (string.IsNullOrWhiteSpace(val))
-            return bool.Parse(_config["Security:PreventSelfGrant"] ?? "true");
+            return PreventSelfGrantFromAppsettings();
 
         if (bool.TryParse(val, out var result))
             return result;
 
         _logger.LogWarning("The self-grant setting holds '{Value}', which is neither true nor false - self-grants are refused until it is corrected", val);
+        return true;
+    }
+
+    private bool PreventSelfGrantFromAppsettings()
+    {
+        var fallback = _config["Security:PreventSelfGrant"];
+        if (string.IsNullOrWhiteSpace(fallback))
+            return true;
+
+        if (bool.TryParse(fallback, out var result))
+            return result;
+
+        _logger.LogWarning("The appsettings value Security:PreventSelfGrant is '{Value}', which is neither true nor false - self-grants are refused until it is corrected", fallback);
         return true;
     }
 
@@ -591,30 +604,30 @@ public class PermissionValidator
             return "Access denied: You cannot grant permissions to yourself.";
         }
 
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
-            if (resolver != null)
-            {
-                var currentId = await resolver.ResolveToObjectIdAsync(currentUser);
-                var affectedId = await resolver.ResolveToObjectIdAsync(affectedUser);
+        var (actorAnswered, actor) = await LookUpRecipientAsync(currentUser, "the self-grant check");
+        if (!actorAnswered)
+            return SelfGrantCheckIncomplete(currentUser);
 
-                if (currentId != null && affectedId != null &&
-                    string.Equals(currentId, affectedId, StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogWarning("User {User} attempted to grant permissions to themselves ({Affected}) - resolved via ObjectId", currentUser, affectedUser);
-                    return "Access denied: You cannot grant permissions to yourself.";
-                }
-            }
-        }
-        catch (Exception ex)
+        var (granteeAnswered, grantee) = await LookUpRecipientAsync(affectedUser, "the self-grant check");
+        if (!granteeAnswered)
+            return SelfGrantCheckIncomplete(affectedUser);
+
+        if (actor is not null && grantee is not null && SameRecipient(actor, grantee))
         {
-            _logger.LogWarning(ex, "Identity resolution failed for self-grant check, falling back to string matching");
+            _logger.LogWarning("User {User} attempted to grant permissions to themselves ({Affected}) - Exchange Online names both {Recipient}", currentUser, affectedUser, actor.PrimarySmtpAddress);
+            return "Access denied: You cannot grant permissions to yourself.";
         }
 
         return null;
     }
+
+    internal static string SelfGrantCheckIncomplete(string identity) =>
+        $"Access denied: The self-grant check could not be completed: Exchange Online could not resolve '{identity}'; nothing was written. Contact your administrator.";
+
+    private static bool SameRecipient(ResolvedRecipient a, ResolvedRecipient b) =>
+        (!string.IsNullOrWhiteSpace(a.ExternalDirectoryObjectId)
+            && string.Equals(a.ExternalDirectoryObjectId, b.ExternalDirectoryObjectId, StringComparison.OrdinalIgnoreCase))
+        || string.Equals(a.PrimarySmtpAddress, b.PrimarySmtpAddress, StringComparison.OrdinalIgnoreCase);
 
     public static bool IdentitiesMatch(string identity1, string identity2)
     {

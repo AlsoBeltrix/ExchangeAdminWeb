@@ -32,8 +32,6 @@ public sealed record ResolvedRecipient(
 
 public interface IIdentityResolver
 {
-    Task<string?> ResolveToObjectIdAsync(string identity);
-
     /// <summary>
     /// Resolves an identity through Exchange Online.
     /// </summary>

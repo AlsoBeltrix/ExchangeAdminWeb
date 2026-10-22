@@ -278,7 +278,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                         audit.LogMailboxPermission(
                             currentUser, ipAddress, $"BulkAdd{permType}_SelfGrantAttempt",
                             row.Target, row.User, permType, false, ticketNumber, autoMap,
-                            errorDetail: "Self-grant blocked: User attempted to grant permissions to themselves");
+                            errorDetail: selfGrantError);
 
                         errors.Add($"{row.Target}/{row.User}: {selfGrantError}");
                         entries.Add(new BulkOperationEntry

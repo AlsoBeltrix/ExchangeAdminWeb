@@ -413,7 +413,7 @@
                         Audit.LogCalendarPermission(
                             currentUser, ipAddress, "SetCalendar_SelfGrantAttempt", target, user,
                             access.ToString(), false, ticket,
-                            errorDetail: "Self-grant blocked: User attempted to grant permissions to themselves");
+                            errorDetail: selfGrantError);
                     }
                     catch (Exception ex)
                     {
