@@ -552,6 +552,49 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         Assert.False(Field<bool>(page, "undoLoading"));
     }
 
+    // ---- aud-a26u: a panel that closes takes its preview's activity with it ----------------------------------------
+
+    [Fact]
+    public async Task AClosedPanelsPreviewActivity_LeavesTheFrameWithIt_AndTheNextPreviewKeepsItsOwn()
+    {
+        // aud-a26r cleared the loading guard on close, not the activity: "Building undo preview" stayed in the status
+        // frame until the closed preview's handler returned.
+        var handler = new HeldPreviews();
+        var page = PageWithoutAPanel(new UndoRegistry([handler]));
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var firstEntry = Entry(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
+        var other = AttributeEditorHarness.ForwardEdit(alex, "department", from: "Finance", to: "Audit");
+        other["operationId"] = "op-forward-2";
+
+        var closed = ShowUndoPreview(page, firstEntry);
+        Assert.Equal("Building undo preview", Assert.Single(_progress.Active).Label);
+
+        await CloseUndoPanel(page);
+
+        Assert.False(closed.IsCompleted, "the closed preview's handler has not answered yet");
+        Assert.Empty(_progress.Active);
+
+        var next = ShowUndoPreview(page, Entry(other));
+        var nextActivity = Assert.Single(_progress.Active);
+
+        // The closed preview answers: its finally completes its own activity, which is already gone, and leaves the
+        // next one's alone.
+        var (closedEvent, closedAnswer) = handler.Requests[0];
+        closedAnswer.SetResult(PreviewOf(closedEvent));
+        Assert.Null(await Record.ExceptionAsync(() => closed));
+        Assert.Equal(nextActivity.Id, Assert.Single(_progress.Active).Id);
+
+        // And closing that panel takes the next one's activity too.
+        await CloseUndoPanel(page);
+        Assert.Empty(_progress.Active);
+
+        var (nextEvent, nextAnswer) = handler.Requests[1];
+        nextAnswer.SetResult(PreviewOf(nextEvent));
+        Assert.Null(await Record.ExceptionAsync(() => next));
+        Assert.Empty(_progress.Active);
+        Assert.Null(Field<UndoPreview?>(page, "undoPreview"));
+    }
+
     /// <summary>An undo handler whose every preview waits for the test to answer it.</summary>
     private sealed class HeldPreviews : IUndoableModule
     {

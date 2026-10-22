@@ -24,7 +24,8 @@ public sealed record AttributeLookupResult(
     string? SourceOfAuthority,
     bool IsReadOnly,
     string? ReadOnlyReason,
-    Dictionary<string, string?>? CurrentValues);
+    Dictionary<string, string?>? CurrentValues,
+    IReadOnlyDictionary<string, string>? ReadOnlyAttributes = null);
 
 public sealed record AttributeChange(string Name, string Label, string? OldValue, string? NewValue);
 
@@ -1302,12 +1303,15 @@ public class ADAttributeEditorService
         // lookup's reading with the element the save's record holds - so an edit of such an attribute could never be
         // undone. Several values read as their join, a binary value as "binary (N bytes)".
         var currentValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var readOnlyAttributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var attr in allowlist)
         {
             currentValues[attr.Name] = ReadDirectoryValue(adUser, attr.Name)?.ToString();
+            if (NotSingleText(adUser, attr.Name) is { } notText)
+                readOnlyAttributes[attr.Name] = $"This attribute {notText.Holds}; {RuleFor(notText)}";
         }
 
-        return new(true, null, principal, "OnPremAD", false, null, currentValues);
+        return new(true, null, principal, "OnPremAD", false, null, currentValues, readOnlyAttributes);
     }
 
     /// <summary>Each failed search base with its reason, for the operator's message and the log (psl-6).</summary>
@@ -1799,21 +1803,41 @@ public class ADAttributeEditorService
             if (attr == null)
                 continue;
 
-            var values = DirectoryValues(read, attr.Name);
-            if (values.Count > 1)
-                several.Add($"'{attr.Label}' ({attr.Name}) holds {values.Count} values in the directory");
-            else if (values is [byte[] bytes])
-                binary.Add($"'{attr.Label}' ({attr.Name}) is {Binary(bytes)} in the directory");
+            if (NotSingleText(read, attr.Name) is not { } notText)
+                continue;
+
+            (notText.Binary ? binary : several).Add($"'{attr.Label}' ({attr.Name}) {notText.Holds}");
         }
 
         var refusals = new List<string>();
         if (several.Count > 0)
-            refusals.Add($"{string.Join("; ", several)}; the attribute editor writes single-valued attributes only.");
+            refusals.Add($"{string.Join("; ", several)}; {SingleValuedRule}");
         if (binary.Count > 0)
-            refusals.Add($"{string.Join("; ", binary)}; the attribute editor writes text attributes only.");
+            refusals.Add($"{string.Join("; ", binary)}; {TextOnlyRule}");
 
         return refusals.Count == 0 ? null : $"{string.Join(" ", refusals)} Nothing was written.";
     }
+
+    private const string SingleValuedRule = "the attribute editor writes single-valued attributes only.";
+
+    private const string TextOnlyRule = "the attribute editor writes text attributes only.";
+
+    private readonly record struct NotText(bool Binary, string Holds);
+
+    private static NotText? NotSingleText(PSObject read, string name)
+    {
+        var values = DirectoryValues(read, name);
+        if (values is [byte[] bytes])
+            return new NotText(true, $"is {Binary(bytes)} in the directory");
+        if (values.Count > 1 && values.All(value => value is byte[]))
+            return new NotText(true, $"holds {values.Count} binary values in the directory");
+        if (values.Count > 1)
+            return new NotText(false, $"holds {values.Count} values in the directory");
+
+        return null;
+    }
+
+    private static string RuleFor(NotText notText) => notText.Binary ? TextOnlyRule : SingleValuedRule;
 
     private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
 

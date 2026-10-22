@@ -468,6 +468,7 @@
     // aud-a26r. The preview the panel is waiting for: a new token per ShowUndoPreview, cleared by CloseUndoPanel. Only
     // that request's answer fills the panel, and only it lowers undoLoading.
     private object? undoPreviewRequest;
+    private IActivityHandle? undoPreviewActivity;
     private HashSet<string> reversedOperationIds = new(StringComparer.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
@@ -935,6 +936,7 @@
 
         using var activity = Progress.Begin(
             "Event Log", "Building undo preview", ActivitySize.Unknown);
+        undoPreviewActivity = activity;
 
         try
         {
@@ -970,7 +972,10 @@
             // The flag is the panel's request's (aud-a26r): a request a close made stale must not lower it under the
             // next one, which is still loading.
             if (ReferenceEquals(undoPreviewRequest, request))
+            {
                 undoLoading = false;
+                undoPreviewActivity = null;
+            }
             StateHasChanged();
         }
     }
@@ -990,6 +995,8 @@
         // returned.
         undoPreviewRequest = null;
         undoLoading = false;
+        undoPreviewActivity?.Complete(false, "Closed before the preview was ready.");
+        undoPreviewActivity = null;
         undoPreview = null;
         undoTargetEvent = null;
         undoError = null;

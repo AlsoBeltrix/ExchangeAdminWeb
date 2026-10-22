@@ -558,7 +558,9 @@ public static class ProgressRegistry
             new("ApplyFilters", LocalUiState + "; filters rows already in memory"),
             new("SetPage", LocalUiState),
             new("ToggleExpand", LocalUiState),
-            new("CloseUndoPanel", LocalUiState),
+            new("CloseUndoPanel",
+                "local page state, and it ends the activity of a preview it closes before the preview answers, so the "
+                + "status frame does not keep a wait the operator no longer has (aud-a26u); no remote, disk or JS call"),
         ],
     };
 

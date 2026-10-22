@@ -141,7 +141,11 @@
                                                 <td><small>@GetDisplayValue(attr, currentValues.GetValueOrDefault(attr.Name))</small></td>
                                                 <td>
                                                     @{ var effectiveChoices = attr.Type == "Choice" ? EditorService.GetEffectiveChoices(attr) : null; }
-                                                    @if (effectiveChoices != null && effectiveChoices.Length > 0)
+                                                    @if (readOnlyAttributes.TryGetValue(attr.Name, out var readOnlyReason))
+                                                    {
+                                                        <small class="text-muted">@readOnlyReason</small>
+                                                    }
+                                                    else if (effectiveChoices != null && effectiveChoices.Length > 0)
                                                     {
                                                         <select class="form-select form-select-sm"
                                                                 value="@GetEditValue(attr.Name)"
@@ -255,6 +259,7 @@
     private List<EditableAttribute> editableAttributes = new();
     private Dictionary<string, string?> currentValues = new();
     private Dictionary<string, string?> editValues = new();
+    private IReadOnlyDictionary<string, string> readOnlyAttributes = new Dictionary<string, string>();
 
     private bool showDiffPreview;
     private List<AttributeChange> pendingChanges = new();
@@ -299,6 +304,7 @@
         editableAttributes = new();
         currentValues = new();
         editValues = new();
+        readOnlyAttributes = new Dictionary<string, string>();
         showDiffPreview = false;
         pendingChanges = new();
         operationResult = null;
@@ -393,6 +399,7 @@
             editableAttributes = allowlist;
             currentValues = result.CurrentValues ?? new();
             editValues = new Dictionary<string, string?>(currentValues, StringComparer.OrdinalIgnoreCase);
+            readOnlyAttributes = result.ReadOnlyAttributes ?? new Dictionary<string, string>();
             completed = (true, null);
         }
         catch (Exception ex)
