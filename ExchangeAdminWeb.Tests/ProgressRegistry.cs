@@ -2123,6 +2123,7 @@ public static class ProgressRegistry
             new("UpdateAttrRequired", AllowlistRowEdit),
             new("UpdateAttrAllowClear", AllowlistRowEdit),
             new("UpdateAttrMaxLength", AllowlistRowEdit),
+            new("UpdateAttrPattern", AllowlistRowEdit),
             new("UpdateAttrLevel", AllowlistRowEdit),
             new("UpdateAttrChoices", AllowlistRowEdit),
             new("ApplySelectedOUs", LocalUiState),

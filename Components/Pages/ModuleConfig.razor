@@ -546,6 +546,7 @@
                                     <th style="width: 80px;">Required</th>
                                     <th style="width: 90px;">Allow Clear</th>
                                     <th style="width: 80px;">Max Len</th>
+                                    <th>Pattern</th>
                                     <th style="width: 60px;">Level</th>
                                     <th style="width: 50px;"></th>
                                 </tr>
@@ -567,6 +568,7 @@
                                         <td class="text-center"><input type="checkbox" class="form-check-input" checked="@attr.Required" @onchange="e => UpdateAttrRequired(idx, e)" /></td>
                                         <td class="text-center"><input type="checkbox" class="form-check-input" checked="@attr.AllowClear" @onchange="e => UpdateAttrAllowClear(idx, e)" /></td>
                                         <td><input type="number" class="form-control form-control-sm" value="@attr.MaxLength" @onchange="e => UpdateAttrMaxLength(idx, e)" placeholder="—" /></td>
+                                        <td><input type="text" class="form-control form-control-sm" value="@attr.Pattern" @onchange="e => UpdateAttrPattern(idx, e)" placeholder="none" title="Optional regular expression a saved value must match; add ^ and $ to match the whole value." /></td>
                                         <td>
                                             <select class="form-select form-select-sm" value="@attr.Level" @onchange="e => UpdateAttrLevel(idx, e)">
                                                 <option value="1">1</option>
@@ -579,7 +581,7 @@
                                     @if (attr.Type == "Choice")
                                     {
                                         <tr>
-                                            <td colspan="7" class="ps-4 pt-0">
+                                            <td colspan="8" class="ps-4 pt-0">
                                                 <small class="text-muted">Choices (comma-separated):</small>
                                                 <input type="text" class="form-control form-control-sm" value="@string.Join(", ", attr.Choices ?? [])" @onchange="e => UpdateAttrChoices(idx, e)" placeholder="Option1, Option2, Option3" />
                                             </td>
@@ -1652,6 +1654,7 @@
         dirty.Increment(SecAttrs);
         allowlistAttributes[idx].MaxLength = int.TryParse(e.Value?.ToString(), out var v) && v > 0 ? v : null;
     }
+    private void UpdateAttrPattern(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Pattern = e.Value?.ToString() is { Length: > 0 } typed ? typed : null; dirty.Increment(SecAttrs); }
     private void UpdateAttrChoices(int idx, ChangeEventArgs e)
     {
         dirty.Increment(SecAttrs);

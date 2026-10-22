@@ -293,4 +293,47 @@ public sealed class AllowlistSaveAuditTests : IDisposable
 
         Assert.Contains("AttrEditorService.LogAllowlistSaveFailed(", block, StringComparison.Ordinal);
     }
+
+    // ---- aud-a26e: a pattern can be seen and edited on the page --------------------------------
+
+    [Fact]
+    public void APatternEnteredOnARow_IsSaved_ReadBack_AndRecorded()
+    {
+        const string pattern = "^[A-Z][A-Za-z ]*$";
+        var entered = Loaded().Select(a => a.Name == "department" ? a with { Pattern = pattern } : a).ToList();
+
+        var result = Save(entered);
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(pattern, Assert.Single(_h.Service.GetAllowlist()!, a => a.Name == "department").Pattern);
+        var change = Assert.Single(Assert.Single(_h.AuditEvents()).GetProperty("changed").EnumerateArray());
+        Assert.Equal("department", Text(change, "attribute"));
+        Assert.Equal("Pattern", Text(change, "field"));
+        Assert.Equal(pattern, Text(change, "new"));
+
+        // Cleared on the row, it is no pattern at all.
+        var cleared = Loaded().Select(a => a.Name == "department" ? a with { Pattern = null } : a).ToList();
+        Assert.True(Save(cleared).Success);
+        Assert.Null(Assert.Single(_h.Service.GetAllowlist()!, a => a.Name == "department").Pattern);
+    }
+
+    [Fact]
+    public void ThePatternInput_CarriesTheRowsPatternInAndOut()
+    {
+        // Tripwire: no bUnit host renders the page. The row must show the stored pattern and hand an
+        // edit to UpdateAttrPattern, which must write what was typed; LoadAllowlist fills the row and
+        // the save passes it into the attribute it saves.
+        var raw = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "ModuleConfig.razor"));
+        Assert.Matches(@"<input[^>]*\bvalue=""@attr\.Pattern""[^>]*@onchange=""e => UpdateAttrPattern\(idx, e\)""", raw);
+
+        var code = ProgressScan.CodeView(raw);
+        var handler = AuditCategoryFilingTests.MethodBody(code, "private void UpdateAttrPattern(");
+        Assert.Contains("allowlistAttributes[idx].Pattern =", handler, StringComparison.Ordinal);
+        Assert.Contains("e.Value", handler, StringComparison.Ordinal);
+        Assert.Contains("dirty.Increment(SecAttrs)", handler, StringComparison.Ordinal);
+
+        Assert.Contains("Pattern = a.Pattern",
+            AuditCategoryFilingTests.MethodBody(code, "private void LoadAllowlist()"), StringComparison.Ordinal);
+        Assert.Contains("a.MaxLength, a.Pattern, a.Level", PageSaveCode(), StringComparison.Ordinal);
+    }
 }

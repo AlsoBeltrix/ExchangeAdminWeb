@@ -461,20 +461,24 @@ public class ADAttributeEditorService
     /// Why <paramref name="attribute"/>'s pattern does not compile, naming the attribute; null when
     /// it has no pattern or the pattern compiles.
     /// </summary>
-    private static string? DescribeUncompilablePattern(EditableAttribute attribute)
+    private static string? DescribeUncompilablePattern(EditableAttribute attribute) =>
+        DescribeUncompilablePattern(attribute.Name, attribute.Label, attribute.Pattern) is { } problem
+            ? $"{problem} The allowlist was not saved: an administrator must correct the pattern."
+            : null;
+
+    private static string? DescribeUncompilablePattern(string name, string label, string? pattern)
     {
-        if (string.IsNullOrEmpty(attribute.Pattern))
+        if (string.IsNullOrEmpty(pattern))
             return null;
 
         try
         {
-            _ = new Regex(attribute.Pattern, RegexOptions.None, RegexTimeout);
+            _ = new Regex(pattern, RegexOptions.None, RegexTimeout);
             return null;
         }
         catch (ArgumentException ex)
         {
-            return $"The pattern for attribute '{attribute.Label}' ({attribute.Name}) is not a valid regular expression, "
-                + $"so the allowlist was not saved: {ex.Message}";
+            return $"The pattern for attribute '{label}' ({name}) is not a valid regular expression: {ex.Message}";
         }
     }
 
@@ -552,6 +556,15 @@ public class ADAttributeEditorService
                         // Parseable but fails validation (denylist/contradictory/empty-Choice) - the
                         // file world returned null here too. Leave the file, fail closed.
                         _logger.LogError("Legacy ad-editable-attributes.json fails validation - left in place, failing closed until repaired");
+                        allowlistCorrupt = true;
+                    }
+                    else if (wrapper.Attributes
+                        .Select(a => DescribeUncompilablePattern(a.Name, a.Label, a.Pattern))
+                        .FirstOrDefault(p => p is not null) is { } uncompilable)
+                    {
+                        _logger.LogError(
+                            "Legacy ad-editable-attributes.json was not imported: {Problem} It is left in place, and the allowlist fails closed until an administrator corrects the pattern.",
+                            uncompilable);
                         allowlistCorrupt = true;
                     }
                     else

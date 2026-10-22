@@ -494,6 +494,63 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Equal(2, reloaded!.Count);
     }
 
+    // --- aud-a26e: the legacy-file import compiles every pattern before it stores anything ---
+
+    [Fact]
+    public void Construction_LegacyFileWithAnUncompilablePattern_ImportsNothing_AndFailsClosed()
+    {
+        // The import used to store the file's rows straight through the repository, so a pattern
+        // the allowlist save would refuse (aud-a28e) arrived anyway and was found only by the first
+        // operator to save that attribute. It is refused here as a whole, as the import's other
+        // validation failures are: the good row beside it is not imported either.
+        WriteAllowlistConfig(new
+        {
+            Attributes = new object[]
+            {
+                new { Name = "department", Label = "Department", Type = "String", Required = false, AllowClear = true },
+                new { Name = "title", Label = "Job Title", Type = "String", Required = false, AllowClear = true, Pattern = "[" }
+            }
+        });
+
+        var service = CreateService();
+
+        Assert.Null(service.GetAllowlist());
+        Assert.True(service.IsAllowlistCorrupt());
+        Assert.True(new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore!)
+            .TryReadAllowlist(out var rows, out var configured));
+        Assert.Empty(rows);
+        Assert.False(configured);
+        // Left in place for an administrator to correct, and the log says which attribute.
+        Assert.True(File.Exists(Path.Combine(_configDir, "ad-editable-attributes.json")));
+        Assert.Contains(LoggedErrors(), e => e.Contains("Job Title", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Construction_LegacyFileWithAValidPattern_ImportsIt()
+    {
+        // The control: only a pattern that does not compile stops the import.
+        WriteAllowlistConfig(new
+        {
+            Attributes = new[]
+            {
+                new { Name = "title", Label = "Job Title", Type = "String", Required = false, AllowClear = true, Pattern = "^[A-Z]" }
+            }
+        });
+
+        var service = CreateService();
+
+        Assert.Equal("^[A-Z]", Assert.Single(service.GetAllowlist()!).Pattern);
+        Assert.False(service.IsAllowlistCorrupt());
+        Assert.False(File.Exists(Path.Combine(_configDir, "ad-editable-attributes.json")), "an imported file is archived");
+    }
+
+    /// <summary>Every error the service logged, as formatted text.</summary>
+    private List<string> LoggedErrors() =>
+        _logger.ReceivedCalls()
+            .Where(c => c.GetMethodInfo().Name == nameof(ILogger.Log) && c.GetArguments()[0] is LogLevel.Error)
+            .Select(c => c.GetArguments()[2]?.ToString() ?? "")
+            .ToList();
+
     [Fact]
     public void Construction_ValidLegacyFileButImportFails_FailsClosed()
     {
