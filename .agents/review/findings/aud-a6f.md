@@ -3,10 +3,10 @@
 **Severity**: MEDIUM - not an authorization defect, but a shutdown can still open a fresh Exchange
 Online session from a pool that has stopped and drained; if the caller is abandoned during the
 shutdown the session is stranded. Narrower window than aud-a6e, same harm.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Fixed on master `436a44a1` (patch applied by the supervisor); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-aec54e09518f47fc1` - built and gated on a `git archive` export of master
 `96d9dc4f` with the `aud-a7d` patch applied, and delivered as a patch for the supervisor to apply
-**Commit**: `<pending>`
+**Commit**: `436a44a1`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (storage-batch-1, `prompt-storage-batch-1.md`, 2026-10-22)
 
 ## Evidence
