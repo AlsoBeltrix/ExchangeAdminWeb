@@ -7,9 +7,9 @@ serialises the record outside its try, so a value `System.Text.Json` cannot seri
 the audit call; `OperationTraceService.SamName(null)` throws on a null actor. A handler that calls an
 audit or trace method directly (the success paths do) can therefore end with an exception instead of
 its outcome, and the record is lost. The helpers' catches hide it on the refusal paths only.
-**Status**: Fixed on branch; not merged, not pushed; awaiting review
+**Status**: Merged to master (`5e2b80f3`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-aa41f72251493711c`
-**Commit**: `1edeb40d` (fix, tests, record; comments `d4e69a27`; plan `9301c34b`)
+**Commit**: `1edeb40d` (fix, tests, record; comments `d4e69a27`; plan `9301c34b`); merged `5e2b80f3`
 **Reviewer**: implementer (surfaced by the aud-a26l/a26m/a28o agent, 2026-10-22, candidate 4 of its hand-back)
 
 ## Evidence
