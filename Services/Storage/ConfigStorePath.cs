@@ -11,10 +11,13 @@ namespace ExchangeAdminWeb.Services.Storage;
 ///   starting it on a brand-new empty database seeded at defaults that would serve with no
 ///   protected principals and no section access while looking healthy (review finding scd-1).
 ///
-/// A UNC path is refused: SQLite's WAL locking is only sound on a local file system, and the
-/// two instances live on one server. A relative or drive-relative path (<c>D:file.db</c>) is
-/// refused because it would resolve against whichever working directory the host happens to
-/// have.
+/// The one accepted form is an ASCII drive letter, a colon, then <c>\</c> or <c>/</c>, and it is
+/// returned with every <c>/</c> turned into <c>\</c> (cdt-35). A network path is refused: SQLite's
+/// WAL locking is only sound on a local file system, and the two instances live on one server.
+/// Windows reads any two leading separators, in any mix of <c>\</c> and <c>/</c>, as a UNC or
+/// device path, and <c>\??\UNC\</c> is the NT namespace's name for a share, so none of them
+/// passes. A relative, drive-relative (<c>D:file.db</c>) or driveless rooted path is refused
+/// because it would resolve against whichever working directory the host happens to have.
 /// </summary>
 public static class ConfigStorePath
 {
@@ -25,8 +28,8 @@ public static class ConfigStorePath
 
     /// <summary>
     /// Returns the default path (must not exist) when <paramref name="configured"/> is blank,
-    /// the configured path (must exist) when it is an absolute local path, and throws
-    /// <see cref="InvalidOperationException"/> naming the key for a UNC or relative value.
+    /// the configured path with <c>\</c> separators (must exist) when it is a drive-letter local
+    /// path, and throws <see cref="InvalidOperationException"/> naming the key for anything else.
     /// </summary>
     public static Resolution Resolve(string? configured, string contentRoot)
     {
@@ -35,31 +38,37 @@ public static class ConfigStorePath
 
         var value = configured.Trim();
 
-        // TRIPWIRE (cdt-30): tools/SqliteConfigBackup.psm1 (Assert-ConfigStorePathValue) applies this
-        // rule to the value the deploy, promotion, cutover and installer scripts read before they
-        // back up or check the database, so they act on the file this method accepts. Change one,
-        // change the other; tests/ps/SqliteConfigBackup.Tests.ps1 pins the lines of this rule and
-        // holds the module to it. The scripts are deliberately stricter in two places: they refuse
-        // any two leading separators as UNC (Windows also reads \/ and /\ as UNC, which this check
-        // misses), and every fully qualified form that is not a drive letter (\??\..., which can
-        // name a share).
-        if (value.StartsWith(@"\\", StringComparison.Ordinal) || value.StartsWith("//", StringComparison.Ordinal))
+        // TRIPWIRE (cdt-30, cdt-35): tools/SqliteConfigBackup.psm1 holds the ops scripts' copy of this
+        // rule (marked TRIPWIRE there too) and applies it to the ConfigStore:Path the deploy,
+        // promotion, cutover and installer scripts read before they back up or check the
+        // database, so they act on exactly the file this method opens, spelled the same way. The two
+        // copies are identical: the trim; any two leading separators refused as a network path; then
+        // only an ASCII letter, a colon and \ or / accepted; / turned into \. Change one, change the
+        // other: tests/ps/SqliteConfigBackup.Tests.ps1 pins these lines and holds the module to them,
+        // and ExchangeAdminWeb.Tests/ConfigStorePathTests.cs pins the module's lines and holds this
+        // method to them.
+        if (value.Length >= 2 && IsSeparator(value[0]) && IsSeparator(value[1]))
         {
             throw new InvalidOperationException(
                 $"{Key} is a network (UNC) path: '{value}'. The shared config database must be a local " +
                 "file on this server - SQLite's locking is not reliable over a network share.");
         }
 
-        // Fully qualified, not merely rooted: "D:exchangeadmin.db" is rooted (it names a drive)
-        // but drive-relative, resolving against that drive's current directory, so two
-        // instances could open two different files while both believe they share one
-        // (review finding scdi-2). "\config\x.db" is rooted but drive-relative too.
-        if (!System.IO.Path.IsPathFullyQualified(value))
+        // A drive letter and a separator, not merely rooted or "fully qualified": "D:exchangeadmin.db"
+        // names a drive but resolves against that drive's current directory, so two instances could
+        // open two different files while both believe they share one (review finding scdi-2), and
+        // Path.IsPathFullyQualified also passes \??\UNC\server\share, a network share (cdt-35).
+        if (!IsDriveLetterPath(value))
         {
             throw new InvalidOperationException(
-                $"{Key} must be an absolute local file path (for example D:\\inetpub\\ExchangeAdminWebShared\\config\\exchangeadmin.db); got '{value}'.");
+                $"{Key} must be an absolute local file path (a drive letter, a colon, then \\ or /, for example D:\\inetpub\\ExchangeAdminWebShared\\config\\exchangeadmin.db); got '{value}'.");
         }
 
-        return new Resolution(value, MustExist: true);
+        return new Resolution(value.Replace('/', '\\'), MustExist: true);
     }
+
+    private static bool IsSeparator(char c) => c == '\\' || c == '/';
+
+    private static bool IsDriveLetterPath(string value) =>
+        value.Length >= 3 && char.IsAsciiLetter(value[0]) && value[1] == ':' && IsSeparator(value[2]);
 }

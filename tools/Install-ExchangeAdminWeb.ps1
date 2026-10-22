@@ -37,8 +37,9 @@
       - Seeds only newly missing config fragments.
 
     Shared config database (optional, -ConfigStorePath): when several instances on one server
-    are meant to open ONE config database, pass the absolute local path of that database. The
-    installer writes it as ConfigStore:Path in the generated appsettings.json and grants the
+    are meant to open ONE config database, pass the absolute local path of that database (a
+    drive letter, a colon, then \ or /). The installer writes it, with backslashes, as
+    ConfigStore:Path in the generated appsettings.json and grants the
     app pool identity Modify on the shared directory in addition to the instance's own config
     folder (which is still created and ACLed: the per-instance jobs database and the first-run
     seed files live there). The shared database must already exist - the installer never
@@ -227,17 +228,22 @@ function Assert-SafeDirectoryPath {
 }
 
 function Assert-LocalAbsoluteFilePath {
-    # A shared database path must be fully qualified: "D:file.db" is rooted (it names a drive)
-    # but drive-relative, resolving against that drive's current directory, so two instances
-    # could open two different files (review finding scdi-2). [IO.Path]::IsPathFullyQualified
-    # does not exist on .NET Framework (Windows PowerShell 5.1), hence the explicit drive test.
+    # cdt-37: no copy of the rule here. The installer's own copy - a drive letter, a colon and a
+    # BACKSLASH - refused D:/..., a path the app opens and the read side reads back, so this asks the
+    # sibling SqliteConfigBackup module (imported before the one call below), whose
+    # Get-ConfigStorePathForm is the scripts' one copy of the app's ConfigStorePath.Resolve rule:
+    # any two leading separators name a network share, and only an ASCII drive letter, a colon,
+    # then \ or / is an absolute local path. "D:file.db" names a drive but resolves against that
+    # drive's current directory, so two instances could open two different files (review finding
+    # scdi-2). Anything but Local is refused.
     param([string]$Path, [string]$Name)
 
-    if ($Path.StartsWith('\\') -or $Path.StartsWith('//')) {
+    $form = Get-ConfigStorePathForm -Value $Path
+    if ($form -eq 'NetworkShare') {
         Write-Fail "$Name must be a local path, not a network share: $Path"
     }
-    if ($Path -notmatch '^[A-Za-z]:\\') {
-        Write-Fail "$Name must be an absolute local file path (drive letter, colon, backslash - for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db): $Path"
+    if ($form -ne 'Local') {
+        Write-Fail "$Name must be an absolute local file path (a drive letter, a colon, then \ or / - for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db): $Path"
     }
 }
 
@@ -736,6 +742,9 @@ Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 # instance is tools\Move-ConfigDbToShared.ps1's job, run once.
 if (-not [string]::IsNullOrWhiteSpace($ConfigStorePath)) {
     Assert-LocalAbsoluteFilePath -Path $ConfigStorePath -Name 'ConfigStorePath'
+    # cdt-37: GetFullPath also turns / into \ (under Windows PowerShell 5.1 and 7 alike), so the
+    # banner, the plan, the comparisons and the appsettings.json write below all carry the one
+    # spelling the read side returns.
     $ConfigStorePath = [System.IO.Path]::GetFullPath($ConfigStorePath)
     if (-not (Test-Path -LiteralPath $ConfigStorePath -PathType Leaf)) {
         Write-Fail "ConfigStorePath names $ConfigStorePath but no database exists there. The installer never creates the shared database; create it once from an existing instance with tools\Move-ConfigDbToShared.ps1, then re-run the installer."
