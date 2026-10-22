@@ -1446,17 +1446,152 @@ public class ADAttributeEditorService
         }
         finally
         {
-            // Nothing runs on this pipeline after the write today. A command added after it would
-            // otherwise start with the write's command and any record it left still in place, and
-            // HadErrors stays true while one remains (psl-2).
+            // The read-back below runs on this pipeline (aud-a26j): the write must not stay queued in
+            // front of it, where it would run again, nor leave a record the read's error check would
+            // take for its own - HadErrors stays true while one remains (psl-2). Without the clear, an
+            // error written past -ErrorAction Stop turns an applied write into an unconfirmed one.
             ps.Commands.Clear();
             ps.Streams.Error.Clear();
         }
 
-        LogAudit(target, changes, performedBy, ip, ticket, true, null, servicedNote);
+        // aud-a26j. Done is the attributes reading back as written, not the write raising no error: a
+        // directory that takes a modify and applies nothing, or stores a value in another form, raises
+        // none (Known Failure Class 2; aud-a2p, the Conference Rooms twin). A save not confirmed is
+        // recorded failed with no old/new pair - the event log offers no Undo of a change its record
+        // cannot vouch for - and a confirmed one is recorded with the values read: what the directory
+        // holds, not what was proposed.
+        var (confirmError, asRead) = ConfirmWrite(ps, target, reReadGuid, changes, credential);
+        if (confirmError != null)
+        {
+            LogAudit(target, [], performedBy, ip, ticket, false, confirmError);
+            return new(false, confirmError, null);
+        }
 
-        return new(true, null, changes);
+        LogAudit(target, asRead, performedBy, ip, ticket, true, null, servicedNote);
+
+        return new(true, null, asRead);
     }
+
+    // aud-a26j. The read-back and its verdict: the failure message, or the changes as read. A throw is
+    // the read's error. Both failures name the object and what was sent, because the record they become
+    // has no old/new pair to say it.
+    private (string? Error, List<AttributeChange> AsRead) ConfirmWrite(
+        PowerShell ps,
+        ResolvedDirectoryPrincipal target,
+        string? objectGuid,
+        List<AttributeChange> written,
+        PSCredential credential)
+    {
+        string? readError;
+        PSObject? read = null;
+        try
+        {
+            (readError, read) = ReadBackWrittenAttributes(ps, objectGuid, written, credential);
+        }
+        catch (Exception ex)
+        {
+            readError = ex.InnerException?.Message ?? ex.Message;
+        }
+
+        if (readError != null || read is null)
+        {
+            var failed = readError ?? "nothing was read";
+            _logger.LogWarning("Set-ADUser on {Target} could not be confirmed by reading it back by objectGUID {ObjectGuid}: {Error}", target.UserPrincipalName, objectGuid, failed);
+            return ($"Set-ADUser on {target.UserPrincipalName} was sent but could not be confirmed: reading {string.Join(", ", written.Select(c => c.Name))} back by objectGUID {objectGuid ?? "(none)"} failed: {failed}", written);
+        }
+
+        var (unconfirmed, asRead) = UnconfirmedWrites(written, read);
+        if (unconfirmed.Count > 0)
+        {
+            var detail = string.Join("; ", unconfirmed);
+            _logger.LogWarning("Set-ADUser on {Target} was not confirmed by reading it back by objectGUID {ObjectGuid}: {Detail}", target.UserPrincipalName, objectGuid, detail);
+            return ($"Set-ADUser on {target.UserPrincipalName} was not confirmed: read back by objectGUID {objectGuid}, {detail}.", written);
+        }
+
+        return (null, asRead);
+    }
+
+    // aud-a26j. The written attributes, read back by the objectGUID the re-read returned for the DN the
+    // write named, so the read sees that object and no other. With no -Server, as the write had none: the
+    // read is answered where the module's default sends this session, the write's own route; the editor
+    // routes none of its calls. In the shape of aud-a2p's read: an error record fails it - after a read,
+    // whatever left one, the answer is not known good - and exactly one object, the one written, must
+    // answer.
+    private static (string? Error, PSObject? Read) ReadBackWrittenAttributes(
+        PowerShell ps, string? objectGuid, List<AttributeChange> written, PSCredential credential)
+    {
+        if (string.IsNullOrEmpty(objectGuid))
+            return ("the object read before the write carried no objectGUID", null);
+
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Identity", objectGuid)
+          .AddParameter("Properties", written.Select(c => c.Name).ToArray())
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var found = ps.Invoke();
+        if (ps.HadErrors)
+            return (ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? $"Get-ADUser reported an error reading {objectGuid}.", null);
+        ps.Commands.Clear();
+
+        var answered = found.Count == 1 ? found[0]?.Properties["ObjectGUID"]?.Value?.ToString() : null;
+        if (answered is null || !string.Equals(answered, objectGuid, StringComparison.OrdinalIgnoreCase))
+            return ($"{found.Count} object(s) answered, ObjectGUID {answered ?? "none"}", null);
+
+        return (null, found[0]);
+    }
+
+    // aud-a26j. What the write sent that the object read back does not hold, one description each, and the
+    // changes as read. Each value sent - nothing trimmed, because the write trims nothing - against the
+    // value read, compared ordinal: stricter than the directory's own matching, so a difference only ever
+    // fails a save, never passes one. An empty value and an absent attribute are the same, the directory
+    // keeping no empty value, so a clear is confirmed by an attribute that is gone. Pure, for unit testing.
+    internal static (List<string> Unconfirmed, List<AttributeChange> AsRead) UnconfirmedWrites(
+        IReadOnlyList<AttributeChange> written, PSObject read)
+    {
+        var unconfirmed = new List<string>();
+        var asRead = new List<AttributeChange>();
+        foreach (var change in written)
+        {
+            var expected = EmptyAsAbsent(change.NewValue);
+            var actual = EmptyAsAbsent(ReadDirectoryString(read, change.Name));
+            if (!string.Equals(expected, actual, StringComparison.Ordinal))
+            {
+                unconfirmed.Add($"{change.Name} ({change.Label}) {(actual is null ? "is not set" : $"is '{actual}'")}, "
+                    + $"not {(expected is null ? "cleared" : $"'{expected}'")} as written");
+            }
+
+            asRead.Add(change with { NewValue = actual });
+        }
+
+        return (unconfirmed, asRead);
+    }
+
+    private static string? EmptyAsAbsent(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
+    // A single-valued attribute as read, null when absent: aud-a2p's, a sibling because Conference Rooms'
+    // is private. *Assumption, not probed*: the module answers one with its value, as this service's own
+    // reads take it (Properties[..].Value). A collection is taken as its one element, so a collection-shaped
+    // answer is not told as a difference; several values are not the one written.
+    private static string? ReadDirectoryString(PSObject read, string name)
+    {
+        var value = Unwrapped(read.Properties[name]?.Value);
+        if (value is null or string)
+            return (string?)value;
+        if (value is System.Collections.IEnumerable values)
+        {
+            var items = values.Cast<object?>().Select(v => Unwrapped(v)?.ToString()).ToList();
+            return items.Count switch
+            {
+                0 => null,
+                1 => items[0],
+                _ => string.Join("; ", items),
+            };
+        }
+
+        return value.ToString();
+    }
+
+    private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
 
     private Dictionary<string, string?>? ReReadCurrentValues(
         ResolvedDirectoryPrincipal target,
