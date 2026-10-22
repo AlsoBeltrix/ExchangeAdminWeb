@@ -1857,7 +1857,16 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // so here, as for the membership read below, the preflight says nothing was written.
                 var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, list.Name, list.PrimarySmtpAddress, credential, ref step);
                 if (groupError != null)
+                {
+                    // aud-a2t. A refusal the resolver returns is logged here, where it refuses the row, once, at Warning. It
+                    // used to reach only the row's result and audit - only a throw was logged, by the catch below - so the
+                    // application log held no trace of why the row was refused. Here rather than in the resolver: a static
+                    // reader shared with the add, it says why, and only this path knows that nothing was written yet, as
+                    // its catch's line says. Not again by the row, which puts the refusal on its result. One line for every
+                    // refusal the resolver returns, the error-record ones too, which no stand-in reaches.
+                    _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, groupError);
                     return $"{groupError} Nothing was written.";
+                }
 
                 // aud-a2i. And whether the add will write at all: the room's membership of that group,
                 // read as the add reads it. A membership that cannot be read refuses the row here, while
@@ -1866,7 +1875,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // Set-Place and the timezone had committed, so such a list made every row partial.
                 step = "reading the membership of the list's group";
                 var (memberError, _) = ReadOnPremListMembership(ps, groupGuid, groupDn, roomDn, list.Name, credential);
-                return memberError is null ? null : $"{memberError} Nothing was written.";
+                if (memberError is null)
+                    return null;
+                // aud-a2t. Logged as the resolver's refusal above. Not inside the membership read: it is also the add's
+                // read-back, whose outcome the add logs with what the write reported (aud-a2n), so a line there would log
+                // that outcome twice.
+                _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, memberError);
+                return $"{memberError} Nothing was written.";
             }
             catch (Exception ex)
             {
@@ -1933,7 +1948,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
                 var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, roomListName, listAddress, credential, ref step);
                 if (groupError != null)
+                {
+                    // aud-a2t. Logged where the add refuses, once, as in the preflight above. This is after Set-Place,
+                    // inside the row's partial, so the line says the add's write was not made, not that nothing was.
+                    _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail, roomListName, groupError);
                     return (groupError, null, null);
+                }
 
                 // Idempotency: skip the add if the room is already a member (matches the cloud
                 // path's already-member no-op so a re-run is safe). aud-a2i: read from the group's
@@ -1944,7 +1964,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 step = "reading the membership of the list's group";
                 var (memberError, alreadyMember) = ReadOnPremListMembership(ps, groupGuid, groupDn, roomDn, roomListName, credential);
                 if (memberError != null)
+                {
+                    // aud-a2t. As the resolver's refusal above. The same read as the read-back below, whose outcome is
+                    // logged there, with the write's.
+                    _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail, roomListName, memberError);
                     return (memberError, null, null);
+                }
                 if (alreadyMember)
                     return (null, null, null);
 
@@ -2273,6 +2298,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // search or the re-read reaches the caller's catch, which names the step under way. The catalog's
     // failure never throws - ResolveForestGlobalCatalog catches it - and is refused here in words
     // naming it.
+    //
+    // aud-a2t. It logs nothing: each caller logs a refusal it returns where that refuses the row, once.
     private static (string? error, string? objectGuid, string? distinguishedName) ResolveAdGroupGuid(PowerShell ps, string roomListName, string? listAddress, PSCredential credential, ref string step)
     {
         // A list Exchange reports no address for has nothing to find its group by. Refused before the
@@ -2395,7 +2422,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // is no answer. Shared by the room-list preflight and the add - its check before the write and,
     // since aud-a2l, its read-back after it - so all three read it the same way.
     // Returns (the error, false) when the question cannot be answered, never "not a member".
-    // Assumes the ActiveDirectory module is already imported.
+    // Assumes the ActiveDirectory module is already imported. aud-a2t: it logs nothing - the two
+    // checks log a refusal where it refuses the row, and the read-back's outcome is logged with the
+    // write's.
     private static (string? error, bool isMember) ReadOnPremListMembership(
         PowerShell ps, string? groupGuid, string? groupDn, string? roomDn, string roomListName, PSCredential credential)
     {

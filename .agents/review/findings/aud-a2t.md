@@ -7,9 +7,9 @@ incomplete secret before the service sees it. (2) The refusals the room-list res
 read return without throwing (catalog unresolved, no group or several, group answers as another
 object) are logged nowhere by the service on either path; only the row's audit carries the message,
 so an operator reading the application log sees no trace of why a row was refused.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; plan written, in progress
+**Status**: Fixed on branch, not merged; guard proof below; independent review pending
 **Branch**: `worktree-agent-a3acf365c1c335b8c`
-**Commit**: -
+**Commit**: the fix commit after plan `95bfa5ca` (fix, tests, comments, record)
 **Reviewer**: implementer (surfaced by the aud-a2s agent, 2026-10-22, its two candidates)
 
 ## Evidence
@@ -112,6 +112,153 @@ checked code-identical by a comment-only diff.
 **Files.** `Services/ConferenceRoomService.cs`, `ExchangeAdminWeb.Tests/ConferenceRoomWriteIdentityTests.cs`,
 `ExchangeAdminWeb.Tests/ConferenceRoomRoomListPreflightTests.cs`, this record.
 
+## Approach (as implemented)
+
+- `Services/ConferenceRoomService.cs`. `PreflightRoomListAsync`: after the resolver's refusal (1867) and after the membership
+  read's (1883 - an `if` and two returns in place of the ternary), `_logger.LogWarning("On-prem room-list preflight for
+  {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, <the refusal>)`, then the refusal
+  returned as before with " Nothing was written.". `AddToRoomListViaAdAsync`: after each of the same two (1954, 1970),
+  `_logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail,
+  roomListName, <the refusal>)`, then returned as before. The helpers, their refusals, the read-back and every caller are
+  unchanged; the two helpers' headers say they log nothing and who does (2302, 2425-2427).
+- `ExchangeAdminWeb.Tests/ConferenceRoomWriteIdentityTests.cs`: the `Service` takes aud-a2s's `IncompleteCredentialFor` (57);
+  `InjectedText(failing, injected)` (389), private static: the text injected, or, for the credential, the
+  `NullReferenceException` message that building a credential with no password throws. The two City/State/Country step
+  theories (491, 700) gain `credential`: each now builds its service before its switch, so the case can set the seam - the
+  preflight for the purpose "Set-ADUser preflight", the write for "Set-ADUser synced attributes" - and asserts it as its
+  other steps, the write's case among the steps before the write.
+- `ExchangeAdminWeb.Tests/ConferenceRoomRoomListPreflightTests.cs` (1629-1759): `SetUpRefusal` and `RefusalWords` - the eight
+  refusals the stand-ins can produce, and words of each refusal's own, so a case is known to have met the refusal it names;
+  `ARefusalOfTheRoomListPreflight_IsLoggedOnce_NamingTheRoomTheListAndTheReason` (8),
+  `ARefusalOfTheOnPremRoomListAdd_IsLoggedOnce_NamingTheRoomTheListAndTheReason` (8) and
+  `ARefusalOfTheOnPremRoomListAdd_InTheWholeRow_IsLoggedOnce` (1). No harness change.
+- 19 new cases (2 + 17). No existing assertion changed: the two step theories' existing cases run as before, on the same
+  service, built a line earlier. On the fix the 330 `ConferenceRoom*` cases pass, the 311 existing among them.
+
 ## Guard proof
 
-Pending.
+| Test | What it pins |
+| --- | --- |
+| `ConferenceRoomWriteIdentityTests.AFailureAtEachStepOfTheCityStateAndCountryPreflight_NamesThatStep` (credential) | part 1 on the preflight: the credential step reached - through the seam, not live - refused, not partial, `Writes` empty, the one step `Set-ADUser preflight (City/State/Country)` with the message as its `Error`; the message "... preparing the module's AD credential failed: <the throw's text> ..." with the objectGUID, ending "Nothing was written."; an Error logged naming the step |
+| `ConferenceRoomWriteIdentityTests.AFailureAtEachStepOfTheCityStateAndCountryWrite_NamesThatStep` (credential) | part 1 on the write: failed, partial, nothing written, no detail, the step `Set-ADUser (City/State/Country)` failed; "City/State/Country were not written on the AD object <guid>: preparing the module's AD credential failed: <the throw's text>", not "Failed to write", no log line naming Set-ADUser, no `Set-ADUser` made, the timezone not run |
+| `ARefusalOfTheRoomListPreflight_IsLoggedOnce_NamingTheRoomTheListAndTheReason` (no address, no catalog, no group, two groups, a group DN naming no domain, the group's own domain answering as another object, the room read with no DN, the membership read answering as another object) | part 2 on the preflight, through the whole row: refused, not partial, nothing written, the one step `Room list preflight`, the refusal in its own words; exactly one log entry carries it, a Warning, equal to "On-prem room-list preflight for <room> on <list> refused the row; nothing was written: <refusal>" - so the row logs it no second time |
+| `ARefusalOfTheOnPremRoomListAdd_IsLoggedOnce_NamingTheRoomTheListAndTheReason` (the same eight) | part 2 on the add, called directly so its own resolver and membership read meet each: failed, nothing written, the step `Add to '<list>' (on-prem)` failed carrying the refusal in its own words, no `Set-ADGroup`; exactly one entry carries it, a Warning, equal to "On-prem room-list add for <room> on <list> refused before its write: <refusal>" |
+| `ARefusalOfTheOnPremRoomListAdd_InTheWholeRow_IsLoggedOnce` | the add's refusal through the whole row (the catalog failing only after Set-Place): the partial, the refusal in the step and the message; one entry carries it, the add's Warning - the row, which wraps it in its partial, adds none |
+
+**Mutations** (`scratchpad/a2t-round/round.ps1`, the a2s runner on this worktree, with `rows-a2t.ps1`; log `round-a2t.log`
+beside them; 2026-10-22 15:52-15:59). Each row ran the 330 `ConferenceRoom*` cases, the test project rebuilt each time, the
+failures read from its TRX. md5 before = restored: `Services/ConferenceRoomService.cs` `f7e08ae0503288f6d2a1dcd247b4f347` (every
+row); the service was touched once mutated and once restored, so each build compiled the file as it then was. Test names are in
+`ConferenceRoomRoomListPreflightTests` unless qualified (`Identity.` is `ConferenceRoomWriteIdentityTests`).
+
+| # | Mutation | md5 mutated | Named test | Result |
+| --- | --- | --- | --- | --- |
+| M1a | the brief's (1), at the call site: the preflight's log line for the resolver's refusal dropped | `46b5b6e3e72ed64090f7c2ee8aa97711` | `ARefusalOfTheRoomListPreflight_...` (no address, no catalog, no group, two groups, a group DN naming no domain, the group's own domain answering as another object) | FAIL, 6 of 330: no entry carries the refusal. PASS: the two membership cases |
+| M1b | the same, the preflight's line for the membership read's refusal | `4deb363c39d3ee3e767c63c4aec68fe0` | `ARefusalOfTheRoomListPreflight_...` (the room read with no DN, the membership read answering as another object) | FAIL, 2 |
+| M1c | the same, the add's line for the resolver's refusal | `880298819f328a8484315f7552d7320b` | `ARefusalOfTheOnPremRoomListAdd_...` (the six resolver cases); `ARefusalOfTheOnPremRoomListAdd_InTheWholeRow_IsLoggedOnce` | FAIL, 7: the only entry the cloud add's own Error ("Exchange operation failed: ..."), which carries no refusal |
+| M1d | the same, the add's line for the membership read's refusal | `25550781c85723543dc37ef713aa3653` | `ARefusalOfTheOnPremRoomListAdd_...` (the two membership cases) | FAIL, 2 |
+| M2a | the brief's (2), at the call site: the City/State/Country preflight's credential step collapsed into the import's (its `step` assignment removed) | `e754dc58499002422ceec841d0bce987` | `Identity.AFailureAtEachStepOfTheCityStateAndCountryPreflight_NamesThatStep` (credential) | FAIL, 1: "preparing the module's AD credential failed: " not found - told as the import |
+| M2b | the same on the write | `187e753b9c08ec66c75eab7ff53ea336` | `Identity.AFailureAtEachStepOfTheCityStateAndCountryWrite_NamesThatStep` (credential) | FAIL, 1: the same |
+
+Beyond the brief's two:
+
+| # | Mutation | md5 mutated | Named test | Result |
+| --- | --- | --- | --- | --- |
+| M3a | the row logs the preflight's refusal a second time (a warning in `SetRoomMetadataAndListAsync`'s preflight refusal) | `8443b16496951cc65eb5a788a83d4477` | `ARefusalOfTheRoomListPreflight_...` (all eight) | FAIL, 8: two entries carry the refusal |
+| M3b | the add's caller logs the add's refusal a second time (a warning in `AddToRoomListAsync`'s on-prem failure) | `b5f9b6e96764b5f4306f743b7f0e77db` | `ARefusalOfTheOnPremRoomListAdd_...` (all eight); `ARefusalOfTheOnPremRoomListAdd_InTheWholeRow_IsLoggedOnce` | FAIL, 9: two entries carry the refusal |
+| REV | the fix reverted: the service whole as at `53efd9d1`, the new tests kept (they name nothing the fix adds) | `52fdc56d7abb05fe8c0a67863c5fde69` | the three refusal tests | FAIL, 17 of 330. PASS: the two credential cases - part 1 closes a test gap, the step already named |
+
+Every restored md5 equal to "before"; after the last row the restored tree rebuilt and the 330 `ConferenceRoom*` cases green.
+
+**Comments after the round.** The round ran on the fix with none of the service's new explanatory comments (the test files'
+were written with the tests). They were written afterwards and checked by `scratchpad/a2t-round/comment_only.ps1` (aud-a2q's
+checker: blank, `//`, `///` and PowerShell `#` lines dropped from both versions, the code lines identical in order): service
+`f7e08ae0503288f6d2a1dcd247b4f347` -> `f6b0323d2c504c5d2b5651c7a3b4f80b` (code lines 1783 = 1783; comment and blank lines 957 ->
+974); `ConferenceRoomWriteIdentityTests.cs` `57104c12ee27b23de46ac4ae979b860d` -> `eaf52f657cadb98a2c7f4939122cdf76` (973 = 973;
+298 -> 299: one phrase of a comment written with the tests, in each theory, reworded). Unchanged since the round:
+`ConferenceRoomRoomListPreflightTests.cs` `8f68b7ca054f2e9c3690228d61562f0e`.
+
+## Known gaps
+
+- The credential step, on all four directory paths, is reached only through the test seam - aud-a2s's, now on the
+  City/State/Country paths too. Not reachable live: the PAM provider returns no credential at all for a secret missing its
+  username or password (`DelineaService.GetCredentialsBySecretIdAsync`), which the paths refuse before the runspace as not
+  configured; with the username and password it does return, `CreateAdCredential` throws only for a password past
+  `SecureString`'s capacity of 65,536 characters (measured: pwsh 7.6.6, in-process). The two cases pin the step's name, not a
+  failure seen live.
+- Four refusals the helpers return are reached by no test: the resolver's no-ObjectGUID refusal and the error-record refusals of
+  the search, the re-read and the membership read. A stand-in group always has an objectGUID, and the stand-ins throw their
+  errors under `-ErrorAction Stop`, as a cmdlet's own error is thrown under it (aud-a2o, measured) - so those branches can see
+  only a record written past the preference. The line at each call site logs whatever its helper returns, so the tested cases pin the
+  line those take too.
+- Through the row, the add meets only a refusal whose cause appears after the preflight (pinned with the catalog, failing only
+  after Set-Place): the preflight meets every other one first, on the same directory. The add's other refusals are reached by
+  calling the add directly (aud-a2p's seam).
+- "A group DN naming no domain" is a stand-in shape: every DN a global catalog returns for an object in a domain naming context
+  names its domain (aud-a2q's assumption, carried, not probed). Its cases pin that `ReadAdGroupInItsDomain`'s refusal reaches the
+  line.
+- The catalog's own error reaches the log as text inside the refusal: `ResolveForestGlobalCatalog` catches it, so no exception or
+  stack is logged with it.
+- The read-back's refusals stay logged by the add's could-not-be-confirmed line (aud-a2l, aud-a2n), unchanged.
+- Not changed, outside this record: the room-object read's refusals (`ConfirmDirectoryObject`: none, or another object,
+  answering) are returned and logged nowhere on all four directory paths; nor are the refusals the preflights and the writes
+  return before their runspace - an unmappable country, no list GUID, no sync state reported, no proven directory object (a
+  missing credential is logged by the credential service). Reported in the hand-back.
+
+**Operator-visible changes.**
+
+- A Room Finder row refused by the room-list preflight for a reason the resolver or the membership read returns - the list's
+  address missing, the forest's catalog unresolved, no group carrying the address or several, a group DN naming no domain, the
+  group answering as another object, the room's object read with no DN - leaves one warning in the application log: "On-prem
+  room-list preflight for <room> on <list> refused the row; nothing was written: <the refusal>". The same refusals met by the
+  on-prem add after Set-Place: "On-prem room-list add for <room> on <list> refused before its write: <the refusal>". Before,
+  only the row's result and its audit carried them.
+- Nothing else: no outcome, message, write, audit or notification changes; the City/State/Country part is test-only.
+
+**Dev acceptance:** nothing new beyond the Room Finder check owed with aud-a2f..a2s: a clean row logs no refusal, and the new
+lines follow refusals, which are not to be induced on dev. Not run here: no directory, Exchange or SMTP call was made, and the
+owner's standing instruction is not to probe Active Directory.
+
+## Reviewer comments
+
+Implemented under the owner's 2026-10-21 go by an Opus 5.5 implementation agent on `worktree-agent-a3acf365c1c335b8c`.
+Independent review pending.
+
+For the reviewer:
+
+- One fix commit for the finding's two parts.
+- Where the refusals are logged. The brief's "where it is decided ... not again at the caller" is read as the point where a path
+  turns the reason its helper returned into the row's refusal - the four call sites - with the paths' callers
+  (`SetRoomMetadataAndListAsync`, `AddToRoomListAsync`) logging nothing. Not inside the helpers: they are static readers that
+  return a reason, the shape of `ReadObjectThrough`, whose refusal its caller logs (aud-a2q); the membership read is also the
+  add's read-back, already logged with the write's outcome (aud-a2n), so a line in it would log that twice; only the path knows
+  whether anything was written; and one line per call site covers the refusals no stand-in reaches. M3a/M3b pin the "once".
+- The seam is copied into `ConferenceRoomWriteIdentityTests.Service`, not shared: each test class keeps its own `Service` and
+  `CapturingLogger` (aud-a2s's precedent).
+- Beyond the brief's mutation rows: all four log lines (M1a-d), the credential step on both paths (M2a-b), the "once" (M3a-b) and
+  a whole-file revert (REV).
+- Outside the service and its tests: nothing.
+
+## Closeout
+
+Fixed on branch, not merged, not pushed: the plan `95bfa5ca`, then this fix, tests, comments and record in one commit. A
+module-scoped behaviour change (Conference Rooms: four warning log lines): the Conference Rooms module version bump is due at
+merge - not made here, `Modules/ModuleCatalog.cs` being outside this brief. No shared code changed, so no base app bump.
+
+Gates, run on the final files this commit holds (the mutation round ran before the comments, which the comment-only check shows
+changed no code line):
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count - none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m`: 5545 passed, 0 failed, 3 skipped (the known AD
+  skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`), 5548 total, 5 m 26 s; nothing hung, no Sequence
+  file. This record's new cases are 19; the 316 `ClickGate*` cases are among those passed (and, run alone, 316 passed).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: clean.
+- `git diff --check HEAD`: clean.
+- `tools/Test-AsciiOnly.ps1` after `git add -A`: clean.
+
+PSScriptAnalyzer and Pester were not run: no `.ps1` or `.psm1` changed (the scratch runner and checker are not in the
+repository).
+
+Base `53efd9d1`. The local master has since moved to `e9a59ed4` - eleven commits of the attribute editor, event log and a
+decision - touching none of this record's files; the totals above are this branch's.

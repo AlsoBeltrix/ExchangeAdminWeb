@@ -1625,4 +1625,136 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
             Assert.Single(Run(ps, "Get-ADGroup", search));
         }
     }
+
+    // ---- aud-a2t: a refusal the resolver or the membership read returns is logged, once, where the path refuses ----
+    // Each on-prem path took a refusal its resolver or its membership read returned - no address, no catalog, no group or
+    // several, a group answering as another object - into the row and logged nothing: only the row's audit carried it, so
+    // the application log held no trace of why the row was refused. Only a throw was logged, by the step catch (aud-a2s).
+
+    private const string AnotherObject = "77777777-7777-7777-7777-777777777777";
+
+    // The refusals the stand-ins can produce, each set up on the directory - or, for the address, on what Exchange reports
+    // for the list. Not among them: the resolver's no-ObjectGUID refusal and the three error-record refusals - a stand-in
+    // group always has an objectGUID, and the stand-ins throw their errors under -ErrorAction Stop. The line that logs the
+    // refusals below logs those as well: it logs whatever refusal its helper returns.
+    private void SetUpRefusal(string refusal)
+    {
+        switch (refusal)
+        {
+            case "no address": _h.ListAddresses[List] = null; break;
+            case "no catalog": _h.GlobalCatalogs.Clear(); break;
+            case "no group": _h.DirectoryGroupGuids.Clear(); break;
+            case "two groups": _h.DirectoryGroupGuids.Add("88888888-8888-8888-8888-888888888888"); break;
+            case "a group DN naming no domain": _h.DirectoryGroupDomains[ExchangeWriteHarness.DefaultDirectoryGroupGuid] = "OU=Nowhere"; break;
+            case "the group's own domain answering as another object": _h.DirectoryGroupReadBack[GroupDn] = AnotherObject; break;
+            case "the room read with no DN": ((Hashtable)_h.DirectoryObjects[CheckedObject]!).Remove("DistinguishedName"); break;
+            case "the membership read answering as another object": _h.DirectoryGroupMemberReadBack[GroupDn] = AnotherObject; break;
+            default: throw new ArgumentOutOfRangeException(nameof(refusal), refusal, null);
+        }
+    }
+
+    // Words of each refusal's own, so a case is known to have met the refusal it names and not another.
+    private static string RefusalWords(string refusal) => refusal switch
+    {
+        "no address" => "Exchange reported no primary SMTP address for room list",
+        "no catalog" => "The forest's global catalog could not be resolved",
+        "no group" => "No on-prem AD group in the forest has mail",
+        "two groups" => "Multiple on-prem AD groups (2) in the forest have mail",
+        "a group DN naming no domain" => "has no distinguished name that names its domain",
+        "the group's own domain answering as another object" => "is not what its own domain",
+        "the room read with no DN" => "The room's AD object was read without a distinguished name",
+        "the membership read answering as another object" => "did not return its group",
+        _ => throw new ArgumentOutOfRangeException(nameof(refusal), refusal, null),
+    };
+
+    [Theory]
+    [InlineData("no address")]
+    [InlineData("no catalog")]
+    [InlineData("no group")]
+    [InlineData("two groups")]
+    [InlineData("a group DN naming no domain")]
+    [InlineData("the group's own domain answering as another object")]
+    [InlineData("the room read with no DN")]
+    [InlineData("the membership read answering as another object")]
+    public async Task ARefusalOfTheRoomListPreflight_IsLoggedOnce_NamingTheRoomTheListAndTheReason(string refusal)
+    {
+        // Each refusal in turn, before Set-Place, through the whole row: refused while nothing is written, as before - and
+        // logged, in one line: a warning naming the room, the list and the refusal as the row reports it. Nothing else logs
+        // it: not the row, which puts it on its result.
+        SyncedListTheRoomIsNotOnInExchange();
+        SetUpRefusal(refusal);
+        var logger = new CapturingLogger();
+
+        var result = await Apply(new Service(_h, logger), Room());
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.Writes);
+        Assert.Equal("Room list preflight", Assert.Single(result.Steps).Stage);
+        const string NothingWritten = " Nothing was written.";
+        Assert.EndsWith(NothingWritten, result.Message, StringComparison.Ordinal);
+        var reason = result.Message[..^NothingWritten.Length];
+        Assert.Contains(RefusalWords(refusal), reason, StringComparison.Ordinal);
+        var logged = Assert.Single(logger.Entries, e => e.Message.Contains(reason, StringComparison.Ordinal));
+        Assert.Equal(LogLevel.Warning, logged.Level);
+        Assert.Equal($"On-prem room-list preflight for {Typed} on {List} refused the row; nothing was written: {reason}", logged.Message);
+    }
+
+    [Theory]
+    [InlineData("no address")]
+    [InlineData("no catalog")]
+    [InlineData("no group")]
+    [InlineData("two groups")]
+    [InlineData("a group DN naming no domain")]
+    [InlineData("the group's own domain answering as another object")]
+    [InlineData("the room read with no DN")]
+    [InlineData("the membership read answering as another object")]
+    public async Task ARefusalOfTheOnPremRoomListAdd_IsLoggedOnce_NamingTheRoomTheListAndTheReason(string refusal)
+    {
+        // The same refusals met by the add's own resolver and membership read: the add called directly, as the row calls it
+        // after Set-Place, since through the row the preflight would meet each first. The add fails, its step carrying the
+        // refusal, nothing written on-prem - and one warning names the room, the list and the refusal.
+        SyncedListTheRoomIsNotOnInExchange();
+        SetUpRefusal(refusal);
+        var logger = new CapturingLogger();
+        var list = refusal == "no address" ? TheSyncedList() with { PrimarySmtpAddress = null } : TheSyncedList();
+
+        var result = await new Service(_h, logger).AddToRoomListAsync(Room(), Typed, Typed, list);
+
+        Assert.False(result.Success);
+        Assert.Null(result.WrittenDirectoryObject);
+        var step = Assert.Single(result.Steps, s => s.Stage == $"Add to '{List}' (on-prem)");
+        Assert.False(step.Success);
+        var reason = step.Error;
+        Assert.NotNull(reason);
+        Assert.Equal(reason, result.Message);
+        Assert.Contains(RefusalWords(refusal), reason, StringComparison.Ordinal);
+        Assert.Empty(_h.CallsTo("Set-ADGroup"));
+        var logged = Assert.Single(logger.Entries, e => e.Message.Contains(reason, StringComparison.Ordinal));
+        Assert.Equal(LogLevel.Warning, logged.Level);
+        Assert.Equal($"On-prem room-list add for {Typed} on {List} refused before its write: {reason}", logged.Message);
+    }
+
+    [Fact]
+    public async Task ARefusalOfTheOnPremRoomListAdd_InTheWholeRow_IsLoggedOnce()
+    {
+        // The add's refusal reached through the row: the catalog fails only after Set-Place, so the preflight passes and the
+        // add's resolver refuses. The row is the partial it was, carrying the refusal, and one warning names it: the row,
+        // which wraps it in its partial message, does not log it again.
+        SyncedListTheRoomIsNotOnInExchange();
+        _h.FailuresAfterSetPlace["Get-ADForest"] = Injected;
+        var logger = new CapturingLogger();
+
+        var result = await Apply(new Service(_h, logger), Room());
+
+        Assert.False(result.Success);
+        Assert.True(result.Partial);
+        var reason = Assert.Single(result.Steps, s => s.Stage == $"Add to '{List}' (on-prem)").Error;
+        Assert.NotNull(reason);
+        Assert.StartsWith($"The forest's global catalog could not be resolved ({Injected})", reason, StringComparison.Ordinal);
+        Assert.Contains(reason, result.Message, StringComparison.Ordinal);
+        var logged = Assert.Single(logger.Entries, e => e.Message.Contains(reason, StringComparison.Ordinal));
+        Assert.Equal(LogLevel.Warning, logged.Level);
+        Assert.Equal($"On-prem room-list add for {Typed} on {List} refused before its write: {reason}", logged.Message);
+    }
 }
