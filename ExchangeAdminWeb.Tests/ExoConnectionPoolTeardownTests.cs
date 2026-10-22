@@ -289,6 +289,22 @@ public partial class ExoConnectionPoolSharedConfigTests
                 finally { SetSynchronizationContext(previous); }
             }
         }
+
+        /// <summary>
+        /// Runs exactly one held continuation (aud-a6f), so a borrow can be advanced from one await
+        /// to the next and stopped there.
+        /// </summary>
+        public async Task PumpOne(CancellationToken ct)
+        {
+            if (!await _posted.WaitAsync(TimeSpan.FromSeconds(10), ct))
+                throw new TimeoutException("No held continuation was posted.");
+            if (!_queue.TryDequeue(out var item))
+                throw new InvalidOperationException("Continuation signal without a queued callback.");
+            var previous = Current;
+            SetSynchronizationContext(this);
+            try { item.Callback(item.State); }
+            finally { SetSynchronizationContext(previous); }
+        }
     }
 
     // aud-a6d. A pooled runspace that is stale or idle-expired is taken out of the pool and then
@@ -387,6 +403,94 @@ public partial class ExoConnectionPoolSharedConfigTests
         foreach (var runspace in held.Skip(1))
             pool.Return(runspace);
         Assert.Equal(0, pool.AvailableCount);
+        Assert.Equal(["conn-1", "conn-2", "conn-3", "conn-4", "conn-5"], Disconnected(log));
+    }
+
+    // aud-a6f. The stop lands AFTER the post-slot check and before the connect. The only await in
+    // between is the destroy of a stale or idle-expired runspace the borrow took from the pool, so
+    // the sixth borrow is pumped exactly once - past the check, into that destroy - and the pool
+    // stops while it is held there. It must refuse without connecting; the seventh, queued behind
+    // it before the stop, can only be refused rather than starved if the sixth gave its slot back.
+    [Fact]
+    public async Task AStopBetweenThePostSlotCheckAndTheConnect_RefusesWithoutConnecting()
+    {
+        var log = NewDisconnectLog();
+        var connects = 0;
+        using var pool = NewPool(connect: (_, generation, _) =>
+            DisconnectStubRunspace(generation, $"conn-{Interlocked.Increment(ref connects)}", "ok", log));
+        var held = await BorrowMany(pool, 5);
+
+        var context = new HeldContinuations();
+        var sixth = context.Start(() => pool.BorrowAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken));
+        var seventh = context.Start(() => pool.BorrowAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken));
+        Assert.False(sixth.IsCompleted || seventh.IsCompleted, "With every slot held, both borrows must be waiting for one.");
+
+        pool.Return(held[0]);
+        held[0].LastUsed = DateTime.UtcNow - TimeSpan.FromMinutes(21);
+        await context.PumpOne(TestContext.Current.CancellationToken);
+        Assert.False(sixth.IsCompleted, "The sixth borrow must be held at the destroy of the expired runspace it took.");
+
+        pool.Dispose();
+        await context.PumpUntil(sixth, TestContext.Current.CancellationToken);
+
+        var sixthFailure = await Record.ExceptionAsync(() => sixth);
+        Assert.Equal(5, Volatile.Read(ref connects));
+        Assert.IsType<ObjectDisposedException>(sixthFailure);
+        Assert.Equal(["conn-1"], Disconnected(log));
+
+        await context.PumpUntil(seventh, TestContext.Current.CancellationToken);
+        Assert.IsType<ObjectDisposedException>(await Record.ExceptionAsync(() => seventh));
+
+        foreach (var runspace in held.Skip(1))
+            pool.Return(runspace);
+        Assert.Equal(5, Volatile.Read(ref connects));
+        Assert.Equal(0, pool.AvailableCount);
+        Assert.Equal(["conn-1", "conn-2", "conn-3", "conn-4", "conn-5"], Disconnected(log));
+    }
+
+    // aud-a6f. The stop lands WHILE the connect runs: the fifth borrow's connect is held inside the
+    // seam until the pool has stopped. The connection it opens must be disconnected, not handed out,
+    // and the borrow must fail; the sixth, queued behind it before the stop, proves the slot came back.
+    [Fact]
+    public async Task AStopWhileTheConnectRuns_DisconnectsTheNewConnectionInsteadOfHandingItOut()
+    {
+        var log = NewDisconnectLog();
+        var connects = 0;
+        using var connecting = new SemaphoreSlim(0);
+        using var finish = new ManualResetEventSlim(false);
+        using var pool = NewPool(connect: (_, generation, _) =>
+        {
+            var n = Interlocked.Increment(ref connects);
+            if (n == 5)
+            {
+                connecting.Release();
+                Assert.True(finish.Wait(TimeSpan.FromSeconds(30)), "The test never let the held connect finish.");
+            }
+            return DisconnectStubRunspace(generation, $"conn-{n}", "ok", log);
+        });
+        var held = await BorrowMany(pool, 4);
+
+        var context = new HeldContinuations();
+        var fifth = context.Start(() => pool.BorrowAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken));
+        var sixth = context.Start(() => pool.BorrowAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken));
+        Assert.True(await connecting.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken),
+            "The fifth borrow never reached its connect - this test is stale.");
+        Assert.False(sixth.IsCompleted, "With every slot held, the sixth borrow must be waiting for one.");
+
+        pool.Dispose();
+        finish.Set();
+        await context.PumpUntil(fifth, TestContext.Current.CancellationToken);
+
+        Assert.IsType<ObjectDisposedException>(await Record.ExceptionAsync(() => fifth));
+        Assert.Equal(["conn-5"], Disconnected(log));
+        Assert.Equal(0, pool.AvailableCount);
+
+        await context.PumpUntil(sixth, TestContext.Current.CancellationToken);
+        Assert.IsType<ObjectDisposedException>(await Record.ExceptionAsync(() => sixth));
+
+        foreach (var runspace in held)
+            pool.Return(runspace);
+        Assert.Equal(5, Volatile.Read(ref connects));
         Assert.Equal(["conn-1", "conn-2", "conn-3", "conn-4", "conn-5"], Disconnected(log));
     }
 }

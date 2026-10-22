@@ -191,10 +191,11 @@ public sealed class ExoConnectionPool : IDisposable
     public async Task<PooledRunspace> BorrowAsync(TimeSpan waitTimeout, CancellationToken ct = default)
     {
         // aud-a6c: a stopped pool opens no new sessions. Checked again once a slot is held
-        // (aud-a6e), because the wait for one can outlast the stop. Best effort by design - a
-        // borrow already past both checks comes back through Return, which refuses a stopped pool
-        // and destroys the runspace. That refusal, not these checks, is what keeps a connection
-        // returned after the stop out of the pool.
+        // (aud-a6e), and before and after the connect (aud-a6f), because the wait for a slot and
+        // the connect can each outlast the stop. A borrow that completes as the pool stops comes
+        // back through Return, which refuses a stopped pool and destroys the runspace. That
+        // refusal, not these checks, is what keeps a connection returned after the stop out of
+        // the pool.
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _stopped), this);
 
         if (!_enablement.IsModuleEnabled("ExchangeOnline"))
@@ -269,7 +270,25 @@ public sealed class ExoConnectionPool : IDisposable
             // the config read before it: a drain that lands while Connect-ExchangeOnline runs
             // retired exactly that config, so the runspace must come back stale and be
             // discarded on Return instead of being stamped with the post-drain generation.
-            return await Task.Run(() => _connect(current, currentGen, ct), ct);
+            //
+            // aud-a6f: entering the connect is part of the stop protocol. The stop is checked
+            // again here because the destroy above can take seconds, and Dispose may have run
+            // since the post-slot check: a stopped pool opens no new session.
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _stopped), this);
+            var connected = await Task.Run(() => _connect(current, currentGen, ct), ct);
+
+            // aud-a6f: and again once the connect returns, which itself takes seconds. A session
+            // that finished opening after the stop is disconnected here instead of being handed to
+            // a caller that may never return it; the throw goes through the catch below, which
+            // gives the slot back. No token on the destroy - it is cleanup this borrow owes (aud-a6d).
+            if (Volatile.Read(ref _stopped))
+            {
+                await Task.Run(() => DestroyRunspace(connected));
+                _operationTrace.Step("ExoConnectionDiscardedPoolStopped", backend: "ExchangeOnline");
+                throw new ObjectDisposedException(GetType().FullName);
+            }
+
+            return connected;
         }
         catch (Exception ex)
         {
@@ -876,9 +895,10 @@ public sealed class ExoConnectionPool : IDisposable
     /// <remarks>
     /// Audit finding aud-a6c. The stop is recorded under <c>_poolLock</c> BEFORE the drain, which
     /// is what lets <see cref="TryPool"/> promise that nothing is added after the drain has looked.
-    /// Anything borrowed, still connecting, or held by a sweep in progress comes back through
-    /// <see cref="TryPool"/>, is refused, and is destroyed by whoever was holding it. A borrow
-    /// still waiting for a slot is refused when it gets one, and gives the slot back (aud-a6e).
+    /// Anything borrowed or held by a sweep in progress comes back through <see cref="TryPool"/>,
+    /// is refused, and is destroyed by whoever was holding it. A borrow still waiting for a slot
+    /// is refused when it gets one, and gives the slot back (aud-a6e); one still connecting
+    /// disconnects what it connected instead of handing it out (aud-a6f).
     ///
     /// The finding suggested retiring the generation here instead. That cannot hold by itself: a
     /// borrow that read the generation AFTER such a retire would stamp its connection with the new
