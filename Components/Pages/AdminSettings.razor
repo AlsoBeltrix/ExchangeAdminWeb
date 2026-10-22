@@ -1176,7 +1176,20 @@
             // and both halves are recorded.
             if (secretChanged)
             {
-                var secretCheck = ProtectedPrincipalService.CompareDirectoryReadSecretId(ppDirectoryReadSecretIdBaseline, secretId);
+                ModuleConfigSaveOutcome secretCheck;
+                try
+                {
+                    secretCheck = ProtectedPrincipalService.CompareDirectoryReadSecretId(ppDirectoryReadSecretIdBaseline, secretId);
+                }
+                catch (Exception busy) when (ExchangeAdminWeb.Services.Storage.ConfigStoreBusy.IsBusy(busy))
+                {
+                    Logger.LogWarning(busy, "Protected-principals save not attempted: the settings store was busy when the Secret ID compare went to check it");
+                    statusMessage = "Not saved: the settings store was busy - another save, on this instance or the other, held it for longer than this one could wait - so the directory-read credential (Delinea Secret ID) could not be checked. Nothing was written, the protection rules included. Try again in a moment; your changes are still on this page.";
+                    statusIsError = true;
+                    Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreBusy", statusMessage);
+                    return;
+                }
+
                 if (secretCheck.Status == ModuleConfigSaveStatus.StoreCorrupt)
                 {
                     statusMessage = "Refusing to save: the directory-read credential's setting could not be read as the save went to check it. Nothing was saved, the protection rules included. "
