@@ -5,9 +5,9 @@ the folder says "Refusing to replace files that may still be served" to every ca
 included; `Move-ConfigDbToShared.ps1` replaces no files, so the operator reads a reason that does
 not describe what was refused. Dates from aud-a38g; the aud-a38j `-NestedNodes Allow` path kept the
 text.
-**Status**: Fixed on branch; closed on guard proof; review pending
+**Status**: Merged to master (`0187257e`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a6125ee40db9873ac` (forked at `4a8021a8`)
-**Commit**: -
+**Commit**: `90f73fac` (merged `0187257e`)
 **Reviewer**: implementer (surfaced by the aud-a38j/a7f/a7g agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence
