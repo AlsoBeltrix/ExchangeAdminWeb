@@ -161,6 +161,33 @@ public sealed class ExoConnectionPool : IDisposable
         }
     }
 
+    /// <summary>
+    /// <see cref="IsConfigured"/> for a caller that must not take a store it cannot read for an Exchange Online that is
+    /// not configured (aud-a28t): false when the module's enablement or its module config cannot be read, and then
+    /// <paramref name="configured"/> means nothing; otherwise IsConfigured's rule, from one read of each.
+    /// </summary>
+    /// <remarks>
+    /// IsConfigured reads both fail-open - the enablement as disabled, each value as absent and so from appsettings - and
+    /// its false let the permission validator keep a protected group as a bare name, its members unprotected, while the
+    /// resolver's own read of the same config answered. The appsettings fallback here is for a key the module config does
+    /// not hold, as in GetExoConfig, never for a read that failed. IsConfigured stays as it is for its other callers.
+    /// </remarks>
+    public bool TryGetIsConfigured(out bool configured)
+    {
+        configured = false;
+        if (!_enablement.TryGetModuleEnabled(ConfigModuleKey, out var enabled))
+            return false;
+        if (!enabled)
+            return true;
+        if (!_moduleConfig.TryGetModuleConfig(ConfigModuleKey, out var values))
+            return false;
+
+        var appId = values.GetValueOrDefault(ConfigAppIdKey) ?? _config["ExchangeOnline:AppId"];
+        var organization = values.GetValueOrDefault(ConfigOrganizationKey) ?? _config["ExchangeOnline:Organization"];
+        configured = !string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(organization);
+        return true;
+    }
+
     private ExoConnectionConfig GetExoConfig()
     {
         var appId = _moduleConfig.GetValue(ConfigModuleKey, ConfigAppIdKey);

@@ -77,13 +77,28 @@ public class PermissionValidator
         return true;
     }
 
+    // aud-a28t. One read of the Mailbox Permissions rows, fail-closed. Appsettings Security:PreventSelfGrant is the
+    // upgrade fallback for a setting the module config does not hold (absent or blank) - the Constitution allows it only
+    // then - so rows that cannot be read, and a value that is neither true nor false, refuse self-grants rather than ask
+    // appsettings, whose answer may be false.
     private bool GetPreventSelfGrant()
     {
-        var val = _moduleConfig.GetValue("MailboxPermissions", "PreventSelfGrant");
-        if (!string.IsNullOrEmpty(val) && bool.TryParse(val, out var result))
+        if (!_moduleConfig.TryGetModuleConfig("MailboxPermissions", out var values))
+        {
+            _logger.LogError("The self-grant setting cannot be read - self-grants are refused until it can be. {Store}",
+                SettingsStoreText.ModuleConfig("MailboxPermissions"));
+            return true;
+        }
+
+        var val = values.GetValueOrDefault("PreventSelfGrant");
+        if (string.IsNullOrWhiteSpace(val))
+            return bool.Parse(_config["Security:PreventSelfGrant"] ?? "true");
+
+        if (bool.TryParse(val, out var result))
             return result;
 
-        return bool.Parse(_config["Security:PreventSelfGrant"] ?? "true");
+        _logger.LogWarning("The self-grant setting holds '{Value}', which is neither true nor false - self-grants are refused until it is corrected", val);
+        return true;
     }
 
     public void InvalidateCache()
@@ -654,7 +669,9 @@ public class PermissionValidator
                 _initialized = true;
                 _lastRefresh = UtcNow();
                 _loadedToken = token;
-                _logger.LogError("Module config file is corrupt - blocking all protected-target operations until file is fixed");
+                // There is no file to fix: the rows and their fix, as the admin pages name them (aud-a26q).
+                _logger.LogError("The protected-user list cannot be loaded - every protected-target operation is refused; the load is retried after {Retry}. {Store}",
+                    FailedLoadRetry, SettingsStoreText.ModuleConfig("MailboxPermissions"));
                 return;
             }
 
@@ -737,7 +754,15 @@ public class PermissionValidator
     {
         var members = new List<string>();
 
-        if (!_exoPool.IsConfigured)
+        // aud-a28t. A config that cannot be read is not one that says "not configured": taking it for that kept a
+        // protected group as a bare name, every member unprotected for the cache lifetime, while the resolver's later
+        // read of the same config answered. The throw fails the whole load closed instead (EnsureInitializedAsync's
+        // catch), retried after FailedLoadRetry. Exchange Online read as not configured still keeps the entry a literal.
+        if (!_exoPool.TryGetIsConfigured(out var exchangeConfigured))
+            throw new InvalidOperationException(
+                $"Exchange Online's module enablement or its module_config rows could not be read, so the excluded entry '{identity}' cannot be expanded into its members.");
+
+        if (!exchangeConfigured)
         {
             _logger.LogWarning("Exchange Online not configured - group '{Identity}' kept as literal match only; group members are not individually protected", identity);
             return members;

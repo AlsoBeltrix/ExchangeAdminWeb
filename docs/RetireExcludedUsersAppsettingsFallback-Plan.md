@@ -19,6 +19,8 @@ the admin UI never displays:
 - `Services/PermissionValidator.cs:50` (`GetConfiguredExclusions`)
 - `Services/ProtectedPrincipalService.cs:421` (`GetLegacyExclusions`)
 
+Renamed since, 2026-10-22: `TryGetConfiguredExclusions` (aud-a28s) and `TryGetLegacyExclusions` (aud-a28p).
+
 Both first read the `MailboxPermissions/ExcludedUsers` module-config value; when that
 is empty they fall back to the `Security:ExcludedUsers` string array in
 `appsettings.json`. On both the dev (`D:\inetpub\ExchangeAdminWebDev`) and prod

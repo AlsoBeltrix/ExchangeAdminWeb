@@ -47,7 +47,7 @@ public class PermissionValidatorTests
         ExchangeAdminWeb.Services.Storage.IConfigStore? moduleConfigStore = null,
         IIdentityResolver? resolver = null)
     {
-        // Unique DB dir per validator so seeded module config does not leak across tests.
+        // One database per validator, every store on it, so nothing one test seeds reaches another (aud-a26q).
         var testDir = Path.Combine(Path.GetTempPath(), "eaw-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(testDir);
 
@@ -101,16 +101,16 @@ public class PermissionValidatorTests
         httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
         var delineaLogger = Substitute.For<ILogger<DelineaService>>();
         var extLogLogger = Substitute.For<ILogger<ExtendedLogService>>();
-        var extLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(Path.GetTempPath()), extLogLogger);
+        var extLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(testDir), extLogLogger);
         var jsonlLogger = Substitute.For<ILogger<JsonlLogService>>();
         var jsonlLog = new JsonlLogService(config, jsonlLogger);
         var operationTrace = new OperationTraceService(config, jsonlLog);
         var delineaService = new DelineaService(httpClientFactory, config, delineaLogger, extLog, operationTrace);
         var protectedPrincipalLogger = Substitute.For<ILogger<ProtectedPrincipalService>>();
-        var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(Path.GetTempPath()), delineaService, protectedPrincipalLogger);
+        var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(testDir), delineaService, protectedPrincipalLogger);
 
         var enablementLogger = Substitute.For<ILogger<ModuleEnablementService>>();
-        var enablement = new ModuleEnablementService(new ModuleCatalog(), env, moduleConfig, TestConfigStore.CreateModuleEnablement(Path.GetTempPath()), config, enablementLogger);
+        var enablement = new ModuleEnablementService(new ModuleCatalog(), env, moduleConfig, TestConfigStore.CreateModuleEnablement(testDir), config, enablementLogger);
 
         var exoPoolLogger = Substitute.For<ILogger<ExoConnectionPool>>();
         var exoPool = new ExoConnectionPool(config, moduleConfig, enablement, exoPoolLogger, operationTrace);
@@ -119,7 +119,7 @@ public class PermissionValidatorTests
         // assertions are about the PROTECTION decision and must keep passing unchanged.
         var servicers = new ProtectedPrincipalServicerService(
             new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, new ModuleCatalog(),
-                new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(Path.GetTempPath()))),
+                new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(testDir))),
             Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
 
         return new PermissionValidator(config, moduleConfig, exoPool, protectedPrincipalService, servicers, logger, scopeFactory);
@@ -662,9 +662,9 @@ public class PermissionValidatorTests
         if (resolver is not null)
             serviceProvider.GetService(typeof(IIdentityResolver)).Returns(resolver);
 
-        // A servicer row is written to this validator's OWN store, never the shared temp one.
+        // A servicer row is written to this validator's own store, as every other row here is (aud-a26q).
         var sectionAccessRepo = new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(
-            TestConfigStore.Create(servicerSid is null ? Path.GetTempPath() : testDir));
+            TestConfigStore.Create(testDir));
         if (servicerSid is not null)
         {
             sectionAccessRepo.SaveAll(new Dictionary<string, string[]>

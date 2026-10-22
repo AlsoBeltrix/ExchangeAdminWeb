@@ -1795,6 +1795,8 @@ admin could see or clear from the UI (hit in practice: a test account blocked by
 self-service groups gate). The fallback is removed; exclusions now come only from the
 DB-managed protected-principal store and the MailboxPermissions module config.
 
+Renamed since, 2026-10-22: `TryGetConfiguredExclusions` (aud-a28s) and `TryGetLegacyExclusions` (aud-a28p).
+
 Reconciled read-only against the DB `protected_principal` store on both installs before
 removal: `vincent.roche` (exact DB duplicate) and `VRStaff` (covered by
 `group|ANALOG\VR Staff`) keep protection; `mcoelho-2` (test account) and `CLD_LIC_MS_BOD`
