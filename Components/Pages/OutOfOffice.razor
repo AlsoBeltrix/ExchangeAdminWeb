@@ -65,7 +65,7 @@
                         <div class="card-body">
                             @if (checkResult.State == "Scheduled" && checkResult.StartTime.HasValue)
                             {
-                                <p><strong>Schedule:</strong> @checkResult.StartTime.Value.ToString("yyyy-MM-dd HH:mm") — @checkResult.EndTime?.ToString("yyyy-MM-dd HH:mm")</p>
+                                <p><strong>Schedule:</strong> @ReadScheduleTime(checkResult.StartTime.Value) — @(checkResult.EndTime is { } end ? ReadScheduleTime(end) : "")</p>
                             }
                             @if (!string.IsNullOrWhiteSpace(checkResult.InternalMessage))
                             {
@@ -222,6 +222,13 @@
 
     private string ScheduleZoneLabel =>
         scheduleZone is null ? "" : $"Times are in your browser's time zone, {OutOfOfficeRequest.ZoneName(scheduleZone)}.";
+
+    // aud-a7f. A read schedule is shown in the zone the operator enters one in - the browser's, read
+    // once on the first render - with the zone and offset named, as the owner's notice names them. With
+    // no browser zone the instant is still known, so it is shown in UTC and labelled UTC: a stated
+    // reference for a known moment, not a guessed zone.
+    private string ReadScheduleTime(DateTime reported) =>
+        OutOfOfficeRequest.ShowReported(reported, scheduleZone ?? TimeZoneInfo.Utc);
 
     protected override async Task OnInitializedAsync()
     {

@@ -394,7 +394,7 @@ public class EmailService
         if (!_notifyUsers)
             return;
 
-        var (subject, body) = BuildOofNotification(performedBy, request, DateTime.Now);
+        var (subject, body) = BuildOofNotification(performedBy, request, DateTimeOffset.UtcNow);
         await SendEmailAsync(targetEmail, subject, body);
     }
 
@@ -402,7 +402,7 @@ public class EmailService
     /// The affected-user auto-reply notification for one written request. Extracted from the send
     /// so it is assertable without SMTP. Every caller-supplied value is HTML-encoded.
     /// </summary>
-    internal static (string Subject, string Body) BuildOofNotification(string performedBy, OutOfOfficeRequest request, DateTime changedAt)
+    internal static (string Subject, string Body) BuildOofNotification(string performedBy, OutOfOfficeRequest request, DateTimeOffset changedAt)
     {
         var h = (string s) => WebUtility.HtmlEncode(s ?? "");
         var (headerText, action, subjectWord, headerColor) = request.State switch
@@ -425,6 +425,11 @@ public class EmailService
             ? $"{wallClock:MMMM dd, yyyy 'at' h:mm tt} (time zone not recorded)"
             : $"{wallClock:MMMM dd, yyyy 'at' h:mm tt} ({OutOfOfficeRequest.ZoneName(zone)}, {OutOfOfficeRequest.OffsetAt(wallClock, zone)})";
 
+        // aud-a7f. The change's instant in UTC, labelled UTC; it used to be this server's clock with no
+        // zone. UTC rather than the operator's zone: the reader is the mailbox owner, who may be anywhere
+        // and has no tie to the operator's browser, and the request carries a zone only when Scheduled.
+        static string Changed(DateTimeOffset at) => $"{at.UtcDateTime:MMMM dd, yyyy 'at' h:mm tt} UTC";
+
         var body = $@"<!DOCTYPE html>
 <html>
 <head>
@@ -446,7 +451,7 @@ public class EmailService
             <p>Hello,</p>
             <p>Your mailbox auto-reply (Out of Office) has been <strong>{h(action)}</strong> by an administrator.</p>{window}
             <p><strong>Changed by:</strong> {h(performedBy)}<br>
-               <strong>Date:</strong> {changedAt:MMMM dd, yyyy 'at' h:mm tt}</p>
+               <strong>Date:</strong> {h(Changed(changedAt))}</p>
             <div class=""warning"">
                 <strong>Important:</strong> If you were unaware of this change or did not request it, please contact the IT Service Desk immediately.
             </div>

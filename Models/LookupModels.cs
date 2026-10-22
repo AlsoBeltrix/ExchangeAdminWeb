@@ -211,12 +211,40 @@ public sealed record OutOfOfficeRequest(
     /// The zone's offset from UTC at that wall-clock time, as <c>UTC+05:30</c>. Per time, not per zone:
     /// a window that crosses a daylight-saving change has two.
     /// </summary>
-    public static string OffsetAt(DateTime wallClock, TimeZoneInfo zone)
+    public static string OffsetAt(DateTime wallClock, TimeZoneInfo zone) => UtcOffset(zone.GetUtcOffset(WallClock(wallClock)));
+
+    /// <summary>
+    /// aud-a7f. A time Exchange reported, as the Check Status tab shows it: the wall-clock time it
+    /// reads in <paramref name="zone"/>, with the zone's name and its offset at that instant - the form
+    /// the owner's notice uses. When its Kind is Unspecified it is shown as reported, marked as naming
+    /// no zone.
+    /// </summary>
+    /// <remarks>
+    /// Shown by what its Kind states, because which Kind the Exchange Online module hands back is not
+    /// known here - an assumption the finding record labels; no live call was made. Utc and Local each
+    /// name an instant (Local is a time in this server's own zone), so either converts. Unspecified
+    /// names none: reading it as UTC would print a confident label that, whenever the guess is wrong,
+    /// is wrong by the zone's whole offset - the ambiguity aud-a7e removed from the write. The offset
+    /// is the zone's at the instant, not at the wall-clock time as <see cref="OffsetAt"/> reads it: the
+    /// two instants of an hour the clocks repeat show the same clock time and differ only in it.
+    /// </remarks>
+    public static string ShowReported(DateTime reported, TimeZoneInfo zone)
     {
-        var offset = zone.GetUtcOffset(WallClock(wallClock));
-        return "UTC" + (offset < TimeSpan.Zero ? "-" : "+")
-            + offset.Duration().ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture);
+        if (reported.Kind == DateTimeKind.Unspecified)
+            return reported.ToString(ReportedFormat, System.Globalization.CultureInfo.InvariantCulture) + " (time zone not reported)";
+
+        var instant = reported.ToUniversalTime();
+        var shown = TimeZoneInfo.ConvertTimeFromUtc(instant, zone);
+        return $"{shown.ToString(ReportedFormat, System.Globalization.CultureInfo.InvariantCulture)} ({ZoneName(zone)}, {UtcOffset(zone.GetUtcOffset(instant))})";
     }
+
+    // The page's own form of a clock time, culture-free so the separators cannot move.
+    private const string ReportedFormat = "yyyy-MM-dd HH:mm";
+
+    // One spelling of an offset, for the notice (OffsetAt) and the Check Status tab (ShowReported).
+    private static string UtcOffset(TimeSpan offset) =>
+        "UTC" + (offset < TimeSpan.Zero ? "-" : "+")
+            + offset.Duration().ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture);
 
     // Unspecified, whatever the form handed over: the page's defaults start life as DateTime.Now, of
     // Kind Local - the SERVER's zone - and TimeZoneInfo would convert a Local value out of the server's

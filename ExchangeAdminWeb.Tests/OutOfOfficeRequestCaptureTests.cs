@@ -64,6 +64,8 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "eaw-oof-" + Guid.NewGuid().ToString("N"));
     private readonly IList _setCalls = ArrayList.Synchronized(new ArrayList());
     private readonly IList _getCalls = ArrayList.Synchronized(new ArrayList());
+    // aud-a7f. What Get-MailboxAutoReplyConfiguration reports; a test sets it before the read.
+    private readonly Hashtable _read = Hashtable.Synchronized(new Hashtable { ["State"] = "Disabled", ["StartTime"] = null, ["EndTime"] = null });
     private readonly SemaphoreSlim _entered = new(0);
     private readonly ManualResetEventSlim _released = new(false);
     private readonly ActivityProgressService _progress = new();
@@ -170,11 +172,34 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
 
     private static DateTime Parse(string value) => DateTime.Parse(value, CultureInfo.InvariantCulture);
 
+    /// <summary>An instant, as a DateTime of Kind Utc.</summary>
+    private static DateTime Utc(string value) =>
+        DateTime.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal);
+
+    /// <summary>What the next status check reads: a Scheduled auto-reply with this window.</summary>
+    private void ReadBack(DateTime start, DateTime end)
+    {
+        _read["State"] = "Scheduled";
+        _read["StartTime"] = start;
+        _read["EndTime"] = end;
+    }
+
+    /// <summary>The Check Status tab after a check of the mailbox: its rendered text.</summary>
+    private static async Task<string> CheckedStatus(Page page)
+    {
+        SetField(page, "tabIndex", 0);
+        SetField(page, "checkEmail", Mailbox);
+        await CheckStatus(page);
+        Assert.Null(GetField<OutOfOfficeResult>(page, "checkResult").Error);
+        return Rendered(page).Text;
+    }
+
     private PooledRunspace ExchangeRunspace(long generation, string holdAt)
     {
         var state = InitialSessionState.CreateDefault2();
         state.Variables.Add(new SessionStateVariableEntry("SetCalls", _setCalls, null));
         state.Variables.Add(new SessionStateVariableEntry("GetCalls", _getCalls, null));
+        state.Variables.Add(new SessionStateVariableEntry("Read", _read, null));
         state.Variables.Add(new SessionStateVariableEntry("HoldAt", holdAt, null));
         state.Variables.Add(new SessionStateVariableEntry("Entered", _entered, null));
         state.Variables.Add(new SessionStateVariableEntry("Released", _released, null));
@@ -183,7 +208,7 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
             param([string] $Identity)
             [void]$GetCalls.Add($Identity)
             if ($HoldAt -eq 'read') { [void]$Entered.Release(); [void]$Released.Wait([TimeSpan]::FromSeconds(30)) }
-            [pscustomobject]@{ AutoReplyState = 'Disabled'; InternalMessage = $null; ExternalMessage = $null; StartTime = $null; EndTime = $null }
+            [pscustomobject]@{ AutoReplyState = $Read['State']; InternalMessage = $null; ExternalMessage = $null; StartTime = $Read['StartTime']; EndTime = $Read['EndTime'] }
             """));
         state.Commands.Add(new SessionStateFunctionEntry("Set-MailboxAutoReplyConfiguration", """
             [CmdletBinding()]
@@ -605,5 +630,89 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         Assert.DoesNotContain(email.ReceivedCalls(), call => call.GetMethodInfo().Name
             is nameof(EmailService.SendAdminNotificationAsync) or nameof(EmailService.SendOofNotificationAsync));
         Assert.False(GetField<bool>(page, "isSetting"));
+    }
+
+    // aud-a7f, the finding: the Check Status tab printed a read schedule as bare clock times. A time
+    // whose Kind names an instant is shown as the wall clock it reads in the browser's zone, with the
+    // zone and that instant's offset. New York's second case is its repeated hour - two instants that
+    // both read 01:30, told apart only by their offsets. The expected values are literals.
+    [Theory]
+    [InlineData("America/New_York", "2026-10-30T13:00:00Z", "2026-11-06T22:00:00Z",
+        "2026-10-30 09:00 (America/New_York, UTC-04:00)", "2026-11-06 17:00 (America/New_York, UTC-05:00)")]
+    [InlineData("America/New_York", "2026-11-01T05:30:00Z", "2026-11-01T06:30:00Z",
+        "2026-11-01 01:30 (America/New_York, UTC-04:00)", "2026-11-01 01:30 (America/New_York, UTC-05:00)")]
+    [InlineData("Asia/Kolkata", "2026-11-02T03:30:00Z", "2026-11-06T11:30:00Z",
+        "2026-11-02 09:00 (Asia/Kolkata, UTC+05:30)", "2026-11-06 17:00 (Asia/Kolkata, UTC+05:30)")]
+    public async Task TheStatusCheck_ShowsAReadScheduleInTheBrowsersZone_WithTheZoneAndEachTimesOffset(
+        string zone, string startUtc, string endUtc, string shownStart, string shownEnd)
+    {
+        var (page, _) = BuildPage("none", browserZone: zone);
+        ReadBack(Utc(startUtc), Utc(endUtc));
+
+        var text = await CheckedStatus(page);
+
+        Assert.Contains($"{shownStart} \u2014 {shownEnd}", text, StringComparison.Ordinal);
+    }
+
+    // aud-a7f. Local, in .NET, is a time in this server's own zone: still one instant, whatever the
+    // server's zone is, so it is shown exactly as the same instant of Kind Utc is.
+    [Fact]
+    public async Task AReadScheduleOfKindLocal_IsShownAsTheSameInstant()
+    {
+        var (page, _) = BuildPage("none", browserZone: "America/New_York");
+        ReadBack(Utc("2026-10-30T13:00:00Z").ToLocalTime(), Utc("2026-11-06T22:00:00Z").ToLocalTime());
+
+        var text = await CheckedStatus(page);
+
+        Assert.Contains("2026-10-30 09:00 (America/New_York, UTC-04:00) \u2014 2026-11-06 17:00 (America/New_York, UTC-05:00)",
+            text, StringComparison.Ordinal);
+    }
+
+    // aud-a7f. A time of Kind Unspecified names no instant. It is shown as reported and given no zone
+    // and no offset: reading it as UTC would label it confidently and, whenever that guess is wrong,
+    // wrongly by the zone's whole offset.
+    [Fact]
+    public async Task AReadScheduleThatNamesNoZone_IsShownAsReported_AndIsGivenNone()
+    {
+        var (page, _) = BuildPage("none", browserZone: "America/New_York");
+        ReadBack(new DateTime(2026, 10, 30, 13, 0, 0, DateTimeKind.Unspecified), new DateTime(2026, 11, 6, 22, 0, 0, DateTimeKind.Unspecified));
+
+        var text = await CheckedStatus(page);
+
+        Assert.Contains("2026-10-30 13:00", text, StringComparison.Ordinal);
+        Assert.Contains("2026-11-06 22:00", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("America/New_York", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("UTC", text, StringComparison.Ordinal);
+    }
+
+    // aud-a7f. With no browser zone the instant is still known, so it is shown in UTC and labelled so -
+    // a stated reference, not a guessed zone.
+    [Fact]
+    public async Task WithoutTheBrowsersZone_AReadScheduleIsShownInUtc_AndSaysSo()
+    {
+        var (page, _) = BuildPage("none", browserZone: null);
+        ReadBack(Utc("2026-10-30T13:00:00Z"), Utc("2026-11-06T22:00:00Z"));
+
+        var text = await CheckedStatus(page);
+
+        Assert.Contains("2026-10-30 13:00 (UTC, UTC+00:00) \u2014 2026-11-06 22:00 (UTC, UTC+00:00)", text, StringComparison.Ordinal);
+    }
+
+    // aud-a7f. The owner's notice dated the change with the server's clock and no zone. It is the
+    // change's instant in UTC, and says so; handed over at another offset, it is the same instant.
+    [Theory]
+    [InlineData("Scheduled")]
+    [InlineData("Enabled")]
+    [InlineData("Disabled")]
+    public void TheOwnersNotice_DatesTheChangeInUtc_AndSaysSo(string state)
+    {
+        var request = OutOfOfficeRequest.FromForm(Mailbox, state, InternalText, ExternalText, Start, End,
+            TimeZoneInfo.FindSystemTimeZoneById(BrowserZone), Ticket);
+        var changedAt = new DateTimeOffset(2026, 10, 22, 9, 52, 0, TimeSpan.FromHours(-4));
+
+        var (_, body) = EmailService.BuildOofNotification(@"CONTOSO\operator", request, changedAt);
+
+        var date = Regex.Match(body, "<strong>Date:</strong> (?<when>[^<]+)</p>").Groups["when"].Value;
+        Assert.Equal(WebUtility.HtmlEncode($"{new DateTime(2026, 10, 22, 13, 52, 0):MMMM dd, yyyy 'at' h:mm tt} UTC"), date);
     }
 }
