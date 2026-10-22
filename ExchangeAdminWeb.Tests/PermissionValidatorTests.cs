@@ -22,6 +22,24 @@ public class PermissionValidatorTests
         return resolver;
     }
 
+    /// <summary>
+    /// aud-a2d: a mailbox Exchange reports, with the mailbox GUID a write is bound to. An allow now
+    /// requires one, so the tests written before a2d that expect an allow give their target one.
+    /// </summary>
+    private static ResolvedRecipient MailboxRecipient(string address, Guid exchangeGuid) =>
+        new(address, "ext-" + address, "UserMailbox", ExistsOnPrem: true, ExchangeGuid: exchangeGuid);
+
+    private static readonly Guid AnyoneGuid = Guid.Parse("1a1a1a1a-0000-4000-8000-000000000001");
+    private static readonly Guid OtherGuid = Guid.Parse("1a1a1a1a-0000-4000-8000-000000000002");
+
+    /// <summary>Exchange knows <paramref name="address"/> as a mailbox and nobody else.</summary>
+    private static IIdentityResolver ExchangeKnowsOnly(string address, Guid exchangeGuid)
+    {
+        var resolver = ExchangeKnowsNobody();
+        resolver.ResolveRecipientAsync(address).Returns(MailboxRecipient(address, exchangeGuid));
+        return resolver;
+    }
+
     private static PermissionValidator CreateValidator(
         string[]? excludedUsers = null,
         bool preventSelfGrant = true,
@@ -220,9 +238,10 @@ public class PermissionValidatorTests
     {
         // Exchange answered and has no such recipient, so the entry stays a literal match. An
         // unrelated target is allowed; the literal entry is blocked. (Before aud-a2b this ran
-        // with no resolver at all and passed only because the failed lookup was swallowed.)
+        // with no resolver at all and passed only because the failed lookup was swallowed. Since
+        // aud-a2d the unrelated target must be a mailbox Exchange knows, or nothing can be written.)
         var validator = CreateValidator(excludedUsers: new[] { "SomeGroupThatNeedsExpansion" },
-            resolver: ExchangeKnowsNobody());
+            resolver: ExchangeKnowsOnly("anyone@company.com", AnyoneGuid));
 
         var resultUnrelated = await validator.ValidateTargetMailboxAsync("anyone@company.com");
         Assert.Null(resultUnrelated);
@@ -270,8 +289,7 @@ public class PermissionValidatorTests
         // The opposite direction, so the refusal above cannot be passing by refusing everything.
         var resolver = ExchangeKnowsNobody();
         resolver.ResolveRecipientAsync("vip@contoso.com").Returns(Vip);
-        resolver.ResolveRecipientAsync("other@contoso.com")
-            .Returns(new ResolvedRecipient("other@contoso.com", "ext-other", "UserMailbox", ExistsOnPrem: true));
+        resolver.ResolveRecipientAsync("other@contoso.com").Returns(MailboxRecipient("other@contoso.com", OtherGuid));
         var validator = CreateValidator(excludedUsers: new[] { "vip@contoso.com" }, resolver: resolver);
 
         var result = await validator.ValidateTargetMailboxAsync("other@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
@@ -321,8 +339,7 @@ public class PermissionValidatorTests
         var resolver = ExchangeKnowsNobody();
         resolver.ResolveRecipientAsync("vip@contoso.com").Returns<ResolvedRecipient?>(_ =>
             ++calls == 1 ? throw new InvalidOperationException("EXO unreachable") : Vip);
-        resolver.ResolveRecipientAsync("other@contoso.com")
-            .Returns(new ResolvedRecipient("other@contoso.com", "ext-other", "UserMailbox", ExistsOnPrem: true));
+        resolver.ResolveRecipientAsync("other@contoso.com").Returns(MailboxRecipient("other@contoso.com", OtherGuid));
         var validator = CreateValidator(excludedUsers: new[] { "vip@contoso.com" }, resolver: resolver);
         var now = DateTime.UtcNow;
         validator.UtcNow = () => now;
@@ -340,8 +357,10 @@ public class PermissionValidatorTests
     [Fact]
     public async Task ValidateTargetMailbox_EmptyExclusions_AllowsOperations()
     {
-        // No exclusions configured at all - init succeeds with empty set
-        var validator = CreateValidator(excludedUsers: Array.Empty<string>());
+        // No exclusions configured at all - init succeeds with empty set. Since aud-a2d the target
+        // is still put to Exchange once, for the mailbox the write is bound to.
+        var validator = CreateValidator(excludedUsers: Array.Empty<string>(),
+            resolver: ExchangeKnowsOnly("anyone@company.com", AnyoneGuid));
 
         var result = await validator.ValidateTargetMailboxAsync("anyone@company.com");
         Assert.Null(result);
@@ -353,7 +372,8 @@ public class PermissionValidatorTests
         // Guards the retirement of the Security:ExcludedUsers appsettings fallback
         // (2026-07-28): a value present ONLY under appsettings, with the module config
         // empty, must NOT be treated as excluded. Restoring the fallback read fails this.
-        var validator = CreateValidator(appsettingsExcludedUsers: new[] { "AppsettingsOnlyGroup" });
+        var validator = CreateValidator(appsettingsExcludedUsers: new[] { "AppsettingsOnlyGroup" },
+            resolver: ExchangeKnowsOnly("AppsettingsOnlyGroup", AnyoneGuid));
 
         var result = await validator.ValidateTargetMailboxAsync("AppsettingsOnlyGroup");
         Assert.Null(result);
@@ -380,7 +400,8 @@ public class PermissionValidatorTests
         // entries are still present. Exchange answering "no such recipient" for every entry is a
         // complete load, so init succeeds and unrelated targets are allowed. (It used to run
         // with no resolver; since aud-a2b that refuses - see the FailsClosed test above.)
-        var validator = CreateValidator(excludedUsers: new[] { "SomeGroup" }, resolver: ExchangeKnowsNobody());
+        var validator = CreateValidator(excludedUsers: new[] { "SomeGroup" },
+            resolver: ExchangeKnowsOnly("user@company.com", AnyoneGuid));
 
         var firstResult = await validator.ValidateTargetMailboxAsync("user@company.com");
         Assert.Null(firstResult);
@@ -452,7 +473,7 @@ public class PermissionValidatorTests
         var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
         pp.ResolveTo = new ResolvedDirectoryPrincipal(
             "Test", "Nobody", "nobody@contoso.com", "nobody", "nobody@contoso.com",
-            "CN=nobody,DC=contoso,DC=com", "guid", null);
+            "CN=nobody,DC=contoso,DC=com", "guid", null, ExchangeGuid: AnyoneGuid);
 
         var result = await validator.ValidateTargetMailboxAsync(
             "nobody@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
@@ -533,11 +554,15 @@ public class PermissionValidatorTests
         /// </summary>
         public ResolvedDirectoryPrincipal? ResolveTo;
 
+        /// <summary>The mailbox GUID the default scripted principal carries (aud-a2d: an allow needs one).</summary>
+        public static readonly Guid DefaultMailboxGuid = Guid.Parse("1a1a1a1a-0000-4000-8000-0000000000ff");
+
         public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
         {
             ResolveCalls++;
             ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved
-                ? ResolveTo ?? new ResolvedDirectoryPrincipal("Test", identity, identity, "sam", identity, "CN=x,DC=y", "guid", null)
+                ? ResolveTo ?? new ResolvedDirectoryPrincipal("Test", identity, identity, "sam", identity, "CN=x,DC=y", "guid", null,
+                    ExchangeGuid: DefaultMailboxGuid)
                 : null;
             return Task.FromResult((p, Status));
         }
@@ -569,8 +594,14 @@ public class PermissionValidatorTests
     /// Builds a validator whose protected-principal config has a Group rule, which is what makes
     /// ValidateTargetMailboxAsync require full resolution and reach the scripted seam.
     /// </summary>
+    /// <param name="excludedUsers">aud-a2d: a legacy list to run beside the central check.</param>
+    /// <param name="resolver">aud-a2d: what Exchange answers the legacy list, when it asks.</param>
+    /// <param name="servicerSid">aud-a2d: a Mailbox Permissions servicer group, so the serviced allow is reachable.</param>
     private static (PermissionValidator validator, ScriptedPpService pp) CreateValidatorWithScriptedResolution(
-        bool addressOnlyConfig = false)
+        bool addressOnlyConfig = false,
+        string[]? excludedUsers = null,
+        IIdentityResolver? resolver = null,
+        string? servicerSid = null)
     {
         var testDir = Path.Combine(Path.GetTempPath(), "eaw-res-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(testDir, "config"));
@@ -586,6 +617,13 @@ public class PermissionValidatorTests
 
         var catalog = new ModuleCatalog();
         var moduleConfig = new ModuleConfigService(catalog, env, TestConfigStore.CreateModuleConfig(testDir), Substitute.For<ILogger<ModuleConfigService>>());
+        if (excludedUsers is not null)
+        {
+            moduleConfig.SaveModuleConfig("MailboxPermissions", new Dictionary<string, string>
+            {
+                ["ExcludedUsers"] = string.Join(",", excludedUsers)
+            });
+        }
 
         File.WriteAllText(Path.Combine(testDir, "config", "protected-principals.json"),
             System.Text.Json.JsonSerializer.Serialize(new
@@ -618,12 +656,26 @@ public class PermissionValidatorTests
 
         var scopeFactory = Substitute.For<IServiceScopeFactory>();
         var scope = Substitute.For<IServiceScope>();
+        var serviceProvider = Substitute.For<IServiceProvider>();
         scopeFactory.CreateScope().Returns(scope);
-        scope.ServiceProvider.Returns(Substitute.For<IServiceProvider>());
+        scope.ServiceProvider.Returns(serviceProvider);
+        if (resolver is not null)
+            serviceProvider.GetService(typeof(IIdentityResolver)).Returns(resolver);
 
+        // A servicer row is written to this validator's OWN store, never the shared temp one.
+        var sectionAccessRepo = new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(
+            TestConfigStore.Create(servicerSid is null ? Path.GetTempPath() : testDir));
+        if (servicerSid is not null)
+        {
+            sectionAccessRepo.SaveAll(new Dictionary<string, string[]>
+            {
+                [ProtectedPrincipalServicerService.SectionKeyFor("MailboxPermissions")] = [servicerSid],
+                ["MailboxPermissions"] = ["S-1-5-21-1-2-3-500"],
+            });
+        }
         var servicers2 = new ProtectedPrincipalServicerService(
             new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, new ModuleCatalog(),
-                new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(Path.GetTempPath()))),
+                sectionAccessRepo),
             Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
         var validator = new PermissionValidator(config, moduleConfig, exoPool, pp, servicers2,
             Substitute.For<ILogger<PermissionValidator>>(), scopeFactory);
@@ -756,5 +808,192 @@ public class PermissionValidatorTests
         var result = await validator.ValidateTargetMailboxAsync("ordinary@company.com");
 
         Assert.Null(result);
+    }
+
+    // --- aud-a2d: the allow carries the mailbox the write is bound to, and there is no allow without one ---
+
+    private static readonly Guid SharedGuid = Guid.Parse("2b2b2b2b-0000-4000-8000-000000000001");
+    private const string SharedObjectGuid = "2c2c2c2c-0000-4000-8000-000000000001";
+
+    private static ResolvedDirectoryPrincipal SharedMailbox(Guid? exchangeGuid) => new(
+        "Test", "Shared", "shared@contoso.com", "shared", "shared@contoso.com",
+        "CN=shared,DC=contoso,DC=com", SharedObjectGuid, null, ExchangeGuid: exchangeGuid);
+
+    [Fact]
+    public async Task TheAllowCarriesTheMailboxTheCheckResolved_NotTheStringTyped()
+    {
+        // The operator types an alias; the check resolves and proves the mailbox behind it. The
+        // write must be handed that mailbox - its GUID and the AD object proven to own it - and
+        // not the alias, which Exchange would resolve all over again.
+        var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
+        pp.ResolveTo = SharedMailbox(SharedGuid);
+
+        var result = await validator.ValidateTargetMailboxAsync("alias@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.Null(result.Error);
+        var mailbox = Assert.IsType<ValidatedMailbox>(result.Mailbox);
+        Assert.Equal(SharedGuid, mailbox.ExchangeGuid);
+        Assert.Equal(SharedGuid.ToString("D"), mailbox.Identity);
+        Assert.Equal(SharedObjectGuid, mailbox.DirectoryObjectGuid);
+    }
+
+    [Fact]
+    public async Task AResolvedTargetWithNoMailbox_IsRefused_RatherThanWrittenByItsName()
+    {
+        // ResolveExchangeTargetAsync's no-recipient branch: AD knows the object, Exchange has no
+        // recipient, so the principal carries no mailbox GUID. Before aud-a2d this was allowed and
+        // the write handed the string to Exchange to make of it what it would.
+        var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
+        pp.ResolveTo = SharedMailbox(exchangeGuid: null);
+
+        var result = await validator.ValidateTargetMailboxAsync("shared@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.Equal(PermissionValidator.NoMailboxMessage("shared@contoso.com"), result.Error);
+        Assert.Null(result.Mailbox);
+    }
+
+    [Fact]
+    public async Task AProtectedTargetWithNoMailbox_IsStillRefusedAsProtected()
+    {
+        // The binding runs after the protection verdict, so a protected principal keeps the
+        // refusal - and the warning - that names it as protected.
+        var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
+        pp.ResolveTo = SharedMailbox(exchangeGuid: null);
+        pp.CheckResult = ProtectedPrincipalResult.Protected("Target is a protected principal.", "User:vip");
+
+        var result = await validator.ValidateTargetMailboxAsync("shared@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.Contains("is protected", result.Error, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AServicedAllow_CarriesTheMailbox_AndWithoutOneIsRefused(bool hasMailbox)
+    {
+        const string servicerSid = "S-1-5-21-1-2-3-4001";
+        var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true, servicerSid: servicerSid);
+        pp.ResolveTo = SharedMailbox(hasMailbox ? SharedGuid : null);
+        pp.CheckResult = ProtectedPrincipalResult.Protected("Target is a protected principal.", "User:vip");
+        var servicer = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+            [new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, @"CONTOSO\servicer"),
+             new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, servicerSid)], "TestAuth"));
+
+        var result = await validator.ValidateTargetMailboxAsync("shared@contoso.com", servicer, "MailboxPermissions");
+
+        if (hasMailbox)
+        {
+            Assert.Null(result.Error);
+            Assert.NotNull(result.ServicedNote);
+            Assert.Equal(SharedGuid, result.Mailbox!.ExchangeGuid);
+        }
+        else
+        {
+            Assert.Equal(PermissionValidator.NoMailboxMessage("shared@contoso.com"), result.Error);
+            Assert.Null(result.ServicedNote);
+            Assert.Null(result.Mailbox);
+        }
+    }
+
+    [Fact]
+    public async Task NothingConfigured_TheTargetIsStillBoundToTheMailboxExchangeNames()
+    {
+        // No protection configured: nothing to check, but the write must still be bound to a
+        // mailbox rather than to the string - so Exchange is asked once, here.
+        var resolver = ExchangeKnowsOnly("anyone@company.com", AnyoneGuid);
+        var validator = CreateValidator(excludedUsers: Array.Empty<string>(), resolver: resolver);
+
+        var result = await validator.ValidateTargetMailboxAsync("anyone@company.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.Null(result.Error);
+        Assert.Equal(AnyoneGuid, result.Mailbox!.ExchangeGuid);
+        Assert.Null(result.Mailbox.DirectoryObjectGuid);
+        await resolver.Received(1).ResolveRecipientAsync("anyone@company.com");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NothingConfigured_ATargetWithNoMailbox_IsRefused(bool recipientWithoutMailbox)
+    {
+        // No recipient at all, or a recipient Exchange reports no mailbox GUID for (a contact, a
+        // distribution group): either way there is no mailbox to bind a write to.
+        var resolver = ExchangeKnowsNobody();
+        if (recipientWithoutMailbox)
+        {
+            resolver.ResolveRecipientAsync("team@company.com")
+                .Returns(new ResolvedRecipient("team@company.com", "ext-team", "MailUniversalDistributionGroup", ExistsOnPrem: false));
+        }
+        var validator = CreateValidator(excludedUsers: Array.Empty<string>(), resolver: resolver);
+
+        var result = await validator.ValidateTargetMailboxAsync("team@company.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.Equal(PermissionValidator.NoMailboxMessage("team@company.com"), result.Error);
+        Assert.Null(result.Mailbox);
+    }
+
+    [Fact]
+    public async Task NothingConfigured_ExchangeCannotBeAsked_IsRefused()
+    {
+        var resolver = Substitute.For<IIdentityResolver>();
+        resolver.ResolveRecipientAsync(Arg.Any<string>())
+            .Returns<ResolvedRecipient?>(_ => throw new InvalidOperationException("EXO unreachable"));
+        var withResolver = CreateValidator(excludedUsers: Array.Empty<string>(), resolver: resolver);
+        var withoutResolver = CreateValidator(excludedUsers: Array.Empty<string>());
+
+        var unreachable = await withResolver.ValidateTargetMailboxAsync("anyone@company.com", actingUser: null, moduleId: "MailboxPermissions");
+        var unregistered = await withoutResolver.ValidateTargetMailboxAsync("anyone@company.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.Contains("could not be identified", unreachable.Error, StringComparison.Ordinal);
+        Assert.Null(unreachable.Mailbox);
+        Assert.Contains("could not be identified", unregistered.Error, StringComparison.Ordinal);
+        Assert.Null(unregistered.Mailbox);
+    }
+
+    [Fact]
+    public async Task LegacyList_TheAllowCarriesTheMailboxTheListChecked_AskingExchangeOnce()
+    {
+        // The list put the target to Exchange to compare its canonical address; that answer is the
+        // mailbox the write is bound to. Asking again could get a different one.
+        var resolver = ExchangeKnowsNobody();
+        resolver.ResolveRecipientAsync("vip@contoso.com").Returns(Vip);
+        resolver.ResolveRecipientAsync("other@contoso.com").Returns(MailboxRecipient("other@contoso.com", OtherGuid));
+        var validator = CreateValidator(excludedUsers: new[] { "vip@contoso.com" }, resolver: resolver);
+
+        var result = await validator.ValidateTargetMailboxAsync("other@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        Assert.Null(result.Error);
+        Assert.Equal(OtherGuid, result.Mailbox!.ExchangeGuid);
+        await resolver.Received(1).ResolveRecipientAsync("other@contoso.com");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CentralAndLegacyLookupsNamingDifferentMailboxes_AreRefused(bool sameMailbox)
+    {
+        // Both checks ran on this target and each asked Exchange. If the answers name two
+        // mailboxes, the two checks looked at different objects and there is no one mailbox the
+        // write could be bound to. The same answer twice is the ordinary case and is allowed.
+        var resolver = ExchangeKnowsNobody();
+        resolver.ResolveRecipientAsync("legacy-vip@contoso.com").Returns(MailboxRecipient("legacy-vip@contoso.com", AnyoneGuid));
+        resolver.ResolveRecipientAsync("alias@contoso.com")
+            .Returns(MailboxRecipient(sameMailbox ? "shared@contoso.com" : "elsewhere@contoso.com", sameMailbox ? SharedGuid : OtherGuid));
+        var (validator, pp) = CreateValidatorWithScriptedResolution(
+            addressOnlyConfig: true, excludedUsers: ["legacy-vip@contoso.com"], resolver: resolver);
+        pp.ResolveTo = SharedMailbox(SharedGuid);
+
+        var result = await validator.ValidateTargetMailboxAsync("alias@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
+
+        if (sameMailbox)
+        {
+            Assert.Null(result.Error);
+            Assert.Equal(SharedGuid, result.Mailbox!.ExchangeGuid);
+        }
+        else
+        {
+            Assert.Contains("two different mailboxes", result.Error, StringComparison.Ordinal);
+            Assert.Null(result.Mailbox);
+        }
     }
 }

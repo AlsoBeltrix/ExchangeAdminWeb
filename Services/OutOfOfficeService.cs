@@ -46,19 +46,38 @@ public class OutOfOfficeService : ExchangeServiceBase
     }
 
     /// <summary>
-    /// Writes exactly the request the page captured before its first await (aud-a7b). The
-    /// positional overload this replaced let a caller assemble the arguments from live form fields
-    /// at the moment of the write; the page was its only caller.
+    /// The current auto-reply of the mailbox the write will be bound to, for the audit's previous
+    /// state (aud-a2d): read by its GUID, so the state recorded is the written mailbox's and not
+    /// whatever the typed string resolves to. Null when there is no mailbox - the write then
+    /// refuses as well.
     /// </summary>
-    public Task<PermissionResult> SetOutOfOfficeAsync(OutOfOfficeRequest request)
+    public async Task<OutOfOfficeResult?> GetOutOfOfficeAsync(ValidatedMailbox? mailbox) =>
+        mailbox is null ? null : await GetOutOfOfficeAsync(mailbox.Identity);
+
+    /// <summary>
+    /// Writes exactly the request the page captured before its first await (aud-a7b), to the mailbox
+    /// the protected-principal check validated (aud-a2d). The positional overload this replaced let
+    /// a caller assemble the arguments from live form fields at the moment of the write; the page
+    /// was its only caller.
+    /// </summary>
+    /// <param name="request">What to write. Its <c>Mailbox</c> is the operator's input, used for the message only.</param>
+    /// <param name="mailbox">
+    /// The only identity written. A second parameter rather than a field of the request: the request
+    /// is what the operator asked for, captured before any await; this is what the check found, and
+    /// exists only after it. Null refuses before a connection is borrowed.
+    /// </param>
+    public Task<PermissionResult> SetOutOfOfficeAsync(OutOfOfficeRequest request, ValidatedMailbox? mailbox)
     {
         var (emailAddress, state, internalMessage, externalMessage, startTime, endTime, _) = request;
+
+        if (mailbox is null)
+            return Task.FromResult(PermissionResult.Fail(ValidatedMailbox.Refusal(emailAddress)));
 
         // Single-write (Set-MailboxAutoReplyConfiguration): safe to retry on a dead session.
         return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Set-MailboxAutoReplyConfiguration")
-              .AddParameter("Identity", emailAddress)
+              .AddParameter("Identity", mailbox.Identity)
               .AddParameter("AutoReplyState", state)
               .AddParameter("ErrorAction", "Stop");
 

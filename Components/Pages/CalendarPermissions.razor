@@ -428,7 +428,7 @@
 
             try
             {
-                var location = await CalendarService.GetMailboxLocationAsync(target);
+                var location = await CalendarService.GetMailboxLocationAsync(validation.Mailbox);
                 if (location == "Unknown")
                 {
                     result = PermissionResult.Fail($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found.");
@@ -459,13 +459,13 @@
 
                 if (isSet)
                 {
-                    opResult = await CalendarService.SetCalendarPermissionAsync(target, user, access);
+                    opResult = await CalendarService.SetCalendarPermissionAsync(target, validation.Mailbox, user, access);
                     action = "SetCalendar";
                     level = access.ToString();
                 }
                 else
                 {
-                    opResult = await CalendarService.RemoveCalendarPermissionAsync(target, user);
+                    opResult = await CalendarService.RemoveCalendarPermissionAsync(target, validation.Mailbox, user);
                     action = "RemoveCalendar";
                     level = null;
                 }
@@ -473,12 +473,12 @@
                 var ipAddress = clientIpAddress;
 
                 // Serviced note in `extra`, not errorDetail: this is the SUCCESS path and the error
-                // field is dropped on success.
+                // field is dropped on success. The identity written rides beside it (aud-a2d).
                 Audit.LogCalendarPermission(
                     currentUser, ipAddress, action, target, user, level,
                     opResult.Success, ticket,
                     errorDetail: opResult.Success ? null : opResult.Message,
-                    extra: ProtectedPrincipalServicing.Extra(servicedNote));
+                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), validation.Mailbox));
 
                 // Send admin notification
                 await Email.SendAdminNotificationAsync(
@@ -658,14 +658,14 @@
 
             PermissionResult opResult;
             if (isSet)
-                opResult = await CalendarService.SetCalendarPermissionOnPremAsync(target, user, access.ToString());
+                opResult = await CalendarService.SetCalendarPermissionOnPremAsync(target, onPremValidation.Mailbox, user, access.ToString());
             else
-                opResult = await CalendarService.RemoveCalendarPermissionOnPremAsync(target, user);
+                opResult = await CalendarService.RemoveCalendarPermissionOnPremAsync(target, onPremValidation.Mailbox, user);
 
             Audit.LogCalendarPermission(
                 currentUser, clientIpAddress, action, target, user, level,
                 opResult.Success, ticket, errorDetail: opResult.Success ? null : opResult.Message,
-                extra: ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote));
+                extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox));
 
             await Email.SendAdminNotificationAsync(
                 currentUser, clientIpAddress, action, target, user,

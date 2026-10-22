@@ -30,8 +30,10 @@ namespace ExchangeAdminWeb.Tests;
 /// over a real <see cref="OutOfOfficeService"/> on a real pool, whose connect seam hands out an
 /// in-process runspace carrying stub <c>Get-</c> / <c>Set-MailboxAutoReplyConfiguration</c>
 /// functions; the Set stub records the parameters it was bound with. The validator is real with
-/// nothing protected, the audit is real over a temp JSONL root and is read back, and the email
-/// service is a substitute whose virtual admin notification is captured. No Exchange, no Graph.
+/// nothing protected - it still asks a substituted resolver which mailbox the target is, because
+/// the write is bound to that mailbox (aud-a2d) - the audit is real over a temp JSONL root and is
+/// read back, and the email service is a substitute whose virtual admin notification is captured.
+/// No Exchange, no Graph.
 /// </remarks>
 public sealed class OutOfOfficeRequestCaptureTests : IDisposable
 {
@@ -41,6 +43,8 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     private const string ExternalText = "Away until Friday (external)";
     private static readonly DateTime Start = new(2026, 11, 2, 9, 0, 0);
     private static readonly DateTime End = new(2026, 11, 6, 17, 0, 0);
+    private static readonly Guid AliceGuid = Guid.Parse("3c3c3c3c-0000-4000-8000-00000000a11c");
+    private static readonly Guid MalloryGuid = Guid.Parse("3c3c3c3c-0000-4000-8000-0000000ba11d");
 
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "eaw-oof-" + Guid.NewGuid().ToString("N"));
     private readonly IList _setCalls = ArrayList.Synchronized(new ArrayList());
@@ -173,10 +177,20 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
             new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, new ModuleCatalog(),
                 new SectionAccessRepository(TestConfigStore.Create(_dir))),
             Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+        // Nothing is protected, but since aud-a2d the validator still asks Exchange which mailbox the
+        // target is, so the write can be bound to it. Each address names its own mailbox.
+        var resolver = Substitute.For<IIdentityResolver>();
+        resolver.ResolveRecipientAsync(Arg.Any<string>()).Returns((ResolvedRecipient?)null);
+        resolver.ResolveRecipientAsync(Mailbox)
+            .Returns(new ResolvedRecipient(Mailbox, "ext-alice", "UserMailbox", ExistsOnPrem: false, ExchangeGuid: AliceGuid));
+        resolver.ResolveRecipientAsync("mallory@contoso.test")
+            .Returns(new ResolvedRecipient("mallory@contoso.test", "ext-mallory", "UserMailbox", ExistsOnPrem: false, ExchangeGuid: MalloryGuid));
         var scopeFactory = Substitute.For<IServiceScopeFactory>();
         var scope = Substitute.For<IServiceScope>();
+        var provider = Substitute.For<IServiceProvider>();
         scopeFactory.CreateScope().Returns(scope);
-        scope.ServiceProvider.Returns(Substitute.For<IServiceProvider>());
+        scope.ServiceProvider.Returns(provider);
+        provider.GetService(typeof(IIdentityResolver)).Returns(resolver);
         return new PermissionValidator(config, moduleConfig, _pool!, protectedPrincipals, servicers,
             Substitute.For<ILogger<PermissionValidator>>(), scopeFactory);
     }
@@ -275,8 +289,12 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
 
         await PauseEditAndRelease(page, SetOof(page));
 
+        // aud-a2d: written to the captured mailbox's GUID - the mailbox the check validated - and
+        // the previous-state read is of the same mailbox. The edit moved the box to mallory, whose
+        // mailbox has a GUID of its own; neither reaches the write.
         var write = SingleWrite();
-        Assert.Equal(Mailbox, Unwrap(write["Identity"]));
+        Assert.Equal(AliceGuid.ToString("D"), Unwrap(write["Identity"]));
+        Assert.Equal(AliceGuid.ToString("D"), Unwrap(Assert.Single(_getCalls.Cast<object?>())));
         Assert.Equal("Scheduled", Unwrap(write["AutoReplyState"]));
         Assert.Equal(InternalText, Unwrap(write["InternalMessage"]));
         Assert.Equal(ExternalText, Unwrap(write["ExternalMessage"]));
@@ -285,6 +303,7 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
 
         var row = SingleRow(AuditRows(), "OutOfOffice_Set");
         Assert.Equal(Mailbox, row.GetProperty("target").GetString());
+        Assert.Equal(AliceGuid.ToString("D"), row.GetProperty(ValidatedMailbox.AuditKey).GetString());
         Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
         Assert.Equal("Success", row.GetProperty("result").GetString());
         Assert.Equal("Scheduled", row.GetProperty("newState").GetString());
@@ -331,7 +350,7 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         await first;
         await second;
 
-        Assert.Equal(Mailbox, Unwrap(SingleWrite()["Identity"]));
+        Assert.Equal(AliceGuid.ToString("D"), Unwrap(SingleWrite()["Identity"]));
         SingleRow(AuditRows(), "OutOfOffice_Set");
         Assert.False(GetField<bool>(page, "isSetting"));
     }

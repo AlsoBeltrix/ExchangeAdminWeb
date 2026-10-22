@@ -458,7 +458,7 @@
 
             try
             {
-                var location = await MailboxService.GetMailboxLocationAsync(target);
+                var location = await MailboxService.GetMailboxLocationAsync(validation.Mailbox);
                 if (location == "Unknown")
                 {
                     result = PermissionResult.Fail($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found.");
@@ -485,8 +485,8 @@
                 }
 
                 var opResult = isAdd
-                    ? await MailboxService.AddMailboxPermissionsAsync(target, user, fullAccess, sendAs, autoMap)
-                    : await MailboxService.RemoveMailboxPermissionsAsync(target, user, fullAccess, sendAs);
+                    ? await MailboxService.AddMailboxPermissionsAsync(target, validation.Mailbox, user, fullAccess, sendAs, autoMap)
+                    : await MailboxService.RemoveMailboxPermissionsAsync(target, validation.Mailbox, user, fullAccess, sendAs);
 
                 var perms = new List<string>();
                 if (fullAccess) perms.Add("FullAccess");
@@ -497,13 +497,13 @@
 
                 // The serviced note rides `extra`: this is the SUCCESS path, and LogMailboxPermission
                 // drops errorDetail on success, so the field explaining why a protected mailbox could
-                // be modified would vanish exactly when it matters.
+                // be modified would vanish. So does the identity written (aud-a2d); target stays typed.
                 Audit.LogMailboxPermission(
                     currentUser, ipAddress, action, target, user, permType,
                     opResult.Success, ticket,
                     autoMapping: isAdd && fullAccess ? autoMap : null,
                     errorDetail: opResult.Success ? null : opResult.Message,
-                    extra: ProtectedPrincipalServicing.Extra(servicedNote));
+                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), validation.Mailbox));
 
                 // Send admin notification
                 await Email.SendAdminNotificationAsync(
@@ -702,11 +702,11 @@
                 return;
             }
 
-            var onPremExtra = ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote);
+            var onPremExtra = ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox);
 
             var opResult = isAdd
-                ? await MailboxService.AddMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs)
-                : await MailboxService.RemoveMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs);
+                ? await MailboxService.AddMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs)
+                : await MailboxService.RemoveMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs);
 
             var actionVerb = isAdd ? "Add" : "Remove";
             // aud-a23b: rights come from AppliedRights, never from Detail (on a cloud grant, Detail is the OWA link).

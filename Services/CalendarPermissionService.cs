@@ -21,16 +21,29 @@ public class CalendarPermissionService : ExchangeServiceBase
     public CalendarPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<CalendarPermissionService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "CalendarPermissions", operationTrace) { }
 
-    public Task<PermissionResult> SetCalendarPermissionAsync(string targetMailbox, string user, CalendarAccessRight accessRight)
+    /// <param name="targetMailbox">The operator's input, for the message only.</param>
+    /// <param name="mailbox">
+    /// The mailbox the protected-principal check validated (aud-a2d). Its GUID is the mailbox part
+    /// of the folder identity written; null refuses before a connection is borrowed.
+    /// </param>
+    public Task<PermissionResult> SetCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, CalendarAccessRight accessRight)
     {
+        if (mailbox is null)
+            return Task.FromResult(PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox)));
+
         string? calendarPath = null;
+        string? resolvedMailbox = null;
 
         return RunAsync((ps, tracker) =>
         {
-            var resolvedMailbox = ValidateMailbox(ps, targetMailbox);
+            resolvedMailbox = BindValidatedMailbox(ps, tracker, mailbox);
             ValidateRecipient(ps, user);
 
-            calendarPath = GetCalendarFolderName(ps, resolvedMailbox);
+            // aud-a2d. The folder identity was built from the primary address the TYPED string
+            // resolved to, and Exchange resolved that address again on write. It is built from the
+            // validated mailbox's GUID now, and the folder name is read from that mailbox too - a
+            // localized name ("Kalender") belongs to one mailbox, not to whatever a string names.
+            calendarPath = GetCalendarFolderName(ps, mailbox.Identity);
             var level = accessRight.ToString();
 
             ps.AddCommand("Set-MailboxFolderPermission")
@@ -53,28 +66,34 @@ public class CalendarPermissionService : ExchangeServiceBase
                   .AddParameter("ErrorAction", "Stop");
                 Invoke(ps, tracker);
             }
-        }, () => ($"{user} granted {accessRight} permission to {calendarPath}", null));
+        }, () => ($"{user} granted {accessRight} permission on the calendar of {resolvedMailbox} ({calendarPath})", null));
     }
 
-    public Task<PermissionResult> RemoveCalendarPermissionAsync(string targetMailbox, string user)
+    /// <param name="mailbox">As on <see cref="SetCalendarPermissionAsync"/>: null refuses.</param>
+    public Task<PermissionResult> RemoveCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user)
     {
+        if (mailbox is null)
+            return Task.FromResult(PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox)));
+
         string? calendarPath = null;
+        string? resolvedMailbox = null;
 
         // Single-write (Remove-MailboxFolderPermission): safe to retry on a dead pooled session.
         // The preceding Get-* validations are reads. SetCalendarPermissionAsync is deliberately
         // NOT opted in: it is a Set-then-fallback-Add (two writes) per the retry-safety audit.
         return RunAsync((ps, tracker) =>
         {
-            var resolvedMailbox = ValidateMailbox(ps, targetMailbox);
+            resolvedMailbox = BindValidatedMailbox(ps, tracker, mailbox);
             ValidateRecipient(ps, user);
 
-            calendarPath = GetCalendarFolderName(ps, resolvedMailbox);
+            // The validated mailbox's folder, by its GUID - see SetCalendarPermissionAsync.
+            calendarPath = GetCalendarFolderName(ps, mailbox.Identity);
             ps.AddCommand("Remove-MailboxFolderPermission")
               .AddParameter("Identity", calendarPath)
               .AddParameter("User", user)
               .AddParameter("Confirm", false);
             Invoke(ps, tracker);
-        }, () => ($"Calendar permission removed for {user} on {calendarPath}", null), allowRetry: true);
+        }, () => ($"Calendar permission removed for {user} on the calendar of {resolvedMailbox} ({calendarPath})", null), allowRetry: true);
     }
 
     /// <param name="actingUser">
@@ -164,18 +183,20 @@ public class CalendarPermissionService : ExchangeServiceBase
 
                 var permType = isSet ? row.AccessRight : "Remove";
 
+                // aud-a2d: this ROW's validated mailbox, never row.Target.
                 var result = isSet
-                    ? await SetCalendarPermissionAsync(row.Target, row.User, Enum.Parse<CalendarAccessRight>(row.AccessRight))
-                    : await RemoveCalendarPermissionAsync(row.Target, row.User);
+                    ? await SetCalendarPermissionAsync(row.Target, targetValidation.Mailbox, row.User, Enum.Parse<CalendarAccessRight>(row.AccessRight))
+                    : await RemoveCalendarPermissionAsync(row.Target, targetValidation.Mailbox, row.User);
 
                 var action = $"Bulk{(isSet ? "Set" : "Remove")}Calendar";
                 // Per row, because servicing is decided per row: a batch can mix serviced and
                 // ordinary targets. The note rides extra - a serviced row SUCCEEDS, and errorDetail
                 // is written as null on success, so the record of who permitted it would vanish.
+                // The identity written rides beside it; `target` stays the row as typed.
                 audit.LogCalendarPermission(
                     currentUser, ipAddress, action, row.Target, row.User,
                     isSet ? row.AccessRight : null, result.Success, ticketNumber,
-                    extra: ProtectedPrincipalServicing.Extra(servicedNote),
+                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), targetValidation.Mailbox),
                     errorDetail: result.Success ? null : result.Message);
 
                 // Audit finding A24, and the trustee label matches the single-target path: a
@@ -246,8 +267,16 @@ public class CalendarPermissionService : ExchangeServiceBase
         };
     }
 
-    public async Task<PermissionResult> SetCalendarPermissionOnPremAsync(string targetMailbox, string user, string accessRight)
+    /// <summary>
+    /// The on-premises grant, on the validated mailbox's calendar (aud-a2d): the remote script
+    /// builds <c>&lt;GUID&gt;:\Calendar</c> from the argument it is sent. Null refuses before a
+    /// credential is requested.
+    /// </summary>
+    public async Task<PermissionResult> SetCalendarPermissionOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, string accessRight)
     {
+        if (mailbox is null)
+            return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
+
         var creds = await GetModuleCredentialsAsync("on-prem calendar permission operation");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
@@ -276,7 +305,7 @@ public class CalendarPermissionService : ExchangeServiceBase
                 ps.AddCommand("Invoke-Command")
                   .AddParameter("Session", session)
                   .AddParameter("ScriptBlock", script)
-                  .AddParameter("ArgumentList", new object[] { targetMailbox, user, accessRight });
+                  .AddParameter("ArgumentList", new object[] { mailbox.Identity, user, accessRight });
                 Invoke(ps);
 
                 return new PermissionResult { Success = true, Message = $"{user} granted {accessRight} on {targetMailbox} calendar (on-premises)." };
@@ -294,8 +323,12 @@ public class CalendarPermissionService : ExchangeServiceBase
         }), _onPremThrottle);
     }
 
-    public async Task<PermissionResult> RemoveCalendarPermissionOnPremAsync(string targetMailbox, string user)
+    /// <summary>The on-premises revoke; bound exactly as <see cref="SetCalendarPermissionOnPremAsync"/>.</summary>
+    public async Task<PermissionResult> RemoveCalendarPermissionOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user)
     {
+        if (mailbox is null)
+            return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
+
         var creds = await GetModuleCredentialsAsync("on-prem calendar permission operation");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
@@ -320,7 +353,7 @@ public class CalendarPermissionService : ExchangeServiceBase
                 ps.AddCommand("Invoke-Command")
                   .AddParameter("Session", session)
                   .AddParameter("ScriptBlock", script)
-                  .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                  .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
                 Invoke(ps);
 
                 return new PermissionResult { Success = true, Message = $"Calendar permissions removed for {user} on {targetMailbox} (on-premises)." };

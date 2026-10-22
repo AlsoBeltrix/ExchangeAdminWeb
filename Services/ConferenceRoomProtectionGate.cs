@@ -18,14 +18,22 @@ public sealed record ProtectionDenial(string Message, string AuditDetail);
 /// A servicer allow carries <see cref="ServicedAuditDetail"/>, which the caller MUST record in the
 /// audit event's <c>extra</c> - never as an error detail, since a serviced action succeeds and
 /// every audit method drops the error field on success.
+///
+/// aud-a2d. Every allow also carries <see cref="Room"/>, the room mailbox the gate resolved and
+/// checked: the write is bound to it, never to the string the operator typed. The two allow
+/// factories require one, so there is no allow without a room.
 /// </remarks>
-public sealed record ProtectionOutcome(ProtectionDenial? Denial, string? ServicedAuditDetail)
+public sealed record ProtectionOutcome(ProtectionDenial? Denial, string? ServicedAuditDetail, ValidatedMailbox? Room)
 {
     public bool IsDenied => Denial is not null;
 
-    public static ProtectionOutcome Allow() => new(null, null);
-    public static ProtectionOutcome AllowAsServicer(string auditDetail) => new(null, auditDetail);
-    public static ProtectionOutcome Deny(ProtectionDenial denial) => new(denial, null);
+    public static ProtectionOutcome Allow(ValidatedMailbox room) =>
+        new(null, null, room ?? throw new ArgumentNullException(nameof(room)));
+
+    public static ProtectionOutcome AllowAsServicer(string auditDetail, ValidatedMailbox room) =>
+        new(null, auditDetail, room ?? throw new ArgumentNullException(nameof(room)));
+
+    public static ProtectionOutcome Deny(ProtectionDenial denial) => new(denial, null, null);
 }
 
 /// <summary>
@@ -64,13 +72,14 @@ public sealed class ConferenceRoomProtectionGate
     /// Evaluate the protected-principal gate for <paramref name="identity"/> exactly once, then run
     /// exactly one of the two delegates: <paramref name="onDenied"/> when the target is protected or
     /// the check cannot be trusted (fail closed), otherwise <paramref name="onAllowed"/>. The write
-    /// must live inside <paramref name="onAllowed"/> so it is unreachable on any deny path.
+    /// must live inside <paramref name="onAllowed"/> so it is unreachable on any deny path, and it
+    /// must write to the room <paramref name="onAllowed"/> is handed (aud-a2d).
     /// </summary>
     public async Task<TResult> GuardThenRunAsync<TResult>(
         string identity,
         Func<ProtectionDenial, TResult> onDenied,
-        Func<Task<TResult>> onAllowed)
-        => await GuardThenRunAsync(identity, user: null, onDenied, _ => onAllowed());
+        Func<ValidatedMailbox, Task<TResult>> onAllowed)
+        => await GuardThenRunAsync(identity, user: null, onDenied, (_, room) => onAllowed(room));
 
     /// <summary>
     /// As above, but consults the authorised-servicer grant for <paramref name="user"/> when the
@@ -86,30 +95,48 @@ public sealed class ConferenceRoomProtectionGate
     /// and a description of the overridden rules when a servicer authorised it. The caller must put
     /// that in the audit event's <c>extra</c>, because a serviced action SUCCEEDS and the error
     /// field is dropped on success.
+    ///
+    /// It also receives the room the gate resolved and checked (aud-a2d): every room write - the
+    /// Exchange cmdlets and the Active Directory steps - is bound to it. The typed string the gate
+    /// was asked about is for the caller's messages and audit target only.
     /// </remarks>
     public async Task<TResult> GuardThenRunAsync<TResult>(
         string identity,
         ClaimsPrincipal? user,
         Func<ProtectionDenial, TResult> onDenied,
-        Func<string?, Task<TResult>> onAllowed)
+        Func<string?, ValidatedMailbox, Task<TResult>> onAllowed)
     {
         var outcome = await EvaluateAsync(identity, user);
         if (outcome.Denial is not null)
             return onDenied(outcome.Denial);
-        return await onAllowed(outcome.ServicedAuditDetail);
+        // Unreachable by construction - the allow factories require a room - and refused anyway,
+        // so nothing could be handed a write with no room to bind it to.
+        if (outcome.Room is null)
+            return onDenied(NoRoomDenial(identity));
+        return await onAllowed(outcome.ServicedAuditDetail, outcome.Room);
     }
 
+    private static ProtectionDenial NoRoomDenial(string identity) => new(
+        $"'{identity}' did not resolve to a room mailbox Exchange can identify, so the change cannot be bound to one. Check the address.",
+        $"No mailbox identity for '{identity}' - blocked");
+
     /// <summary>
-    /// The protection decision. Returns a <see cref="ProtectionDenial"/> to block, or null to allow.
-    /// Fail-closed: Unavailable / Ambiguous / CheckFailed / any exception all deny. NotFound is
-    /// treated as not protected - an accepted limitation, and a much narrower one since resolution
-    /// began asking Exchange: a mailbox reached by a secondary SMTP alias, a mail-enabled group,
-    /// and a cloud-only mailbox all used to land here as NotFound and be allowed through. The
-    /// alias case was a real bypass, because protected rows are stored as primary addresses.
-    /// NotFound now means both directories were asked and neither knows the recipient.
+    /// The protection decision. Fail-closed: Unavailable / Ambiguous / CheckFailed / any exception
+    /// all deny. NotFound is not protected - both directories were asked and neither knows the
+    /// recipient (since resolution began asking Exchange, a secondary alias, a mail-enabled group
+    /// and a cloud-only mailbox no longer land here; the alias case was a real bypass). Since
+    /// aud-a2d NotFound is refused all the same: there is no room mailbox the write could be bound
+    /// to, and the write used to hand the string to Exchange to resolve on its own.
     /// </summary>
+    /// <remarks>
+    /// The room is bound AFTER the protection verdict, so a protected room keeps its own refusal. An
+    /// allow, ordinary or serviced, carries the room the gate resolved; one with no mailbox GUID - no
+    /// recipient, or a recipient that is not a mailbox - is refused.
+    /// </remarks>
     private async Task<ProtectionOutcome> EvaluateAsync(string identity, ClaimsPrincipal? user)
     {
+        string? servicedAuditDetail = null;
+        ValidatedMailbox? room;
         try
         {
             // aud-a2b hole 2. The room writes hand this identity to Exchange, so the object checked
@@ -140,27 +167,39 @@ public sealed class ConferenceRoomProtectionGate
                     // to be protected. A null user (bulk job) denies, because Evaluate refuses a
                     // null principal.
                     var servicer = _servicers.Evaluate(user, ModuleId);
-                    if (servicer.Allowed)
+                    if (!servicer.Allowed)
                     {
-                        _logger.LogInformation(
-                            "Authorised servicer acting on protected room {Identity} - matched rules: {Rules}, authorised by {Group}",
-                            identity, rules, servicer.ServicerGroup);
-
-                        return ProtectionOutcome.AllowAsServicer(
-                            $"Protected principal serviced by an authorised operator - matched rules: {rules}; authorised by {servicer.ServicerGroup}");
+                        return ProtectionOutcome.Deny(new ProtectionDenial(
+                            "This is a protected principal. Operation not permitted.",
+                            $"Protected principal - matched rules: {rules}"));
                     }
 
-                    return ProtectionOutcome.Deny(new ProtectionDenial(
-                        "This is a protected principal. Operation not permitted.",
-                        $"Protected principal - matched rules: {rules}"));
+                    _logger.LogInformation(
+                        "Authorised servicer acting on protected room {Identity} - matched rules: {Rules}, authorised by {Group}",
+                        identity, rules, servicer.ServicerGroup);
+                    servicedAuditDetail =
+                        $"Protected principal serviced by an authorised operator - matched rules: {rules}; authorised by {servicer.ServicerGroup}";
                 }
             }
+
+            // aud-a2d: the room this check resolved is the room written - the GUID aud-a2c proved,
+            // and the Active Directory object it proved owns it, when there is one.
+            room = ValidatedMailbox.From(resolved);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Protected principal check failed for {Identity} - blocking as precaution", identity);
             return ProtectionOutcome.Deny(new ProtectionDenial($"Protection check error: {ex.Message}", $"Protection check exception: {ex.Message}"));
         }
-        return ProtectionOutcome.Allow();
+
+        if (room is null)
+        {
+            _logger.LogWarning("Blocking room write on {Identity} - no room mailbox the write could be bound to", identity);
+            return ProtectionOutcome.Deny(NoRoomDenial(identity));
+        }
+
+        return servicedAuditDetail is null
+            ? ProtectionOutcome.Allow(room)
+            : ProtectionOutcome.AllowAsServicer(servicedAuditDetail, room);
     }
 }

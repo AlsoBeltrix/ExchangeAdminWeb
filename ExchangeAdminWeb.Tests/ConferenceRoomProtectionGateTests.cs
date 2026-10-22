@@ -48,6 +48,12 @@ public class ConferenceRoomProtectionGateTests : IDisposable
         /// </summary>
         public ResolutionStatus AdFirstStatus = ResolutionStatus.Resolved;
 
+        /// <summary>
+        /// The mailbox GUID the resolved principal carries (aud-a2d: an allow needs one). Null is a
+        /// principal with no mailbox - an AD object Exchange has no recipient for.
+        /// </summary>
+        public Guid? ExchangeGuid = RoomGuid;
+
         // The gate resolves through ResolveExchangeTargetAsync (Exchange first, AD must agree)
         // since aud-a2b, so that is the seam to script. Overriding ResolveWithStatusAsync instead
         // would let the real resolution run and fail closed, which would silently invalidate every
@@ -56,7 +62,7 @@ public class ConferenceRoomProtectionGateTests : IDisposable
         {
             if (Throw) throw new InvalidOperationException("boom");
             ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved
-                ? new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, "guid", null)
+                ? new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, RoomObjectGuid, null, ExchangeGuid)
                 : null;
             return Task.FromResult((p, Status));
         }
@@ -104,18 +110,24 @@ public class ConferenceRoomProtectionGateTests : IDisposable
         return (gate, pp);
     }
 
-    // Runs the gate with a spy write delegate. Returns (writeInvoked, result-marker).
-    private async Task<(bool writeInvoked, string marker)> RunAsync(ConferenceRoomProtectionGate gate)
+    private static readonly Guid RoomGuid = Guid.Parse("4d4d4d4d-0000-4000-8000-000000000001");
+    private const string RoomObjectGuid = "4e4e4e4e-0000-4000-8000-000000000001";
+
+    // Runs the gate with a spy write delegate. Returns (writeInvoked, result-marker, the room the
+    // write was handed).
+    private async Task<(bool writeInvoked, string marker, ValidatedMailbox? room)> RunAsync(ConferenceRoomProtectionGate gate)
     {
         var writeInvoked = false;
+        ValidatedMailbox? handed = null;
         var marker = await gate.GuardThenRunAsync("room@x",
             onDenied: d => $"DENIED:{d.Message}",
-            onAllowed: () =>
+            onAllowed: room =>
             {
                 writeInvoked = true;
+                handed = room;
                 return Task.FromResult("WROTE");
             });
-        return (writeInvoked, marker);
+        return (writeInvoked, marker, handed);
     }
 
     [Fact]
@@ -125,22 +137,59 @@ public class ConferenceRoomProtectionGateTests : IDisposable
         pp.Status = ProtectedPrincipalService.ResolutionStatus.Resolved;
         pp.Verdict = ProtectedPrincipalResult.NotProtected();
 
-        var (writeInvoked, marker) = await RunAsync(gate);
+        var (writeInvoked, marker, _) = await RunAsync(gate);
 
         Assert.True(writeInvoked);
         Assert.Equal("WROTE", marker);
     }
 
     [Fact]
-    public async Task NotFound_TreatedAsAllow_InvokesWrite()
+    public async Task NotFound_HasNoRoomToBindTheWriteTo_WriteNotInvoked()
     {
+        // This test used to pin NotFound as an ALLOW (named NotFound_TreatedAsAllow_InvokesWrite):
+        // neither directory knows the string, so nothing is protected, and the write went ahead
+        // with the string for Exchange to resolve on its own. Since aud-a2d a write is bound to the
+        // room the gate resolved, and NotFound resolved none - so it is refused. Rewritten to the
+        // opposite, not worked around.
         var (gate, pp) = CreateGate();
-        pp.Status = ProtectedPrincipalService.ResolutionStatus.NotFound; // cloud-only: AD cannot resolve
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.NotFound;
 
-        var (writeInvoked, marker) = await RunAsync(gate);
+        var (writeInvoked, marker, _) = await RunAsync(gate);
+
+        Assert.False(writeInvoked);
+        Assert.StartsWith("DENIED:", marker);
+    }
+
+    [Fact]
+    public async Task TheWrite_IsHandedTheRoomTheGateResolved()
+    {
+        // aud-a2d. The GUID aud-a2c proved, and the AD object it proved owns the mailbox - never
+        // the "room@x" the gate was asked about.
+        var (gate, pp) = CreateGate();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.Resolved;
+
+        var (writeInvoked, _, room) = await RunAsync(gate);
 
         Assert.True(writeInvoked);
-        Assert.Equal("WROTE", marker);
+        Assert.NotNull(room);
+        Assert.Equal(RoomGuid, room!.ExchangeGuid);
+        Assert.Equal(RoomObjectGuid, room.DirectoryObjectGuid);
+    }
+
+    [Fact]
+    public async Task AResolvedTargetWithNoMailboxGuid_IsDenied_WriteNotInvoked()
+    {
+        // Resolved, not protected, but no mailbox: an AD object Exchange has no recipient for.
+        // Nothing to bind a room write to.
+        var (gate, pp) = CreateGate();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.Resolved;
+        pp.ExchangeGuid = null;
+
+        var (writeInvoked, marker, _) = await RunAsync(gate);
+
+        Assert.False(writeInvoked);
+        Assert.StartsWith("DENIED:", marker);
+        Assert.Contains("cannot be bound", marker, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -152,7 +201,7 @@ public class ConferenceRoomProtectionGateTests : IDisposable
         pp.Status = ProtectedPrincipalService.ResolutionStatus.Resolved;
         pp.Verdict = ProtectedPrincipalResult.Protected("matched", "Users");
 
-        var (writeInvoked, marker) = await RunAsync(gate);
+        var (writeInvoked, marker, _) = await RunAsync(gate);
 
         Assert.False(writeInvoked);
         Assert.StartsWith("DENIED:", marker);
@@ -167,7 +216,7 @@ public class ConferenceRoomProtectionGateTests : IDisposable
         var (gate, pp) = CreateGate();
         pp.Status = status;
 
-        var (writeInvoked, marker) = await RunAsync(gate);
+        var (writeInvoked, marker, _) = await RunAsync(gate);
 
         Assert.False(writeInvoked);
         Assert.StartsWith("DENIED:", marker);
@@ -180,7 +229,7 @@ public class ConferenceRoomProtectionGateTests : IDisposable
         pp.Status = ProtectedPrincipalService.ResolutionStatus.Resolved;
         pp.Verdict = ProtectedPrincipalResult.Failed("directory error");
 
-        var (writeInvoked, marker) = await RunAsync(gate);
+        var (writeInvoked, marker, _) = await RunAsync(gate);
 
         Assert.False(writeInvoked);
         Assert.StartsWith("DENIED:", marker);
@@ -192,7 +241,7 @@ public class ConferenceRoomProtectionGateTests : IDisposable
         var (gate, pp) = CreateGate();
         pp.Throw = true;
 
-        var (writeInvoked, marker) = await RunAsync(gate);
+        var (writeInvoked, marker, _) = await RunAsync(gate);
 
         Assert.False(writeInvoked);
         Assert.StartsWith("DENIED:", marker);
@@ -211,7 +260,7 @@ public class ConferenceRoomProtectionGateTests : IDisposable
         pp.Status = ProtectedPrincipalService.ResolutionStatus.Ambiguous;
         pp.Verdict = ProtectedPrincipalResult.NotProtected();
 
-        var (writeInvoked, marker) = await RunAsync(gate);
+        var (writeInvoked, marker, _) = await RunAsync(gate);
 
         Assert.False(writeInvoked);
         Assert.StartsWith("DENIED:", marker);

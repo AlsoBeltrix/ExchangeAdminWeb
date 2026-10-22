@@ -25,25 +25,29 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 
-    // A fake room-ops seam that records calls and returns a scripted result.
+    // A fake room-ops seam that records calls - and, since aud-a2d, the room each was bound to -
+    // and returns a scripted result.
     private sealed class FakeRoomOps : IConferenceRoomBulkOperations
     {
         public readonly List<string> FinderCalls = new();
         public readonly List<string> TypeCalls = new();
+        public readonly List<ValidatedMailbox?> Rooms = new();
         public Func<string, RoomOperationResult> Result = email =>
             new RoomOperationResult { Email = email, Success = true, Message = "ok" };
 
-        public Task<RoomOperationResult> SetRoomMetadataAndListAsync(string roomEmail, string city, string building, int capacity,
+        public Task<RoomOperationResult> SetRoomMetadataAndListAsync(string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
             string floor, string floorLabel, string displayDevice, string videoDevice, string countryOrRegion, string state, string timezone)
         {
             FinderCalls.Add(roomEmail);
+            Rooms.Add(room);
             return Task.FromResult(Result(roomEmail));
         }
 
-        public Task<RoomOperationResult> SetRoomTypeAsync(string roomEmail, RoomType roomType, string timezone,
+        public Task<RoomOperationResult> SetRoomTypeAsync(string roomEmail, ValidatedMailbox? room, RoomType roomType, string timezone,
             string site = "none", string? arbiter = null, bool removeExistingPermissions = false)
         {
             TypeCalls.Add(roomEmail);
+            Rooms.Add(room);
             return Task.FromResult(Result(roomEmail));
         }
     }
@@ -53,7 +57,14 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
     // exactly one protection evaluation must occur per processed row.
     private sealed class FakePpService : ProtectedPrincipalService
     {
-        public ProtectedPrincipalService.ResolutionStatus Status = ResolutionStatus.NotFound;
+        /// <summary>
+        /// The mailbox GUID a resolved row carries. aud-a2d: the default used to be NotFound, which
+        /// the gate allowed; it now refuses (no room to bind the write to), so an ordinary row is a
+        /// resolved, unprotected room with a mailbox.
+        /// </summary>
+        public static readonly Guid RoomGuid = Guid.Parse("5b5b5b5b-0000-4000-8000-000000000001");
+
+        public ProtectedPrincipalService.ResolutionStatus Status = ResolutionStatus.Resolved;
         public ProtectedPrincipalResult Verdict = ProtectedPrincipalResult.NotProtected();
         public int EvalCount;
 
@@ -70,7 +81,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         {
             EvalCount++;
             ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved
-                ? new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, "guid", null)
+                ? new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, "guid", null, RoomGuid)
                 : null;
             return Task.FromResult((p, Status));
         }
@@ -198,7 +209,47 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         // Exactly one protection evaluation per row - the consolidation guarantee (no double-check).
         Assert.Equal(1, f.Pp.EvalCount);
         f.Audit.Received().LogConferenceRoomAction("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
-            "room1@x", true, "INC1", errorDetail: Arg.Any<string?>(), oldValues: Arg.Any<Dictionary<string, object?>?>(), newValues: Arg.Any<Dictionary<string, object?>?>());
+            "room1@x", true, "INC1", errorDetail: Arg.Any<string?>(), oldValues: Arg.Any<Dictionary<string, object?>?>(), newValues: Arg.Any<Dictionary<string, object?>?>(),
+            extra: Arg.Any<Dictionary<string, object?>?>());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ARow_IsWrittenToTheRoomTheGateResolvedForIt_AndTheAuditRecordsIt(bool finder)
+    {
+        // aud-a2d. The row's room operation is handed the gate's room, not row.Email, and the row's
+        // audit keeps the typed target while recording the identity written.
+        var f = CreateFixture();
+        var job = finder ? FinderJob("AllUsers", "room1@x") : TypeJob("AllUsers", "room1@x");
+
+        var outcome = await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+
+        Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
+        Assert.Equal(FakePpService.RoomGuid, Assert.Single(f.Rooms.Rooms)!.ExchangeGuid);
+        f.Audit.Received().LogConferenceRoomAction("jdoe", "10.0.0.9",
+            finder ? "ConferenceRooms_SetMetadata_Bulk" : "ConferenceRooms_SetType_Bulk",
+            "room1@x", true, "INC1", errorDetail: Arg.Any<string?>(), oldValues: Arg.Any<Dictionary<string, object?>?>(),
+            newValues: Arg.Any<Dictionary<string, object?>?>(),
+            extra: Arg.Is<Dictionary<string, object?>?>(x =>
+                x != null && Equals(x[ValidatedMailbox.AuditKey], FakePpService.RoomGuid.ToString("D"))));
+    }
+
+    [Fact]
+    public async Task ARowNeitherDirectoryKnows_HasNoRoomToBindTo_IsDeniedAndNotApplied()
+    {
+        // NotFound used to reach the write (the old fixture default); with nothing resolved there is
+        // no room to bind it to, so the row is refused and audited as a denial.
+        var f = CreateFixture();
+        f.Pp.Status = ProtectedPrincipalService.ResolutionStatus.NotFound;
+        var job = FinderJob("AllUsers", "ghost@x");
+
+        var outcome = await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+
+        Assert.Equal(BulkJobRowStatus.Failed, outcome.Status);
+        Assert.Empty(f.Rooms.FinderCalls);
+        f.Audit.Received().LogConferenceRoomAction("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
+            "ghost@x", false, "INC1", errorDetail: Arg.Any<string?>(), oldValues: Arg.Any<Dictionary<string, object?>?>(), newValues: Arg.Any<Dictionary<string, object?>?>());
     }
 
     [Fact]

@@ -251,7 +251,11 @@ Shared infrastructure in `ExchangeServiceBase`:
 - `ThrottledAsync` — on-prem throttle (2 concurrent)
 - `Invoke` / `InvokeOptional` — PowerShell invocation wrappers
 - `ConnectOnPrem` — Kerberos PSSession via Delinea credentials
-- `ValidateMailbox` / `ValidateRecipient` — EXO identity validation
+- `BindValidatedMailbox` / `ReadValidatedMailbox` — read back the mailbox a protected-principal
+  check validated, by its GUID, refusing unless Exchange returns exactly that mailbox. A write to
+  a protected-principal target takes the check's `ValidatedMailbox` and passes its `Identity` as
+  `-Identity`, never the operator's typed string; a write handed none refuses (aud-a2d)
+- `ValidateRecipient` — EXO recipient validation (the principal being granted access, not the target)
 
 ## UI Rendering
 
