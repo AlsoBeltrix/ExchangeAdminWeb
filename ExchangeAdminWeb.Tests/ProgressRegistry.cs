@@ -1387,7 +1387,7 @@ public static class ProgressRegistry
         [
             new("SaveExoConfig",
                 [
-                    "ModuleConfigSvc.SaveModuleConfig(",
+                    "ModuleConfigSvc.UpdateModuleValues(",
                     "ExoPool.DrainPool(",
                 ],
                 "the last of the survey's six silent writes (docs/ProgressCoverage-Plan.md S2), "
@@ -1397,7 +1397,7 @@ public static class ProgressRegistry
                 + "exists to close, and it is the reason the page set here comes from the "
                 + "filesystem. The activity opens above the try, so the four validation "
                 + "refusals inside it are covered too, and completes in the finally. "
-                + "ModuleConfigSvc.SaveModuleConfig is the opening pin: it is the MUTATION - the "
+                + "ModuleConfigSvc.UpdateModuleValues is the opening pin: it is the MUTATION - the "
                 + "three connection values written to the shared SQLite config store - rather "
                 + "than the slow part, and naming it is what stops an activity opened below it "
                 + "leaving the write itself unreported. ExoPool.DrainPool is the closing pin and "
@@ -1414,8 +1414,8 @@ public static class ProgressRegistry
                 + "the wait. Three calls were read and deliberately NOT named: "
                 + "GetAuthenticationStateAsync and AuthorizationService.AuthorizeAsync decide "
                 + "from the Windows token's group SIDs plus a cached section-access read, "
-                + "ModuleConfigSvc.GetModuleConfig is the uncached local read of the very "
-                + "document the save below it already pins, and Audit.LogSettingsChange is a "
+                + "ModuleConfigSvc.IsModuleCorrupt is the uncached local re-check of the very "
+                + "rows the write below it already pins (aud-a28j), and Audit.LogSettingsChange is a "
                 + "local append. The Begin sits ABOVE the page's await Task.Yield, which the "
                 + "other S2 fixes did not need: everything after it here is synchronous, so the "
                 + "Yield is the handler's only guaranteed flush point and an activity opened "

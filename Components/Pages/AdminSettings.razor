@@ -615,23 +615,25 @@
                 return;
             }
 
-            var previous = Enablement.GetAllEnablement();
-            Enablement.SaveEnablement(moduleEnablement);
-
-            foreach (var module in Catalog.GetAll().Where(m => !m.IsSystemModule))
+            var outcome = Enablement.SetModulesEnabled(ChangedToggles());
+            if (outcome.StoreCorrupt)
             {
-                var prev = previous.GetValueOrDefault(module.Id, module.EnabledByDefault);
-                var curr = moduleEnablement.GetValueOrDefault(module.Id, module.EnabledByDefault);
-                if (prev != curr)
+                enablementStoreCorrupt = true;
+                statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreCorrupt", statusMessage, PendingEnablementSections());
+                return;
+            }
+
+            foreach (var change in outcome.Written)
+            {
+                try
                 {
-                    try
-                    {
-                        Audit.LogSettingsChange(currentUser, ip, $"Module:{module.Id}",
-                            prev ? new[] { "Enabled" } : Array.Empty<string>(),
-                            curr ? new[] { "Enabled" } : Array.Empty<string>());
-                    }
-                    catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for enablement change"); }
+                    Audit.LogSettingsChange(currentUser, ip, $"Module:{change.ModuleId}",
+                        change.Before ? new[] { "Enabled" } : Array.Empty<string>(),
+                        change.After ? new[] { "Enabled" } : Array.Empty<string>());
                 }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for enablement change"); }
             }
 
             // Clear BEFORE the reload below, or the guard fires on our own navigation and asks
@@ -670,10 +672,13 @@
 
     /// <summary>The <c>Module:{id}</c> section of each toggle that differs from what the page loaded.</summary>
     private string[] PendingEnablementSections() =>
+        ChangedToggles().Keys.Select(id => $"Module:{id}").ToArray();
+
+    /// <summary>The toggles that differ from what the page loaded, and the state each was switched to.</summary>
+    private Dictionary<string, bool> ChangedToggles() =>
         moduleEnablement
             .Where(kv => !moduleEnablementBaseline.TryGetValue(kv.Key, out var loaded) || loaded != kv.Value)
-            .Select(kv => $"Module:{kv.Key}")
-            .ToArray();
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
 
     private async Task SaveLogLevel()
     {
@@ -706,7 +711,7 @@
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save log level: {ex.Message}";
+            statusMessage = $"Failed to save log level: {ex.Message.TrimEnd('.')}. The extended log level is still {ExtendedLog.CurrentLevel}.";
             statusIsError = true;
             Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }

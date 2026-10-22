@@ -174,6 +174,42 @@ public class ModuleEnablementService
         }
     }
 
+    /// <summary>
+    /// The admin pages' save (aud-a28k): sets only the modules in <paramref name="changes"/>, each
+    /// decided against its row under the write lock, and returns the modules it wrote with the state
+    /// each replaced. System modules and unknown ids are ignored. Writes nothing while the legacy file
+    /// is not imported. Throws when the write fails.
+    /// </summary>
+    public EnablementSaveOutcome SetModulesEnabled(IReadOnlyDictionary<string, bool> changes)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+
+        if (_legacyFileCorrupt)
+            return new EnablementSaveOutcome(true, []);
+
+        var defaults = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var settable = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (moduleId, enabled) in changes)
+        {
+            var module = _catalog.GetById(moduleId);
+            if (module is null || module.IsSystemModule)
+                continue;
+
+            defaults[module.Id] = module.EnabledByDefault;
+            settable[module.Id] = enabled;
+        }
+
+        if (settable.Count == 0)
+            return new EnablementSaveOutcome(false, []);
+
+        lock (_writeLock)
+        {
+            var written = _repository.SetModules(settable, defaults);
+            _logger.LogInformation("Module enablement set for {Count} module(s)", written.Count);
+            return new EnablementSaveOutcome(false, written);
+        }
+    }
+
     // Read-only startup check. Enablement state is written ONLY by SaveEnablement from
     // Admin Settings - never at startup (owner direction, incident 2026-06-12).
     private void WarnIfExchangeOnlineUnset()
@@ -267,3 +303,9 @@ public class ModuleEnablementService
         }
     }
 }
+
+/// <summary>
+/// What <see cref="ModuleEnablementService.SetModulesEnabled"/> did: <paramref name="StoreCorrupt"/> when it
+/// wrote nothing because the store is not to be written, otherwise the modules it wrote.
+/// </summary>
+public sealed record EnablementSaveOutcome(bool StoreCorrupt, IReadOnlyList<EnablementChange> Written);

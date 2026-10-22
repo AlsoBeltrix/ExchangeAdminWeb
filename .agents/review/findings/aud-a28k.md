@@ -9,7 +9,7 @@ aliases is lost - the authorization store). (2) Empty before-state (the aud-a28f
 ProtectedPrincipals and ExchangeOnlineConfig success records pass an empty "before", so every save
 reads as everything added. (3) False success: `AdminSettings.SaveLogLevel` reports and records
 success even when the level failed to persist, because `SetLevel` swallows the store failure.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan below)
+**Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
 **Branch**: `worktree-agent-af0cdb58244ff4bed`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a28g/h/a26f/a28i agent, 2026-10-22, candidates 3, 4, 5 and 9 of its hand-back)
@@ -104,6 +104,119 @@ enablement map written again; (5) the empty before-state passed again; (6) the `
 swallowed again; extras - the section-access comparison deleted; the section-access read taken outside
 the write.
 
+## Executed reproduction - 2026-10-22
+
+Branch `worktree-agent-af0cdb58244ff4bed` on aud-a28j (`1c2bb9ff`), the fix's services and tests in place
+and the three pages and `ExtendedLogService.cs` as they were at `1c2bb9ff` swapped in (AdminSettings
+`6C3C208CCC8503C14C8B0B27981B2212`, ModuleConfig `1A5A38150093E0CE63DE5CA50F655482`, ExchangeOnlineConfig
+`3F5014B1374DCE1530C053E296D262B7`, ExtendedLogService `71AACCD15C659EAA86EC53F168B860A6`), build 0
+errors: `SettingsConcurrentSaveTests` 10 failed / 1 passed. The toggle the other instance switched off
+was switched back on by all three enablement saves (`Assert.False() Failure`), the two that ran it inside
+the save included; a grant changed elsewhere on the edited alias was overwritten, both between load and
+save and inside the save (`[A, B, C]` expected, `[A]` stored); a grant made elsewhere on the alias the page
+did not edit was wiped (`MailboxPermissionsOnPrem` gone); a save with nothing edited rewrote the table
+(change token 1 -> 2); Save Status with no toggle changed wrote its loaded state back; the connection
+save's record held no removal (`[]`); the refused log level was reported as set (`"Warning"` in effect).
+The one that passed is the never-configured case, which calls the new service directly. The fixed bytes
+were restored to their MD5s afterwards.
+
+## Fix
+
+`Services/Storage/ModuleEnablementRepository.cs`: `SetModules(changes, defaults)` - one write; per module
+the row read on the write's transaction (or the default where there is none) is the before-state; a module
+already in the target state is skipped; each other one is upserted alone; nothing written throws the
+private `NothingWritten`, rolling back, change token included. Record `EnablementChange(ModuleId, Before,
+After)`.
+
+`Services/ModuleEnablementService.cs`: `SetModulesEnabled(changes)` returns
+`EnablementSaveOutcome(StoreCorrupt, Written)`: nothing written while the legacy file is not imported;
+system modules and unknown ids dropped; otherwise the repository write under the service's lock.
+
+`Services/Storage/SectionAccessRepository.cs`: `ReplaceAliases(decide)` - one write; `decide` sees the table
+and marker as read on the write's transaction (`SectionAccessSnapshot`; unreadable as `Unreadable`);
+the aliases it returns are each deleted and re-inserted, display names carried across, the marker set;
+null rolls back. `ClearAndInsert` shares the new display-name and insert helpers; the readers gain
+transaction-aware overloads. Records `SectionAccessSnapshot`, `SectionAccessReplaceOutcome`.
+
+`Services/SectionAccessService.cs`: `SaveEditedAliases(loaded, edited)` returns
+`SectionAccessSaveOutcome(Status, ChangedAliases, Before)`: `StoreCorrupt` (legacy file not imported, or
+the table unreadable under the lock); `ConcurrentChange` naming every edited alias whose rows under the lock
+- or, never configured, the fallback the gates read (`FallbackAccess`: the legacy appsettings block, else
+each configurable alias as `GetGroupsForSection` answers it) - differ, as sets ignoring case, from what the
+page loaded; `NothingToSave` (configured, nothing edited); else `Saved`, replacing only the edited aliases,
+plus the whole fallback and the marker when never configured.
+
+`Services/ExtendedLogService.cs`: `SetLevel` stores first and applies the level only once stored; a store
+failure is logged and rethrown.
+
+`Components/Pages/AdminSettings.razor`: `SaveEnablement` passes `ChangedToggles()` (the toggles that differ
+from the loaded baseline) to `SetModulesEnabled` and records one change per module written, its before from
+the lock; `SaveLogLevel`'s catch says the level was not saved and which level is still in effect.
+`Components/Pages/ModuleConfig.razor`: `SaveModuleEnablementAsync` passes its module only when toggled;
+`SaveSectionAccessAsync` passes the aliases whose confirmed snapshot differs from the loaded baseline and
+their loaded lists to `SaveEditedAliases`, refuses `StoreCorrupt` and `ConcurrentChange` (the message names
+each alias as the Access tab heads it, with the alias), records one change per edited alias with the rows
+under the lock as before, and says when there was nothing to save. `Components/Pages/ExchangeOnlineConfig.razor`:
+`SaveModuleStatus` gains the loaded baseline, writes only a changed toggle through `SetModulesEnabled`, and
+says when nothing changed; `SaveExoConfig` writes through `UpdateModuleValues` and records `AppId=`, `Org=`,
+`Cert=` as read under the lock (before) and as left (after), empty values omitted.
+
+Tests: new `ExchangeAdminWeb.Tests/SettingsConcurrentSaveTests.cs` (11 cases); `SettingsPageHarness`:
+`LogLevelStore` (the extended-log store behind a switch), `CreateOtherEnablement()`,
+`CreateOtherSectionAccess()`. `ProgressRegistry` `SaveExoConfig`'s opening pin follows the write
+(`ModuleConfigSvc.UpdateModuleValues(`); `GroupGrantValidationTests`' access-save tripwire follows the new
+persist call, still requiring the confirmed snapshot and never the live list.
+
+Caller-visible change, by design: an enablement save writes only the modules the admin switched, so a toggle
+made elsewhere since the page loaded stays; a section-access save writes only the aliases the admin edited
+and is refused, naming the alias, when one of them was changed elsewhere since the page loaded - the admin
+reloads and re-applies; a save with nothing changed writes nothing. The connection save's record lists what
+it replaced. A log level the store refuses is reported as not saved and is not applied.
+
 ## Guard proof
 
-Pending.
+Same driver as aud-a28j, filter
+`FullyQualifiedName~SettingsConcurrentSaveTests|FullyQualifiedName~SettingsSaveStoreCheckTests|FullyQualifiedName~SettingsSaveAuditTests`
+(76 tests). Fixed-file MD5s: `Components/Pages/AdminSettings.razor` `303A84E590A0F32B2C759BEBC0770FBB`,
+`Components/Pages/ExchangeOnlineConfig.razor` `5DCBF849D4CE0D272E3D529B541D3B5A`,
+`Services/ExtendedLogService.cs` `47A60E337C302CDB73390EE516280BA0`, `Services/SectionAccessService.cs`
+`AF907383DD0520919F8777A01DF1B2BB`; every mutant built with 0 errors and every file was restored to its MD5.
+
+| # | Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| 4 | `AdminSettings.SaveEnablement`: the page's whole enablement map written again (`Enablement.SaveEnablement(moduleEnablement)` above the per-module call) | `27CA4CECD54476903DEA01D35AF59F14` | `AdminSettings_AToggleMadeElsewhereSinceThePageLoaded_IsNotReverted` (the other instance's toggle switched back on), `SettingsSaveAuditTests.AdminSettings_AnEnablementSave_LeavesExactlyOneSuccessRecord_AndReloads` |
+| 5 | `ExchangeOnlineConfig.SaveExoConfig`: the empty before-state passed again | `7E55A0C8E08515152D20B18F14970645` | `ExchangeOnlineConfig_AConnectionSave_RecordsTheValueItReplaced` (no removal recorded) |
+| 6 | `ExtendedLogService.SetLevel`: the store failure swallowed again (applied first, caught and logged) | `DBDAFB1FA867BEA620210E4C46380FF1` | `AdminSettings_ALogLevelTheStoreRefuses_IsReportedAndRecordedAsAFailure` (`"Warning"` in effect, a success record) |
+| KA | extra, `SectionAccessService.SaveEditedAliases`: the comparison's refusal deleted | `E7D7ABD3E9ACEDDF98EF78E9AB0F6C6D` | `ModuleConfig_AGrantChangedElsewhereOnAnEditedAlias_RefusesTheSave_NamingTheAlias`, `ModuleConfig_AGrantChangedElsewhereInsideTheSave_RefusesTheSave` |
+| KB | extra, the same: the comparison made against a read taken outside the write | `3A7962352715FD4CFD528C6C1BBCE4B1` | `ModuleConfig_AGrantChangedElsewhereInsideTheSave_RefusesTheSave` only - the between-load-and-save case still refuses, as it must: the outside read sees a change made before it, and only one landing between the read and the write gets through |
+| KD | extra, `ExchangeOnlineConfig.SaveModuleStatus`: written with no toggle changed | `6CA4A5AF44CD9580639874DBE3D8C975` | `ExchangeOnlineConfig_AStatusSaveWithNoToggleChanged_WritesNothing` (the change made elsewhere reverted) |
+
+The code comments are written after the round, in their own commit, so the MD5s above are this commit's
+bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors; warnings all pre-existing, none in a touched
+  file.
+- `dotnet test ExchangeAdminWeb.slnx -c Release --no-build --blame-hang --blame-hang-timeout 10m`: exit 0,
+  5,302 passed / 3 skipped (the three known AD skips) / 0 failed, 5,305 total, 5m16s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check`: exit 0.
+  `tools/Test-AsciiOnly.ps1` with the files staged: exit 0.
+
+No PowerShell source, AD module, directory, Exchange Online, Delinea, SMTP, push or deployment; no case adds
+a usable group grant. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- A section-access save is refused when an edited alias changed at all since the page loaded it, even when
+  the other change touched a different group of that alias. Deliberate: nothing is merged or guessed; the
+  admin reloads and re-applies.
+- Enablement compares booleans, so nothing there refuses: a toggle switched the same way elsewhere is
+  skipped and recorded only by its own writer.
+- The protected-principals save still replaces the whole rule set from the page's lists, and
+  `SaveConfigAsync` / `SaveModuleAdminsAsync` a module's whole config or admin list (aud-a28j's known gaps):
+  outside this finding's listed saves.
+- `ModuleEnablementService.SaveEnablement` and `SectionAccessService.SaveSectionAccess` (the whole-map and
+  whole-table writes) stay public; no page calls them any more, and tests use them as fixtures.
+- Two in-process stores on one temp file stand in for the two instances; nothing ran against the real
+  shared database.

@@ -232,6 +232,98 @@ public class SectionAccessService
         }
     }
 
+    /// <summary>
+    /// The Module Configuration page's access save (aud-a28k): replaces only the aliases in
+    /// <paramref name="edited"/>, inside one write, after comparing each with what the page loaded
+    /// (<paramref name="loaded"/>) against the table as it is under the write lock. Any alias that
+    /// differs refuses the whole save. Throws when the write fails.
+    /// </summary>
+    public SectionAccessSaveOutcome SaveEditedAliases(
+        IReadOnlyDictionary<string, string[]> loaded, IReadOnlyDictionary<string, string[]> edited)
+    {
+        ArgumentNullException.ThrowIfNull(loaded);
+        ArgumentNullException.ThrowIfNull(edited);
+
+        var before = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        var changed = new List<string>();
+        if (_legacyFileCorrupt)
+            return new SectionAccessSaveOutcome(SectionAccessSaveStatus.StoreCorrupt, changed, before);
+
+        var fallback = FallbackAccess();
+        var status = SectionAccessSaveStatus.Saved;
+        lock (_writeLock)
+        {
+            var outcome = _repository.ReplaceAliases(current =>
+            {
+                if (!current.Readable)
+                {
+                    status = SectionAccessSaveStatus.StoreCorrupt;
+                    return null;
+                }
+
+                var source = current.Configured ? current.Access : fallback;
+                foreach (var alias in edited.Keys)
+                {
+                    var now = source.TryGetValue(alias, out var groups) ? groups : [];
+                    before[alias] = now;
+                    if (!SameGroups(now, loaded.TryGetValue(alias, out var was) ? was : []))
+                        changed.Add(alias);
+                }
+
+                if (changed.Count > 0)
+                {
+                    status = SectionAccessSaveStatus.ConcurrentChange;
+                    return null;
+                }
+
+                var replacement = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+                if (!current.Configured)
+                {
+                    foreach (var (alias, groups) in fallback)
+                        replacement[alias] = groups;
+                }
+
+                foreach (var (alias, groups) in edited)
+                    replacement[alias] = groups;
+
+                if (replacement.Count == 0)
+                {
+                    status = SectionAccessSaveStatus.NothingToSave;
+                    return null;
+                }
+
+                return replacement;
+            });
+
+            if (outcome.Replaced)
+                _logger.LogInformation("SectionAccess saved for {Count} alias(es)", edited.Count);
+        }
+
+        return new SectionAccessSaveOutcome(status, changed, before);
+    }
+
+    // What the gates read while section access has never been configured in the store: the legacy
+    // appsettings block, or else each configurable alias as GetGroupsForSection answers it.
+    private Dictionary<string, string[]> FallbackAccess()
+    {
+        var legacySection = _config.GetSection("Security:SectionAccess");
+        if (legacySection.Exists() && legacySection.GetChildren().Any())
+        {
+            var legacy = legacySection.Get<Dictionary<string, string[]>>();
+            if (legacy != null && legacy.Count > 0)
+                return new Dictionary<string, string[]>(legacy, StringComparer.OrdinalIgnoreCase);
+        }
+
+        var materialized = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var alias in _catalog.GetConfigurablePolicyAliases())
+            materialized[alias] = IsFailClosed(alias) ? [] : _allowedGroups;
+        return materialized;
+    }
+
+    private static bool SameGroups(string[] a, string[] b) =>
+        new HashSet<string>(a.Where(g => !string.IsNullOrWhiteSpace(g)), StringComparer.OrdinalIgnoreCase)
+            .SetEquals(b.Where(g => !string.IsNullOrWhiteSpace(g)));
+
     // One-time import of the legacy sectionaccess.json into section_access, then archive the
     // file (SqliteConfigStore-Plan Section 4). Only fills if not yet configured (DB wins). Returns true
     // if the legacy file exists but is unparseable / missing the Security:SectionAccess node: it
@@ -290,3 +382,29 @@ public class SectionAccessService
         }
     }
 }
+
+/// <summary>How <see cref="SectionAccessService.SaveEditedAliases"/> ended.</summary>
+public enum SectionAccessSaveStatus
+{
+    /// <summary>The edited aliases were replaced.</summary>
+    Saved,
+
+    /// <summary>Nothing written: no alias was edited and section access is already configured.</summary>
+    NothingToSave,
+
+    /// <summary>Nothing written: the legacy file was not imported, or the table could not be read under the lock.</summary>
+    StoreCorrupt,
+
+    /// <summary>Nothing written: an edited alias no longer holds what the page loaded.</summary>
+    ConcurrentChange,
+}
+
+/// <summary>
+/// The outcome of a section-access save: the edited aliases that had changed since the page loaded them
+/// (on <see cref="SectionAccessSaveStatus.ConcurrentChange"/>), and each edited alias's groups as they were
+/// under the write lock.
+/// </summary>
+public sealed record SectionAccessSaveOutcome(
+    SectionAccessSaveStatus Status,
+    IReadOnlyList<string> ChangedAliases,
+    IReadOnlyDictionary<string, string[]> Before);

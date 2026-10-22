@@ -81,8 +81,9 @@ internal sealed class SettingsPageHarness : IDisposable
         Trace = new OperationTraceService(Config, log);
         Audit = new AuditService(log, Trace);
 
+        LogLevelStore = new AttributeEditorHarness.SwitchableStore(TestConfigStore.Create(_root));
         ExtendedLog = new ExtendedLogService(
-            Config, Env, TestConfigStore.CreateAppSettings(_root), NullLogger<ExtendedLogService>.Instance);
+            Config, Env, new AppSettingRepository(LogLevelStore), NullLogger<ExtendedLogService>.Instance);
         var http = Substitute.For<IHttpClientFactory>();
         http.CreateClient(Arg.Any<string>()).Returns(_ => new HttpClient(new NoNetwork()));
         Delinea = new DelineaService(http, Config, NullLogger<DelineaService>.Instance, ExtendedLog, Trace);
@@ -124,6 +125,7 @@ internal sealed class SettingsPageHarness : IDisposable
     public ModuleAdminService ModuleAdmins { get; }
     public OperationTraceService Trace { get; }
     public AuditService Audit { get; }
+    public AttributeEditorHarness.SwitchableStore LogLevelStore { get; }
     public ExtendedLogService ExtendedLog { get; }
     public DelineaService Delinea { get; }
     public AttributeEditorHarness.SwitchableStore ProtectedStore { get; }
@@ -201,6 +203,15 @@ internal sealed class SettingsPageHarness : IDisposable
     public ProtectedPrincipalService CreateOtherProtectedPrincipals() =>
         new(Env, Config, ModuleConfig, new ProtectedPrincipalRepository(TestConfigStore.Create(_root)), Delinea,
             NullLogger<ProtectedPrincipalService>.Instance);
+
+    /// <summary>The other instance's enablement service, over its own store on the same file (aud-a28k).</summary>
+    public ModuleEnablementService CreateOtherEnablement() =>
+        new(Catalog, Env, ModuleConfig, new ModuleEnablementRepository(TestConfigStore.Create(_root)), Config,
+            NullLogger<ModuleEnablementService>.Instance);
+
+    /// <summary>The other instance's section-access service, over its own store on the same file (aud-a28k).</summary>
+    public SectionAccessService CreateOtherSectionAccess() =>
+        new(Config, NullLogger<SectionAccessService>.Instance, Env, Catalog, new SectionAccessRepository(TestConfigStore.Create(_root)));
 
     public AdminSettingsPage OpenAdminSettings()
     {

@@ -1236,18 +1236,25 @@
                 return;
             }
 
-            var enablement = Enablement.GetAllEnablement();
-            var previous = enablement.GetValueOrDefault(module.Id, module.EnabledByDefault);
-            enablement[module.Id] = moduleEnabled;
-            Enablement.SaveEnablement(enablement);
+            var outcome = Enablement.SetModulesEnabled(moduleEnabled == moduleEnabledBaseline
+                ? new Dictionary<string, bool>()
+                : new Dictionary<string, bool> { [module.Id] = moduleEnabled });
+            if (outcome.StoreCorrupt)
+            {
+                enablementStoreCorrupt = true;
+                statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                return;
+            }
 
-            if (previous != moduleEnabled)
+            foreach (var change in outcome.Written)
             {
                 try
                 {
                     Audit.LogSettingsChange(currentUser, ip, section,
-                        previous ? new[] { "Enabled" } : Array.Empty<string>(),
-                        moduleEnabled ? new[] { "Enabled" } : Array.Empty<string>());
+                        change.Before ? new[] { "Enabled" } : Array.Empty<string>(),
+                        change.After ? new[] { "Enabled" } : Array.Empty<string>());
                 }
                 catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module status change"); }
             }
@@ -1334,32 +1341,37 @@
                 return;
             }
 
-            var allAccess = SectionAccess.GetSectionAccess();
+            var edited = policyAliases
+                .Where(a => GroupDelta(snapshot[a].ToList(), accessBaseline.GetValueOrDefault(a) ?? new List<string>()) > 0)
+                .ToDictionary(a => a, a => snapshot[a], StringComparer.OrdinalIgnoreCase);
+            var loaded = edited.Keys.ToDictionary(
+                a => a, a => (accessBaseline.GetValueOrDefault(a) ?? new List<string>()).ToArray(), StringComparer.OrdinalIgnoreCase);
 
-            if (allAccess.Count == 0)
+            var outcome = SectionAccess.SaveEditedAliases(loaded, edited);
+            if (outcome.Status == SectionAccessSaveStatus.StoreCorrupt)
             {
-                foreach (var alias in Catalog.GetConfigurablePolicyAliases())
-                {
-                    if (!allAccess.ContainsKey(alias))
-                        allAccess[alias] = SectionAccess.GetGroupsForSection(alias);
-                }
+                sectionAccessCorrupt = true;
+                statusMessage = "Refusing to save: config\\sectionaccess.json is corrupt and saving would replace it, wiping every module's groups. Fix or restore the file first.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, PendingAccessSections());
+                return;
             }
 
-            var previousGroups = new Dictionary<string, string[]>();
-            foreach (var alias in policyAliases)
+            if (outcome.Status == SectionAccessSaveStatus.ConcurrentChange)
             {
-                previousGroups[alias] = allAccess.TryGetValue(alias, out var prev) ? prev : Array.Empty<string>();
-                allAccess[alias] = snapshot[alias];
+                statusMessage = $"Refusing to save: the groups for {string.Join(", ", outcome.ChangedAliases.Select(AliasName))} were changed after this page loaded them - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage, PendingAccessSections());
+                return;
             }
-            SectionAccess.SaveSectionAccess(allAccess);
+
             // Persisted separately from the grants, and after them: a display name is cosmetic, so
             // failing to store one must never fail the access save that already succeeded.
             SectionAccess.SaveGroupDisplayNames(accessDisplayNames);
 
-            foreach (var alias in policyAliases)
+            foreach (var (alias, curr) in edited)
             {
-                var prev = previousGroups[alias];
-                var curr = snapshot[alias];
+                var prev = outcome.Before.TryGetValue(alias, out var stored) ? stored : Array.Empty<string>();
                 if (!prev.SequenceEqual(curr, StringComparer.OrdinalIgnoreCase))
                 {
                     try { Audit.LogSettingsChange(currentUser, ip, alias, prev, curr); }
@@ -1371,7 +1383,9 @@
             // unsaved edit rather than vanishing from the dirty count.
             accessBaseline = snapshot.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
             RecountAccess();
-            statusMessage = "Section access saved.";
+            statusMessage = outcome.Status == SectionAccessSaveStatus.NothingToSave
+                ? "Section access is unchanged; there was nothing to save."
+                : "Section access saved.";
             statusIsError = false;
         }
         catch (Exception ex)
@@ -1392,6 +1406,13 @@
                 accessState.GetValueOrDefault(a) ?? new List<string>(),
                 accessBaseline.GetValueOrDefault(a) ?? new List<string>()) > 0)
             .ToArray();
+
+    /// <summary>An alias as the admin reads it on the Access tab: its label, with the alias when they differ.</summary>
+    private string AliasName(string alias)
+    {
+        var label = PermissionLabelFor(alias);
+        return string.Equals(label, alias, StringComparison.Ordinal) ? alias : $"{label} ({alias})";
+    }
 
     private async Task SaveModuleAdminsAsync()
     {

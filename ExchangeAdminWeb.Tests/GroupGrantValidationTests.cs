@@ -135,12 +135,13 @@ public class GroupGrantValidationTests
 
         var iConfirm = body.IndexOf("var refused = await ConfirmNewGroupGrantsAsync(newGrants);", StringComparison.Ordinal);
         var iRefuse = body.IndexOf("if (refused is not null)", StringComparison.Ordinal);
-        var iPersist = body.IndexOf("SectionAccess.SaveSectionAccess(allAccess);", StringComparison.Ordinal);
+        // aud-a28k: the save writes only the aliases it edited, decided under the write lock.
+        var iPersist = body.IndexOf("SectionAccess.SaveEditedAliases(loaded, edited);", StringComparison.Ordinal);
 
         Assert.True(iConfirm >= 0, "The access save no longer confirms new grants.");
         Assert.True(iRefuse > iConfirm && iPersist > iRefuse, "The confirmation must refuse BEFORE the store write.");
-        Assert.Contains("allAccess[alias] = snapshot[alias];", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("allAccess[alias] = accessState[alias]", body, StringComparison.Ordinal);
+        Assert.Contains(".ToDictionary(a => a, a => snapshot[a], StringComparer.OrdinalIgnoreCase);", body, StringComparison.Ordinal);
+        Assert.DoesNotContain(".ToDictionary(a => a, a => accessState[a], StringComparer.OrdinalIgnoreCase)", body, StringComparison.Ordinal);
     }
 
     [Fact]
