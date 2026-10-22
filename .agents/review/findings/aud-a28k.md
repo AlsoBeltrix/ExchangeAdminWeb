@@ -9,9 +9,9 @@ aliases is lost - the authorization store). (2) Empty before-state (the aud-a28f
 ProtectedPrincipals and ExchangeOnlineConfig success records pass an empty "before", so every save
 reads as everything added. (3) False success: `AdminSettings.SaveLogLevel` reports and records
 success even when the level failed to persist, because `SetLevel` swallows the store failure.
-**Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
+**Status**: Merged to master (`6ae1af25`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-af0cdb58244ff4bed`
-**Commit**: `b2afe0e2` (plan `6869fd81`; comments `6aaa1133`)
+**Commit**: `b2afe0e2` (plan `6869fd81`; comments `6aaa1133`; merged `6ae1af25`)
 **Reviewer**: implementer (surfaced by the aud-a28g/h/a26f/a28i agent, 2026-10-22, candidates 3, 4, 5 and 9 of its hand-back)
 
 ## Evidence

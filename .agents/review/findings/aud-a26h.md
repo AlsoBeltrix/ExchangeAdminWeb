@@ -6,9 +6,9 @@ fix a `config/*.json` file; those stores live in the SQLite config database sinc
 (2) `ExchangeOnlineConfig.razor` `SaveExoConfig`: when the write succeeds and the following
 `DrainPool` fails, the page shows and records "Failed to save", though the configuration was saved;
 the admin re-saves a value that is already there and the audit says a save failed that did not.
-**Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
+**Status**: Merged to master (`6ae1af25`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-af0cdb58244ff4bed`
-**Commit**: `3a4d2c96` (plan `6869fd81`; comments `6aaa1133`)
+**Commit**: `3a4d2c96` (plan `6869fd81`; comments `6aaa1133`; merged `6ae1af25`)
 **Reviewer**: implementer (surfaced by the aud-a28g/h/a26f/a28i agent, 2026-10-22, candidates 7 and 8 of its hand-back)
 
 ## Evidence
