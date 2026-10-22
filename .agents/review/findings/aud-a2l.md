@@ -4,8 +4,8 @@
 (a replication-lagged domain controller, a directory that silently dropped the value, a
 constraint the server did not report) is audited and announced as done. Known Failure Class 2:
 success must be confirmed, not inferred from the absence of an error.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
+**Status**: In progress - plan recorded; approved under the owner's 2026-10-21 "EVERYTHING" go
+**Branch**: `worktree-agent-ae52370b2527142a4`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a2j agent, 2026-10-22, candidate 3 of its hand-back)
 
@@ -29,6 +29,61 @@ failure when the member is absent.
 - Tests through `ExchangeWriteHarness`: a stand-in whose `Set-ADGroup` succeeds but whose
   subsequent member read lacks the room (failed row, audit says failed); the normal case (read-back
   present, success). Mutation at the call site: drop the read-back.
+
+## Plan (approved by the owner's EVERYTHING go)
+
+Owner go 2026-10-21 ("fix all the bugs ... EVERYTHING", `.agents/decisions.md` 2026-10-21); the
+admitted approach above, the folded-in race below and the supervising session's brief.
+
+**Rule.** The on-prem add succeeds only when the group's `member` attribute, read back from the
+group's own domain after the write, holds the room's DN (Known Failure Class 2).
+
+- **The read-back.** After `Set-ADGroup -Add @{ member = <room DN> }` (aud-a2j),
+  `ReadOnPremListMembership` - aud-a2i's read, the helper the preflight and the pre-write check call:
+  `Get-ADGroup -Identity <group DN> -Properties member -Server ServerFromDn(groupDn)`, the answer's
+  objectGUID checked, DNs compared ordinal-ignore-case. Present: `(null, roomGuid)`, written
+  (aud-a2g). Absent: `(<message naming the room, the list, the group's DN and the server read>,
+  null)` - the existing failed shape, so the row is partial after the Exchange writes and the audit
+  carries no `writtenDirectoryObject`. A read-back that cannot be made fails the same way, as "could
+  not be confirmed".
+- **The race (folded in).** A write refused because the value is already there - recognized by
+  `IsDuplicateMemberValue` (internal static) over the error's message chain: "already a member",
+  "already exists", `ENTRY_EXISTS`, the forms Active Directory reports it in (*assumption*,
+  documented error text, not probed) - is read back like a write that reported nothing: present is
+  success, audited as written (the folded-in rule below), absent a failure. Every other write error
+  stays the failure it was, with no read-back, the same message and log.
+- No retry loop; the operator re-runs. **Unchanged:** the preflight, the pre-write membership check,
+  the cloud path, every Exchange write, the step names and the success message.
+
+**Tests** (`ExchangeWriteHarness`). The stand-in `Set-ADGroup` applies `-Add member` to
+`DirectoryGroupMembers` and refuses a DN already there with Active Directory's duplicate-value error
+(`DuplicateMemberValueError`); `SetAdGroupChangesNothing` makes it report success and change nothing;
+`AnotherAddLandsFirst` puts the DN on the group just before the call - another actor's add. In
+`ConferenceRoomRoomListPreflightTests`:
+- the normal case: success, written, and a membership read after the write, of the group's DN on its
+  domain;
+- `Set-ADGroup` reports success and changes nothing: failed, partial, the message naming the group
+  and the server, nothing recorded as written;
+- the race: refused as a value already present with the room there - success, written; the same
+  refusal with the room absent - failed, not written;
+- another write error with the room present (another actor's add, then the write times out): failed,
+  no read-back;
+- the duplicate-value forms recognized, other errors not (pure).
+In `ConferenceRoomDirectoryAuditTests`, page and bulk: changes nothing - Failed, no
+`writtenDirectoryObject`; refused as present - Success and the room's objectGUID when the read-back
+shows the room, Failed and none when it does not. Existing:
+`TheGroupFoundInTheForest_IsReReadInItsOwnDomain_SoThePreflightAndTheAddResolveTheSameObject` counts
+three membership reads, not two.
+
+**Mutations, at the call site:** (3) the read-back dropped - success on no error, as before; (4) the
+duplicate-value error a failure without a read-back; and (5) every write error read back, the group
+modules' shape - against the brief's rule that other errors stay failures. Each: md5 before and
+after, the named failing test, restored, md5 matched, touched, rebuilt, green. Comments after the
+round.
+
+**Files.** `Services/ConferenceRoomService.cs`, `ExchangeAdminWeb.Tests/ExchangeWriteHarness.cs`,
+`ExchangeAdminWeb.Tests/ConferenceRoomRoomListPreflightTests.cs`,
+`ExchangeAdminWeb.Tests/ConferenceRoomDirectoryAuditTests.cs`, this record.
 
 ## Guard proof
 
