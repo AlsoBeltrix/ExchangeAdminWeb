@@ -11,7 +11,7 @@ comment where it matters: `PowerShell.HadErrors` reads true after an `Invoke` th
 zero records.
 **Status**: Fixed on branch; not merged, not pushed; awaiting review
 **Branch**: `worktree-agent-aa41f72251493711c`
-**Commit**: -
+**Commit**: `339da5c9` (fix, tests, record; comments `d4e69a27`; plan `9301c34b`)
 **Reviewer**: implementer (surfaced by the aud-a2r agent, 2026-10-22, candidates 2 to 4 of its hand-back)
 
 ## Evidence
@@ -213,3 +213,48 @@ No PowerShell source changed (no analyzer or Pester run). No real module, direct
 deployment: every new session is a stand-in. The existing `ADDirectorySearchServiceTests` in the full suite load the
 real module through the production probe, as they did before (the three known skips); no new test does. No coder
 self-review verdict is claimed.
+
+## Comments after the round
+
+Written after all three rounds, in their own commit (`d4e69a27`), checked comment-only as aud-a28q's record says
+(113 lines over eleven files). This record's files: `Services/ActiveDirectoryModuleImport.cs`
+`5CD2122FBB24112D59A05985DA15DBB3` -> `7F7BA25B6F7E724E4A559B9EA71D1826` (16 lines: why the throw is the import's
+error, why Stop is load-bearing, why the finally clears the error stream, the measurement and the assumption);
+`Services/GroupManagementService.cs` `22302309CB1AFD6F044F9741F61ED30C` -> `5DAFE973E098247946453B5FA63CE33E` (10: the
+seam, and the measured note at the routed re-read's HadErrors after a caught throw);
+`Services/AccountLockoutRemediationService.cs` `D0A6EABB4AD86BD9A6FA88AA41F01AA3` ->
+`F10DC84D13D7E68CE4735EC6DF7ECCC5` (5: why the dead branch went, why the catch disposes, the seam);
+`Services/ADDirectorySearchService.cs` `F6839DF8D0F0484C23389B37A7E7124B` -> `BFC67EE19836F92B3E29749C6258ED5F` (6: the
+seam, and why no HadErrors check follows the import); `Services/ADOrganizationalUnitService.cs`
+`92A27FE3DB289CACB0FFBD04C7F50C8D` -> `5C1FA4C885A8D1EF5C01CA863F8B9058` (10: the seam, and why the read's own check
+now sees only the read's record); and two lines in `Services/ADAttributeEditorService.cs` at the lookup's read
+check, the same note (that file's MD5s are in aud-a26o's record). The tests and the harness carry their comments
+from their own commit.
+
+## Branch-tip gates - 2026-10-22 (`d4e69a27`: the three fixes and the comments)
+
+As aud-a28q's record: Release build 0 errors / 61 warnings (the one in this record's files the pre-existing CS8604
+above); the full suite 5,604 / 3 / 0, 5,607 total, 5m23s, the fifteen cases here among the branch's fifty-two;
+`ClickGate*` 316/316 and `ProgressRegistryTests` 35/35 alone; format, `git diff --check HEAD` and
+`tools/Test-AsciiOnly.ps1` exit 0.
+
+## Closeout
+
+Fixed on branch `worktree-agent-aa41f72251493711c`, not merged, not pushed. Module-scoped behaviour changes to Group
+Management, AD Attribute Editor and Account Lockout Remediation (an import's reported, unthrown error no longer
+fails them; a failing lockout import no longer leaks), so their module versions are due; and shared code - the new
+`ActiveDirectoryModuleImport`, the Module Configuration page's OU browser (`ADOrganizationalUnitService`) and the
+directory autocomplete's availability probe (`ADDirectorySearchService`) - so the base app version as well. The bumps
+are the supervisor's, at merge: `ExchangeAdminWeb.csproj` and `Modules/ModuleCatalog.cs` were outside this brief.
+
+## Known gaps
+
+- `ConferenceRoomService.ImportActiveDirectoryModule` is aud-a2r's private copy of the helper's shape, left where it
+  is: that file was outside this brief. Pointing it at `ActiveDirectoryModuleImport` is a follow-up.
+- Other services import the module inline and are outside the five this record names - `Comms10kService`,
+  `EmergencyDisableService`, `LicensingUpdatesService` (psl-2 cleared its imports), `ProtectedPrincipalService`
+  (outside this brief) and the DHCP and Exchange imports. Whether each leaves a record a later check reads was not
+  audited here; a candidate.
+- *Assumption, not probed* (aud-a2r's): the real ActiveDirectory module's import writes no error past
+  `-ErrorAction Stop`. No test imports the real module; the existing `ADDirectorySearchServiceTests` do, through the
+  production probe, and could use the new `CreateProbeRunspace` seam instead - a candidate.

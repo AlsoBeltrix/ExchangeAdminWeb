@@ -9,7 +9,7 @@ audit or trace method directly (the success paths do) can therefore end with an 
 its outcome, and the record is lost. The helpers' catches hide it on the refusal paths only.
 **Status**: Fixed on branch; not merged, not pushed; awaiting review
 **Branch**: `worktree-agent-aa41f72251493711c`
-**Commit**: -
+**Commit**: `1edeb40d` (fix, tests, record; comments `d4e69a27`; plan `9301c34b`)
 **Reviewer**: implementer (surfaced by the aud-a26l/a26m/a28o agent, 2026-10-22, candidate 4 of its hand-back)
 
 ## Evidence
@@ -143,3 +143,47 @@ are written after the round, in their own commit, so the MD5s above are this com
 
 No PowerShell source, AD module, directory, Delinea, SMTP, push or deployment. No coder self-review verdict is
 claimed.
+
+## Comments after the round
+
+Written after all three rounds, in their own commit (`d4e69a27`) with psl-7's and aud-a26o's. Checked by
+`check-comment-diff.ps1` (session scratchpad) over `git diff -U0` of the staged change before that commit: every
+added or removed line of the eleven code files is a comment or blank (113 lines), so each file's code lines are the
+fix commits'. This record's files: `Services/JsonlLogService.cs` `C4FB0EA878AB891FFCCE5D8B3959F07C` ->
+`0EDA85203422A970286A57AF4F472CB5` (9 lines: why the serialisation is inside the try and the record dropped whole,
+why a failed record is named only by string fields); `Services/OperationTraceService.cs`
+`E299A9B96148E2FC1DB31858F2509199` -> `D52B4215E78CEF7B2409A832D5EFE735` and `Services/AuditService.cs`
+`F8248F532B71884A9323336DBBCB96C2` -> `975BBF4193AA00FE23C031E4F2AA1100` (why a null actor is "unknown"). One comment
+this fix made untrue is corrected: WriteAuditEvent's telemetry note said the audit row "is already written" when the
+hook runs; it has been handed to the writer, which logs its own failure, so the action is counted either way. The test
+file carries its comments from its own commit.
+
+## Branch-tip gates - 2026-10-22 (`d4e69a27`: the three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count; the one
+  in a touched file of the branch is the pre-existing CS8604 at `AccountLockoutRemediationService.cs`'s `AuditLogoff`
+  call (psl-7's record), none in this record's files.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,604 passed / 3 skipped (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`)
+  / 0 failed, 5,607 total, 5m23s; nothing hung, no Sequence file. Baseline at `89096ac9`: 5,552 / 3 / 0, 5,555 total;
+  the fifty-two new cases are this branch's (aud-a28q twenty-six, psl-7 fifteen, aud-a26o eleven).
+- `ClickGate*` 316/316 and `ProgressRegistryTests` 35/35, also run alone (Release).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+## Closeout
+
+Fixed on branch `worktree-agent-aa41f72251493711c`, not merged, not pushed. A shared-infrastructure change - the audit
+and trace writers every module ends in - so the base app version is due; no module's own behaviour changed beyond
+that. The bumps are the supervisor's, at merge: `ExchangeAdminWeb.csproj` and `Modules/ModuleCatalog.cs` were outside
+this brief.
+
+## Known gaps
+
+- When the writer drops an audit record, WriteAuditEvent's "AuditWritten" trace step still reads Success - as it
+  already did for a write the writer's IO catch swallowed. The writer returns nothing to say otherwise; a candidate,
+  not changed here.
+- The tripwire hands each method one kind of unwritable value (a throwing getter) in every dictionary parameter; the
+  writer's own cases cover the cycle and the unsupported type. A value whose ToString throws, placed under a field
+  WriteAuditEvent names the trace by (category, action, user, ip, target, ticket, section), still throws there: not
+  this finding's two causes, and no caller passes one.

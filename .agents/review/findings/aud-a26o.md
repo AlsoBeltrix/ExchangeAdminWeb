@@ -15,7 +15,7 @@ while the read-back takes its element; v1 excludes multi-valued attributes but t
 enforce that.
 **Status**: Fixed on branch; not merged, not pushed; awaiting review
 **Branch**: `worktree-agent-aa41f72251493711c`
-**Commit**: -
+**Commit**: `e4fa78ad` (fix, tests, record; comments `d4e69a27`; plan `9301c34b`)
 **Reviewer**: implementer (surfaced by the aud-a26l/a26m/a28o agent, 2026-10-22, candidates 1, 2, 3, 5 and 6 of its hand-back)
 
 ## Evidence
@@ -215,3 +215,32 @@ do-nothing renderer (aud-a28m's harness). No coder self-review verdict is claime
   and the read-back, take its element. Outside this record's five parts; a candidate.
 - The event log's preview guard refuses a second preview until the first answers, a closed panel included: an
   operator who closes a loading panel and asks for another preview at once is refused until the first returns.
+
+## Comments after the round
+
+Written after all three rounds, in their own commit (`d4e69a27`), checked comment-only as aud-a28q's record says
+(113 lines over eleven files). This record's files: `Components/Pages/AdminEventLog.razor`
+`5B35C3695508B525655EED7105BAF603` -> `943DE5D48A8D0864F3A17D3D7F86E7D7` (8 lines: why a preview is refused while one
+loads, why an answer is shown only for the entry it was asked for, and the failure the same; 1,574 lines -> 1,582,
+still NotYetConverted, no key to move); `Services/ADAttributeEditorService.cs` `F91DC378E5BB16F3AD8BF2E2DA4D07A6` ->
+`97BB11FACD3F1BE4BD65C7932FA77807` (33 added, 3 removed, psl-7's two-line note among them: why the preview's
+credentials come through the seam, why the pre-write re-read reads as the read-back and refuses several values,
+why ComputeChanges judges in the attribute's syntax, why the preview's re-read is seamed and routed, each new
+helper and its assumption; the two seams' summaries and ReadDirectoryValue's now name their new callers);
+`Services/ADAttributeEditorUndoService.cs` `5CB73E0C79682EA89BED4D7DBF1273AC` -> `1DE1BD0E2B0CA4002D742F213A36C04F` (2:
+why a JSON null is not set). The tests carry their comments from their own commit.
+
+## Branch-tip gates - 2026-10-22 (`d4e69a27`: the three fixes and the comments)
+
+As aud-a28q's record: Release build 0 errors / 61 warnings, none in this record's files; the full suite 5,604 / 3 / 0,
+5,607 total, 5m23s, the eleven cases here among the branch's fifty-two; `ClickGate*` 316/316 and
+`ProgressRegistryTests` 35/35 alone; format, `git diff --check HEAD` and `tools/Test-AsciiOnly.ps1` exit 0.
+
+## Closeout
+
+Fixed on branch `worktree-agent-aa41f72251493711c`, not merged, not pushed. Two module-scoped behaviour changes: the
+Admin Event Log (the preview's loading guard and target check) and the AD Attribute Editor (ComputeChanges' syntax
+comparison, the undo's JSON-null side, the seamed and routed preview, the pre-write re-read's reading and
+several-valued refusal): both module versions are due. No shared code changed here, so no base app bump from this
+record. The bumps are the supervisor's, at merge: `Modules/ModuleCatalog.cs` and `ExchangeAdminWeb.csproj` were
+outside this brief.
