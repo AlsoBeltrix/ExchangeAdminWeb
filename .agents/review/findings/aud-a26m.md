@@ -7,9 +7,9 @@ and `ADAttributeEditorUndoService.CanUndo` (around line 59) requires at least on
 setting a previously empty attribute - leaves a successful `ADAttributeEditor_Update` row with
 `changedAttributes` but no Undo button, although the preview/execute code already treats a missing
 side as null.
-**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
+**Status**: Merged to master (`fee8a58b`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a6af37cca287ebc2c`
-**Commit**: `d0edf1ea` (comments `97592e99`; plan `4684d84d`)
+**Commit**: `d0edf1ea` (comments `97592e99`; plan `4684d84d`; merged `fee8a58b`)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-7, `prompt-attr-batch-7.md`, 2026-10-22)
 
 ## Evidence
