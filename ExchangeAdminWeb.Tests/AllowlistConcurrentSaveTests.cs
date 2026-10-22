@@ -179,6 +179,9 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
     [Fact]
     public void TheServicesOnlyAllowlistWriter_IsTheSaveThatChecksTheLoadedVersion()
     {
+        // A method a page can call that is handed allowlist rows is taken for a writer. The save is the
+        // only one there should be, and it must take the version its page loaded (aud-a28i); the public
+        // SaveAllowlist removed in aud-a28l was a writer with neither the version nor a record.
         var writers = typeof(ADAttributeEditorService)
             .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
             .Where(m => !m.IsPrivate && m.GetParameters().Any(p => HoldsAllowlistRows(p.ParameterType)))
@@ -194,6 +197,8 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
     [Fact]
     public void NoProductionCode_ReplacesTheStoredAllowlist_OutsideTheSaveThatChecksTheLoadedVersion()
     {
+        // The repository is a DI singleton, so the version check could also be gone round by calling
+        // its whole-table writers directly. Only the audited save may.
         var calls = new List<string>();
         foreach (var file in ProductionSources())
         {

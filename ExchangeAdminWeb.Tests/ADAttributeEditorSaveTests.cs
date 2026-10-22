@@ -316,6 +316,8 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     [Fact]
     public async Task AnErrorTheWriteReportsWithoutThrowing_IsNotTakenForAFailedWrite()
     {
+        // The case the removed HadErrors check existed for, and the one it got wrong: the write was
+        // applied, and a record no throw carried sat in the stream. Only a thrown error is the write's.
         const string reported = "A non-terminating error reported beside the write.";
         var alex = _h.Ad.AddAlex();
         _h.Ad.SetReportsErrorWithoutThrowing = reported;
@@ -343,6 +345,9 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     [InlineData(true)]
     public async Task AWriteTheDirectoryRefuses_IsTheAuditedFailure_ThrownEitherWay(bool nonTerminating)
     {
+        // aud-a28c's failed-write record, for a refusal thrown either way: a terminating one, and a
+        // non-terminating one that -ErrorAction Stop turns into a throw. With no HadErrors check left,
+        // the second is caught only because of Stop - which this pins.
         const string refusal = "Insufficient access rights to perform the operation";
         var alex = _h.Ad.AddAlex();
         _h.Ad.SetFailure = refusal;
@@ -371,6 +376,8 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     [Fact]
     public void TheHarness_SetADUser_ReportsAnErrorWithoutThrowing_AndRefusesWithoutTerminating()
     {
+        // The two knobs, so the tests above cannot pass for want of what they describe: an error that
+        // is reported and not thrown, and a refusal that only -ErrorAction Stop throws.
         var alex = _h.Ad.AddAlex();
         var replace = new Hashtable { ["title"] = "Lead Analyst" };
 

@@ -9,7 +9,7 @@ namespace ExchangeAdminWeb.Tests;
 /// </summary>
 /// <remarks>
 /// ExecuteUndoAsync has eight refusal returns ahead of SaveAsync. Each completed only the
-/// diagnostic trace, and the event-log page that calls it audits nothing, so "who tried to reverse
+/// diagnostic trace, and the event-log page that calls it audited nothing, so "who tried to reverse
 /// a change to this protected account, and was stopped?" had no answer in the audit log. Driven
 /// end to end through <see cref="AttributeEditorHarness"/>; each refusal's record is read back from
 /// the JSONL the real audit writer produced.

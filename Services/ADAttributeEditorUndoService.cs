@@ -166,7 +166,9 @@ public class ADAttributeEditorUndoService : IUndoableModule
 
         // aud-a28d: every refusal below writes the undo record before it returns, marked with where
         // it was refused and that nothing was sent to the directory. They used to complete only
-        // the diagnostic trace, and the event-log page that calls this audits nothing.
+        // the diagnostic trace, and the event-log page that calls this audited nothing; the one
+        // refusal the page makes itself, its authorization re-check, is recorded through
+        // LogUndoRefused (aud-a28l).
         if (string.IsNullOrWhiteSpace(target))
         {
             const string noTarget = "No target identity in audit event.";
@@ -343,6 +345,17 @@ public class ADAttributeEditorUndoService : IUndoableModule
         }
     }
 
+    /// <summary>
+    /// Records an undo the event log refused before calling <see cref="ExecuteUndoAsync"/> (aud-a28l).
+    /// </summary>
+    /// <remarks>
+    /// The record the refusals inside ExecuteUndoAsync write (aud-a28d): the undo action, failed, with
+    /// the reason the operator was shown, the operation it would have reversed and the values it would
+    /// have restored, <c>refusedAt</c> and <c>mutationAttempted</c> false. Failed, so it never marks the
+    /// original edit reversed (aud-a26c) and the edit keeps its Undo button. Not announced: the page
+    /// never announced this refusal. An audit failure is logged and swallowed; it must not turn the
+    /// refusal into an exception the page would report instead.
+    /// </remarks>
     public void LogUndoRefused(
         Dictionary<string, object?> auditEvent, string performedBy, string ip, string ticket, string refusedAt, string reason)
     {

@@ -129,10 +129,14 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         Assert.Equal("Lead Analyst", Text(record, "old_title"));
         Assert.Equal("Analyst", Text(record, "new_title"));
 
+        // Refused before the undo service ran: no directory session, nothing written, and no notice -
+        // the page never announced this refusal, and recording it does not start to.
         Assert.Equal(0, _h.Service.SessionsOpened);
         Assert.Empty(_h.Ad.Sets);
         Assert.Empty(_h.Notices);
 
+        // The edit keeps its Undo button: the refusal names the edit, and neither the page's in-session
+        // set nor the rule the next load applies to the records (aud-a26c) takes that for a reversal.
         Assert.DoesNotContain("op-forward-1", Field<HashSet<string>>(page, "reversedOperationIds"));
         Assert.DoesNotContain("op-forward-1", ReversedOperations.From(
             _h.AuditEvents(),
@@ -143,6 +147,9 @@ public sealed class EventLogUndoRefusalTests : IDisposable
     [Fact]
     public void ARefusalWhoseRecordCannotBeWritten_IsLogged_NotThrown()
     {
+        // No audit writer at all stands in for one that throws. The page calls this on its refusal path,
+        // so a throw would replace "Authorization denied." with the catch's message and still leave no
+        // record.
         var logger = Substitute.For<ILogger<ADAttributeEditorUndoService>>();
         var service = new ADAttributeEditorUndoService(null!, null!, null!, null!, null!, null!, null!, logger);
         var alex = _h.Ad.AddAlex(title: "Lead Analyst");

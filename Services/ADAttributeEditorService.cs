@@ -433,6 +433,11 @@ public class ADAttributeEditorService
     /// It does not throw. Every outcome is recorded here and returned, which is what lets the page's
     /// catch write the one record for an attempt that failed before reaching this method without
     /// risking a second. The records are written after the transaction, which a refusal rolls back.
+    ///
+    /// It is the service's only allowlist writer (aud-a28l). A public SaveAllowlist stood beside it with
+    /// no caller left, writing with neither the version check nor a record, so any later caller would
+    /// have gone round both; it was removed rather than kept as a backstop. AllowlistConcurrentSaveTests
+    /// holds the line, here and at the repository.
     /// </remarks>
     public AllowlistSaveResult SaveAllowlistAndAudit(
         List<EditableAttribute> attributes, string loadedVersion, string performedBy, string ip)
@@ -1422,6 +1427,13 @@ public class ADAttributeEditorService
         // constraint violation, unreachable DC) THROW from Invoke(). Catch, audit,
         // and return a failed result; a failed mutation with no audit record
         // violates the Constitution's audit invariant.
+        //
+        // aud-a26g: the throw is the write's whole verdict, with no HadErrors check after it. An error
+        // a command writes under -ErrorAction Stop is thrown and leaves no record in the stream, so such
+        // a check could never see the write's own error - only a record something else left, an earlier
+        // command's or one written past the preference, and then a write the directory had taken was
+        // reported and recorded as failed, with nothing to undo. So -ErrorAction Stop is load-bearing
+        // here: a non-terminating refusal is caught only because it is thrown.
         try
         {
             ps.Invoke();
@@ -1434,6 +1446,9 @@ public class ADAttributeEditorService
         }
         finally
         {
+            // Nothing runs on this pipeline after the write today. A command added after it would
+            // otherwise start with the write's command and any record it left still in place, and
+            // HadErrors stays true while one remains (psl-2).
             ps.Commands.Clear();
             ps.Streams.Error.Clear();
         }

@@ -131,6 +131,7 @@ public sealed class EventLogSectionsTargetTests : IDisposable
     {
         var entries = WriteTheRecordsAndParseThem(new Page());
 
+        // Only the enablement refusal names this section, and only in its "sections".
         var calendar = Assert.Single(Filter(entries, Calendar));
         Assert.Contains("ModuleEnablement", Read(calendar, "FullTarget"), StringComparison.Ordinal);
         Assert.Contains(Mailbox, Read(calendar, "FullTarget"), StringComparison.Ordinal);
@@ -168,6 +169,7 @@ public sealed class EventLogSectionsTargetTests : IDisposable
         var page = new Page();
         var entries = WriteTheRecordsAndParseThem(page);
 
+        // The control: the single-section refusal and the success read exactly as before.
         var own = entries.Where(e => Read(e, "FullTarget") == Mailbox).ToList();
         Assert.Equal(2, own.Count);
         Assert.All(own, e => Assert.Equal(Mailbox, Read(e, "Target")));
