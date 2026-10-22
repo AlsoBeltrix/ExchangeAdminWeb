@@ -4,9 +4,9 @@
 step, installs `-MinimumVersion 5.5`; CI therefore runs the Gallery's newest Pester (6.2.0 today, the
 dev host's version). A later release would change the runner's behaviour on every push with no
 commit in the repo explaining it, and could fail or silently change what the suites assert.
-**Status**: Fixed on branch; closed on guard proof; review pending
+**Status**: Merged to master (`bba6d659`); closed on guard proof; Pester 478/0/0 in the repo; codex review pending (batched with the next ops group); owner decision recorded: the workflow's other floating inputs (runs-on, actions major tags, dotnet-version) are a pinning-policy call, not admitted
 **Branch**: `worktree-agent-ab74c2738ad037db4` (forked at `dc0555e2`)
-**Commit**: `0f185411` (fix, tests, guard proof); plan `9bb69900`; comments in the commit after the fix
+**Commit**: `0f185411` (fix, test, guard proof); plan `9bb69900`; comments `f0b50bb4`; merged `bba6d659`
 **Reviewer**: implementer (surfaced by the cdt-39 agent, 2026-10-22, its one candidate)
 
 ## Evidence
