@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM - a configuration change made on one instance can be silently reverted by
 the other starting up. Pre-existing.
-**Status**: Merged to master (`3ce560bd`); closed on guard proof; codex storage review pending
+**Status**: Merged to master (`3ce560bd`); closed on guard proof; codex storage-batch-1 clean
 **Branch**: `worktree-agent-a801aa638651e79ad`
 **Commit**: `8c0f1721` (merged `3ce560bd`)
 

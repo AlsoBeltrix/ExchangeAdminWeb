@@ -2,7 +2,7 @@
 
 **Severity**: HIGH - it restores access an administrator removed, silently, and the only
 signal is that someone who should have lost a permission still has it. Pre-existing.
-**Status**: Merged to master (`3ce560bd`); closed on guard proof; codex storage review pending
+**Status**: Merged to master (`3ce560bd`); closed on guard proof; codex storage-batch-1 clean
 **Branch**: `worktree-agent-a801aa638651e79ad`
 **Commit**: `82fc9b88` (merged `3ce560bd`)
 
