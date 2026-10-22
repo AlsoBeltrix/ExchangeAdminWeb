@@ -6,9 +6,9 @@ so a refused save under aud-a28e can only be cleared by deleting and re-adding t
 silently drops the pattern. The legacy `ad-editable-attributes.json` import writes rows straight to
 the repository and so skips the aud-a28e save-time check; the validation-time catch still refuses
 at save, so the gap is operability, not safety.
-**Status**: Fixed on the branch below, closed on guard proof; not merged; codex review pending
+**Status**: Merged to master (`488e535e`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a0e4f589237f5b88c`
-**Commit**: -
+**Commit**: `fc117a1c` (merged `488e535e`)
 **Reviewer**: implementer (surfaced by the aud-a28e/a26d agent, 2026-10-22, candidates 3 and 4 of its hand-back)
 
 ## Evidence
