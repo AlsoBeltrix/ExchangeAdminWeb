@@ -343,9 +343,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// <summary>
     /// A building's room list as Exchange reported it (aud-a2f): its name, whether it exists, whether
     /// that is the legacy name, and - for an existing list - whether it is synchronized from
-    /// on-premises (<c>IsDirSynced</c>), or null when Exchange did not say.
+    /// on-premises (<c>IsDirSynced</c>), or null when Exchange did not say; and the primary SMTP
+    /// address Exchange holds for it, by which its on-prem group is found (aud-a2k), as Exchange
+    /// returned it - null when the list does not exist or Exchange reported none.
     /// </summary>
-    private sealed record RoomListTarget(string Name, bool Exists, bool IsLegacy, bool? IsDirSynced)
+    private sealed record RoomListTarget(string Name, bool Exists, bool IsLegacy, bool? IsDirSynced, string? PrimarySmtpAddress)
     {
         /// <summary>
         /// An existing list synchronized from on-premises. Exchange Online refuses the cloud add to
@@ -364,7 +366,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
           .AddParameter("ErrorAction", "SilentlyContinue");
         var canonical = InvokeOptional(ps, tracker);
         if (canonical.Count > 0)
-            return new RoomListTarget(canonicalName, Exists: true, IsLegacy: false, ReadIsDirSynced(canonical[0]));
+            return new RoomListTarget(canonicalName, Exists: true, IsLegacy: false, ReadIsDirSynced(canonical[0]), ReadPrimarySmtpAddress(canonical[0]));
 
         var legacyName = BuildLegacyRoomListName(building);
         ps.AddCommand("Get-DistributionGroup")
@@ -372,9 +374,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
           .AddParameter("ErrorAction", "SilentlyContinue");
         var legacy = InvokeOptional(ps, tracker);
         if (legacy.Count > 0)
-            return new RoomListTarget(legacyName, Exists: true, IsLegacy: true, ReadIsDirSynced(legacy[0]));
+            return new RoomListTarget(legacyName, Exists: true, IsLegacy: true, ReadIsDirSynced(legacy[0]), ReadPrimarySmtpAddress(legacy[0]));
 
-        return new RoomListTarget(canonicalName, Exists: false, IsLegacy: false, IsDirSynced: null);
+        return new RoomListTarget(canonicalName, Exists: false, IsLegacy: false, IsDirSynced: null, PrimarySmtpAddress: null);
     }
 
     // True, false, or null when the property is absent or not a boolean - which the preflight refuses
@@ -387,6 +389,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             string text when bool.TryParse(text, out var parsed) => parsed,
             _ => null,
         };
+
+    // aud-a2k. Taken from the object the IsDirSynced read already returned, so the list whose sync
+    // state the preflight decides on is the list whose address finds its on-prem group. Not checked
+    // here: ResolveAdGroupGuid refuses a blank one at the point of use.
+    private static string? ReadPrimarySmtpAddress(PSObject list) =>
+        list.Properties["PrimarySmtpAddress"]?.Value?.ToString();
 
     // The apply's room list, read before any write (aud-a2f). Read-only: safe to retry.
     private Task<RoomListTarget> ResolveRoomListTargetAsync(string building) =>
@@ -703,7 +711,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                     }
 
                     _operationTrace?.Step("AddToRoomListOnPrem", backend: "AD", command: "Set-ADGroup", target: room.DirectoryObjectGuid ?? roomEmail);
-                    var (adError, adWritten) = await AddToRoomListViaAdAsync(room, roomEmail, roomListName);
+                    var (adError, adWritten) = await AddToRoomListViaAdAsync(room, roomEmail, roomListName, list.PrimarySmtpAddress);
                     if (adError == null)
                     {
                         result.Success = true;
@@ -1551,10 +1559,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // needs anything further. A list synchronized from on-premises takes the room only on-prem
     // (AddToRoomListViaAdAsync below), so everything that add needs and can be checked without
     // writing - a proven AD object, the AD credential, that object readable by its objectGUID,
-    // exactly one on-prem group for the list in the whole forest (aud-a2j), and whether the room is
-    // already in it (aud-a2i) - is checked here, and its absence refuses the row while nothing has
-    // been written. A list whose sync state Exchange did not report is refused too: whether the row
-    // can complete is then unknown, and the old order found out by writing.
+    // exactly one on-prem group in the whole forest (aud-a2j) carrying the list's address (aud-a2k),
+    // and whether the room is already in it (aud-a2i) - is checked here, and its absence refuses the
+    // row while nothing has been written. A list whose sync state Exchange did not report is refused
+    // too: whether the row can complete is then unknown, and the old order found out by writing.
     // Returns the refusal, or null. (A genuine failure of the membership write after a passing
     // preflight - missing write-members delegation, say - remains the inherent two-system residual.)
     // roomPrimary is the address Exchange returned for the validated room: the membership test's key.
@@ -1607,7 +1615,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
                 // The resolver's refusals are shared with the add, which meets them after the writes,
                 // so here, as for the membership read below, the preflight says nothing was written.
-                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, list.Name, credential);
+                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, list.Name, list.PrimarySmtpAddress, credential);
                 if (groupError != null)
                     return $"{groupError} Nothing was written.";
 
@@ -1632,13 +1640,16 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // ("out of the current user's write scope ... being synchronized from your on-premises
     // organization"), so membership must be written on-prem and then syncs up (~30 min) - the
     // same shape as the Set-ADUser City/State/Country handling. Returns (null, the room's
-    // objectGUID) once the membership write has succeeded, (null, null) for the already-a-member
-    // no-op - nothing was written - and (a failure message, null) otherwise (aud-a2g). See
+    // objectGUID) once the membership write is confirmed - the room's DN read back on the group's
+    // member attribute after it (aud-a2l) - (null, null) for the already-a-member no-op - nothing
+    // was written - and (a failure message, null) otherwise (aud-a2g). See
     // docs/ConferenceRooms-OnPremRoomListAdd-Plan.md, and aud-a2j for the form of the write.
     //
     // aud-a2d. The member added is the AD object the protection gate proved owns the room's
-    // mailbox, by objectGUID - not a userPrincipalName match of the typed string.
-    private async Task<(string? error, string? written)> AddToRoomListViaAdAsync(ValidatedMailbox room, string roomEmail, string roomListName)
+    // mailbox, by objectGUID - not a userPrincipalName match of the typed string. aud-a2k. The group
+    // is found by listAddress, the primary SMTP address Exchange reported for the list before any
+    // write - the address the preflight found it by.
+    private async Task<(string? error, string? written)> AddToRoomListViaAdAsync(ValidatedMailbox room, string roomEmail, string roomListName, string? listAddress)
     {
         if (room.DirectoryObjectGuid is not { } roomGuid)
             return (NoDirectoryObject(roomEmail, "the room could not be added to the on-prem room list"), null);
@@ -1669,7 +1680,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 if (roomError != null)
                     return (roomError, null);
 
-                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, roomListName, credential);
+                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, roomListName, listAddress, credential);
                 if (groupError != null)
                     return (groupError, null);
 
@@ -1696,15 +1707,70 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // exists to prevent. The group by the objectGUID its own domain answered with; the room
                 // by the DN of its proven object, the DN the membership read above compared, never null
                 // here - that read refuses a room read without one. Not by a name or a UPN.
+                var groupServer = GroupManagementService.ServerFromDn(groupDn);
                 ps.AddCommand("Set-ADGroup")
                   .AddParameter("Identity", groupGuid)
                   .AddParameter("Add", GroupManagementService.BuildMemberAttributeWrite(roomDn!))
-                  .AddParameter("Server", GroupManagementService.ServerFromDn(groupDn))
+                  .AddParameter("Server", groupServer)
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                if (ps.HadErrors)
-                    return (FirstError(ps) ?? $"Adding {roomEmail} to on-prem room list '{roomListName}' failed.", null);
+                // aud-a2l. One refusal is held for the read-back rather than reported: the value already
+                // there. The membership read just above said "not a member", so that refusal means the room
+                // got there in between - another actor's add (codex's race, folded into aud-a2l), or one the
+                // read's domain controller had not yet seen - and the row used to come back partial for a
+                // membership that was in place. -ErrorAction Stop makes every write error a thrown one, so
+                // the filter sees each; any other error passes it untouched to the catch below - the
+                // failure, message and log it always was, with no read-back, because nothing but this
+                // refusal says the value may be there.
+                string? refusedAsPresent = null;
+                try
+                {
+                    ps.Invoke();
+                    if (ps.HadErrors)
+                        return (FirstError(ps) ?? $"Adding {roomEmail} to on-prem room list '{roomListName}' failed.", null);
+                }
+                catch (Exception ex) when (IsDuplicateMemberValue(ex))
+                {
+                    refusedAsPresent = ex.Message;
+                }
+                finally
+                {
+                    // The read-back below runs on this pipeline: the write must not stay queued before it,
+                    // nor its error be the one the read reports.
+                    ps.Commands.Clear();
+                    ps.Streams.Error.Clear();
+                }
+
+                // aud-a2l. The write is not taken as done because it raised no error - a domain controller
+                // that dropped the value, or a constraint it did not report, raises none and changes nothing
+                // (Known Failure Class 2). Done is the room's DN on the group's member attribute, read back
+                // with the read the preflight and the check above made (aud-a2i: by the group's DN, on the
+                // domain that holds it, the answer's objectGUID checked, compared by DN), on the domain the
+                // write went to. Not there - or not readable - is a failure naming the group and the server
+                // asked, and the audit names nothing written (aud-a2g). No retry: the operator re-runs, and
+                // a re-run finds the room already a member, or writes again.
+                string? readError;
+                bool present;
+                try
+                {
+                    (readError, present) = ReadOnPremListMembership(ps, groupGuid, groupDn, roomDn, roomListName, credential);
+                }
+                catch (Exception ex)
+                {
+                    // A read that threw - the domain controller unreachable, say - says nothing either way.
+                    (readError, present) = (ex.Message, false);
+                }
+                if (readError != null)
+                {
+                    _logger.LogWarning("On-prem room-list add for {Room} on {List} could not be confirmed from {Server}: {Error}", roomEmail, roomListName, groupServer, readError);
+                    return ($"Adding {roomEmail} to on-prem room list '{roomListName}' could not be confirmed: reading its group {groupDn} back from {groupServer} failed: {readError}", null);
+                }
+                if (!present)
+                {
+                    _logger.LogWarning("On-prem room-list add for {Room} on {List} not confirmed: {Group} read back from {Server} does not hold the room", roomEmail, roomListName, groupDn, groupServer);
+                    return ($"Adding {roomEmail} to on-prem room list '{roomListName}' was not confirmed: its group {groupDn}, read back from {groupServer}, does not hold the room as a member"
+                        + (refusedAsPresent is null ? "." : $", though Active Directory refused the add as a value already there ({refusedAsPresent})."), null);
+                }
 
                 return (null, roomGuid);
             }
@@ -1749,32 +1815,49 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         return null;
     }
 
-    // Resolve a room list (distribution group) to exactly one immutable on-prem ObjectGUID.
-    // Matches on mail first, then displayName/name, and refuses on not-found or ambiguous -
-    // same fail-closed posture as ConfirmDirectoryObject so an on-prem membership write can never
-    // target the wrong group. Shared by the room-list preflight and the add (aud-a2f), so they
-    // resolve the same group. Also reports the group's DN, by which its membership is read
-    // (aud-a2i). Assumes the ActiveDirectory module is already imported.
+    // Resolve a room list (distribution group) to exactly one immutable on-prem ObjectGUID, and
+    // refuse on not-found or ambiguous - same fail-closed posture as ConfirmDirectoryObject so an
+    // on-prem membership write can never target the wrong group. Shared by the room-list preflight
+    // and the add (aud-a2f), so they resolve the same group. Also reports the group's DN, by which
+    // its membership is read (aud-a2i). Assumes the ActiveDirectory module is already imported.
+    //
+    // aud-a2k. Found by the list's address and nothing else: the one group whose mail is the
+    // primary SMTP address Exchange holds for the list (listAddress, read with its sync state before
+    // any write). It used to be matched by the list's NAME as displayName or name - the mail clause
+    // compared an address attribute with a name and could never match - so one unrelated group
+    // carrying that name, with the synced group out of the result, was written in its place. Names
+    // are not identities (aud-a2b, aud-a2c, aud-a2d), and Exchange exposes no immutable attribute
+    // tying a synced group to its on-prem object, so the address is the binding. When it finds no
+    // group or several, the refusal names the list and the address searched, and what to put right;
+    // it does not offer a likely-looking group to choose: the data is the operator's to correct, not
+    // the app's to guess at (owner, .agents/decisions.md 2026-10-15).
     //
     // aud-a2j. Searched in the forest's global catalog, not in one domain. Without -Server,
     // Get-ADGroup is answered by a domain controller of the domain the cmdlet binds to by default
     // and sees only that domain's groups, so a room list synced from a group in any other domain of
     // the forest came back "No on-prem AD group found" and a legitimate row was refused. The
-    // catalog widens what can match, and the exactly-one rule holds across all of it: a name that
-    // matches a group in each of two domains refuses. No catalog refuses too, before any write -
+    // catalog widens what can match, and the exactly-one rule holds across all of it: an address
+    // that a group in each of two domains carries refuses. No catalog refuses too, before any write -
     // never a fallback to one domain, which is the shape this replaced. The one match is re-read
     // in its own domain (ReadAdGroupInItsDomain), and that read's objectGUID and DN are what the
     // membership read and the write use, so the preflight and the add resolve the same object the
     // same way.
-    private static (string? error, string? objectGuid, string? distinguishedName) ResolveAdGroupGuid(PowerShell ps, string roomListName, PSCredential credential)
+    private static (string? error, string? objectGuid, string? distinguishedName) ResolveAdGroupGuid(PowerShell ps, string roomListName, string? listAddress, PSCredential credential)
     {
+        // A list Exchange reports no address for has nothing to find its group by. Refused before the
+        // forest is asked anything: a search for an empty mail is not a search for this list's group,
+        // whatever the directory makes of it.
+        var address = listAddress?.Trim() ?? "";
+        if (address.Length == 0)
+            return ($"Exchange reported no primary SMTP address for room list '{roomListName}', so its on-prem group cannot be identified: the group is found by that address alone, never by its name. Check the list in Exchange Online. The room was not added to the list.", null, null);
+
         var (catalog, catalogError) = ResolveForestGlobalCatalog(ps, credential);
         if (catalog is null)
             return ($"The forest's global catalog could not be resolved ({catalogError}), so the on-prem group for room list '{roomListName}' cannot be looked up across the forest. Refusing rather than searching one domain.", null, null);
 
-        var escaped = roomListName.Replace("'", "''");
+        var escaped = address.Replace("'", "''");
         ps.AddCommand("Get-ADGroup")
-          .AddParameter("Filter", $"mail -eq '{escaped}' -or displayName -eq '{escaped}' -or name -eq '{escaped}'")
+          .AddParameter("Filter", $"mail -eq '{escaped}'")
           .AddParameter("Server", catalog)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
@@ -1784,9 +1867,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         ps.Commands.Clear();
 
         if (found.Count == 0)
-            return ($"No on-prem AD group found for room list '{roomListName}'. The room was not added to the list.", null, null);
+            return ($"No on-prem AD group in the forest has mail '{address}', the primary SMTP address Exchange holds for room list '{roomListName}'. Check that the list's group in on-premises Active Directory carries exactly that address in its mail attribute. The room was not added to the list.", null, null);
         if (found.Count > 1)
-            return ($"Multiple on-prem AD groups ({found.Count}) match room list '{roomListName}'. Refusing to write to avoid the wrong group.", null, null);
+            return ($"Multiple on-prem AD groups ({found.Count}) in the forest have mail '{address}', the primary SMTP address Exchange holds for room list '{roomListName}'. Check which of them is the list's group; only it may carry that address. Refusing to write to avoid the wrong group.", null, null);
 
         var objectGuid = found[0].Properties["ObjectGUID"]?.Value?.ToString();
         if (string.IsNullOrWhiteSpace(objectGuid))
@@ -1875,7 +1958,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // The group is read by its DN, on the domain that DN names (routed as GetMembersAsync routes
     // it), and must answer as the objectGUID ResolveAdGroupGuid resolved. The room is the object
     // proven by objectGUID, compared by that object's DN - never by a name - so without its DN there
-    // is no answer. Shared by the room-list preflight and the add, so both read it the same way.
+    // is no answer. Shared by the room-list preflight and the add - its check before the write and,
+    // since aud-a2l, its read-back after it - so all three read it the same way.
     // Returns (the error, false) when the question cannot be answered, never "not a member".
     // Assumes the ActiveDirectory module is already imported.
     private static (string? error, bool isMember) ReadOnPremListMembership(
@@ -1903,6 +1987,33 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         return (null, GroupManagementService.MemberDnsOf(found[0]).Contains(roomDn, StringComparer.OrdinalIgnoreCase));
     }
+
+    // aud-a2l. Whether a write was refused because the value it adds is already there - the one write
+    // error the on-prem add reads back instead of reporting. Its message is looked for in the exception
+    // and every exception inside it, since PowerShell may wrap the cmdlet's own ("The running command
+    // stopped because ...: <message>") or carry it as the inner exception. The forms, case-insensitive:
+    // "already a member" (Win32 1378, "The specified account name is already a member of the group.",
+    // the server's answer for a member value already present), "already exists" (Win32 8205/8323, "The
+    // specified directory service attribute or value already exists." / "... value already exists.",
+    // and ADSI's "The object already exists.") and ENTRY_EXISTS (the LDAP diagnostic, "problem 6005
+    // (ENTRY_EXISTS)"). *Assumption, documented error text, not probed - no live directory call is made
+    // here:* which of these the ActiveDirectory module reports for Set-ADGroup -Add. Matching too little
+    // costs nothing new: the refusal is reported as the failure it always was. Matching too much is
+    // bounded by the read-back, which decides.
+    internal static bool IsDuplicateMemberValue(Exception error)
+    {
+        for (Exception? e = error; e is not null; e = e.InnerException)
+        {
+            if (IsDuplicateMemberValue(e.Message))
+                return true;
+        }
+        return false;
+    }
+
+    internal static bool IsDuplicateMemberValue(string? message) =>
+        message is not null && DuplicateMemberValueMarkers.Any(marker => message.Contains(marker, StringComparison.OrdinalIgnoreCase));
+
+    private static readonly string[] DuplicateMemberValueMarkers = ["already a member", "already exists", "ENTRY_EXISTS"];
 
     private static string? FirstError(PowerShell ps) =>
         ps.Streams.Error.Select(e => e.Exception?.Message ?? e.ToString())

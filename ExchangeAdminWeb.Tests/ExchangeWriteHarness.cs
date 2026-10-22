@@ -75,13 +75,49 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// </summary>
     public Hashtable ListSyncState { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// aud-a2k. The <c>PrimarySmtpAddress</c> of a list <see cref="ListAddresses"/> does not name, and
+    /// the <c>mail</c> of a group <see cref="DirectoryGroupAttributes"/> does not name: so, unless a test
+    /// says otherwise, every list's on-prem group is every stand-in group - the shape the tests written
+    /// before aud-a2k assume.
+    /// </summary>
+    public const string DefaultListAddress = "list@contoso.test";
+
+    /// <summary>
+    /// aud-a2k. What the stand-in <c>Get-DistributionGroup</c> reports as <c>PrimarySmtpAddress</c>, by
+    /// list name: an address (an empty or blank one included), or null to leave the property out.
+    /// </summary>
+    public Hashtable ListAddresses { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// aud-a2k. The attributes a stand-in group search is matched against, by objectGUID - set through
+    /// <see cref="SetDirectoryGroupAttributes"/>. A group named here has exactly those attributes; one
+    /// not named has <c>mail</c> <see cref="DefaultListAddress"/> and its CN, <c>Group &lt;objectGUID&gt;</c>,
+    /// as both <c>displayName</c> and <c>name</c>.
+    /// </summary>
+    public Hashtable DirectoryGroupAttributes { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>aud-a2k. Gives the group <paramref name="objectGuid"/> exactly these attributes; a null one is absent, as an unset attribute is in Active Directory.</summary>
+    public void SetDirectoryGroupAttributes(string objectGuid, string? mail, string? displayName, string? name)
+    {
+        var attributes = new Hashtable(StringComparer.OrdinalIgnoreCase);
+        if (mail is not null)
+            attributes["mail"] = mail;
+        if (displayName is not null)
+            attributes["displayName"] = displayName;
+        if (name is not null)
+            attributes["name"] = name;
+        DirectoryGroupAttributes[objectGuid] = attributes;
+    }
+
     /// <summary>The objectGUID of the one group the stand-in <c>Get-ADGroup</c> search returns unless a test changes it.</summary>
     public const string DefaultDirectoryGroupGuid = "99999999-9999-9999-9999-999999999999";
 
     /// <summary>
     /// The objectGUIDs of the stand-in directory's groups: one unless a test changes it. A
-    /// <c>Get-ADGroup</c> search returns every one of them in a domain the call reaches, whatever the
-    /// filter (aud-a2j: <see cref="DirectoryGroupDomains"/> places each).
+    /// <c>Get-ADGroup</c> search returns every one of them in a domain the call reaches (aud-a2j:
+    /// <see cref="DirectoryGroupDomains"/> places each) whose attributes its filter matches (aud-a2k:
+    /// <see cref="DirectoryGroupAttributes"/>).
     /// </summary>
     public IList DirectoryGroupGuids { get; } = ArrayList.Synchronized(new ArrayList { DefaultDirectoryGroupGuid });
 
@@ -131,7 +167,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <summary>
     /// The member DNs on the stand-in group's linked <c>member</c> attribute - what
     /// <c>Get-ADGroup -Properties member</c> returns, and what the stand-in <c>Get-ADGroupMember</c>
-    /// resolves against <see cref="DirectoryObjects"/>: none unless a test adds them (aud-a2i).
+    /// resolves against <see cref="DirectoryObjects"/>: none unless a test adds them (aud-a2i), or the
+    /// stand-in <c>Set-ADGroup</c> does (aud-a2l). One list for every stand-in group.
     /// </summary>
     public IList DirectoryGroupMembers { get; } = ArrayList.Synchronized(new ArrayList());
 
@@ -149,6 +186,28 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// check: the group answers as itself to the re-read and as another object to the read after it.
     /// </summary>
     public Hashtable DirectoryGroupMemberReadBack { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// aud-a2l. Active Directory's refusal of a member-attribute add for a DN the group already holds, as
+    /// the stand-in <c>Set-ADGroup</c> raises it: the Win32 1378 text, one of the forms
+    /// <c>ConferenceRoomService.IsDuplicateMemberValue</c> recognizes (which form the real cmdlet reports
+    /// is not established - no directory is probed).
+    /// </summary>
+    public const string DuplicateMemberValueError = "The specified account name is already a member of the group.";
+
+    /// <summary>
+    /// aud-a2l. The stand-in <c>Set-ADGroup</c> reports success and changes nothing - the write a domain
+    /// controller dropped without saying, which only a read-back can catch. Read when a directory runspace
+    /// opens.
+    /// </summary>
+    public bool SetAdGroupChangesNothing { get; set; }
+
+    /// <summary>
+    /// aud-a2l. Another actor's add of the same DN lands just before the stand-in <c>Set-ADGroup</c>'s:
+    /// the DN is put on the group first, so the write is refused as a value already there (or fails with
+    /// whatever <see cref="Failures"/> names). The race codex raised. Read when a directory runspace opens.
+    /// </summary>
+    public bool AnotherAddLandsFirst { get; set; }
 
     /// <summary>
     /// The default ADWS <c>MaxGroupOrMemberEntries</c>: past this many members the real
@@ -366,6 +425,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("Failures", Failures);
         rs.SessionStateProxy.SetVariable("ListMembers", ListMembers);
         rs.SessionStateProxy.SetVariable("ListSyncState", ListSyncState);
+        rs.SessionStateProxy.SetVariable("DefaultListAddress", DefaultListAddress);
+        rs.SessionStateProxy.SetVariable("ListAddresses", ListAddresses);
+        rs.SessionStateProxy.SetVariable("DirectoryGroupAttributes", DirectoryGroupAttributes);
         rs.SessionStateProxy.SetVariable("DirectoryGroupGuids", DirectoryGroupGuids);
         rs.SessionStateProxy.SetVariable("DirectoryGroupMembers", DirectoryGroupMembers);
         rs.SessionStateProxy.SetVariable("DirectoryGroupReadBack", DirectoryGroupReadBack);
@@ -376,6 +438,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("DirectoryGroupDomains", DirectoryGroupDomains);
         rs.SessionStateProxy.SetVariable("GlobalCatalogs", GlobalCatalogs);
         rs.SessionStateProxy.SetVariable("AdwsMaxGroupOrMemberEntries", AdwsMaxGroupOrMemberEntries);
+        rs.SessionStateProxy.SetVariable("DuplicateMemberValueError", DuplicateMemberValueError);
+        rs.SessionStateProxy.SetVariable("SetAdGroupChangesNothing", SetAdGroupChangesNothing);
+        rs.SessionStateProxy.SetVariable("AnotherAddLandsFirst", AnotherAddLandsFirst);
         using var init = PowerShell.Create();
         init.Runspace = rs;
         init.AddScript(definitions);
@@ -501,10 +566,16 @@ internal sealed class ExchangeWriteHarness : IDisposable
             [CmdletBinding()] param($Identity, $CustomAttribute9, $MailTip)
             Write-StandInCall 'Set-Mailbox' $PSBoundParameters
         }
+        # A list's IsDirSynced (ListSyncState, aud-a2f) and PrimarySmtpAddress (ListAddresses, aud-a2k): False
+        # and DefaultListAddress unless a test says otherwise; a null in either leaves the property out.
         function global:Get-DistributionGroup {
             [CmdletBinding()] param($Identity)
             Write-StandInCall 'Get-DistributionGroup' $PSBoundParameters
-            $list = @{ Name = "$Identity"; PrimarySmtpAddress = "list@contoso.test"; IsDirSynced = $false }
+            $list = @{ Name = "$Identity"; PrimarySmtpAddress = $global:DefaultListAddress; IsDirSynced = $false }
+            if ($global:ListAddresses.ContainsKey("$Identity")) {
+                $address = $global:ListAddresses["$Identity"]
+                if ($null -eq $address) { $list.Remove('PrimarySmtpAddress') } else { $list['PrimarySmtpAddress'] = $address }
+            }
             if ($global:ListSyncState.ContainsKey("$Identity")) {
                 $state = $global:ListSyncState["$Identity"]
                 if ($null -eq $state) { $list.Remove('IsDirSynced') } else { $list['IsDirSynced'] = $state }
@@ -626,7 +697,38 @@ internal sealed class ExchangeWriteHarness : IDisposable
         function global:Find-StandInGroups($Reach) {
             foreach ($g in @($global:DirectoryGroupGuids)) { if (Test-StandInReaches $Reach (Get-StandInGroupDomain "$g")) { "$g" } }
         }
-        # aud-a2i, aud-a2j. A search answers with every group the call reaches, by objectGUID and DN. A read
+        # aud-a2k. A search answers with the groups its -Filter matches, not every group it reaches: the filter
+        # is read as the clauses the service builds - "<attribute> -eq '<value>'", single quotes doubled
+        # inside, joined by -or - and a group matches when any clause equals its attribute (DirectoryGroupAttributes,
+        # or the default mail and the CN as both names), case-insensitively as Active Directory compares these
+        # attributes; an attribute the group lacks reads as empty, so "mail -eq ''" finds every group without
+        # one - the worst a search by a blank address could do. A filter in any other shape is an error, so a
+        # test cannot pass through a filter the stand-in did not evaluate.
+        function global:Get-StandInGroupAttribute([string] $Guid, [string] $Name) {
+            $attributes = $global:DirectoryGroupAttributes[$Guid]
+            if ($null -eq $attributes) {
+                $cn = "Group $Guid"
+                $attributes = @{ mail = $global:DefaultListAddress; displayName = $cn; name = $cn }
+            }
+            foreach ($key in @($attributes.Keys)) { if ("$key" -ieq $Name) { return "$($attributes[$key])" } }
+            return ''
+        }
+        function global:Read-StandInFilter([string] $Filter) {
+            $clauses = New-Object System.Collections.ArrayList
+            foreach ($clause in ($Filter -split '\s+-or\s+')) {
+                if ($clause -notmatch "^\s*(\w+)\s+-eq\s+'((?:[^']|'')*)'\s*$") { return $null }
+                [void]$clauses.Add(@($Matches[1], ($Matches[2] -replace "''", "'")))
+            }
+            , $clauses
+        }
+        function global:Test-StandInGroupMatches($Clauses, [string] $Guid) {
+            foreach ($clause in $Clauses) {
+                if ((Get-StandInGroupAttribute $Guid $clause[0]) -ieq $clause[1]) { return $true }
+            }
+            return $false
+        }
+        # aud-a2i, aud-a2j, aud-a2k. A search answers with every group the call reaches that its filter matches,
+        # by objectGUID and DN. A read
         # by -Identity (a DN or an objectGUID) answers with that group when the call reaches it - as another
         # object when DirectoryGroupReadBack names the identity, or, for a read of the member attribute,
         # DirectoryGroupMemberReadBack - and with its member attribute when -Properties asks for it;
@@ -639,8 +741,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if ($null -eq $reach) { Write-Error "Unable to contact the server '$Server'."; return }
             $reached = @(Find-StandInGroups $reach)
             if (-not $PSBoundParameters.ContainsKey('Identity')) {
+                $clauses = Read-StandInFilter "$Filter"
+                if ($null -eq $clauses) { Write-Error "stand-in: cannot read the filter '$Filter'."; return }
                 foreach ($group in $reached) {
-                    [pscustomobject]@{ ObjectGUID = [guid]"$group"; DistinguishedName = (Get-StandInGroupDn "$group") }
+                    if (Test-StandInGroupMatches $clauses "$group") {
+                        [pscustomobject]@{ ObjectGUID = [guid]"$group"; DistinguishedName = (Get-StandInGroupDn "$group") }
+                    }
                 }
                 return
             }
@@ -657,14 +763,24 @@ internal sealed class ExchangeWriteHarness : IDisposable
         }
         # aud-a2j. The on-prem room-list add's write. Its group must be one the call reaches - routed to the
         # group's own domain - and a write sent to the catalog is refused, as the read-only catalog refuses it.
+        # aud-a2l. And it writes: the DN goes on the member attribute (DirectoryGroupMembers, the one member list
+        # the stand-in keeps for its groups), so a read-back sees it - unless SetAdGroupChangesNothing, a write
+        # that reports success and changes nothing. A DN already there is refused, as Active Directory refuses
+        # a value already present (DuplicateMemberValueError, Write-Error then return); AnotherAddLandsFirst puts
+        # the DN there just before the call, another actor's add, and before Failures['Set-ADGroup'] can throw.
         function global:Set-ADGroup {
             [CmdletBinding()] param($Identity, $Add, $Server, $Credential)
+            $member = if ($null -ne $Add) { "$($Add['member'])" } else { '' }
+            if ($global:AnotherAddLandsFirst -and $member) { [void]$global:DirectoryGroupMembers.Add($member) }
             Write-StandInCall 'Set-ADGroup' $PSBoundParameters
             $reach = Get-StandInReach $PSBoundParameters
             if ($null -eq $reach) { Write-Error "Unable to contact the server '$Server'."; return }
             if ($reach -eq 'forest') { Write-Error 'The server is unwilling to process the request.'; return }
             $group = @(Find-StandInGroups $reach | Where-Object { "$Identity" -eq "$_" -or "$Identity" -eq (Get-StandInGroupDn "$_") })
             if ($group.Count -ne 1) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
+            if (-not $member) { return }
+            if (@($global:DirectoryGroupMembers | Where-Object { "$_" -ieq $member }).Count -gt 0) { Write-Error $global:DuplicateMemberValueError; return }
+            if (-not $global:SetAdGroupChangesNothing) { [void]$global:DirectoryGroupMembers.Add($member) }
         }
         # aud-a2i. The real cmdlet resolves every member server-side: Active Directory Web Services refuses a
         # group of more than MaxGroupOrMemberEntries members (5,000 by default), and the read faults on a

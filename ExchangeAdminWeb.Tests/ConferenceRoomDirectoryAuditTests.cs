@@ -171,6 +171,57 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
     [Theory]
     [InlineData("page")]
     [InlineData("bulk")]
+    public async Task AnOnPremAddTheReadBackDoesNotShow_IsNotRecordedAsWritten(string surface)
+    {
+        // aud-a2l. Set-ADGroup raises nothing and changes nothing: the read-back does not find the room, so
+        // the row is a failure and names no written object - it used to be a success naming the room.
+        _h.ListSyncState[ConferenceRoomService.BuildRoomListName(Building)] = true;
+        _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
+        _h.SetAdGroupChangesNothing = true;
+
+        var row = await ApplyAndReadAudit(surface);
+
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Single(_h.CallsTo("Set-ADGroup"));
+        Assert.False(row.TryGetProperty(ValidatedMailbox.DirectoryAuditKey, out _), row.ToString());
+    }
+
+    [Theory]
+    [InlineData("page", true)]
+    [InlineData("page", false)]
+    [InlineData("bulk", true)]
+    [InlineData("bulk", false)]
+    public async Task AnOnPremAddRefusedAsAValueAlreadyThere_IsRecordedAsWrittenOnlyWhenTheReadBackShowsTheRoom(string surface, bool theRoomIsThere)
+    {
+        // aud-a2l, the folded-in race. The write is refused as a value already there: a success naming the
+        // room when the read-back finds it (another actor's add landed first), a failure naming nothing when
+        // it does not. Recorded as written in the first case by the record's rule: the row's own write was
+        // refused, but the membership it asked for is in place and confirmed.
+        _h.ListSyncState[ConferenceRoomService.BuildRoomListName(Building)] = true;
+        _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
+        if (theRoomIsThere)
+            _h.AnotherAddLandsFirst = true;
+        else
+            _h.Failures["Set-ADGroup"] = ExchangeWriteHarness.DuplicateMemberValueError;
+
+        var row = await ApplyAndReadAudit(surface);
+
+        Assert.Single(_h.CallsTo("Set-ADGroup"));
+        if (theRoomIsThere)
+        {
+            Assert.Equal("Success", row.GetProperty("result").GetString());
+            Assert.Equal(CheckedObject, row.GetProperty(ValidatedMailbox.DirectoryAuditKey).GetString());
+        }
+        else
+        {
+            Assert.Equal("Failed", row.GetProperty("result").GetString());
+            Assert.False(row.TryGetProperty(ValidatedMailbox.DirectoryAuditKey, out _), row.ToString());
+        }
+    }
+
+    [Theory]
+    [InlineData("page")]
+    [InlineData("bulk")]
     public async Task AnApplyThatThrows_IsNotRecordedAsWritten(string surface)
     {
         // Exchange answers the room's GUID with a different mailbox, so the read-back throws before
