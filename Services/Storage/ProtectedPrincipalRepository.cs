@@ -66,7 +66,12 @@ public sealed class ProtectedPrincipalRepository
     /// Replaces the entire protected-principal config (clear + insert all four lists) and sets
     /// the presence marker, in one transaction - matching the file version's whole-file save.
     /// </summary>
-    public void Save(ProtectedPrincipalData data)
+    /// <remarks>
+    /// Internal, and reached in production only from <see cref="ProtectedPrincipalService.SaveConfig"/>, itself an
+    /// internal test fixture (aud-a26n): it reads nothing first, and the admin page's save decides under the lock
+    /// (<see cref="Replace"/>). WholeStoreWriterTripwireTests refuses another caller.
+    /// </remarks>
+    internal void Save(ProtectedPrincipalData data)
     {
         _store.Write((connection, transaction) =>
         {

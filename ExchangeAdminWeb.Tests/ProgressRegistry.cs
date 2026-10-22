@@ -1387,7 +1387,7 @@ public static class ProgressRegistry
         [
             new("SaveExoConfig",
                 [
-                    "ModuleConfigSvc.UpdateModuleValues(",
+                    "ModuleConfigSvc.SaveChangedValues(",
                     "ExoPool.DrainPool(",
                 ],
                 "the last of the survey's six silent writes (docs/ProgressCoverage-Plan.md S2), "
@@ -1397,8 +1397,9 @@ public static class ProgressRegistry
                 + "exists to close, and it is the reason the page set here comes from the "
                 + "filesystem. The activity opens above the try, so the four validation "
                 + "refusals inside it are covered too, and completes in the finally. "
-                + "ModuleConfigSvc.UpdateModuleValues is the opening pin: it is the MUTATION - the "
-                + "three connection values written to the shared SQLite config store - rather "
+                + "ModuleConfigSvc.SaveChangedValues is the opening pin: it is the MUTATION - the "
+                + "connection values the admin changed, written to the shared SQLite config store "
+                + "under its write lock (aud-a26n) - rather "
                 + "than the slow part, and naming it is what stops an activity opened below it "
                 + "leaving the write itself unreported. ExoPool.DrainPool is the closing pin and "
                 + "the only genuinely slow call, and it was MEASURED rather than inherited from "

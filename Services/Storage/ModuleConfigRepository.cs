@@ -75,7 +75,12 @@ public sealed class ModuleConfigRepository
     /// Replaces a module's entire config (delete-then-insert) in one transaction, matching the
     /// file version's whole-file overwrite semantics. Empty/whitespace keys are skipped.
     /// </summary>
-    public void SaveModule(string moduleId, IReadOnlyDictionary<string, string> values)
+    /// <remarks>
+    /// Internal, and reached in production only from <see cref="ModuleConfigService.SaveModuleConfig"/>, itself an
+    /// internal test fixture (aud-a26n): it compares nothing, and the settings saves write the keys they changed,
+    /// decided under the lock (<see cref="UpdateModuleIf"/>). WholeStoreWriterTripwireTests refuses another caller.
+    /// </remarks>
+    internal void SaveModule(string moduleId, IReadOnlyDictionary<string, string> values)
     {
         _store.Write((connection, transaction) =>
         {

@@ -542,7 +542,8 @@ Rules:
   corrupt state as fail-closed for privileged operations.
 - Required config missing means the operation must not proceed.
 - Writes name their keys. `UpdateModuleValues` upserts only the keys given;
-  `SaveChangedValues` (the Module Configuration page's save) writes only the keys an admin
+  `SaveChangedValues` (the settings pages' saves: Module Configuration, the Exchange Online
+  connection and the directory-read secret) writes only the keys an admin
   changed, each compared under the write lock with the value the page loaded. There is no
   public whole-module replace: the shared config database is written by both instances, and
   replacing a module's whole config from a caller's copy reverts what the other wrote
