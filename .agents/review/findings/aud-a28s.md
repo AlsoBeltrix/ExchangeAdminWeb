@@ -8,7 +8,7 @@ corruption reads (around lines 637-638) and then reads the list through `GetConf
 returns an empty dictionary. The validator initialises with an empty excluded-user set, so a mailbox
 listed in `ExcludedUsers` is treated as not protected and Mailbox Permissions, Calendar Permissions
 and Out of Office writes can proceed until the cache is invalidated.
-**Status**: Merged to master (`0bcb92c0`); closed on guard proof; codex review pending (batched with aud-a28r/a26p)
+**Status**: Complete; merged `0bcb92c0`; codex settings-batch-4 clean
 **Branch**: `worktree-agent-aaa429d3a8979950e`
 **Commit**: `f99a0a13` (fix, tests, record); comments `6e8861f6`; plan `6a2bb13f`; merged `0bcb92c0`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-10, `prompt-attr-batch-10.md`, 2026-10-22)

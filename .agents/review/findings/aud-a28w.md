@@ -28,3 +28,12 @@ services (nothing warms a runspace); `Services/ExoConnectionPool.cs`, `Services/
 ## Guard proof
 
 Pending.
+
+## Folded in: the warm-up fixture discards the failure it is meant to diagnose (codex, settings-batch-4, 2026-10-22) - LOW
+
+`ExchangeAdminWeb.Tests/PowerShellStartup.cs` around line 40 and `PowerShellStartupTests.cs` line 22: when all
+three warm-up attempts fail (`CreateDefault`, `CreateDefault2`, `Open`, `Invoke`), the fixture swallows the
+exception and leaves only `Started == false`, so the suite reports "not registered, or its start failed"
+without which shape failed or why. Keep the fixture non-throwing; store the last exception and the failing
+shape in static state and include them in the pin test's message. Mutation at the call site: the stored
+exception dropped.
