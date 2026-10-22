@@ -4,7 +4,7 @@
 (a replication-lagged domain controller, a directory that silently dropped the value, a
 constraint the server did not report) is audited and announced as done. Known Failure Class 2:
 success must be confirmed, not inferred from the absence of an error.
-**Status**: Merged to master (`28263a6c`); closed on guard proof; codex review pending; dev acceptance owed with a2f/a2i/a2j/a2k
+**Status**: Merged to master (`28263a6c`); closed on guard proof; codex clean, two LOW items folded into aud-a2n; dev acceptance owed with a2f/a2i/a2j/a2k
 **Branch**: `worktree-agent-ae52370b2527142a4`
 **Commit**: `a38df458` (fix, tests, comments); plan `b836c6d7`; after aud-a2k's `3341e112`; merged `28263a6c`
 **Reviewer**: implementer (surfaced by the aud-a2j agent, 2026-10-22, candidate 3 of its hand-back)

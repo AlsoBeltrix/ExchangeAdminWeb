@@ -37,3 +37,26 @@ a dev probe confirms it (owner go required for any AD probe).
 ## Guard proof
 
 Pending.
+
+## Folded in: two LOW candidates from the codex review of aud-a2k/a2l (2026-10-22)
+
+Both belong to the add's error handling this record already owns (`prompt-a2k-a2l.md`,
+`a2k-a2l.result.txt`):
+
+1. **A refused duplicate must not be audited as this operation's AD write.** When `Set-ADGroup`
+   is refused as "already there" and the read-back finds the room, the row succeeds and returns
+   `roomGuid`, so the page and bulk audit record `writtenDirectoryObject` although this operation's
+   write was refused (aud-a2g rule: name only what a write produced). Keep the row successful;
+   return no written directory object for a refused write; add a "membership confirmed present"
+   detail instead. Test: the race case's audit carries no `writtenDirectoryObject`.
+2. **Every write error is reconciled by the read-back, not only the duplicate.** A `Set-ADGroup`
+   that applied the change and then raised a timeout or transport error is reported PARTIAL even
+   though the membership is present; `GroupManagementService` reconciles all write outcomes by
+   read-back. Catch the write error, clear the pipeline, read back on the group's own domain, decide
+   the row from the read-back, and keep the original error text in the step and audit detail. A
+   read-back that fails or misses stays a failed row carrying the write error. Test: a stand-in
+   whose `Set-ADGroup` applies the add and then throws a non-duplicate error is settled as success
+   with the error recorded in the detail; one that throws without applying stays a failure.
+
+Mutations at the call site for both: return `roomGuid` on the refused-duplicate path; read back
+only duplicate errors again.
