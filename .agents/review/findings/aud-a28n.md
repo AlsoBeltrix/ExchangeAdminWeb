@@ -9,7 +9,7 @@ module's whole config, and `SaveModuleAdminsAsync` the whole admin list, from th
 no compare against the rows under the lock.
 **Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
 **Branch**: `worktree-agent-a5f93bbf442feb5e2`
-**Commit**: -
+**Commit**: `650a359b` (plan `738cef45`; comments `639d721b`)
 **Reviewer**: implementer (surfaced by the aud-a28j/a28k/a26h agent, 2026-10-22, candidates 1 and 2 of its hand-back)
 
 ## Evidence
@@ -65,7 +65,7 @@ a key changed elsewhere since the page loaded - one the page does not show inclu
    and `EmptyOverNonEmpty`, a version that no longer matches the rows under the lock refuses `ConcurrentChange`,
    nothing written (rollback, change token included) - unless the rows already hold exactly the rules this
    save writes (per kind, as sets ignoring case, marker set): `AlreadyApplied`, nothing written, not a refusal
-   (the aud-a26k rule, below). The outcome carries the version of the rows left on `Saved` and `AlreadyApplied`;
+   (the aud-a26k rule). The outcome carries the version of the rows left on `Saved` and `AlreadyApplied`;
    the page keeps it, so a second save from one page is not refused. Page: `ConcurrentChange` ->
    `LogSettingsSaveRefused(..., "ConcurrentChange", ...)` ("changed after this page loaded them ... reload the
    page and re-apply your changes"); `AlreadyApplied` -> the rules' success record with nothing added or removed
@@ -238,3 +238,11 @@ self-review verdict is claimed.
 - `ModuleConfigService.SaveModuleConfig` and `ModuleAdminService.SetModuleAdmins` have no production caller after this
   fix; aud-a26k, next on this branch, takes them off the public surface.
 - Two in-process stores on one temp file stand in for the two instances; nothing ran against the real shared database.
+
+## Branch-tip gates - 2026-10-22 (`639d721b`: both fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,438 passed / 3 skipped (the three known AD skips) / 0 failed, 5,441 total, 5m02s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.

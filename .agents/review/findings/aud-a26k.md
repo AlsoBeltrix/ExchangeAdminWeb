@@ -10,7 +10,7 @@ so the harm is display). (4) The drain-failure record (aud-a26h) uses the generi
 action; a reviewer filtering by action cannot tell it from a settings change.
 **Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
 **Branch**: `worktree-agent-a5f93bbf442feb5e2`
-**Commit**: -
+**Commit**: `a4115132` (plan `738cef45`; comments `639d721b`)
 **Reviewer**: implementer (surfaced by the aud-a28j/a28k/a26h agent, 2026-10-22, candidates 3 to 6 of its hand-back)
 
 ## Evidence
@@ -220,3 +220,11 @@ pool that holds no runspace. The pages were not rendered in a browser. No coder 
   read switch fails a whole store, and the rules' load gate reads the same store (the Mailbox Permissions exclusions), so a
   single load where only the secret's read fails cannot be produced otherwise.
 - A pool drain that succeeds is still not recorded; only its failure has a record.
+
+## Branch-tip gates - 2026-10-22 (`639d721b`: both fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,438 passed / 3 skipped (the three known AD skips) / 0 failed, 5,441 total, 5m02s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
