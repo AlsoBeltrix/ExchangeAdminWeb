@@ -5,9 +5,9 @@ writes no audit record: an attempt on the authorization-adjacent undo path that 
 aud-a28g class; aud-a28d audited the undo SERVICE's refusals, not the page's). (2) After aud-a28i,
 `ADAttributeEditorService.SaveAllowlist` has no production caller; it still writes the allowlist
 with no version check and no audit record, so any future caller bypasses both guards.
-**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
+**Status**: Merged to master (`f0cccea8`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ad10b5ab24c8ce164`
-**Commit**: `5dc2e6e4` (comments `ee00d337`; plan `1aeaa315`)
+**Commit**: `5dc2e6e4` (comments `ee00d337`; plan `1aeaa315`; merged `f0cccea8`)
 **Reviewer**: implementer (surfaced by the aud-a28g/h/a26f/a28i agent, 2026-10-22, candidates 6 and 10 of its hand-back)
 
 ## Evidence

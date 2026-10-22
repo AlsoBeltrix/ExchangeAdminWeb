@@ -6,9 +6,9 @@ record in the stream; the `if (ps.HadErrors)` branch after it cannot fire on the
 It can fire on a stale record an earlier command left (psl-2/psl-3 class), in which case a clean
 write would be reported as a failure. The comment above it already says it is unreachable. Same
 pattern aud-a2o removed from the Conference Rooms group write.
-**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
+**Status**: Merged to master (`f0cccea8`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ad10b5ab24c8ce164`
-**Commit**: `748d358d` (comments `ee00d337`; plan `1aeaa315`)
+**Commit**: `748d358d` (comments `ee00d337`; plan `1aeaa315`; merged `f0cccea8`)
 **Reviewer**: implementer (surfaced by the aud-a2o agent, 2026-10-22, candidate 3 of its hand-back)
 
 ## Evidence
