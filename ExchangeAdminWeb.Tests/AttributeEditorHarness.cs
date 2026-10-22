@@ -206,10 +206,10 @@ internal sealed class AttributeEditorHarness : IDisposable
             ["_undoMaxLevel"] = 3,
         };
 
-    public ADAttributeEditorUndoService CreateUndoService()
+    public ADAttributeEditorUndoService CreateUndoService(bool moduleEnabled = true)
     {
         var enablementRepository = TestConfigStore.CreateModuleEnablement(_root);
-        enablementRepository.SaveAll(new Dictionary<string, bool> { ["ADAttributeEditor"] = true });
+        enablementRepository.SaveAll(new Dictionary<string, bool> { ["ADAttributeEditor"] = moduleEnabled });
         var enablement = new ModuleEnablementService(
             new ModuleCatalog(), Env, ModuleConfig, enablementRepository, Config, NullLogger<ModuleEnablementService>.Instance);
 
