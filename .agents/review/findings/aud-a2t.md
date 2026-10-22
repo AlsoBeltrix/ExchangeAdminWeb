@@ -7,7 +7,7 @@ incomplete secret before the service sees it. (2) The refusals the room-list res
 read return without throwing (catalog unresolved, no group or several, group answers as another
 object) are logged nowhere by the service on either path; only the row's audit carries the message,
 so an operator reading the application log sees no trace of why a row was refused.
-**Status**: Merged to master (`932fd294`); closed on guard proof; codex review pending (batched with aud-a2s and aud-a2u)
+**Status**: Merged to master (`932fd294`); closed on guard proof; codex cr-batch-1 clean
 **Branch**: `worktree-agent-a3acf365c1c335b8c`
 **Commit**: `78889b58` (fix, tests, comments, record); plan `95bfa5ca`; merged `932fd294`
 **Reviewer**: implementer (surfaced by the aud-a2s agent, 2026-10-22, its two candidates)
