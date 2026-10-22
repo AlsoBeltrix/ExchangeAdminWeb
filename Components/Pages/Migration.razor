@@ -1985,15 +1985,15 @@
                 var protectedNote = $"PROTECTED PRINCIPAL — escalate (not migrated){(string.IsNullOrWhiteSpace(singleResult.ProtectionNote) ? "" : $": {singleResult.ProtectionNote}")}";
                 checkDetail = string.IsNullOrWhiteSpace(checkDetail) ? protectedNote : $"{checkDetail}; {protectedNote}";
             }
+            try { Audit.LogMigrationCheck(currentUser, ipAddress, singleEmail, singleResult.Status.ToString(),
+                singleTicketNumber, checkDetail); }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", singleEmail); }
 
-            Audit.LogMigrationCheck(currentUser, ipAddress, singleEmail, singleResult.Status.ToString(),
-                singleTicketNumber, checkDetail);
-
-            // Send admin notification
-            await Email.SendAdminNotificationAsync(
+            try { await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CheckMigrationEligibility_{singleMigrationDirection}", singleEmail, "N/A",
                 singleResult.Status.ToString(), singleResult.Status == MigrationStatus.Eligible, singleTicketNumber,
-                checkDetail);
+                checkDetail); }
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for the Migration eligibility check of {Email}", singleEmail); }
         }
         catch (Exception ex)
         {
@@ -2004,8 +2004,8 @@
             };
             singleResult.IneligibilityReasons.Add($"Could not be determined: {ex.Message}");
             checkFailure = $"Could not be determined: {ex.Message}";
-            Audit.LogMigrationCheck(currentUser, clientIpAddress, singleEmail.Trim(),
-                "Error", singleTicketNumber, ex.Message);
+            try { Audit.LogMigrationCheck(currentUser, clientIpAddress, singleEmail.Trim(),
+                "Error", singleTicketNumber, ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", singleEmail); }
         }
         finally
         {
@@ -2025,7 +2025,7 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", "Creating the migration batch", ActivitySize.Unknown);
-
+        string? createFailure = "Nothing was created.";
 
         try
         {
@@ -2044,7 +2044,7 @@
 
             singleCreateResult = await MigrationSvc.CreateMigrationBatchAsync(
                 singleMigrationDirection, new List<string> { singleResult.EmailAddress }, finalBatchName, singleAutoStart, singleAutoComplete, authState.User);
-
+            createFailure = singleCreateResult.Success ? null : singleCreateResult.Message;
             var ipAddress = clientIpAddress;
             var singleExcluded = singleCreateResult.ExcludedTargets ?? Array.Empty<string>();
             var singleCreatedCount = 1 - singleExcluded.Count;
@@ -2073,20 +2073,20 @@
             var singleExclusionNote = singleExcluded.Count > 0
                 ? $" | EXCLUDED protected principals (not migrated): {string.Join("; ", singleExcluded)}"
                 : "";
-
-            await Email.SendAdminNotificationAsync(
+            try { await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{singleMigrationDirection}", finalBatchName,
                 singleResult.EmailAddress, $"AutoStart:{singleAutoStart} AutoComplete:{singleAutoComplete}{singleExclusionNote}",
-                singleCreateResult.Success, singleTicketNumber, singleCreateResult.Success ? null : singleCreateResult.Message);
+                singleCreateResult.Success, singleTicketNumber, singleCreateResult.Success ? null : singleCreateResult.Message); }
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", singleMigrationDirection, finalBatchName); }
         }
         catch (Exception ex)
         {
-            singleCreateResult = PermissionResult.Fail(ex.Message);
+            singleCreateResult = PermissionResult.Fail(createFailure = ex.Message);
         }
         finally
         {
             isCreating = false;
-            activity.Complete(true);
+            activity.Complete(createFailure is null, createFailure);
         }
     }
 
@@ -2166,7 +2166,7 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", "Creating the migration batch", ActivitySize.Unknown);
-
+        string? createFailure = "Nothing was created.";
 
         try
         {
@@ -2190,7 +2190,7 @@
 
             createResult = await MigrationSvc.CreateMigrationBatchAsync(
                 migrationDirection, eligibleEmails, finalBatchName, bulkAutoStart, bulkAutoComplete, authState.User);
-
+            createFailure = createResult.Success ? null : createResult.Message;
             var ipAddress = clientIpAddress;
             var bulkExcluded = createResult.ExcludedTargets ?? Array.Empty<string>();
             var createdCount = eligibleEmails.Count - bulkExcluded.Count;
@@ -2219,20 +2219,20 @@
             var bulkExclusionNote = bulkExcluded.Count > 0
                 ? $" | EXCLUDED {bulkExcluded.Count} protected principal(s) (not migrated): {string.Join("; ", bulkExcluded)}"
                 : "";
-
-            await Email.SendAdminNotificationAsync(
+            try { await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{migrationDirection}", finalBatchName,
                 $"{createdCount} users", $"AutoStart:{bulkAutoStart} AutoComplete:{bulkAutoComplete}{bulkExclusionNote}",
-                createResult.Success, bulkTicketNumber, createResult.Success ? null : createResult.Message);
+                createResult.Success, bulkTicketNumber, createResult.Success ? null : createResult.Message); }
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", migrationDirection, finalBatchName); }
         }
         catch (Exception ex)
         {
-            createResult = PermissionResult.Fail(ex.Message);
+            createResult = PermissionResult.Fail(createFailure = ex.Message);
         }
         finally
         {
             isCreating = false;
-            activity.Complete(true);
+            activity.Complete(createFailure is null, createFailure);
         }
     }
 
@@ -3294,7 +3294,7 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", $"{auditAction} on {target}", ActivitySize.Unknown);
-
+        string? actionFailure = "Nothing was done.";
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -3303,7 +3303,7 @@
 
             var result = await action();
             batchActionResult = result;
-
+            actionFailure = result.Success ? null : result.Message;
             try
             {
                 Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, ticket, result.Success ? null : result.Message);
@@ -3333,12 +3333,12 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(ex.Message);
+            batchActionResult = PermissionResult.Fail(actionFailure = ex.Message);
         }
         finally
         {
             actionInProgress = null;
-            activity.Complete(true);
+            activity.Complete(actionFailure is null, actionFailure);
         }
     }
 
@@ -3358,7 +3358,7 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", $"{auditAction} on {target}", ActivitySize.Unknown);
-
+        string? actionFailure = "Nothing was done.";
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -3367,7 +3367,7 @@
 
             var result = await action();
             batchActionResult = result;
-
+            actionFailure = result.Success ? null : result.Message;
             try
             {
                 Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, ticket, result.Success ? null : result.Message);
@@ -3396,12 +3396,12 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(ex.Message);
+            batchActionResult = PermissionResult.Fail(actionFailure = ex.Message);
         }
         finally
         {
             actionInProgress = null;
-            activity.Complete(true);
+            activity.Complete(actionFailure is null, actionFailure);
         }
     }
 
@@ -3523,14 +3523,14 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", "Removing completed batches", ActivitySize.Unknown);
-
+        string? bulkFailure = "Nothing was done.";
 
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
             {
-                batchActionResult = PermissionResult.Fail("Authorization denied.");
+                batchActionResult = PermissionResult.Fail(bulkFailure = "Authorization denied.");
                 try
                 {
                     Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied", notificationAction, false, ticket, errorDetail: "MigrationManage authorization denied");
@@ -3559,7 +3559,7 @@
                     Message = $"Nothing to do: none of {skipped.Count} selected batches is eligible.",
                     Detail = "Why each one was skipped is on its row."
                 };
-                return;
+                bulkFailure = null; return;
             }
 
             var succeeded = 0;
@@ -3638,7 +3638,7 @@
             batchActionResult = errors.Count == 0
                 ? new PermissionResult { Success = true, Message = summary, Detail = "Exchange works in the background - use Refresh to follow it. Per-batch results are on the rows." }
                 : PermissionResult.Fail(summary, "Per-batch results are on the rows.");
-
+            bulkFailure = errors.Count == 0 ? null : summary;
             try
             {
                 await Email.SendAdminNotificationAsync(
@@ -3657,12 +3657,12 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(ex.Message);
+            batchActionResult = PermissionResult.Fail(bulkFailure = ex.Message);
         }
         finally
         {
             actionInProgress = null;
-            activity.Complete(true);
+            activity.Complete(bulkFailure is null, bulkFailure);
             isLoadingStatus = false;
         }
     }
@@ -3689,14 +3689,14 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", "Applying the bulk mailbox action", ActivitySize.Unknown);
-
+        string? bulkFailure = "Nothing was done.";
 
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
             {
-                batchActionResult = PermissionResult.Fail("Authorization denied.");
+                batchActionResult = PermissionResult.Fail(bulkFailure = "Authorization denied.");
                 try
                 {
                     Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied",
@@ -3723,7 +3723,7 @@
                     Message = $"Nothing to do: none of {plan.Skipped.Count} selected mailboxes is eligible.",
                     Detail = "Why each one was skipped is on its row."
                 };
-                return;
+                bulkFailure = null; return;
             }
 
             var succeeded = 0;
@@ -3782,7 +3782,7 @@
             batchActionResult = errors.Count == 0
                 ? new PermissionResult { Success = true, Message = summary, Detail = "Exchange works in the background - use Refresh to follow it. Per-mailbox results are on the rows." }
                 : PermissionResult.Fail(summary, "Per-mailbox results are on the rows.");
-
+            bulkFailure = errors.Count == 0 ? null : summary;
             try
             {
                 await Email.SendAdminNotificationAsync(
@@ -3807,12 +3807,12 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(ex.Message);
+            batchActionResult = PermissionResult.Fail(bulkFailure = ex.Message);
         }
         finally
         {
             actionInProgress = null;
-            activity.Complete(true);
+            activity.Complete(bulkFailure is null, bulkFailure);
         }
     }
 

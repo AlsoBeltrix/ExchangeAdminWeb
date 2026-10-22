@@ -204,13 +204,82 @@ internal sealed class MigrationStubExchange : IDisposable
     /// <summary>
     /// aud-a23j. The real service, its Active Directory session the stand-in's: <see cref="DirectoryStandIn"/>, a runspace of
     /// stub Import-Module, Get-ADUser and Get-ADGroup over <see cref="DirectoryUsers"/> and <see cref="DirectoryGroups"/>,
-    /// failing as <see cref="Failures"/> says, like the Exchange stubs. No directory.
+    /// failing as <see cref="Failures"/> says, like the Exchange stubs. No directory. aud-a23m: with <see cref="Protection"/>
+    /// set, its protected-principal check is the stand-in's too; unset, it has none, and that check fails closed.
     /// </summary>
     internal sealed class StubMigrationService(MigrationStubExchange exchange, bool connects)
         : MigrationService(exchange._config, exchange.Pool(connects), null!, NullLogger<MigrationService>.Instance,
-            exchange._moduleConfig, null!, exchange._trace, null!, null!)
+            exchange._moduleConfig, null!, exchange._trace,
+            exchange.Protection is null ? null! : exchange.ProtectionStandIn(),
+            exchange.Protection is null ? null! : exchange.Servicers())
     {
         internal override Runspace CreateDirectoryRunspace() => exchange.DirectoryStandIn();
+    }
+
+    /// <summary>
+    /// aud-a23m. The protected-principal check's answer per target, when set: "protected", "unavailable", "ambiguous" or
+    /// "failed"; anything else, or none, is clear. The key "*" answers for a target not listed.
+    /// </summary>
+    public Hashtable? Protection { get; set; }
+
+    private ProtectedPrincipalService ProtectionStandIn() =>
+        new StubProtectedPrincipals(this, Environment, _config, _moduleConfig, TestConfigStore.CreateProtectedPrincipal(_directory));
+
+    // No servicer group is granted, so a protected target is refused. Something is always written, so the access store
+    // counts as configured and no legacy fallback applies (ppsvc-1).
+    private ProtectedPrincipalServicerService Servicers()
+    {
+        var access = new SectionAccessRepository(TestConfigStore.Create(_directory));
+        access.SaveAll(new Dictionary<string, string[]> { ["Migration"] = ["S-1-5-21-1-2-3-500"] });
+        var sectionAccess = new SectionAccessService(_config, NullLogger<SectionAccessService>.Instance, Environment, new ModuleCatalog(), access);
+        return new ProtectedPrincipalServicerService(sectionAccess, NullLogger<ProtectedPrincipalServicerService>.Instance);
+    }
+
+    /// <summary>aud-a23m. A protected-principal check that answers from <see cref="Protection"/>; no directory.</summary>
+    private sealed class StubProtectedPrincipals(MigrationStubExchange exchange, IWebHostEnvironment environment, IConfiguration config,
+        ModuleConfigService moduleConfig, ProtectedPrincipalRepository repository)
+        : ProtectedPrincipalService(environment, config, moduleConfig, repository, null!, NullLogger<ProtectedPrincipalService>.Instance)
+    {
+        private string Verdict(string identity) =>
+            (exchange.Protection?[identity] ?? exchange.Protection?["*"]) as string ?? "clear";
+
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity) =>
+            Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus)>(Verdict(identity) switch
+            {
+                "unavailable" => (null, ResolutionStatus.Unavailable),
+                "ambiguous" => (null, ResolutionStatus.Ambiguous),
+                _ => (new ResolvedDirectoryPrincipal("AD", identity, identity, null, identity, null, null, null), ResolutionStatus.Resolved),
+            });
+
+        public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target) =>
+            Task.FromResult(Verdict(target.UserPrincipalName) switch
+            {
+                "protected" => ProtectedPrincipalResult.Protected("protected for the test", "a test rule"),
+                "failed" => ProtectedPrincipalResult.Failed("the protection rules could not be read"),
+                _ => ProtectedPrincipalResult.NotProtected(),
+            });
+    }
+
+    /// <summary>aud-a23m. An admin notification that records what it was asked to send, and throws when told to.</summary>
+    public RecordingEmail Email(bool throws = false) => new(_config, throws);
+
+    internal sealed class RecordingEmail(IConfiguration config, bool throws) : EmailService(config, NullLogger<EmailService>.Instance)
+    {
+        private readonly List<string> _sent = [];
+
+        public IReadOnlyList<string> Sent
+        {
+            get { lock (_sent) return _sent.ToList(); }
+        }
+
+        public override Task SendAdminNotificationAsync(string performedBy, string ipAddress, string action, string targetMailbox,
+            string affectedUser, string permissionType, bool success, string ticketNumber, string? errorDetail = null)
+        {
+            lock (_sent) _sent.Add(action);
+            return throws
+                ? Task.FromException(new InvalidOperationException("the mail relay refused the message"))
+                : Task.CompletedTask;
+        }
     }
 
     private static readonly (string Name, string Parameters, string Answer)[] DirectoryStubs =
@@ -304,7 +373,8 @@ internal sealed class MigrationStubExchange : IDisposable
             if ($Behaviour['CompletionStatus']) { $Batches[$Identity].Status = [string]$Behaviour['CompletionStatus'] }
             """),
         ("Stop-MigrationUser", "[string] $Identity, [switch] $Confirm", ""),
-        ("New-MigrationBatch", "[string] $Name, [object] $CSVData, [object] $TargetDeliveryDomain, [object] $AutoStart, [object] $AutoComplete", ""),
+        ("Stop-MigrationBatch", "[string] $Identity, [switch] $Confirm", ""),
+        ("New-MigrationBatch", "[string] $Name, [object] $CSVData, [object] $SourceEndpoint, [object] $TargetEndpoint, [object] $TargetDeliveryDomain, [object] $TargetDatabases, [object] $NotificationEmails, [object] $AutoStart, [object] $AutoComplete", ""),
         ("Get-MailboxStatistics", "[string] $Identity, [switch] $Archive", """
             [pscustomobject]@{ TotalItemSize = '1.5 GB (1,610,612,736 bytes)' }
             """),
@@ -322,7 +392,7 @@ internal sealed class MigrationStubExchange : IDisposable
     private static string Stub(string name, string parameters, string answer) => $$"""
         [CmdletBinding()]
         param({{parameters}})
-        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Archive', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties' } | ForEach-Object { " -$_" }) -join ''
+        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Archive', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails' } | ForEach-Object { " -$_" }) -join ''
         $step = '{{name}}' + $switches
         $null = $Calls.Add(("$step $Identity").Trim())
         $failure = $Failures["$step $Identity"]

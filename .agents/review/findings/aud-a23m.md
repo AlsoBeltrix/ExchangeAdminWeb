@@ -83,4 +83,63 @@ write's `Complete(true)` restored; M2g the single create's notification guard re
 
 ## Guard proof
 
-Pending.
+Built as the Plan. `Components/Pages/Migration.razor` is 4377 lines before and after: `git diff --numstat` 42/42, every
+change in place, on lines past the last registered one (1540); no registered snippet changed, `ExpectedLineCount`
+untouched; each handler's `Complete(` is the one it had, in its `finally`. The fix commit carries no new code comments.
+
+- `CheckSingleEligibility`: the audit (1988-1990) and the notification (1992-1996) each in its own `try`, a throw
+  logged (`Logger.LogError` / `LogWarning`); the page catch's audit (2007-2008) the same. Nothing else changed: what is
+  audited and notified, and the outcome (aud-a23i), are as they were.
+- `CreateSingleMigrationBatch`: `createFailure` "Nothing was created." (2028), the result's outcome once the service
+  returns (2047); the notification in its own guard (2076-2080); the catch's message (2084); `Complete` (2089).
+- `CreateMigrationBatch`: the same - 2169, 2193, 2222-2226, 2230, 2235.
+- `ExecuteBatchAction`: `actionFailure` "Nothing was done." (3297), the action's outcome (3306), the catch (3336),
+  `Complete` (3341). `ExecuteUserAction`: 3361, 3370, 3399, 3404.
+- `ExecuteBulkBatchAction`: `bulkFailure` "Nothing was done." (3526) - the "no list loaded" return keeps it;
+  "Authorization denied." (3533); null for "Nothing to do" (3562); the summary when a batch was refused, null when none
+  was (3641); the catch (3660); `Complete` (3665). `ExecuteBulkMailboxAction`: 3692, 3699, 3726, 3785, 3810, 3815.
+- `ExchangeAdminWeb.Tests/MigrationStubExchange.cs`: `Email(throws)` - a `RecordingEmail` whose
+  `SendAdminNotificationAsync` records the action and, when told, returns a faulted task; `Protection` - per-target
+  answers ("protected", "unavailable", "ambiguous", "failed", else clear; "*" for any other target) through
+  `StubProtectedPrincipals` (the two virtual lookups) and a real `ProtectedPrincipalServicerService` with no servicer
+  group; unset, the service has none, as before; stub `Stop-MigrationBatch`; `New-MigrationBatch`'s full parameter set.
+
+New `ExchangeAdminWeb.Tests/MigrationVerdictAndWriteOutcomeTests.cs`, 6 tests (21 cases):
+
+| Test | Pins |
+| --- | --- |
+| `AnAuditThatThrows_LeavesTheVerdictStanding_AndTheNotificationStillGoes` (eligible, undetermined) | **part 1, the finding**: with no audit service (its call throws), the verdict and its reasons are the service's, the notification is still sent, the activity outcome is the verdict's, nothing escapes |
+| `ANotificationThatThrows_LeavesTheVerdictStanding_AndItsOneAuditRow` (eligible, undetermined) | **part 1**: a throwing notification - the verdict stands; one audit row, its status the verdict's (no second "Error" row) |
+| `ACheckThatFailsBeforeTheServiceReturns_WithAnAuditThatThrows_IsStillUndetermined` | the page catch's own audit guarded: Undetermined, the sign-in reason, nothing escapes |
+| `EveryWrite_CompletesItsActivityWithItsOutcome` (the six writes, each failing and succeeding) | **part 2, the finding**: a failed write completes its activity (false, the message the page shows); a succeeded one (true, null). Creates fail through the protection stand-in ("unavailable") and succeed through it (clear) |
+| `ACreateWhoseNotificationThrows_KeepsItsResult` (single, bulk) | found while planning: the created batch's result stands, the activity succeeds, the notification was attempted |
+| `ABulkRunWithNothingToDo_Succeeds` (batches, mailboxes) | "Nothing to do" is an answer (D2(a)): succeeded |
+
+**Against the unfixed code: not runnable as a whole** - the tests read outcomes the handlers did not set apart, so each
+behaviour was put back at its own call site instead; each revert fails the tests that pin it.
+
+Mutations at the call site, by the same driver and protocol as aud-a23n's (`round-a23m.ps1`, session scratchpad), over
+the 1110 tests of the same filter; every mutant kept the page at 4377 lines, so no `ClickGate*` pin failed for a
+reason of its own. Page bytes (LF) before every mutation and after every restore: `417e270b66c2efa29d200edc351f9b94`.
+
+| Mutation | md5 mutated | Failed (of 1110) | Restored, rerun |
+| --- | --- | --- | --- |
+| M1 (the record's): the audit back inside the verdict's try (its own guard removed) | `754d7546fd2e983b52c3cd51e12bb92c` | 2: `AnAuditThatThrows...` (both) - the verdict replaced, a throw out of the handler | equal; 1110/0 |
+| M2 (the record's): `ExecuteUserAction`'s `Complete(true)` restored | `0a33fc842a900451dbd790a4070ec4bf` | 1: `EveryWrite...` (ExecuteUserAction, fails) | equal; 1110/0 |
+| M1b: the notification's guard removed | `4811a8957a25e60a2698feeef7360550` | 2: `ANotificationThatThrows...` (both) | equal; 1110/0 |
+| M1c: the page catch's audit unguarded | `c82a45c3088dde243089a33b7afdbc04` | 1: `ACheckThatFailsBeforeTheServiceReturns_WithAnAuditThatThrows...` | equal; 1110/0 |
+| M2b: `ExecuteBatchAction`'s `Complete(true)` | `dddcbd0a037e30536f268adecebf4e03` | 1: `EveryWrite...` (ExecuteBatchAction, fails) | equal; 1110/0 |
+| M2c: `ExecuteBulkBatchAction`'s | `8e3b258b4c18b44f0e2d9506e6266ef4` | 1: `EveryWrite...` (ExecuteBulkBatchAction, fails) | equal; 1110/0 |
+| M2d: `ExecuteBulkMailboxAction`'s | `7d260fb2e78df81afc75ae2cf4064ea9` | 1: `EveryWrite...` (ExecuteBulkMailboxAction, fails) | equal; 1110/0 |
+| M2e: `CreateSingleMigrationBatch`'s | `e7ad96a6b48937645a9a24c6bd7b7228` | 1: `EveryWrite...` (CreateSingleMigrationBatch, fails) | equal; 1110/0 |
+| M2f: `CreateMigrationBatch`'s | `0e977b57be90a56d58daa3a3598f0071` | 1: `EveryWrite...` (CreateMigrationBatch, fails) | equal; 1110/0 |
+| M2g: the single create's notification guard removed | `e0a5efa338787c6eb610f70c5e65ea4b` | 1: `ACreateWhoseNotificationThrows...` (single) | equal; 1110/0 |
+| M2h: the bulk create's notification guard removed | `42f89aa81d701a82ab41bc05f2ee3397` | 1: `ACreateWhoseNotificationThrows...` (bulk) | equal; 1110/0 |
+
+md5s (LF) of the other files at the fix commit: `MigrationVerdictAndWriteOutcomeTests.cs`
+`a567b5aa30e455718c567c88b3fd411f` (the round ran on `f287491d470b9a3c327b7f2129ae78d1`; the format gate then
+re-indented its `case` blocks - leading whitespace only, no test changed), `MigrationStubExchange.cs`
+`2696ad6939a9cc183e403069dd91f842`.
+
+On the fix commit's tree: Release build 0 errors; the 1110 focused tests 1110/0 (`ClickGate*` and `ProgressRegistry*`
+among them); `dotnet format --verify-no-changes` exit 0; `git diff --check HEAD` exit 0; `wc -l` 4377.
