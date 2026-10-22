@@ -162,6 +162,54 @@ public class OofScheduleValidationTests
             new DateTime(2026, 11, 1, 2, 30, 0), newYork);
         Assert.Null(result);
     }
+
+    // aud-a7h. The repeated-time reason said the clocks "repeat that hour", but the check is
+    // IsAmbiguousTime, which holds for whatever amount they go back. This zone goes back thirty minutes,
+    // from 02:00 to 01:30 on 1 November (Lord Howe Island's clocks go back by that much), and is built
+    // here so the test does not depend on this host's time-zone data. 01:30 to 01:59 repeat; 01:15 and
+    // 02:00 are each one instant.
+    private static TimeZoneInfo ThirtyMinutesBack()
+    {
+        var forward = TimeZoneInfo.TransitionTime.CreateFixedDateRule(new DateTime(1, 1, 1, 2, 0, 0), 3, 8);
+        var back = TimeZoneInfo.TransitionTime.CreateFixedDateRule(new DateTime(1, 1, 1, 2, 0, 0), 11, 1);
+        var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(DateTime.MinValue.Date, DateTime.MaxValue.Date,
+            TimeSpan.FromMinutes(30), forward, back);
+        return TimeZoneInfo.CreateCustomTimeZone("Test/Back_Thirty_Minutes", TimeSpan.Zero, "Back thirty minutes",
+            "Standard", "Daylight", [rule]);
+    }
+
+    [Theory]
+    [InlineData("2026-11-01T01:30:00")]
+    [InlineData("2026-11-01T01:59:00")]
+    public void Scheduled_AtATimeAZoneRepeatsForThirtyMinutes_ReturnsError_InWordsThatNameNoHour(string repeated)
+    {
+        var zone = ThirtyMinutesBack();
+        var time = DateTime.Parse(repeated, CultureInfo.InvariantCulture);
+        Assert.True(zone.IsAmbiguousTime(time), "precondition: the zone repeats this time");
+
+        var result = OutOfOffice.ValidateOofSchedule("Scheduled", time, time.AddDays(1), zone);
+
+        Assert.NotNull(result);
+        Assert.Contains(time.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture), result, StringComparison.Ordinal);
+        Assert.Contains("Test/Back_Thirty_Minutes", result, StringComparison.Ordinal);
+        var reason = OutOfOfficeRequest.NoInstantReason(time, zone);
+        Assert.NotNull(reason);
+        Assert.Contains(reason, result, StringComparison.Ordinal);
+        Assert.DoesNotContain("hour", reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(OutOfOfficeRequest.ToUtc(time, zone));
+    }
+
+    [Theory]
+    [InlineData("2026-11-01T01:15:00")]
+    [InlineData("2026-11-01T02:00:00")]
+    public void Scheduled_OnTheDayAZoneGoesBackThirtyMinutes_OutsideTheRepeat_ReturnsNull(string value)
+    {
+        var zone = ThirtyMinutesBack();
+        var time = DateTime.Parse(value, CultureInfo.InvariantCulture);
+
+        Assert.Null(OutOfOffice.ValidateOofSchedule("Scheduled", time, time.AddDays(1), zone));
+        Assert.NotNull(OutOfOfficeRequest.ToUtc(time, zone));
+    }
 }
 
 public class ParseSizeToGBTests

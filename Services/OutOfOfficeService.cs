@@ -32,8 +32,10 @@ public class OutOfOfficeService : ExchangeServiceBase
                 result.State = config.Properties["AutoReplyState"]?.Value?.ToString() ?? "Disabled";
                 result.InternalMessage = config.Properties["InternalMessage"]?.Value?.ToString();
                 result.ExternalMessage = config.Properties["ExternalMessage"]?.Value?.ToString();
-                result.StartTime = config.Properties["StartTime"]?.Value as DateTime?;
-                result.EndTime = config.Properties["EndTime"]?.Value as DateTime?;
+                // aud-a7h. Through the one reader, not `as DateTime?`: any other type came back as null
+                // and the tab showed a Scheduled auto-reply with no window. One it cannot read is named.
+                result.StartTime = ReportedTime.Read(config.Properties["StartTime"]?.Value);
+                result.EndTime = ReportedTime.Read(config.Properties["EndTime"]?.Value);
             }
             catch (Exception ex)
             {
