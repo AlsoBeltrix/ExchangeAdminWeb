@@ -2,9 +2,9 @@
 
 **Severity**: MEDIUM. Not a live defect after `aud-a26` - both known callers now notify. It
 is the reason `aud-a26` existed, and it is still there.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master (`5e55e6aa`); codex review pending
 **Branch**: `worktree-agent-acad2a289bd002e11`
-**Commit**: `<pending>`
+**Commit**: `277f2b9a` (merged `5e55e6aa`)
 
 ## Evidence
 

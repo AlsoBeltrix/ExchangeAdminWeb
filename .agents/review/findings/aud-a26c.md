@@ -2,9 +2,9 @@
 
 **Severity**: MEDIUM (proposed). The page states a reversal that did not happen and removes the
 control that would retry it. Nothing is mis-mutated.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master (`5e55e6aa`); codex review pending
 **Branch**: `worktree-agent-acad2a289bd002e11`
-**Commit**: `<pending>`
+**Commit**: `9cfd996c` (merged `5e55e6aa`)
 **Reviewer**: implementer (found while fixing aud-a28d, 2026-10-22)
 **Evidence head**: `ca6575a21e48596848ca9521d4683424f10cf577`
 

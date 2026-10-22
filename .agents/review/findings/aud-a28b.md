@@ -1,9 +1,9 @@
 # aud-a28b: SaveAsync has no happy-path behavioural coverage
 
 **Severity**: MEDIUM. Not a defect in shipped behaviour - a gap in what the suite can detect.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master (`5e55e6aa`); codex review pending
 **Branch**: `worktree-agent-acad2a289bd002e11`
-**Commit**: `<pending>`
+**Commit**: `5b5bd6f6` (merged `5e55e6aa`)
 
 ## Evidence
 
