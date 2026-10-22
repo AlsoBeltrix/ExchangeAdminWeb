@@ -32,18 +32,17 @@ public class JsonlLogService
         Directory.CreateDirectory(_logFolder);
     }
 
-    public void Write(Dictionary<string, object?> evt)
+    public JsonlWriteOutcome Write(Dictionary<string, object?> evt)
     {
         var eventType = evt.GetValueOrDefault("eventType")?.ToString();
-        if (eventType?.StartsWith("operation.", StringComparison.OrdinalIgnoreCase) == true)
-            WriteTrace(evt);
-        else
-            WriteAudit(evt);
+        return eventType?.StartsWith("operation.", StringComparison.OrdinalIgnoreCase) == true
+            ? WriteTrace(evt)
+            : WriteAudit(evt);
     }
 
-    public void WriteAudit(Dictionary<string, object?> evt) => WriteToFile(evt, LogStream.Audit);
+    public JsonlWriteOutcome WriteAudit(Dictionary<string, object?> evt) => WriteToFile(evt, LogStream.Audit);
 
-    public void WriteTrace(Dictionary<string, object?> evt) => WriteToFile(evt, LogStream.Trace);
+    public JsonlWriteOutcome WriteTrace(Dictionary<string, object?> evt) => WriteToFile(evt, LogStream.Trace);
 
     public IEnumerable<string> GetAuditLogPaths(DateTime date)
     {
@@ -69,14 +68,19 @@ public class JsonlLogService
     // helpers' own catches hid it. Whatever stops a record is now logged here once, naming its action and category,
     // and the record is dropped whole, never half a line in the JSONL. The operation's outcome is its caller's
     // (Constitution, Auditing And Tracing: an audit failure is logged separately and never fails the operation).
-    private void WriteToFile(Dictionary<string, object?> evt, LogStream stream)
+    // aud-a28u. And the write says what became of the record. It returned nothing, so the audit service's
+    // "AuditWritten" step read Success after a drop. A drop is judged by how far the write got - no line yet, the record
+    // could not be serialised; a line, its file could not be written - never by the exception's type, which the
+    // serialiser or the file system chooses.
+    private JsonlWriteOutcome WriteToFile(Dictionary<string, object?> evt, LogStream stream)
     {
         var logPath = "(unresolved)";
+        string? json = null;
 
         try
         {
             var filtered = evt.Where(kv => kv.Value != null).ToDictionary(kv => kv.Key, kv => kv.Value);
-            var json = JsonSerializer.Serialize(filtered, JsonOpts);
+            json = JsonSerializer.Serialize(filtered, JsonOpts);
 
             lock (_lock)
             {
@@ -85,12 +89,30 @@ public class JsonlLogService
                 using var writer = new StreamWriter(fileStream);
                 writer.WriteLine(json);
             }
+
+            return JsonlWriteOutcome.Written;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex,
-                "Failed to write a JSONL {Stream} event (action {Action}, category {Category}) to {Path}; the event was not written",
-                stream, TextField(evt, "action"), TextField(evt, "category") ?? TextField(evt, "module"), logPath);
+            var outcome = json is null ? JsonlWriteOutcome.NotSerializable : JsonlWriteOutcome.FileWriteFailed;
+
+            // aud-a28u, folded in from codex attr-batch-11. Reporting the drop must not fail the write either: a logging
+            // provider or formatter that throws took its exception out of the audit or trace call after the operation
+            // had completed - aud-a28q's class, on its recovery path. Nothing is left to report that to, so it is
+            // dropped, and the outcome still says the record was not written. This one catch is both streams': the
+            // trace writer has no recovery path of its own.
+            try
+            {
+                _logger.LogError(ex,
+                    "Failed to write a JSONL {Stream} event (action {Action}, category {Category}) to {Path}; the event was not written",
+                    stream, TextField(evt, "action"), TextField(evt, "category") ?? TextField(evt, "module"), logPath);
+            }
+            catch (Exception)
+            {
+                // Nowhere left to say so.
+            }
+
+            return outcome;
         }
     }
 
@@ -164,4 +186,20 @@ public class JsonlLogService
         Audit,
         Trace
     }
+}
+
+/// <summary>
+/// What became of a record handed to the JSONL writer (aud-a28u): written, or dropped and why. The writer logs a drop
+/// itself and never throws; this tells its caller, so the audit service's trace can say whether its row exists.
+/// </summary>
+public enum JsonlWriteOutcome
+{
+    /// <summary>The record is a line in its log file.</summary>
+    Written,
+
+    /// <summary>Dropped before any file was touched: the record could not be serialised.</summary>
+    NotSerializable,
+
+    /// <summary>Dropped: the record serialised, but its log file could not be chosen, rotated, opened or written.</summary>
+    FileWriteFailed
 }

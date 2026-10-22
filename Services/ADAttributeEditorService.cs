@@ -1297,11 +1297,14 @@ public class ADAttributeEditorService
             ObjectGuid: adUser.Properties["ObjectGUID"]?.Value?.ToString(),
             EntraObjectId: null);
 
+        // aud-a26r. Each value is read as the save, the preview and the read-back read it (ReadDirectoryValue). By ToString
+        // a one-element collection was its type's name, in the form and in both undo conflict checks, which compare the
+        // lookup's reading with the element the save's record holds - so an edit of such an attribute could never be
+        // undone. Several values read as their join, a binary value as "binary (N bytes)".
         var currentValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var attr in allowlist)
         {
-            var val = adUser.Properties[attr.Name]?.Value;
-            currentValues[attr.Name] = val?.ToString();
+            currentValues[attr.Name] = ReadDirectoryValue(adUser, attr.Name)?.ToString();
         }
 
         return new(true, null, principal, "OnPremAD", false, null, currentValues);
@@ -1419,12 +1422,13 @@ public class ADAttributeEditorService
         // and the record's old value was that name. An attribute the save would write that holds several values is
         // refused before the write: written as one, the others would be lost, and v1 edits single-valued attributes
         // only. Refused here rather than by the allowlist's save, which cannot tell a multi-valued attribute without
-        // reading the schema - and one holding a single value is safely written as one.
-        var severalValued = SeveralValuedRefusal(reReadUser, proposedValues, allowlist);
-        if (severalValued != null)
+        // reading the schema - and one holding a single value is safely written as one. Since aud-a26r a binary value is
+        // refused here too, as binary: the editor writes text attributes only.
+        var notSingleText = NotSingleTextRefusal(reReadUser, proposedValues, allowlist);
+        if (notSingleText != null)
         {
-            LogAudit(target, [], performedBy, ip, ticket, false, severalValued);
-            return new(false, severalValued, null);
+            LogAudit(target, [], performedBy, ip, ticket, false, notSingleText);
+            return new(false, notSingleText, null);
         }
 
         var changes = ComputeChanges(proposedValues, CurrentValues(reReadUser, allowlist), allowlist);
@@ -1734,26 +1738,34 @@ public class ADAttributeEditorService
     // *Assumption, not probed*: the module answers one with its value, as this service's own reads take it
     // (Properties[..].Value). A collection is taken as its one element, so a collection-shaped answer is not
     // told as a difference; several values, joined, are not the one written. Since aud-a26o the re-reads before
-    // a save and for a preview read through it too, so a value is compared before the write as after it.
+    // a save and for a preview read through it too, so a value is compared before the write as after it; since
+    // aud-a26r the lookup does, and a binary value is named "binary (N bytes)" rather than returned - nothing compares
+    // one, the refusal stopping a save or preview of a binary attribute first, and its ToString is its type's name.
     private static object? ReadDirectoryValue(PSObject read, string name)
     {
         var items = DirectoryValues(read, name);
         return items.Count switch
         {
             0 => null,
-            1 => items[0],
-            _ => string.Join("; ", items.Select(v => v?.ToString())),
+            1 => Named(items[0]),
+            _ => string.Join("; ", items.Select(v => Named(v)?.ToString())),
         };
     }
 
-    // An attribute's values as read (aud-a26o): none, one, or a collection's elements, a string being one value.
-    // ReadDirectoryValue takes one value from them; SeveralValuedRefusal counts them.
+    // A binary value as the editor shows and refuses it (aud-a26r): by its length, never its bytes nor its type's name.
+    private static object? Named(object? value) => value is byte[] bytes ? Binary(bytes) : value;
+
+    private static string Binary(byte[] bytes) => $"binary ({bytes.Length} bytes)";
+
+    // An attribute's values as read (aud-a26o): none, one, or a collection's elements, a string being one value and,
+    // since aud-a26r, a byte array too - it was its bytes, each counted as a value. ReadDirectoryValue takes one value
+    // from them; NotSingleTextRefusal counts them.
     private static List<object?> DirectoryValues(PSObject read, string name)
     {
         var value = Unwrapped(read.Properties[name]?.Value);
         if (value is null)
             return [];
-        if (value is string)
+        if (value is string or byte[])
             return [value];
         if (value is System.Collections.IEnumerable values)
             return values.Cast<object?>().Select(Unwrapped).ToList();
@@ -1770,28 +1782,37 @@ public class ADAttributeEditorService
         return current;
     }
 
-    // aud-a26o. The refusal of a save or preview that would write an attribute holding several values, naming each,
-    // or null. Only the attributes proposed count: one the save does not write may hold what it holds.
-    // *Assumption, not probed*: the module answers an attribute holding several values with a collection, and one
-    // holding a single value with that value or a one-element collection. A byte array, being a collection, reads as
-    // several values and is refused - the editor does not edit binary attributes.
-    private static string? SeveralValuedRefusal(PSObject read, Dictionary<string, string?> proposedValues, List<EditableAttribute> allowlist)
+    // aud-a26o, aud-a26r. The refusal of a save or preview that would write an attribute that is not one text value,
+    // naming each under its own rule - several values (the editor writes single-valued attributes only) or a binary
+    // value (it writes text attributes only) - or null. Only the attributes proposed count: one the save does not write
+    // may hold what it holds. *Assumption, not probed*: the module answers an attribute holding several values with a
+    // collection, one holding a single value with that value or a one-element collection, and a binary attribute with a
+    // byte array. A byte array was a collection to DirectoryValues, so a binary attribute was refused as holding one
+    // value per byte: safe, but the count named values it does not have. Several binary values still read as several.
+    private static string? NotSingleTextRefusal(PSObject read, Dictionary<string, string?> proposedValues, List<EditableAttribute> allowlist)
     {
         var several = new List<string>();
+        var binary = new List<string>();
         foreach (var name in proposedValues.Keys)
         {
             var attr = allowlist.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
             if (attr == null)
                 continue;
 
-            var count = DirectoryValues(read, attr.Name).Count;
-            if (count > 1)
-                several.Add($"'{attr.Label}' ({attr.Name}) holds {count} values in the directory");
+            var values = DirectoryValues(read, attr.Name);
+            if (values.Count > 1)
+                several.Add($"'{attr.Label}' ({attr.Name}) holds {values.Count} values in the directory");
+            else if (values is [byte[] bytes])
+                binary.Add($"'{attr.Label}' ({attr.Name}) is {Binary(bytes)} in the directory");
         }
 
-        return several.Count == 0
-            ? null
-            : $"{string.Join("; ", several)}; the attribute editor writes single-valued attributes only. Nothing was written.";
+        var refusals = new List<string>();
+        if (several.Count > 0)
+            refusals.Add($"{string.Join("; ", several)}; the attribute editor writes single-valued attributes only.");
+        if (binary.Count > 0)
+            refusals.Add($"{string.Join("; ", binary)}; the attribute editor writes text attributes only.");
+
+        return refusals.Count == 0 ? null : $"{string.Join(" ", refusals)} Nothing was written.";
     }
 
     private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
@@ -1800,7 +1821,7 @@ public class ADAttributeEditorService
     // (CreateDirectoryRunspace), so it can be tested, and with the save's -Server - the object's own domain, from its
     // DN (aud-a26l) - so another domain controller than the save's cannot answer it. It opened its own session and
     // sent no -Server. A DN naming no domain goes unrouted, as the save's chain does, and says so. The values come back
-    // as read, or the save's refusal of an attribute holding several values.
+    // as read, or the save's refusal of an attribute that is not one text value.
     private (Dictionary<string, object?>? Current, string? Refusal) ReReadCurrentValues(
         ResolvedDirectoryPrincipal target,
         Dictionary<string, string?> proposedValues,
@@ -1842,7 +1863,7 @@ public class ADAttributeEditorService
             if (!IsWithinSearchBases(reReadDn, GetConfiguredSearchBases()))
                 return (null, null);
 
-            var refusal = SeveralValuedRefusal(result[0], proposedValues, allowlist);
+            var refusal = NotSingleTextRefusal(result[0], proposedValues, allowlist);
             return refusal is null ? (CurrentValues(result[0], allowlist), null) : (null, refusal);
         }
         catch (Exception ex)
