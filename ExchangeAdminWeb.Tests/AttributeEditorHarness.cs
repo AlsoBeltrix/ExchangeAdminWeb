@@ -35,7 +35,6 @@ internal sealed class AttributeEditorHarness : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "eaw-attr-" + Guid.NewGuid().ToString("N"));
     private readonly SectionAccessRepository _sections;
-    private readonly IConfigStore _allowlistStore;
 
     public AttributeEditorHarness()
     {
@@ -55,8 +54,8 @@ internal sealed class AttributeEditorHarness : IDisposable
         ModuleConfig = new ModuleConfigService(
             catalog, Env, TestConfigStore.CreateModuleConfig(_root), NullLogger<ModuleConfigService>.Instance);
 
-        _allowlistStore = TestConfigStore.Create(_root);
-        Allowlist = new AttributeEditorRepository(_allowlistStore);
+        AllowlistStore = new SwitchableStore(TestConfigStore.Create(_root));
+        Allowlist = new AttributeEditorRepository(AllowlistStore);
         Allowlist.SaveAllowlist(
         [
             new AttributeRow("title", "Job Title", "String", null, false, true, null, null, 1),
@@ -112,6 +111,9 @@ internal sealed class AttributeEditorHarness : IDisposable
     public IWebHostEnvironment Env { get; }
     public ModuleConfigService ModuleConfig { get; }
     public AttributeEditorRepository Allowlist { get; }
+
+    /// <summary>The store under <see cref="Allowlist"/>; its writes can be made to fail.</summary>
+    public SwitchableStore AllowlistStore { get; }
     public SwitchableStore SectionStore { get; }
     public ProtectedPrincipalServicerService Servicers { get; }
     public OperationTraceService Trace { get; }
@@ -167,7 +169,7 @@ internal sealed class AttributeEditorHarness : IDisposable
     /// </summary>
     public void CorruptAllowlist()
     {
-        _allowlistStore.Write((connection, transaction) =>
+        AllowlistStore.Write((connection, transaction) =>
         {
             using var insert = connection.CreateCommand();
             insert.Transaction = transaction;
@@ -307,19 +309,31 @@ internal sealed class AttributeEditorHarness : IDisposable
             Task.FromResult(Decide(target));
     }
 
-    /// <summary>A config store whose reads can be made to fail, as an unreadable database does.</summary>
+    /// <summary>
+    /// A config store whose reads, or writes, can be made to fail, as an unreadable or busy
+    /// database does.
+    /// </summary>
     internal sealed class SwitchableStore(IConfigStore inner) : IConfigStore
     {
         public bool ReadsFail { get; set; }
+
+        public bool WritesFail { get; set; }
 
         public long GetChangeToken() => inner.GetChangeToken();
 
         public T Read<T>(Func<SqliteConnection, T> read) =>
             ReadsFail ? throw new InvalidOperationException("config store unreadable") : inner.Read(read);
 
-        public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write) => inner.Write(write);
+        public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write) =>
+            WritesFail ? throw new InvalidOperationException("config store unwritable") : inner.Write(write);
 
-        public void Write(Action<SqliteConnection, SqliteTransaction> write) => inner.Write(write);
+        public void Write(Action<SqliteConnection, SqliteTransaction> write)
+        {
+            if (WritesFail)
+                throw new InvalidOperationException("config store unwritable");
+
+            inner.Write(write);
+        }
     }
 
     /// <summary>Records warnings, so a test can say which base a lookup reported as failed.</summary>

@@ -600,6 +600,45 @@ public class ADAttributeEditorServiceTests : IDisposable
     }
 
     [Fact]
+    public void SaveAllowlistAndAudit_StoreCorruptedBehindAValidCache_IsRefusedAndNotOverwritten()
+    {
+        // aud-a28f moved the Module Configuration page's pre-save corruption re-check into
+        // SaveAllowlistAndAudit, and this is the property the page's old tripwire stood for: the
+        // re-check must read the store fresh. GetAllowlist would hand back the stale-but-valid list
+        // cached below, the gate would pass, and the save would replace the corrupt store - discarding
+        // whatever it holds.
+        var service = CreateService();
+        SeedAllowlist(new ExchangeAdminWeb.Services.Storage.AttributeRow(
+            "extensionAttribute1", "Extension 1", "String", null, false, true, null, null, 1));
+
+        var now = DateTime.UtcNow;
+        service.ChangeWatcher.UtcNow = () => now;
+        var cached = service.GetAllowlist();
+        Assert.NotNull(cached);
+        Assert.Same(cached, service.GetAllowlist());
+
+        // A row whose choices cannot be parsed - the store's corrupt state - written behind the cache.
+        _attrStore!.Write((connection, tx) =>
+        {
+            using var insert = connection.CreateCommand();
+            insert.Transaction = tx;
+            insert.CommandText =
+                "INSERT INTO editable_attribute (name, label, type, choices_json, required, allow_clear, level) " +
+                "VALUES ('department', 'Department', 'Choice', '{not valid json', 0, 0, 1);";
+            insert.ExecuteNonQuery();
+        });
+        Assert.Same(cached, service.GetAllowlist());
+
+        var result = service.SaveAllowlistAndAudit(
+            [new EditableAttribute("title", "Title", "String", null, false, true, null, null)],
+            "EXAMPLE\\admin", "10.0.0.9");
+
+        Assert.False(result.Success);
+        Assert.True(result.StoreCorrupt);
+        Assert.True(service.IsAllowlistCorrupt(), "the save replaced the corrupt store");
+    }
+
+    [Fact]
     public void IsAllowlistCorrupt_ValidFile_ReturnsFalse()
     {
         WriteAllowlistConfig(new

@@ -40,6 +40,10 @@ public sealed record AttributeSaveResult(
     string? Error,
     List<AttributeChange>? AppliedChanges);
 
+public sealed record AllowlistSaveResult(bool Success, string? Error, bool StoreCorrupt = false);
+
+internal sealed record AllowlistFieldChange(string Attribute, string Field, string? Old, string? New);
+
 /// <summary>
 /// Marks a save as the reversal of an earlier attribute edit (aud-a26, aud-a26b).
 /// </summary>
@@ -211,8 +215,12 @@ public class ADAttributeEditorService
     /// when nothing is configured (a valid "nothing allowlisted" state) and null when the store
     /// is unreadable or its rows fail validation (the fail-closed/corrupt state).
     /// </summary>
-    private List<EditableAttribute>? LoadAllowlistFromDisk()
+    private List<EditableAttribute>? LoadAllowlistFromDisk() => LoadAllowlistFromDisk(out _);
+
+    private List<EditableAttribute>? LoadAllowlistFromDisk(out List<AttributeRow> storedRows)
     {
+        storedRows = [];
+
         // Fail closed (null) if a corrupt legacy file is still on disk during the upgrade window.
         if (_legacyAllowlistCorrupt)
             return null;
@@ -223,6 +231,7 @@ public class ADAttributeEditorService
             return null;
         }
 
+        storedRows = rows;
         if (!configured)
             return []; // nothing configured - valid empty allowlist
 
@@ -324,6 +333,129 @@ public class ADAttributeEditorService
         _repository.SaveAllowlist(attributes.Select(ToAllowlistRow).ToList());
         InvalidateAllowlistCache();
     }
+
+    internal const string AllowlistAuditSection = "ADAttributeEditor:Allowlist";
+
+    public AllowlistSaveResult SaveAllowlistAndAudit(List<EditableAttribute> attributes, string performedBy, string ip)
+    {
+        List<AttributeRow> stored;
+        List<AttributeRow> written;
+        List<AllowlistFieldChange> changed;
+        try
+        {
+            if (LoadAllowlistFromDisk(out stored) == null)
+            {
+                const string corrupt = "Allowlist store is corrupt; refusing to save over it. Fix or restore config/ad-editable-attributes.json, then reload this page.";
+                LogAllowlistSaveRefused(performedBy, ip, "AllowlistConfig", corrupt);
+                return new(false, corrupt, StoreCorrupt: true);
+            }
+
+            var denied = attributes.Where(a => IsDenylisted(a.Name)).ToList();
+            if (denied.Count > 0)
+            {
+                var refused = $"Cannot save: {string.Join(", ", denied.Select(d => d.Name))} are on the hard denylist.";
+                LogAllowlistSaveRefused(performedBy, ip, "Denylist", refused);
+                return new(false, refused);
+            }
+
+            var uncompilable = attributes.Select(DescribeUncompilablePattern).FirstOrDefault(p => p is not null);
+            if (uncompilable is not null)
+            {
+                LogAllowlistSaveRefused(performedBy, ip, "PatternCheck", uncompilable);
+                return new(false, uncompilable);
+            }
+
+            written = RowsAsWritten(attributes);
+            changed = DescribeChangedRows(stored, written);
+            SaveAllowlist(attributes);
+        }
+        catch (Exception ex)
+        {
+            var failed = $"Failed to save: {ex.Message}";
+            _logger.LogError(ex, "Allowlist save failed");
+            LogAllowlistSaveFailed(performedBy, ip, failed);
+            return new(false, failed);
+        }
+
+        try
+        {
+            _audit.LogSettingsChange(
+                performedBy,
+                ip,
+                AllowlistAuditSection,
+                stored.Select(r => r.Name).ToArray(),
+                written.Select(r => r.Name).ToArray(),
+                changed.Count > 0 ? new Dictionary<string, object?> { ["changed"] = changed } : null);
+        }
+        catch (Exception auditEx)
+        {
+            _logger.LogError(auditEx, "Audit failed for allowlist save");
+        }
+
+        return new(true, null);
+    }
+
+    public void LogAllowlistSaveRefused(string performedBy, string ip, string refusedAt, string reason) =>
+        WriteAllowlistSaveFailure(performedBy, ip, reason,
+            new Dictionary<string, object?> { ["refusedAt"] = refusedAt, ["mutationAttempted"] = false });
+
+    public void LogAllowlistSaveFailed(string performedBy, string ip, string reason) =>
+        WriteAllowlistSaveFailure(performedBy, ip, reason, null);
+
+    private void WriteAllowlistSaveFailure(string performedBy, string ip, string reason, Dictionary<string, object?>? extra)
+    {
+        try
+        {
+            _audit.LogSettingsChangeFailed(performedBy, ip, AllowlistAuditSection, reason, extra);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audit failed for an allowlist save that did not complete");
+        }
+    }
+
+    private static List<AttributeRow> RowsAsWritten(List<EditableAttribute> attributes) =>
+        attributes
+            .Where(a => !string.IsNullOrWhiteSpace(a.Name))
+            .Select(ToAllowlistRow)
+            .GroupBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Last() with { Name = g.First().Name })
+            .ToList();
+
+    private static List<AllowlistFieldChange> DescribeChangedRows(List<AttributeRow> before, List<AttributeRow> after)
+    {
+        var changed = new List<AllowlistFieldChange>();
+        foreach (var now in after)
+        {
+            var was = before.FirstOrDefault(b => string.Equals(b.Name, now.Name, StringComparison.OrdinalIgnoreCase));
+            if (was is null)
+                continue;
+
+            AddIfChanged(changed, now.Name, "Name", was.Name, now.Name);
+            AddIfChanged(changed, now.Name, "Label", was.Label, now.Label);
+            AddIfChanged(changed, now.Name, "Type", was.Type, now.Type);
+            AddIfChanged(changed, now.Name, "Choices", was.ChoicesJson, now.ChoicesJson);
+            AddIfChanged(changed, now.Name, "Required", Flag(was.Required), Flag(now.Required));
+            AddIfChanged(changed, now.Name, "AllowClear", Flag(was.AllowClear), Flag(now.AllowClear));
+            AddIfChanged(changed, now.Name, "MaxLength", Number(was.MaxLength), Number(now.MaxLength));
+            AddIfChanged(changed, now.Name, "Pattern", was.Pattern, now.Pattern);
+            AddIfChanged(changed, now.Name, "Level", Number(was.Level), Number(now.Level));
+        }
+
+        return changed;
+    }
+
+    private static void AddIfChanged(List<AllowlistFieldChange> changed, string attribute, string field, string? old, string? now)
+    {
+        old = string.IsNullOrEmpty(old) ? null : old;
+        now = string.IsNullOrEmpty(now) ? null : now;
+        if (!string.Equals(old, now, StringComparison.Ordinal))
+            changed.Add(new AllowlistFieldChange(attribute, field, old, now));
+    }
+
+    private static string Flag(bool value) => value ? "true" : "false";
+
+    private static string? Number(int? value) => value?.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
     /// Why <paramref name="attribute"/>'s pattern does not compile, naming the attribute; null when

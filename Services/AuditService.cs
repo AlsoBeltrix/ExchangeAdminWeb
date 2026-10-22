@@ -377,8 +377,8 @@ public class AuditService
             ["ts"] = DateTime.UtcNow.ToString("O"),
             ["user"] = SamName(performedBy),
             ["ip"] = ipAddress,
-            ["action"] = "UpdateSectionAccess",
-            ["category"] = "AdminSettings",
+            ["action"] = SettingsChangeAction,
+            ["category"] = SettingsChangeCategory,
             ["result"] = "Success",
             ["section"] = section,
             ["added"] = added.Length > 0 ? added : null,
@@ -388,6 +388,32 @@ public class AuditService
         MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
+
+    public void LogSettingsChangeFailed(
+        string performedBy,
+        string ipAddress,
+        string section,
+        string errorDetail,
+        Dictionary<string, object?>? extra = null)
+    {
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = SettingsChangeAction,
+            ["category"] = SettingsChangeCategory,
+            ["result"] = "Failed",
+            ["section"] = section,
+            ["error"] = errorDetail
+        };
+
+        MergeExtra(evt, extra);
+        WriteAuditEvent(evt);
+    }
+
+    private const string SettingsChangeAction = "UpdateSectionAccess";
+    private const string SettingsChangeCategory = "AdminSettings";
 
     private void WriteAuditEvent(Dictionary<string, object?> evt)
     {
