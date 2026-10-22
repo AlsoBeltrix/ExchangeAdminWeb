@@ -3,9 +3,9 @@
 **Severity**: MEDIUM - a wrong-object write on the on-prem room-list path. The exact-one-match rule
 narrows it, but one unrelated group that happens to carry the list's name as its displayName or
 name, with the real synced group absent from the catalog result, is written in its place.
-**Status**: Fixed on branch, not merged; independent review pending; dev acceptance owed with a2f/a2i/a2j
+**Status**: Merged to master (`28263a6c`); closed on guard proof; codex review pending; dev acceptance owed with a2f/a2i/a2j
 **Branch**: `worktree-agent-ae52370b2527142a4`
-**Commit**: `3341e112` (fix, tests, comments); plan `b836c6d7`
+**Commit**: `3341e112` (fix, tests, comments); plan `b836c6d7`; merged `28263a6c`
 **Reviewer**: implementer (surfaced by the aud-a2j agent, 2026-10-22, candidate 2 of its hand-back)
 
 ## Evidence

@@ -87,6 +87,16 @@ In `AddToRoomListAsync` (`Services/ConferenceRoomService.cs`), when the cloud
    stays "Added to room list '<name>'." The row is only PARTIAL/failed if BOTH the cloud
    add is rejected-as-synced AND the on-prem add fails.
 
+## Amendments after approval (pointers, not re-approval)
+
+- 2026-10-22, `aud-a2j` / `aud-a2k` / `aud-a2l` (`.agents/review/findings/`): step 3 above is
+  superseded in three ways. The group is found through the forest global catalog, by the list's
+  primary SMTP address alone (`mail -eq '<PrimarySmtpAddress>'`; never displayName or name), then
+  re-read by DN on its own domain. Membership is read from the group's `member` attribute, never
+  `Get-ADGroupMember`. The write is `Set-ADGroup -Add @{member=<room DN>} -Server <group's DC>`,
+  not `Add-ADGroupMember`, and is confirmed by reading the membership back; a value-already-there
+  refusal is settled by that read. The "write members" rights note below still applies.
+
 ## Idempotency and re-run safety
 
 Both paths already tolerate re-runs (cloud path checks `Get-DistributionGroupMember`
