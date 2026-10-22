@@ -563,6 +563,7 @@
         statusMessage = null;
         await Task.Yield();
 
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -571,6 +572,7 @@
             {
                 statusMessage = "Authorization check failed.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "Authorization", statusMessage, PendingEnablementSections());
                 return;
             }
 
@@ -579,13 +581,13 @@
                 enablementStoreCorrupt = true;
                 statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreCorrupt", statusMessage, PendingEnablementSections());
                 return;
             }
 
             var previous = Enablement.GetAllEnablement();
             Enablement.SaveEnablement(moduleEnablement);
 
-            var ip = ClientInfo.GetIpForUser(currentUser);
             foreach (var module in Catalog.GetAll().Where(m => !m.IsSystemModule))
             {
                 var prev = previous.GetValueOrDefault(module.Id, module.EnabledByDefault);
@@ -623,6 +625,7 @@
         {
             statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, EnablementSection, statusMessage, PendingEnablementSections());
         }
         finally
         {
@@ -630,12 +633,22 @@
         }
     }
 
+    private const string EnablementSection = "ModuleEnablement";
+
+    private string[] PendingEnablementSections() =>
+        moduleEnablement
+            .Where(kv => !moduleEnablementBaseline.TryGetValue(kv.Key, out var loaded) || loaded != kv.Value)
+            .Select(kv => $"Module:{kv.Key}")
+            .ToArray();
+
     private async Task SaveLogLevel()
     {
         saving = true;
         statusMessage = null;
         await Task.Yield();
 
+        const string section = "ExtendedLogLevel";
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -644,14 +657,14 @@
             {
                 statusMessage = "Authorization check failed.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage);
                 return;
             }
 
             var previousLevel = ExtendedLog.CurrentLevel;
             ExtendedLog.SetLevel(selectedLogLevel);
 
-            var ip = ClientInfo.GetIpForUser(currentUser);
-            try { Audit.LogSettingsChange(currentUser, ip, "ExtendedLogLevel", new[] { previousLevel }, new[] { selectedLogLevel }); }
+            try { Audit.LogSettingsChange(currentUser, ip, section, new[] { previousLevel }, new[] { selectedLogLevel }); }
             catch { }
 
             statusMessage = $"Extended log level set to {ExtendedLog.CurrentLevel}.";
@@ -661,6 +674,7 @@
         {
             statusMessage = $"Failed to save log level: {ex.Message}";
             statusIsError = true;
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally
         {
@@ -943,11 +957,19 @@
         statusMessage = null;
         await Task.Yield();
 
+        const string section = "ProtectedPrincipals";
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
-            if (!authResult.Succeeded) { statusMessage = "Authorization check failed."; statusIsError = true; return; }
+            if (!authResult.Succeeded)
+            {
+                statusMessage = "Authorization check failed.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage);
+                return;
+            }
 
             // Refuse rather than snapshot a list an in-flight Add is about to mutate. Without
             // this, saving mid-validation persists the list WITHOUT the pending entry, reports
@@ -959,6 +981,7 @@
             {
                 statusMessage = ProtectedPrincipalEntryValidator.SaveBlockedMessage;
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ValidationInProgress", statusMessage);
                 return;
             }
 
@@ -976,8 +999,7 @@
 
             try
             {
-                var ip = ClientInfo.GetIpForUser(currentUser);
-                Audit.LogSettingsChange(currentUser, ip, "ProtectedPrincipals",
+                Audit.LogSettingsChange(currentUser, ip, section,
                     Array.Empty<string>(),
                     new[] { $"Users:{newConfig.Users.Length},Groups:{newConfig.Groups.Length},OUs:{newConfig.OrganizationalUnits.Length},Patterns:{newConfig.SamAccountNamePatterns.Length},Targets:{newConfig.GroupTargets.Length}" });
             }
@@ -993,6 +1015,7 @@
         {
             statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally { saving = false; }
     }

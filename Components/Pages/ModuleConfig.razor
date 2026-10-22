@@ -1091,6 +1091,8 @@
         statusMessage = null;
         await Task.Yield();
 
+        var section = $"ModuleConfig:{module.Id}";
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -1100,6 +1102,7 @@
             {
                 statusMessage = "You are not authorized to configure this module.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage);
                 return;
             }
 
@@ -1108,6 +1111,7 @@
                 moduleConfigCorrupt = true;
                 statusMessage = "Refusing to save: this module's config file is corrupt and saving would overwrite it with the rendered fallback values. Fix or restore config\\module-config-" + module.Id + ".json first.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
             }
 
@@ -1121,10 +1125,9 @@
             {
                 try
                 {
-                    var ip = ClientInfo.GetIpForUser(currentUser);
                     var prevKeys = changed.Select(k => $"{k}={MaskIfSecret(k, previous.GetValueOrDefault(k) ?? "")}").ToArray();
                     var newKeys = changed.Select(k => $"{k}={MaskIfSecret(k, currentConfigState.GetValueOrDefault(k) ?? "")}").ToArray();
-                    Audit.LogSettingsChange(currentUser, ip, $"ModuleConfig:{module.Id}", prevKeys, newKeys);
+                    Audit.LogSettingsChange(currentUser, ip, section, prevKeys, newKeys);
                 }
                 catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module config change"); }
             }
@@ -1140,6 +1143,7 @@
         {
             statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally { saving = false; }
     }
@@ -1151,6 +1155,8 @@
         statusMessage = null;
         await Task.Yield();
 
+        var section = $"Module:{module.Id}";
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -1159,6 +1165,7 @@
             {
                 statusMessage = "Only global admins can change module status.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage);
                 return;
             }
 
@@ -1167,6 +1174,7 @@
                 enablementStoreCorrupt = true;
                 statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
             }
 
@@ -1179,8 +1187,7 @@
             {
                 try
                 {
-                    var ip = ClientInfo.GetIpForUser(currentUser);
-                    Audit.LogSettingsChange(currentUser, ip, $"Module:{module.Id}",
+                    Audit.LogSettingsChange(currentUser, ip, section,
                         previous ? new[] { "Enabled" } : Array.Empty<string>(),
                         moduleEnabled ? new[] { "Enabled" } : Array.Empty<string>());
                 }
@@ -1206,6 +1213,7 @@
         {
             statusMessage = $"Failed to save module status: {ex.Message}";
             statusIsError = true;
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally
         {
@@ -1220,6 +1228,8 @@
         statusMessage = null;
         await Task.Yield();
 
+        var section = module.MainPermission.PolicyAlias;
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -1228,6 +1238,7 @@
             {
                 statusMessage = "Only global admins can change section access.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage, PendingAccessSections());
                 return;
             }
 
@@ -1236,6 +1247,7 @@
                 sectionAccessCorrupt = true;
                 statusMessage = "Refusing to save: config\\sectionaccess.json is corrupt and saving would replace it, wiping every module's groups. Fix or restore the file first.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, PendingAccessSections());
                 return;
             }
 
@@ -1252,6 +1264,7 @@
             {
                 statusMessage = refused;
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "GroupGrantCheck", statusMessage, PendingAccessSections());
                 return;
             }
 
@@ -1277,7 +1290,6 @@
             // failing to store one must never fail the access save that already succeeded.
             SectionAccess.SaveGroupDisplayNames(accessDisplayNames);
 
-            var ip = ClientInfo.GetIpForUser(currentUser);
             foreach (var alias in policyAliases)
             {
                 var prev = previousGroups[alias];
@@ -1300,9 +1312,17 @@
         {
             statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage, PendingAccessSections());
         }
         finally { saving = false; }
     }
+
+    private string[] PendingAccessSections() =>
+        policyAliases
+            .Where(a => GroupDelta(
+                accessState.GetValueOrDefault(a) ?? new List<string>(),
+                accessBaseline.GetValueOrDefault(a) ?? new List<string>()) > 0)
+            .ToArray();
 
     private async Task SaveModuleAdminsAsync()
     {
@@ -1311,6 +1331,8 @@
         statusMessage = null;
         await Task.Yield();
 
+        var section = $"ModuleAdmins:{module.Id}";
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -1319,6 +1341,7 @@
             {
                 statusMessage = "Only global admins can assign module admins.";
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage);
                 return;
             }
 
@@ -1331,6 +1354,7 @@
             {
                 statusMessage = refused;
                 statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "GroupGrantCheck", statusMessage);
                 return;
             }
 
@@ -1339,8 +1363,7 @@
 
             try
             {
-                var ip = ClientInfo.GetIpForUser(currentUser);
-                Audit.LogSettingsChange(currentUser, ip, $"ModuleAdmins:{module.Id}", previous, snapshot);
+                Audit.LogSettingsChange(currentUser, ip, section, previous, snapshot);
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module admin change"); }
 
@@ -1356,6 +1379,7 @@
         {
             statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
+            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally { saving = false; }
     }

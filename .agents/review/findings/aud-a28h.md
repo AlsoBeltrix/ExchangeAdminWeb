@@ -103,6 +103,93 @@ refusal record dropped per page (ModuleConfig SaveSectionAccessAsync Authorizati
 SaveProtectedPrincipals Authorization, ExchangeOnlineConfig SaveExoConfig Authorization); one catch
 record dropped (ModuleConfig SaveConfigAsync).
 
+## Executed reproduction - 2026-10-22
+
+Branch `worktree-agent-aa5d4735f85b48351` after aud-a28g (`e993a83f`). The new
+`SettingsSaveAuditTests` run against the three pages as committed there (the pre-fix bytes swapped
+in by a session-local driver, `reproduce.ps1` in the scratchpad's `a28g-a28h-a26f-a28i-work`;
+ModuleConfig `2C6292E1A1575D6BA9039184C87B0DF5`, AdminSettings
+`7B07FE69B8A715CFDFAB406980295846`, ExchangeOnlineConfig `8884749CEE5157A1C2FB0E98D090E382`), build
+0 errors: 38 failed / 9 passed. Every refusal and exception case - 29 behavioural cases, the four
+connection-validation theory rows among them - failed `Assert.Single() Failure: The collection was
+empty`: the attempt left no record at all; the nine tripwire rows failed too. The nine success
+controls passed: the success records were already there. The fixed bytes were restored to their
+MD5s after the run.
+
+## Fix
+
+`Services/SettingsSaveAudit.cs` (new): `LogSettingsSaveRefused(this AuditService, logger,
+performedBy, ip, section, refusedAt, reason, sections)` and `LogSettingsSaveFailed(this AuditService,
+logger, performedBy, ip, section, reason, sections)`, both through `AuditService.LogSettingsChangeFailed`
+(the success record's action and category, result Failed, `error` = what the admin was shown); a
+refusal adds `refusedAt` and `mutationAttempted: false`, a failure neither; `sections`, when given,
+is listed; an audit failure is logged and never thrown.
+
+The nine handlers (survey above): every refusal records `LogSettingsSaveRefused` directly above its
+return, every catch records `LogSettingsSaveFailed`. Each handler reads its ip once above the try and
+names its section once; the success record uses both, unchanged in value. The three one-line
+refusals became blocks. Two page-local helpers name what a multi-section save was changing:
+ModuleConfig `PendingAccessSections()` (aliases whose working list differs from the loaded one) and
+AdminSettings `PendingEnablementSections()` (`Module:{id}` for each toggle that differs). Refusal
+steps: `Authorization`, `StoreCorrupt`, `GroupGrantCheck`, `ValidationInProgress`, `Validation`.
+
+Tests: new `ExchangeAdminWeb.Tests/SettingsPageHarness.cs` (the compiled pages driven over real
+stores, the real audit writer, a substituted authorization service and a recording
+NavigationManager; Admin Settings' post-render directory sweep is overridden to nothing) and
+`ExchangeAdminWeb.Tests/SettingsSaveAuditTests.cs` (47 cases: 29 refusal and failure, 9 success, 9
+tripwire rows).
+
+Caller-visible change, by design: every refused or failed attempt on these nine saves now leaves one
+Failed row in the Admin Event Log (category AdminSettings, the section its success files under, or
+`ModuleEnablement` / the module's main alias for the two multi-section saves, with the pending
+sections listed). Nothing the pages show, write or send changes.
+
 ## Guard proof
 
-Pending.
+Same session-local driver as aud-a28g (`mutate.ps1`), filter `FullyQualifiedName~SettingsSaveAuditTests`
+(47 tests). Fixed-file MD5s: `Components/Pages/ModuleConfig.razor`
+`BB3A2A282F0C06F9564F3CA6E8E21D0F`, `Components/Pages/AdminSettings.razor`
+`57682F609A95E206B64A64F1DAE0621A`, `Components/Pages/ExchangeOnlineConfig.razor`
+`39D84DA5CA333674631F2E8D12950BE9`, `Services/SettingsSaveAudit.cs`
+`7C6D62143577DEC65EB3438D2FCCC92F`; each restored to its MD5 after every mutant, and every mutant
+built with 0 errors. After the round, a rebuild on the restored bytes and the filter widened to the
+page registries and tripwires (SettingsSaveAuditTests, ProgressRegistryTests,
+PageAuthorizationRecheckTests, ClickGate*, AllowlistSaveAuditTests, GlobalProgress*,
+AuditCategoryFilingTests): 468/468 green.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| ModuleConfig SaveSectionAccessAsync: the authorization refusal's record deleted | `BF8F3C62AEEAC6A9D621483C3CD4B416` | `ModuleConfig_AnUnauthorisedAccessSave_IsRecordedAsARefusal_NamingWhatItWouldChange` (and its tripwire row) |
+| AdminSettings SaveProtectedPrincipals: the authorization refusal's record deleted | `745884A9FE3830B2664C5F1F3BFC8612` | `AdminSettings_AnUnauthorisedProtectedSave_IsRecordedAsARefusal_AndWritesNothing` (and its tripwire row) |
+| ExchangeOnlineConfig SaveExoConfig: the authorization refusal's record deleted | `59CB5FA4AC9934D8F38AB83608529647` | `ExchangeOnlineConfig_AnUnauthorisedConnectionSave_IsRecordedAsARefusal_AndWritesNothing` (and its tripwire row) |
+| ModuleConfig SaveConfigAsync: the catch's record deleted | `A8A59BC0ABFB23E104D243F9BCBDB1C4` | `ModuleConfig_AConfigSaveWhoseWriteFails_IsRecordedAsAFailure` (and its tripwire row) |
+| extra, AdminSettings SaveEnablement: the catch's record deleted | `F570C94503D9C66E8EF107B2872B9E0F` | `AdminSettings_AnEnablementSaveWhoseWriteFails_IsRecordedAsAFailure` (and its tripwire row) |
+| extra, the helper: a refusal written without its refusal fields | `23313870947203A9C4056315C9D52BE6` | every refusal case, 20 of 47 (`ModuleConfig_AnUnauthorisedConfigSave_IsRecordedAsARefusal_AndWritesNothing` first) |
+
+The code comments are written after the round, in their own commit, so the MD5s above are this
+commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors; warnings all pre-existing, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx -c Release --no-build --blame-hang --blame-hang-timeout 10m`:
+  exit 0, 5,196 passed / 3 skipped / 0 failed, 5,199 total, 5m30s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0.
+  `git diff --check`: exit 0. `tools/Test-AsciiOnly.ps1` with the files staged: exit 0.
+
+No PowerShell source, AD module, directory, Exchange Online, Delinea, SMTP, push or deployment: no
+case adds a usable group SID, and the harness leaves the directory services unset. The pages were
+not rendered in a browser and no live circuit was run. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- The two multi-section saves file their one refusal or failure under the save's own scope
+  (`ModuleEnablement`, the module's main alias), not the per-alias or per-module sections their
+  successes use; `sections` lists those. One record per attempt was the requirement, and there is
+  no single success section to match.
+- A save whose write lands and whose next step throws (SaveExoConfig's DrainPool, SaveProtectedPrincipals'
+  second write) is recorded as a failure, which is what the admin is shown; the record does not say
+  the first write landed. Pre-existing ordering, not changed here.
+- The pages are driven by reflection over their compiled handlers, not through a rendered circuit:
+  the buttons' own gating is not exercised.
