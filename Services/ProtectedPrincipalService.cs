@@ -1328,6 +1328,12 @@ public class ProtectedPrincipalService
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = loaded },
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = wanted });
 
+    public ModuleConfigSaveOutcome CompareDirectoryReadSecretId(string loaded, string wanted) =>
+        _moduleConfig.CompareChangedValues(
+            ProtectedPrincipalsModuleKey,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = loaded },
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = wanted });
+
     // Legacy exclusions come only from the MailboxPermissions/ExcludedUsers module
     // config. The appsettings Security:ExcludedUsers fallback was retired 2026-07-28:
     // it was invisible to the Protected Principals admin UI, so principals could be

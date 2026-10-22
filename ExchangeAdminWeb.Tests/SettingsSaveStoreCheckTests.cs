@@ -196,7 +196,9 @@ public sealed class SettingsSaveStoreCheckTests : IDisposable
         var page = _h.OpenAdminSettings();
         Assert.True(SettingsPageHarness.Field<List<string>>(page, typeof(AdminSettingsPage), "ppUsers").Remove(Ceo));
         SettingsPageHarness.SetField(page, typeof(AdminSettingsPage), "ppDirectoryReadSecretId", "4242");
-        _h.ModuleConfigStore.WritesFail = true;
+        // From the rules' write on (aud-a28r): the secret is compared on its store before the rules are written, so
+        // a store failing from the start fails the whole save; one failing after the compare is this case.
+        _h.ProtectedStore.BeforeWrite = () => _h.ModuleConfigStore.WritesFail = true;
 
         await _h.RunAsync(page, "SaveProtectedPrincipals");
         _h.ModuleConfigStore.WritesFail = false;

@@ -6,8 +6,8 @@ the locked write, but the rules are written FIRST: when the secret compare refus
 the rules are already saved and the secret is not. aud-a28j's folded-in part records both outcomes
 honestly (a success record for the rules, a refusal for the secret, a message saying which part
 landed), so nothing is silent; but the save the admin confirmed as one change lands as half.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
+**Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
+**Branch**: `worktree-agent-a992f9d6471a07501`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a28p/a26n agent, 2026-10-22, candidate 2 of its hand-back)
 
@@ -87,6 +87,84 @@ reports the conflict. `SettingsConnectionAndSecretSaveTests`' two cases that pin
 before the save move to the whole-save refusal. Mutation at the call site: (1) the rules written before the compare
 again - the compare taken out, so the secret is first compared inside its own write, after the rules.
 
+## Executed reproduction - 2026-10-22
+
+Branch `worktree-agent-a992f9d6471a07501`, the fix's services and tests in place and `Components/Pages/AdminSettings.razor`
+as it was at `55a111e9` swapped in (`git show`; `git hash-object` equal to the blob `93e5ee89`, MD5
+`D8C205490ED99BC818FC93716440236F`), build 0 errors: `SettingsWholeProtectedSaveTests`, `SettingsConnectionAndSecretSaveTests`
+and `SettingsSaveStoreCheckTests` 5 failed / 37 passed. A secret changed elsewhere between load and save, and one landing as
+the secret's store opened its first write, each had the rules written anyway (`"SamAccountNamePatterns":["svc-*"]` stored,
+`[]` expected; `sam_pattern:svc-*` where `user:cfo@contoso.com` was the first row) and left two records where one refusal was
+expected; a secret store that could not open a write had the rules written and then failed the secret. The 37 that passed
+include the clean save, the named window - the old order produces it too - and the service's compare, which is new code and
+was not swapped. The fixed page was restored to `A14C80B2B968A6501BAA61EE476C7A10` and touched.
+
+## Fix
+
+`Services/ModuleConfigService.cs`: `SaveChangedValues` and new `CompareChangedValues` share one private
+`DecideChangedValues(moduleId, loaded, wanted, writeIfClear)` - the per-key decision inside one `UpdateModuleIf`. With
+`writeIfClear` false a passing decision stores nothing either, so the compare's transaction is rolled back, change token
+included; `Saved` from the compare means it passed.
+
+`Services/ProtectedPrincipalService.cs`: `CompareDirectoryReadSecretId(loaded, wanted)`, the compare for the one key.
+
+`Components/Pages/AdminSettings.razor` `SaveProtectedPrincipals`: when the secret changed, after its two existing refusals and
+before `ReplaceConfig`, the compare against the baseline; `StoreCorrupt` and `ConcurrentChange` refuse the whole save through
+`LogSettingsSaveRefused` under `ProtectedPrincipals`, saying nothing was saved, the rules included. The secret's own write
+after the rules is unchanged.
+
+`docs/AdminModuleDeveloperGuide.md`: `CompareChangedValues` in the module-config API, and the rule for a save across two
+stores.
+
+Tests: new `ExchangeAdminWeb.Tests/SettingsWholeProtectedSaveTests.cs` (6 cases). `SettingsConnectionAndSecretSaveTests`: its
+two cases for a secret changed before the save - between load and save, and as the secret's store opens its first write,
+which is now the compare's - assert the whole-save refusal, one record, where they asserted the partial; the partial's helper
+is gone. `SettingsSaveStoreCheckTests.AdminSettings_ASecretSaveThatThrowsAfterTheRulesSaved_RecordsBoth_AndSaysTheRulesWereSaved`:
+the secret's store fails from the rules' write on (`ProtectedStore.BeforeWrite`) rather than from the start, because a store
+failing from the start now fails the compare and with it the whole save; its assertions are unchanged. One case beyond the
+plan: `ASecretStoreThatCannotOpenAWrite_FailsTheWholeSave_BeforeTheRules`, since the compare holds the secret's write lock and
+that is new behaviour.
+
+Caller-visible change, by design: on Admin Settings, a protected-principals save whose Secret ID was changed elsewhere since
+the page loaded is refused whole - nothing saved, the rules included, one refusal record - where it saved the rules and
+refused the secret; a secret store that cannot open a write fails the whole save before the rules. A change landing inside
+the save after the compare still saves the rules and refuses the secret, recorded as both, as before.
+
 ## Guard proof
 
-Pending.
+Session-local driver (`mutate.ps1` in the scratchpad's `a28r-a26p-work`): back up, mutate by exact text (one match required),
+MD5, `dotnet build` of the test project, `dotnet test` filtered to
+`FullyQualifiedName~SettingsWholeProtectedSaveTests|FullyQualifiedName~SettingsConnectionAndSecretSaveTests|FullyQualifiedName~SettingsSaveStoreCheckTests|FullyQualifiedName~SettingsSaveAuditTests|FullyQualifiedName~SettingsNoOpAndUnreadableSecretTests|FullyQualifiedName~SettingsPerRowSaveTests|FullyQualifiedName~ProtectedPrincipalServiceTests|FullyQualifiedName~ModuleConfigServiceTests|FullyQualifiedName~AdminPageDirtyStateTests|FullyQualifiedName~ProgressRegistryTests|FullyQualifiedName~WholeStoreWriterTripwireTests|FullyQualifiedName~ProtectedGroupWriteTargetTests|FullyQualifiedName~SettingsConcurrentSaveTests|FullyQualifiedName~SettingsStoreTextTests`
+(322 tests), restore from the backup, set the write time, MD5 re-confirmed. Fixed-file MD5s:
+`Components/Pages/AdminSettings.razor` `A14C80B2B968A6501BAA61EE476C7A10`, `Services/ModuleConfigService.cs`
+`A53FCA7B8018A2DB031038C438077F92`; every mutant built with 0 errors and each file was restored to its MD5. After the round,
+the restored tree rebuilt and the same filter: 322/322 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| 1 | `AdminSettings.SaveProtectedPrincipals`: the rules written before the compare again - the compare ahead of `ReplaceConfig` disabled (`if (secretChanged && false)`), so the secret is compared only inside its own write, after the rules | `4A6C977B955030FE5E201EFA71C1BECA` | `ASecretChangedElsewhereBeforeTheSave_RefusesTheWholeSave_AndWritesNothing_RulesIncluded` (`"SamAccountNamePatterns":["svc-*"]` stored, `[]` expected), `ASecretChangedElsewhereAsTheCompareOpensItsWrite_RefusesTheWholeSave_RulesIncluded` and `ASecretStoreThatCannotOpenAWrite_FailsTheWholeSave_BeforeTheRules` (`sam_pattern:svc-*` stored), `SettingsConnectionAndSecretSaveTests.AdminSettings_ASecretChangedElsewhere_IsNotOverwritten_AndItsSaveIsRefused` and `..._InsideTheSave_IsNotOverwritten` (two records, the rules' success and the secret's refusal, where one was expected) |
+| E1 | extra, `ModuleConfigService.CompareChangedValues`: the compare writes (`writeIfClear: true`) | `6A4D45056CC195608946FB8E9F4FB91D` | `TheCompare_WritesNothing_AndReportsWhatASaveWouldMeet` (`"4242"` stored by the compare, `"777"` expected), `ACleanSave_WritesTheRulesAndTheSecret_EachWithItsRecord` (the secret's record added nothing: its write found the compare's value); collateral in `SettingsSaveStoreCheckTests`: `AdminSettings_ANoRulesSaveOverRulesAddedSinceThePageLoaded_IsRefused_AndTheRulesStay` and `AdminSettings_ASecretSaveThatThrowsAfterTheRulesSaved_...` (the secret stored by a save that wrote nothing else), `AdminSettings_AChangedSecret_IsSavedWithItsOwnRecord` |
+
+The code comments are written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors; 61 warnings, all pre-existing, none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,624 passed / 3 skipped (the three known AD skips) / 0 failed, 5,627 total, 5m23s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No PowerShell session, directory, Exchange Online, Delinea, SMTP, push or deployment: the one rule edit in the new cases is a
+pattern, never looked up, and the harness leaves the directory services unset. The page was not rendered in a browser. No
+coder self-review verdict is claimed.
+
+## Known gaps
+
+- The window named in plan item 3: a change to the secret landing during the rules' write of the same save - another admin, or
+  the other instance, within that save's milliseconds - still leaves the rules saved and the secret refused, recorded as both;
+  and a secret write that throws after the rules is aud-a28j's partial, unchanged. Closing either needs the two repositories in
+  one transaction, which no repository supports today.
+- The compare takes the secret's write lock to read; a database whose write lock is held past the 5-second busy timeout fails
+  the save before anything is written, where it used to fail only the secret after the rules.
+- Two in-process stores on one temp file stand in for the two instances; nothing ran against the shared database.

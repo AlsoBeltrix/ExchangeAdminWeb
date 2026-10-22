@@ -1149,6 +1149,27 @@
                 return;
             }
 
+            if (secretChanged)
+            {
+                var secretCheck = ProtectedPrincipalService.CompareDirectoryReadSecretId(ppDirectoryReadSecretIdBaseline, secretId);
+                if (secretCheck.Status == ModuleConfigSaveStatus.StoreCorrupt)
+                {
+                    statusMessage = "Refusing to save: the directory-read credential's setting could not be read as the save went to check it. Nothing was saved, the protection rules included. "
+                        + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey);
+                    statusIsError = true;
+                    Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
+                    return;
+                }
+
+                if (secretCheck.Status == ModuleConfigSaveStatus.ConcurrentChange)
+                {
+                    statusMessage = "Refusing to save: the directory-read credential (Delinea Secret ID) was changed after this page loaded it - by another administrator, or on the other instance. Nothing was saved, the protection rules included. Reload the page and re-apply your changes.";
+                    statusIsError = true;
+                    Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage);
+                    return;
+                }
+            }
+
             var newConfig = new ProtectedPrincipalConfig
             {
                 Users = ppUsers.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),

@@ -233,21 +233,8 @@ public sealed class SettingsConnectionAndSecretSaveTests : IDisposable
     private static string SecretShown(AdminSettingsPage page) =>
         SettingsPageHarness.Field<string>(page, typeof(AdminSettingsPage), "ppDirectoryReadSecretId");
 
-    private void AssertTheRulesSavedAndTheSecretRefused(AdminSettingsPage page, string refusedAt)
-    {
-        var records = _h.AuditEvents();
-        Assert.Equal(2, records.Count);
-        var rules = Assert.Single(records, r => Text(r, "section") == "ProtectedPrincipals");
-        Assert.Equal("Success", Text(rules, "result"));
-        var secret = Assert.Single(records, r => Text(r, "section") == SecretSection);
-        Assert.Equal("Failed", Text(secret, "result"));
-        Assert.Equal(refusedAt, Text(secret, "refusedAt"));
-        Assert.False(secret.GetProperty("mutationAttempted").GetBoolean());
-        Assert.Equal(Status(page), Text(secret, "error"));
-        Assert.Contains("rules were saved", Status(page), StringComparison.Ordinal);
-        Assert.True(IsError(page));
-    }
-
+    // aud-a28r. A secret changed elsewhere is compared before the rules are written, so its refusal is the whole
+    // save's: one record under the save's section. The window left after that compare is SettingsWholeProtectedSaveTests'.
     [Fact]
     public async Task AdminSettings_ASecretChangedElsewhere_IsNotOverwritten_AndItsSaveIsRefused()
     {
@@ -260,13 +247,14 @@ public sealed class SettingsConnectionAndSecretSaveTests : IDisposable
         await _h.RunAsync(page, "SaveProtectedPrincipals");
 
         Assert.Equal("888", StoredSecret());
-        AssertTheRulesSavedAndTheSecretRefused(page, "ConcurrentChange");
+        AssertOnlyARefusal("ProtectedPrincipals", "ConcurrentChange", Status(page));
+        Assert.True(IsError(page));
     }
 
     [Fact]
     public async Task AdminSettings_ASecretChangedElsewhereInsideTheSave_IsNotOverwritten()
     {
-        // The rules are written on their own store; the module-config store's first write is the secret's.
+        // The module-config store's first write is the secret's compare, made before the rules' write.
         SeedRules(Cfo);
         SeedSecret("777");
         var page = _h.OpenAdminSettings();
@@ -277,7 +265,7 @@ public sealed class SettingsConnectionAndSecretSaveTests : IDisposable
 
         Assert.Null(_h.ModuleConfigStore.BeforeWrite);
         Assert.Equal("888", StoredSecret());
-        AssertTheRulesSavedAndTheSecretRefused(page, "ConcurrentChange");
+        AssertOnlyARefusal("ProtectedPrincipals", "ConcurrentChange", Status(page));
     }
 
     /// <summary>When the secret's row was last written. The change token will not do here: it is the database's, and the rules' write moves it.</summary>

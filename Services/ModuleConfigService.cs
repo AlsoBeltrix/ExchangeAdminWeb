@@ -148,7 +148,15 @@ public class ModuleConfigService
     /// could land between a read and a later write.
     /// </remarks>
     public ModuleConfigSaveOutcome SaveChangedValues(
-        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted)
+        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted) =>
+        DecideChangedValues(moduleId, loaded, wanted, writeIfClear: true);
+
+    public ModuleConfigSaveOutcome CompareChangedValues(
+        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted) =>
+        DecideChangedValues(moduleId, loaded, wanted, writeIfClear: false);
+
+    private ModuleConfigSaveOutcome DecideChangedValues(
+        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted, bool writeIfClear)
     {
         ArgumentNullException.ThrowIfNull(loaded);
         ArgumentNullException.ThrowIfNull(wanted);
@@ -195,7 +203,7 @@ public class ModuleConfigService
                     return null;
                 }
 
-                return write;
+                return writeIfClear ? write : null;
             });
 
             if (update.Written)
