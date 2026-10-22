@@ -7,7 +7,7 @@ replace or purge those nodes' files. Deploy and promote also refuse nested nodes
 the `/XD` excluded folders (`logs`, `config`), which the mirror leaves alone. And the plan-mode
 lines and comments in promote and the cutover ("refuse unless IIS serves that folder from this
 pool and no other") describe aud-a38f's rule, not aud-a38i's; tests pin that text.
-**Status**: Merged to master (`f18431d0`); closed on guard proof; codex review pending
+**Status**: Merged to master (`f18431d0`); closed on guard proof; codex ops-batch-7 clean
 **Branch**: `worktree-agent-aeb07a6371bf7b965` (forked at `36fb150d`)
 **Commit**: `40e578f0` (merged `f18431d0`)
 **Reviewer**: implementer (surfaced by the aud-a38i/a7e agent, 2026-10-22, candidates 3 and 4 of its hand-back)

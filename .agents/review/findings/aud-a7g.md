@@ -6,7 +6,7 @@ and `ConvertTimeToUtc` picks one without asking, so the auto-reply window can be
 off from the operator's intent. The second part is LOW: when the browser returns a real IANA id
 this host cannot resolve, the page says the browser zone "could not be read" and asks for a reload,
 which cannot fix a server-side globalization gap.
-**Status**: Merged to master (`f18431d0`); closed on guard proof; codex review pending
+**Status**: Merged to master (`f18431d0`); closed on guard proof; codex ops-batch-7 clean
 **Branch**: `worktree-agent-aeb07a6371bf7b965` (forked at `36fb150d`; this record exported from master `a77b9f77`)
 **Commit**: `9f3f8e39` (merged `f18431d0`); plan/record export `1e0ef195`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (ops-batch-6, `prompt-ops-batch-6.md`, 2026-10-22)

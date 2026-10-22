@@ -3,7 +3,7 @@
 **Severity**: LOW - same ambiguity aud-a7e removed from the Scheduled notice, left in two other
 places: the Out of Office Check Status tab renders a read schedule's start and end with no zone,
 and the owner notice's "Date:" line is the server clock with no zone.
-**Status**: Merged to master (`f18431d0`); closed on guard proof; codex review pending
+**Status**: Merged to master (`f18431d0`); closed on guard proof; codex ops-batch-7 clean
 **Branch**: `worktree-agent-aeb07a6371bf7b965` (forked at `36fb150d`)
 **Commit**: `58ccceac` (merged `f18431d0`)
 **Reviewer**: implementer (surfaced by the aud-a38i/a7e agent, 2026-10-22, candidates 1 and 2 of its hand-back)
