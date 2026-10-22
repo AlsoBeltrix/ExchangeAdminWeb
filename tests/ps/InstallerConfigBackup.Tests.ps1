@@ -1415,3 +1415,59 @@ Describe 'cdt-33: only a confirmed stop reaches the installer''s mirror' {
         $stopped.Calls | Should -BeExactly 'stop,mirror,start,manifest'
     }
 }
+
+Describe 'cdt-34: a relative -PublishPath or -LogRoot resolves where the operator is' {
+    # [System.IO.Path]::GetFullPath resolves against the PROCESS directory, which Set-Location does
+    # not move, so a relative path landed under wherever the PowerShell process had started.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt34Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        foreach ($name in 'Write-Fail', 'Assert-SafeDirectoryPath') {
+            $fn = $script:Cdt34Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            if ($null -eq $fn) { throw "the installer defines no function $name" }
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+    }
+
+    It 'resolves a relative path against the current location, and leaves an absolute one as it was' {
+        $loc = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt34_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $loc -Force | Out-Null
+        Push-Location -LiteralPath $loc
+        try {
+            [Environment]::CurrentDirectory | Should -Not -Be $loc -Because 'the trap is set: the process directory is elsewhere'
+            Assert-SafeDirectoryPath 'site' 'PublishPath' | Should -BeExactly (Join-Path $loc 'site')
+            Assert-SafeDirectoryPath '.\a\..\b' 'LogRoot' | Should -BeExactly (Join-Path $loc 'b')
+            Assert-SafeDirectoryPath 'D:\apps\App\' 'PublishPath' | Should -BeExactly 'D:\apps\App'
+            { Assert-SafeDirectoryPath 'C:\' 'PublishPath' } | Should -Throw -ExpectedMessage '*cannot be a drive root*'
+        } finally {
+            Pop-Location
+            Remove-Item -LiteralPath $loc -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'a -PlanOnly run from another location plans the folders under it and creates nothing (Windows PowerShell 5.1)' {
+        $loc = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt34_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $loc -Force | Out-Null
+        $alias = 'cdt34' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+        try {
+            $command = "Set-Location -LiteralPath '$loc'; & '$((Resolve-Path $script:InstallerPath).Path)' -PlanOnly -NonInteractive -PublishPath 'site' -LogRoot 'logs' -AppAlias '$alias' -AppPoolName '$alias' -AdminGroups 'CONTOSO\Exchange Admins'"
+            $out = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $command 2>&1
+            $exitCode = $LASTEXITCODE
+            $text = @($out | ForEach-Object { "$_" }) -join "`n"
+            $exitCode | Should -Be 0 -Because $text
+            # Windows PowerShell may wrap long lines; compare with whitespace removed.
+            $flat = $text -replace '\s+', ''
+            $publishLine = ('Publish : ' + (Join-Path $loc 'site')) -replace '\s+', ''
+            $logLine = ('Log root : ' + (Join-Path $loc 'logs')) -replace '\s+', ''
+            $flat | Should -Match ([regex]::Escape($publishLine)) -Because 'the publish folder is planned where the operator is'
+            $flat | Should -Match ([regex]::Escape($logLine))
+            $text | Should -Match 'Plan only\. No changes were made\.'
+            @(Get-ChildItem -LiteralPath $loc -Force).Count | Should -Be 0 -Because 'a plan creates nothing'
+        } finally {
+            Remove-Item -LiteralPath $loc -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}

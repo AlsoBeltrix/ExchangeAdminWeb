@@ -215,7 +215,10 @@ function Assert-SafeDirectoryPath {
         Write-Fail "$Name is required."
     }
 
-    $full = [System.IO.Path]::GetFullPath($Path)
+    # cdt-34: resolved against PowerShell's current location first. GetFullPath alone resolves a
+    # relative path against the PROCESS directory, which Set-Location does not move, so a relative
+    # -PublishPath or -LogRoot landed under wherever the PowerShell process had started.
+    $full = [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
     $root = [System.IO.Path]::GetPathRoot($full).TrimEnd('\', '/')
     if ($full.TrimEnd('\', '/') -eq $root) {
         Write-Fail "$Name cannot be a drive root: $full"
