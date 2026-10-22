@@ -107,6 +107,101 @@ Files: `Components/Pages/AdminEventLog.razor`, `Services/Storage/AttributeEditor
 `ExchangeAdminWeb.Tests/EventLogUndoRefusalTests.cs`, `ExchangeAdminWeb.Tests/AllowlistConcurrentSaveTests.cs`,
 this record.
 
+## Fix
+
+`Components/Pages/AdminEventLog.razor`:
+
+- ExecuteUndo reads what it acts on into locals before its first await - the event (`target`), the preview,
+  the trimmed ticket and the client IP - and every later read uses them: FindHandler, aud-a28l's
+  LogUndoRefused, the fields copy, ExecuteUndoAsync, the in-session reversed add, the catch's log line and its
+  record. The auth state and `userName` are read first in the try, above FindHandler.
+- The no-handler return calls `LogUndoNotRun(target, userName, clientIp, ticket, "NoHandler", undoError)`
+  first. The catch calls `LogUndoNotRun(target, userName ?? "unknown", clientIp, ticket, null, undoError)`
+  while `moduleCalled` is false; it is set on the line before `handler.ExecuteUndoAsync`.
+- New `LogUndoNotRun`: `Audit.LogModuleAction(userName, clientIp, "AdminEventLog_Undo", "AdminEventLog",
+  <the event's FullTarget, or "(none)">, false, ticket, error, extra)` with `originalOperationId` (null when
+  the event has none), `mutationAttempted: false` and, when given, `refusedAt`; inside a catch that logs an
+  audit failure. `@inject AuditService Audit`.
+- CloseUndoPanel returns while `undoExecuting`; the X and Cancel buttons render `disabled="@undoExecuting"`.
+- The category filter offers `AdminEventLog`.
+- 1484 lines before, 1528 after. NotYetConverted in ClickGateRegistry, so no line key moves.
+
+`Services/Storage/AttributeEditorRepository.cs`: `SaveAllowlist` is `internal`.
+
+Tests: `EventLogUndoRefusalTests` - six new cases: `AnUndoNoModuleClaims_LeavesOneRefusalRecord`,
+`AnUndoThatThrowsBeforeItsModuleIsCalled_LeavesOneFailureRecord` (the page re-check faulted; the level check
+faulted), `ACancelWhileTheUndoRuns_IsRefused_AndTheUndosOutcomeIsShownAndRecorded`,
+`ThePanelClearedWhileTheUndoRuns_CannotTurnItsOutcomeIntoAnException` and
+`TheUndoPanelsCloseButtons_AreDisabledWhileAnUndoRuns`; its authorization substitute can hold or fault a
+policy's answer, the page is given the harness's `Audit` and the entry its `FullTarget`.
+`AllowlistConcurrentSaveTests.TheRepositorysWholeTableSave_IsNotPublic`. One existing scan follows the
+change: `ReversedOperationsTests.ThePageTakesItsMarkersFromTheRule` pinned the in-session add's text as
+`reversedOperationIds.Add(undoPreview.OriginalOperationId)`; it now pins
+`reversedOperationIds.Add(preview.OriginalOperationId)`, the captured preview - still exactly one add, of
+the preview's operation id. Outside the plan's file list by necessity, not scope.
+
+Caller-visible change, by design: an undo no module claims, and one the page ends with an exception before
+its module is called, each leave one `AdminEventLog_Undo` record (category `AdminEventLog`, Failed,
+`mutationAttempted` false; `refusedAt: NoHandler` for the first). While an undo runs the panel's X and Cancel
+are disabled and a click on the backdrop does nothing; the panel closes as before once the undo has ended.
+The messages the operator sees are unchanged. Nothing in the app called the repository's SaveAllowlist.
+
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: each part of the fix is reverted at its own call site below - M1 and M2
+are the two exits as they were, M3 the catch's log line as it was, E1 the close as it was, E2 the
+repository's writer as it was - and each fails the test that names it.
+
+Session-local driver (`mutate.ps1`, session scratchpad `a28m-a26j-work`, copied from the a28l/a26g/a26i
+round): exact bytes saved, one literal replacement that must match exactly once, Release build with `0
+Error(s)` required, filter
+`FullyQualifiedName~EventLogUndoRefusalTests|FullyQualifiedName~AllowlistConcurrentSaveTests|FullyQualifiedName~ADAttributeEditorUndoRefusalTests|FullyQualifiedName~AllowlistSaveAuditTests|FullyQualifiedName~AllowlistBannerTests|FullyQualifiedName~ADAttributeEditorPatternTests|FullyQualifiedName~ADAttributeEditorServiceTests|FullyQualifiedName~ReversedOperationsTests|FullyQualifiedName~PageAuthorizationRecheckTests|FullyQualifiedName~UndoNotificationTests|FullyQualifiedName~PageProtectionGateServicingTests|FullyQualifiedName~AuditCategoryFilingTests`
+(167 tests), exact bytes restored in `finally`, MD5 re-checked, mtime advanced so MSBuild rebuilds (log
+`a28m-mutations.log`). Every mutant built with 0 errors; each restore matched its original MD5. After the
+round, a rebuild on the restored bytes and the filter: 167/167 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| M1 the no-handler record dropped | `AdminEventLog.razor`, `A1BB2EE1D48262DA116491FB056B7E30` | `8AA5434326509986366E32B2ADD121DF` | `AnUndoNoModuleClaims_LeavesOneRefusalRecord` (no record) |
+| M2 the catch's record dropped | `AdminEventLog.razor`, `A1BB2EE1D48262DA116491FB056B7E30` | `0C7D707958A5FF62127557C2B207CCE1` | `AnUndoThatThrowsBeforeItsModuleIsCalled_LeavesOneFailureRecord` (both cases), `ACancelWhileTheUndoRuns_IsRefused_AndTheUndosOutcomeIsShownAndRecorded`, `ThePanelClearedWhileTheUndoRuns_CannotTurnItsOutcomeIntoAnException` (no record) |
+| M3 the catch's log line reading `undoTargetEvent.OperationId` again, as at `762c774c` | `AdminEventLog.razor`, `A1BB2EE1D48262DA116491FB056B7E30` | `7E505D66358109E5F43C922CE1BE7C6A` | `ThePanelClearedWhileTheUndoRuns_CannotTurnItsOutcomeIntoAnException` only - with the field cleared mid-run the catch throws out of the handler; the Cancel test passes, as it must, because the guarded close no longer clears it |
+| extra E1 CloseUndoPanel's `undoExecuting` guard dropped | `AdminEventLog.razor`, `A1BB2EE1D48262DA116491FB056B7E30` | `32BAB80031319FBE1737E9B72832E865` | `ACancelWhileTheUndoRuns_IsRefused_AndTheUndosOutcomeIsShownAndRecorded` only (the panel closed mid-run); `ThePanelClearedWhileTheUndoRuns_CannotTurnItsOutcomeIntoAnException` still passes - the locals, not the guard, keep the outcome recorded |
+| extra E2 `SaveAllowlist` public again | `AttributeEditorRepository.cs`, `40B5B0E09D7758F1AE889DFA8FA3D83E` | `59959A735F692E0F2106CD3F0B658550` | `TheRepositorysWholeTableSave_IsNotPublic` |
+
+Unchanged through the round: `EventLogUndoRefusalTests.cs` `6A3B3BB5FB6C726710C450A1D1BDDA4A`,
+`AllowlistConcurrentSaveTests.cs` `AB0B19E72B6963426A0A1FF043E0DBC2`, `ReversedOperationsTests.cs`
+`73D0036C8B91E1A61C6E944E0DF9AC08`. The code comments are written after the round, in their own commit, so
+the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline
+  count - none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,318 passed / 3 skipped (the three known AD skips,
+  `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0 failed, 5,321 total, 5m20s;
+  nothing hung, no Sequence file. Baseline at `762c774c`: 5,311 / 3 / 0, 5,314 total; the seven new cases
+  are this record's.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` with the files staged: exit 0.
+- `ClickGate*` 316/316 and ProgressRegistryTests 35/35 run alone on this tree (Release), and among the
+  suite above.
+
+No PowerShell source, AD module, directory, Delinea, SMTP, push or deployment. The page was not rendered in
+a browser and no live circuit was run. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- ShowUndoPreview is not refused while an undo runs. The table's Undo buttons sit behind the backdrop but stay
+  keyboard-reachable, so a second preview opened mid-run replaces the panel and the first undo's outcome then
+  shows on it. The running undo is unaffected - it acts on its locals. A candidate, not fixed here.
+- An exception out of ExecuteUndoAsync is the module's to record, and the page records nothing once it has
+  called the module. ADAttributeEditorUndoService records every exit inside its try and each of its three
+  refusals before it; the BeginOperation before its try is outside its catch, and is not known to throw (its
+  trace write goes through the JSONL writer, which logs and swallows its IO errors). Not driven.
+- The no-handler exit is defensive: the panel offers Confirm Undo only after a handler previewed the event,
+  and FindHandler is a pure function of the event, so the rendered panel cannot reach it. Recorded anyway.
+- The page records are audited, not announced (aud-a28d's known gap). They carry no old/new values: the page
+  holds the module's record shape only through the module.
+- ExecuteUndo and CloseUndoPanel are driven through the compiled page by reflection on a do-nothing renderer,
+  not through a rendered circuit; the disabled attributes are pinned by a source scan only.

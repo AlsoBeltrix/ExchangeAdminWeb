@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Progress;
 using Microsoft.AspNetCore.Authorization;
@@ -39,13 +40,29 @@ public sealed class EventLogUndoRefusalTests : IDisposable
     private readonly HandlerRenderer _renderer = new();
     private readonly IAuthorizationService _authorization = Substitute.For<IAuthorizationService>();
     private readonly HashSet<string> _denied = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCompletionSource<AuthorizationResult>> _held = new(StringComparer.Ordinal);
 
     public EventLogUndoRefusalTests()
     {
         _authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
-            .Returns(call => Task.FromResult(_denied.Contains(call.ArgAt<string>(2))
-                ? AuthorizationResult.Failed()
-                : AuthorizationResult.Success()));
+            .Returns(call =>
+            {
+                var policy = call.ArgAt<string>(2);
+                if (_held.TryGetValue(policy, out var held))
+                    return held.Task;
+
+                return Task.FromResult(_denied.Contains(policy)
+                    ? AuthorizationResult.Failed()
+                    : AuthorizationResult.Success());
+            });
+    }
+
+    /// <summary>The answer for <paramref name="policy"/> is whatever the returned source is given.</summary>
+    private TaskCompletionSource<AuthorizationResult> Hold(string policy)
+    {
+        var answer = new TaskCompletionSource<AuthorizationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _held[policy] = answer;
+        return answer;
     }
 
     public void Dispose()
@@ -56,10 +73,11 @@ public sealed class EventLogUndoRefusalTests : IDisposable
     }
 
     /// <summary>The page with the undo panel open on <paramref name="edit"/> and a ticket typed.</summary>
-    private Page PageConfirming(Dictionary<string, object?> edit)
+    private Page PageConfirming(Dictionary<string, object?> edit, UndoRegistry? registry = null)
     {
         var page = new QuietEventLog();
-        SetProperty(page, "UndoRegistry", new UndoRegistry([_h.CreateUndoService()]));
+        SetProperty(page, "UndoRegistry", registry ?? new UndoRegistry([_h.CreateUndoService()]));
+        SetProperty(page, "Audit", _h.Audit);
         var authState = Substitute.For<AuthenticationStateProvider>();
         authState.GetAuthenticationStateAsync().Returns(new AuthenticationState(AttributeEditorHarness.Operator()));
         SetProperty(page, "AuthStateProvider", authState);
@@ -72,6 +90,7 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         var entry = Activator.CreateInstance(entryType)!;
         entryType.GetProperty("RawFields")!.SetValue(entry, edit);
         entryType.GetProperty("OperationId")!.SetValue(entry, (string)edit["operationId"]!);
+        entryType.GetProperty("FullTarget")!.SetValue(entry, (string)edit["target"]!);
         SetField(page, "undoTargetEvent", entry);
         SetField(page, "undoPreview", new UndoPreview(
             true, null, "ADAttributeEditor", "ADAttributeEditor_Update", (string)edit["target"]!,
@@ -85,6 +104,10 @@ public sealed class EventLogUndoRefusalTests : IDisposable
     private Task ExecuteUndo(Page page) =>
         _renderer.Dispatcher.InvokeAsync(() =>
             (Task)typeof(Page).GetMethod("ExecuteUndo", PrivateInstance)!.Invoke(page, null)!);
+
+    private Task CloseUndoPanel(Page page) =>
+        _renderer.Dispatcher.InvokeAsync(() =>
+            typeof(Page).GetMethod("CloseUndoPanel", PrivateInstance)!.Invoke(page, null));
 
     private static void SetProperty(Page page, string name, object value) =>
         typeof(Page).GetProperty(name, PrivateInstance)!.SetValue(page, value);
@@ -161,6 +184,156 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         Assert.Null(thrown);
         Assert.Contains(logger.ReceivedCalls(), call =>
             call.GetMethodInfo().Name == "Log" && Equals(call.GetArguments()[0], LogLevel.Error));
+    }
+
+    // ---- aud-a28m: every exit of ExecuteUndo leaves its record, and a close cannot break it ----------
+
+    private const string StoreUnreadable = "The authorization store could not be read.";
+
+    /// <summary>The edit is not marked reversed: not by the page's in-session set, nor by the rule the next load applies.</summary>
+    private void AssertNotReversed(Page page)
+    {
+        Assert.DoesNotContain("op-forward-1", Field<HashSet<string>>(page, "reversedOperationIds"));
+        Assert.DoesNotContain("op-forward-1", ReversedOperations.From(
+            _h.AuditEvents(),
+            e => e.TryGetProperty("originalOperationId", out var id) ? id.GetString() : null,
+            e => e.TryGetProperty("result", out var outcome) ? outcome.GetString() : null));
+    }
+
+    /// <summary>The event log's own record of an undo it did not hand to a module.</summary>
+    private static void AssertEventLogRecord(JsonElement record, string shown, LocalAd.User alex)
+    {
+        Assert.Equal("AdminEventLog_Undo", Text(record, "action"));
+        Assert.Equal("AdminEventLog", Text(record, "category"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal(shown, Text(record, "error"));
+        Assert.Equal("op-forward-1", Text(record, "originalOperationId"));
+        Assert.Equal(alex.Upn, Text(record, "target"));
+        Assert.Equal("operator", Text(record, "user"));
+        Assert.Equal(Ip, Text(record, "ip"));
+        Assert.Equal(Ticket, Text(record, "ticket"));
+    }
+
+    [Fact]
+    public async Task AnUndoNoModuleClaims_LeavesOneRefusalRecord()
+    {
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var page = PageConfirming(
+            AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"), new UndoRegistry([]));
+
+        await ExecuteUndo(page);
+
+        var shown = Field<string?>(page, "undoError");
+        Assert.False(string.IsNullOrEmpty(shown));
+        Assert.Null(Field<string?>(page, "undoSuccess"));
+
+        var record = Assert.Single(_h.AuditEvents());
+        AssertEventLogRecord(record, shown!, alex);
+        Assert.Equal("NoHandler", Text(record, "refusedAt"));
+
+        Assert.Equal(0, _h.Service.SessionsOpened);
+        Assert.Empty(_h.Ad.Sets);
+        Assert.Empty(_h.Notices);
+        AssertNotReversed(page);
+    }
+
+    [Theory]
+    [InlineData("EventLog")]
+    [InlineData("ADAttributeEditorLevel3")]
+    public async Task AnUndoThatThrowsBeforeItsModuleIsCalled_LeavesOneFailureRecord(string faulted)
+    {
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var page = PageConfirming(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
+        Hold(faulted).SetException(new InvalidOperationException(StoreUnreadable));
+
+        await ExecuteUndo(page);
+
+        var shown = Field<string?>(page, "undoError");
+        Assert.Contains(StoreUnreadable, shown, StringComparison.Ordinal);
+        Assert.Null(Field<string?>(page, "undoSuccess"));
+
+        var record = Assert.Single(_h.AuditEvents());
+        AssertEventLogRecord(record, shown!, alex);
+        Assert.False(record.TryGetProperty("refusedAt", out _));
+
+        Assert.Equal(0, _h.Service.SessionsOpened);
+        Assert.Empty(_h.Ad.Sets);
+        Assert.Empty(_h.Notices);
+        AssertNotReversed(page);
+    }
+
+    [Fact]
+    public async Task ACancelWhileTheUndoRuns_IsRefused_AndTheUndosOutcomeIsShownAndRecorded()
+    {
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var page = PageConfirming(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
+        var check = Hold("EventLog");
+        var confirmed = Field<object?>(page, "undoTargetEvent");
+
+        var undo = ExecuteUndo(page);
+        Assert.False(undo.IsCompleted);
+        Assert.True(Field<bool>(page, "undoExecuting"));
+
+        await CloseUndoPanel(page);
+
+        Assert.Same(confirmed, Field<object?>(page, "undoTargetEvent"));
+        Assert.NotNull(Field<UndoPreview?>(page, "undoPreview"));
+        Assert.Equal(Ticket, Field<string>(page, "undoTicket"));
+
+        check.SetException(new InvalidOperationException(StoreUnreadable));
+        var escaped = await Record.ExceptionAsync(() => undo);
+
+        Assert.Null(escaped);
+        var shown = Field<string?>(page, "undoError");
+        Assert.Contains(StoreUnreadable, shown, StringComparison.Ordinal);
+        AssertEventLogRecord(Assert.Single(_h.AuditEvents()), shown!, alex);
+        Assert.False(Field<bool>(page, "undoExecuting"));
+
+        await CloseUndoPanel(page);
+
+        Assert.Null(Field<object?>(page, "undoTargetEvent"));
+        Assert.Null(Field<UndoPreview?>(page, "undoPreview"));
+    }
+
+    [Fact]
+    public async Task ThePanelClearedWhileTheUndoRuns_CannotTurnItsOutcomeIntoAnException()
+    {
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var page = PageConfirming(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
+        var check = Hold("EventLog");
+
+        var undo = ExecuteUndo(page);
+        await _renderer.Dispatcher.InvokeAsync(() =>
+        {
+            SetField(page, "undoPreview", null);
+            SetField(page, "undoTargetEvent", null);
+            SetField(page, "undoError", null);
+            SetField(page, "undoSuccess", null);
+            SetField(page, "undoTicket", "");
+        });
+
+        check.SetException(new InvalidOperationException(StoreUnreadable));
+        var escaped = await Record.ExceptionAsync(() => undo);
+
+        Assert.Null(escaped);
+        var shown = Field<string?>(page, "undoError");
+        Assert.Contains(StoreUnreadable, shown, StringComparison.Ordinal);
+        AssertEventLogRecord(Assert.Single(_h.AuditEvents()), shown!, alex);
+    }
+
+    [Fact]
+    public void TheUndoPanelsCloseButtons_AreDisabledWhileAnUndoRuns()
+    {
+        var markup = RazorSyntax.CommentsBlanked(File.ReadAllText(
+            AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminEventLog.razor")));
+
+        var buttons = Regex.Matches(markup, @"<button[^>]*@onclick=""CloseUndoPanel""[^>]*>")
+            .Select(m => m.Value)
+            .ToList();
+
+        Assert.Equal(2, buttons.Count);
+        Assert.All(buttons, button => Assert.Contains("disabled=\"@undoExecuting\"", button, StringComparison.Ordinal));
     }
 
     private sealed class QuietEventLog : Page

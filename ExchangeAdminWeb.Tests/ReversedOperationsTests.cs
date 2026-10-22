@@ -96,7 +96,7 @@ public sealed class ReversedOperationsTests : IDisposable
         // Add is the old loop come back.
         var adds = Regex.Matches(page, @"reversedOperationIds\.Add\(");
         Assert.True(adds.Count == 1, $"expected only the in-session add after a successful undo; found {adds.Count}");
-        Assert.Contains("reversedOperationIds.Add(undoPreview.OriginalOperationId)", page, StringComparison.Ordinal);
+        Assert.Contains("reversedOperationIds.Add(preview.OriginalOperationId)", page, StringComparison.Ordinal);
     }
 
     private Task<UndoResult> Undo(LocalAd.User user) =>

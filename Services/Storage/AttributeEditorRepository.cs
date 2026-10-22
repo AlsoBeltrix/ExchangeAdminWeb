@@ -54,7 +54,7 @@ public sealed class AttributeEditorRepository
     }
 
     /// <summary>Replaces the entire allowlist (clear + insert) and marks present, in one txn.</summary>
-    public void SaveAllowlist(IReadOnlyList<AttributeRow> rows)
+    internal void SaveAllowlist(IReadOnlyList<AttributeRow> rows)
     {
         _store.Write((connection, transaction) =>
         {

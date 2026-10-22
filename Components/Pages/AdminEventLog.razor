@@ -12,6 +12,7 @@
 @inject ExtendedLogService ExtendedLog
 @inject JsonlLogService JsonlLog
 @inject UndoRegistry UndoRegistry
+@inject AuditService Audit
 @inject ClientInfoService ClientInfo
 @using ExchangeAdminWeb.Modules
 @using ExchangeAdminWeb.Services.Storage
@@ -66,6 +67,7 @@
                 <option value="LicensingUpdates">LicensingUpdates</option>
                 <option value="Comms10k">Comms10k</option>
                 <option value="AdminSettings">AdminSettings</option>
+                <option value="AdminEventLog">AdminEventLog</option>
                 <option value="ADAttributeEditor">ADAttributeEditor</option>
                 <option value="MfaReset">MfaReset</option>
                 <option value="GroupManagement">GroupManagement</option>
@@ -342,7 +344,7 @@
     <div class="position-fixed top-0 end-0 bottom-0 bg-body shadow-lg d-flex flex-column" style="width: min(500px, 90vw); z-index: 1050;">
         <div class="p-3 border-bottom d-flex justify-content-between align-items-center">
             <h5 class="mb-0">Undo Preview</h5>
-            <button type="button" class="btn-close" @onclick="CloseUndoPanel"></button>
+            <button type="button" class="btn-close" @onclick="CloseUndoPanel" disabled="@undoExecuting"></button>
         </div>
         <div class="p-3 flex-grow-1 overflow-auto">
             @if (undoLoading)
@@ -419,7 +421,7 @@
             }
         </div>
         <div class="p-3 border-top d-flex gap-2 justify-content-end">
-            <button class="btn btn-secondary btn-sm" @onclick="CloseUndoPanel">
+            <button class="btn btn-secondary btn-sm" @onclick="CloseUndoPanel" disabled="@undoExecuting">
                 @(undoSuccess != null ? "Close" : "Cancel")
             </button>
             @if (undoPreview.CanUndo && undoSuccess == null)
@@ -947,6 +949,9 @@
 
     private void CloseUndoPanel()
     {
+        if (undoExecuting)
+            return;
+
         undoPreview = null;
         undoTargetEvent = null;
         undoError = null;
@@ -956,8 +961,15 @@
 
     private async Task ExecuteUndo()
     {
-        if (undoTargetEvent == null || undoPreview == null || string.IsNullOrWhiteSpace(undoTicket))
+        var target = undoTargetEvent;
+        var preview = undoPreview;
+        if (target == null || preview == null || string.IsNullOrWhiteSpace(undoTicket))
             return;
+
+        var ticket = undoTicket.Trim();
+        var clientIp = ClientInfo.IpAddress;
+        string? userName = null;
+        var moduleCalled = false;
 
         undoExecuting = true;
         undoError = null;
@@ -971,17 +983,17 @@
 
         try
         {
-            var handler = UndoRegistry.FindHandler(undoTargetEvent.RawFields);
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            // Read before the re-check, so its refusal record says who was refused and from where.
+            userName = authState.User.Identity?.Name ?? "unknown";
+
+            var handler = UndoRegistry.FindHandler(target.RawFields);
             if (handler == null)
             {
                 undoError = "No undo handler available for this event.";
+                LogUndoNotRun(target, userName, clientIp, ticket, "NoHandler", undoError);
                 return;
             }
-
-            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            // Read before the re-check, so its refusal record says who was refused and from where.
-            var userName = authState.User.Identity?.Name ?? "unknown";
-            var clientIp = ClientInfo.IpAddress;
 
             // Re-check authorization immediately before the write: hasUndoPermission
             // is evaluated at render and only hides UI, which is not security. A
@@ -995,11 +1007,11 @@
                 // aud-a28l: refused before the module is called, so the module never sees this
                 // attempt; it is recorded here, in the module's own refused-undo record. Failed, so
                 // the edit keeps its Undo button (aud-a26c); not announced, as it never was.
-                handler.LogUndoRefused(undoTargetEvent.RawFields, userName, clientIp, undoTicket.Trim(), "Authorization", undoError);
+                handler.LogUndoRefused(target.RawFields, userName, clientIp, ticket, "Authorization", undoError);
                 return;
             }
 
-            var fields = new Dictionary<string, object?>(undoTargetEvent.RawFields, StringComparer.OrdinalIgnoreCase);
+            var fields = new Dictionary<string, object?>(target.RawFields, StringComparer.OrdinalIgnoreCase);
             if (handler.ModuleId == "ADAttributeEditor")
             {
                 var maxLevel = 0;
@@ -1011,18 +1023,19 @@
                 fields["_undoMaxLevel"] = maxLevel;
             }
 
+            moduleCalled = true;
             var result = await handler.ExecuteUndoAsync(
                 fields,
                 userName,
                 clientIp,
-                undoTicket.Trim(),
+                ticket,
                 authState.User);
 
             if (result.Success)
             {
                 undoSuccess = $"Undo completed successfully. Reversal operation ID: {result.ReversalOperationId ?? "N/A"}";
-                if (!string.IsNullOrEmpty(undoPreview?.OriginalOperationId))
-                    reversedOperationIds.Add(undoPreview.OriginalOperationId);
+                if (!string.IsNullOrEmpty(preview.OriginalOperationId))
+                    reversedOperationIds.Add(preview.OriginalOperationId);
 
                 // The window closes HERE, before the trailing refresh, which is
                 // BlockedSenders.ConfirmUnblock's shape and is a decision rather than a
@@ -1042,14 +1055,45 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Failed to execute undo for operation {OperationId}", undoTargetEvent.OperationId);
+            Logger.LogError(ex, "Failed to execute undo for operation {OperationId}", target.OperationId);
             undoError = $"Unexpected error: {ex.Message}";
+            if (!moduleCalled)
+                LogUndoNotRun(target, userName ?? "unknown", clientIp, ticket, null, undoError);
         }
         finally
         {
             activity.Complete(undoError == null, undoError);
             undoExecuting = false;
             StateHasChanged();
+        }
+    }
+
+    private void LogUndoNotRun(MergedLogEntry target, string userName, string clientIp, string ticket, string? refusedAt, string error)
+    {
+        try
+        {
+            var extra = new Dictionary<string, object?>
+            {
+                ["originalOperationId"] = string.IsNullOrEmpty(target.OperationId) ? null : target.OperationId,
+                ["mutationAttempted"] = false,
+            };
+            if (refusedAt is not null)
+                extra["refusedAt"] = refusedAt;
+
+            Audit.LogModuleAction(
+                userName,
+                clientIp,
+                "AdminEventLog_Undo",
+                "AdminEventLog",
+                string.IsNullOrEmpty(target.FullTarget) ? "(none)" : target.FullTarget,
+                false,
+                ticket,
+                error,
+                extra);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Audit failed for an undo the event log did not hand to its module");
         }
     }
 

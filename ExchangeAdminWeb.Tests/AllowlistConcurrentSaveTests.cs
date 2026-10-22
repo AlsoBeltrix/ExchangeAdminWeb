@@ -214,6 +214,17 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
         Assert.Contains("_repository.ReplaceAllowlist(", save, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TheRepositorysWholeTableSave_IsNotPublic()
+    {
+        var save = typeof(AttributeEditorRepository).GetMethod(
+            nameof(AttributeEditorRepository.SaveAllowlist), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+        Assert.NotNull(save);
+        Assert.False(save!.IsPublic);
+        Assert.True(save.IsAssembly);
+    }
+
     private static bool HoldsAllowlistRows(Type type) =>
         type.GetInterfaces().Append(type).Any(i =>
             i.IsGenericType
