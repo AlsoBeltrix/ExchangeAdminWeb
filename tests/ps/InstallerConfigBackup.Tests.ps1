@@ -1182,7 +1182,7 @@ Describe 'cdt-23: a failed run removes its staging publish' {
         ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
         # Since cdt-32 the region asks IIS what serves the folder before the stop; that check has its
         # own tests (the cdt-32 Describe), so here it passes and records nothing.
-        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath) $null = $Name, $PhysicalPath }
+        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath, $NestedNodes) $null = $Name, $PhysicalPath, $NestedNodes }
         ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; if ($script:cdt23Case -eq 'StopFails') { throw "App pool is still 'Started' after 60 seconds." }; 'Stopped' }
         ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments; if ($script:cdt23Case -eq 'MirrorFails') { Write-Fail "robocopy failed with exit code 8 during: $Description" } }
         ${function:Start-AppPoolVerified} = { param($Name) $null = $Name; 'Started' }
@@ -1250,10 +1250,10 @@ Describe 'cdt-32: the installer asks IIS what serves the folder before it stops 
         $previous.Extent.Text | Should -BeLike 'Invoke-PlanOrAction "Confirm that IIS serves *' -Because 'the statement right before the stop step is the folder check'
         $check = $previous.PipelineElements[0]
         $check.GetCommandName() | Should -BeExactly 'Invoke-PlanOrAction' -Because 'the check is a step, so a plan prints it and runs nothing (Invariant 4)'
-        $check.CommandElements[1].Extent.Text | Should -BeExactly '"Confirm that IIS serves $PublishPath from app pool $AppPoolName and no other"'
+        $check.CommandElements[1].Extent.Text | Should -BeExactly '"Confirm that IIS serves $PublishPath from app pool $AppPoolName and no other, with nothing else rooted inside it (the mirror replaces the whole folder)"'
         $body = @($check.CommandElements[2].ScriptBlock.EndBlock.Statements)
         $body.Count | Should -Be 1 -Because 'the step is the check and nothing else'
-        $body[0].Extent.Text | Should -BeExactly '$null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath'
+        $body[0].Extent.Text | Should -BeExactly '$null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath -NestedNodes Refuse'
         $calls = @($script:Cdt32Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-AppPoolServesPath' }, $true))
         $calls.Count | Should -Be 1
         $ancestor = $calls[0].Parent
@@ -1281,8 +1281,8 @@ Describe 'cdt-32: the installer asks IIS what serves the folder before it stops 
         ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath, $PlanOnly; @{ Summary = 'tool' } }
         ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
         ${function:Assert-AppPoolServesPath} = {
-            param($Name, $PhysicalPath)
-            $script:cdt32Calls.Add('serves')
+            param($Name, $PhysicalPath, $NestedNodes)
+            $script:cdt32Calls.Add("serves($NestedNodes)")
             if ($script:cdt32ServedElsewhere) { throw "The files at '$PhysicalPath' are served by an app pool other than '$Name': Other Site/Copy runs under 'OtherPool'. Stopping '$Name' would leave that application running while its files are replaced. Name the pool that serves them, or fix the binding." }
             [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = $Name; PhysicalPath = $PhysicalPath }
         }
@@ -1320,13 +1320,13 @@ Describe 'cdt-32: the installer asks IIS what serves the folder before it stops 
 
         $script:cdt32Thrown = $null
         $elsewhere = & $run $true $false
-        $elsewhere.Calls | Should -BeExactly 'serves' -Because 'a folder another pool also serves must stop the run before the pool is stopped or anything mirrored'
+        $elsewhere.Calls | Should -BeExactly 'serves(Refuse)' -Because 'a folder another pool also serves must stop the run before the pool is stopped or anything mirrored'
         $elsewhere.Thrown | Should -BeLike "*served by an app pool other than 'ExamplePool'*" -Because 'the refusal is the module''s own'
         $elsewhere.StagingLeft | Should -BeFalse -Because 'the refusal happens inside the try that removes staging'
 
         $alone = & $run $false $false
         $alone.Thrown | Should -BeNullOrEmpty
-        $alone.Calls | Should -BeExactly 'serves,stop,mirror,start,manifest' -Because 'the check comes right before the stop'
+        $alone.Calls | Should -BeExactly 'serves(Refuse),stop,mirror,start,manifest' -Because 'the check comes right before the stop'
 
         $planned = & $run $true $true
         $planned.Thrown | Should -BeNullOrEmpty
@@ -1375,7 +1375,7 @@ Describe 'cdt-33: only a confirmed stop reaches the installer''s mirror' {
         ${function:dotnet} = { New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null; $global:LASTEXITCODE = 0 }
         ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath, $PlanOnly; @{ Summary = 'tool' } }
         ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
-        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath) $null = $Name, $PhysicalPath }
+        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath, $NestedNodes) $null = $Name, $PhysicalPath, $NestedNodes }
         ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt33Calls.Add('stop'); $script:cdt33StopResult }
         ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments, $Description; $script:cdt33Calls.Add('mirror') }
         ${function:Start-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt33Calls.Add('start'); 'Started' }

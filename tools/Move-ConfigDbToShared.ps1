@@ -221,14 +221,21 @@ function Assert-PoolServesInstance {
     # stopped and confirmed, dev ran on under its real pool while steps 3 and 4 snapshotted its
     # database, and the restore commands then copied that stale snapshot back over the live file.
     #
-    # The rule is AppPoolControl's, called exactly as promote-dev-to-prod.ps1 calls it (aud-a38c):
-    # it refuses unless IIS serves the folder from the named pool and from no other, and fails
-    # closed when IIS cannot be read or nothing serves the folder. Its message names the pool that
-    # does serve the folder, or lists what IIS reported; this adds the parameter to fix.
+    # The rule is AppPoolControl's (aud-a38c): it refuses unless IIS serves the folder from the
+    # named pool and from no other, and fails closed when IIS cannot be read or nothing serves the
+    # folder. Its message names the pool that does serve the folder, or lists what IIS reported;
+    # this adds the parameter to fix.
+    #
+    # aud-a38j: -NestedNodes Allow, where the promotion passes Refuse. The cutover copies databases
+    # only - backups out to -BackupRoot, dev's database to the shared path, which lies outside both
+    # folders - and rewrites each instance's appsettings.json; it never mirrors. So a site,
+    # application or virtual directory rooted inside the folder loses no files to it, and one under
+    # the named pool is stopped with it. One under another pool would keep a worker serving from
+    # inside the instance's folder while its database is copied, and Allow still refuses that.
     param([string]$Label, [string]$Name, [string]$PublishPath, [string]$PoolParameter)
 
     try {
-        $null = Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath
+        $null = Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Allow
     } catch {
         Write-Fail "-$PoolParameter names app pool '$Name', but IIS does not confirm that this pool alone serves the $Label folder $PublishPath. $($_.Exception.Message) The cutover stops that pool and then copies the $Label database, so it must be the pool that serves the instance. Nothing has been stopped or copied."
     }
@@ -704,9 +711,10 @@ $poolIdentities = @()
 $identityLabel = 'both app pool identities'
 
 if ($PlanOnly) {
-    # Printed whatever happens next, so every plan shows the check - the promotion's dry-run line.
-    Write-Plan "Assert-AppPoolServesPath -Name $DevAppPoolName -PhysicalPath $DevPublishPath (refuse unless IIS serves that folder from this pool and no other)"
-    Write-Plan "Assert-AppPoolServesPath -Name $ProdAppPoolName -PhysicalPath $ProdPublishPath (refuse unless IIS serves that folder from this pool and no other)"
+    # Printed whatever happens next, so every plan shows the check and the rule the cutover applies
+    # (aud-a38j: Allow, where the promotion's dry-run line says Refuse).
+    Write-Plan "Assert-AppPoolServesPath -Name $DevAppPoolName -PhysicalPath $DevPublishPath -NestedNodes Allow (refuse unless IIS serves that folder, and everything rooted inside it, from this pool and no other)"
+    Write-Plan "Assert-AppPoolServesPath -Name $ProdAppPoolName -PhysicalPath $ProdPublishPath -NestedNodes Allow (refuse unless IIS serves that folder, and everything rooted inside it, from this pool and no other)"
     $iisReason = $null
     if (-not (Test-IsAdministrator)) {
         $iisReason = 'this session is not elevated'

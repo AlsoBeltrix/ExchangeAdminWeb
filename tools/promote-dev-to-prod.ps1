@@ -224,7 +224,7 @@ function Stop-AppPoolChecked {
     )
 
     if (-not $Apply) {
-        Write-Plan "Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath (refuse unless IIS serves that folder from this pool and no other)"
+        Write-Plan "Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse (refuse unless IIS serves that folder from this pool and no other, and nothing else is rooted inside it: the mirror replaces the whole folder)"
         Write-Plan "Stop-AppPoolVerified -Name $Name (refuse to promote unless IIS confirms it Stopped)"
         if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath -PlanOnly | Out-Null }
         return
@@ -237,7 +237,10 @@ function Stop-AppPoolChecked {
     # replaced. Confirming that the NAMED pool stopped proves nothing when prod runs under a
     # different one - a wrong but existing -ProdAppPoolName would be stopped, confirmed and
     # mirrored past. deploy.ps1 makes the same check, keyed on its site and alias.
-    $null = Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath
+    # aud-a38j: -NestedNodes Refuse, because the mirror below replaces the whole prod folder and
+    # purges what dev's output lacks - a node rooted inside it would lose its files whatever pool
+    # serves it (aud-a38i).
+    $null = Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse
     # aud-a38b: this was a bare Stop-WebAppPool and a three-second sleep - a guess about how
     # long a worker takes to exit - and then robocopy /MIR replaced the files of the live prod
     # application whether or not it had. Stop, then CONFIRM: Stop-AppPoolVerified polls IIS

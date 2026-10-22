@@ -1160,6 +1160,34 @@ Describe 'aud-a38g: the cutover refuses unless each named pool is the one servin
                 Should -Throw -ExpectedMessage "*-ProdAppPoolName names app pool 'aud-a38g-prod'*Cannot read the IIS sites and applications*Cannot read configuration file*Nothing has been stopped or copied."
             $script:servesEvents | Should -Contain 'applications probe'
         }
+
+        It 'aud-a38j: passes a folder with a node rooted inside it under the same pool' {
+            # The finding. The cutover replaces nothing inside the folder, and stopping the named
+            # pool stops the nested node with it; under the mirror's rule (aud-a38i) this refused.
+            $PSDefaultParameterValues = New-ServingProbe -Applications {
+                $script:servesEvents.Add('applications probe')
+                $script:ServedByDevPool
+                [pscustomobject]@{ Location = 'Default Web Site/aud-a38g-Dev/reports'; ApplicationPool = 'aud-a38g-dev'; PhysicalPath = "$($script:DevFolder)\reports" }
+            }
+
+            { Assert-PoolServesInstance -Label 'Dev' -Name 'aud-a38g-dev' -PublishPath $script:DevFolder -PoolParameter 'DevAppPoolName' 6>&1 | Out-Null } |
+                Should -Not -Throw
+            $script:servesEvents | Should -Contain 'applications probe'
+        }
+
+        It 'aud-a38j: still refuses a node rooted inside the folder under another pool' {
+            # Stopping the named pool would leave that pool's worker serving from inside the
+            # instance's folder while its database is copied.
+            $PSDefaultParameterValues = New-ServingProbe -Applications {
+                $script:servesEvents.Add('applications probe')
+                $script:ServedByDevPool
+                [pscustomobject]@{ Location = 'Default Web Site/aud-a38g-Dev/reports'; ApplicationPool = 'ReportsPool'; PhysicalPath = "$($script:DevFolder)\reports" }
+            }
+
+            { Assert-PoolServesInstance -Label 'Dev' -Name 'aud-a38g-dev' -PublishPath $script:DevFolder -PoolParameter 'DevAppPoolName' 6>&1 | Out-Null } |
+                Should -Throw -ExpectedMessage '*Default Web Site/aud-a38g-Dev/reports*'
+            $script:servesEvents | Should -Contain 'applications probe'
+        }
     }
 
     Context 'the cutover' {
@@ -1169,8 +1197,9 @@ Describe 'aud-a38g: the cutover refuses unless each named pool is the one servin
             try {
                 $out = Invoke-Cutover $fake @{ PlanOnly = $true; MinimumAppVersion = '1.0' }
 
-                $dev = "PLAN Assert-AppPoolServesPath -Name ExchangeAdminWebDev -PhysicalPath $($fake.Dev) (refuse unless IIS serves that folder from this pool and no other)"
-                $prod = "PLAN Assert-AppPoolServesPath -Name ExchangeAdminWeb -PhysicalPath $($fake.Prod) (refuse unless IIS serves that folder from this pool and no other)"
+                # aud-a38j: each line states the rule the cutover applies, nested nodes included.
+                $dev = "PLAN Assert-AppPoolServesPath -Name ExchangeAdminWebDev -PhysicalPath $($fake.Dev) -NestedNodes Allow (refuse unless IIS serves that folder, and everything rooted inside it, from this pool and no other)"
+                $prod = "PLAN Assert-AppPoolServesPath -Name ExchangeAdminWeb -PhysicalPath $($fake.Prod) -NestedNodes Allow (refuse unless IIS serves that folder, and everything rooted inside it, from this pool and no other)"
                 $out.IndexOf($dev) | Should -BeGreaterOrEqual 0 -Because 'the plan shows the dev check'
                 $out.IndexOf($prod) | Should -BeGreaterThan $out.IndexOf($dev) -Because 'the plan shows the prod check, after the dev one'
                 $out.IndexOf('PLAN Stop app pool ') | Should -BeGreaterThan $out.IndexOf($prod) -Because 'both checks come before either stop'
@@ -1184,10 +1213,10 @@ Describe 'aud-a38g: the cutover refuses unless each named pool is the one servin
 
     Context 'the call sites' {
 
-        It 'asks the module, with the promotion''s parameters, from one place' {
+        It 'asks the module from one place, stating that nodes nested under the same pool are allowed (aud-a38j)' {
             $calls = @(Get-ServesCommand 'Assert-AppPoolServesPath')
             $calls.Count | Should -Be 1 -Because 'one call into the module and no copy of its rule'
-            $calls[0].Extent.Text | Should -BeExactly 'Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath'
+            $calls[0].Extent.Text | Should -BeExactly 'Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Allow'
 
             $wrapper = Get-ServesFunction 'Assert-PoolServesInstance'
             $tries = @($wrapper.FindAll({ param($node) $node -is [System.Management.Automation.Language.TryStatementAst] }, $true))

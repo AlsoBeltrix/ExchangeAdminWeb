@@ -573,13 +573,34 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
 
             $script:promoteEvents | Should -Not -Contain 'applications probe'
-            @($script:promoteEvents | Where-Object { $_ -like 'plan: Assert-AppPoolServesPath -Name aud-a38b-prod -PhysicalPath X:\prod *' }).Count | Should -Be 1
+            # aud-a38j: the plan line states the rule the promotion applies, nested nodes included.
+            @($script:promoteEvents | Where-Object { $_ -like 'plan: Assert-AppPoolServesPath *' }) |
+                Should -Be @('plan: Assert-AppPoolServesPath -Name aud-a38b-prod -PhysicalPath X:\prod -NestedNodes Refuse (refuse unless IIS serves that folder from this pool and no other, and nothing else is rooted inside it: the mirror replaces the whole folder)')
+        }
+
+        It 'aud-a38j: refuses a prod folder with a node rooted inside it under the same pool, before stopping anything' {
+            # The promotion mirrors over the prod folder, so it states -NestedNodes Refuse: the nested
+            # node is refused although it runs under the prod pool itself.
+            Set-Variable -Name Apply -Value $true
+            $PSDefaultParameterValues = New-PoolProbe `
+                -Exists { $script:promoteEvents.Add('exists probe'); $true } `
+                -State { 'Stopped' } `
+                -Serving {
+                    $script:promoteEvents.Add('applications probe')
+                    [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = 'X:\prod' }
+                    [pscustomobject]@{ Location = 'Web/prod/reports'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = 'X:\prod\reports' }
+                }
+
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' -PublishPath 'X:\prod' } | Should -Throw -ExpectedMessage '*Web/prod/reports*'
+            $script:promoteEvents | Should -Contain 'applications probe'
+            $script:promoteEvents | Should -Not -Contain 'exists probe'
+            $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
         }
 
         It 'checks the folder the mirror replaces, inside the stop step, before the stop' {
             $checks = @(Get-PromoteCommand 'Assert-AppPoolServesPath')
             $checks.Count | Should -Be 1
-            $checks[0].Extent.Text | Should -Be 'Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath'
+            $checks[0].Extent.Text | Should -Be 'Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse'
 
             $stopStep = Get-PromoteFunction 'Stop-AppPoolChecked'
             $verified = @(Get-PromoteCommand 'Stop-AppPoolVerified')[0]
@@ -655,7 +676,7 @@ Describe 'Assert-AppPoolServesPath' {
     }
 
     It 'passes, and returns what serves the folder, when the named pool alone serves it' {
-        $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+        $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                 Get-IisEntry -Location 'Web/' -ApplicationPool 'DefaultAppPool' -PhysicalPath 'D:\sites'
                 Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
             })
@@ -667,7 +688,7 @@ Describe 'Assert-AppPoolServesPath' {
     It 'refuses when the folder is served by a different pool, and says which and where' {
         # THE FINDING.
         {
-            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                 Get-IisEntry -Location 'Web/App' -ApplicationPool 'RealPool' -PhysicalPath 'D:\sites\App'
             }
         } | Should -Throw -ExpectedMessage "*'D:\sites\App'*Web/App runs under 'RealPool'*Stopping 'ProdPool' would leave that application running*"
@@ -675,7 +696,7 @@ Describe 'Assert-AppPoolServesPath' {
 
     It 'refuses when any one of several applications on the folder runs under another pool' {
         {
-            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                 Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
                 Get-IisEntry -Location 'Other/App' -ApplicationPool 'OtherPool' -PhysicalPath 'D:\sites\App'
             }
@@ -686,7 +707,7 @@ Describe 'Assert-AppPoolServesPath' {
         # Case, forward slashes, a trailing separator, a dot segment, an environment variable.
         $env:AUD_A38C_ROOT = 'D:\sites'
         try {
-            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                     Get-IisEntry -Location 'A/' -ApplicationPool 'ProdPool' -PhysicalPath 'd:/SITES/app/'
                     Get-IisEntry -Location 'B/' -ApplicationPool 'ProdPool' -PhysicalPath '%AUD_A38C_ROOT%\App'
                     Get-IisEntry -Location 'C/' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\.\App\'
@@ -701,7 +722,7 @@ Describe 'Assert-AppPoolServesPath' {
     It 'does not mistake a sibling folder that shares a prefix for the folder' {
         # ...\AppDev starts with ...\App. A prefix test reads the sibling's pool as serving this
         # folder - refusing a correct promotion here, accepting a wrong one in the next test.
-        $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+        $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                 Get-IisEntry -Location 'Web/AppDev' -ApplicationPool 'DevPool' -PhysicalPath 'D:\sites\AppDev'
                 Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
             })
@@ -714,24 +735,24 @@ Describe 'Assert-AppPoolServesPath' {
         # deploy.ps1's check lets an empty answer through. Here, if nothing can be shown to
         # serve the folder, stopping the named pool cannot be shown to stop what runs from it.
         {
-            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                 Get-IisEntry -Location 'Web/AppDev' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\AppDev'
             }
         } | Should -Throw -ExpectedMessage "*No IIS site or application has its files at 'D:\sites\App'*IIS reported 1: Web/AppDev at 'D:\sites\AppDev' under 'ProdPool'*"
     }
 
     It 'fails closed when IIS reports nothing at all' {
-        { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe { } } |
+        { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe { } } |
             Should -Throw -ExpectedMessage '*IIS reported no sites or applications at all*'
     }
 
     It 'fails closed when IIS cannot be read, and says why' {
-        { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe { throw 'Cannot read configuration file' } } |
+        { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe { throw 'Cannot read configuration file' } } |
             Should -Throw -ExpectedMessage "*Cannot read the IIS sites and applications*'ProdPool'*Cannot read configuration file*"
     }
 
     It 'compares pool names without regard to case, as deploy.ps1''s check does' {
-        $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+        $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                 Get-IisEntry -Location 'Web/App' -ApplicationPool 'PRODPOOL' -PhysicalPath 'D:\sites\App'
             })
 
@@ -748,7 +769,7 @@ Describe 'Assert-AppPoolServesPath' {
         It 'refuses when an application nested inside the folder runs under another pool, and names it' {
             # THE FINDING.
             {
-                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                     Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
                     Get-IisEntry -Location 'Web/App/Admin' -ApplicationPool 'OtherPool' -PhysicalPath 'D:\sites\App\Admin'
                 }
@@ -756,7 +777,7 @@ Describe 'Assert-AppPoolServesPath' {
         }
 
         It 'does not count a folder that only shares the prefix as inside the folder' {
-            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                     Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
                     Get-IisEntry -Location 'Web/AppDev' -ApplicationPool 'DevPool' -PhysicalPath 'D:\sites\AppDev'
                     Get-IisEntry -Location 'Web/AppDev/Admin' -ApplicationPool 'DevPool' -PhysicalPath 'D:\sites\AppDev\Admin'
@@ -768,7 +789,7 @@ Describe 'Assert-AppPoolServesPath' {
 
         It 'counts a virtual directory inside the folder, under the pool of whatever owns it' {
             {
-                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                     Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
                     Get-IisEntry -Location 'Web/media' -ApplicationPool 'SitePool' -PhysicalPath 'D:\sites\App\wwwroot\media'
                 }
@@ -779,7 +800,7 @@ Describe 'Assert-AppPoolServesPath' {
             # A parent folder named by mistake: /MIR would replace everything under it, the siblings
             # of the application included, so a nested match is not "what serves the folder".
             {
-                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites' -ApplicationsProbe {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites' -NestedNodes Refuse -ApplicationsProbe {
                     Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
                 }
             } | Should -Throw -ExpectedMessage "*No IIS site or application has its files at 'D:\sites'*"
@@ -797,7 +818,7 @@ Describe 'Assert-AppPoolServesPath' {
         It 'refuses an application nested inside the folder under the same pool, and says the mirror would replace or purge it' {
             # THE FINDING. This passed under aud-a38f.
             {
-                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                     Get-IisEntry -Location 'Web/' -ApplicationPool 'DefaultAppPool' -PhysicalPath 'D:\sites'
                     Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
                     Get-IisEntry -Location 'Web/App/Admin' -ApplicationPool 'ProdPool' -PhysicalPath 'd:/SITES/app/admin/'
@@ -807,7 +828,7 @@ Describe 'Assert-AppPoolServesPath' {
 
         It 'refuses a virtual directory nested inside the folder under the same pool' {
             {
-                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                     Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
                     Get-IisEntry -Location 'Web/App/assets' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App\wwwroot\assets'
                 }
@@ -818,12 +839,99 @@ Describe 'Assert-AppPoolServesPath' {
             # One refusal for all of them: told only about the node under another pool, an operator
             # would move it to the named pool and be refused again for the same folder.
             {
-                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe {
                     Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
                     Get-IisEntry -Location 'Web/App/Admin' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App\Admin'
                     Get-IisEntry -Location 'Web/media' -ApplicationPool 'SitePool' -PhysicalPath 'D:\sites\App\wwwroot\media'
                 }
             } | Should -Throw -ExpectedMessage "*Web/App/Admin runs under 'ProdPool', with its files at 'D:\sites\App\Admin'; Web/media runs under 'SitePool', with its files at 'D:\sites\App\wwwroot\media'*"
+        }
+    }
+
+    Context 'aud-a38j: every caller states the nested-node rule, and Allow is the aud-a38f rule' {
+
+        # The aud-a38i refusal is right for a caller that mirrors the folder and wrong for one that
+        # never does (the cutover). -NestedNodes has no default, so each caller says which it is.
+
+        It 'fails binding when a caller does not say, and never reads IIS' {
+            # In a runspace with no host a missing mandatory parameter is an error; in this one it
+            # could be a prompt. The probe counts whether the function body ever ran.
+            $module = (Resolve-Path $script:ModulePath).Path
+            $ps = [powershell]::Create()
+            try {
+                $null = $ps.AddScript(@"
+Import-Module '$module' -Force
+`$global:probeAsked = 0
+Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe { `$global:probeAsked++; [pscustomobject]@{ Location = 'Web/App'; ApplicationPool = 'ProdPool'; PhysicalPath = 'D:\sites\App' } }
+`$global:probeAsked
+"@)
+                $output = @($ps.Invoke())
+                $errors = @($ps.Streams.Error)
+            } finally {
+                $ps.Dispose()
+            }
+
+            @($errors | Where-Object { $_.FullyQualifiedErrorId -like 'MissingMandatoryParameter,*' }).Count | Should -Be 1
+            $output[-1] | Should -Be 0 -Because 'the function never ran, so IIS was never asked'
+        }
+
+        It 'declares -NestedNodes mandatory, limited to Refuse and Allow, with no default' {
+            $command = Get-Command Assert-AppPoolServesPath -Module AppPoolControl
+            $parameter = $command.Parameters['NestedNodes']
+            @($parameter.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] -and $_.Mandatory }).Count | Should -Be 1
+            $sets = @($parameter.Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] })
+            $sets.Count | Should -Be 1
+            @($sets[0].ValidValues) | Should -Be @('Refuse', 'Allow')
+            $declared = @($command.ScriptBlock.Ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.ParameterAst] -and $node.Name.VariablePath.UserPath -eq 'NestedNodes'
+                    }, $true))
+            $declared.Count | Should -Be 1
+            $declared[0].DefaultValue | Should -BeNullOrEmpty -Because 'a default would choose the rule for a caller that did not'
+        }
+
+        It 'with Allow, passes nodes nested inside the folder under the named pool, and returns them with the folder''s own' {
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Allow -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/' -ApplicationPool 'DefaultAppPool' -PhysicalPath 'D:\sites'
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                    Get-IisEntry -Location 'Web/App/Admin' -ApplicationPool 'ProdPool' -PhysicalPath 'd:/SITES/app/admin/'
+                    Get-IisEntry -Location 'Web/App/assets' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App\wwwroot\assets'
+                    Get-IisEntry -Location 'Web/AppDev' -ApplicationPool 'DevPool' -PhysicalPath 'D:\sites\AppDev'
+                })
+
+            ($result | ForEach-Object Location) -join ',' | Should -Be 'Web/App,Web/App/Admin,Web/App/assets'
+        }
+
+        It 'with Allow, still refuses a node nested inside the folder under another pool, and blames only it' {
+            $err = $null
+            try {
+                $null = Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Allow -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                    Get-IisEntry -Location 'Web/App/Admin' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App\Admin'
+                    Get-IisEntry -Location 'Web/media' -ApplicationPool 'SitePool' -PhysicalPath 'D:\sites\App\wwwroot\media'
+                }
+            } catch { $err = "$_" }
+
+            $err | Should -Not -BeNullOrEmpty -Because 'stopping the named pool would leave the other pool serving from inside the folder'
+            $err | Should -BeLike '*Web/media*'
+            $err | Should -Not -BeLike '*Web/App/Admin*' -Because 'a nested node under the named pool is allowed'
+        }
+
+        It 'with Allow, still refuses a folder another pool serves' {
+            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Allow -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'RealPool' -PhysicalPath 'D:\sites\App'
+                } } | Should -Throw -ExpectedMessage '*Web/App*'
+        }
+
+        It 'with Allow, still refuses when nothing is at the folder itself' {
+            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites' -NestedNodes Allow -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                } } | Should -Throw -ExpectedMessage "*'D:\sites'*"
+        }
+
+        It 'with Allow, still refuses when IIS cannot be read' {
+            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Allow -ApplicationsProbe { throw 'Cannot read configuration file' } } |
+                Should -Throw -ExpectedMessage '*Cannot read configuration file*'
         }
     }
 
@@ -881,7 +989,7 @@ Describe 'Assert-AppPoolServesPath' {
                 $script:AppDirectories  = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites\App' })
             }
 
-            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' } |
+            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse } |
                 Should -Throw -ExpectedMessage "*Web/media runs under 'SitePool', with its files at 'D:\sites\App\media'*"
         }
 
@@ -894,7 +1002,7 @@ Describe 'Assert-AppPoolServesPath' {
                 $script:AppDirectories  = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites\App' }, [pscustomobject]@{ path = '/assets'; physicalPath = 'D:\sites\App' })
             }
 
-            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App')
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse)
             ($result | ForEach-Object Location) -join ',' | Should -Be 'Web/App,Web/App/assets'
         }
 
@@ -904,8 +1012,18 @@ Describe 'Assert-AppPoolServesPath' {
                 $script:AppDirectories  = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites\App' }, [pscustomobject]@{ path = '/assets'; physicalPath = 'D:\sites\App\assets' })
             }
 
-            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' } |
+            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse } |
                 Should -Throw -ExpectedMessage "*Web/App/assets runs under 'ProdPool', with its files at 'D:\sites\App\assets'*replace or purge*"
+        }
+
+        It 'aud-a38j: with Allow, passes an application''s own virtual directory inside the folder, under that application''s pool' {
+            Initialize-IisDirectory @{
+                $script:RootDirectories = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites' })
+                $script:AppDirectories  = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites\App' }, [pscustomobject]@{ path = '/assets'; physicalPath = 'D:\sites\App\assets' })
+            }
+
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Allow)
+            ($result | ForEach-Object Location) -join ',' | Should -Be 'Web/App,Web/App/assets'
         }
 
         It 'refuses when an application''s virtual directories cannot be shown to have been read' {
@@ -915,7 +1033,7 @@ Describe 'Assert-AppPoolServesPath' {
                 $script:RootDirectories = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites' })
             }
 
-            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' } |
+            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse } |
                 Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications*no root virtual directory for Web/App*'
         }
     }

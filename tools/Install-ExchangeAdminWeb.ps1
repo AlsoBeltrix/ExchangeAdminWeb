@@ -1085,9 +1085,10 @@ try {
     # Ask IIS for every node serving the folder (aud-a38c, the promotion script's check): the module
     # throws unless there is one and each runs under -AppPoolName, and nothing here catches it. A
     # step of its own, so a plan prints it - on a fresh install the application exists only once the
-    # apply run has created it above.
-    Invoke-PlanOrAction "Confirm that IIS serves $PublishPath from app pool $AppPoolName and no other" {
-        $null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath
+    # apply run has created it above. -NestedNodes Refuse (aud-a38j): the mirror below replaces the
+    # whole folder, so nothing may be rooted inside it, whatever its pool (aud-a38i).
+    Invoke-PlanOrAction "Confirm that IIS serves $PublishPath from app pool $AppPoolName and no other, with nothing else rooted inside it (the mirror replaces the whole folder)" {
+        $null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath -NestedNodes Refuse
     }
 
     Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped" {

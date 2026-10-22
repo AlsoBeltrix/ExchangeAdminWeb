@@ -613,7 +613,9 @@ try {
         # while the mirror replaces them (and this branch never points the alias at $PublishPath).
         # Ask IIS for every node serving the folder, as the promotion script does: the module throws
         # unless there is one and each runs under $AppPoolName, and nothing here catches it.
-        $null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath
+        # -NestedNodes Refuse (aud-a38j): the mirror below replaces the whole folder, so nothing may
+        # be rooted inside it, whatever its pool (aud-a38i).
+        $null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath -NestedNodes Refuse
 
         # A35: the empty catch here swallowed every stop failure, not only the harmless
         # already-stopped one, and the fixed sleep was a guess about how long a worker takes to
@@ -925,8 +927,9 @@ try {
         # application with its files in $PublishPath under a different pool would keep serving them
         # while the mirror replaces them. Ask IIS for every node serving the folder, as the promotion
         # script does: the module throws unless there is one and each runs under $AppPoolName, and
-        # nothing here catches it.
-        $null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath
+        # nothing here catches it. -NestedNodes Refuse (aud-a38j): the mirror below replaces the whole
+        # folder, so nothing may be rooted inside it, whatever its pool (aud-a38i).
+        $null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath -NestedNodes Refuse
 
         # A35: the empty catch here swallowed every stop failure, not only the harmless
         # already-stopped one, and the fixed sleep was a guess about how long a worker takes to
