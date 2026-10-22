@@ -538,6 +538,8 @@
     // offered and the save refuses on its own: the button is not the guard.
     private bool ppLoaded;
 
+    private string ppRulesVersion = "";
+
     // Surfaced next to the add controls, not through statusMessage: a refused Add must not
     // overwrite an unrelated save result.
     private string? ppAddError;
@@ -740,7 +742,7 @@
 
     private void LoadProtectedPrincipals()
     {
-        var (cfg, _, error) = ProtectedPrincipalService.LoadEffectiveConfig();
+        var (_, _, error) = ProtectedPrincipalService.LoadEffectiveConfig();
         if (error != null)
         {
             // aud-a26h. The service's error is the text a module shows an operator ("Contact your
@@ -751,14 +753,22 @@
             ppLoaded = false;
             return;
         }
-        if (cfg != null)
+
+        var editing = ProtectedPrincipalService.LoadRulesForEditing();
+        if (editing is null)
         {
-            ppUsers = cfg.Users.ToList();
-            ppGroups = cfg.Groups.ToList();
-            ppOus = cfg.OrganizationalUnits.ToList();
-            ppPatterns = cfg.SamAccountNamePatterns.ToList();
-            ppTargets = cfg.GroupTargets.ToList();
+            ppLoadError = "The protection rules could not be read, so the lists below are empty and saving is disabled. "
+                + SettingsStoreText.ProtectedPrincipals(ProtectedPrincipalService.LegacyImportFailed, exclusionsUnreadable: false);
+            ppLoaded = false;
+            return;
         }
+
+        ppUsers = editing.Config.Users.ToList();
+        ppGroups = editing.Config.Groups.ToList();
+        ppOus = editing.Config.OrganizationalUnits.ToList();
+        ppPatterns = editing.Config.SamAccountNamePatterns.ToList();
+        ppTargets = editing.Config.GroupTargets.ToList();
+        ppRulesVersion = editing.Version;
         ppDirectoryReadSecretId = ProtectedPrincipalService.GetDirectoryReadSecretId()?.ToString() ?? "";
         SnapshotProtectedBaseline();
         ppLoaded = true;
@@ -1086,7 +1096,7 @@
 
             // Decided under the write lock from the rules as they are: a store that cannot be read, and a save
             // holding no rules over rules this page never loaded, are refused there and write nothing.
-            var outcome = ProtectedPrincipalService.ReplaceConfig(newConfig, pageLoadedRules: LoadedRuleCount() > 0);
+            var outcome = ProtectedPrincipalService.ReplaceConfig(newConfig, pageLoadedRules: LoadedRuleCount() > 0, loadedVersion: ppRulesVersion);
             if (outcome.Status == ProtectedPrincipalSaveStatus.StoreCorrupt)
             {
                 statusMessage = "Refusing to save: the protection rules could not be read when this save went to replace them. Nothing was changed. "
@@ -1104,22 +1114,36 @@
                 return;
             }
 
+            if (outcome.Status == ProtectedPrincipalSaveStatus.ConcurrentChange)
+            {
+                statusMessage = "Refusing to save: the protection rules were changed after this page loaded them - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage);
+                return;
+            }
+
             // The rules are saved and in effect from here, so their record is written now - with the rows the
             // write replaced as its before-state (aud-a28k), not an empty one - and before the secret, whose
             // failure must not hide that they landed (aud-a28j's folded-in partial save).
+            var alreadyApplied = outcome.Status == ProtectedPrincipalSaveStatus.AlreadyApplied;
             try
             {
-                Audit.LogSettingsChange(currentUser, ip, section, RuleEntries(outcome.Before), RuleEntries(outcome.After),
-                    new Dictionary<string, object?> { ["counts"] = RuleCounts(outcome.After) });
+                var extra = new Dictionary<string, object?> { ["counts"] = RuleCounts(outcome.After) };
+                if (alreadyApplied)
+                    extra["alreadyApplied"] = ChangedRuleEntries();
+                Audit.LogSettingsChange(currentUser, ip, section, RuleEntries(outcome.Before), RuleEntries(outcome.After), extra);
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for protected principals change"); }
 
+            ppRulesVersion = outcome.Version ?? "";
             var secretFailure = secretChanged ? SaveDirectoryReadSecret(secretId, ip) : null;
             if (secretFailure is null)
             {
                 dirty.ClearSection(SectionProtected);
                 SnapshotProtectedBaseline();
-                statusMessage = "Protected principals saved. Changes are effective immediately.";
+                statusMessage = alreadyApplied
+                    ? "Protected principals saved: the rules already held these changes - made the same way elsewhere after this page loaded - so they were not written again. They are in effect."
+                    : "Protected principals saved. Changes are effective immediately.";
                 statusIsError = false;
             }
             else
@@ -1189,6 +1213,20 @@
                 .Concat(rules.SamAccountNamePatterns.Select(v => "Patterns:" + v))
                 .Concat(rules.GroupTargets.Select(v => "Targets:" + v))
                 .ToArray();
+
+    /// <summary>The entries the admin added or removed against what the page loaded, as <c>Kind:value</c>.</summary>
+    private string[] ChangedRuleEntries() =>
+        ChangedEntries("Users", ppUsers, ppUsersBaseline)
+            .Concat(ChangedEntries("Groups", ppGroups, ppGroupsBaseline))
+            .Concat(ChangedEntries("OUs", ppOus, ppOusBaseline))
+            .Concat(ChangedEntries("Patterns", ppPatterns, ppPatternsBaseline))
+            .Concat(ChangedEntries("Targets", ppTargets, ppTargetsBaseline))
+            .ToArray();
+
+    private static IEnumerable<string> ChangedEntries(string kind, List<string> current, List<string> loaded) =>
+        current.Except(loaded, StringComparer.OrdinalIgnoreCase)
+            .Concat(loaded.Except(current, StringComparer.OrdinalIgnoreCase))
+            .Select(v => kind + ":" + v);
 
     private static string RuleCounts(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData? rules) =>
         rules is null

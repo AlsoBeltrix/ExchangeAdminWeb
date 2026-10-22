@@ -116,6 +116,74 @@ public class ModuleConfigService
     }
 
     /// <summary>
+    /// The Module Configuration page's save (aud-a28n): writes only the keys in <paramref name="wanted"/>,
+    /// each decided inside one write against the module's row as it is under the lock and the value the
+    /// page loaded (<paramref name="loaded"/>; a key absent from either reads as empty). Throws when the
+    /// write fails.
+    /// </summary>
+    public ModuleConfigSaveOutcome SaveChangedValues(
+        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted)
+    {
+        ArgumentNullException.ThrowIfNull(loaded);
+        ArgumentNullException.ThrowIfNull(wanted);
+
+        var none = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (wanted.Count == 0)
+            return new ModuleConfigSaveOutcome(ModuleConfigSaveStatus.NothingToSave, [], [], none, none);
+
+        var status = ModuleConfigSaveStatus.Saved;
+        var conflicting = new List<string>();
+        var alreadyApplied = new List<string>();
+        ModuleConfigConditionalUpdate update;
+        lock (_writeLock)
+        {
+            update = _repository.UpdateModuleIf(moduleId, current =>
+            {
+                if (current is null)
+                {
+                    status = ModuleConfigSaveStatus.StoreCorrupt;
+                    return null;
+                }
+
+                var write = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var (key, value) in wanted)
+                {
+                    var now = current.GetValueOrDefault(key) ?? "";
+                    if (string.Equals(now, loaded.GetValueOrDefault(key) ?? "", StringComparison.Ordinal))
+                        write[key] = value ?? "";
+                    else if (string.Equals(now, value ?? "", StringComparison.Ordinal))
+                        alreadyApplied.Add(key);
+                    else
+                        conflicting.Add(key);
+                }
+
+                if (conflicting.Count > 0)
+                {
+                    status = ModuleConfigSaveStatus.ConcurrentChange;
+                    return null;
+                }
+
+                if (write.Count == 0)
+                {
+                    status = ModuleConfigSaveStatus.NothingToSave;
+                    return null;
+                }
+
+                return write;
+            });
+
+            if (update.Written)
+                _logger.LogInformation("Module config for {Module} updated ({Count} key(s))", moduleId, wanted.Count - alreadyApplied.Count);
+        }
+
+        if (update.Written)
+            ConfigSaved?.Invoke(moduleId);
+
+        var before = update.Before ?? none;
+        return new ModuleConfigSaveOutcome(status, conflicting, alreadyApplied, before, update.After ?? before);
+    }
+
+    /// <summary>
     /// One-time remap of the renamed Graph credential key: for every catalog module that declares
     /// a <c>GraphDelineaSecretId</c> ConfigField, move a value stranded under the old
     /// <c>DelineaSecretId</c> key to the new key (and drop the stale row). Catalog-driven so it is
@@ -240,3 +308,31 @@ public class ModuleConfigService
         }
     }
 }
+
+/// <summary>How <see cref="ModuleConfigService.SaveChangedValues"/> ended.</summary>
+public enum ModuleConfigSaveStatus
+{
+    /// <summary>The keys still as the page loaded them were written.</summary>
+    Saved,
+
+    /// <summary>Nothing written: no key changed, or every changed key already held its wanted value.</summary>
+    NothingToSave,
+
+    /// <summary>Nothing written: the module's values could not be read under the lock.</summary>
+    StoreCorrupt,
+
+    /// <summary>Nothing written: a changed key no longer holds what the page loaded, nor what it wants.</summary>
+    ConcurrentChange,
+}
+
+/// <summary>
+/// The outcome of a module-config save: the changed keys that had changed since the page loaded them
+/// (on <see cref="ModuleConfigSaveStatus.ConcurrentChange"/>), the changed keys that already held their
+/// wanted value and were not written, and the module's values as read under the write lock and as left.
+/// </summary>
+public sealed record ModuleConfigSaveOutcome(
+    ModuleConfigSaveStatus Status,
+    IReadOnlyList<string> ConflictingKeys,
+    IReadOnlyList<string> AlreadyApplied,
+    IReadOnlyDictionary<string, string> Before,
+    IReadOnlyDictionary<string, string> After);

@@ -148,7 +148,7 @@ public sealed class SettingsSaveStoreCheckTests : IDisposable
         var service = _h.CreateOtherProtectedPrincipals();
 
         var outcome = service.ReplaceConfig(
-            new ProtectedPrincipalConfig { SamAccountNamePatterns = ["svc-*"] }, pageLoadedRules: false);
+            new ProtectedPrincipalConfig { SamAccountNamePatterns = ["svc-*"] }, pageLoadedRules: false, loadedVersion: "");
 
         Assert.Equal(ProtectedPrincipalSaveStatus.StoreCorrupt, outcome.Status);
         Assert.Empty(StoredRules());

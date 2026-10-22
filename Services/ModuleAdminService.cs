@@ -143,6 +143,25 @@ public class ModuleAdminService
     }
 
     /// <summary>
+    /// The Module Configuration page's save (aud-a28n): adds and removes only the groups named, each decided
+    /// against the module's rows under the write lock; groups not named are not touched. Throws when the
+    /// write fails.
+    /// </summary>
+    public ModuleAdminChangeOutcome ApplyAdminChanges(string moduleId, IReadOnlyCollection<string> add, IReadOnlyCollection<string> remove)
+    {
+        ArgumentNullException.ThrowIfNull(add);
+        ArgumentNullException.ThrowIfNull(remove);
+
+        lock (_writeLock)
+        {
+            var outcome = _repository.ApplyChanges(moduleId, add, remove);
+            if (outcome.Written)
+                _logger.LogInformation("Module admins for {Module} changed ({Before} -> {After} group(s))", moduleId, outcome.Before.Length, outcome.After.Length);
+            return outcome;
+        }
+    }
+
+    /// <summary>
     /// Every module's grants, or an empty map when the store cannot be read.
     /// </summary>
     /// <remarks>

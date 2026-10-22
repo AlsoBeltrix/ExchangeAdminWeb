@@ -71,14 +71,31 @@ public enum ProtectedPrincipalSaveStatus
 
     /// <summary>Nothing written: the save held no rules, the store held some, and the page had loaded none.</summary>
     EmptyOverNonEmpty,
+
+    /// <summary>Nothing written: the rules changed after the page loaded them, to something other than this save.</summary>
+    ConcurrentChange,
+
+    /// <summary>Nothing written: the rules changed after the page loaded them, to exactly the rules this save holds.</summary>
+    AlreadyApplied,
 }
 
 /// <summary>
 /// The outcome of a protected-principals replace: the rules found under the write lock (null when they
-/// could not be read) and, after a replace, the rules it left.
+/// could not be read), the rules it left (after a replace, or as they stand when they already held this
+/// save), and - on <see cref="ProtectedPrincipalSaveStatus.Saved"/> and
+/// <see cref="ProtectedPrincipalSaveStatus.AlreadyApplied"/> - the version of the rules as they stand.
 /// </summary>
 public sealed record ProtectedPrincipalSaveOutcome(
-    ProtectedPrincipalSaveStatus Status, ProtectedPrincipalData? Before, ProtectedPrincipalData? After);
+    ProtectedPrincipalSaveStatus Status,
+    ProtectedPrincipalData? Before,
+    ProtectedPrincipalData? After,
+    string? Version = null);
+
+/// <summary>
+/// The protection rules as the admin page edits them, and the version of the one read they came from
+/// (aud-a28n).
+/// </summary>
+public sealed record ProtectedPrincipalRulesForEditing(ProtectedPrincipalConfig Config, string Version);
 
 /// <summary>
 /// One parsed Protected Targets entry. Stored as <c>objectGUID|DN</c>: the GUID is the immutable
@@ -1028,7 +1045,7 @@ public class ProtectedPrincipalService
     /// them since, and either way the admin never saw what the save would delete. A page that loaded rules
     /// and had the admin remove them one by one is that admin's intent, and saves.
     /// </remarks>
-    public ProtectedPrincipalSaveOutcome ReplaceConfig(ProtectedPrincipalConfig config, bool pageLoadedRules)
+    public ProtectedPrincipalSaveOutcome ReplaceConfig(ProtectedPrincipalConfig config, bool pageLoadedRules, string loadedVersion)
     {
         ArgumentNullException.ThrowIfNull(config);
 
@@ -1057,15 +1074,24 @@ public class ProtectedPrincipalService
                 return null;
             }
 
+            if (!string.Equals(RulesVersion(current), loadedVersion, StringComparison.Ordinal))
+            {
+                refusal = current.Configured && SameRules(current.Data, data)
+                    ? ProtectedPrincipalSaveStatus.AlreadyApplied
+                    : ProtectedPrincipalSaveStatus.ConcurrentChange;
+                return null;
+            }
+
             return data;
         });
 
         if (!outcome.Replaced)
         {
-            return new ProtectedPrincipalSaveOutcome(
-                refusal == ProtectedPrincipalSaveStatus.Saved ? ProtectedPrincipalSaveStatus.StoreCorrupt : refusal,
-                outcome.Before.Readable ? outcome.Before.Data : null,
-                null);
+            var status = refusal == ProtectedPrincipalSaveStatus.Saved ? ProtectedPrincipalSaveStatus.StoreCorrupt : refusal;
+            var before = outcome.Before.Readable ? outcome.Before.Data : null;
+            return status == ProtectedPrincipalSaveStatus.AlreadyApplied
+                ? new ProtectedPrincipalSaveOutcome(status, before, before, RulesVersion(outcome.Before))
+                : new ProtectedPrincipalSaveOutcome(status, before, null);
         }
 
         InvalidateCache();
@@ -1073,8 +1099,69 @@ public class ProtectedPrincipalService
         return new ProtectedPrincipalSaveOutcome(
             ProtectedPrincipalSaveStatus.Saved,
             outcome.Before.Data,
-            outcome.After is { Readable: true } after ? after.Data : data);
+            outcome.After is { Readable: true } after ? after.Data : data,
+            outcome.After is { Readable: true } left ? RulesVersion(left) : null);
     }
+
+    /// <summary>
+    /// The rules as the admin page shows them for editing, and the version of the same read; null when the
+    /// legacy file was not imported or the rows cannot be read (aud-a28n).
+    /// </summary>
+    public ProtectedPrincipalRulesForEditing? LoadRulesForEditing()
+    {
+        if (_legacyFileCorrupt)
+            return null;
+
+        var snapshot = _repository.ReadSnapshot();
+        if (!snapshot.Readable)
+            return null;
+
+        var rules = snapshot.Configured ? snapshot.Data : ProtectedPrincipalData.Empty;
+        return new ProtectedPrincipalRulesForEditing(
+            new ProtectedPrincipalConfig
+            {
+                Users = rules.Users,
+                Groups = rules.Groups,
+                OrganizationalUnits = rules.OrganizationalUnits,
+                SamAccountNamePatterns = rules.SamAccountNamePatterns,
+                GroupTargets = rules.GroupTargets,
+            },
+            RulesVersion(snapshot));
+    }
+
+    /// <summary>The rules' own content as a version: each kind's stored rows in order, and the presence marker.</summary>
+    internal static string RulesVersion(ProtectedPrincipalSnapshot snapshot)
+    {
+        if (!snapshot.Readable)
+            return "unreadable";
+
+        var canonical = JsonSerializer.Serialize(new
+        {
+            snapshot.Configured,
+            Users = Sorted(snapshot.Data.Users),
+            Groups = Sorted(snapshot.Data.Groups),
+            OrganizationalUnits = Sorted(snapshot.Data.OrganizationalUnits),
+            SamAccountNamePatterns = Sorted(snapshot.Data.SamAccountNamePatterns),
+            GroupTargets = Sorted(snapshot.Data.GroupTargets),
+        });
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    private static string[] Sorted(string[] values) =>
+        values.OrderBy(v => v, StringComparer.OrdinalIgnoreCase).ThenBy(v => v, StringComparer.Ordinal).ToArray();
+
+    // Whether the stored rules are, kind by kind, the rules a save would write - compared as the table
+    // stores them: blanks dropped, and case ignored, as its NOCASE key does.
+    private static bool SameRules(ProtectedPrincipalData stored, ProtectedPrincipalData wanted) =>
+        SameSet(stored.Users, wanted.Users)
+        && SameSet(stored.Groups, wanted.Groups)
+        && SameSet(stored.OrganizationalUnits, wanted.OrganizationalUnits)
+        && SameSet(stored.SamAccountNamePatterns, wanted.SamAccountNamePatterns)
+        && SameSet(stored.GroupTargets, wanted.GroupTargets);
+
+    private static bool SameSet(string[] a, string[] b) =>
+        new HashSet<string>(a.Where(v => !string.IsNullOrWhiteSpace(v)), StringComparer.OrdinalIgnoreCase)
+            .SetEquals(b.Where(v => !string.IsNullOrWhiteSpace(v)));
 
     // One-time import of the legacy protected-principals.json into protected_principal, then
     // archive the file (SqliteConfigStore-Plan Section 4). Only fills if not yet configured (DB wins).

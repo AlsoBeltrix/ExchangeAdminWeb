@@ -109,6 +109,47 @@ public sealed class ModuleConfigRepository
     }
 
     /// <summary>
+    /// Upserts some keys of a module's config in ONE write transaction (aud-a28n): <paramref name="decide"/>
+    /// is shown the module's values as they are under the write lock - null when they cannot be read - and
+    /// returns the keys to upsert, or null to store nothing, in which case the transaction is rolled back
+    /// and nothing, not even the change token, is written. Keys it does not return are not touched.
+    /// </summary>
+    public ModuleConfigConditionalUpdate UpdateModuleIf(
+        string moduleId, Func<Dictionary<string, string>?, IReadOnlyDictionary<string, string>?> decide)
+    {
+        ArgumentNullException.ThrowIfNull(decide);
+        try
+        {
+            return _store.Write((connection, transaction) =>
+            {
+                Dictionary<string, string>? before;
+                try
+                {
+                    before = ReadModule(connection, moduleId, transaction);
+                }
+                catch
+                {
+                    before = null;
+                }
+
+                var values = decide(before) ?? throw new NothingWritten(before);
+                MarkPresent(connection, transaction, moduleId);
+                InsertValues(connection, transaction, moduleId, values);
+                return new ModuleConfigConditionalUpdate(true, before, ReadModule(connection, moduleId, transaction));
+            });
+        }
+        catch (NothingWritten nothing)
+        {
+            return new ModuleConfigConditionalUpdate(false, nothing.Before, null);
+        }
+    }
+
+    private sealed class NothingWritten(Dictionary<string, string>? before) : Exception
+    {
+        public Dictionary<string, string>? Before { get; } = before;
+    }
+
+    /// <summary>
     /// One-time import of a module's config only if it has no rows yet (DB wins). Returns true
     /// if rows were written.
     /// </summary>
@@ -259,3 +300,10 @@ public sealed class ModuleConfigRepository
 /// them (<see cref="ModuleConfigRepository.UpdateModule"/>).
 /// </summary>
 public sealed record ModuleConfigUpdate(Dictionary<string, string> Before, Dictionary<string, string> After);
+
+/// <summary>
+/// What <see cref="ModuleConfigRepository.UpdateModuleIf"/> did: whether it wrote, the module's values as
+/// read under the write lock (null when they could not be read) and, after a write, as read back.
+/// </summary>
+public sealed record ModuleConfigConditionalUpdate(
+    bool Written, Dictionary<string, string>? Before, Dictionary<string, string>? After);

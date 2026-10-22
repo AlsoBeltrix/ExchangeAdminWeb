@@ -134,10 +134,26 @@ public sealed class ProtectedPrincipalRepository
         }
     }
 
+    /// <summary>
+    /// The rows and the presence marker from one fresh read (aud-a28n); an unreadable store as
+    /// <see cref="ProtectedPrincipalSnapshot.Unreadable"/>, never an exception.
+    /// </summary>
+    public ProtectedPrincipalSnapshot ReadSnapshot()
+    {
+        try
+        {
+            return _store.Read(connection => ReadSnapshot(connection, null));
+        }
+        catch
+        {
+            return ProtectedPrincipalSnapshot.Unreadable;
+        }
+    }
+
     // A read that throws - a damaged or missing table - is a snapshot that says it could not be read: the
     // service refuses on it, and inside the write it must not escape as an exception the page would record
     // as a failed write rather than a refusal.
-    private static ProtectedPrincipalSnapshot ReadSnapshot(SqliteConnection connection, SqliteTransaction transaction)
+    private static ProtectedPrincipalSnapshot ReadSnapshot(SqliteConnection connection, SqliteTransaction? transaction)
     {
         try
         {

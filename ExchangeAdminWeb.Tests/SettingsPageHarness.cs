@@ -218,6 +218,14 @@ internal sealed class SettingsPageHarness : IDisposable
     public SectionAccessService CreateOtherSectionAccess() =>
         new(Config, NullLogger<SectionAccessService>.Instance, Env, Catalog, new SectionAccessRepository(TestConfigStore.Create(_root)));
 
+    /// <summary>The other instance's module-config service, over its own store on the same file (aud-a28n).</summary>
+    public ModuleConfigService CreateOtherModuleConfig() =>
+        new(Catalog, Env, new ModuleConfigRepository(TestConfigStore.Create(_root)), NullLogger<ModuleConfigService>.Instance);
+
+    /// <summary>The other instance's module-admin service, over its own store on the same file (aud-a28n).</summary>
+    public ModuleAdminService CreateOtherModuleAdmins() =>
+        new(Env, new ModuleAdminRepository(TestConfigStore.Create(_root)), NullLogger<ModuleAdminService>.Instance);
+
     public AdminSettingsPage OpenAdminSettings()
     {
         var page = new AdminSettingsHandlers();
