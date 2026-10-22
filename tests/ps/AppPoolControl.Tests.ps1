@@ -644,8 +644,8 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
 Describe 'Assert-AppPoolServesPath' {
 
     # aud-a38c. Before a pool is stopped and a folder mirrored over, ask IIS which pools serve
-    # that folder. Driven through -ApplicationsProbe; the default reads Get-Website and
-    # Get-WebApplication.
+    # that folder. Driven through -ApplicationsProbe; the default reads Get-Website,
+    # Get-WebApplication and (aud-a38f) Get-WebConfiguration for virtual directories.
 
     BeforeAll {
         function Get-IisEntry {
@@ -736,6 +736,144 @@ Describe 'Assert-AppPoolServesPath' {
             })
 
         $result.Count | Should -Be 1
+    }
+
+    Context 'aud-a38f: the mirror replaces the whole tree, so everything IIS serves inside it counts' {
+
+        # robocopy /MIR replaces everything under the folder, not only the folder's own files. An
+        # application or virtual directory rooted INSIDE it and served by another pool keeps running
+        # while its files are replaced. Inside means at the folder or below a separator after it:
+        # ...\AppDev shares the prefix and is still a sibling.
+
+        It 'refuses when an application nested inside the folder runs under another pool, and names it' {
+            # THE FINDING.
+            {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                    Get-IisEntry -Location 'Web/App/Admin' -ApplicationPool 'OtherPool' -PhysicalPath 'D:\sites\App\Admin'
+                }
+            } | Should -Throw -ExpectedMessage "*'D:\sites\App'*Web/App/Admin runs under 'OtherPool', with its files at 'D:\sites\App\Admin'*"
+        }
+
+        It 'passes when everything inside the folder runs under the named pool, and returns all of it' {
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/' -ApplicationPool 'DefaultAppPool' -PhysicalPath 'D:\sites'
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                    Get-IisEntry -Location 'Web/App/Admin' -ApplicationPool 'ProdPool' -PhysicalPath 'd:/SITES/app/admin/'
+                })
+
+            ($result | ForEach-Object Location) -join ',' | Should -Be 'Web/App,Web/App/Admin'
+        }
+
+        It 'does not count a folder that only shares the prefix as inside the folder' {
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                    Get-IisEntry -Location 'Web/AppDev' -ApplicationPool 'DevPool' -PhysicalPath 'D:\sites\AppDev'
+                    Get-IisEntry -Location 'Web/AppDev/Admin' -ApplicationPool 'DevPool' -PhysicalPath 'D:\sites\AppDev\Admin'
+                    Get-IisEntry -Location 'Old/' -ApplicationPool 'OldPool' -PhysicalPath 'D:\sites\App.old'
+                })
+
+            ($result | ForEach-Object Location) -join ',' | Should -Be 'Web/App'
+        }
+
+        It 'counts a virtual directory inside the folder, under the pool of whatever owns it' {
+            {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                    Get-IisEntry -Location 'Web/media' -ApplicationPool 'SitePool' -PhysicalPath 'D:\sites\App\wwwroot\media'
+                }
+            } | Should -Throw -ExpectedMessage "*Web/media runs under 'SitePool', with its files at 'D:\sites\App\wwwroot\media'*"
+        }
+
+        It 'still refuses when something inside the folder is served but nothing at the folder itself' {
+            # A parent folder named by mistake: /MIR would replace everything under it, the siblings
+            # of the application included, so a nested match is not "what serves the folder".
+            {
+                Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites' -ApplicationsProbe {
+                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath 'D:\sites\App'
+                }
+            } | Should -Throw -ExpectedMessage "*No IIS site or application has its files at 'D:\sites'*"
+        }
+    }
+
+    Context 'aud-a38f: the default probe reads virtual directories too' {
+
+        # The default reads Get-Website and Get-WebApplication as before and, for every application
+        # (a site's root one included), Get-WebConfiguration under the application's ItemXPath plus
+        # /virtualDirectory - the form WebAdministration's own type data uses for an application's
+        # PhysicalPath. These stand-ins answer the way that type data describes: they pin what the
+        # probe does with the answer, not that real IIS gives it.
+
+        BeforeAll {
+            # Defined in the module's own scope, where the default probe resolves commands first,
+            # and removed again after this block.
+            InModuleScope AppPoolControl {
+                function script:Get-Website {
+                    [pscustomobject]@{ name = 'Web'; applicationPool = 'SitePool'; physicalPath = 'D:\sites'; ItemXPath = "/system.applicationHost/sites/site[@name='Web' and @id='1']" }
+                }
+                function script:Get-WebApplication {
+                    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '',
+                        Justification = 'The probe passes -Site; the stand-in knows one site')]
+                    param([string]$Site)
+                    [pscustomobject]@{ path = '/App'; applicationPool = 'ProdPool'; PhysicalPath = 'D:\sites\App'; ItemXPath = "/system.applicationHost/sites/site[@name='Web' and @id='1']/application[@path='/App']" }
+                }
+                function script:Get-WebConfiguration {
+                    param([string]$PSPath, [string]$Filter)
+                    if ($PSPath -ne 'MACHINE/WEBROOT/APPHOST') { throw "unexpected -PSPath '$PSPath'" }
+                    # A filter that matches nothing writes nothing, as the cmdlet does - not a $null.
+                    if ($script:AudA38fDirectories.ContainsKey($Filter)) { $script:AudA38fDirectories[$Filter] }
+                }
+            }
+
+            function Initialize-IisDirectory {
+                param([hashtable]$Map)
+                InModuleScope AppPoolControl -Parameters @{ Map = $Map } {
+                    param($Map)
+                    $script:AudA38fDirectories = $Map
+                }
+            }
+
+            $script:RootDirectories = "/system.applicationHost/sites/site[@name='Web' and @id='1']/application[@path='/']/virtualDirectory"
+            $script:AppDirectories = "/system.applicationHost/sites/site[@name='Web' and @id='1']/application[@path='/App']/virtualDirectory"
+        }
+
+        AfterAll {
+            InModuleScope AppPoolControl {
+                Remove-Item -Path 'function:Get-Website', 'function:Get-WebApplication', 'function:Get-WebConfiguration' -ErrorAction SilentlyContinue
+                Remove-Variable -Name AudA38fDirectories -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'finds a virtual directory of the site root pointing inside the folder, and refuses its pool' {
+            Initialize-IisDirectory @{
+                $script:RootDirectories = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites' }, [pscustomobject]@{ path = '/media'; physicalPath = 'D:\sites\App\media' })
+                $script:AppDirectories  = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites\App' })
+            }
+
+            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' } |
+                Should -Throw -ExpectedMessage "*Web/media runs under 'SitePool', with its files at 'D:\sites\App\media'*"
+        }
+
+        It 'reads an application''s own virtual directories under that application''s pool' {
+            Initialize-IisDirectory @{
+                $script:RootDirectories = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites' })
+                $script:AppDirectories  = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites\App' }, [pscustomobject]@{ path = '/assets'; physicalPath = 'D:\sites\App\assets' })
+            }
+
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App')
+            ($result | ForEach-Object Location) -join ',' | Should -Be 'Web/App,Web/App/assets'
+        }
+
+        It 'refuses when an application''s virtual directories cannot be shown to have been read' {
+            # Every IIS application has a root virtual directory. A listing without one means the
+            # read missed, and a missed read must not pass as "nothing inside".
+            Initialize-IisDirectory @{
+                $script:RootDirectories = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites' })
+            }
+
+            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' } |
+                Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications*no root virtual directory for Web/App*'
+        }
     }
 }
 
