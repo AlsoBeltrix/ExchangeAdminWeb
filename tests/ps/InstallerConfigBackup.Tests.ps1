@@ -286,7 +286,9 @@ Describe 'cdt-11: ConfigStore:Path survives -RegenerateAppSettings, and the back
     }
 
     It 'lets a supplied -ConfigStorePath win when the file is written' {
-        $t = Initialize-TestInstance -Key $script:Shared
+        # Over a file with no key to replace. A supplied path that differs from an existing key is
+        # refused since cdt-29 (its context below).
+        $t = Initialize-TestInstance
         try {
             $script:RegenerateAppSettings = $true
             $plan = Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Other -RegenerateAppSettings $true
@@ -348,9 +350,10 @@ Describe 'cdt-11: ConfigStore:Path survives -RegenerateAppSettings, and the back
             [System.IO.File]::ReadAllBytes($t.AppSettings) | Should -Be $bytes -Because 'the file is preserved byte for byte'
 
             # A supplied path is not written into a kept file. It used to be dropped silently (the
-            # kept key won); since cdt-20 it is refused - see the cdt-20 context below.
+            # kept key won); since cdt-20 it is refused, and since cdt-29 a path that differs from the
+            # key the file names is refused as a move to another database - see the contexts below.
             { Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Other -RegenerateAppSettings $false } |
-                Should -Throw -ExpectedMessage '*would not take effect*'
+                Should -Throw -ExpectedMessage '*a different config database*'
         } finally {
             Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -407,6 +410,115 @@ Describe 'cdt-11: ConfigStore:Path survives -RegenerateAppSettings, and the back
                 $plan.Path | Should -BeExactly $script:Shared -Because 'the kept file is what the instance opens'
             } finally {
                 Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context 'cdt-29: a supplied -ConfigStorePath never replaces the key an existing appsettings.json names' {
+        # -RegenerateAppSettings -ConfigStorePath B over a file naming shared database A rewrote it to
+        # name B: the instance moved to another authorization and settings store, its shared-folder
+        # grant and its pre-upgrade backup followed B, and nothing said so.
+
+        It 'refuses a different database, with or without -RegenerateAppSettings, naming both and the cutover, before anything is written' {
+            foreach ($regenerate in $true, $false) {
+                $t = Initialize-TestInstance -Key $script:Shared
+                try {
+                    $script:RegenerateAppSettings = $regenerate
+                    $bytes = [System.IO.File]::ReadAllBytes($t.AppSettings)
+                    $err = $null
+                    try { Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Other -RegenerateAppSettings $regenerate } catch { $err = $_ }
+                    $err | Should -Not -BeNullOrEmpty -Because "a different database must not replace the existing key (-RegenerateAppSettings: $regenerate)"
+                    foreach ($text in "-ConfigStorePath $($script:Other) was given", "names ConfigStore:Path = $($script:Shared), a different config database", 'with or without -RegenerateAppSettings', 'tools\Move-ConfigDbToShared.ps1', 'the only sanctioned way', "with -ConfigStorePath $($script:Shared).", 'Nothing was changed') {
+                        "$err" | Should -BeLike "*$text*"
+                    }
+                    [System.IO.File]::ReadAllBytes($t.AppSettings) | Should -Be $bytes -Because 'the refusal comes before anything is written'
+                } finally {
+                    Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        It 'accepts the existing key restated, however it is cased, and writes the same database' {
+            $t = Initialize-TestInstance -Key $script:Shared
+            try {
+                $script:RegenerateAppSettings = $true
+                $plan = Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Shared.ToUpperInvariant() -RegenerateAppSettings $true
+                [string]::Equals($plan.DbPath, $script:Shared, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue -Because 'the same file, however it is spelled'
+                Invoke-InstallerWrite -Instance $t -Plan $plan
+                [string]::Equals((Get-ConfigStorePathSetting -PublishPath $t.Publish), $script:Shared, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+            } finally {
+                Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'still takes a supplied path when there is no key to replace (the first configuration)' {
+            $keyless = Initialize-TestInstance
+            $fresh = Initialize-TestInstance -NoAppSettings
+            try {
+                $script:RegenerateAppSettings = $true
+                $plan = Resolve-ConfigStorePlan -PublishPath $keyless.Publish -SuppliedPath $script:Other -RegenerateAppSettings $true
+                $plan.Source | Should -BeExactly 'Supplied'
+                $plan.DbPath | Should -BeExactly $script:Other
+                $script:RegenerateAppSettings = $false
+                $plan = Resolve-ConfigStorePlan -PublishPath $fresh.Publish -SuppliedPath $script:Other -RegenerateAppSettings $false
+                $plan.Source | Should -BeExactly 'Supplied' -Because 'a fresh install has no key to replace'
+            } finally {
+                Remove-Item -LiteralPath $keyless.Root, $fresh.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'in plan mode prints the refusal as a PLAN line, then stops as the real run does' {
+            $t = Initialize-TestInstance -Key $script:Shared
+            $script:PlanOnly = $true
+            try {
+                $script:cdt29Err = $null
+                $said = @(& {
+                        try { Resolve-ConfigStorePlan -PublishPath $t.Publish -SuppliedPath $script:Other -RegenerateAppSettings $true }
+                        catch { $script:cdt29Err = $_ }
+                    } 6>&1 | ForEach-Object { "$_" })
+                $script:cdt29Err | Should -Not -BeNullOrEmpty -Because 'a plan must not carry on past a refusal'
+                $lines = @($said | Where-Object { $_ -like 'PLAN REFUSED: *' })
+                $lines.Count | Should -Be 1 -Because 'the plan says the real run refuses here'
+                $lines[0] | Should -BeLike "*-ConfigStorePath $($script:Other) was given*names ConfigStore:Path = $($script:Shared), a different config database*"
+            } finally {
+                $script:PlanOnly = $false
+                Remove-Item -LiteralPath $t.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'a -PlanOnly run naming a different database prints the refusal and creates nothing (Windows PowerShell 5.1)' {
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt29_' + [guid]::NewGuid().ToString('N'))
+            $publish = Join-Path $root 'publish'
+            New-Item -ItemType Directory -Path (Join-Path $publish 'config'), (Join-Path $root 'a'), (Join-Path $root 'b') -Force | Out-Null
+            $a = Join-Path $root 'a\exchangeadmin.db'
+            $b = Join-Path $root 'b\exchangeadmin.db'
+            Set-Content -LiteralPath $a -Value 'database A' -Encoding ascii
+            Set-Content -LiteralPath $b -Value 'database B' -Encoding ascii
+            Set-Content -LiteralPath (Join-Path $publish 'appsettings.json') -Encoding UTF8 -Value (@{ AllowedHosts = '*'; ConfigStore = @{ Path = $a } } | ConvertTo-Json -Depth 5)
+            $alias = 'cdt29' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+            $snapshot = {
+                param($Root)
+                @(Get-ChildItem -LiteralPath $Root -Recurse -Force | Sort-Object FullName | ForEach-Object {
+                        if ($_.PSIsContainer) { '{0}|dir' -f $_.FullName.Substring($Root.Length) }
+                        else { '{0}|{1}|{2}' -f $_.FullName.Substring($Root.Length), $_.Length, (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
+                    }) -join "`n"
+            }
+            try {
+                $before = & $snapshot $root
+                $out = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Resolve-Path $script:InstallerPath).Path `
+                    -PlanOnly -NonInteractive -RegenerateAppSettings -ConfigStorePath $b -PublishPath $publish -LogRoot (Join-Path $root 'logs') `
+                    -AppAlias $alias -AppPoolName $alias -AdminGroups 'CONTOSO\Exchange Admins' 2>&1
+                $exitCode = $LASTEXITCODE
+                $text = @($out | ForEach-Object { "$_" }) -join "`n"
+                $exitCode | Should -Not -Be 0 -Because 'a plan must not complete over a run that would be refused'
+                # Windows PowerShell wraps an error at the console width; compare with whitespace removed.
+                $flat = $text -replace '\s+', ''
+                $flat | Should -Match ([regex]::Escape(("PLAN REFUSED: -ConfigStorePath $b was given" -replace '\s+', '')))
+                $flat | Should -Match ([regex]::Escape(("names ConfigStore:Path = $a, a different config database" -replace '\s+', '')))
+                $text | Should -Not -Match 'Plan only\. No changes were made\.'
+                & $snapshot $root | Should -BeExactly $before -Because 'the refusal comes before anything is written'
+            } finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -664,6 +776,127 @@ Describe 'cdt-18: the pool restarts only after a complete mirror, confirmed, and
         $planned = & $run $false $false $true 6>$null
         $planned.Thrown | Should -BeNullOrEmpty
         $planned.Calls | Should -Not -Match 'start' -Because '-PlanOnly prints the restart and runs nothing'
+    }
+}
+
+Describe 'cdt-31: a failed manifest write never hides a failed restart' {
+    # The manifest write between the restart and the "application is DOWN" check was unguarded: when
+    # it threw after a failed restart, its exception was the one the caller got.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt31Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        $script:Cdt31Mirror = $script:Cdt31Ast.Find({
+                param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] -and
+                @($n.Body.Statements | Where-Object { $_.Extent.Text -like 'Invoke-RobocopyChecked -Description "Deploy application files"*' }).Count -gt 0
+            }, $true)
+        if ($null -eq $script:Cdt31Mirror) { throw 'the installer has no try around the mirror' }
+        $script:Cdt31Statements = @($script:Cdt31Mirror.Parent.Statements)
+        $script:Cdt31TryAt = [array]::IndexOf($script:Cdt31Statements, $script:Cdt31Mirror)
+    }
+
+    It 'writes the manifest in its own try after the mirror, and fails on the restart before the manifest (AST)' {
+        $statements = $script:Cdt31Statements
+        $functions = @($script:Cdt31Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+        $writes = @($script:Cdt31Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-DeploymentManifest' }, $true) | Where-Object {
+                $call = $_
+                @($functions | Where-Object { $call.Extent.StartOffset -ge $_.Extent.StartOffset -and $call.Extent.EndOffset -le $_.Extent.EndOffset }).Count -eq 0
+            })
+        $writes.Count | Should -Be 1 -Because 'the installer writes the manifest once'
+        $guard = $writes[0].Parent
+        while ($null -ne $guard -and -not ($guard -is [System.Management.Automation.Language.TryStatementAst])) { $guard = $guard.Parent }
+        $guardAt = [array]::IndexOf($statements, $guard)
+        $guardAt | Should -BeGreaterThan $script:Cdt31TryAt -Because 'the manifest write has its own try, beside the mirror''s and after it'
+        @($guard.Body.Statements).Count | Should -Be 1 -Because 'it guards the manifest write and nothing else'
+        $guard.CatchClauses.Count | Should -Be 1
+        $catch = $guard.CatchClauses[0].Body
+        $catch.Extent.Text | Should -Match ([regex]::Escape('$manifestError = $_.Exception.Message'))
+        @($catch.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.ThrowStatementAst] -or
+                    ($n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-Fail') }, $true)).Count |
+            Should -Be 0 -Because 'its failure is recorded, so the restart failure can stay the one the caller gets'
+        $statements[$guardAt - 1].Extent.Text | Should -BeExactly '$manifestError = $null'
+
+        $down = $statements[$guardAt + 1]
+        $down | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+        $down.Clauses[0].Item1.Extent.Text | Should -BeExactly '$poolStartError' -Because 'the restart failure is checked first'
+        $downFail = $down.Clauses[0].Item2.Statements[0].Extent.Text
+        $downFail | Should -BeLike 'Write-Fail "The files are deployed, but app pool*'
+        $downFail | Should -Match ([regex]::Escape('$manifestError')) -Because 'it also reports a manifest that was not written'
+        $manifest = $statements[$guardAt + 2]
+        $manifest | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+        $manifest.Clauses[0].Item1.Extent.Text | Should -BeExactly '$manifestError' -Because 'a failed manifest write is still a failure, after the restart''s'
+        $manifest.Clauses[0].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "*'
+    }
+
+    It 'runs the real region: both failing gives the DOWN failure naming the manifest, and each alone its own (behavioural)' {
+        foreach ($name in 'Write-Ok', 'Write-Warn', 'Write-Plan', 'Write-Fail', 'Invoke-PlanOrAction') {
+            $fn = $script:Cdt31Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        $statements = $script:Cdt31Statements
+        $from = $script:Cdt31TryAt
+        while ($from -gt 0 -and $statements[$from - 1].Extent.Text -match '^\$(mirrorSucceeded|poolStartError) = ') { $from-- }
+        # Through the last check after the mirror, whichever order the checks are in.
+        $to = $script:Cdt31TryAt
+        for ($j = $script:Cdt31TryAt + 1; $j -lt $statements.Count; $j++) {
+            if ($statements[$j].Extent.Text -match '^if \(\$(poolStartError|manifestError)\)') { $to = $j }
+        }
+        $region = ($statements[$from..$to] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments, $Description; $script:cdt31Calls.Add('robocopy') }
+        ${function:Start-AppPoolVerified} = { param($Name) $script:cdt31Calls.Add('start'); if ($script:cdt31StartFails) { throw "App pool '$Name' is 'Stopped' after 60 seconds, not Started. The application is DOWN." }; 'Started' }
+        ${function:Write-DeploymentManifest} = {
+            param($PublishFolder, $RepoRoot)
+            $null = $RepoRoot
+            $script:cdt31Calls.Add('manifest')
+            if ($script:cdt31ManifestFails) { throw "Access to the path '$PublishFolder\deployment-manifest.json' is denied." }
+        }
+
+        $run = {
+            param([bool]$StartFails, [bool]$ManifestFails)
+            $script:cdt31Calls = New-Object System.Collections.Generic.List[string]
+            $script:cdt31StartFails = $StartFails
+            $script:cdt31ManifestFails = $ManifestFails
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt31_' + [guid]::NewGuid().ToString('N'))
+            # Read only by the lifted region.
+            Set-Variable -Name stagingPath -Value (Join-Path $root 'publish.staging.x')
+            Set-Variable -Name PublishPath -Value (Join-Path $root 'publish')
+            Set-Variable -Name LogRoot -Value (Join-Path $root 'logs')
+            Set-Variable -Name repoRoot -Value (Join-Path $root 'source')
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name PlanOnly -Value $false
+            New-Item -ItemType Directory -Path (Join-Path $root 'publish.staging.x'), (Join-Path $root 'publish') -Force | Out-Null
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try {
+                . ([scriptblock]::Create($region))
+            } catch {
+                $thrown = $_.Exception.Message
+            } finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt31Calls -join ',') }
+        }
+
+        $both = & $run $true $true 6>$null
+        $both.Calls | Should -BeExactly 'robocopy,start,manifest'
+        $both.Thrown | Should -BeLike "The files are deployed, but app pool ExamplePool did not start (App pool 'ExamplePool' is 'Stopped'*). The application is DOWN until the pool is started by hand.*" -Because 'a failed restart is the error the caller gets, whatever the manifest did'
+        $both.Thrown | Should -BeLike "*The deployment manifest was not written either (Access to the path '*deployment-manifest.json' is denied.)*" -Because 'and the manifest failure is reported with it, not lost'
+
+        $downOnly = & $run $true $false 6>$null
+        $downOnly.Thrown | Should -BeLike '*The application is DOWN until the pool is started by hand.'
+        $downOnly.Calls | Should -BeExactly 'robocopy,start,manifest' -Because 'the files are deployed, so the manifest is still written'
+
+        $manifestOnly = & $run $false $true 6>$null
+        $manifestOnly.Thrown | Should -BeLike "The files are deployed and app pool ExamplePool is running, but the deployment manifest was not written to * (Access to the path '*deployment-manifest.json' is denied.)*" -Because 'a failed manifest write is still a failure'
+
+        $clean = & $run $false $false 6>$null
+        $clean.Thrown | Should -BeNullOrEmpty
+        $clean.Calls | Should -BeExactly 'robocopy,start,manifest'
     }
 }
 
@@ -947,6 +1180,9 @@ Describe 'cdt-23: a failed run removes its staging publish' {
         }
         ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath; if (-not $PlanOnly -and $script:cdt23Case -eq 'ToolMissing') { throw 'The config DB tool is missing: ExchangeAdminWeb.dll not found.' }; @{ Summary = 'tool' } }
         ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
+        # Since cdt-32 the region asks IIS what serves the folder before the stop; that check has its
+        # own tests (the cdt-32 Describe), so here it passes and records nothing.
+        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath) $null = $Name, $PhysicalPath }
         ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; if ($script:cdt23Case -eq 'StopFails') { throw "App pool is still 'Started' after 60 seconds." }; 'Stopped' }
         ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments; if ($script:cdt23Case -eq 'MirrorFails') { Write-Fail "robocopy failed with exit code 8 during: $Description" } }
         ${function:Start-AppPoolVerified} = { param($Name) $null = $Name; 'Started' }
@@ -989,5 +1225,249 @@ Describe 'cdt-23: a failed run removes its staging publish' {
         $clean = & $run 'Success' 6>$null
         $clean.Thrown | Should -BeNullOrEmpty
         $clean.StagingLeft | Should -BeFalse
+    }
+}
+
+Describe 'cdt-32: the installer asks IIS what serves the folder before it stops the pool and mirrors' {
+    # The stop confirmed that -AppPoolName stopped; nothing asked whether another site or application
+    # with its files in the publish folder, under a different pool, would keep serving them.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt32Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+    }
+
+    It 'checks the folder in a step of its own right before the stop, and nothing catches its refusal (AST)' {
+        $stop = $script:Cdt32Ast.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.Extent.Text -like 'Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped"*' }, $true)
+        $stop | Should -Not -BeNullOrEmpty
+        $stopStatement = $stop.Parent
+        $statements = @($stopStatement.Parent.Statements)
+        $stopAt = [array]::IndexOf($statements, $stopStatement)
+        $stopAt | Should -BeGreaterThan 0
+        $previous = $statements[$stopAt - 1]
+        $previous.Extent.Text | Should -BeLike 'Invoke-PlanOrAction "Confirm that IIS serves *' -Because 'the statement right before the stop step is the folder check'
+        $check = $previous.PipelineElements[0]
+        $check.GetCommandName() | Should -BeExactly 'Invoke-PlanOrAction' -Because 'the check is a step, so a plan prints it and runs nothing (Invariant 4)'
+        $check.CommandElements[1].Extent.Text | Should -BeExactly '"Confirm that IIS serves $PublishPath from app pool $AppPoolName and no other"'
+        $body = @($check.CommandElements[2].ScriptBlock.EndBlock.Statements)
+        $body.Count | Should -Be 1 -Because 'the step is the check and nothing else'
+        $body[0].Extent.Text | Should -BeExactly '$null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath'
+        $calls = @($script:Cdt32Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-AppPoolServesPath' }, $true))
+        $calls.Count | Should -Be 1
+        $ancestor = $calls[0].Parent
+        while ($null -ne $ancestor) {
+            if ($ancestor -is [System.Management.Automation.Language.TryStatementAst]) {
+                $ancestor.CatchClauses.Count | Should -Be 0 -Because 'a catch around it could swallow the refusal and let the stop and the mirror run'
+            }
+            $ancestor = $ancestor.Parent
+        }
+    }
+
+    It 'runs the real region: a folder another pool also serves is refused before anything is stopped or mirrored (behavioural)' {
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Plan', 'Write-Fail', 'Invoke-PlanOrAction') {
+            $fn = $script:Cdt32Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        $outer = $script:Cdt32Ast.Find({
+                param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] -and
+                @($n.Body.Statements | Where-Object { $_.Extent.Text -like 'Invoke-PlanOrAction "dotnet publish to staging*' }).Count -gt 0
+            }, $true)
+        $outer | Should -Not -BeNullOrEmpty
+        $region = $outer.Extent.Text
+        ${function:dotnet} = { New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null; $global:LASTEXITCODE = 0 }
+        ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath, $PlanOnly; @{ Summary = 'tool' } }
+        ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
+        ${function:Assert-AppPoolServesPath} = {
+            param($Name, $PhysicalPath)
+            $script:cdt32Calls.Add('serves')
+            if ($script:cdt32ServedElsewhere) { throw "The files at '$PhysicalPath' are served by an app pool other than '$Name': Other Site/Copy runs under 'OtherPool'. Stopping '$Name' would leave that application running while its files are replaced. Name the pool that serves them, or fix the binding." }
+            [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = $Name; PhysicalPath = $PhysicalPath }
+        }
+        ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt32Calls.Add('stop'); 'Stopped' }
+        ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments, $Description; $script:cdt32Calls.Add('mirror') }
+        ${function:Start-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt32Calls.Add('start'); 'Started' }
+        ${function:Write-DeploymentManifest} = { $script:cdt32Calls.Add('manifest') }
+
+        $run = {
+            param([bool]$ServedElsewhere, [bool]$Plan)
+            $script:cdt32Calls = New-Object System.Collections.Generic.List[string]
+            $script:cdt32ServedElsewhere = $ServedElsewhere
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt32_' + [guid]::NewGuid().ToString('N'))
+            $publish = Join-Path $root 'publish'
+            New-Item -ItemType Directory -Path $publish -Force | Out-Null
+            # Read only by the lifted region.
+            Set-Variable -Name PublishPath -Value $publish
+            Set-Variable -Name stagingPath -Value "$publish.staging.x"
+            Set-Variable -Name LogRoot -Value (Join-Path $root 'logs')
+            Set-Variable -Name repoRoot -Value $root
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name PlanOnly -Value $Plan
+            Set-Variable -Name SkipConfigBackup -Value $false
+            Set-Variable -Name configStorePlan -Value ([pscustomobject]@{ Path = $null; DbPath = (Join-Path $publish 'config\exchangeadmin.db'); Source = 'None' })
+            $ErrorActionPreference = 'Stop'
+            $said = @(& {
+                    try { . ([scriptblock]::Create($region)) } catch { $script:cdt32Thrown = $_.Exception.Message }
+                } 6>&1 | ForEach-Object { "$_" })
+            $thrown = $script:cdt32Thrown
+            $script:cdt32Thrown = $null
+            $left = Test-Path -LiteralPath "$publish.staging.x"
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt32Calls -join ','); StagingLeft = $left; Said = ($said -join "`n") }
+        }
+
+        $script:cdt32Thrown = $null
+        $elsewhere = & $run $true $false
+        $elsewhere.Calls | Should -BeExactly 'serves' -Because 'a folder another pool also serves must stop the run before the pool is stopped or anything mirrored'
+        $elsewhere.Thrown | Should -BeLike "*served by an app pool other than 'ExamplePool'*" -Because 'the refusal is the module''s own'
+        $elsewhere.StagingLeft | Should -BeFalse -Because 'the refusal happens inside the try that removes staging'
+
+        $alone = & $run $false $false
+        $alone.Thrown | Should -BeNullOrEmpty
+        $alone.Calls | Should -BeExactly 'serves,stop,mirror,start,manifest' -Because 'the check comes right before the stop'
+
+        $planned = & $run $true $true
+        $planned.Thrown | Should -BeNullOrEmpty
+        $planned.Calls | Should -Not -Match 'serves' -Because 'a plan prints the check and runs nothing'
+        $planned.Said | Should -Match ([regex]::Escape('PLAN Confirm that IIS serves ')) -Because 'the plan shows the check'
+    }
+}
+
+Describe 'cdt-33: only a confirmed stop reaches the installer''s mirror' {
+    # The stop accepted 'Absent' with a warning and mirrored, although the run's own pool step
+    # creates the pool well before it: an absent pool there is IIS not answering, not a fresh install.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt33Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+    }
+
+    It 'refuses anything but Stopped right after the verified stop, and nothing compares the state with Absent (AST)' {
+        $stop = $script:Cdt33Ast.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.Extent.Text -like 'Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped"*' }, $true)
+        $stop | Should -Not -BeNullOrEmpty
+        $body = @($stop.CommandElements[2].ScriptBlock.EndBlock.Statements)
+        $stopAt = -1
+        for ($i = 0; $i -lt $body.Count; $i++) { if ($body[$i].Extent.Text -eq '$poolState = Stop-AppPoolVerified -Name $AppPoolName') { $stopAt = $i } }
+        $stopAt | Should -BeGreaterOrEqual 0 -Because 'the step stops the pool through the verified stop'
+        $confirmed = $body[$stopAt + 1]
+        $confirmed | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+        $confirmed.Clauses[0].Item1.Extent.Text | Should -BeExactly "`$poolState -ne 'Stopped'" -Because 'only a confirmed stop may reach the mirror'
+        $confirmed.ElseClause | Should -BeNullOrEmpty
+        $confirmed.Clauses[0].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "*'
+        $script:Cdt33Ast.Extent.Text | Should -Not -Match "poolState -eq 'Absent'" -Because 'an absent pool is no longer something to carry on past'
+    }
+
+    It 'runs the real region: a pool reported absent is refused before the mirror, a stopped one reaches it (behavioural)' {
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Plan', 'Write-Fail', 'Invoke-PlanOrAction') {
+            $fn = $script:Cdt33Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        $outer = $script:Cdt33Ast.Find({
+                param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] -and
+                @($n.Body.Statements | Where-Object { $_.Extent.Text -like 'Invoke-PlanOrAction "dotnet publish to staging*' }).Count -gt 0
+            }, $true)
+        $region = $outer.Extent.Text
+        ${function:dotnet} = { New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null; $global:LASTEXITCODE = 0 }
+        ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath, $PlanOnly; @{ Summary = 'tool' } }
+        ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
+        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath) $null = $Name, $PhysicalPath }
+        ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt33Calls.Add('stop'); $script:cdt33StopResult }
+        ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments, $Description; $script:cdt33Calls.Add('mirror') }
+        ${function:Start-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt33Calls.Add('start'); 'Started' }
+        ${function:Write-DeploymentManifest} = { $script:cdt33Calls.Add('manifest') }
+
+        $run = {
+            param([string]$StopResult)
+            $script:cdt33Calls = New-Object System.Collections.Generic.List[string]
+            $script:cdt33StopResult = $StopResult
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt33_' + [guid]::NewGuid().ToString('N'))
+            $publish = Join-Path $root 'publish'
+            New-Item -ItemType Directory -Path $publish -Force | Out-Null
+            # Read only by the lifted region.
+            Set-Variable -Name PublishPath -Value $publish
+            Set-Variable -Name stagingPath -Value "$publish.staging.x"
+            Set-Variable -Name LogRoot -Value (Join-Path $root 'logs')
+            Set-Variable -Name repoRoot -Value $root
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name PlanOnly -Value $false
+            Set-Variable -Name SkipConfigBackup -Value $false
+            Set-Variable -Name configStorePlan -Value ([pscustomobject]@{ Path = $null; DbPath = (Join-Path $publish 'config\exchangeadmin.db'); Source = 'None' })
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+            $left = Test-Path -LiteralPath "$publish.staging.x"
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt33Calls -join ','); StagingLeft = $left }
+        }
+
+        $absent = & $run 'Absent' 6>$null
+        $absent.Calls | Should -BeExactly 'stop' -Because 'a pool the run created but IIS reports absent must not be mirrored over'
+        $absent.Thrown | Should -BeLike "App pool ExamplePool was reported 'Absent', not confirmed stopped*the publish folder is unchanged."
+        $absent.StagingLeft | Should -BeFalse
+
+        $stopped = & $run 'Stopped' 6>$null
+        $stopped.Thrown | Should -BeNullOrEmpty
+        $stopped.Calls | Should -BeExactly 'stop,mirror,start,manifest'
+    }
+}
+
+Describe 'cdt-34: a relative -PublishPath or -LogRoot resolves where the operator is' {
+    # [System.IO.Path]::GetFullPath resolves against the PROCESS directory, which Set-Location does
+    # not move, so a relative path landed under wherever the PowerShell process had started.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt34Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        foreach ($name in 'Write-Fail', 'Assert-SafeDirectoryPath') {
+            $fn = $script:Cdt34Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            if ($null -eq $fn) { throw "the installer defines no function $name" }
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+    }
+
+    It 'resolves a relative path against the current location, and leaves an absolute one as it was' {
+        $loc = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt34_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $loc -Force | Out-Null
+        Push-Location -LiteralPath $loc
+        try {
+            [Environment]::CurrentDirectory | Should -Not -Be $loc -Because 'the trap is set: the process directory is elsewhere'
+            Assert-SafeDirectoryPath 'site' 'PublishPath' | Should -BeExactly (Join-Path $loc 'site')
+            Assert-SafeDirectoryPath '.\a\..\b' 'LogRoot' | Should -BeExactly (Join-Path $loc 'b')
+            Assert-SafeDirectoryPath 'D:\apps\App\' 'PublishPath' | Should -BeExactly 'D:\apps\App'
+            { Assert-SafeDirectoryPath 'C:\' 'PublishPath' } | Should -Throw -ExpectedMessage '*cannot be a drive root*'
+        } finally {
+            Pop-Location
+            Remove-Item -LiteralPath $loc -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'a -PlanOnly run from another location plans the folders under it and creates nothing (Windows PowerShell 5.1)' {
+        $loc = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt34_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $loc -Force | Out-Null
+        $alias = 'cdt34' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+        try {
+            $command = "Set-Location -LiteralPath '$loc'; & '$((Resolve-Path $script:InstallerPath).Path)' -PlanOnly -NonInteractive -PublishPath 'site' -LogRoot 'logs' -AppAlias '$alias' -AppPoolName '$alias' -AdminGroups 'CONTOSO\Exchange Admins'"
+            $out = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $command 2>&1
+            $exitCode = $LASTEXITCODE
+            $text = @($out | ForEach-Object { "$_" }) -join "`n"
+            $exitCode | Should -Be 0 -Because $text
+            # Windows PowerShell may wrap long lines; compare with whitespace removed.
+            $flat = $text -replace '\s+', ''
+            $publishLine = ('Publish : ' + (Join-Path $loc 'site')) -replace '\s+', ''
+            $logLine = ('Log root : ' + (Join-Path $loc 'logs')) -replace '\s+', ''
+            $flat | Should -Match ([regex]::Escape($publishLine)) -Because 'the publish folder is planned where the operator is'
+            $flat | Should -Match ([regex]::Escape($logLine))
+            $text | Should -Match 'Plan only\. No changes were made\.'
+            @(Get-ChildItem -LiteralPath $loc -Force).Count | Should -Be 0 -Because 'a plan creates nothing'
+        } finally {
+            Remove-Item -LiteralPath $loc -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
