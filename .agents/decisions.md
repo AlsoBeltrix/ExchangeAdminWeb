@@ -5,6 +5,28 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-22 - The app is its own backup tool; no sqlite3 on the deploy host
+
+Owner ruling 2026-10-21 ("figure out the best way to fix the sqlite3 issue", then "okay,
+plan it"): replace the dependency rather than harden its lookup. Implemented by
+`docs/ConfigDbToolInApp-Plan.md` (S1 `86970a5`, S2 `b1577f7`, S3 this entry).
+
+Rule: every ops script (deploy, promote, cutover, installer, job-state warning) takes the
+verified online backup, the integrity check and the empty-database creation by running the
+app's own `db` command-line mode (`backup`, `check`, `active-jobs`, `init`) through
+`<ProgramFiles>\dotnet\dotnet.exe`, against the build it is about to deploy or already runs,
+with a file-version floor of 2.34.0. No script may resolve or run `sqlite3.exe` by any means
+(Pester guard `no tracked ops script resolves sqlite3 with Get-Command`). The app has no
+arbitrary-SQL verb; operators who need ad-hoc SQL or `.recover` use the sqlite3 shell by hand,
+installed machine-wide under Program Files, never per-user, never from an elevated script
+(`docs/ConfigDbOperations.md`).
+
+Why: the elevated deploy ran whatever `sqlite3.exe` PATH resolved to first, and on the deploy
+host that was a user-writable, unsigned per-user copy - a privilege-escalation path into the
+authorization database (`.agents/review/findings/aud-sqlite3-path.md`). Supersedes the
+"Deploy-host dependency: sqlite3.exe on PATH" rule in `.agents/repo-guidance.md` Commands
+and the `winget install SQLite.SQLite` instruction in `README.md`.
+
 ### 2026-10-21 - Every open review follow-up is approved for implementation
 
 Owner ruling, verbatim, after being asked whether "fix all the bugs that you know about and

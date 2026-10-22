@@ -4,8 +4,22 @@ Runtime configuration lives in a single SQLite database. This guide is the opera
 "open it and fix it" reference — the SQLite-world replacement for editing a JSON file in
 Notepad.
 
-> **Dependency:** these recipes need `sqlite3.exe` on PATH (`winget install SQLite.SQLite`),
-> the same tool the deploy/promote scripts require.
+> **Tools, two kinds.** The backup, integrity-check and "create an empty database" recipes use
+> the app's own `db` command-line mode, run through the .NET host in Program Files - the same
+> thing the deploy/promote/installer scripts use (`docs/ConfigDbToolInApp-Plan.md`). Nothing
+> extra to install:
+>
+> ```powershell
+> $dotnet = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
+> $app    = "<PublishPath>\ExchangeAdminWeb.dll"   # either instance's publish folder, app 2.34.0+
+> & $dotnet $app db                                # prints the verbs; exit 0 ok, 1 usage, 2 failure
+> ```
+>
+> The ad-hoc SQL recipes and `.recover` need the real `sqlite3` shell; the app deliberately has
+> no arbitrary-SQL verb. If you need it: install it machine-wide under Program Files as an
+> administrator (never per-user, never through a per-user package manager - `winget` on a
+> server installs into your own profile, where any process running as you can replace the
+> binary), and never run it from an elevated script. `.recover` has no in-app equivalent.
 
 ## Where the database is — read this before anything else
 
@@ -76,7 +90,13 @@ Set `$db` to the path you found above and reuse it.
 ```powershell
 $db = "<the ConfigStore:Path value>"
 
-sqlite3 $db "PRAGMA integrity_check;"   # should print "ok"
+& $dotnet $app db check $db             # app tool: prints "ok", exit 0; exit 2 on any failure
+
+# A verified online backup (VACUUM INTO + integrity_check, safe while the app runs).
+# Refuses an existing destination.
+& $dotnet $app db backup --source $db --dest "D:\backups\exchangeadmin.$(Get-Date -Format yyyyMMdd-HHmmss).db"
+
+# Everything below needs the sqlite3 shell (see the note at the top).
 sqlite3 $db "PRAGMA user_version;"      # schema version
 sqlite3 $db ".tables"
 
@@ -94,7 +114,7 @@ sqlite3 $db "UPDATE module_enablement SET enabled=1 WHERE module_id='MailboxPerm
 sqlite3 $db "INSERT INTO app_setting(key,value) VALUES('extended_log_level','Information') ON CONFLICT(key) DO UPDATE SET value=excluded.value;"
 ```
 
-After any edit, re-run `PRAGMA integrity_check;` and start the pools.
+After any edit, re-run `& $dotnet $app db check $db` and start the pools.
 
 ### Authorization rows are SIDs, not names
 
@@ -144,8 +164,8 @@ missing file and never creates one — deleting it turns a corrupt instance into
 
 2. **Or salvage what is readable** with `.recover`:
    ```powershell
-   sqlite3 $db ".recover" | sqlite3 "$db.recovered"
-   sqlite3 "$db.recovered" "PRAGMA integrity_check;"
+   sqlite3 $db ".recover" | sqlite3 "$db.recovered"   # needs the sqlite3 shell
+   & $dotnet $app db check "$db.recovered"
    ```
    If that prints `ok`, then with **both pools stopped**:
    ```powershell
@@ -160,7 +180,7 @@ missing file and never creates one — deleting it turns a corrupt instance into
 3. **If there is no usable backup**, create an EMPTY database at the configured path and let
    the app build the schema on next start:
    ```powershell
-   sqlite3 $db "PRAGMA user_version;"   # creates the file if absent
+   & $dotnet $app db init $db   # creates an empty, integrity-checked database; refuses an existing file
    ```
    The app refuses to start against a *missing* configured database but migrates an empty
    one (`ConfigStoreMigrator` issues `CREATE TABLE IF NOT EXISTS`), so an empty file is a

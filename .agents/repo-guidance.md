@@ -58,11 +58,14 @@ which should win. Do not silently choose whichever source is convenient.
   SQLite backup, enforces a clean tree unless `-AllowDirty`, and supports `-PlanOnly`. Prod is the
   same script with `-Prod`. Generic install:
   `tools/Install-ExchangeAdminWeb.ps1`.
-- Deploy-host dependency: `sqlite3.exe` must be on PATH (`winget install SQLite.SQLite`).
-  The deploy/promote scripts use it to make a verified online backup of
-  `config/exchangeadmin.db` before each deploy and fail fast if it is missing (see <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime config DB is intentionally created outside source control) -->
-  `tools/SqliteConfigBackup.psm1`). The app bundles its own SQLite engine; this is a
-  host dependency for the ops scripts only.
+- Deploy-host dependency: none beyond the ASP.NET Core Hosting Bundle. The deploy, promote,
+  cutover and installer scripts take the verified online backup of the config database by
+  running the app's own `db` command-line mode (`backup`, `check`, `active-jobs`, `init`)
+  through `<ProgramFiles>\dotnet\dotnet.exe`, against the build they are about to deploy
+  (`tools/SqliteConfigBackup.psm1`, `docs/ConfigDbToolInApp-Plan.md`, decision 2026-10-22).
+  `sqlite3.exe` is never resolved or run by any script; a Pester guard enforces that. The
+  sqlite3 shell is needed only for the manual ad-hoc SQL and `.recover` recipes in
+  `docs/ConfigDbOperations.md`.
 
 ## Reading Order
 

@@ -1,9 +1,9 @@
 # aud-sqlite3-path: an elevated deploy runs a user-writable, unsigned sqlite3.exe found on PATH
 
 **Severity**: HIGH. A privilege-escalation path on the deploy host, measured, not inferred.
-**Status**: S1 landed, S2 landed (scripts use the app's db mode; no script runs sqlite3.exe), S3 pending (`docs/ConfigDbToolInApp-Plan.md`)
+**Status**: Complete. S1, S2 and S3 landed; no script resolves or runs sqlite3.exe; docs and decision updated (`docs/ConfigDbToolInApp-Plan.md`, decision 2026-10-22)
 **Branch**: -- (direct-to-main)
-**Commit**: S1 `86970a5`; cdt-1 follow-up `872f211`
+**Commit**: S1 `86970a5`; cdt-1 follow-up `872f211`; S2 `b1577f7`; S3 docs (see git log for `docs(configdbtool): S3`)
 
 ## Evidence
 
@@ -155,4 +155,8 @@ running it; the exit-1 message is kept for any other usage error.
 
 ## Closeout
 
-S1 and S2 on `master`. Independent review of S2 not yet run.
+S1, S2 and S3 on `master`. codex reviewed S1 (`prompt-s1-configdbtool.md` -> cdt-1, fixed
+`872f211`) and S2 (`prompt-s2-configdbtool.md`, over `9e7f9f9..b1577f7` -> cdt-2, cdt-3
+declined/contested, cdt-4; see their records). S3 is docs plus the decision entry
+(2026-10-22). Owner host actions still open: remove the per-user `sqlite3.exe`; run
+`tools/deploy-pipeline.ps1 -Prod -PlanOnly` (AC7); first elevated dev deploy.

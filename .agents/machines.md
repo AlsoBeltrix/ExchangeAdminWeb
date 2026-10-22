@@ -72,9 +72,11 @@ _First recorded 2026-07-21._
 - `deploy.ps1` / `deploy-pipeline.ps1 -Dev` must run in **Windows PowerShell 5.1** on this box
   (the `WebAdministration` IIS provider does not load under PowerShell 7). Dev app root:
   `D:\inetpub\ExchangeAdminWebDev`.
-- `sqlite3.exe` is on PATH via winget (ops-script dependency for config backup). Re-verified
-  2026-10-05 as of `25bb108` at
-  `C:\Users\mcoelho\AppData\Local\Microsoft\WinGet\Packages\SQLite.SQLite_Microsoft.Winget.Source_8wekyb3d8bbwe\sqlite3.exe`.
+- `sqlite3.exe` is NO LONGER an ops-script dependency (ConfigDbToolInApp-Plan, decision
+  2026-10-22): the scripts run the app's `db` mode through `<ProgramFiles>\dotnet\dotnet.exe`.
+  A per-user, unsigned copy still sits on PATH at
+  `C:\Users\mcoelho\AppData\Local\Microsoft\WinGet\Packages\SQLite.SQLite_Microsoft.Winget.Source_8wekyb3d8bbwe\sqlite3.exe`
+  (finding `aud-sqlite3-path`); removing it is the owner's host action, pending.
 - **Shared config database path** (SharedConfigDb-Plan, decision 2026-09-04):
   `D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db` - the default `-SharedDbPath` of
   `tools/Move-ConfigDbToShared.ps1` and the value both instances' `appsettings.json` carry

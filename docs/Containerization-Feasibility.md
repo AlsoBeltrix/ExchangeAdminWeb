@@ -429,7 +429,7 @@ alternative, offered so the owner can compare it against 13 to 17 sessions.**
 - **Slice 1 - Prerequisite preflight.** A `-PlanOnly`-honouring phase at the top of the
   installer that checks, reports and refuses: Windows PowerShell 5.1 availability and the `IIS:`
   drive; the ASP.NET Core hosting bundle / `AspNetCoreModuleV2`; the `ActiveDirectory` module;
-  the `ExchangeOnlineManagement` module; `sqlite3.exe` on PATH for the backup path; the EXO
+  the `ExchangeOnlineManagement` module; the EXO
   certificate present with a readable private key; and the Delinea credential resolvable under
   the configured target. Each check fails closed through `Write-Fail`, in line with the PowerShell
   error model in `.agents/repo-guidance.md`. Pester coverage in `tests/ps/`.

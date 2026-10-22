@@ -531,13 +531,14 @@ permission that could. Disabled by default and fail-closed.
 - **.NET 10 SDK** and **ASP.NET Core 10 Runtime (Windows Hosting Bundle)**
 - **PowerShell 7.4+**
 - **ExchangeOnlineManagement PowerShell Module** (v3.7.0+ required for Get-MessageTraceV2)
-- **SQLite command-line tools (`sqlite3.exe` on PATH)** — required by the deploy/promote
-  scripts to make a verified, consistent online backup of the runtime config database
-  (the shared `exchangeadmin.db`, see "Shared config database" below) before each deploy.
-  Install with `winget install SQLite.SQLite`.
-  The deploy/promote scripts fail fast if `sqlite3` is not on PATH rather than fall back to an
-  unverified file copy. (The app itself bundles its own SQLite engine and does not need this;
-  it is a *deployment-host* dependency only.)
+- **No SQLite tooling.** The deploy/promote/installer scripts make the verified, consistent
+  online backup of the runtime config database (the shared `exchangeadmin.db`, see "Shared
+  config database" below) by running the app's own `db` command-line mode through
+  `<ProgramFiles>\dotnet\dotnet.exe`, using the build they are about to deploy. The scripts
+  fail fast if that build is missing or predates the `db` mode (app 2.34.0) rather than fall
+  back to an unverified file copy. `sqlite3.exe` is not used by any script. The sqlite3 shell
+  is only needed for the manual ad-hoc SQL and `.recover` recipes in
+  `docs/ConfigDbOperations.md`, which says how to install it safely.
 
 ### Exchange Online Prerequisites
 - **Azure App Registration** with:

@@ -1,7 +1,10 @@
 # The app backs up its own database: retire the sqlite3.exe host dependency
 
-Status: Approved 2026-10-21 (owner: "okay, plan it"; the approach was ruled in chat the same
-day after the deploy-host finding recorded in `.agents/state.md`). Not started.
+Status: Implemented 2026-10-22 (S1 `86970a5`, S2 `b1577f7`, S3 docs + decision 2026-10-22).
+Approved 2026-10-21 (owner: "okay, plan it"; the approach was ruled in chat the same day after
+the deploy-host finding, now `.agents/review/findings/aud-sqlite3-path.md`). Owner host actions
+still open: AC7 `deploy-pipeline.ps1 -Prod -PlanOnly`, first dev deploy, remove the per-user
+`sqlite3.exe` (section 10).
 Owner: Michael
 Last verified against code: `45f3ca9` / 2026-10-21
 Versions: base app `2.33.0` -> `2.34.0` in S1 (Program.cs gains a command-line entry point and
@@ -340,6 +343,12 @@ ASCII lint over tracked `.cs/.ps1/.psm1`.
 - 2026-10-21: plan written. Codex openreview returned Acceptable with changes; both
   changes folded in (section 9).
 - 2026-10-21: S1 landed `86970a5`; codex review -> cdt-1 (MEDIUM), fixed `872f211`. S2 next.
+- 2026-10-21: S2 landed `b1577f7`; codex review over `9e7f9f9..b1577f7` -> cdt-2, cdt-3
+  (declined, contested record), cdt-4; follow-on deploy/installer findings cdt-5..cdt-38 fixed
+  under the owner's 2026-10-21 "EVERYTHING" go (`.agents/review/index.md`).
+- 2026-10-22: S3 landed (docs, machines note, decision entry, `aud-sqlite3-path` closed).
+  Status -> Implemented. Open owner items: AC7 plan-mode run, first dev deploy, remove the
+  per-user `sqlite3.exe`.
 
 ## 9. Review
 

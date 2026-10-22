@@ -37,7 +37,7 @@ Opus 5.5 agents dispatched from the supervising session; codex reviews.
 | 6 | aud-a29b merged `b60a507` with off-switch `Authentication:RevalidationEnabled`; codex raised a29c/d/e (two HIGH, one MEDIUM) - agent fixing; aud-a33b/a33c agent still running | in progress |
 | 7 | psl-4, psl-2, psl-3, psl-5 (new) merged `66bdb90`, codex review pending; psl-6 (attribute editor search-base flag) in the item-8 agent; aud-a6c/a7b agent running | partly merged |
 | 8 | aud-a26b, a28b, psl-6 (one agent); aud-a23b, cdr-followup-1, a38e (another) | agents running |
-| 9 | ConfigDbToolInApp S3 docs + decision; close aud-sqlite3-path; final consolidated version bump (base + modules touched today); push after every group is codex-clean | queued - last |
+| 9 | ConfigDbToolInApp S3 docs + decision + aud-sqlite3-path closed (done 2026-10-22); final consolidated version bump (base + modules touched today); push after every group is codex-clean | S3 done; bump queued - last |
 
 Constitution still applies inside the go: authorization changes get a short written plan
 section inside their finding record (approach, files, tests) before code; one finding per
@@ -63,17 +63,14 @@ PowerShell modules, five callers, Pester without skip gates, CI builds the app i
 
 **The finding** (HIGH: an elevated deploy runs a user-writable, unsigned `sqlite3.exe` from
 PATH) and its measured evidence now live in
-[aud-sqlite3-path.md](review/findings/aud-sqlite3-path.md). Until S2 lands every deploy
-still runs that binary.
+[aud-sqlite3-path.md](review/findings/aud-sqlite3-path.md). S1-S3 landed: no script runs
+sqlite3.exe any more; the per-user copy on the deploy host is the owner's to remove.
 
 **Also open, owner decisions:**
 - `-NarrowPublishAcl` shipped opt-in (`tools/Install-ExchangeAdminWeb.ps1`). Making it the
   default needs a dev install that exercises the modules - it cannot be validated off a host.
 - `SQLitePCLRaw.lib.e_sqlite3 2.1.11` carries a known high-severity advisory and ships INSIDE
   the app. Surfaced by build warnings; untouched, outside audit scope.
-- Untested seam: the app writes the config DB with `Microsoft.Data.Sqlite` and the ops scripts
-  back it up with `sqlite3.exe`. No test covers the handoff - every Pester fixture is created
-  and verified by the same CLI, which is close to self-certification.
 - Pre-existing: `aud-a29b`, `aud-a33b`, `aud-a6b` live acceptance.
 - Unapproved follow-ups I filed: `aud-a23b`, `a26b`, `a28b`, `a38b`, `a1b`-`a7b`, `a33c`, `a6c`.
 
