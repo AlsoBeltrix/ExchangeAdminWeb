@@ -1082,8 +1082,11 @@ try {
         # A35: see tools/AppPoolControl.psm1. The empty catch hid a pool that would not stop,
         # and the robocopy below mirrors over a live application.
         $poolState = Stop-AppPoolVerified -Name $AppPoolName
-        if ($poolState -eq 'Absent') {
-            Write-Warn "App pool $AppPoolName does not exist yet - nothing to stop."
+        # cdt-33: only a confirmed stop reaches the mirror. The pool step above creates the pool when it
+        # is missing, so 'Absent' here means IIS did not answer what was asked (an unreadable
+        # configuration, a name the existence probe reads as a wildcard pattern), not a fresh install.
+        if ($poolState -ne 'Stopped') {
+            Write-Fail "App pool $AppPoolName was reported '$poolState', not confirmed stopped, although this run created or updated it above. Refusing to replace the files of an application that cannot be shown to be stopped; the publish folder is unchanged."
         }
     }
 

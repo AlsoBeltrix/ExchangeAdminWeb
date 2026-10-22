@@ -1334,3 +1334,84 @@ Describe 'cdt-32: the installer asks IIS what serves the folder before it stops 
         $planned.Said | Should -Match ([regex]::Escape('PLAN Confirm that IIS serves ')) -Because 'the plan shows the check'
     }
 }
+
+Describe 'cdt-33: only a confirmed stop reaches the installer''s mirror' {
+    # The stop accepted 'Absent' with a warning and mirrored, although the run's own pool step
+    # creates the pool well before it: an absent pool there is IIS not answering, not a fresh install.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt33Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+    }
+
+    It 'refuses anything but Stopped right after the verified stop, and nothing compares the state with Absent (AST)' {
+        $stop = $script:Cdt33Ast.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.Extent.Text -like 'Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped"*' }, $true)
+        $stop | Should -Not -BeNullOrEmpty
+        $body = @($stop.CommandElements[2].ScriptBlock.EndBlock.Statements)
+        $stopAt = -1
+        for ($i = 0; $i -lt $body.Count; $i++) { if ($body[$i].Extent.Text -eq '$poolState = Stop-AppPoolVerified -Name $AppPoolName') { $stopAt = $i } }
+        $stopAt | Should -BeGreaterOrEqual 0 -Because 'the step stops the pool through the verified stop'
+        $confirmed = $body[$stopAt + 1]
+        $confirmed | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+        $confirmed.Clauses[0].Item1.Extent.Text | Should -BeExactly "`$poolState -ne 'Stopped'" -Because 'only a confirmed stop may reach the mirror'
+        $confirmed.ElseClause | Should -BeNullOrEmpty
+        $confirmed.Clauses[0].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "*'
+        $script:Cdt33Ast.Extent.Text | Should -Not -Match "poolState -eq 'Absent'" -Because 'an absent pool is no longer something to carry on past'
+    }
+
+    It 'runs the real region: a pool reported absent is refused before the mirror, a stopped one reaches it (behavioural)' {
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Plan', 'Write-Fail', 'Invoke-PlanOrAction') {
+            $fn = $script:Cdt33Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        $outer = $script:Cdt33Ast.Find({
+                param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] -and
+                @($n.Body.Statements | Where-Object { $_.Extent.Text -like 'Invoke-PlanOrAction "dotnet publish to staging*' }).Count -gt 0
+            }, $true)
+        $region = $outer.Extent.Text
+        ${function:dotnet} = { New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null; $global:LASTEXITCODE = 0 }
+        ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath, $PlanOnly; @{ Summary = 'tool' } }
+        ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
+        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath) $null = $Name, $PhysicalPath }
+        ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt33Calls.Add('stop'); $script:cdt33StopResult }
+        ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments, $Description; $script:cdt33Calls.Add('mirror') }
+        ${function:Start-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt33Calls.Add('start'); 'Started' }
+        ${function:Write-DeploymentManifest} = { $script:cdt33Calls.Add('manifest') }
+
+        $run = {
+            param([string]$StopResult)
+            $script:cdt33Calls = New-Object System.Collections.Generic.List[string]
+            $script:cdt33StopResult = $StopResult
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt33_' + [guid]::NewGuid().ToString('N'))
+            $publish = Join-Path $root 'publish'
+            New-Item -ItemType Directory -Path $publish -Force | Out-Null
+            # Read only by the lifted region.
+            Set-Variable -Name PublishPath -Value $publish
+            Set-Variable -Name stagingPath -Value "$publish.staging.x"
+            Set-Variable -Name LogRoot -Value (Join-Path $root 'logs')
+            Set-Variable -Name repoRoot -Value $root
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name PlanOnly -Value $false
+            Set-Variable -Name SkipConfigBackup -Value $false
+            Set-Variable -Name configStorePlan -Value ([pscustomobject]@{ Path = $null; DbPath = (Join-Path $publish 'config\exchangeadmin.db'); Source = 'None' })
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+            $left = Test-Path -LiteralPath "$publish.staging.x"
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt33Calls -join ','); StagingLeft = $left }
+        }
+
+        $absent = & $run 'Absent' 6>$null
+        $absent.Calls | Should -BeExactly 'stop' -Because 'a pool the run created but IIS reports absent must not be mirrored over'
+        $absent.Thrown | Should -BeLike "App pool ExamplePool was reported 'Absent', not confirmed stopped*the publish folder is unchanged."
+        $absent.StagingLeft | Should -BeFalse
+
+        $stopped = & $run 'Stopped' 6>$null
+        $stopped.Thrown | Should -BeNullOrEmpty
+        $stopped.Calls | Should -BeExactly 'stop,mirror,start,manifest'
+    }
+}
