@@ -287,6 +287,10 @@
                     else
                     {
                         <small class="text-muted">Read-only AD credential for group membership and OU checks.</small>
+                        @if (ppSecretFallbackId is { } fallbackId)
+                        {
+                            <small class="text-muted d-block">@SecretFallbackText(fallbackId)</small>
+                        }
                     }
                 </div>
             </div>
@@ -343,9 +347,10 @@
     private Dictionary<string, bool> moduleEnablement = new();
 
     // What the page loaded, so the save bar can count the modules ACTUALLY changed rather than
-    // tallying clicks. Plain copy, deliberately: it inherits the store dictionary's own comparer,
-    // where re-keying it case-insensitively would throw on a store holding two casings of one id.
-    private Dictionary<string, bool> moduleEnablementBaseline = new();
+    // tallying clicks. Copied with the case-insensitive comparer named: a dictionary copy does not
+    // inherit its source's comparer, and GetAllEnablement's is case-insensitive, so the copy cannot
+    // meet two casings of one id (aud-a26n).
+    private Dictionary<string, bool> moduleEnablementBaseline = new(StringComparer.OrdinalIgnoreCase);
 
     private bool enablementStoreCorrupt;
     private string selectedLogLevel = "None";
@@ -561,6 +566,14 @@
         "The directory-read credential's setting could not be read, so it is not shown and cannot be changed here. "
         + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey);
 
+    // aud-a26n. The appsettings fallback the lookups use while the database holds no usable Secret ID, shown beside the
+    // field; null when the database's own value applies, or there is no fallback.
+    private int? ppSecretFallbackId;
+
+    private string SecretFallbackText(int fallbackId) =>
+        (string.IsNullOrWhiteSpace(ppDirectoryReadSecretIdBaseline) ? "Not set in the database" : "The value in the database is not a usable Secret ID")
+        + $"; the configured fallback applies: Secret ID {fallbackId} (Security:ProtectedPrincipalDirectoryReadSecretId in appsettings.json).";
+
     // Surfaced next to the add controls, not through statusMessage: a refused Add must not
     // overwrite an unrelated save result.
     private string? ppAddError;
@@ -587,7 +600,7 @@
 
         enablementStoreCorrupt = Enablement.IsStoreCorrupt();
         moduleEnablement = Enablement.GetAllEnablement();
-        moduleEnablementBaseline = new Dictionary<string, bool>(moduleEnablement);
+        moduleEnablementBaseline = new Dictionary<string, bool>(moduleEnablement, StringComparer.OrdinalIgnoreCase);
         selectedLogLevel = ExtendedLog.CurrentLevel;
         LoadProtectedPrincipals();
         authChecked = true;
@@ -673,7 +686,7 @@
             // Clear BEFORE the reload below, or the guard fires on our own navigation and asks
             // the operator to confirm leaving a page they just saved.
             dirty.ClearSection(SectionModules);
-            moduleEnablementBaseline = new Dictionary<string, bool>(moduleEnablement);
+            moduleEnablementBaseline = new Dictionary<string, bool>(moduleEnablement, StringComparer.OrdinalIgnoreCase);
             statusMessage = "Module enablement saved. Refreshing...";
             statusIsError = false;
 
@@ -803,9 +816,10 @@
     /// </remarks>
     private void LoadDirectoryReadSecret()
     {
-        ppSecretUnreadable = !ProtectedPrincipalService.TryGetDirectoryReadSecretId(out var secretId);
-        ppDirectoryReadSecretId = secretId?.ToString() ?? "";
+        ppSecretUnreadable = !ProtectedPrincipalService.TryGetDirectoryReadSecret(out var secret);
+        ppDirectoryReadSecretId = secret.Stored;
         ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;
+        ppSecretFallbackId = secret.FallbackInEffect;
     }
 
     // Only Patterns keeps a keydown handler. Users, Groups and OUs all use
@@ -1184,6 +1198,16 @@
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for protected principals change"); }
 
+            // aud-a26n. Already applied: the lists become the rows under the lock, the ones the version below is of.
+            if (alreadyApplied && outcome.After is { } held)
+            {
+                ppUsers = held.Users.ToList();
+                ppGroups = held.Groups.ToList();
+                ppOus = held.OrganizationalUnits.ToList();
+                ppPatterns = held.SamAccountNamePatterns.ToList();
+                ppTargets = held.GroupTargets.ToList();
+            }
+
             ppRulesVersion = outcome.Version ?? "";
             var secretFailure = secretChanged ? SaveDirectoryReadSecret(secretId, ip) : null;
             if (secretFailure is null)
@@ -1229,13 +1253,31 @@
     {
         try
         {
-            var update = ProtectedPrincipalService.SaveDirectoryReadSecretId(secretId);
+            // aud-a26n. Decided under the write lock against the value this page loaded (its baseline).
+            var outcome = ProtectedPrincipalService.SaveDirectoryReadSecretId(ppDirectoryReadSecretIdBaseline, secretId);
+            if (outcome.Status is ModuleConfigSaveStatus.StoreCorrupt or ModuleConfigSaveStatus.ConcurrentChange)
+            {
+                var concurrent = outcome.Status == ModuleConfigSaveStatus.ConcurrentChange;
+                var refusal = "The protection rules were saved and are in effect, but the directory-read credential (Delinea Secret ID) was not saved: "
+                    + (concurrent
+                        ? "it was changed after this page loaded it - by another administrator, or on the other instance. Reload the page and re-apply your change."
+                        : "its setting could not be read as the save went to change it. " + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey));
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, SecretSection, concurrent ? "ConcurrentChange" : "StoreCorrupt", refusal);
+                return refusal;
+            }
+
             try
             {
-                Audit.LogSettingsChange(currentUser, ip, SecretSection, SecretValue(update.Before), SecretValue(update.After));
+                Audit.LogSettingsChange(currentUser, ip, SecretSection, SecretValue(outcome.Before), SecretValue(outcome.After),
+                    outcome.AlreadyApplied.Count > 0
+                        ? new Dictionary<string, object?> { ["alreadyApplied"] = outcome.AlreadyApplied.ToArray() }
+                        : null);
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the directory-read secret id change"); }
 
+            var stored = outcome.After.GetValueOrDefault(ProtectedPrincipalService.DirectoryReadSecretConfigKey) ?? "";
+            ppDirectoryReadSecretId = stored;
+            ppSecretFallbackId = ProtectedPrincipalService.DescribeDirectoryReadSecret(stored).FallbackInEffect;
             return null;
         }
         catch (Exception secretEx)

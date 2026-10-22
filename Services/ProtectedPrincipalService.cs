@@ -98,6 +98,12 @@ public sealed record ProtectedPrincipalSaveOutcome(
 public sealed record ProtectedPrincipalRulesForEditing(ProtectedPrincipalConfig Config, string Version);
 
 /// <summary>
+/// The directory-read secret as the admin page shows it (aud-a26n): the value stored in the database, empty when none
+/// is, and the appsettings fallback the lookups use while that value gives them no Secret ID (null otherwise).
+/// </summary>
+public sealed record DirectoryReadSecretSetting(string Stored, int? FallbackInEffect);
+
+/// <summary>
 /// One parsed Protected Targets entry. Stored as <c>objectGUID|DN</c>: the GUID is the immutable
 /// identity (a rename or move cannot silently un-protect the group), the DN doubles as the
 /// display label and as a fallback matcher. Pure so the matching rule is unit-testable.
@@ -1263,9 +1269,9 @@ public class ProtectedPrincipalService
         ?? PositiveId(_config["Security:ProtectedPrincipalDirectoryReadSecretId"]);
 
     /// <summary>
-    /// The directory-read secret id as the admin page shows it (aud-a26k): false when the ProtectedPrincipals
-    /// module config cannot be read, so the page can say so rather than show the id as unset. Otherwise the
-    /// value <see cref="GetDirectoryReadSecretId"/> answers, appsettings fallback included.
+    /// The directory-read secret as the admin page shows it: false when the ProtectedPrincipals module config cannot
+    /// be read (aud-a26k), so the page can say so rather than show the id as unset; otherwise the value the database
+    /// holds and, while that value gives the lookups no Secret ID, the fallback they use instead (aud-a26n).
     /// </summary>
     /// <remarks>
     /// The lookups keep <see cref="GetDirectoryReadSecretId"/>'s fail-open read, because an unreadable id there
@@ -1273,30 +1279,49 @@ public class ProtectedPrincipalService
     /// store look unset - blank, or the appsettings fallback - and a page that then saved a changed id wrote over
     /// a value it had never shown.
     /// </remarks>
-    public bool TryGetDirectoryReadSecretId(out int? secretId)
+    public bool TryGetDirectoryReadSecret(out DirectoryReadSecretSetting setting)
     {
         if (!_moduleConfig.TryGetModuleConfig(ProtectedPrincipalsModuleKey, out var values))
         {
-            secretId = null;
+            setting = new DirectoryReadSecretSetting("", null);
             return false;
         }
 
-        secretId = PositiveId(values.GetValueOrDefault(DirectoryReadSecretConfigKey))
-            ?? PositiveId(_config["Security:ProtectedPrincipalDirectoryReadSecretId"]);
+        setting = DescribeDirectoryReadSecret(values.GetValueOrDefault(DirectoryReadSecretConfigKey));
         return true;
     }
+
+    /// <summary>
+    /// The setting for a value stored in the database: the value, and the appsettings fallback while it gives the
+    /// lookups no Secret ID - the rule <see cref="GetDirectoryReadSecretId"/> applies.
+    /// </summary>
+    public DirectoryReadSecretSetting DescribeDirectoryReadSecret(string? stored) =>
+        new(stored ?? "", PositiveId(stored) is null ? PositiveId(_config["Security:ProtectedPrincipalDirectoryReadSecretId"]) : null);
 
     private static int? PositiveId(string? value) =>
         int.TryParse(value, out var id) && id > 0 ? id : null;
 
     /// <summary>
-    /// Stores the directory-read secret id and returns the ProtectedPrincipals module values as they
-    /// were under the write lock and as the write left them.
+    /// Stores the directory-read secret id, comparing nothing, and returns the ProtectedPrincipals module values as
+    /// they were under the write lock and as the write left them. A test fixture: the admin page writes through the
+    /// two-argument form (aud-a26n).
     /// </summary>
-    public ModuleConfigUpdate SaveDirectoryReadSecretId(string value) =>
+    internal ModuleConfigUpdate SaveDirectoryReadSecretId(string value) =>
         _moduleConfig.UpdateModuleValues(
             ProtectedPrincipalsModuleKey,
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = value });
+
+    /// <summary>
+    /// The admin page's write of the directory-read secret id (aud-a26n): written only while the stored value is
+    /// still <paramref name="loaded"/>, decided under the write lock; a stored value already
+    /// <paramref name="wanted"/> is reported as already applied and not written; any other refuses, nothing written.
+    /// Throws when the write fails.
+    /// </summary>
+    public ModuleConfigSaveOutcome SaveDirectoryReadSecretId(string loaded, string wanted) =>
+        _moduleConfig.SaveChangedValues(
+            ProtectedPrincipalsModuleKey,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = loaded },
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = wanted });
 
     // Legacy exclusions come only from the MailboxPermissions/ExcludedUsers module
     // config. The appsettings Security:ExcludedUsers fallback was retired 2026-07-28:

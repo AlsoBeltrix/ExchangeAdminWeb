@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -34,7 +35,30 @@ public sealed class WholeStoreWriterTripwireTests
     public void AWholeStoreWriter_IsNotPublic(string writer)
     {
         var (type, name) = Writers.Single(w => $"{w.Type.Name}.{w.Method}" == writer);
+        AssertInternal(type, name, writer);
+    }
 
+    // aud-a26n: the repositories' own whole writers, a level below the fixtures above. The repositories are DI
+    // singletons, so a page could inject one and write past every per-row save.
+    private static readonly (Type Type, string Method)[] RepositoryWriters =
+    [
+        (typeof(ModuleConfigRepository), "SaveModule"),
+        (typeof(ModuleAdminRepository), "SetForModule"),
+        (typeof(ProtectedPrincipalRepository), "Save"),
+    ];
+
+    [Theory]
+    [InlineData("ModuleConfigRepository.SaveModule")]
+    [InlineData("ModuleAdminRepository.SetForModule")]
+    [InlineData("ProtectedPrincipalRepository.Save")]
+    public void ARepositoryWholeWriter_IsNotPublic(string writer)
+    {
+        var (type, name) = RepositoryWriters.Single(w => $"{w.Type.Name}.{w.Method}" == writer);
+        AssertInternal(type, name, writer);
+    }
+
+    private static void AssertInternal(Type type, string name, string writer)
+    {
         var methods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
             .Where(m => m.Name == name)
             .ToList();
@@ -99,5 +123,45 @@ public sealed class WholeStoreWriterTripwireTests
 
         Assert.True(fixtureCalls == fixtures.Count, "the fixtures no longer call SaveAll - this tripwire is stale");
         Assert.True(callers.Count == 0, "A whole-table SaveAll reached outside its fixture: " + string.Join("; ", callers));
+    }
+
+    [Fact]
+    public void ARepositoryWholeWriter_IsReachedOnlyFromItsServiceFixture()
+    {
+        // aud-a26n. Save is too common a name to look for everywhere: it is looked for in the files that name the
+        // repository, which a caller has to do to be given one.
+        var fixtures = new (string Path, string Signature, Regex Call, string? OnlyWhereNamed)[]
+        {
+            ("Services/ModuleConfigService.cs", "internal void SaveModuleConfig(", new Regex(@"\.SaveModule\s*\("), null),
+            ("Services/ModuleAdminService.cs", "internal void SetModuleAdmins(", new Regex(@"\.SetForModule\s*\("), null),
+            ("Services/ProtectedPrincipalService.cs", "internal void SaveConfig(", new Regex(@"\.Save\s*\("), nameof(ProtectedPrincipalRepository)),
+        };
+
+        var callers = new List<string>();
+        var fixtureCalls = new int[fixtures.Length];
+        foreach (var (path, code) in ProductionSources())
+        {
+            var scanned = code;
+            for (var i = 0; i < fixtures.Length; i++)
+            {
+                if (!string.Equals(fixtures[i].Path, path, StringComparison.Ordinal))
+                    continue;
+
+                var body = AuditCategoryFilingTests.MethodBody(code, fixtures[i].Signature);
+                fixtureCalls[i] += fixtures[i].Call.Matches(body).Count;
+                scanned = scanned.Replace(body, new string(' ', body.Length), StringComparison.Ordinal);
+            }
+
+            foreach (var fixture in fixtures)
+            {
+                if (fixture.OnlyWhereNamed is { } named && !code.Contains(named, StringComparison.Ordinal))
+                    continue;
+
+                callers.AddRange(fixture.Call.Matches(scanned).Select(m => $"{path}:{RazorSyntax.LineOf(scanned, m.Index)} {m.Value}"));
+            }
+        }
+
+        Assert.True(fixtureCalls.All(c => c > 0), "a fixture no longer calls its repository writer - this tripwire is stale");
+        Assert.True(callers.Count == 0, "A repository whole writer reached outside its service fixture: " + string.Join("; ", callers));
     }
 }

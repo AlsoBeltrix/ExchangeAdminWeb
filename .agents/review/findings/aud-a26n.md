@@ -12,8 +12,8 @@ fallback set, clearing the secret id writes an empty value and the page then sho
 again, so the admin cannot tell the clear took. (6) Comments in `ModuleConfig.razor` (~696) and
 `AdminSettings.razor` (~346) say dictionary copies keep the store's case-insensitive comparer; on
 .NET 10 they do not (harmless today).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
+**Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
+**Branch**: `worktree-agent-a3c115693e85a6623`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a28n/a26k agent, 2026-10-22, candidates 2 to 7 of its hand-back)
 
@@ -150,9 +150,139 @@ written without compare; (4) masked both sides with nothing naming the change (`
 a repository writer public again; (6) the fallback shown for a cleared secret again; (7) the display names
 written again from the page's whole map on every save not refused; (8) the stale lists kept on `AlreadyApplied`.
 
+## Executed reproduction - 2026-10-22
+
+Branch `worktree-agent-a3c115693e85a6623` on aud-a28p (`0b92c35f`), the fix's tests in place (less
+`DisplayNamesToStore_IsThePickedNamesOfTheGroupsAddedToTheAliasesWritten`, whose helper does not exist before the fix)
+and the seven production files as they were at `0b92c35f` swapped in (`git show`, each `git hash-object` equal to its
+blob: ExchangeOnlineConfig `95DBBF0E79BC458FA8BE18EE1D8CCFD3`, AdminSettings `9FE272BD2B2122704A57A7A163912717`,
+ModuleConfig `A301E76C06777CB4703EC6B4DBC115AE`, ProtectedPrincipalService `062DE6CF308D399A1A730EBA53057678`,
+ModuleConfigRepository `0401B9B2CD30B99903F567F8F5A2400B`, ModuleAdminRepository `9D72FE52FE45691408DB83B0DA29527B`,
+ProtectedPrincipalRepository `395B9059629A583C8750FFF8600E82DC`), build 0 errors: `SettingsConnectionAndSecretSaveTests`
+and `WholeStoreWriterTripwireTests` 19 failed / 9 passed. All six connection cases failed: a certificate changed
+elsewhere was reverted (`"CN=EXO-Automation"` stored, `"CN=EXO-Rotated"` expected); a certificate shown from the
+fallback was written into the store; the admin's own key changed elsewhere was overwritten rather than refused,
+between load and save and inside it (`"fabrikam..."` stored, `"northwind..."` expected); the equal change and the
+unedited save both wrote (change token moved). All three secret cases failed: a change elsewhere was overwritten
+(`"4242"` stored, `"888"` expected), between load and save and inside it, and the equal change wrote (`updated_at`
+moved). The cleared secret showed the fallback in its field (`"55"`, `""` expected) and no caption after a clearing
+save; both secret-field records lacked `changedSecretKeys`; both display-name cases reverted the newer name
+(`EXAMPLE\Old-A`) and the no-op moved the token; the already-applied rules page kept `"cfo@contoso.com"`; the three
+repository writers were public. The nine that passed are the seven aud-a26k tripwires, the source tripwire for a
+repository writer reached outside its fixture - no page calls one, and the guard is for the next - and the control
+in which a stored id with a fallback configured shows the id. Every file was restored to its MD5 and touched.
+
+## Fix
+
+`Components/Pages/ExchangeOnlineConfig.razor`: `LoadExoConfig` - one `TryGetModuleConfig` read fills the fields
+(appsettings fallbacks as before) and keeps `exoShown` (the values shown) and `exoStored` (the store's, absent as
+empty); unreadable with the module marked present -> the corrupt banner as before; unreadable otherwise -> not
+loaded, the "could not be read" banner and Save withheld, where it used to show the fallbacks as if loaded.
+`SaveExoConfig`: after the validation and aud-a28j's re-check, the keys whose trimmed field differs from the trimmed
+value shown go to `SaveChangedValues` with the values the store held; `StoreCorrupt` and `ConcurrentChange` (each key
+by its field label, `ConnectionFieldName`) refuse through `LogSettingsSaveRefused`; the success record's before is
+from the lock and its after as read back, with `alreadyApplied` when any; nothing edited -> no write and no record
+("unchanged; nothing was written"); the drain runs after every save that passes the refusals, as before; the
+baselines follow what was written. `ConnectionFields` builds the three-key map both use.
+
+`Services/ProtectedPrincipalService.cs`: `DirectoryReadSecretSetting(Stored, FallbackInEffect)`;
+`TryGetDirectoryReadSecret(out setting)` replaces `TryGetDirectoryReadSecretId` (its one caller was the page);
+`DescribeDirectoryReadSecret(stored)`, the lookups' `PositiveId` rule; `SaveDirectoryReadSecretId(loaded, wanted)` ->
+`SaveChangedValues` for the one key; the one-argument form is internal (test fixture).
+
+`Components/Pages/AdminSettings.razor`: `LoadDirectoryReadSecret` shows the stored value and keeps `ppSecretFallbackId`;
+the caption under the field while the fallback applies (`SecretFallbackText`). `SaveDirectoryReadSecret` passes the
+baseline and the trimmed field; `ConcurrentChange` and `StoreCorrupt` are refusals under
+`ProtectedPrincipals:DirectoryReadSecretId` with the message that the rules were saved and the credential was not;
+already applied is the secret's success record with `alreadyApplied`; on success the field holds the value read back
+and the caption is recomputed. `SaveProtectedPrincipals`, on `AlreadyApplied` and after its record, sets the five
+lists from `outcome.After`; the baselines follow. The enablement baseline's copies name the comparer and the comment
+says what is true.
+
+`Components/Pages/ModuleConfig.razor`: the config record's `changedSecretKeys` (`IsSecretField`, which `MaskIfSecret`
+now shares); the config baseline's copies name the comparer, and the comment is corrected; `pickedDisplayNames`,
+filled beside `accessDisplayNames` by `RememberGroupDisplayName`; the access save writes display names only on `Saved`,
+through `DisplayNamesToStore`.
+
+`Services/Storage/ModuleConfigRepository.cs`, `ModuleAdminRepository.cs`, `ProtectedPrincipalRepository.cs`:
+`SaveModule`, `SetForModule`, `Save` internal, each documented as reached only from its service fixture.
+
+Tests: new `ExchangeAdminWeb.Tests/SettingsConnectionAndSecretSaveTests.cs` (18 cases);
+`WholeStoreWriterTripwireTests` gains `ARepositoryWholeWriter_IsNotPublic` (3) and
+`ARepositoryWholeWriter_IsReachedOnlyFromItsServiceFixture`; `ProgressRegistry`'s `SaveExoConfig` opening pin is
+`ModuleConfigSvc.SaveChangedValues(`. `docs/AdminModuleDeveloperGuide.md` names `SaveChangedValues`' callers. Two
+departures from the plan's wording, neither in what is decided: the secret's equal-change case checks the row's
+`updated_at` rather than the change token, which is the database's and moves with the rules' own write in the same
+save; and a case beyond the plan pins that a connection key shown from the fallback and not edited is not written.
+
+Caller-visible change, by design: on Exchange Online Config a save writes only the fields the admin changed, and is
+refused, naming the field, when one of them was changed elsewhere to another value; a field shown from appsettings
+and not edited stays the appsettings value. On Admin Settings a changed directory-read Secret ID is refused, after
+the rules were saved, when the stored value changed since the page loaded; the field shows the value in the
+database, empty when cleared, with a caption naming the appsettings fallback while that applies; and a rules save
+already applied elsewhere leaves the page holding the stored entries. On Module Configuration a changed secret field is named
+in its record, and an access save stores display names only for groups it added from the picker. The three
+repository whole writers are no longer public; nothing in the app called them.
+
 ## Guard proof
 
-Pending.
+Same driver as aud-a28p, filter
+`FullyQualifiedName~SettingsConnectionAndSecretSaveTests|FullyQualifiedName~WholeStoreWriterTripwireTests|FullyQualifiedName~SettingsPerRowSaveTests|FullyQualifiedName~SettingsNoOpAndUnreadableSecretTests|FullyQualifiedName~SettingsConcurrentSaveTests|FullyQualifiedName~SettingsSaveStoreCheckTests|FullyQualifiedName~SettingsSaveAuditTests|FullyQualifiedName~SettingsStoreTextTests|FullyQualifiedName~GroupGrantValidationTests|FullyQualifiedName~ProtectedPrincipalServiceTests|FullyQualifiedName~ProgressRegistryTests`
+(262 tests). Fixed-file MD5s: `Components/Pages/ExchangeOnlineConfig.razor` `F323839B32AC753B55A2E626042A1339`,
+`Components/Pages/AdminSettings.razor` `B1D55A1327BD610535F469400A5DADA4`, `Components/Pages/ModuleConfig.razor`
+`9D7FE1ED6F327BB571504EC8EDC8F7D5`, `Services/Storage/ModuleConfigRepository.cs` `FAC5E79CD39CC23A6590800D518A0EC5`,
+`Services/ModuleConfigService.cs` `624AB9B2F188CCF5982268CA7D9C36A7` (unchanged by this commit; E5 only); every mutant
+built with 0 errors and every file was restored to its MD5. After the round, the restored tree rebuilt and the same
+filter: 262/262 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| 2 | `ExchangeOnlineConfig.SaveExoConfig`: all three connection keys written again (`UpdateModuleValues(..., wanted)` in place of the per-key call) | `F7439FA9B85B3A9AA75A59BB36157094` | `ExchangeOnlineConfig_AKeyChangedElsewhereAndNotEditedHere_IsNotReverted` (`"CN=EXO-Automation"` written back), `..._AKeyShownFromTheFallbackAndNotEdited_IsNotWritten`, `..._TheAdminsOwnKeyChangedElsewhere_RefusesTheSave_NamingIt` and `..._InsideTheSave_...` (`"fabrikam..."` over `"northwind..."`), `..._AnEqualChangeMadeElsewhere_IsANoOp_NotARefusal`, `..._NothingEdited_WritesNothing_AndRecordsNothing` (token moved); collateral `ProgressRegistryTests.AReportedOperationContainsTheCallItClaimsToCover` (the pin) |
+| 3 | `AdminSettings.SaveDirectoryReadSecret`: the secret written without compare (the one-argument writer) | `10843A33B7D35E2170AC96E74224AC0C` | `AdminSettings_ASecretChangedElsewhere_IsNotOverwritten_AndItsSaveIsRefused` and `..._InsideTheSave_...` (`"4242"` over `"888"`), `..._ToTheSameValue_IsARecordedNoOp` (`updated_at` moved) |
+| 4 | `ModuleConfig.SaveConfigAsync`: masked both sides with nothing naming the change (`changedSecretKeys` dropped) | `CFBE5D9570DD3BFAEAB4D66B008B3ACD` | `ModuleConfig_ASecretFieldChangedValueToValue_IsNamedInChangedSecretKeys_AndNotAsAddedOrRemoved`, `ModuleConfig_ASecretFieldSetFromEmpty_IsMaskedOnlyWhereItHasAValue` (`[]`, `["ApiToken"]` expected) |
+| 5 | a repository writer public again (`public void SaveModule(`) | `393F7913524EBF9739C8EEE36618CAF9` | `ARepositoryWholeWriter_IsNotPublic(ModuleConfigRepository.SaveModule)` |
+| 6 | `AdminSettings.LoadDirectoryReadSecret`: the fallback shown for a cleared secret again (`FallbackInEffect?.ToString() ?? Stored`) | `1D442579807C6A3554CEBCD37644FCE6` | `AdminSettings_AClearedSecretWithAFallbackConfigured_ShowsNotSetInTheDatabase` (`"55"`, `""` expected) |
+| 7 | `ModuleConfig.SaveSectionAccessAsync`: the display names written again from the page's whole map on every save not refused | `8DC93471A3A6AEF76CC65BF2271FE385` | `ModuleConfig_AnAccessSaveWhoseEditWasAlreadyApplied_WritesNoDisplayName` (token 4 -> 5), `ModuleConfig_AnAccessSave_DoesNotRevertADisplayNameChangedElsewhere` (`EXAMPLE\Old-A` back) |
+| 8 | `AdminSettings.SaveProtectedPrincipals`: the stale lists kept on `AlreadyApplied` (`if (false && ...)`) | `C927CFABA10EBF4898E0BC978DBDCC51` | `AdminSettings_AfterAnAlreadyAppliedSave_ThePageHoldsTheStoredRows_AndALaterSaveKeepsTheirCasing` (`"cfo@contoso.com"`, `"CFO@Contoso.com"` expected) |
+| E4 | extra, `MaskIfSecret`: an empty side masked too (the two checks swapped) | `E4780EF53DA05A33889ADA5407C74E0A` | `ModuleConfig_ASecretFieldSetFromEmpty_IsMaskedOnlyWhereItHasAValue` (`removed` empty, `["ApiToken=(empty)"]` expected) |
+| E5 | extra: a production caller of a repository whole writer (`_repository.SaveModule(` in a new public method of `ModuleConfigService`) | `D1941749CD42D10607C9EB95DC923168` | `ARepositoryWholeWriter_IsReachedOnlyFromItsServiceFixture` (`Services/ModuleConfigService.cs:26 .SaveModule(`) |
+| E7 | extra, `SaveSectionAccessAsync`: on `Saved`, the whole map written rather than the picked names of added groups | `85B4A7BF92BFEC73F491954655571F41` | `ModuleConfig_AnAccessSave_DoesNotRevertADisplayNameChangedElsewhere` |
+
+Part 6 has no mutation: the copies name a comparer whose sources are already case-insensitive, so no behaviour
+moves (the record called it harmless); the comments now say what is true.
+
+The code comments are written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors; 61 warnings, all pre-existing, none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,495 passed / 3 skipped (the three known AD skips) / 0 failed, 5,498 total, 5m23s. No hang. (After aud-a28p,
+  `0b92c35f`: 5,473 / 3 / 0.)
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No PowerShell source, AD module, directory, Exchange Online, Delinea, SMTP, push or deployment: no case adds a group
+grant or picks one from the directory, the harness leaves the directory services unset, and the drains run over a
+pool that holds no runspace. The pages were not rendered in a browser. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- A secret refused under the lock is refused after the rules were saved (aud-a28j's order, unchanged): the rules are in
+  effect, the credential is not, and the page says so and records both. Reload and re-apply.
+- A connection field shown from the appsettings fallback and not edited stays the fallback, so the store can hold
+  some keys while the runtime falls back for the others; the page shows the effective values and still does not mark
+  which come from appsettings.
+- Every Exchange Online save that passes the refusals drains this instance's pool, an unchanged one included, as
+  before; a change saved on the other instance still drains only that instance's pool.
+- The secret field still takes any text; a value that is not a Secret ID makes the lookups fall back, which the caption
+  now says ("The value in the database is not a usable Secret ID"), but nothing refuses it.
+- `changedSecretKeys` has no production effect until a module declares an `IsSecret` field; none does today, so the
+  cases give the page a descriptor that declares one.
+- A group added by pasting its SID, not picked, gets no stored display name from the save; the table carries any name
+  it already holds for that SID. Before, the page's loaded name could be written back over a newer one.
+- After an already-applied rules save the lists take the store's order and casing.
+- Two in-process stores on one temp file stand in for the two instances; nothing ran against the shared database.
 
 ## Folded in: two LOW items from the codex review of aud-a28n/a26k (attr-batch-8, 2026-10-22)
 

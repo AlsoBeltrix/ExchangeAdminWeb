@@ -693,9 +693,11 @@
 
     // What the page loaded. The save bar counts ACTUAL pending edits, so every section holding a
     // working copy of stored state counts its own diff against these rather than tallying events.
-    // Plain copies, deliberately: they inherit each store dictionary's own comparer, where
-    // re-keying case-insensitively would throw on a store holding two casings of one key.
-    private Dictionary<string, string> configBaseline = new();
+    // The config baseline is copied with the case-insensitive comparer named: a dictionary copy does
+    // not inherit its source's comparer, and the store's is case-insensitive, so the copy cannot meet
+    // two casings of one key. The access baseline is keyed by the catalog's policy aliases, as
+    // accessState is (aud-a26n).
+    private Dictionary<string, string> configBaseline = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, List<string>> accessBaseline = new();
     private List<string> moduleAdminGroupsBaseline = new();
     private bool moduleEnabledBaseline;
@@ -921,6 +923,9 @@
     // picked, so a group added in this session shows its name before any save/reload.
     private Dictionary<string, string> accessDisplayNames = new(StringComparer.OrdinalIgnoreCase);
 
+    // aud-a26n. The names picked from the directory on this page - the only ones an access save stores.
+    private readonly Dictionary<string, string> pickedDisplayNames = new(StringComparer.OrdinalIgnoreCase);
+
     private string? loadedModuleId;
     private bool moduleEnabled;
     private bool enablementStoreCorrupt;
@@ -993,7 +998,7 @@
         moduleAdminsUnreadable = !ModuleAdmin.TryGetAllGrants(out var adminGrants);
         moduleAdminGroups = (adminGrants.TryGetValue(module.Id, out var admins) ? admins : Array.Empty<string>()).ToList();
 
-        configBaseline = new Dictionary<string, string>(currentConfigState);
+        configBaseline = new Dictionary<string, string>(currentConfigState, StringComparer.OrdinalIgnoreCase);
         moduleEnabledBaseline = moduleEnabled;
         moduleAdminGroupsBaseline = new List<string>(moduleAdminGroups);
 
@@ -1216,10 +1221,17 @@
                 {
                     var prevKeys = written.Select(k => $"{k}={MaskIfSecret(k, outcome.Before.GetValueOrDefault(k) ?? "")}").ToArray();
                     var newKeys = written.Select(k => $"{k}={MaskIfSecret(k, outcome.After.GetValueOrDefault(k) ?? "")}").ToArray();
-                    Audit.LogSettingsChange(currentUser, ip, section, prevKeys, newKeys,
-                        outcome.AlreadyApplied.Count > 0
-                            ? new Dictionary<string, object?> { ["alreadyApplied"] = outcome.AlreadyApplied.ToArray() }
-                            : null);
+                    var extra = new Dictionary<string, object?>();
+                    if (outcome.AlreadyApplied.Count > 0)
+                        extra["alreadyApplied"] = outcome.AlreadyApplied.ToArray();
+                    // aud-a26n. Names only: which secret keys changed, values never.
+                    var changedSecretKeys = written
+                        .Where(k => IsSecretField(k)
+                            && !string.Equals(outcome.Before.GetValueOrDefault(k) ?? "", outcome.After.GetValueOrDefault(k) ?? "", StringComparison.Ordinal))
+                        .ToArray();
+                    if (changedSecretKeys.Length > 0)
+                        extra["changedSecretKeys"] = changedSecretKeys;
+                    Audit.LogSettingsChange(currentUser, ip, section, prevKeys, newKeys, extra.Count > 0 ? extra : null);
                 }
                 catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module config change"); }
             }
@@ -1227,7 +1239,7 @@
             dirty.ClearSection(SecConfig);
             // Re-baseline here, not merely tidy: this save does not reload the page, so a stale
             // baseline would count the values just persisted all over again on the next edit.
-            configBaseline = new Dictionary<string, string>(currentConfigState);
+            configBaseline = new Dictionary<string, string>(currentConfigState, StringComparer.OrdinalIgnoreCase);
             statusMessage = changed.Count == 0
                 ? "Configuration is unchanged; there was nothing to save."
                 : written.Count == 0
@@ -1427,7 +1439,13 @@
 
             // Persisted separately from the grants, and after them: a display name is cosmetic, so
             // failing to store one must never fail the access save that already succeeded.
-            SectionAccess.SaveGroupDisplayNames(accessDisplayNames);
+            if (outcome.Status == SectionAccessSaveStatus.Saved)
+            {
+                var writtenAliases = edited
+                    .Where(kv => !outcome.AlreadyApplied.Contains(kv.Key, StringComparer.OrdinalIgnoreCase))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+                SectionAccess.SaveGroupDisplayNames(DisplayNamesToStore(writtenAliases, accessBaseline, pickedDisplayNames));
+            }
 
             foreach (var (alias, curr) in edited)
             {
@@ -1629,10 +1647,12 @@
     private string MaskIfSecret(string key, string value)
     {
         if (string.IsNullOrEmpty(value)) return "(empty)";
-        var field = module?.ConfigFields.FirstOrDefault(f => f.Key == key);
-        if (field?.IsSecret == true) return "***";
+        if (IsSecretField(key)) return "***";
         return value;
     }
+
+    private bool IsSecretField(string key) =>
+        module?.ConfigFields.FirstOrDefault(f => f.Key == key)?.IsSecret == true;
 
     /// <remarks>
     /// Only a group SID is accepted here - a group picked from the AD suggestion list, or a group's
@@ -1696,10 +1716,25 @@
         // Qualified for the same reason the badge is qualified everywhere else: three domains can
         // authenticate here, and a bare name does not say which one a grant applies to. The domain
         // is derived from the SID, which is authoritative about that.
-        accessDisplayNames[result.ObjectSid] =
-            ExchangeAdminWeb.Authorization.SectionAccessGroupIdentity.QualifiedDisplayName(
-                NetBiosDomainOf(result.ObjectSid), name);
+        var display = ExchangeAdminWeb.Authorization.SectionAccessGroupIdentity.QualifiedDisplayName(
+            NetBiosDomainOf(result.ObjectSid), name);
+        accessDisplayNames[result.ObjectSid] = display;
+        pickedDisplayNames[result.ObjectSid] = display;
     }
+
+    /// <summary>
+    /// The display names an access save stores (aud-a26n): the name picked on this page for each group the save added
+    /// to an alias it wrote, and nothing else.
+    /// </summary>
+    internal static Dictionary<string, string> DisplayNamesToStore(
+        IReadOnlyDictionary<string, string[]> written,
+        IReadOnlyDictionary<string, List<string>> loaded,
+        IReadOnlyDictionary<string, string> picked) =>
+        written
+            .SelectMany(kv => kv.Value.Except(loaded.GetValueOrDefault(kv.Key) ?? [], StringComparer.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(picked.ContainsKey)
+            .ToDictionary(group => group, group => picked[group], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The NetBIOS domain owning a SID, or null. Fail-soft: this only decorates a badge, so a

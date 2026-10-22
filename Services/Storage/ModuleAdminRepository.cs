@@ -50,7 +50,13 @@ public sealed class ModuleAdminRepository
     /// Replaces the admin groups for one module (delete-then-insert) inside one transaction,
     /// mirroring the file version's whole-list overwrite semantics.
     /// </summary>
-    public void SetForModule(string moduleId, string[] groups)
+    /// <remarks>
+    /// Internal, and reached in production only from <see cref="ModuleAdminService.SetModuleAdmins"/>, itself an
+    /// internal test fixture (aud-a26n): it compares nothing, and the admins save adds and removes the groups it
+    /// changed, decided under the lock (<see cref="ApplyChanges"/>). WholeStoreWriterTripwireTests refuses another
+    /// caller.
+    /// </remarks>
+    internal void SetForModule(string moduleId, string[] groups)
     {
         _store.Write((connection, transaction) =>
         {
