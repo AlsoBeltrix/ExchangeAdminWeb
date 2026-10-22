@@ -4,7 +4,7 @@
 cause. aud-a28r/a26p added a one-time test start-up guard after one failure where two classes' first
 runspaces opened at once. Nothing in the app opens a runspace first: after a start the first two
 operators' sessions may open concurrently, the same shape.
-**Status**: Fixed on the branch, the folded-in LOW with it; closed on guard proof; awaiting merge and codex review
+**Status**: Merged `a583777d`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a9db60993a8970569`
 **Commit**: `9c554a5a` (plan `40026345`; comments `082a2b51`, `c7b61943`)
 **Reviewer**: implementer (surfaced by the aud-a28r/a26p agent, 2026-10-22, candidate 1 of its hand-back)

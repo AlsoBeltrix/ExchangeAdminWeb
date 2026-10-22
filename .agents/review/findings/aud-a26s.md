@@ -7,7 +7,7 @@ asserts the page and the pool agree. (2) The Secret ID validation uses the looku
 right, but the stored text differs from what the operator meant. (3) `ChangedEntries`, which names the
 entries in an already-applied record, compares case-insensitively while the dirty count (aud-a26p) is
 now case-sensitive, so a casing-only change counts as unsaved yet is named as unchanged.
-**Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review (one follow-up in a file owned by another agent, below)
+**Status**: Merged `a583777d`; closed on guard proof; codex review pending (the pool follow-up folded into aud-a28x)
 **Branch**: `worktree-agent-a9db60993a8970569`
 **Commit**: `63f43eb5` (plan `40026345`; comments `082a2b51`, `c7b61943`)
 **Reviewer**: implementer (surfaced by the aud-a28r/a26p agent, 2026-10-22, candidates 2, 3 and 4 of its hand-back)
