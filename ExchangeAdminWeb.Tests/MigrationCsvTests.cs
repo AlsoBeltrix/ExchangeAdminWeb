@@ -35,7 +35,7 @@ public class MigrationCsvTests
                 BatchName = "Batch-A",
                 Status = "Synced",
                 Direction = MigrationDirection.ToCloud,
-                CreatedDateTime = created,
+                CreatedDateTime = ReportedTime.Of(created),
                 StartDateTime = null,
                 CompletedDateTime = null,
                 TotalCount = 10,

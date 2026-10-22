@@ -19,7 +19,8 @@ public class MigrationScheduleTests
     {
         BatchName = "Wave1",
         Status = "Synced",
-        CompleteAfter = completeAfter,
+        // Through the one reader, as the service reads it (aud-a23d).
+        CompleteAfter = ReportedTime.Read(completeAfter),
     };
 
     [Fact]

@@ -113,7 +113,7 @@ public sealed class MigrationMailboxLoadTests : IDisposable
         batch.TotalCount = totalCount;
         batch.PendingCount = totalCount;
         batch.WorkflowStage = stage;
-        batch.StartDateTime = started ? DateTime.UtcNow : null;
+        batch.StartDateTime = started ? ReportedTime.Of(DateTime.UtcNow) : null;
         var page = CreatePage(service);
         PageField("migrationBatches").SetValue(page, new List<MigrationBatchInfo> { batch });
 

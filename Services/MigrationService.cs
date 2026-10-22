@@ -636,9 +636,14 @@ https://admin.exchange.microsoft.com/#/migration";
                         var syncedCount = Convert.ToInt32(batchObj.Properties["SyncedCount"]?.Value ?? 0);
                         var finalizedCount = Convert.ToInt32(batchObj.Properties["FinalizedCount"]?.Value ?? batchObj.Properties["FinalizedItemCount"]?.Value ?? 0);
                         var failedCount = Convert.ToInt32(batchObj.Properties["FailedCount"]?.Value ?? batchObj.Properties["FailedItemCount"]?.Value ?? 0);
-                        var createdDateTime = batchObj.Properties["CreationDateTime"]?.Value as DateTime? ?? DateTime.MinValue;
-                        var startDateTime = batchObj.Properties["StartDateTime"]?.Value as DateTime?;
-                        var completedDateTime = batchObj.Properties["CompletionDateTime"]?.Value as DateTime?;
+                        // aud-a23d. Every time through the one reader, not `as DateTime?`: any other
+                        // type came back as null and the batch showed no start, no completion, no
+                        // schedule - as if none were set. Which types the Exchange Online module hands
+                        // back is an unverified assumption; one this app cannot read is kept and named.
+                        // An absent creation time is still MinValue, as it always read here.
+                        var createdDateTime = ReportedTime.Read(batchObj.Properties["CreationDateTime"]?.Value) ?? ReportedTime.Of(DateTime.MinValue);
+                        var startDateTime = ReportedTime.Read(batchObj.Properties["StartDateTime"]?.Value);
+                        var completedDateTime = ReportedTime.Read(batchObj.Properties["CompletionDateTime"]?.Value);
                         var targetEndpoint = batchObj.Properties["TargetEndpoint"]?.Value?.ToString();
                         var autoStartVal = Convert.ToBoolean(batchObj.Properties["AutoStart"]?.Value ?? false);
                         // S8. The VALUE, not a boolean derived from its presence. A batch told to
@@ -646,7 +651,7 @@ https://admin.exchange.microsoft.com/#/migration";
                         // CompleteAfter, and collapsing them here is what made queue item 12
                         // impossible to represent. MigrationBatchInfo derives AutoComplete from
                         // this, so the flag and the time cannot disagree.
-                        var completeAfterVal = batchObj.Properties["CompleteAfter"]?.Value as DateTime?;
+                        var completeAfterVal = ReportedTime.Read(batchObj.Properties["CompleteAfter"]?.Value);
 
                         // Determine direction based on endpoint (hybrid = ToOnPrem, null/cloud = ToCloud)
                         var direction = targetEndpoint?.Contains("hybrid", StringComparison.OrdinalIgnoreCase) == true
@@ -710,7 +715,9 @@ https://admin.exchange.microsoft.com/#/migration";
                     var email = userObj.Properties["Identity"]?.Value?.ToString() ?? "Unknown";
                     var userStatus = userObj.Properties["Status"]?.Value?.ToString() ?? "Unknown";
                     var errorSummary = userObj.Properties["ErrorSummary"]?.Value?.ToString();
-                    var lastSyncDateTime = userObj.Properties["LastSyncTime"]?.Value as DateTime?;
+                    // aud-a23d. Through the one reader: `as DateTime?` showed any other type as "-",
+                    // a mailbox that never synced.
+                    var lastSyncDateTime = ReportedTime.Read(userObj.Properties["LastSyncTime"]?.Value);
                     var itemsSynced = Convert.ToInt64(userObj.Properties["ItemsSynced"]?.Value ?? 0);
                     var itemsSkipped = Convert.ToInt64(userObj.Properties["ItemsSkipped"]?.Value ?? 0);
 

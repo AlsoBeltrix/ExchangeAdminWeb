@@ -124,8 +124,8 @@ public class RecipientInfoResult
     public long? DeletedItemCount { get; set; }
     public long? ArchiveItemCount { get; set; }
     public long? ArchiveDeletedItemCount { get; set; }
-    public DateTime? WhenCreated { get; set; }
-    public DateTime? LastLogonTime { get; set; }
+    public ReportedTime? WhenCreated { get; set; }
+    public ReportedTime? LastLogonTime { get; set; }
     public List<string> EmailAddresses { get; set; } = new();
     public List<string> Warnings { get; set; } = new();
     public string? Error { get; set; }
@@ -143,82 +143,6 @@ public class OutOfOfficeResult
     public ReportedTime? StartTime { get; set; }
     public ReportedTime? EndTime { get; set; }
     public string? Error { get; set; }
-}
-
-/// <summary>
-/// aud-a7h. One schedule time as <c>Get-MailboxAutoReplyConfiguration</c> reported it: the time, or -
-/// when what came back is not a form this app can read as one - the name of what did come back.
-/// </summary>
-/// <remarks>
-/// The read used to take each time <c>as DateTime?</c>, so any other type became null and the Check
-/// Status tab showed a Scheduled auto-reply with no window, as if none were set. Which type the
-/// Exchange Online module hands back is not known here (an assumption the finding record labels; no
-/// live call was made), so every form that names a time unambiguously is read, and anything else is
-/// kept as its type name for the tab to show - the onus is on the data, and nothing is guessed.
-/// </remarks>
-public sealed record ReportedTime
-{
-    private ReportedTime(DateTime? time, string? unreadableType)
-    {
-        Time = time;
-        UnreadableType = unreadableType;
-    }
-
-    /// <summary>The time, when it could be read. Its Kind says whether it names an instant (aud-a7f).</summary>
-    public DateTime? Time { get; }
-
-    /// <summary>The type name of what was reported instead, when it could not be read as a time.</summary>
-    public string? UnreadableType { get; }
-
-    /// <summary>
-    /// The one reader for a reported time: null when nothing was reported. A <c>PSObject</c> is read as
-    /// what it wraps; a <see cref="DateTime"/> as is; a <see cref="DateTimeOffset"/> as its instant, of
-    /// Kind Utc; a string only in an ISO 8601 form, which with <c>Z</c> or an offset is that instant (Kind
-    /// Utc) and with neither names no zone (Kind Unspecified). Anything else is not readable.
-    /// </summary>
-    /// <remarks>
-    /// Text in any other form is not read because reading it would be a guess: <c>01/02/2026</c> is a
-    /// different day in different cultures, and nothing here says which wrote it. ISO 8601 puts the year
-    /// first in a fixed order, so the invariant culture reads it the same whoever wrote it. A wrapped
-    /// value that cannot be read is named by the wrapper's first type name, which for a deserialized
-    /// object says what it was, where its base object (a property bag) would not.
-    /// </remarks>
-    public static ReportedTime? Read(object? reported)
-    {
-        var value = reported;
-        string? typeName = null;
-        while (value is System.Management.Automation.PSObject wrapped)
-        {
-            typeName ??= wrapped.TypeNames.Count > 0 ? wrapped.TypeNames[0] : null;
-            value = wrapped.BaseObject;
-        }
-
-        switch (value)
-        {
-            case null:
-                return null;
-            case DateTime time:
-                return new(time, null);
-            case DateTimeOffset instant:
-                return new(instant.UtcDateTime, null);
-            case string text when DateTime.TryParseExact(text, IsoForms, System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AllowWhiteSpaces,
-                    out var parsed):
-                return new(parsed, null);
-            default:
-                return new(null, typeName ?? value.GetType().FullName ?? value.GetType().Name);
-        }
-    }
-
-    // Date, then T or a space, then the time to the minute or the second (fractions optional), then Z,
-    // an offset or nothing - which AdjustToUniversal turns into Kind Utc, Utc, or Unspecified.
-    private static readonly string[] IsoForms =
-    [
-        "yyyy-MM-ddTHH:mm:ss.FFFFFFFK",
-        "yyyy-MM-dd HH:mm:ss.FFFFFFFK",
-        "yyyy-MM-ddTHH:mmK",
-        "yyyy-MM-dd HH:mmK",
-    ];
 }
 
 /// <summary>
@@ -339,13 +263,11 @@ public sealed record OutOfOfficeRequest(
 
     /// <summary>
     /// aud-a7h. A reported time as the Check Status tab shows it: a readable one exactly as the overload
-    /// above shows it, and one this app cannot read as a note naming what came back - so a schedule
-    /// Exchange did report is never shown as an empty window.
+    /// above shows it, and one this app cannot read as a note naming what came back (and, aud-a7i, its
+    /// text) - so a schedule Exchange did report is never shown as an empty window.
     /// </summary>
     public static string ShowReported(ReportedTime reported, TimeZoneInfo zone) =>
-        reported.Time is { } time
-            ? ShowReported(time, zone)
-            : $"reported in a form this app cannot read: {reported.UnreadableType}";
+        reported.Show(time => ShowReported(time, zone));
 
     // The page's own form of a clock time, culture-free so the separators cannot move.
     private const string ReportedFormat = "yyyy-MM-dd HH:mm";

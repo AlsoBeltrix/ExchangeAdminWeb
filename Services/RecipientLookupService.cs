@@ -31,7 +31,11 @@ public class RecipientLookupService : ExchangeServiceBase
 
                 r.DisplayName = recip.Properties["DisplayName"]?.Value?.ToString();
                 r.RecipientType = recip.Properties["RecipientTypeDetails"]?.Value?.ToString();
-                r.WhenCreated = recip.Properties["WhenCreated"]?.Value as DateTime?;
+                // aud-a23d. Both times through the one reader, not `as DateTime?`: any other type came
+                // back as null and the page showed "N/A", as if none were set. Which types the Exchange
+                // Online module hands back is an unverified assumption; one this app cannot read is
+                // kept and named on the page.
+                r.WhenCreated = ReportedTime.Read(recip.Properties["WhenCreated"]?.Value);
 
                 var emailAddresses = recip.Properties["EmailAddresses"]?.Value;
                 if (emailAddresses is System.Collections.IEnumerable addrs)
@@ -65,7 +69,7 @@ public class RecipientLookupService : ExchangeServiceBase
                         {
                             r.ItemCount = ParseLong(stat.Properties["ItemCount"]?.Value);
                             r.DeletedItemCount = ParseLong(stat.Properties["DeletedItemCount"]?.Value);
-                            r.LastLogonTime = stat.Properties["LastLogonTime"]?.Value as DateTime?;
+                            r.LastLogonTime = ReportedTime.Read(stat.Properties["LastLogonTime"]?.Value);
                             r.MailboxSizeGB = ParseSizeToGB(stat.Properties["TotalItemSize"]?.Value?.ToString());
                             r.DeletedItemSizeGB = ParseSizeToGB(stat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
                         }
