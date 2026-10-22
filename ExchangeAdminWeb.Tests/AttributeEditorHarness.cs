@@ -441,6 +441,20 @@ internal sealed class LocalAd
     /// <summary>When set, Set-ADUser fails with this message as a terminating error.</summary>
     public string? SetFailure { get; set; }
 
+    /// <summary>
+    /// With <see cref="SetFailure"/>, Set-ADUser reports it through its WriteError instead - a
+    /// non-terminating refusal, as a compiled cmdlet makes one - and applies nothing, so only the
+    /// caller's -ErrorAction Stop turns it into a throw (aud-a26g).
+    /// </summary>
+    public bool SetFailureNonTerminating { get; set; }
+
+    /// <summary>
+    /// When set, Set-ADUser applies the change and then writes this message as an error with its own
+    /// -ErrorAction Continue, which the caller's -ErrorAction Stop does not throw: a record in the
+    /// error stream that no throw carried (aud-a26g).
+    /// </summary>
+    public string? SetReportsErrorWithoutThrowing { get; set; }
+
     /// <summary>When set, Import-Module fails with this message, as on a host without the module.</summary>
     public string? ImportFailure { get; set; }
 
@@ -608,11 +622,16 @@ internal sealed class LocalAd
             $directory = $global:AttributeDirectory
             $directory.Note("Set-ADUser|$Identity")
             if ($directory.SetFailure) {
-                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                $refusal = [System.Management.Automation.ErrorRecord]::new(
                     [System.InvalidOperationException]::new($directory.SetFailure),
-                    'WriteRefused', [System.Management.Automation.ErrorCategory]::PermissionDenied, $Identity))
+                    'WriteRefused', [System.Management.Automation.ErrorCategory]::PermissionDenied, $Identity)
+                if ($directory.SetFailureNonTerminating) { $PSCmdlet.WriteError($refusal); return }
+                $PSCmdlet.ThrowTerminatingError($refusal)
             }
             $directory.RecordSet([string]$Identity, $Replace, $Clear)
+            if ($directory.SetReportsErrorWithoutThrowing) {
+                Write-Error -Message $directory.SetReportsErrorWithoutThrowing -ErrorAction Continue
+            }
             """));
 
         return state;

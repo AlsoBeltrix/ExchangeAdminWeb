@@ -1419,10 +1419,9 @@ public class ADAttributeEditorService
         if (clear.Count > 0) ps.AddParameter("Clear", clear.ToArray());
 
         // -ErrorAction Stop makes real Set-ADUser failures (access denied,
-        // constraint violation, unreachable DC) THROW from Invoke() - they never
-        // reach the HadErrors branch below. Catch, audit, and return a failed
-        // result; a failed mutation with no audit record violates the
-        // Constitution's audit invariant.
+        // constraint violation, unreachable DC) THROW from Invoke(). Catch, audit,
+        // and return a failed result; a failed mutation with no audit record
+        // violates the Constitution's audit invariant.
         try
         {
             ps.Invoke();
@@ -1433,13 +1432,10 @@ public class ADAttributeEditorService
             LogAudit(target, changes, performedBy, ip, ticket, false, thrownMsg);
             return new(false, thrownMsg, null);
         }
-        ps.Commands.Clear();
-
-        if (ps.HadErrors)
+        finally
         {
-            var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Set-ADUser failed.";
-            LogAudit(target, changes, performedBy, ip, ticket, false, errMsg);
-            return new(false, errMsg, null);
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
         }
 
         LogAudit(target, changes, performedBy, ip, ticket, true, null, servicedNote);

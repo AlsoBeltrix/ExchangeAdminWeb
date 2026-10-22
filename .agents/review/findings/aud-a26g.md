@@ -76,6 +76,74 @@ ignored - (a) then passes either way, and only the self-test stops it.
 Files: `Services/ADAttributeEditorService.cs`, `ExchangeAdminWeb.Tests/AttributeEditorHarness.cs`,
 `ExchangeAdminWeb.Tests/ADAttributeEditorSaveTests.cs`, this record.
 
+## Fix
+
+`Services/ADAttributeEditorService.cs`, PerformSave, the Set-ADUser write: `try { ps.Invoke(); } catch
+(Exception ex) { the aud-a28c failure record and result, unchanged } finally { ps.Commands.Clear();
+ps.Streams.Error.Clear(); }`. The `if (ps.HadErrors)` branch after it is removed, and with it the
+comment's claim that failures "never reach the HadErrors branch below". The success record still
+follows the write and is reached only when Invoke did not throw.
+
+Harness (`ExchangeAdminWeb.Tests/AttributeEditorHarness.cs`, `LocalAd`), both default off:
+`SetFailureNonTerminating` - with `SetFailure`, the stand-in Set-ADUser reports it through
+`$PSCmdlet.WriteError` and applies nothing; `SetReportsErrorWithoutThrowing` - it applies the change,
+then writes the message with its own `-ErrorAction Continue`. The terminating `SetFailure` is the same
+error record as before, built once.
+
+Tests (`ExchangeAdminWeb.Tests/ADAttributeEditorSaveTests.cs`, 4 cases):
+`AnErrorTheWriteReportsWithoutThrowing_IsNotTakenForAFailedWrite`,
+`AWriteTheDirectoryRefuses_IsTheAuditedFailure_ThrownEitherWay` (terminating; non-terminating under
+Stop) and the knob self-test `TheHarness_SetADUser_ReportsAnErrorWithoutThrowing_AndRefusesWithoutTerminating`
+(under Stop: the reported error is not thrown, HadErrors, one record, the change applied; the
+non-terminating refusal is thrown and applies nothing; without Stop the same refusal is not thrown -
+the knob is genuinely non-terminating, which is what lets M4 bite).
+
+Behaviour: no outcome a real cmdlet is known to produce changes. A save whose write did not throw is
+recorded and reported as a success even if an error record sits in the stream; one that threw is the
+audited failure, as before.
+
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: M3 below is the write exactly as at `374718b3` (the fix reverted at
+its call site), and it fails the one test that names the defect.
+
+Same driver and conditions as aud-a28l (`a26g-mutations.log`), filter
+`FullyQualifiedName~ADAttributeEditorSaveTests|FullyQualifiedName~ADAttributeEditorNotificationTests|FullyQualifiedName~ADAttributeEditorUndoRefusalTests|FullyQualifiedName~ReversedOperationsTests|FullyQualifiedName~AttributeEditorPageSaveAuditTests|FullyQualifiedName~ADAttributeEditorLookupTests|FullyQualifiedName~ADAttributeEditorPatternTests|FullyQualifiedName~EventLogUndoRefusalTests`
+(73 tests). Every mutant built with 0 errors; each restore matched its original MD5. After the round, a
+rebuild on the restored bytes and the filter: 73/73 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| M3 the HadErrors branch restored - the write as at `374718b3` | `ADAttributeEditorService.cs`, `35D6C756F2A774CE2D86F18957B63FBC` | `F01CB09F6D7CC5AE41E088EA6BE6A337` | `AnErrorTheWriteReportsWithoutThrowing_IsNotTakenForAFailedWrite` (the applied write reported failed with the reported text) |
+| extra M4 `-ErrorAction Stop` dropped from the write | `ADAttributeEditorService.cs`, `35D6C756F2A774CE2D86F18957B63FBC` | `E6B1DAD96CBD5A60867CBE61ED082156` | `AWriteTheDirectoryRefuses_IsTheAuditedFailure_ThrownEitherWay(nonTerminating: True)` - the refusal no longer thrown, the save reported and audited as a success with nothing written; the terminating case passes, as it must |
+| extra H1 the harness's `SetReportsErrorWithoutThrowing` ignored (`if ($false -and ...)`) | `AttributeEditorHarness.cs`, `CCB3D018E42FFCCBF19314C33EBE7FEC` | `3FFB6B3656D6977A0C5365D2B634C534` | `TheHarness_SetADUser_ReportsAnErrorWithoutThrowing_AndRefusesWithoutTerminating` only - the M3 test passes either way when no error is reported, the wrong-reason pass only the self-test stops |
+
+M4's case was confirmed by a single re-run of that mutant with the theory's cases listed: True failed,
+False passed; restored to `35D6C756F2A774CE2D86F18957B63FBC`. Unchanged through the round:
+`ADAttributeEditorSaveTests.cs` `5549C6D9165D3805B936431B8486E33E`. The code comments are written after
+the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,282 passed / 3 skipped (the three known AD skips) / 0 failed, 5,285 total,
+  5m14s; nothing hung, no Sequence file. aud-a28l's tree: 5,278 / 3 / 0, 5,281 total; the
+  four new cases are this record's.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` with the files staged: exit 0.
+
+No PowerShell source, AD module, directory, Delinea, SMTP, push or deployment. No coder self-review
+verdict is claimed.
+
+## Known gaps
+
+- *Assumption, not probed* (no directory call is made here): the real Set-ADUser, a compiled cmdlet,
+  writes no error that `-ErrorAction Stop` leaves unthrown. Were one ever reported, it is now left
+  unread and the save recorded as a success; PerformSave has no read-back after the write to settle it,
+  unlike the Conference Rooms write aud-a2o changed.
+- The finally's error-stream clear has no reader today - the write is the session's last command - so
+  no test can see it; it is there for a command added after the write.
+- The re-read Get-ADUser before the write has no HadErrors check either and relies on `-ErrorAction
+  Stop` the same way; unchanged here.
