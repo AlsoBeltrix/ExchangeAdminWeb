@@ -1067,6 +1067,17 @@ try {
 
     }
 
+    # cdt-32: the stop below proves that -AppPoolName stopped, not that nothing else serves the folder
+    # the mirror replaces. Another site or application with its files in $PublishPath under a
+    # different pool would keep serving them; cdt-15's check above compares only this application.
+    # Ask IIS for every node serving the folder (aud-a38c, the promotion script's check): the module
+    # throws unless there is one and each runs under -AppPoolName, and nothing here catches it. A
+    # step of its own, so a plan prints it - on a fresh install the application exists only once the
+    # apply run has created it above.
+    Invoke-PlanOrAction "Confirm that IIS serves $PublishPath from app pool $AppPoolName and no other" {
+        $null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath
+    }
+
     Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped" {
         # A35: see tools/AppPoolControl.psm1. The empty catch hid a pool that would not stop,
         # and the robocopy below mirrors over a live application.

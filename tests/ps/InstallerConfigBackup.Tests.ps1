@@ -1180,6 +1180,9 @@ Describe 'cdt-23: a failed run removes its staging publish' {
         }
         ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath; if (-not $PlanOnly -and $script:cdt23Case -eq 'ToolMissing') { throw 'The config DB tool is missing: ExchangeAdminWeb.dll not found.' }; @{ Summary = 'tool' } }
         ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
+        # Since cdt-32 the region asks IIS what serves the folder before the stop; that check has its
+        # own tests (the cdt-32 Describe), so here it passes and records nothing.
+        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath) $null = $Name, $PhysicalPath }
         ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; if ($script:cdt23Case -eq 'StopFails') { throw "App pool is still 'Started' after 60 seconds." }; 'Stopped' }
         ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments; if ($script:cdt23Case -eq 'MirrorFails') { Write-Fail "robocopy failed with exit code 8 during: $Description" } }
         ${function:Start-AppPoolVerified} = { param($Name) $null = $Name; 'Started' }
@@ -1222,5 +1225,112 @@ Describe 'cdt-23: a failed run removes its staging publish' {
         $clean = & $run 'Success' 6>$null
         $clean.Thrown | Should -BeNullOrEmpty
         $clean.StagingLeft | Should -BeFalse
+    }
+}
+
+Describe 'cdt-32: the installer asks IIS what serves the folder before it stops the pool and mirrors' {
+    # The stop confirmed that -AppPoolName stopped; nothing asked whether another site or application
+    # with its files in the publish folder, under a different pool, would keep serving them.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt32Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+    }
+
+    It 'checks the folder in a step of its own right before the stop, and nothing catches its refusal (AST)' {
+        $stop = $script:Cdt32Ast.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.Extent.Text -like 'Invoke-PlanOrAction "Stop app pool $AppPoolName and confirm it stopped"*' }, $true)
+        $stop | Should -Not -BeNullOrEmpty
+        $stopStatement = $stop.Parent
+        $statements = @($stopStatement.Parent.Statements)
+        $stopAt = [array]::IndexOf($statements, $stopStatement)
+        $stopAt | Should -BeGreaterThan 0
+        $previous = $statements[$stopAt - 1]
+        $previous.Extent.Text | Should -BeLike 'Invoke-PlanOrAction "Confirm that IIS serves *' -Because 'the statement right before the stop step is the folder check'
+        $check = $previous.PipelineElements[0]
+        $check.GetCommandName() | Should -BeExactly 'Invoke-PlanOrAction' -Because 'the check is a step, so a plan prints it and runs nothing (Invariant 4)'
+        $check.CommandElements[1].Extent.Text | Should -BeExactly '"Confirm that IIS serves $PublishPath from app pool $AppPoolName and no other"'
+        $body = @($check.CommandElements[2].ScriptBlock.EndBlock.Statements)
+        $body.Count | Should -Be 1 -Because 'the step is the check and nothing else'
+        $body[0].Extent.Text | Should -BeExactly '$null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath'
+        $calls = @($script:Cdt32Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-AppPoolServesPath' }, $true))
+        $calls.Count | Should -Be 1
+        $ancestor = $calls[0].Parent
+        while ($null -ne $ancestor) {
+            if ($ancestor -is [System.Management.Automation.Language.TryStatementAst]) {
+                $ancestor.CatchClauses.Count | Should -Be 0 -Because 'a catch around it could swallow the refusal and let the stop and the mirror run'
+            }
+            $ancestor = $ancestor.Parent
+        }
+    }
+
+    It 'runs the real region: a folder another pool also serves is refused before anything is stopped or mirrored (behavioural)' {
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Plan', 'Write-Fail', 'Invoke-PlanOrAction') {
+            $fn = $script:Cdt32Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        $outer = $script:Cdt32Ast.Find({
+                param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] -and
+                @($n.Body.Statements | Where-Object { $_.Extent.Text -like 'Invoke-PlanOrAction "dotnet publish to staging*' }).Count -gt 0
+            }, $true)
+        $outer | Should -Not -BeNullOrEmpty
+        $region = $outer.Extent.Text
+        ${function:dotnet} = { New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null; $global:LASTEXITCODE = 0 }
+        ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath, $PlanOnly; @{ Summary = 'tool' } }
+        ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
+        ${function:Assert-AppPoolServesPath} = {
+            param($Name, $PhysicalPath)
+            $script:cdt32Calls.Add('serves')
+            if ($script:cdt32ServedElsewhere) { throw "The files at '$PhysicalPath' are served by an app pool other than '$Name': Other Site/Copy runs under 'OtherPool'. Stopping '$Name' would leave that application running while its files are replaced. Name the pool that serves them, or fix the binding." }
+            [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = $Name; PhysicalPath = $PhysicalPath }
+        }
+        ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt32Calls.Add('stop'); 'Stopped' }
+        ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments, $Description; $script:cdt32Calls.Add('mirror') }
+        ${function:Start-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt32Calls.Add('start'); 'Started' }
+        ${function:Write-DeploymentManifest} = { $script:cdt32Calls.Add('manifest') }
+
+        $run = {
+            param([bool]$ServedElsewhere, [bool]$Plan)
+            $script:cdt32Calls = New-Object System.Collections.Generic.List[string]
+            $script:cdt32ServedElsewhere = $ServedElsewhere
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt32_' + [guid]::NewGuid().ToString('N'))
+            $publish = Join-Path $root 'publish'
+            New-Item -ItemType Directory -Path $publish -Force | Out-Null
+            # Read only by the lifted region.
+            Set-Variable -Name PublishPath -Value $publish
+            Set-Variable -Name stagingPath -Value "$publish.staging.x"
+            Set-Variable -Name LogRoot -Value (Join-Path $root 'logs')
+            Set-Variable -Name repoRoot -Value $root
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name PlanOnly -Value $Plan
+            Set-Variable -Name SkipConfigBackup -Value $false
+            Set-Variable -Name configStorePlan -Value ([pscustomobject]@{ Path = $null; DbPath = (Join-Path $publish 'config\exchangeadmin.db'); Source = 'None' })
+            $ErrorActionPreference = 'Stop'
+            $said = @(& {
+                    try { . ([scriptblock]::Create($region)) } catch { $script:cdt32Thrown = $_.Exception.Message }
+                } 6>&1 | ForEach-Object { "$_" })
+            $thrown = $script:cdt32Thrown
+            $script:cdt32Thrown = $null
+            $left = Test-Path -LiteralPath "$publish.staging.x"
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt32Calls -join ','); StagingLeft = $left; Said = ($said -join "`n") }
+        }
+
+        $script:cdt32Thrown = $null
+        $elsewhere = & $run $true $false
+        $elsewhere.Calls | Should -BeExactly 'serves' -Because 'a folder another pool also serves must stop the run before the pool is stopped or anything mirrored'
+        $elsewhere.Thrown | Should -BeLike "*served by an app pool other than 'ExamplePool'*" -Because 'the refusal is the module''s own'
+        $elsewhere.StagingLeft | Should -BeFalse -Because 'the refusal happens inside the try that removes staging'
+
+        $alone = & $run $false $false
+        $alone.Thrown | Should -BeNullOrEmpty
+        $alone.Calls | Should -BeExactly 'serves,stop,mirror,start,manifest' -Because 'the check comes right before the stop'
+
+        $planned = & $run $true $true
+        $planned.Thrown | Should -BeNullOrEmpty
+        $planned.Calls | Should -Not -Match 'serves' -Because 'a plan prints the check and runs nothing'
+        $planned.Said | Should -Match ([regex]::Escape('PLAN Confirm that IIS serves ')) -Because 'the plan shows the check'
     }
 }
