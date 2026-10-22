@@ -125,6 +125,9 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     [Fact]
     public async Task TheOnPremRoomListFallback_AddsTheProvenDirectoryObject()
     {
+        // A list Exchange reports as synchronized from on-premises: since aud-a2f the only kind the
+        // fallback serves, and the kind that refuses the cloud add below.
+        _h.ListSyncState[ConferenceRoomService.BuildRoomListName("Building 1")] = true;
         _h.Failures["Add-DistributionGroupMember"] =
             "The operation on the group failed because it is being synchronized from your on-premises organization.";
 

@@ -35,6 +35,10 @@ age.
 
 ## Approach — try cloud, fall back to on-prem (auto-detect, per row, no mode switch)
 
+> Amended by aud-a2f (2026-10-21; `.agents/review/findings/aud-a2f.md` owns the detail): the
+> fallback now also requires that Exchange reported the list as synchronized from on-premises
+> (`IsDirSynced`), and what it needs is checked before the row's first write, not at the add.
+
 Extend the existing, proven pattern the module already uses for City/State/Country
 (cloud write rejected as synced → write on-prem via a direct AD runspace → syncs up in
 ~30 min). The room-list step currently only ever tries the cloud and gives up; this

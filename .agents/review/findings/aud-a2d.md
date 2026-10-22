@@ -249,7 +249,8 @@ Conference Rooms. Gates before each.
   '<typed>'` search - is replaced by `ConfirmDirectoryObject` (`Get-ADUser -Identity <objectGUID>`,
   exactly that object or refuse). A cloud-only room has no proven object: a row with
   City/State/Country, or one needing the on-prem list fallback, is refused before any write and
-  before a credential is fetched. The removed comment's safety argument ("userPrincipalName ==
+  before a credential is fetched. (Correction: true of City/State/Country only - the list-fallback
+  refusal came after Set-Place; see aud-a2f.) The removed comment's safety argument ("userPrincipalName ==
   email in this environment") rested on this environment's shape (Architectural Invariant 7).
   `OpenDirectoryRunspace` is a new `virtual` test seam, no behaviour change.
 - Bulk processor: each row's operation is handed the gate's room for that row; its audit adds

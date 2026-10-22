@@ -317,7 +317,6 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         return await RunPooledQueryAsync((ps, tracker) =>
         {
             var canonicalName = BuildRoomListName(building);
-            var legacyName = BuildLegacyRoomListName(building);
 
             // Stray city-named list detection (Option ii): only meaningful when the city
             // would produce a different list name than the building target.
@@ -336,23 +335,62 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 }
             }
 
-            ps.AddCommand("Get-DistributionGroup")
-              .AddParameter("Identity", canonicalName)
-              .AddParameter("ErrorAction", "SilentlyContinue");
-            var canonical = InvokeOptional(ps, tracker);
-            if (canonical.Count > 0)
-                return (canonicalName, true, false, strayCityListName);
-
-            ps.AddCommand("Get-DistributionGroup")
-              .AddParameter("Identity", legacyName)
-              .AddParameter("ErrorAction", "SilentlyContinue");
-            var legacy = InvokeOptional(ps, tracker);
-            if (legacy.Count > 0)
-                return (legacyName, true, true, strayCityListName);
-
-            return (canonicalName, false, false, strayCityListName);
+            var list = FindRoomList(ps, tracker, building);
+            return (list.Name, list.Exists, list.IsLegacy, strayCityListName);
         }, allowRetry: true);
     }
+
+    /// <summary>
+    /// A building's room list as Exchange reported it (aud-a2f): its name, whether it exists, whether
+    /// that is the legacy name, and - for an existing list - whether it is synchronized from
+    /// on-premises (<c>IsDirSynced</c>), or null when Exchange did not say.
+    /// </summary>
+    private sealed record RoomListTarget(string Name, bool Exists, bool IsLegacy, bool? IsDirSynced)
+    {
+        /// <summary>
+        /// An existing list synchronized from on-premises. Exchange Online refuses the cloud add to
+        /// it, so the room is added on-prem - and only to such a list, once the preflight proved it can.
+        /// </summary>
+        public bool TakesOnPremFallback => Exists && IsDirSynced == true;
+    }
+
+    // The canonical name first, then the legacy form: the order the preview has always used, so the
+    // preview and the apply name the same list.
+    private static RoomListTarget FindRoomList(PowerShell ps, ConnectionErrorTracker tracker, string building)
+    {
+        var canonicalName = BuildRoomListName(building);
+        ps.AddCommand("Get-DistributionGroup")
+          .AddParameter("Identity", canonicalName)
+          .AddParameter("ErrorAction", "SilentlyContinue");
+        var canonical = InvokeOptional(ps, tracker);
+        if (canonical.Count > 0)
+            return new RoomListTarget(canonicalName, Exists: true, IsLegacy: false, ReadIsDirSynced(canonical[0]));
+
+        var legacyName = BuildLegacyRoomListName(building);
+        ps.AddCommand("Get-DistributionGroup")
+          .AddParameter("Identity", legacyName)
+          .AddParameter("ErrorAction", "SilentlyContinue");
+        var legacy = InvokeOptional(ps, tracker);
+        if (legacy.Count > 0)
+            return new RoomListTarget(legacyName, Exists: true, IsLegacy: true, ReadIsDirSynced(legacy[0]));
+
+        return new RoomListTarget(canonicalName, Exists: false, IsLegacy: false, IsDirSynced: null);
+    }
+
+    // True, false, or null when the property is absent or not a boolean - which the preflight refuses
+    // rather than guesses (aud-a2f).
+    private static bool? ReadIsDirSynced(PSObject list) =>
+        list.Properties["IsDirSynced"]?.Value switch
+        {
+            bool value => value,
+            PSObject { BaseObject: bool wrapped } => wrapped,
+            string text when bool.TryParse(text, out var parsed) => parsed,
+            _ => null,
+        };
+
+    // The apply's room list, read before any write (aud-a2f). Read-only: safe to retry.
+    private Task<RoomListTarget> ResolveRoomListTargetAsync(string building) =>
+        RunPooledQueryAsync((ps, tracker) => FindRoomList(ps, tracker, building), allowRetry: true);
 
     private static readonly HashSet<string> ValidRoomRecipientTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -427,6 +465,25 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             result.Message = adPreflightError;
             result.Steps.Add(new RoomOperationStep { Stage = "Set-ADUser preflight (City/State/Country)", Success = false, Error = adPreflightError });
             return result;
+        }
+
+        // aud-a2f. The room list, the same way and for the same reason: resolved here, and when it
+        // is synchronized from on-premises its on-prem add proven here, before Set-Place. Checked
+        // only at the add, a proven AD object, the AD credential, that object and the list's on-prem
+        // group were all first tested after Set-Place and the timezone had committed - so a
+        // cloud-only room on a synced list came back partial on every re-run.
+        RoomListTarget? roomList = null;
+        if (!string.IsNullOrWhiteSpace(building))
+        {
+            roomList = await ResolveRoomListTargetAsync(building);
+            var listPreflightError = await PreflightRoomListAsync(room, roomEmail, roomList);
+            if (listPreflightError != null)
+            {
+                result.Success = false;
+                result.Message = listPreflightError;
+                result.Steps.Add(new RoomOperationStep { Stage = "Room list preflight", Success = false, Error = listPreflightError });
+                return result;
+            }
         }
 
         // Step 1: Set-Place (EXO) - Building/Capacity/Floor/devices are NOT dir-synced, so
@@ -509,10 +566,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
 
         // Step 4: Room list - keyed on building (the room list IS the building; city is
-        // metadata only). A room with no building is not added to any list.
-        if (!string.IsNullOrWhiteSpace(building))
+        // metadata only). A room with no building is not added to any list. The list is the one
+        // resolved and proven before the writes (aud-a2f), not looked up again.
+        if (roomList is not null)
         {
-            var listResult = await AddToRoomListAsync(room, roomInfo.Email, roomEmail, building, city);
+            var listResult = await AddToRoomListAsync(room, roomInfo.Email, roomEmail, roomList);
             result.Steps.AddRange(listResult.Steps);
             if (!listResult.Success)
             {
@@ -543,18 +601,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// against the list's members only, never written.
     /// </param>
     /// <param name="roomEmail">The operator's input, for the result only.</param>
+    /// <param name="list">The room list resolved, and its on-prem add proven, before any write (aud-a2f).</param>
     private async Task<RoomOperationResult> AddToRoomListAsync(
-        ValidatedMailbox room, string roomPrimary, string roomEmail, string building, string city = "")
+        ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list)
     {
         var result = new RoomOperationResult { Email = roomEmail };
-
-        var (roomListName, exists, isLegacy, _) = await ResolveRoomListAsync(building, city);
-        if (roomListName == null)
-        {
-            result.Success = false;
-            result.Message = "Could not determine room list name.";
-            return result;
-        }
+        var (roomListName, exists, isLegacy) = (list.Name, list.Exists, list.IsLegacy);
 
         var opResult = await RunAsync((ps, tracker) =>
         {
@@ -631,6 +683,19 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // to adding the membership on-prem, exactly as City/State/Country are written
                 // on-prem and synced up.
                 case RoomListAddAction.OnPremFallback:
+                    // aud-a2f. Only a list Exchange reported as synchronized from on-premises - the
+                    // one whose on-prem add the preflight proved before anything was written - is
+                    // added on-prem. Any other list refusing the cloud add is surfaced: nothing
+                    // proved that add could complete, and an on-prem group found by the list's name
+                    // would not be the list Exchange holds.
+                    if (!list.TakesOnPremFallback)
+                    {
+                        result.Success = false;
+                        result.Message = $"{opResult.Message} Exchange reported room list '{roomListName}' as not synchronized from on-premises, so the room was not added on-prem instead.";
+                        result.Steps.Add(new RoomOperationStep { Stage = "Add to room list", Success = false, Error = result.Message });
+                        return result;
+                    }
+
                     _operationTrace?.Step("AddToRoomListOnPrem", backend: "AD", command: "Add-ADGroupMember", target: room.DirectoryObjectGuid ?? roomEmail);
                     var adError = await AddToRoomListViaAdAsync(room, roomEmail, roomListName);
                     if (adError == null)
@@ -1451,6 +1516,67 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         });
     }
 
+    // aud-a2f. Whether the room can be added to its room list, settled before any write. A list
+    // that does not exist yet is created cloud-side and a cloud list takes the cloud add, so neither
+    // needs anything further. A list synchronized from on-premises takes the room only on-prem
+    // (AddToRoomListViaAdAsync below), so everything that add needs and can be checked without
+    // writing - a proven AD object, the AD credential, that object readable by its objectGUID, and
+    // exactly one on-prem group for the list - is checked here, and its absence refuses the row
+    // while nothing has been written. A list whose sync state Exchange did not report is refused
+    // too: whether the row can complete is then unknown, and the old order found out by writing.
+    // Returns the refusal, or null. (A genuine Add-ADGroupMember failure after a passing preflight -
+    // missing write-members delegation, say - remains the inherent two-system residual.)
+    private async Task<string?> PreflightRoomListAsync(ValidatedMailbox room, string roomEmail, RoomListTarget list)
+    {
+        if (!list.Exists)
+            return null;
+
+        if (list.IsDirSynced is null)
+            return $"Exchange did not report whether room list '{list.Name}' is synchronized from on-premises, so it cannot be established before writing that the room can be added to it. Nothing was written.";
+
+        if (!list.TakesOnPremFallback)
+            return null;
+
+        if (room.DirectoryObjectGuid is not { } roomGuid)
+            return NoDirectoryObject(roomEmail, $"it cannot be added to room list '{list.Name}', which is synchronized from on-premises and takes members only there. Nothing was written");
+
+        var creds = await GetModuleCredentialsAsync($"Add-ADGroupMember preflight for {roomEmail}");
+        if (creds is null)
+            return $"On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config), and room list '{list.Name}' is synchronized from on-premises, so the room cannot be added to it. Nothing was written.";
+
+        return await Task.Run(() =>
+        {
+            try
+            {
+                using var runspace = OpenDirectoryRunspace();
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+
+                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+                ps.Invoke();
+                if (ps.HadErrors)
+                    return FirstError(ps) ?? "Failed to load the ActiveDirectory module.";
+                ps.Commands.Clear();
+
+                var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+
+                // The two objects the on-prem add names - the room's proven object and the list's
+                // group - each read here exactly as the add will read them, without writing.
+                var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential);
+                if (roomError != null)
+                    return roomError;
+
+                var (groupError, _) = ResolveAdGroupGuid(ps, list.Name, credential);
+                return groupError;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "On-prem room-list preflight failed for {Room} on {List}", roomEmail, list.Name);
+                return $"Failed to validate the on-prem room list '{list.Name}' before writing: {ex.Message} Nothing was written.";
+            }
+        });
+    }
+
     // Adds a room mailbox to an on-prem-mastered (DirSync'd) room-list group via the on-prem
     // AD object. Exchange Online refuses Add-DistributionGroupMember against a synced group
     // ("out of the current user's write scope ... being synchronized from your on-premises
@@ -1560,8 +1686,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
     // Resolve a room list (distribution group) to exactly one immutable on-prem ObjectGUID.
     // Matches on mail first, then displayName/name, and refuses on not-found or ambiguous -
-    // same fail-closed posture as ResolveAdObjectGuid so an on-prem membership write can never
-    // target the wrong group. Assumes the ActiveDirectory module is already imported.
+    // same fail-closed posture as ConfirmDirectoryObject so an on-prem membership write can never
+    // target the wrong group. Shared by the room-list preflight and the add (aud-a2f), so they
+    // resolve the same group. Assumes the ActiveDirectory module is already imported.
     private static (string? error, string? objectGuid) ResolveAdGroupGuid(PowerShell ps, string roomListName, PSCredential credential)
     {
         var escaped = roomListName.Replace("'", "''");
