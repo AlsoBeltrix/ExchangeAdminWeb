@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM - not a wrong-principal write, but a Conference Rooms partial mutation on a path
 the aud-a2d record says fails closed before any write.
-**Status**: Merged to master; codex group review pending; dev acceptance owed
+**Status**: Merged to master; codex batch-5 extends it as aud-a2h (Get-DistributionGroupMember without -ResultSize Unlimited can miss an existing member) - fix in progress; dev acceptance owed
 **Branch**: `worktree-agent-a0c2a0143143dd6e1`
 **Commit**: `587d7d5`; repair `f07a6ef` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh over 3562cf08..7ae55b9a, 2026-10-21

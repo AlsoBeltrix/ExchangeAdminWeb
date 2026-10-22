@@ -9,7 +9,7 @@ cdt-30) reads that key back. A legitimate first configuration of a shared databa
 the operator respells it. The installer's copy is also case-insensitive (`-notmatch`), so it passes
 a Kelvin-sign "drive letter" the app refuses; the existence check stops that one later. From the
 codex review of the cdt-28..cdt-34 merge (ops-batch-4), extending cdt-30.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (batch-5, 2026-10-21) raised no defect in this change
 **Branch**: `worktree-agent-ae79adccaaf3eeb47` (worktree `agent-ae79adccaaf3eeb47`)
 **Commit**: `cc998bb` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh, ops-batch-4, 2026-10-21
