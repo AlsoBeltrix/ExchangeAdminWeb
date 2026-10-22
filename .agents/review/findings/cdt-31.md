@@ -10,9 +10,9 @@ application is down is a red line printed earlier. The operator is pointed at a 
 the real state is a stopped application. In `deploy.ps1` the write sits in the `finally` that
 restarts the pool, so its throw also skips that `finally`'s own staging removal (the outer one still
 removes it, cdt-6). From the codex review of the cdt-11..cdt-27 merge (ops-batch-3, its finding 4).
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a80bd818fc511a34f` (worktree `agent-a80bd818fc511a34f`)
-**Commit**: `<pending>`
+**Commit**: `d32a848` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh, ops-batch-3, 2026-10-21
 
 ## Evidence

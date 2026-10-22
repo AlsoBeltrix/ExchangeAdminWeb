@@ -11,9 +11,9 @@ instance was actually using. cdt-11 decided "a supplied `-ConfigStorePath` wins"
 written, and cdt-20's refusal for a kept file points the operator at exactly this run ("Re-run with
 `-RegenerateAppSettings` to write it"). From the codex review of the cdt-11..cdt-27 merge
 (ops-batch-3, its finding 2).
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a80bd818fc511a34f` (worktree `agent-a80bd818fc511a34f`)
-**Commit**: `<pending>`
+**Commit**: `fce5c5e` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh, ops-batch-3, 2026-10-21
 
 ## Evidence

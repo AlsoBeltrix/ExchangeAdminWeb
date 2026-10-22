@@ -8,9 +8,9 @@ different pool. One that does keeps serving files the mirror replaces. cdt-15's 
 the run's pool and folder; `Assert-AppPoolServesPath` (aud-a38c), which asks about every node, is
 exported by `tools/AppPoolControl.psm1`, which the installer already imports, and is not called.
 Found while fixing cdt-28 (the same check in `deploy.ps1`); not in the codex verdict.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a80bd818fc511a34f` (worktree `agent-a80bd818fc511a34f`)
-**Commit**: `<pending>`
+**Commit**: `94eb43a` (merged)
 **Reviewer**: implementer (found while fixing cdt-28 from codex / gpt-5.5-dzs / xhigh, ops-batch-3, 2026-10-21)
 
 ## Evidence

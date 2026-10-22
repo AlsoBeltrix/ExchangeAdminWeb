@@ -8,9 +8,9 @@ stops `-AppPoolName`, confirms it stopped, and `robocopy /MIR` replaces files th
 still serving - the live-file replacement `Assert-AppPoolServesPath` (aud-a38c,
 `tools/AppPoolControl.psm1`) was written to close, and which the promotion script already calls
 before its stop. From the codex review of the cdt-11..cdt-27 merge (ops-batch-3, its finding 1).
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; codex group review pending
 **Branch**: `worktree-agent-a80bd818fc511a34f` (worktree `agent-a80bd818fc511a34f`)
-**Commit**: `<pending>`
+**Commit**: `7548b56` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh, ops-batch-3, 2026-10-21
 
 ## Evidence
