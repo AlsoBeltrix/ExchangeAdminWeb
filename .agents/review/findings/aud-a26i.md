@@ -7,9 +7,9 @@ sections in a `sections` list. The Admin Event Log filters on category/user/IP/r
 summary shows `section` only, and the CSV exports `FullTarget` only, so an admin reviewing
 `Module:MailboxPermissions` sees its success rows and not the refused or failed attempts that named
 it in `sections`.
-**Status**: Plan written; in progress
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
 **Branch**: `worktree-agent-ad10b5ab24c8ce164`
-**Commit**: -
+**Commit**: `4a538d40` (comments `ee00d337`; plan `1aeaa315`)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-4, `prompt-attr-batch-4.md`, 2026-10-22)
 
 ## Evidence
@@ -127,3 +127,22 @@ verdict is claimed.
 - The Target cell's summary is cut at 90 characters, as every target is; a long `sections` list is
   then complete only in the tooltip, the expanded row and the CSV.
 - The expanded row shows the sections twice: in Full Target, and as the record's own `sections` field.
+
+## Comments after the round
+
+Written after the round, in `ee00d337`, with aud-a28l's and aud-a26g's; the same check as aud-a28l
+(only comment and blank lines changed between `4a538d40` and `ee00d337`). This record's files:
+`Components/Pages/AdminEventLog.razor` `A55F8DB9DE66EFF00FDC20707AAF22DF` -> `A75626D42DC54C5F573B0EADAF0CE3B4`
+(GetAuditTarget's why; the file also carries aud-a28l's two); `EventLogSectionsTargetTests.cs`
+`57B19F8F133BAB8890FE99323018526C` -> `40CB6432E4AC43E46489D6642EB6B231`.
+
+## Branch-tip gates - 2026-10-22 (`ee00d337`: all three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,285 passed / 3 skipped (the three known AD skips) / 0 failed, 5,288 total,
+  5m22s; nothing hung, no Sequence file. Baseline at `374718b3`: 5,273 / 3 / 0, 5,276 total; the
+  twelve new cases are this branch's (aud-a28l five, aud-a26g four, aud-a26i three). The 316
+  `ClickGate*` cases are among those passed.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.

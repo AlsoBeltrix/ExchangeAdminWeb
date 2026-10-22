@@ -5,9 +5,9 @@ writes no audit record: an attempt on the authorization-adjacent undo path that 
 aud-a28g class; aud-a28d audited the undo SERVICE's refusals, not the page's). (2) After aud-a28i,
 `ADAttributeEditorService.SaveAllowlist` has no production caller; it still writes the allowlist
 with no version check and no audit record, so any future caller bypasses both guards.
-**Status**: Plan written; in progress
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
 **Branch**: `worktree-agent-ad10b5ab24c8ce164`
-**Commit**: -
+**Commit**: `5dc2e6e4` (comments `ee00d337`; plan `1aeaa315`)
 **Reviewer**: implementer (surfaced by the aud-a28g/h/a26f/a28i agent, 2026-10-22, candidates 6 and 10 of its hand-back)
 
 ## Evidence
@@ -181,3 +181,33 @@ rendered in a browser and no live circuit was run. No coder self-review verdict 
   rendered circuit: the Confirm Undo button's own gating is not exercised.
 - `AttributeEditorRepository.SaveAllowlist` stays public: the tests seed the store with it. No
   production code calls it, and the source tripwire refuses one that does.
+
+## Comments after the round
+
+Written after the round, in `ee00d337`, with aud-a26g's and aud-a26i's. Checked by
+`check_comment_diff.py` (session scratchpad) over `git diff 4a538d40 ee00d337 -U0`: every added or
+removed line is a comment or blank line, so each file's code lines are unchanged and in order. This
+record's files: `Services/IUndoableModule.cs` `CAC44BBC08F98BB9CB2C2A9564C7D4A6` ->
+`B03D1347375608F9C14053139CD03D82`; `Services/ADAttributeEditorUndoService.cs`
+`151479F88A4D6F52F3D5866020B93F7C` -> `D46A574CA9ABB271D9628D59C75B6E6D` (LogUndoRefused's remarks, and the
+aud-a28d comment that said the page audits nothing); ExecuteUndo's two comments in
+`Components/Pages/AdminEventLog.razor` (the file `A55F8DB9DE66EFF00FDC20707AAF22DF` at `4a538d40` ->
+`A75626D42DC54C5F573B0EADAF0CE3B4`, with aud-a26i's); SaveAllowlistAndAudit's remark in
+`Services/ADAttributeEditorService.cs` (`35D6C756F2A774CE2D86F18957B63FBC` at `748d358d` ->
+`933676D6B9174FFDC8917AA04882D0C7`, with aud-a26g's); `EventLogUndoRefusalTests.cs`
+`520E6FBE6CF751D76D33864AB0AF7E69` -> `97D3C76DA55FC320F0B2EA865E37966A`; `AllowlistConcurrentSaveTests.cs`
+`888B21B023F5E2562CB70C8DA2DFAA43` -> `416333D54334100046AFBE942FA442B8`. Two stale comments this
+record's change made are corrected in the same pass: `PageAuthorizationRecheckTests.cs` (it named
+SaveAllowlist as a live route) and `ADAttributeEditorUndoRefusalTests.cs` (it said the event log audits
+nothing).
+
+## Branch-tip gates - 2026-10-22 (`ee00d337`: all three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,285 passed / 3 skipped (the three known AD skips) / 0 failed, 5,288 total,
+  5m22s; nothing hung, no Sequence file. Baseline at `374718b3`: 5,273 / 3 / 0, 5,276 total; the
+  twelve new cases are this branch's (aud-a28l five, aud-a26g four, aud-a26i three). The 316
+  `ClickGate*` cases are among those passed.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.

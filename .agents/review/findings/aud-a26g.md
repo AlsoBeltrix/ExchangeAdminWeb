@@ -6,9 +6,9 @@ record in the stream; the `if (ps.HadErrors)` branch after it cannot fire on the
 It can fire on a stale record an earlier command left (psl-2/psl-3 class), in which case a clean
 write would be reported as a failure. The comment above it already says it is unreachable. Same
 pattern aud-a2o removed from the Conference Rooms group write.
-**Status**: Plan written; in progress
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
 **Branch**: `worktree-agent-ad10b5ab24c8ce164`
-**Commit**: -
+**Commit**: `748d358d` (comments `ee00d337`; plan `1aeaa315`)
 **Reviewer**: implementer (surfaced by the aud-a2o agent, 2026-10-22, candidate 3 of its hand-back)
 
 ## Evidence
@@ -116,7 +116,7 @@ rebuild on the restored bytes and the filter: 73/73 green.
 |---|---|---|---|
 | M3 the HadErrors branch restored - the write as at `374718b3` | `ADAttributeEditorService.cs`, `35D6C756F2A774CE2D86F18957B63FBC` | `F01CB09F6D7CC5AE41E088EA6BE6A337` | `AnErrorTheWriteReportsWithoutThrowing_IsNotTakenForAFailedWrite` (the applied write reported failed with the reported text) |
 | extra M4 `-ErrorAction Stop` dropped from the write | `ADAttributeEditorService.cs`, `35D6C756F2A774CE2D86F18957B63FBC` | `E6B1DAD96CBD5A60867CBE61ED082156` | `AWriteTheDirectoryRefuses_IsTheAuditedFailure_ThrownEitherWay(nonTerminating: True)` - the refusal no longer thrown, the save reported and audited as a success with nothing written; the terminating case passes, as it must |
-| extra H1 the harness's `SetReportsErrorWithoutThrowing` ignored (`if ($false -and ...)`) | `AttributeEditorHarness.cs`, `CCB3D018E42FFCCBF19314C33EBE7FEC` | `3FFB6B3656D6977A0C5365D2B634C534` | `TheHarness_SetADUser_ReportsAnErrorWithoutThrowing_AndRefusesWithoutTerminating` only - the M3 test passes either way when no error is reported, the wrong-reason pass only the self-test stops |
+| extra H1 the harness's `SetReportsErrorWithoutThrowing` ignored (`if ($false -and ...)`) | `AttributeEditorHarness.cs`, `CCB3D018E42FFCCBF19314C33EBE7FEC` | `3FFB6B3656D6977A0C5365D2B634C534` | `TheHarness_SetADUser_ReportsAnErrorWithoutThrowing_AndRefusesWithoutTerminating` only - the M3 test still passes, having no error to see: the wrong-reason pass only the self-test stops |
 
 M4's case was confirmed by a single re-run of that mutant with the theory's cases listed: True failed,
 False passed; restored to `35D6C756F2A774CE2D86F18957B63FBC`. Unchanged through the round:
@@ -147,3 +147,22 @@ verdict is claimed.
   no test can see it; it is there for a command added after the write.
 - The re-read Get-ADUser before the write has no HadErrors check either and relies on `-ErrorAction
   Stop` the same way; unchanged here.
+
+## Comments after the round
+
+Written after the round, in `ee00d337`, with aud-a28l's and aud-a26i's; the same check as aud-a28l
+(only comment and blank lines changed between `4a538d40` and `ee00d337`). This record's files:
+`Services/ADAttributeEditorService.cs` `35D6C756F2A774CE2D86F18957B63FBC` -> `933676D6B9174FFDC8917AA04882D0C7`
+(the write's why and the finally's; the file also carries aud-a28l's remark);
+`ADAttributeEditorSaveTests.cs` `5549C6D9165D3805B936431B8486E33E` -> `06101AD9E4D8308C723EA064F6BF13C0`.
+
+## Branch-tip gates - 2026-10-22 (`ee00d337`: all three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,285 passed / 3 skipped (the three known AD skips) / 0 failed, 5,288 total,
+  5m22s; nothing hung, no Sequence file. Baseline at `374718b3`: 5,273 / 3 / 0, 5,276 total; the
+  twelve new cases are this branch's (aud-a28l five, aud-a26g four, aud-a26i three). The 316
+  `ClickGate*` cases are among those passed.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
