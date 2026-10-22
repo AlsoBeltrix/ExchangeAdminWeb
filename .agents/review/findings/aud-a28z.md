@@ -122,7 +122,118 @@ drop not counted, E5 the writer's eventType read by ToString again.
 Files: `Services/ExtendedLogService.cs`, `Services/AuditService.cs`, `Services/JsonlLogService.cs`,
 `ExchangeAdminWeb.Tests/ExtendedLogServiceTests.cs`, `ExchangeAdminWeb.Tests/AuditWriterThrowFreeTests.cs`, this record.
 
+## Fix
+
+- `Services/ExtendedLogService.cs`: new private `ReportSafely(Action<ILogger>)` - the report in a try whose catch takes
+  any exception. Every report goes through it: `SetLevel`'s (then `throw;` as before), `Write`'s two, `Dispose`'s, the
+  consumer's and the legacy import's. New field `_droppedEntries` and public `DroppedEntryCount` (`Interlocked.Read`);
+  the consumer's catch and `Write`'s closed-queue branch increment it before they report. `MinimumLevel` holds the
+  watcher check and its reload in a try with an empty catch and returns the level in effect.
+- `Services/AuditService.cs`: `GetString` reads through new private static `TextOf` - null and a string as they are,
+  anything else its `ToString()` in a try, and "(unreadable <TypeName>)" when that throws.
+- `Services/JsonlLogService.cs`: `Write` routes by `TextField(evt, "eventType")`. `WriteToFile` writes, inside its lock,
+  through new private `AppendLine(logPath, json, stream)`: `new FileStream(logPath, FileMode.OpenOrCreate,
+  FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete, bufferSize: 1)`; `start = file.Seek(0, SeekOrigin.End)`;
+  `repair = start > 0 && !EndsWithNewline(file)` (the last byte read back); the line,
+  `Encoding.UTF8.GetBytes((repair ? NewLine : "") + json + NewLine)`, handed to the internal seam `WriteLineBytes`
+  (default `file.Write(line)`), whose failure runs `TruncateTo(file, start, ...)` - `SetLength` in a try, its own
+  failure a warning - and `throw;`; after a repaired write, a warning naming the stream and path. The catch's error
+  report carries `OperationId`, `User`, `Ip`, `Target`, `Ticket` and `Result`, each through `TextField`; it and both
+  warnings go through a private `ReportSafely` of the same shape as ExtendedLogService's.
+
+Tests: `ExchangeAdminWeb.Tests/ExtendedLogServiceTests.cs` +6 - `ExtendedLogService_GivenALoggerThatThrows_StillReturns`
+(four causes), `TheConsumer_GivenAnEntryItCannotWrite_AndALoggerThatThrows_DropsAndCountsIt_AndWritesTheNext`,
+`SetLevel_WhenTheStoreRefusesIt_AndTheLoggerThrows_ThrowsTheStoresFailure`; `CreateService` takes a logger; new
+`CapturingLogger` and `HoldTodaysLogFile`. `ExchangeAdminWeb.Tests/AuditWriterThrowFreeTests.cs` +13 -
+`AValueWhoseToStringThrows_UnderAFieldTheAuditReads_IsMarkerText_AndTheRowIsWritten` (seven fields),
+`TheWriter_GivenAnEventTypeWhoseToStringThrows_WritesTheRecord_AsAudit`,
+`ALineThatFailsHalfWritten_IsTakenBack_SoTheFileHoldsExactlyTheRowsReportedWritten` (both streams),
+`ATailADeadProcessLeft_IsEndedFirst_SoTheNextRowParsesOnItsOwnLine_AndTheRepairIsReported` (both streams),
+`ADroppedRowsReport_NamesWhoDidWhat_WhenTheTraceIsDroppedToo`; helpers `Row`, `ReadAsTheEventLogDoes`, `TraceText`,
+`LogFiles` (which `Lines` now uses), `ThrowingToString` and `CapturingLogger.Entries`.
+
+Caller-visible change, by design: a logging provider that throws no longer takes its exception out of
+`ExtendedLogService.Write`, `IsEnabledFor`, `CurrentLevel`, `Dispose` or its constructor, and no longer ends the
+extended log's consumer; `SetLevel` still throws when the store refuses the level, with the store's exception. An entry
+the consumer cannot write, or a closed queue refuses, is counted in `DroppedEntryCount`. A caller-supplied value whose
+`ToString` throws is recorded in the trace and the step's details as "(unreadable <TypeName>)" and the audit row is
+written. A record whose line fails part-way is taken back out of the file, and a file that ends mid-line is ended
+before the next record, with a warning; each record the writer reports `Written` is then a line the event log parses.
+A dropped record's report names its operation id, user, ip, target, ticket and result. The JSONL bytes of a record
+that writes are unchanged.
+
 ## Guard proof
+
+No separate pre-fix reproduction: M1, M2, E1 and E5 put each call site back as at `18530b58` (M1 keeps the new count
+before the report, as the fix has it); M3, M4, E2, E3 and E4 each take out one new guard. Each fails the tests named.
+
+Session-local driver (session scratchpad `mutate/mutate.psm1` and `mutate/round-a28z.ps1`, log
+`mutate/a28z-mutations.log`): the file's exact bytes saved, one literal replacement that must match exactly once, a
+Release build of the solution with 0 errors required, the filter
+`FullyQualifiedName~AuditWriterThrowFreeTests|FullyQualifiedName~AuditServiceTests|FullyQualifiedName~UsageTelemetryServiceTests|FullyQualifiedName~ExtendedLogServiceTests|FullyQualifiedName~AuditExtraChannelTests|FullyQualifiedName~AuditCategoryFilingTests|FullyQualifiedName~EventLog`
+(169 tests) run with a TRX logger, the exact bytes restored in a `finally`, the MD5 re-checked and the mtime advanced
+so MSBuild rebuilds. Every mutant built with 0 errors; each restore matched its original MD5. After the round, a
+rebuild on the restored bytes and the filter: 169/169 green. The round was run twice with the same results: first on
+the tests as written, then - after `dotnet format` re-indented the four `case` blocks of the new theory, a
+whitespace-only change (`git diff -w` empty) - on this commit's bytes, which the table gives.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 the consumer's report unguarded again (`_logger.LogError(ex, "Failed to write extended log entry");`) | `ExtendedLogService.cs`, `C41261D66DBFE976A6ECCEBDC54F13F1` | `A5C5FF213024B81E16743A96F258933B` | 1 of 169: `TheConsumer_GivenAnEntryItCannotWrite_AndALoggerThatThrows_DropsAndCountsIt_AndWritesTheNext` - the drop is counted, then the report's exception faults the consumer and the next entry is never written (the file stays empty) |
+| M2 the raw `ToString` again (`value?.ToString()` in GetString) | `AuditService.cs`, `28DE23A4840ECB241DEBA386E928001C` | `6E56497E094CC8E9518878F82033DBF8` | 7 of 169: `AValueWhoseToStringThrows_UnderAFieldTheAuditReads_IsMarkerText_AndTheRowIsWritten`, all seven fields - the value's exception escapes `LogModuleAction` |
+| M3 the truncate-back removed (`TruncateTo(file, start, logPath, stream);` dropped from AppendLine's catch) | `JsonlLogService.cs`, `DDA5A7DBC0246CB4277D6FB2E2F974CB` | `81F4D9E529FDEE07F8FC1F4457FE7E88` | 2 of 169: `ALineThatFailsHalfWritten_IsTakenBack_SoTheFileHoldsExactlyTheRowsReportedWritten`, both streams - the half line stays, one line the event log cannot parse (the tail repair still starts the next row on its own line) |
+| M4 the identity fields dropped from the report (aud-a28u's message and arguments again) | `JsonlLogService.cs`, `DDA5A7DBC0246CB4277D6FB2E2F974CB` | `0436F6BEF89D687F7F69A9FBA5F26650` | 1 of 169: `ADroppedRowsReport_NamesWhoDidWhat_WhenTheTraceIsDroppedToo` - the report carries no operation id |
+| extra E1 Write's detail-factory report unguarded again | `ExtendedLogService.cs`, `C41261D66DBFE976A6ECCEBDC54F13F1` | `FD109D51B6F585C4E53D054E42EDB0FC` | 1 of 169: `ExtendedLogService_GivenALoggerThatThrows_StillReturns(cause: "a detail factory that throws")` |
+| extra E2 MinimumLevel's guard removed | `ExtendedLogService.cs`, `C41261D66DBFE976A6ECCEBDC54F13F1` | `7A187EAEB0ADD7AED90E6ED41EC2F37E` | 1 of 169: `ExtendedLogService_GivenALoggerThatThrows_StillReturns(cause: "an unreadable change token")` - the provider's exception escapes `Write` through the watcher |
+| extra E3 the tail repair removed (`var repair = false;`) | `JsonlLogService.cs`, `DDA5A7DBC0246CB4277D6FB2E2F974CB` | `6A314E45615DFAA0E4E891E83B270D0E` | 2 of 169: `ATailADeadProcessLeft_IsEndedFirst_SoTheNextRowParsesOnItsOwnLine_AndTheRepairIsReported`, both streams - the next row is appended onto the cut one |
+| extra E4 the consumer's drop not counted | `ExtendedLogService.cs`, `C41261D66DBFE976A6ECCEBDC54F13F1` | `C931F796FDE7E4E6CC2DA4060F13CA4E` | 1 of 169: `TheConsumer_GivenAnEntryItCannotWrite_AndALoggerThatThrows_DropsAndCountsIt_AndWritesTheNext` - "the consumer never counted the entry it could not write" |
+| extra E5 the writer's eventType by `ToString` again | `JsonlLogService.cs`, `DDA5A7DBC0246CB4277D6FB2E2F974CB` | `CA88237F41161FF473E8B93872991982` | 1 of 169: `TheWriter_GivenAnEventTypeWhoseToStringThrows_WritesTheRecord_AsAudit` |
+
+Unchanged through the round: `ExtendedLogServiceTests.cs` `D9DB9CCCC5E8130BBBE85B3ECF300935`,
+`AuditWriterThrowFreeTests.cs` `274A15772A06889E9667EEDD1311B26A`. The code comments are written after the round, in
+their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count (36
+  NU1903, 4 NU1902, 12 CS8604, 5 CS8602, 3 CS0649, 1 CS0414) - none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,858 passed / 3 skipped (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`)
+  / 0 failed, 5,861 total, 6m51s; nothing hung, no Sequence file. The nineteen new cases are this record's (the base
+  was not run separately: 5,842 expected at `18530b58`).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0 (after the re-indent the guard proof
+  names). `git diff --check HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No AD, EXO, Graph, DHCP or IIS call, no real module, no Delinea, SMTP, push or deployment: a real writer and a real
+extended log over temp folders, a substitute config store where a store failure is the cause. No coder self-review
+verdict is claimed.
+
+## Known gaps
+
+- `DroppedEntryCount` is shown on no page yet: it is the counter a health surface or a later line reads, and the page
+  that shows the extended log level (`Components/Pages/AdminSettings.razor`) is outside this brief. Until one shows it,
+  a drop the provider could not report is visible to code only.
+- The count covers a failed write and a closed queue. A full queue's `DropOldest` - the bounded channel discarding its
+  oldest entry when writes outpace the disk - is not counted: pre-existing, and the consumer no longer dies to cause it.
+- `ConfigChangeWatcher.LogOnce` (`Services/Storage/ConfigChangeWatcher.cs` 120) stays unguarded for the other cache-hit
+  readers - `ADAttributeEditorService` (183), `PermissionValidator` (47), `ProtectedPrincipalService` (211),
+  `UsageTelemetryService` (79): with the change token unreadable and a provider that throws, `HasChangedSince` throws
+  into their callers. ExtendedLogService guards its own call; one guard in `LogOnce` would cover them all. A candidate.
+- The extended log's own file writes (`ProcessQueueAsync`, a `StreamWriter` over a `FileMode.Append` stream) can leave
+  a half line as the JSONL writer could, and the Admin Event Log's `ParseExtendedLine` then drops the merged line.
+  Diagnostics, not audit; a candidate.
+- *Assumption, not probed*: one writer per JSONL file. The lock serialises this process's writes; a second process
+  appending to the same file (two instances sharing one audit log root) between `start` and a truncation would lose its
+  row, as interleaved appends could already corrupt each other.
+- The truncation is best effort. When `SetLength` fails too, the half line stays and the next write's tail repair
+  starts its own row on a new line; the half line is then one unparseable line, which the event log drops as before.
+- Each write reads the file's last byte back, so the append handle opens for reading as well: a handle another process
+  holds with write sharing but no read sharing would now refuse the open. This repo's readers (the event log, the
+  extended log) share read, write and delete.
+- The marker text names the value's type, not its value; the audit row itself carries what System.Text.Json writes for
+  the value (its public properties - for a type with none, `{}`).
+
+## Codex review
 
 Pending.
 

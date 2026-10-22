@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -34,7 +35,7 @@ public class JsonlLogService
 
     public JsonlWriteOutcome Write(Dictionary<string, object?> evt)
     {
-        var eventType = evt.GetValueOrDefault("eventType")?.ToString();
+        var eventType = TextField(evt, "eventType");
         return eventType?.StartsWith("operation.", StringComparison.OrdinalIgnoreCase) == true
             ? WriteTrace(evt)
             : WriteAudit(evt);
@@ -85,9 +86,7 @@ public class JsonlLogService
             lock (_lock)
             {
                 logPath = GetWritableLogPath(stream);
-                using var fileStream = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-                using var writer = new StreamWriter(fileStream);
-                writer.WriteLine(json);
+                AppendLine(logPath, json, stream);
             }
 
             return JsonlWriteOutcome.Written;
@@ -101,18 +100,71 @@ public class JsonlLogService
             // had completed - aud-a28q's class, on its recovery path. Nothing is left to report that to, so it is
             // dropped, and the outcome still says the record was not written. This one catch is both streams': the
             // trace writer has no recovery path of its own.
-            try
-            {
-                _logger.LogError(ex,
-                    "Failed to write a JSONL {Stream} event (action {Action}, category {Category}) to {Path}; the event was not written",
-                    stream, TextField(evt, "action"), TextField(evt, "category") ?? TextField(evt, "module"), logPath);
-            }
-            catch (Exception)
-            {
-                // Nowhere left to say so.
-            }
+            ReportSafely(logger => logger.LogError(ex,
+                "Failed to write a JSONL {Stream} event (action {Action}, category {Category}, operation {OperationId}, user {User}, ip {Ip}, target {Target}, ticket {Ticket}, result {Result}) to {Path}; the event was not written",
+                stream, TextField(evt, "action"), TextField(evt, "category") ?? TextField(evt, "module"),
+                TextField(evt, "operationId"), TextField(evt, "user"), TextField(evt, "ip"), TextField(evt, "target"),
+                TextField(evt, "ticket"), TextField(evt, "result"), logPath));
 
             return outcome;
+        }
+    }
+
+    internal Action<Stream, byte[]> WriteLineBytes { get; set; } = static (file, line) => file.Write(line);
+
+    private void AppendLine(string logPath, string json, LogStream stream)
+    {
+        using var file = new FileStream(logPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete, bufferSize: 1);
+        var start = file.Seek(0, SeekOrigin.End);
+        var repair = start > 0 && !EndsWithNewline(file);
+        var line = Encoding.UTF8.GetBytes(repair ? Environment.NewLine + json + Environment.NewLine : json + Environment.NewLine);
+
+        try
+        {
+            WriteLineBytes(file, line);
+        }
+        catch (Exception)
+        {
+            TruncateTo(file, start, logPath, stream);
+            throw;
+        }
+
+        if (repair)
+        {
+            ReportSafely(logger => logger.LogWarning(
+                "The JSONL {Stream} file {Path} ended in a partial line, left by a write that did not finish; this event was started on a new line",
+                stream, logPath));
+        }
+    }
+
+    private static bool EndsWithNewline(FileStream file)
+    {
+        file.Seek(-1, SeekOrigin.End);
+        return file.ReadByte() == '\n';
+    }
+
+    private void TruncateTo(FileStream file, long length, string logPath, LogStream stream)
+    {
+        try
+        {
+            file.SetLength(length);
+        }
+        catch (Exception ex)
+        {
+            ReportSafely(logger => logger.LogWarning(ex,
+                "Could not remove the partial JSONL {Stream} line a failed write left in {Path}; the next event will start on a new line",
+                stream, logPath));
+        }
+    }
+
+    private void ReportSafely(Action<ILogger> report)
+    {
+        try
+        {
+            report(_logger);
+        }
+        catch (Exception)
+        {
         }
     }
 

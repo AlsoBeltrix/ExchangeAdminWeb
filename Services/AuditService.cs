@@ -541,7 +541,22 @@ public class AuditService
         => GetString(evt, "target") ?? GetString(evt, "batchName") ?? GetString(evt, "section");
 
     private static string? GetString(IReadOnlyDictionary<string, object?> evt, string key)
-        => evt.TryGetValue(key, out var value) ? value?.ToString() : null;
+        => evt.TryGetValue(key, out var value) ? TextOf(value) : null;
+
+    private static string? TextOf(object? value)
+    {
+        if (value is null or string)
+            return (string?)value;
+
+        try
+        {
+            return value.ToString();
+        }
+        catch (Exception)
+        {
+            return $"(unreadable {value.GetType().Name})";
+        }
+    }
 
     private static bool IsSuccessfulAuditResult(string? result)
         => !string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase);

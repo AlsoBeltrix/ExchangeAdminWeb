@@ -33,6 +33,7 @@ public class ExtendedLogService : IDisposable
     // cost of MinimumLevel is a clock read and a compare.
     private readonly ConfigChangeWatcher _changeWatcher;
     private long _loadedToken = ConfigChangeWatcher.Unknown;
+    private long _droppedEntries;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -66,6 +67,8 @@ public class ExtendedLogService : IDisposable
 
     public bool IsEnabledFor(LogEventLevel level) => level >= MinimumLevel;
 
+    public long DroppedEntryCount => Interlocked.Read(ref _droppedEntries);
+
     /// <summary>Test seam: the watcher consulted before every read of the level.</summary>
     internal ConfigChangeWatcher ChangeWatcher => _changeWatcher;
 
@@ -75,8 +78,15 @@ public class ExtendedLogService : IDisposable
     {
         get
         {
-            if (_changeWatcher.HasChangedSince(_loadedToken))
-                LoadLevel();
+            try
+            {
+                if (_changeWatcher.HasChangedSince(_loadedToken))
+                    LoadLevel();
+            }
+            catch (Exception)
+            {
+            }
+
             return _minimumLevel;
         }
     }
@@ -98,7 +108,7 @@ public class ExtendedLogService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to persist extended log level");
+            ReportSafely(logger => logger.LogError(ex, "Failed to persist extended log level"));
             throw;
         }
 
@@ -131,7 +141,7 @@ public class ExtendedLogService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to build extended log detail");
+            ReportSafely(logger => logger.LogError(ex, "Failed to build extended log detail"));
         }
 
         var entry = new
@@ -146,7 +156,10 @@ public class ExtendedLogService : IDisposable
         var json = JsonSerializer.Serialize(entry, JsonOptions);
 
         if (!_writeQueue.Writer.TryWrite(new PendingLogEntry(DateTime.Now.Date, json)))
-            _logger.LogWarning("Extended log queue is closed; dropping extended log entry");
+        {
+            Interlocked.Increment(ref _droppedEntries);
+            ReportSafely(logger => logger.LogWarning("Extended log queue is closed; dropping extended log entry"));
+        }
     }
 
     public List<string> GetEntries(DateTime date, int maxLines = DefaultMaxLines)
@@ -218,7 +231,7 @@ public class ExtendedLogService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to flush extended log queue during shutdown");
+            ReportSafely(logger => logger.LogError(ex, "Failed to flush extended log queue during shutdown"));
         }
     }
 
@@ -236,8 +249,20 @@ public class ExtendedLogService : IDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to write extended log entry");
+                Interlocked.Increment(ref _droppedEntries);
+                ReportSafely(logger => logger.LogError(ex, "Failed to write extended log entry"));
             }
+        }
+    }
+
+    private void ReportSafely(Action<ILogger> report)
+    {
+        try
+        {
+            report(_logger);
+        }
+        catch (Exception)
+        {
         }
     }
 
@@ -325,7 +350,7 @@ public class ExtendedLogService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to import legacy extended log level file");
+            ReportSafely(logger => logger.LogWarning(ex, "Failed to import legacy extended log level file"));
         }
     }
 

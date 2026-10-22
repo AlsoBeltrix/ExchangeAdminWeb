@@ -328,7 +328,196 @@ public sealed class AuditWriterThrowFreeTests : IDisposable
         Assert.Single(Lines(audit));
     }
 
+    // ---- aud-a28z: a value read as text never throws, a row reported Written is a line the event log reads,
+    //      and a dropped row is reported with who did what -----------------------------------------------------
+
+    private const string Unreadable = "(unreadable ThrowingToString)";
+
+    [Theory]
+    [InlineData("category")]
+    [InlineData("action")]
+    [InlineData("user")]
+    [InlineData("ip")]
+    [InlineData("target")]
+    [InlineData("ticket")]
+    [InlineData("result")]
+    public void AValueWhoseToStringThrows_UnderAFieldTheAuditReads_IsMarkerText_AndTheRowIsWritten(string field)
+    {
+        // A caller's extra can replace any field; the audit read each by ToString - for the trace's operation, the
+        // step's details, the operation's result and the usage count - so a ToString that threw escaped the call.
+        var thrown = Record.Exception(() => _audit.LogModuleAction(
+            "operator", "10.0.0.5", "TripwireAction", "TripwireCategory", "target", success: true,
+            extra: new Dictionary<string, object?> { [field] = new ThrowingToString() }));
+
+        Assert.Null(thrown);
+        var row = Assert.Single(Lines(audit: true));
+        Assert.Equal(JsonValueKind.Object, row.GetProperty(field).ValueKind);
+        Assert.Contains(Unreadable, TraceText(), StringComparison.Ordinal);
+        var step = Assert.Single(Lines(audit: false), e => e.GetProperty("stage").GetString() == "AuditWritten");
+        Assert.Equal("Success", step.GetProperty("result").GetString());
+        Assert.Empty(_logger.Errors);
+    }
+
+    [Fact]
+    public void TheWriter_GivenAnEventTypeWhoseToStringThrows_WritesTheRecord_AsAudit()
+    {
+        var outcome = JsonlWriteOutcome.FileWriteFailed;
+        var thrown = Record.Exception(() => outcome = _writer.Write(new Dictionary<string, object?>
+        {
+            ["eventType"] = new ThrowingToString(),
+            ["action"] = "TripwireAction",
+            ["category"] = "TripwireCategory",
+        }));
+
+        Assert.Null(thrown);
+        Assert.Equal(JsonlWriteOutcome.Written, outcome);
+        Assert.Equal("TripwireAction", Assert.Single(Lines(audit: true)).GetProperty("action").GetString());
+        Assert.Empty(_logger.Errors);
+    }
+
+    [Theory]
+    [InlineData("audit")]
+    [InlineData("trace")]
+    public void ALineThatFailsHalfWritten_IsTakenBack_SoTheFileHoldsExactlyTheRowsReportedWritten(string stream)
+    {
+        // Folded in from codex attr-batch-12, part 3. The half line stayed, the next row was appended onto it and
+        // reported Written - yet the event log, parsing line by line, dropped the two together.
+        var audit = stream == "audit";
+        var failNext = false;
+        _writer.WriteLineBytes = (file, line) =>
+        {
+            if (failNext)
+            {
+                failNext = false;
+                file.Write(line, 0, line.Length / 2);
+                throw new IOException("the disk is full");
+            }
+
+            file.Write(line);
+        };
+
+        var outcomes = new List<JsonlWriteOutcome> { Write(audit, Row(audit, "Before")) };
+        failNext = true;
+        outcomes.Add(Write(audit, Row(audit, "Lost")));
+        outcomes.Add(Write(audit, Row(audit, "After")));
+        outcomes.Add(Write(audit, Row(audit, "AfterThat")));
+
+        Assert.Equal(
+            [JsonlWriteOutcome.Written, JsonlWriteOutcome.FileWriteFailed, JsonlWriteOutcome.Written, JsonlWriteOutcome.Written],
+            outcomes);
+        var (rows, unparsed) = ReadAsTheEventLogDoes(audit);
+        Assert.Equal(0, unparsed);
+        Assert.Equal(["Before", "After", "AfterThat"], rows.Select(r => r.GetProperty("action").GetString()));
+        Assert.Single(_logger.Errors);
+        Assert.DoesNotContain(_logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Theory]
+    [InlineData("audit")]
+    [InlineData("trace")]
+    public void ATailADeadProcessLeft_IsEndedFirst_SoTheNextRowParsesOnItsOwnLine_AndTheRepairIsReported(string stream)
+    {
+        // A writer that died mid-line - nothing in this process could take its half line back - left a tail the next
+        // row would have been appended onto.
+        var audit = stream == "audit";
+        var path = (audit ? _writer.GetAuditLogPaths(DateTime.Now) : _writer.GetTraceLogPaths(DateTime.Now)).Last();
+        File.WriteAllText(path, "{\"action\":\"Earlier\"}" + Environment.NewLine + "{\"action\":\"CutOff");
+
+        var outcome = Write(audit, Row(audit, "Next"));
+
+        Assert.Equal(JsonlWriteOutcome.Written, outcome);
+        var (rows, unparsed) = ReadAsTheEventLogDoes(audit);
+        Assert.Equal(["Earlier", "Next"], rows.Select(r => r.GetProperty("action").GetString()));
+        Assert.Equal(1, unparsed);
+        var repair = Assert.Single(_logger.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Equal(path, repair.Value("Path"));
+        Assert.Empty(_logger.Errors);
+    }
+
+    [Fact]
+    public void ADroppedRowsReport_NamesWhoDidWhat_WhenTheTraceIsDroppedToo()
+    {
+        // Folded in from codex attr-batch-12, part 4. The report named the stream, action, category and path only: with
+        // the trace gone as well, nothing tied the missing row to an operation or an actor.
+        string operationId;
+        using (HoldTheFile(audit: true))
+        using (HoldTheFile(audit: false))
+        {
+            using var scope = _trace.BeginOperation(
+                "TripwireModule", "TripwireOperation", "EXAMPLE\\operator", "10.0.0.5", target: "alex@example.test", ticket: "CHG0300");
+            operationId = scope.OperationId;
+            _audit.LogModuleAction(
+                "EXAMPLE\\operator", "10.0.0.5", "TripwireAction", "TripwireCategory", "alex@example.test", success: true,
+                ticketNumber: "CHG0300", extra: new Dictionary<string, object?> { ["marker"] = Marker });
+        }
+
+        var report = Assert.Single(_logger.Errors, e => e.Value("Stream") == "Audit");
+        Assert.Equal("TripwireAction", report.Value("Action"));
+        Assert.Equal("TripwireCategory", report.Value("Category"));
+        Assert.Equal(operationId, report.Value("OperationId"));
+        Assert.Equal("operator", report.Value("User"));
+        Assert.Equal("10.0.0.5", report.Value("Ip"));
+        Assert.Equal("alex@example.test", report.Value("Target"));
+        Assert.Equal("CHG0300", report.Value("Ticket"));
+        Assert.Equal("Success", report.Value("Result"));
+        AssertNoPayload(report);
+        Assert.Empty(Lines(audit: true));
+        Assert.Empty(Lines(audit: false));
+    }
+
+    /// <summary>A plain record for the stream, by its action.</summary>
+    private static Dictionary<string, object?> Row(bool audit, string action) => new()
+    {
+        ["eventType"] = audit ? "audit" : "operation.step",
+        ["action"] = action,
+        ["category"] = "TripwireCategory",
+    };
+
+    /// <summary>
+    /// The stream's lines as the Admin Event Log reads them - each non-blank line parsed on its own, a line that does not
+    /// parse dropped - and how many were dropped.
+    /// </summary>
+    private (List<JsonElement> Rows, int Unparsed) ReadAsTheEventLogDoes(bool audit)
+    {
+        var rows = new List<JsonElement>();
+        var unparsed = 0;
+        foreach (var line in LogFiles(audit).SelectMany(File.ReadAllLines).Where(line => !string.IsNullOrWhiteSpace(line)))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                rows.Add(document.RootElement.Clone());
+            }
+            catch (JsonException)
+            {
+                unparsed++;
+            }
+        }
+
+        return (rows, unparsed);
+    }
+
+    private string TraceText() => string.Concat(LogFiles(audit: false).Select(File.ReadAllText));
+
+    private IEnumerable<string> LogFiles(bool audit)
+    {
+        var folder = Path.Combine(_root, "ExchangeAdminWeb");
+        if (!Directory.Exists(folder))
+            return [];
+
+        return Directory.GetFiles(folder, "exchangeadmin_*.jsonl")
+            .Where(f => Path.GetFileNameWithoutExtension(f).EndsWith("_trace", StringComparison.OrdinalIgnoreCase) != audit)
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .ToList();
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------------
+
+    /// <summary>A value whose ToString throws; System.Text.Json writes it as an empty object, having nothing to read.</summary>
+    private sealed class ThrowingToString
+    {
+        public override string ToString() => throw new InvalidOperationException("this value's ToString throws");
+    }
 
     /// <summary>An object System.Text.Json cannot write: reading its one property throws.</summary>
     private sealed class ThrowingGetter
@@ -473,13 +662,7 @@ public sealed class AuditWriterThrowFreeTests : IDisposable
 
     private List<JsonElement> Lines(bool audit)
     {
-        var folder = Path.Combine(_root, "ExchangeAdminWeb");
-        if (!Directory.Exists(folder))
-            return [];
-
-        return Directory.GetFiles(folder, "exchangeadmin_*.jsonl")
-            .Where(f => Path.GetFileNameWithoutExtension(f).EndsWith("_trace", StringComparison.OrdinalIgnoreCase) != audit)
-            .OrderBy(f => f, StringComparer.Ordinal)
+        return LogFiles(audit)
             .SelectMany(File.ReadAllLines)
             .Where(line => !string.IsNullOrWhiteSpace(line))
             .Select(line =>
@@ -505,6 +688,11 @@ public sealed class AuditWriterThrowFreeTests : IDisposable
         public IReadOnlyList<LogEntry> Errors
         {
             get { lock (_entries) return _entries.Where(e => e.Level >= LogLevel.Error).ToList(); }
+        }
+
+        public IReadOnlyList<LogEntry> Entries
+        {
+            get { lock (_entries) return _entries.ToList(); }
         }
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
