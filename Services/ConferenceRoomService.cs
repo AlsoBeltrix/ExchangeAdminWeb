@@ -169,11 +169,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         var alpha2 = countryOrRegion.Trim().ToUpperInvariant();
         var numeric = IsoCountryCodes.GetNumeric(alpha2);
+        // aud-a2v. Neither refusal here names its parameter: an ArgumentException that does adds " (Parameter '<name>')" to
+        // its Message, and the Message is the operator's - the row shows it and the preflight logs it - so the refusal ended
+        // with a .NET artifact. Nothing reads ParamName.
         if (numeric is null)
             throw new ArgumentException(
                 $"'{countryOrRegion}' is not a recognized ISO 3166-1 alpha-2 country code. " +
-                $"Use the two-letter code (e.g. IE, US, GB). If this is a new country, add it to IsoCountryCodes.cs.",
-                nameof(countryOrRegion));
+                $"Use the two-letter code (e.g. IE, US, GB). If this is a new country, add it to IsoCountryCodes.cs.");
 
         string co;
         try
@@ -182,11 +184,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
         catch (ArgumentException)
         {
-            // In the IsoCountryCodes table but unknown to this runtime's RegionInfo
-            // (extremely unlikely). Fail closed rather than write c/countryCode without co.
+            // In the IsoCountryCodes table but unknown to this runtime's RegionInfo. Not "extremely unlikely", as this said:
+            // Western Sahara (EH) is one on this machine's .NET 10 over the operating system's ICU (measured 2026-10-22,
+            // aud-a2v; the only one of the table's 249). Fail closed rather than write c/countryCode without co.
             throw new ArgumentException(
-                $"Country '{alpha2}' has no display name on this system; cannot set the 'co' attribute.",
-                nameof(countryOrRegion));
+                $"Country '{alpha2}' has no display name on this system; cannot set the 'co' attribute.");
         }
 
         return (alpha2, co, numeric.Value);
@@ -474,10 +476,15 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     {
         var result = new RoomOperationResult { Email = roomEmail };
 
+        // aud-a2v. The row's own three refusals, before its preflights, are logged as its paths' are (aud-a2t, aud-a2u): once,
+        // at Warning, where the row refuses, naming the room as typed and the refusal. They reached only the result and the
+        // audit. Nothing is written before any of them - the room's read is the only call - so the line says so. Here, not in
+        // ValidateRoomRecipientAsync, which SetRoomTypeAsync shares.
         if (room is null)
         {
             result.Success = false;
             result.Message = ValidatedMailbox.Refusal(roomEmail);
+            _logger.LogWarning("Room Finder apply for {Room} refused the row; nothing was written: {Refusal}", roomEmail, result.Message);
             return result;
         }
 
@@ -488,15 +495,19 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             {
                 result.Success = false;
                 result.Message = $"Invalid timezone: '{timezone}'.";
+                _logger.LogWarning("Room Finder apply for {Room} refused the row; nothing was written: {Refusal}", roomEmail, result.Message);
                 return result;
             }
         }
 
+        // Not a room mailbox, or - defensively, as GetRoomInfoAsync(ValidatedMailbox) returns a room or throws - not found:
+        // one line for either.
         var (roomInfo, recipientError) = await ValidateRoomRecipientAsync(room, roomEmail);
         if (recipientError != null || roomInfo == null)
         {
             result.Success = false;
             result.Message = recipientError ?? $"Room '{roomEmail}' not found.";
+            _logger.LogWarning("Room Finder apply for {Room} refused the row; nothing was written: {Refusal}", roomEmail, result.Message);
             return result;
         }
 
@@ -1559,8 +1570,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             // one, and the reason. These used to reach only the row's result and audit, so the application log held no
             // trace of why a row was refused. Not again by the row, which puts the refusal on its result - aud-a2t's
             // placement, for the resolver's refusals.
-            _logger.LogWarning("Set-ADUser preflight for {Room} refused the row; nothing was written: {Refusal}", roomEmail, ex.Message);
-            return (ex.Message, null); // unmappable country - fail the row closed
+            // aud-a2v. And each of this preflight's three refusals before its runspace - this, no proven object, no
+            // credential - is built without " Nothing was written.", logged so, and returned with it, as the room-list
+            // preflight's are: one rule for both preflights, a refusal decided before any write saying so at its end. These
+            // three said only what could not be written, so the operator read two styles for one fact. Sentence(): the
+            // mapping's words are another method's.
+            var refusal = Sentence(ex.Message);
+            _logger.LogWarning("Set-ADUser preflight for {Room} refused the row; nothing was written: {Refusal}", roomEmail, refusal);
+            return ($"{refusal} Nothing was written.", null); // unmappable country - fail the row closed
         }
 
         if (attrs.Count == 0)
@@ -1570,12 +1587,21 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         {
             var refusal = NoDirectoryObject(roomEmail, "City/State/Country could not be written");
             _logger.LogWarning("Set-ADUser preflight for {Room} refused the row; nothing was written: {Refusal}", roomEmail, refusal);
-            return (refusal, null);
+            return ($"{refusal} Nothing was written.", null);
         }
 
-        var creds = await GetModuleCredentialsAsync($"Set-ADUser preflight for {roomEmail}");
+        // aud-a2v. A lookup that returns none - no secret ID, a corrupt module config, a PAM provider failing or holding an
+        // incomplete secret - is logged by the credential services, whose lines name the module or the secret, and the
+        // purpose only for a missing secret ID: none named the room. So this path's line names the room beside the purpose it
+        // asked with, which ties it to theirs. The refusal keeps its words.
+        var purpose = $"Set-ADUser preflight for {roomEmail}";
+        var creds = await GetModuleCredentialsAsync(purpose);
         if (creds is null)
-            return ("On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.", null);
+        {
+            var refusal = "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.";
+            _logger.LogWarning("Set-ADUser preflight for {Room} refused the row; nothing was written: no AD credential was returned for {Purpose}: {Refusal}", roomEmail, purpose, refusal);
+            return ($"{refusal} Nothing was written.", null);
+        }
 
         return await Task.Run<(string? error, string? server)>(() =>
         {
@@ -1648,7 +1674,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     {
         // aud-a2u. The two refusals below, unlike the preflight's, are not logged: nothing reaches them. The row runs this
         // only after the preflight passed on the same room and the same fields, and BuildSyncedUserAttributes is pure, so
-        // the preflight has refused - and logged - every row they could refuse.
+        // the preflight has refused - and logged - every row they could refuse. The credential's, after them, is reached
+        // and logged (aud-a2v).
         Dictionary<string, object> attrs;
         try
         {
@@ -1665,9 +1692,16 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (room.DirectoryObjectGuid is not { } objectGuid)
             return (NoDirectoryObject(roomEmail, "City/State/Country could not be written"), null, null);
 
-        var creds = await GetModuleCredentialsAsync($"Set-ADUser synced attributes for {roomEmail}");
+        // aud-a2v. As the preflight's, in this write's words - after Set-Place, inside the row's partial. Reached when this
+        // lookup returns none though the preflight's returned one: each asks the PAM provider again.
+        var purpose = $"Set-ADUser synced attributes for {roomEmail}";
+        var creds = await GetModuleCredentialsAsync(purpose);
         if (creds is null)
-            return ("On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.", null, null);
+        {
+            var refusal = "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.";
+            _logger.LogWarning("Set-ADUser City/State/Country write for {Room} refused before its write: no AD credential was returned for {Purpose}: {Refusal}", roomEmail, purpose, refusal);
+            return (refusal, null, null);
+        }
 
         var serverName = server ?? "the default domain controller";
         return await Task.Run<(string? error, string? written, string? confirmed)>(() =>
@@ -1856,9 +1890,16 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             return $"{refusal} Nothing was written.";
         }
 
-        var creds = await GetModuleCredentialsAsync($"on-prem room-list membership preflight for {roomEmail}");
+        // aud-a2v. As the City/State/Country preflight's: the line names the room, the list and the purpose asked with. The
+        // refusal is built without its " Nothing was written.", as the three above, and the message is unchanged.
+        var purpose = $"on-prem room-list membership preflight for {roomEmail}";
+        var creds = await GetModuleCredentialsAsync(purpose);
         if (creds is null)
-            return $"On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config), and room list '{list.Name}' is synchronized from on-premises, so the room cannot be added to it. Nothing was written.";
+        {
+            var refusal = $"On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config), and room list '{list.Name}' is synchronized from on-premises, so the room cannot be added to it.";
+            _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: no AD credential was returned for {Purpose}: {Refusal}", roomEmail, list.Name, purpose, refusal);
+            return $"{refusal} Nothing was written.";
+        }
 
         return await Task.Run(() =>
         {
@@ -1959,9 +2000,17 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             return (refusal, null, null);
         }
 
-        var creds = await GetModuleCredentialsAsync($"on-prem room-list membership add for {roomEmail}");
+        // aud-a2v. As the preflight's, in the add's words - after Set-Place, inside the row's partial. Reached when this lookup
+        // returns none though the preflight's returned one, or when the preflight asked for none - the room on the list in
+        // Exchange then - and the cloud add no longer finds it there.
+        var purpose = $"on-prem room-list membership add for {roomEmail}";
+        var creds = await GetModuleCredentialsAsync(purpose);
         if (creds is null)
-            return ("On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). The room could not be added to the on-prem room list.", null, null);
+        {
+            var refusal = "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). The room could not be added to the on-prem room list.";
+            _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: no AD credential was returned for {Purpose}: {Refusal}", roomEmail, roomListName, purpose, refusal);
+            return (refusal, null, null);
+        }
 
         return await Task.Run<(string? error, string? written, string? confirmed)>(() =>
         {
