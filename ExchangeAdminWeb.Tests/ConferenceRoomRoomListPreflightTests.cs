@@ -4,6 +4,7 @@ using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Services;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using AdException = Microsoft.ActiveDirectory.Management.ADException;
 
@@ -62,13 +63,19 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         private readonly ExchangeWriteHarness _h;
         public bool NoCredential;
         public int CredentialRequests;
+        // aud-a2s. For a purpose containing this text, a credential with no password, so the step that builds the AD
+        // credential from it throws: the way a test reaches that step. Live it is not reached so - the module's PAM
+        // provider returns no credential at all for a secret without a password (DelineaService).
+        public string? IncompleteCredentialFor;
 
-        public Service(ExchangeWriteHarness h)
-            : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, NullLogger<ConferenceRoomService>.Instance) => _h = h;
+        public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null)
+            : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
         {
             CredentialRequests++;
+            if (IncompleteCredentialFor is { } incomplete && purpose.Contains(incomplete, StringComparison.Ordinal))
+                return Task.FromResult<(string username, string password, string domain)?>(("svc", null!, "CONTOSO"));
             return Task.FromResult<(string username, string password, string domain)?>(
                 NoCredential ? null : ("svc", "secret", "CONTOSO"));
         }
@@ -1397,6 +1404,225 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
             Assert.True(ps.HadErrors);
             Assert.Equal("Reported, not thrown.", Assert.Single(ps.Streams.Error).Exception.Message);
             Assert.Equal([RoomDn], Members());
+        }
+    }
+
+    // ---- aud-a2s: a failure on either on-prem path names the step it came from ----
+    // The preflight's catch told every throw as "Failed to validate the on-prem room list '<list>' before writing:
+    // <error>", and the add's as "Failed to add the room to the on-prem room list on the AD object: <error>", logged as a
+    // failed Set-ADGroup, whichever step had thrown - the runspace, the credential, the room's object read, the group
+    // search, the group's re-read in its own domain, the membership read. Only the import was named (aud-a2r), by a catch
+    // of its own.
+
+    private const string Injected = "The injected failure.";
+
+    private sealed class CapturingLogger : ILogger<ConferenceRoomService>
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<(LogLevel Level, string Message)> Entries { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Entries.Enqueue((logLevel, formatter(state, exception)));
+    }
+
+    // The step a failure is injected at, as the catch names it. (The catalog is named by its own refusal instead.)
+    private static string StepNamed(string failing) => failing switch
+    {
+        "runspace" => "opening the directory runspace",
+        "import" => "importing the ActiveDirectory module",
+        "credential" => "preparing the module's AD credential",
+        "room object read" => "reading the room's AD object",
+        "group search" => "searching the forest's global catalog for the list's group",
+        "group re-read" => "reading the list's group in its own domain",
+        "membership read" => "reading the membership of the list's group",
+        _ => throw new ArgumentOutOfRangeException(nameof(failing), failing, null),
+    };
+
+    // The text the injected failure carries: the one given, or, for the credential, which has none to give, the message of
+    // what building a credential with no password throws.
+    private static string InjectedText(string failing) =>
+        failing == "credential" ? new NullReferenceException().Message : Injected;
+
+    [Theory]
+    [InlineData("runspace")]
+    [InlineData("import")]
+    [InlineData("credential")]
+    [InlineData("room object read")]
+    [InlineData("catalog")]
+    [InlineData("group search")]
+    [InlineData("group re-read")]
+    [InlineData("membership read")]
+    public async Task AFailureAtEachStepOfTheRoomListPreflight_NamesThatStep(string failing)
+    {
+        // Each step of the preflight fails in turn, before Set-Place. Each refuses the row while nothing is written, in its
+        // one step, and the message and the log line name the step that failed and carry its error. The catalog's failure
+        // is the resolver's own refusal, which names it.
+        SyncedListTheRoomIsNotOnInExchange();
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
+        switch (failing)
+        {
+            case "runspace": _h.DirectoryRunspaceFailure = Injected; break;
+            case "import": _h.ImportModuleFailure = Injected; break;
+            case "credential": service.IncompleteCredentialFor = "membership preflight"; break;
+            case "room object read": _h.Failures["Get-ADUser"] = Injected; break;
+            case "catalog": _h.Failures["Get-ADForest"] = Injected; break;
+            case "group search": _h.Failures["Get-ADGroup"] = Injected; break;
+            case "group re-read": _h.Failures["Get-ADGroup -Identity"] = Injected; break;
+            default: _h.Failures[ExchangeWriteHarness.MemberReadFailureKey] = Injected; break;
+        }
+
+        var result = await Apply(service, Room());
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.Writes);
+        var step = Assert.Single(result.Steps);
+        Assert.Equal("Room list preflight", step.Stage);
+        Assert.False(step.Success);
+        Assert.Equal(result.Message, step.Error);
+        Assert.Contains(List, result.Message, StringComparison.Ordinal);
+        Assert.Contains(InjectedText(failing), result.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
+        if (failing == "catalog")
+        {
+            Assert.StartsWith($"The forest's global catalog could not be resolved ({Injected})", result.Message, StringComparison.Ordinal);
+            return;
+        }
+        var named = StepNamed(failing);
+        Assert.StartsWith($"Failed to validate the on-prem room list '{List}' before writing: {named} failed: ", result.Message, StringComparison.Ordinal);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains($": {named} failed; nothing was written", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("runspace")]
+    [InlineData("import")]
+    [InlineData("credential")]
+    [InlineData("room object read")]
+    [InlineData("catalog")]
+    [InlineData("group search")]
+    [InlineData("group re-read")]
+    [InlineData("membership read")]
+    [InlineData("write")]
+    [InlineData("read-back")]
+    public async Task AFailureAtEachStepOfTheOnPremRoomListAdd_NamesThatStep(string failing)
+    {
+        // Each step of the add fails in turn - after Set-Place, so the preflight's own steps pass. Each is a failed, partial
+        // row naming nothing written, and its message names the step that failed: the steps before the write in the catch's
+        // words, logged naming the step and never Set-ADGroup, no write made; the catalog in the resolver's own refusal; the
+        // write and the read-back each in their own words (aud-a2n), the write made.
+        SyncedListTheRoomIsNotOnInExchange();
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
+        switch (failing)
+        {
+            case "runspace": _h.DirectoryRunspaceFailureAfterSetPlace = Injected; break;
+            case "import": _h.ImportModuleFailureAfterSetPlace = Injected; break;
+            case "credential": service.IncompleteCredentialFor = "membership add"; break;
+            case "room object read": _h.ObjectReadFailureAfterSetPlace = Injected; break;
+            case "catalog": _h.FailuresAfterSetPlace["Get-ADForest"] = Injected; break;
+            case "group search": _h.FailuresAfterSetPlace["Get-ADGroup"] = Injected; break;
+            case "group re-read": _h.FailuresAfterSetPlace["Get-ADGroup -Identity"] = Injected; break;
+            case "membership read": _h.FailuresAfterSetPlace[ExchangeWriteHarness.MemberReadFailureKey] = Injected; break;
+            case "write": _h.Failures["Set-ADGroup"] = Injected; break;
+            default: _h.MemberReadBackFailure = Injected; break;
+        }
+
+        var result = await Apply(service, Room());
+
+        Assert.False(result.Success);
+        Assert.True(result.Partial);
+        Assert.Null(result.WrittenDirectoryObject);
+        Assert.Null(result.DirectoryMembershipConfirmed);
+        Assert.Single(_h.CallsTo("Set-Place"));
+        var step = Assert.Single(result.Steps, s => s.Stage == $"Add to '{List}' (on-prem)");
+        Assert.False(step.Success);
+        Assert.NotNull(step.Error);
+        Assert.Contains(step.Error, result.Message, StringComparison.Ordinal);
+        Assert.Contains(InjectedText(failing), step.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("Nothing was written", result.Message, StringComparison.Ordinal);
+        switch (failing)
+        {
+            case "catalog":
+                Assert.StartsWith($"The forest's global catalog could not be resolved ({Injected})", step.Error, StringComparison.Ordinal);
+                Assert.Empty(_h.CallsTo("Set-ADGroup"));
+                break;
+            case "write":
+                Assert.StartsWith($"Adding {Typed} to on-prem room list '{List}' was not confirmed: ", step.Error, StringComparison.Ordinal);
+                Assert.Contains(", and Set-ADGroup reported an error (", step.Error, StringComparison.Ordinal);
+                Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("not confirmed", StringComparison.Ordinal));
+                Assert.Single(_h.CallsTo("Set-ADGroup"));
+                break;
+            case "read-back":
+                Assert.StartsWith($"Adding {Typed} to on-prem room list '{List}' could not be confirmed: reading its group {GroupDn} back from contoso.test failed: ", step.Error, StringComparison.Ordinal);
+                Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("could not be confirmed", StringComparison.Ordinal));
+                Assert.Single(_h.CallsTo("Set-ADGroup"));
+                break;
+            default:
+                var named = StepNamed(failing);
+                Assert.StartsWith($"Failed to add the room to the on-prem room list '{List}': {named} failed: ", step.Error, StringComparison.Ordinal);
+                Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains($": {named} failed", StringComparison.Ordinal));
+                Assert.DoesNotContain(logger.Entries, e => e.Message.Contains("Set-ADGroup", StringComparison.Ordinal));
+                Assert.Empty(_h.CallsTo("Set-ADGroup"));
+                break;
+        }
+    }
+
+    [Fact]
+    public void TheHarness_FailuresAfterSetPlace_AndTheMemberReadKey_FailOnlyWhatTheyName()
+    {
+        // The knobs the two tests above rest on, so that they cannot pass for the wrong reason. Under -ErrorAction Stop, as
+        // the code calls the stand-ins: the member key in Failures fails a read asking for the member attribute, at any time,
+        // and neither the group search nor the re-read; each key of FailuresAfterSetPlace fails nothing before a Set-Place
+        // is recorded and its own call after one - Get-ADForest, the search (any Get-ADGroup), a read by identity, a member
+        // read - and the member key and the read-by-identity key no other read.
+        const string Later = "The failure after Set-Place.";
+        (string Name, object Value)[] search = [("Filter", $"mail -eq '{ExchangeWriteHarness.DefaultListAddress}'"), ("Server", ExchangeWriteHarness.GlobalCatalogEndpoint)];
+        (string Name, object Value)[] reRead = [("Identity", GroupDn), ("Server", "contoso.test")];
+        (string Name, object Value)[] memberRead = [("Identity", GroupDn), ("Properties", new[] { "member" }), ("Server", "contoso.test")];
+        void SetPlaceRecorded() => _h.Calls.Add(new Hashtable { ["__Command"] = "Set-Place" });
+
+        _h.Failures[ExchangeWriteHarness.MemberReadFailureKey] = Injected;
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Assert.Single(Run(ps, "Get-ADGroup", search));
+            Assert.Single(Run(ps, "Get-ADGroup", reRead));
+            Assert.Contains(Injected, Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Get-ADGroup", memberRead)).Message, StringComparison.Ordinal);
+        }
+        _h.Failures.Clear();
+
+        void FailsOnlyAfterSetPlace(string key, string command, (string Name, object Value)[] parameters)
+        {
+            _h.Calls.Clear();
+            _h.FailuresAfterSetPlace.Clear();
+            _h.FailuresAfterSetPlace[key] = Later;
+            using var rs = _h.OpenDirectoryRunspace();
+            using var ps = PowerShell.Create();
+            ps.Runspace = rs;
+            Assert.NotEmpty(Run(ps, command, parameters));
+            SetPlaceRecorded();
+            Assert.Contains(Later, Assert.ThrowsAny<RuntimeException>(() => Run(ps, command, parameters)).Message, StringComparison.Ordinal);
+        }
+        FailsOnlyAfterSetPlace("Get-ADForest", "Get-ADForest", []);
+        FailsOnlyAfterSetPlace("Get-ADGroup", "Get-ADGroup", search);
+        FailsOnlyAfterSetPlace("Get-ADGroup -Identity", "Get-ADGroup", reRead);
+        FailsOnlyAfterSetPlace(ExchangeWriteHarness.MemberReadFailureKey, "Get-ADGroup", memberRead);
+
+        _h.Calls.Clear();
+        _h.FailuresAfterSetPlace.Clear();
+        _h.FailuresAfterSetPlace[ExchangeWriteHarness.MemberReadFailureKey] = Later;
+        SetPlaceRecorded();
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Assert.Single(Run(ps, "Get-ADGroup", search));
+            Assert.Single(Run(ps, "Get-ADGroup", reRead));
+            _h.FailuresAfterSetPlace.Clear();
+            _h.FailuresAfterSetPlace["Get-ADGroup -Identity"] = Later;
+            Assert.Single(Run(ps, "Get-ADGroup", search));
         }
     }
 }

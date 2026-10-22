@@ -63,6 +63,20 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public Hashtable Failures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
+    /// aud-a2s. <see cref="Failures"/> for the directory stand-ins, once a <c>Set-Place</c> has been called: the same keys and
+    /// the same failure, made only by a call after one - the on-prem room-list add's steps, not its preflight's, which
+    /// come before it.
+    /// </summary>
+    public Hashtable FailuresAfterSetPlace { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// aud-a2s. The key, in <see cref="Failures"/> or <see cref="FailuresAfterSetPlace"/>, that fails a stand-in
+    /// <c>Get-ADGroup</c> read asking for the <c>member</c> attribute - the membership read - with its message, and no other
+    /// read. <c>Get-ADGroup -Identity</c> fails every read by identity, so the group's re-read, which comes first.
+    /// </summary>
+    public const string MemberReadFailureKey = "Get-ADGroup -Properties member";
+
+    /// <summary>
     /// The primary addresses the stand-in <c>Get-DistributionGroupMember</c> reports on any list: all of
     /// them to <c>-ResultSize Unlimited</c>, the first N to a number, and none - an error - to a read
     /// without the parameter (aud-a2h).
@@ -592,6 +606,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("Mailboxes", Mailboxes);
         rs.SessionStateProxy.SetVariable("DirectoryObjects", DirectoryObjects);
         rs.SessionStateProxy.SetVariable("Failures", Failures);
+        rs.SessionStateProxy.SetVariable("FailuresAfterSetPlace", FailuresAfterSetPlace);
         rs.SessionStateProxy.SetVariable("ListMembers", ListMembers);
         rs.SessionStateProxy.SetVariable("ListSyncState", ListSyncState);
         rs.SessionStateProxy.SetVariable("DefaultListAddress", DefaultListAddress);
@@ -853,6 +868,10 @@ internal sealed class ExchangeWriteHarness : IDisposable
             [void]$global:Calls.Add($row)
             $failure = $global:Failures[$Command]
             if ($failure) { throw $failure }
+            # aud-a2s. And once a Set-Place is recorded, FailuresAfterSetPlace the same way: the room-list add's steps fail,
+            # its preflight's - all made before Set-Place - do not.
+            $later = $global:FailuresAfterSetPlace[$Command]
+            if ($later -and (Test-StandInAfterSetPlace)) { throw $later }
         }
         # aud-a2q. Whether a Set-Place has been recorded: the knobs named "after Set-Place" fail the City/State/Country
         # write's steps and leave its preflight's - all made before Set-Place - alone. ImportModuleFailureAfterSetPlace
@@ -1019,7 +1038,10 @@ internal sealed class ExchangeWriteHarness : IDisposable
         # object when DirectoryGroupReadBack names the identity, or, for a read of the member attribute,
         # DirectoryGroupMemberReadBack - and with its member attribute when -Properties asks for it;
         # Failures['Get-ADGroup -Identity'] fails every read by identity. Its errors are Write-Error then
-        # return, so they stay errors under any -ErrorAction.
+        # return, so they stay errors under any -ErrorAction. aud-a2s: Failures['Get-ADGroup -Properties member']
+        # (MemberReadFailureKey) fails only a read of the member attribute - the membership read, which the key above
+        # cannot reach, failing the group's re-read before it; and FailuresAfterSetPlace holds either key for the calls
+        # made after a Set-Place.
         function global:Get-ADGroup {
             [CmdletBinding()] param($Filter, $Identity, $Properties, $Server, $Credential)
             Write-StandInCall 'Get-ADGroup' $PSBoundParameters
@@ -1037,10 +1059,14 @@ internal sealed class ExchangeWriteHarness : IDisposable
                 return
             }
             $failure = $global:Failures['Get-ADGroup -Identity']
+            if (-not $failure -and $global:FailuresAfterSetPlace['Get-ADGroup -Identity'] -and (Test-StandInAfterSetPlace)) { $failure = $global:FailuresAfterSetPlace['Get-ADGroup -Identity'] }
             if ($failure) { Write-Error $failure; return }
             $group = @($reached | Where-Object { "$Identity" -eq (Get-StandInGroupDn "$_") -or "$Identity" -eq "$_" })
             if ($group.Count -ne 1) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
             $memberRead = @($Properties) -contains 'member'
+            $memberFailure = $global:Failures['Get-ADGroup -Properties member']
+            if (-not $memberFailure -and $global:FailuresAfterSetPlace['Get-ADGroup -Properties member'] -and (Test-StandInAfterSetPlace)) { $memberFailure = $global:FailuresAfterSetPlace['Get-ADGroup -Properties member'] }
+            if ($memberRead -and $memberFailure) { Write-Error $memberFailure; return }
             # aud-a2n. MemberReadBackFailure: a member read after any Set-ADGroup fails - the read-back, not the checks before it.
             if ($memberRead -and $global:MemberReadBackFailure -and @($global:Calls | Where-Object { $_['__Command'] -eq 'Set-ADGroup' }).Count -gt 0) { Write-Error "$($global:MemberReadBackFailure)"; return }
             $answer = $global:DirectoryGroupReadBack["$Identity"]
