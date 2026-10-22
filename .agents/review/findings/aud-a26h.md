@@ -8,7 +8,7 @@ fix a `config/*.json` file; those stores live in the SQLite config database sinc
 the admin re-saves a value that is already there and the audit says a save failed that did not.
 **Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
 **Branch**: `worktree-agent-af0cdb58244ff4bed`
-**Commit**: -
+**Commit**: `3a4d2c96` (plan `6869fd81`; comments `6aaa1133`)
 **Reviewer**: implementer (surfaced by the aud-a28g/h/a26f/a28i agent, 2026-10-22, candidates 7 and 8 of its hand-back)
 
 ## Evidence
@@ -178,3 +178,12 @@ verdict is claimed.
 - The drain's failed record uses the settings-change action under its own section; a dedicated audit action
   would read better in the Admin Event Log but would mean a new AuditService method, outside this finding.
 - The banners are read from the compiled pages' frames; no browser rendered them.
+
+## Branch-tip gates - 2026-10-22 (`6aaa1133`: all three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, warnings all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,321 passed / 3 skipped (the three known AD skips) / 0 failed, 5,324 total, 5m15s. No
+  hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`:
+  exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.

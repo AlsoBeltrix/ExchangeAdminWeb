@@ -9,7 +9,7 @@ refusal, and `SaveExoConfig` guards a corrupt config only with a disabled button
 render or a second tab can defeat.
 **Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
 **Branch**: `worktree-agent-af0cdb58244ff4bed`
-**Commit**: -
+**Commit**: `1c2bb9ff` (plan `6869fd81`; comments `6aaa1133`)
 **Reviewer**: implementer (surfaced by the aud-a28g/h/a26f/a28i agent, 2026-10-22, candidates 1 and 2 of its hand-back)
 
 ## Evidence
@@ -245,6 +245,15 @@ self-review verdict is claimed.
   (and recorded). The aud-a28k class, outside its listed saves.
 - "Save not offered" is the rendered disabled attribute on the compiled page; no browser or live circuit ran.
 - Two in-process stores on one temp file stand in for the two instances.
+
+## Branch-tip gates - 2026-10-22 (`6aaa1133`: all three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, warnings all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,321 passed / 3 skipped (the three known AD skips) / 0 failed, 5,324 total, 5m15s. No
+  hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`:
+  exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
 
 ## Folded in: a partial protected-principals save audited only as failed (codex, attr-batch-4, 2026-10-22)
 
