@@ -28,5 +28,6 @@ public enum MigrationDirection
 public enum MigrationStatus
 {
     Eligible,
-    Ineligible
+    Ineligible,
+    Undetermined
 }

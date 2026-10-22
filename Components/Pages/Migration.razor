@@ -88,7 +88,7 @@
                         }
                         else
                         {
-                            <p class="mb-0"><strong>@singleResult.EmailAddress IS NOT eligible to migrate @(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises")</strong></p>
+                            <p class="mb-0"><strong>@(singleResult.Status == MigrationStatus.Undetermined ? $"Whether {singleResult.EmailAddress} can migrate {(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises")} could not be determined. Nothing can be created for it until a check succeeds." : $"{singleResult.EmailAddress} IS NOT eligible to migrate {(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises")}")</strong></p>
                             @if (singleResult.IneligibilityReasons.Any())
                             {
                                 <hr />
@@ -253,7 +253,7 @@
                         <p class="mb-0">
                             <strong>Total Users:</strong> @bulkResult.TotalUsers |
                             <strong>Eligible:</strong> <span class="text-success">@bulkResult.EligibleUsers</span> |
-                            <strong>Ineligible:</strong> <span class="text-danger">@bulkResult.IneligibleUsers</span>
+                            <strong>Ineligible:</strong> <span class="text-danger">@bulkResult.IneligibleUsers</span>@if (bulkResult.UndeterminedUsers > 0) { <text> | <strong>Could not be determined:</strong> <span class="text-danger">@bulkResult.UndeterminedUsers</span></text> }
                         </p>
                     </div>
 
@@ -2000,9 +2000,9 @@
             singleResult = new MigrationEligibilityResult
             {
                 EmailAddress = singleEmail,
-                Status = MigrationStatus.Ineligible
+                Status = MigrationStatus.Undetermined
             };
-            singleResult.IneligibilityReasons.Add($"Error: {ex.Message}");
+            singleResult.IneligibilityReasons.Add($"Could not be determined: {ex.Message}");
 
             Audit.LogMigrationCheck(currentUser, clientIpAddress, singleEmail.Trim(),
                 "Error", singleTicketNumber, ex.Message);

@@ -43,6 +43,7 @@ public class MigrationBatchResult
     public int TotalUsers { get; set; }
     public int EligibleUsers { get; set; }
     public int IneligibleUsers { get; set; }
+    public int UndeterminedUsers { get; set; }
     public bool AutoStart { get; set; }
     public bool AutoComplete { get; set; }
 }

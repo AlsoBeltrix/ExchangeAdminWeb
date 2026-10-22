@@ -9,7 +9,7 @@ operator is told a user is eligible when the directory could not be asked. (2)
 `ApproveMigrationUserAsync` runs `Set-MigrationBatch` twice and `Complete-MigrationBatch` through
 `Ignore` / `InvokeOptional`, so none of them can fail; the page reports "initiated completion"
 whether or not `Complete-MigrationBatch` ran.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; plan written, in progress
+**Status**: Fixed on branch, guard proof below; not merged, not pushed
 **Branch**: `worktree-agent-a3e674616251be4de` (forked at `34c7ccd4`)
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a23g agent, 2026-10-22, candidates 1 and 2 of its hand-back)
@@ -143,4 +143,115 @@ after the mutation round.
 
 ## Guard proof
 
-Pending.
+Built as the Plan. Line numbers are at the fix commit's bytes, which carry no new comments (they come after aud-a23i,
+in their own commit, and move these lines). `Components/Pages/Migration.razor` is 4377 lines before and after:
+`git diff --numstat` 4/4, each changed line replaced in place (91, 256, 2003, 2005); none is registered.
+
+- `Models/Enums.cs`: `MigrationStatus.Undetermined`, appended, so the two existing values keep their numbers.
+- `Models/MigrationModels.cs`: `MigrationBatchResult.UndeterminedUsers`.
+- `Services/MigrationService.cs`:
+  - `CheckMigrationEligibilityAsync` (66-): both reads `-ErrorAction Stop` (81, 92) through `ReadUnlessNotFound` (82,
+    93); `reading` (76, 94) names the read in flight; the catch turns an Eligible verdict into `Undetermined` (149),
+    keeps an Ineligible one, and adds "Could not be determined: <read> failed: <reason>" (or, past the reads, "Could
+    not be determined: <reason>").
+  - `CheckBulkMigrationEligibilityAsync`: `IneligibleUsers` counts Ineligible only (261); `UndeterminedUsers` (262,
+    273).
+  - `FailureReason` (761) looks one level in, at `Invoke`'s wrapper; `ReadUnlessNotFound` (766); `IsNotFound` (778):
+    `CommandNotFoundException` excluded first (the exception, one level in, or the record's identifier), then category
+    `ObjectNotFound`, a `*NotFoundException` reason, or a `*NotFoundException` identifier in the FQID unless a throw
+    statement raised it; `NamesNotFound` (797), `Identifiers` (802).
+  - `ApproveMigrationUserAsync` (952-): the existence read (962-980) before any write; `hasOwnBatch` (982); every write
+    through `ApproveStep` (989, 995, 1003, 1009, 1016, 1021, 1029), the three batch steps only with a batch of its own;
+    `ConfirmBatchSetToComplete` (1031) after `Complete-MigrationBatch`; the Detail (1034). `ApproveStep` (1040) throws
+    "<step> failed for <address>: <reason>. Already applied: ..." / "Nothing was changed before it.";
+    `ConfirmBatchSetToComplete` (1057) - "could not be confirmed" for a failed read-back, "was not confirmed" for one that
+    shows no completion time.
+- `Components/Pages/Migration.razor`: 91 the undetermined text; 256 "| Could not be determined: N"; 2003, 2005 the
+  page's catch Undetermined, "Could not be determined: <message>".
+
+New `ExchangeAdminWeb.Tests/MigrationStubExchange.cs`: the stand-in Exchange (stub cmdlets as advanced functions over
+in-memory users, mailboxes and batches; a failure table of thrown text or written `ErrorRecord`s; the not-found shapes;
+the page with its services set by hand; the audit file read back). New
+`ExchangeAdminWeb.Tests/MigrationEligibilityAndApproveTests.cs`, 17 tests (32 cases):
+
+| Test | Pins |
+| --- | --- |
+| `AnEligibilityReadThatFails_CouldNotBeDetermined_NeverAGuess` (Get-MigrationUser, Get-Mailbox; throw, written error) | **the finding**: ToOnPrem over a cloud mailbox. Undetermined; "Could not be determined: <read> failed: <message>", no Stop prefix; neither "Migration already in progress" nor "Not a cloud mailbox" |
+| `ASessionWithoutTheCmdlet_CouldNotBeDetermined` | `CommandNotFoundException` (ObjectNotFound to PowerShell) is not an answer: Undetermined |
+| `TextThatSaysNotFound_IsNotReadAsAnAnswer` (a written error saying "couldn't be found"; a throw naming the type) | never text: Undetermined |
+| `AReadThatFailsAfterAnIneligibleAnswer_StaysIneligible_WithBothReasons` | a known reason stands: Ineligible, both reasons in order |
+| `ExchangesNotFound_KeepsItsMeaning` (category, type, identifier) | no migration user: Eligible, no reasons; no mailbox: "Not a cloud mailbox ..." - the old meanings |
+| `AMigrationUserThatExists_IsStillAMigrationInProgress` | the control: "Migration already in progress" |
+| `IsNotFound_ReadsTheRecordsStructure_NeverItsText` (7 bodies) | the recogniser over exceptions PowerShell raised under Stop, bare and inside `Invoke`'s wrapper: ObjectNotFound, a `ManagementObjectNotFoundException` reason, the FQID form, `ThrowTerminatingError` - not found; a plain error, a throw's text, a missing cmdlet - not |
+| `AnUndeterminedAnswer_IsShownAsSuch_AndOffersNoBatch` | through the page's own `CheckSingleEligibility`: "Whether <address> can migrate to On-Premises could not be determined.", the reason, no "IS NOT eligible", no "IS eligible", no "Create Migration Batch"; the audit row's status Undetermined, reasons "Could not be determined ..." |
+| `CreatingABatchFromTheAnswer_GoesThroughOnlyWhenEligible` (Undetermined, Eligible) | the handler's own guard: an undetermined answer creates nothing (`singleCreateResult` stays null), the Eligible control reaches the service; no `New-MigrationBatch` either way (this harness has no protection service, so the fail-closed protection check excludes the control's target) |
+| `ACheckThatFailsBeforeTheServiceReturns_CouldNotBeDetermined` | the page's catch (a connect that throws): Undetermined, "Could not be determined: <message>", no "IS NOT eligible" |
+| `ABulkCheck_CountsAnUndeterminedRowApart` | (2, 1, 0, 1) total/eligible/ineligible/undetermined; the summary "Could not be determined:", the row "Undetermined" and its reason, "1 user(s) eligible to migrate" |
+| `ACleanApproval_OfAMailboxInItsOwnBatch_RunsEveryStep_AndReadsTheBatchBack` | success, the message unchanged, the Detail; the nine calls in order, existence read first, read-back last |
+| `ACompleteMigrationBatchThatFails_IsAFailedAuditedRow_NamingIt` (throw, written error) | **the finding**: through the page's `ExecuteUserAction`: failed, "Complete-MigrationBatch failed for <address>: <message>. Already applied: <the six steps>."; no read-back; one audit row, `ApproveMigrationUser`, Failed, the error naming the step |
+| `ASetMigrationBatchThatFails_IsNamed_AndNothingAfterItRuns` | named, the three applied steps; the calls stop there |
+| `AMailboxNotInABatchOfItsOwn_IsApprovedWithoutTouchingABatch_AndSaysSo` | success; the Detail says no batch was completed; no `Set-MigrationBatch`, no `Complete-MigrationBatch` |
+| `AnExistenceReadThatFails_ChangesNothing` (throw, written error) | "Could not tell whether ... Nothing was changed."; the existence read is the only call |
+| `AWriteThatChangesNothing_IsNotConfirmed` | every write reports success and the batch reads back with no completion time: "was not confirmed: Exchange reports no completion time set on it" |
+
+**Against the unfixed code: not runnable as a whole** - the model gained a status and a count and the service an
+internal recogniser, so the tests cannot compile against `34c7ccd4`. Each behaviour was put back at its own call site
+instead, and each revert fails the tests that pin it.
+
+Mutations at the call site, each by exact-text replacement asserted to match once
+(`a23h-a23i-work/run-mutations.ps1`, scratchpad): md5 recorded, `dotnet build ExchangeAdminWeb.slnx -c Release`, the
+975 tests of `Migration*|ClickGate*|ProgressRegistry*|ExchangeServiceBase*|AuditService*|GlobalProgressWiring*` run
+(failures read from the TRX), the file restored from its saved bytes, touched, md5 re-confirmed equal, rebuilt, and the
+975 re-run green - after every mutation. Pre-comment bytes (LF): service `b5156cdb0672f7e3ed16a6b8b6bbae6d`, page
+`893f55217e032813bfbca4ffada5ee9d`.
+
+| Mutation | File | md5 after | Failed (of 975) | Restored, rerun |
+| --- | --- | --- | --- | --- |
+| H1 (the brief's (1)): `-ErrorAction Ignore` again on the `Get-MigrationUser` read | service | `0b3fc7529cfde5e4cfd7a091b1a0f744` | 6: `AnEligibilityReadThatFails...` (Get-MigrationUser, both), `TextThatSaysNotFound...` (both), `AnUndeterminedAnswer...`, `ABulkCheck...` - the fail-open: Eligible | equal; 975/0 |
+| H2 (the brief's (2)): `Ignore` + `InvokeOptional` again on `Complete-MigrationBatch` | service | `68e86bf6b653626dafcef88b4c677379` | 2: `ACompleteMigrationBatchThatFails...` (both) - "initiated completion" again | equal; 975/0 |
+| H1b: `Ignore` on the `Get-Mailbox` read | service | `28d1dde375b7aa4c38363f4193e55726` | 3: `AnEligibilityReadThatFails...` (Get-Mailbox, both), `AReadThatFailsAfterAnIneligibleAnswer...` | equal; 975/0 |
+| H1c: `IsNotFound` without its `CommandNotFoundException` exclusion | service | `6b040af25b2fe6f692105ec01274b031` | 2: `ASessionWithoutTheCmdlet...`, the recogniser's missing-cmdlet row | equal; 975/0 |
+| H1d: a throw statement's FQID read | service | `6087a5331f1048ec73e89dc4586bc88a` | 2: `TextThatSaysNotFound...` (the throw), the recogniser's throw row | equal; 975/0 |
+| H1g: the catch's verdict Ineligible again | service | `7eeabc7c43f7b5437ee987c4e85bf21a` | 9: every Undetermined expectation in the service and page tests | equal; 975/0 |
+| H1h: `IneligibleUsers` counts every non-eligible row again | service | `f2cbf493d86b5a3bbb6a8c9ad5cab25b` | 1: `ABulkCheck...` | equal; 975/0 |
+| H1e: the page's catch Ineligible, "Error: ..." again | page | `e56471f5ee1055ede4ddbde3bc10acee` | 1: `ACheckThatFailsBeforeTheServiceReturns...` | equal; 975/0 |
+| H1f: line 91 "IS NOT eligible" for every non-Eligible verdict | page | `a8122ae4cb3670c3d826363dd3aed5ad` | 2: `AnUndeterminedAnswer...`, `ACheckThatFailsBeforeTheServiceReturns...` | equal; 975/0 |
+| H2b: the batch steps without the existence read (`hasOwnBatch` always true) | service | `1178aa311ddb74cf59c7356b846747f9` | 1: `AMailboxNotInABatchOfItsOwn...` | equal; 975/0 |
+| H2c: no read-back | service | `f00c1a29e3bc8457c766d739254183b4` | 2: `AWriteThatChangesNothing...`, `ACleanApproval...` | equal; 975/0 |
+
+H1 and H2 are the brief's two. md5s (LF) of the other files at the fix commit: `Models/Enums.cs`
+`0dbd1bffa1a0cad4df83e2bceec0c10e`, `Models/MigrationModels.cs` `7d94f0a63565e703d33dc82c7889ec5c`, the tests
+`MigrationStubExchange.cs` `d550fd7903cc9e5f299cfbbdba5fc62c`, `MigrationEligibilityAndApproveTests.cs`
+`f3f27d898f845010e64827dc176a55b6`.
+
+**Pins.** `ClickGateRegistry`: 4377 lines before and after, no registered line among 91, 256, 2003, 2005, no registered
+snippet changed, `ExpectedLineCount` untouched - the `ClickGate*` tests pass. `ProgressRegistry`: no handler, lifecycle
+method or `Complete(` added; `CheckSingleEligibility` still pins `MigrationSvc.CheckMigrationEligibilityAsync`.
+
+## Gates (the fix commit's tree, on `4cf6b629`)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors.
+- `dotnet test ExchangeAdminWeb.slnx -c Release --no-build --blame-hang --blame-hang-timeout 10m`: 5624 passed, 3 skipped
+  (the known `ADDirectorySearchServiceTests ...WhenAdUnavailable` cases), 0 failed - 5627 in all, 32 of them new;
+  5 m 25 s, no hang. Baseline at `34c7ccd4`: 5592 / 3 / 0, 5595.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- The branch-tip gates, after aud-a23i and the comments, are aud-a23i's.
+
+## Known gaps
+
+- **Assumptions, unverified (no live Exchange call):** (a) the not-found recogniser - that the Exchange Online module
+  reports "no such object" for `Get-MigrationUser`, `Get-Mailbox` and `Get-MigrationBatch -Identity` with category
+  ObjectNotFound, a `*NotFoundException` reason, or the FQID's `FailureCategory=Cmdlet-...NotFoundException` part. If it
+  does none of these, every check of a mailbox with no migration reads "could not be determined" and the operator cannot
+  create a batch: visible and fail-closed, but it blocks the module, so one dev check settles it before a deploy; (b)
+  that a batch told to complete reads back with `CompleteAfter` (or `CompleteAfterUTC`) set - if Exchange clears it on
+  completion, a successful approval of a single-user batch reads "was not confirmed"; (c) the SDK behaviour above was
+  probed with script functions on this host's PowerShell 7.6, not with the module's own proxies.
+- **A mailbox in a batch of many is approved without any batch step**, as before (then the steps failed unseen under
+  `Ignore`); the Detail now says so. The batch steps target a batch named for the mailbox, the default single-user
+  batch name; a single-user batch given another name is treated the same way.
+- The audit's `result` for an undetermined check is "Ineligible": `AuditService.LogMigrationCheck` files anything not
+  Eligible there, and the Admin Event Log's result filter (another page) offers only Success and Ineligible. Its
+  `status` field says Undetermined and `reasons` carries the cause.
+- No circuit or browser ran: the page's compiled render tree and handlers were driven directly.

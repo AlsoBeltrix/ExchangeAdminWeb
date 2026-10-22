@@ -1,7 +1,9 @@
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Management.Automation;
 using System.Security.Claims;
 using System.Text;
+using System.Text.RegularExpressions;
 using CsvHelper;
 using CsvHelper.Configuration;
 using ExchangeAdminWeb.Models;
@@ -71,22 +73,25 @@ public class MigrationService : ExchangeServiceBase
                 Status = MigrationStatus.Eligible
             };
 
+            string? reading = "Get-MigrationUser";
             try
             {
                 ps.AddCommand("Get-MigrationUser")
                   .AddParameter("Identity", emailAddress)
-                  .AddParameter("ErrorAction", "Ignore");
-                var migUser = InvokeOptional(ps, tracker);
+                  .AddParameter("ErrorAction", "Stop");
+                var migUser = ReadUnlessNotFound(ps, tracker);
                 if (migUser.Any())
                 {
                     r.Status = MigrationStatus.Ineligible;
                     r.IneligibilityReasons.Add("Migration already in progress");
                 }
 
+                reading = "Get-Mailbox";
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
-                  .AddParameter("ErrorAction", "Ignore");
-                var cloudMbx = InvokeOptional(ps, tracker);
+                  .AddParameter("ErrorAction", "Stop");
+                var cloudMbx = ReadUnlessNotFound(ps, tracker);
+                reading = null;
                 var isCloudMailbox = false;
 
                 if (cloudMbx.Any())
@@ -140,9 +145,13 @@ public class MigrationService : ExchangeServiceBase
             }
             catch (Exception ex)
             {
-                r.Status = MigrationStatus.Ineligible;
-                r.IneligibilityReasons.Add($"Error checking eligibility: {ex.Message}");
-                _logger.LogError(ex, "Error checking migration eligibility for {Email}", emailAddress);
+                if (r.Status == MigrationStatus.Eligible)
+                    r.Status = MigrationStatus.Undetermined;
+                var reason = FailureReason(ex);
+                r.IneligibilityReasons.Add(reading is null
+                    ? $"Could not be determined: {reason}"
+                    : $"Could not be determined: {reading} failed: {reason}");
+                _logger.LogError(ex, "Migration eligibility for {Email} could not be determined", emailAddress);
             }
 
             return r;
@@ -249,7 +258,8 @@ public class MigrationService : ExchangeServiceBase
         }
 
         var eligible = results.Count(r => r.Status == MigrationStatus.Eligible);
-        var ineligible = results.Count - eligible;
+        var ineligible = results.Count(r => r.Status == MigrationStatus.Ineligible);
+        var undetermined = results.Count(r => r.Status == MigrationStatus.Undetermined);
 
         return new MigrationBatchResult
         {
@@ -260,6 +270,7 @@ public class MigrationService : ExchangeServiceBase
             TotalUsers = results.Count,
             EligibleUsers = eligible,
             IneligibleUsers = ineligible,
+            UndeterminedUsers = undetermined,
             AutoStart = false,
             AutoComplete = false
         };
@@ -748,7 +759,50 @@ https://admin.exchange.microsoft.com/#/migration";
     // writes arrives as an ActionPreferenceStopException, whose message puts "The running command stopped
     // because..." in front of it; its ErrorRecord holds the error as written.
     private static string FailureReason(Exception ex) =>
-        ex is ActionPreferenceStopException { ErrorRecord: { } stopped } ? stopped.ToString() : ResolvePsErrors(ex).primary;
+        (ex as ActionPreferenceStopException ?? ex.InnerException as ActionPreferenceStopException) is { ErrorRecord: { } stopped }
+            ? stopped.ToString()
+            : ResolvePsErrors(ex).primary;
+
+    private static Collection<PSObject> ReadUnlessNotFound(PowerShell ps, ConnectionErrorTracker tracker)
+    {
+        try
+        {
+            return InvokeOptional(ps, tracker);
+        }
+        catch (Exception ex) when (IsNotFound(ex))
+        {
+            return new Collection<PSObject>();
+        }
+    }
+
+    internal static bool IsNotFound(Exception ex)
+    {
+        var record = (ex as IContainsErrorRecord ?? ex.InnerException as IContainsErrorRecord)?.ErrorRecord;
+        if (record is null
+            || ex is CommandNotFoundException
+            || ex.InnerException is CommandNotFoundException
+            || Identifiers(record.FullyQualifiedErrorId).Contains(nameof(CommandNotFoundException), StringComparer.Ordinal))
+        {
+            return false;
+        }
+
+        if (record.CategoryInfo.Category == ErrorCategory.ObjectNotFound || NamesNotFound(record.CategoryInfo.Reason))
+            return true;
+
+        var thrown = record.Exception as RuntimeException ?? ex as RuntimeException ?? ex.InnerException as RuntimeException;
+        return thrown is not { WasThrownFromThrowStatement: true }
+            && Identifiers(record.FullyQualifiedErrorId).Any(NamesNotFound);
+    }
+
+    private static bool NamesNotFound(string? identifier) =>
+        identifier is not null
+        && identifier.EndsWith("NotFoundException", StringComparison.Ordinal)
+        && !identifier.EndsWith(nameof(CommandNotFoundException), StringComparison.Ordinal);
+
+    private static IEnumerable<string> Identifiers(string? fullyQualifiedErrorId) =>
+        IdentifierPart.Matches(fullyQualifiedErrorId ?? "").Select(match => match.Value);
+
+    private static readonly Regex IdentifierPart = new(@"[A-Za-z0-9_.]+", RegexOptions.CultureInvariant);
 
     // aud-a23f. A flag as reported: false when nothing was, a bool as itself (wrappers unwrapped), text only
     // when it is True or False. Anything else is null, not false, which would be a guess.
@@ -900,51 +954,132 @@ https://admin.exchange.microsoft.com/#/migration";
         // Mirrors ApproveMigrationUser.ps1: approve skipped items, set complete, resume move request.
         // NOT retry-eligible: multiple writes incl. non-idempotent Resume-MoveRequest (retry-safety
         // audit). A dead session discards and fails as before; the operator re-runs manually.
+        string? batchOutcome = null;
         return RunAsync((ps, tracker) =>
         {
             var pastDate = DateTime.Now.AddDays(-1);
 
+            ps.AddCommand("Get-MigrationBatch")
+              .AddParameter("Identity", emailAddress)
+              .AddParameter("ErrorAction", "Stop");
+            Collection<PSObject> ownBatch;
+            try
+            {
+                ownBatch = ReadUnlessNotFound(ps, tracker);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Could not tell whether {emailAddress} is in a migration batch of its own: {FailureReason(ex).TrimEnd('.')}. Nothing was changed.", ex);
+            }
+
+            if (ownBatch.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    $"Exchange returned {ownBatch.Count} migration batches for {emailAddress}. Nothing was changed.");
+            }
+
+            var hasOwnBatch = ownBatch.Count == 1;
+            var applied = new List<string>();
+
             ps.AddCommand("Set-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("ApproveSkippedItems", true)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps, tracker);
+            ApproveStep(ps, tracker, "Set-MigrationUser -ApproveSkippedItems", emailAddress, applied);
 
             ps.AddCommand("Set-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("CompleteAfter", pastDate)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps, tracker);
+            ApproveStep(ps, tracker, "Set-MigrationUser -CompleteAfter", emailAddress, applied);
 
-            ps.AddCommand("Set-MigrationBatch")
-              .AddParameter("Identity", emailAddress)
-              .AddParameter("ApproveSkippedItems", true)
-              .AddParameter("ErrorAction", "Ignore");
-            InvokeOptional(ps, tracker);
+            if (hasOwnBatch)
+            {
+                ps.AddCommand("Set-MigrationBatch")
+                  .AddParameter("Identity", emailAddress)
+                  .AddParameter("ApproveSkippedItems", true)
+                  .AddParameter("ErrorAction", "Stop");
+                ApproveStep(ps, tracker, "Set-MigrationBatch -ApproveSkippedItems", emailAddress, applied);
 
-            ps.AddCommand("Set-MigrationBatch")
-              .AddParameter("Identity", emailAddress)
-              .AddParameter("CompleteAfter", pastDate)
-              .AddParameter("ErrorAction", "Ignore");
-            InvokeOptional(ps, tracker);
+                ps.AddCommand("Set-MigrationBatch")
+                  .AddParameter("Identity", emailAddress)
+                  .AddParameter("CompleteAfter", pastDate)
+                  .AddParameter("ErrorAction", "Stop");
+                ApproveStep(ps, tracker, "Set-MigrationBatch -CompleteAfter", emailAddress, applied);
+            }
 
             ps.AddCommand("Set-MoveRequest")
               .AddParameter("Identity", emailAddress)
               .AddParameter("SkippedItemApprovalTime", pastDate)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps, tracker);
+            ApproveStep(ps, tracker, "Set-MoveRequest -SkippedItemApprovalTime", emailAddress, applied);
 
             ps.AddCommand("Resume-MoveRequest")
               .AddParameter("Identity", emailAddress)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps, tracker);
+            ApproveStep(ps, tracker, "Resume-MoveRequest", emailAddress, applied);
 
-            ps.AddCommand("Complete-MigrationBatch")
-              .AddParameter("Identity", emailAddress)
-              .AddParameter("Confirm", false)
-              .AddParameter("ErrorAction", "Ignore");
-            InvokeOptional(ps, tracker);
-        }, () => ($"Approved skipped items and initiated completion for {emailAddress}.", (string?)null));
+            if (hasOwnBatch)
+            {
+                ps.AddCommand("Complete-MigrationBatch")
+                  .AddParameter("Identity", emailAddress)
+                  .AddParameter("Confirm", false)
+                  .AddParameter("ErrorAction", "Stop");
+                ApproveStep(ps, tracker, "Complete-MigrationBatch", emailAddress, applied);
+
+                ConfirmBatchSetToComplete(ps, tracker, emailAddress, applied);
+            }
+
+            batchOutcome = hasOwnBatch
+                ? $"Its migration batch {emailAddress} was told to complete, and reads back set to complete."
+                : $"{emailAddress} is not in a migration batch of its own, so no batch was completed; only this mailbox was told to complete.";
+        }, () => ($"Approved skipped items and initiated completion for {emailAddress}.", batchOutcome));
+    }
+
+    private static void ApproveStep(PowerShell ps, ConnectionErrorTracker tracker, string step, string emailAddress, List<string> applied)
+    {
+        try
+        {
+            Invoke(ps, tracker);
+        }
+        catch (Exception ex)
+        {
+            var before = applied.Count == 0
+                ? "Nothing was changed before it."
+                : $"Already applied: {string.Join(", ", applied)}.";
+            throw new InvalidOperationException($"{step} failed for {emailAddress}: {FailureReason(ex).TrimEnd('.')}. {before}", ex);
+        }
+
+        applied.Add(step);
+    }
+
+    private static void ConfirmBatchSetToComplete(PowerShell ps, ConnectionErrorTracker tracker, string batchName, IReadOnlyList<string> applied)
+    {
+        ps.AddCommand("Get-MigrationBatch")
+          .AddParameter("Identity", batchName)
+          .AddParameter("ErrorAction", "Stop");
+        Collection<PSObject> read;
+        try
+        {
+            read = InvokeOptional(ps, tracker);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Completion of the migration batch {batchName} could not be confirmed: reading it back failed: {FailureReason(ex).TrimEnd('.')}. "
+                + $"Every step reported success: {string.Join(", ", applied)}.", ex);
+        }
+
+        var batch = read.Count == 1 ? read[0] : null;
+        if ((batch?.Properties["CompleteAfter"]?.Value ?? batch?.Properties["CompleteAfterUTC"]?.Value) is null)
+        {
+            var why = batch is null
+                ? $"reading it back returned {read.Count} batches"
+                : "Exchange reports no completion time set on it";
+            throw new InvalidOperationException(
+                $"Completion of the migration batch {batchName} was not confirmed: {why}. Every step reported success: {string.Join(", ", applied)}.");
+        }
     }
 
     public Task<PermissionResult> StopMigrationUserAsync(string emailAddress)
