@@ -308,8 +308,42 @@ public class ADAttributeEditorService
 
     public void SaveAllowlist(List<EditableAttribute> attributes)
     {
+        // aud-a28e. A pattern that does not compile is refused where the allowlist is saved, before
+        // the store is touched, rather than found by the first operator to save that attribute. It
+        // throws, so no caller can carry on as if the save happened. ValidateProposedValues keeps its
+        // own catch: a pattern already stored, imported from the legacy file or edited into the
+        // database never passes through here, and a timeout depends on the value being checked, so
+        // it cannot be judged here.
+        foreach (var attribute in attributes)
+        {
+            var problem = DescribeUncompilablePattern(attribute);
+            if (problem is not null)
+                throw new ArgumentException(problem);
+        }
+
         _repository.SaveAllowlist(attributes.Select(ToAllowlistRow).ToList());
         InvalidateAllowlistCache();
+    }
+
+    /// <summary>
+    /// Why <paramref name="attribute"/>'s pattern does not compile, naming the attribute; null when
+    /// it has no pattern or the pattern compiles.
+    /// </summary>
+    private static string? DescribeUncompilablePattern(EditableAttribute attribute)
+    {
+        if (string.IsNullOrEmpty(attribute.Pattern))
+            return null;
+
+        try
+        {
+            _ = new Regex(attribute.Pattern, RegexOptions.None, RegexTimeout);
+            return null;
+        }
+        catch (ArgumentException ex)
+        {
+            return $"The pattern for attribute '{attribute.Label}' ({attribute.Name}) is not a valid regular expression, "
+                + $"so the allowlist was not saved: {ex.Message}";
+        }
     }
 
     public Dictionary<string, Dictionary<string, AttributeLegendEntry>> GetLegend()
@@ -928,7 +962,11 @@ public class ADAttributeEditorService
 
         var changes = ComputeChanges(proposedValues, currentValues, allowlist);
         if (changes.Count == 0)
+        {
+            // aud-a26d: SaveAsync announces this result too, so it needs a record to answer to.
+            LogNoChangeAudit(target, performedBy, ip, ticket, servicedNote);
             return new(true, "No changes to apply.", changes);
+        }
 
         var replace = new Dictionary<string, object?>();
         var clear = new List<string>();
@@ -1070,8 +1108,31 @@ public class ADAttributeEditorService
             if (attr.MaxLength.HasValue && value.Length > attr.MaxLength.Value)
                 return $"Attribute '{attr.Label}' exceeds maximum length of {attr.MaxLength.Value}.";
 
-            if (!string.IsNullOrEmpty(attr.Pattern) && !Regex.IsMatch(value, attr.Pattern, RegexOptions.None, RegexTimeout))
-                return $"Attribute '{attr.Label}' does not match the required pattern.";
+            // aud-a28e. The pattern is the allowlist's, set by an administrator, not the operator's.
+            // One that does not compile (ArgumentException), or that runs past RegexTimeout on this
+            // value (RegexMatchTimeoutException), used to throw out of SaveAsync ahead of LogRefusal
+            // and the notice, so the attempt left no audit record. Returned as a validation error
+            // HERE - the one place that knows which attribute it was - it becomes the audited
+            // Validation refusal SaveAsync announces. The message blames the allowlist because the
+            // operator cannot fix it and must not be left guessing at a value that was never checked.
+            // It refuses: an unusable pattern is never counted as a match.
+            if (!string.IsNullOrEmpty(attr.Pattern))
+            {
+                bool matches;
+                try
+                {
+                    matches = Regex.IsMatch(value, attr.Pattern, RegexOptions.None, RegexTimeout);
+                }
+                catch (Exception ex) when (ex is ArgumentException or RegexMatchTimeoutException)
+                {
+                    return $"The allowlist pattern for attribute '{attr.Label}' "
+                        + (ex is RegexMatchTimeoutException ? "took too long to evaluate" : "is not a valid regular expression")
+                        + ", so the value could not be checked. An administrator must correct the attribute allowlist.";
+                }
+
+                if (!matches)
+                    return $"Attribute '{attr.Label}' does not match the required pattern.";
+            }
 
             if (attr.Type == "Choice")
             {
@@ -1140,6 +1201,31 @@ public class ADAttributeEditorService
             extra["targetObjectGuid"] = target.ObjectGuid;
 
         _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, changes, success, ticket, errorDetail, extra: extra);
+    }
+
+    private const string NoChangeNeeded =
+        "No change was needed: the directory already held the requested values, so nothing was written.";
+
+    /// <summary>
+    /// Records a save that found nothing to change (aud-a26d).
+    /// </summary>
+    /// <remarks>
+    /// SaveAsync announces every result it returns (aud-a26b), this one included, so without this
+    /// administrators were sent an <c>ADAttributeEditor_Update</c> notice that nothing in the audit
+    /// log answered to. The record is that action, successful, with no changes, and
+    /// <c>mutationAttempted</c> false because nothing was sent to the directory - the session only
+    /// re-read the target. With no old_/new_ pair it offers no undo. Not <see cref="LogAudit"/>,
+    /// whose trace step says a write completed.
+    /// </remarks>
+    private void LogNoChangeAudit(ResolvedDirectoryPrincipal target, string performedBy, string ip, string ticket, string? servicedNote)
+    {
+        var extra = ProtectedPrincipalServicing.Extra(servicedNote) ?? new Dictionary<string, object?>();
+        if (!string.IsNullOrWhiteSpace(target.ObjectGuid))
+            extra["targetObjectGuid"] = target.ObjectGuid;
+        extra["mutationAttempted"] = false;
+        extra["detail"] = NoChangeNeeded;
+
+        _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, [], true, ticket, extra: extra);
     }
 
     /// <summary>The forward notice's <c>Changed</c> row when the save found nothing to change.</summary>
