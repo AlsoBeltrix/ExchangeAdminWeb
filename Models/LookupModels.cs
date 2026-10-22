@@ -155,13 +155,16 @@ public class OutOfOfficeResult
 /// Exchange Online module hands back is not known here (an assumption the finding record labels; no
 /// live call was made), so every form that names a time unambiguously is read, and anything else is
 /// kept as its type name for the tab to show - the onus is on the data, and nothing is guessed.
+/// aud-a7i: and as its text. Showing what Exchange said word for word guesses nothing, and lets the
+/// operator see it rather than only what kind of thing it was.
 /// </remarks>
 public sealed record ReportedTime
 {
-    private ReportedTime(DateTime? time, string? unreadableType)
+    private ReportedTime(DateTime? time, string? unreadableType, string? unreadableText)
     {
         Time = time;
         UnreadableType = unreadableType;
+        UnreadableText = unreadableText;
     }
 
     /// <summary>The time, when it could be read. Its Kind says whether it names an instant (aud-a7f).</summary>
@@ -169,6 +172,33 @@ public sealed record ReportedTime
 
     /// <summary>The type name of what was reported instead, when it could not be read as a time.</summary>
     public string? UnreadableType { get; }
+
+    /// <summary>
+    /// aud-a7i. The text of what was reported instead, when it could not be read as a time and has any:
+    /// as it came, cut at <see cref="ShownTextLimit"/> characters.
+    /// </summary>
+    /// <remarks>
+    /// Held raw, not HTML-encoded: a page renders it as text, which Blazor encodes on the way out, so
+    /// encoding it here as well would put <c>&amp;lt;</c> in front of the operator. Cut because it comes
+    /// from outside this app and lands in one line of a tab; the cut is marked, so a shortened value is
+    /// never shown as if it were the whole of it.
+    /// </remarks>
+    public string? UnreadableText { get; }
+
+    /// <summary>
+    /// The time as <paramref name="readable"/> shows one, or - when it could not be read - the marker
+    /// naming what came back and its text.
+    /// </summary>
+    /// <remarks>
+    /// The marker is spelled here once, so every page that shows a reported time says the same thing
+    /// about one it cannot read, and none can show such a value as blank.
+    /// </remarks>
+    public string Show(Func<DateTime, string> readable) =>
+        Time is { } time
+            ? readable(time)
+            : UnreadableText is null
+                ? $"reported in a form this app cannot read ({UnreadableType})"
+                : $"reported in a form this app cannot read ({UnreadableType}): {UnreadableText}";
 
     /// <summary>
     /// The one reader for a reported time: null when nothing was reported. A <c>PSObject</c> is read as
@@ -180,17 +210,30 @@ public sealed record ReportedTime
     /// Text in any other form is not read because reading it would be a guess: <c>01/02/2026</c> is a
     /// different day in different cultures, and nothing here says which wrote it. ISO 8601 puts the year
     /// first in a fixed order, so the invariant culture reads it the same whoever wrote it. A wrapped
-    /// value that cannot be read is named by the wrapper's first type name, which for a deserialized
+    /// value that cannot be read is named by a wrapper's first type name, which for a deserialized
     /// object says what it was, where its base object (a property bag) would not.
+    /// <para>
+    /// Which wrapper's (codex, folded into aud-a7i): wrappers are unwrapped one at a time, and the name
+    /// kept is the innermost <c>Deserialized.*</c> one if any wrapper carries one, else the innermost
+    /// wrapper's. A wrapper around a wrapper need not share its names - one whose names were read before
+    /// the inner one was named keeps a generic type's - and the outermost is the one most likely to be
+    /// generic, so keeping its name named the wrapper instead of what it wrapped. The text is the
+    /// innermost wrapper's own, because a deserialized object carries the text its original had where
+    /// its property bag has none.
+    /// </para>
     /// </remarks>
     public static ReportedTime? Read(object? reported)
     {
         var value = reported;
-        string? typeName = null;
+        System.Management.Automation.PSObject? innermost = null;
+        string? deserializedName = null;
         while (value is System.Management.Automation.PSObject wrapped)
         {
-            typeName ??= wrapped.TypeNames.Count > 0 ? wrapped.TypeNames[0] : null;
-            value = wrapped.BaseObject;
+            innermost = wrapped;
+            var name = FirstTypeName(wrapped);
+            if (name?.StartsWith("Deserialized.", StringComparison.Ordinal) == true)
+                deserializedName = name;
+            value = wrapped.ImmediateBaseObject;
         }
 
         switch (value)
@@ -198,16 +241,50 @@ public sealed record ReportedTime
             case null:
                 return null;
             case DateTime time:
-                return new(time, null);
+                return new(time, null, null);
             case DateTimeOffset instant:
-                return new(instant.UtcDateTime, null);
+                return new(instant.UtcDateTime, null, null);
             case string text when DateTime.TryParseExact(text, IsoForms, System.Globalization.CultureInfo.InvariantCulture,
                     System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AllowWhiteSpaces,
                     out var parsed):
-                return new(parsed, null);
+                return new(parsed, null, null);
             default:
-                return new(null, typeName ?? value.GetType().FullName ?? value.GetType().Name);
+                var typeName = deserializedName
+                    ?? (innermost is null ? null : FirstTypeName(innermost))
+                    ?? value.GetType().FullName
+                    ?? value.GetType().Name;
+                return new(null, typeName, TextOf(innermost ?? value));
         }
+    }
+
+    private static string? FirstTypeName(System.Management.Automation.PSObject wrapped) =>
+        wrapped.TypeNames.Count > 0 ? wrapped.TypeNames[0] : null;
+
+    private const int ShownTextLimit = 80;
+
+    // aud-a7i. What was reported, as text, for the marker: none when it has no visible text, or when its
+    // own ToString throws - a value from outside this app can carry any ToString - because showing the
+    // text is a courtesy on top of naming the type, and must not turn a read that succeeded into one
+    // that failed. The invariant culture, so a number reads the same on every server. A cut never
+    // splits a surrogate pair, which would leave half a character on the page.
+    private static string? TextOf(object value)
+    {
+        string? text;
+        try
+        {
+            text = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+        if (text.Length <= ShownTextLimit)
+            return text;
+        var cut = char.IsHighSurrogate(text[ShownTextLimit - 1]) ? ShownTextLimit - 1 : ShownTextLimit;
+        return text[..cut] + "...";
     }
 
     // Date, then T or a space, then the time to the minute or the second (fractions optional), then Z,
@@ -339,13 +416,11 @@ public sealed record OutOfOfficeRequest(
 
     /// <summary>
     /// aud-a7h. A reported time as the Check Status tab shows it: a readable one exactly as the overload
-    /// above shows it, and one this app cannot read as a note naming what came back - so a schedule
-    /// Exchange did report is never shown as an empty window.
+    /// above shows it, and one this app cannot read as a note naming what came back (and, aud-a7i, its
+    /// text) - so a schedule Exchange did report is never shown as an empty window.
     /// </summary>
     public static string ShowReported(ReportedTime reported, TimeZoneInfo zone) =>
-        reported.Time is { } time
-            ? ShowReported(time, zone)
-            : $"reported in a form this app cannot read: {reported.UnreadableType}";
+        reported.Show(time => ShowReported(time, zone));
 
     // The page's own form of a clock time, culture-free so the separators cannot move.
     private const string ReportedFormat = "yyyy-MM-dd HH:mm";

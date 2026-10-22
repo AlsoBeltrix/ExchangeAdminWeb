@@ -63,9 +63,9 @@
                             @checkResult.EmailAddress
                         </div>
                         <div class="card-body">
-                            @if (checkResult.State == "Scheduled" && checkResult.StartTime is { } start)
+                            @if (checkResult.State == "Scheduled" && (checkResult.StartTime is not null || checkResult.EndTime is not null))
                             {
-                                <p><strong>Schedule:</strong> @ReadScheduleTime(start) — @(checkResult.EndTime is { } end ? ReadScheduleTime(end) : "")</p>
+                                <p><strong>Schedule:</strong> @ReadScheduleTime(checkResult.StartTime) — @ReadScheduleTime(checkResult.EndTime)</p>
                             }
                             @if (!string.IsNullOrWhiteSpace(checkResult.InternalMessage))
                             {
@@ -227,10 +227,12 @@
     // once on the first render - with the zone and offset named, as the owner's notice names them. With
     // no browser zone the instant is still known, so it is shown in UTC and labelled UTC: a stated
     // reference for a known moment, not a guessed zone. aud-a7h: a time Exchange reported in a form this
-    // app cannot read is shown as a note naming what came back, so the schedule line is there whenever
-    // a start was reported at all.
-    private string ReadScheduleTime(ReportedTime reported) =>
-        OutOfOfficeRequest.ShowReported(reported, scheduleZone ?? TimeZoneInfo.Utc);
+    // app cannot read is shown as a note naming what came back (aud-a7i: with its text). aud-a7i: the
+    // line is there whenever a start OR an end was reported - gated on the start alone, an end Exchange
+    // did report vanished with it - and the one it did not report says so, rather than leaving a dash
+    // with nothing beside it.
+    private string ReadScheduleTime(ReportedTime? reported) =>
+        reported is null ? "(not reported)" : OutOfOfficeRequest.ShowReported(reported, scheduleZone ?? TimeZoneInfo.Utc);
 
     protected override async Task OnInitializedAsync()
     {

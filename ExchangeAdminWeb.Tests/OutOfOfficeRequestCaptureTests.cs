@@ -198,7 +198,7 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     /// What the next status check reads: a Scheduled auto-reply with this window, each time handed to
     /// the stub as the object given - a <see cref="DateTime"/>, or (aud-a7h) whatever else it may be.
     /// </summary>
-    private void ReadBack(object start, object end)
+    private void ReadBack(object? start, object? end)
     {
         _read["State"] = "Scheduled";
         _read["StartTime"] = start;
@@ -387,6 +387,30 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         }
 
         return (text.ToString(), inputs);
+    }
+
+    /// <summary>
+    /// aud-a7i. The page's text frames and its markup frames, each joined on its own: Blazor encodes a text
+    /// frame and writes a markup frame into the page as HTML, so which one carries a value says whether
+    /// it can become markup.
+    /// </summary>
+    private static (string Text, string Markup) Frames(Page page)
+    {
+        using var builder = new RenderTreeBuilder();
+        typeof(Page).GetMethod("BuildRenderTree", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [builder]);
+        var frames = builder.GetFrames();
+        var text = new StringBuilder();
+        var markup = new StringBuilder();
+        for (var i = 0; i < frames.Count; i++)
+        {
+            var frame = frames.Array[i];
+            if (frame.FrameType == RenderTreeFrameType.Text)
+                text.Append(frame.TextContent);
+            else if (frame.FrameType == RenderTreeFrameType.Markup)
+                markup.Append(frame.MarkupContent);
+        }
+
+        return (text.ToString(), markup.ToString());
     }
 #pragma warning restore BL0006
 
@@ -773,12 +797,15 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     // aud-a7h. What cannot be read as a time is shown as a note naming what came back, never as a
     // Scheduled auto-reply with no window. A culture-formatted text is among them: reading 10/30/2026
     // means guessing which culture wrote it. A deserialized object is named by its type name, which
-    // says what it was, not by its base object (a property bag).
+    // says what it was, not by its base object (a property bag). aud-a7i, the finding's first half: and
+    // with its text - for a property bag, PowerShell's own text of it - so the operator sees what
+    // Exchange said, which involves no guess.
     [Theory]
-    [InlineData("a number", "System.Int32")]
-    [InlineData("text in a culture's own format", "System.String")]
-    [InlineData("a deserialized object", "Deserialized.Contoso.Data.ExDateTime")]
-    public async Task AReadScheduleThisAppCannotRead_IsShownAsAMarkerNamingWhatCameBack_NeverAsAnEmptyWindow(string form, string typeName)
+    [InlineData("a number", "System.Int32", "42")]
+    [InlineData("text in a culture's own format", "System.String", "10/30/2026 1:00:00 PM")]
+    [InlineData("a deserialized object", "Deserialized.Contoso.Data.ExDateTime", "@{DateTime=Friday, October 30, 2026 1:00:00 PM}")]
+    public async Task AReadScheduleThisAppCannotRead_IsShownAsAMarkerNamingWhatCameBackAndItsText_NeverAsAnEmptyWindow(
+        string form, string typeName, string shownText)
     {
         object read;
         switch (form)
@@ -801,9 +828,134 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
 
         var text = await CheckedStatus(page);
 
-        var marker = $"reported in a form this app cannot read: {typeName}";
+        var marker = $"reported in a form this app cannot read ({typeName}): {shownText}";
         Assert.Contains("Schedule:", text, StringComparison.Ordinal);
         Assert.Contains($"{marker} \u2014 {marker}", text, StringComparison.Ordinal);
+    }
+
+    // aud-a7i. The text comes from outside this app, so it must reach the browser as text: it is shown
+    // word for word, markup included, in the text frames Blazor encodes - never in a markup frame, which
+    // would be written into the page as HTML.
+    [Fact]
+    public async Task AnUnreadableTimesText_IsShownWordForWord_AsTextTheBrowserEncodes_NeverAsMarkup()
+    {
+        const string reported = "<b>Friday</b> 30/10/2026 13:00";
+        var (page, _) = BuildPage("none", browserZone: "America/New_York");
+        ReadBack(reported, reported);
+
+        await CheckedStatus(page);
+        var (text, markup) = Frames(page);
+
+        Assert.Contains($"reported in a form this app cannot read (System.String): {reported}", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("<b>Friday</b>", markup, StringComparison.Ordinal);
+    }
+
+    // aud-a7i. A long value is cut, and the cut is marked, so the tab never shows part of a value as the
+    // whole of it.
+    [Fact]
+    public async Task AnUnreadableTimesText_IsCutAtEightyCharacters_AndTheCutIsMarked()
+    {
+        var reported = string.Concat(Enumerable.Repeat("0123456789", 20));
+        var (page, _) = BuildPage("none", browserZone: "America/New_York");
+        ReadBack(reported, null);
+
+        var text = await CheckedStatus(page);
+
+        Assert.Contains($"reported in a form this app cannot read (System.String): {reported[..80]}... \u2014 (not reported)",
+            text, StringComparison.Ordinal);
+        Assert.DoesNotContain(reported[..81], text, StringComparison.Ordinal);
+    }
+
+    // aud-a7i, the finding's second half: the line was gated on the start, so an end Exchange did report
+    // vanished with it. It is shown, and the start it did not report says so.
+    [Fact]
+    public async Task AScheduleWithOnlyAnEnd_ShowsTheEnd_AndSaysTheStartWasNotReported()
+    {
+        var (page, _) = BuildPage("none", browserZone: "America/New_York");
+        ReadBack(null, Utc("2026-11-06T22:00:00Z"));
+
+        var text = await CheckedStatus(page);
+
+        Assert.Contains("Schedule:", text, StringComparison.Ordinal);
+        Assert.Contains("(not reported) \u2014 2026-11-06 17:00 (America/New_York, UTC-05:00)", text, StringComparison.Ordinal);
+    }
+
+    // aud-a7i. The other way round: the start is shown exactly as aud-a7f shows it, and the end it did not
+    // report reads "(not reported)" where it used to leave the dash with nothing beside it.
+    [Fact]
+    public async Task AScheduleWithOnlyAStart_ShowsTheStartAsBefore_AndSaysTheEndWasNotReported()
+    {
+        var (page, _) = BuildPage("none", browserZone: "America/New_York");
+        ReadBack(Utc("2026-10-30T13:00:00Z"), null);
+
+        var text = await CheckedStatus(page);
+
+        Assert.Contains("2026-10-30 09:00 (America/New_York, UTC-04:00) \u2014 (not reported)", text, StringComparison.Ordinal);
+    }
+
+    // aud-a7i. With neither reported there is no window to show, so there is still no line - two
+    // "(not reported)"s would print a schedule made of nothing.
+    [Fact]
+    public async Task AScheduleWithNeitherTime_ShowsNoScheduleLine()
+    {
+        var (page, _) = BuildPage("none", browserZone: "America/New_York");
+        ReadBack(null, null);
+
+        var text = await CheckedStatus(page);
+
+        Assert.DoesNotContain("Schedule:", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("(not reported)", text, StringComparison.Ordinal);
+    }
+
+    // The codex fold-in (aud-a7i). The reader kept the OUTER wrapper's first type name, so a deserialized
+    // object inside a wrapper with a generic name was named as the wrapper. The inner, deserialized name
+    // is shown, with the inner object's text - through the page and the real service.
+    [Theory]
+    [InlineData("a string", "10/30/2026 1:00:00 PM")]
+    [InlineData("a property bag", "@{DateTime=Friday, October 30, 2026 1:00:00 PM}")]
+    public async Task ATimeInsideTwoWrappers_IsNamedByTheInnerDeserializedType_AndShownWithItsText(string inside, string shownText)
+    {
+        var (page, _) = BuildPage("none", browserZone: "America/New_York");
+        ReadBack(Nested(inside), Nested(inside));
+
+        var text = await CheckedStatus(page);
+
+        var marker = $"reported in a form this app cannot read (Deserialized.Contoso.Data.ExDateTime): {shownText}";
+        Assert.Contains($"{marker} \u2014 {marker}", text, StringComparison.Ordinal);
+    }
+
+    // The same, at the reader itself: it does not depend on the stub handing the wrappers over intact.
+    [Theory]
+    [InlineData("a string", "10/30/2026 1:00:00 PM")]
+    [InlineData("a property bag", "@{DateTime=Friday, October 30, 2026 1:00:00 PM}")]
+    public void TheReader_OfATimeInsideTwoWrappers_KeepsTheInnerDeserializedTypeName_AndItsText(string inside, string shownText)
+    {
+        var read = ReportedTime.Read(Nested(inside));
+
+        Assert.NotNull(read);
+        Assert.Null(read.Time);
+        Assert.Equal("Deserialized.Contoso.Data.ExDateTime", read.UnreadableType);
+        Assert.Equal($"reported in a form this app cannot read (Deserialized.Contoso.Data.ExDateTime): {shownText}",
+            OutOfOfficeRequest.ShowReported(read, TimeZoneInfo.Utc));
+    }
+
+    /// <summary>
+    /// A wrapper around a deserialized-shaped wrapper whose own first type name is generic: the outer's
+    /// names are read before the inner is named, so the two do not share them. Asserted, because a
+    /// PowerShell SDK that made them equal would make the fold-in's tests pass whichever name is kept.
+    /// </summary>
+    private static PSObject Nested(string inside)
+    {
+        var inner = inside == "a string" ? new PSObject("10/30/2026 1:00:00 PM") : new PSObject();
+        var outer = new PSObject(inner);
+        _ = outer.TypeNames;
+        inner.TypeNames.Insert(0, "Deserialized.Contoso.Data.ExDateTime");
+        if (inside != "a string")
+            inner.Properties.Add(new PSNoteProperty("DateTime", "Friday, October 30, 2026 1:00:00 PM"));
+
+        Assert.Same(inner, outer.ImmediateBaseObject);
+        Assert.NotEqual(inner.TypeNames[0], outer.TypeNames[0]);
+        return outer;
     }
 
     // aud-a7f. The owner's notice dated the change with the server's clock and no zone. It is the
