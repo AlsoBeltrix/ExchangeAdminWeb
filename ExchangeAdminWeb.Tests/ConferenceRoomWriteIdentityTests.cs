@@ -50,6 +50,11 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     {
         private readonly ExchangeWriteHarness _h;
         public int CredentialRequests;
+        // aud-a2t. aud-a2s's seam (ConferenceRoomRoomListPreflightTests.Service), for the City/State/Country paths: for a
+        // purpose containing this text, a credential with no password, so the step that builds the AD credential from it
+        // throws - the way a test reaches that step. Live it is not reached so: the module's PAM provider returns no
+        // credential at all for a secret without a password (DelineaService), which the paths refuse as not configured.
+        public string? IncompleteCredentialFor;
 
         public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null)
             : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
@@ -57,6 +62,8 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
         {
             CredentialRequests++;
+            if (IncompleteCredentialFor is { } incomplete && purpose.Contains(incomplete, StringComparison.Ordinal))
+                return Task.FromResult<(string username, string password, string domain)?>(("svc", null!, "CONTOSO"));
             return Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
         }
 
@@ -377,6 +384,11 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     private static List<System.Collections.Hashtable> Named(IEnumerable<System.Collections.Hashtable> calls, string command) =>
         calls.Where(c => (string)c["__Command"]! == command).ToList();
 
+    // aud-a2t. The text a failure injected at a step carries: the one given, or, for the credential, which has none to give,
+    // the message of what building a credential with no password throws.
+    private static string InjectedText(string failing, string injected) =>
+        failing == "credential" ? new NullReferenceException().Message : injected;
+
     [Fact]
     public async Task TheCityStateAndCountryPreflight_RefusesBeforeAnyWrite_WhenTheObjectCannotBeReadThroughTheServerTheWriteUses()
     {
@@ -472,26 +484,31 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     [Theory]
     [InlineData("runspace")]
     [InlineData("import")]
+    [InlineData("credential")]
     [InlineData("object read")]
     [InlineData("write")]
     [InlineData("read-back")]
     public async Task AFailureAtEachStepOfTheCityStateAndCountryWrite_NamesThatStep(string failing)
     {
         // Each step of the write fails in turn - after Set-Place, so the preflight's own steps pass. Every one is a failed,
-        // partial row with nothing written, and its message and its log line name the step that failed. The three before
+        // partial row with nothing written, and its message and its log line name the step that failed. The four before
         // the write say the attributes were not written and are not told in the write's words; the write keeps its own.
+        // aud-a2t: the credential through the seam, for the write's purpose only - a step no test reached before, and no
+        // failure reaches live.
         const string Injected = "The injected failure.";
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
         switch (failing)
         {
             case "runspace": _h.DirectoryRunspaceFailureAfterSetPlace = Injected; break;
             case "import": _h.ImportModuleFailureAfterSetPlace = Injected; break;
+            case "credential": service.IncompleteCredentialFor = "Set-ADUser synced attributes"; break;
             case "object read": _h.ObjectReadFailureAfterSetPlace = Injected; break;
             case "write": _h.Failures["Set-ADUser"] = Injected; break;
             default: _h.AttributeReadBackFailure = Injected; break;
         }
-        var logger = new CapturingLogger();
 
-        var result = await Finder(new Service(_h, logger), Room(), city: "Dublin");
+        var result = await Finder(service, Room(), city: "Dublin");
 
         Assert.False(result.Success);
         Assert.True(result.Partial);
@@ -501,18 +518,19 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.False(step.Success);
         Assert.NotNull(step.Error);
         Assert.Contains(step.Error, result.Message, StringComparison.Ordinal);
-        Assert.Contains(Injected, step.Error, StringComparison.Ordinal);
+        Assert.Contains(InjectedText(failing, Injected), step.Error, StringComparison.Ordinal);
         var (message, logged) = failing switch
         {
             "runspace" => ("opening the directory runspace failed: ", "opening the directory runspace failed"),
             "import" => ("importing the ActiveDirectory module failed: ", "importing the ActiveDirectory module failed"),
+            "credential" => ("preparing the module's AD credential failed: ", "preparing the module's AD credential failed"),
             "object read" => ("reading the AD object failed: ", "reading the AD object failed"),
             "write" => ("Failed to write City/State/Country on the AD object: ", "Set-ADUser City/State/Country write failed"),
             _ => ($"reading l, st, co back from {RoomDomain} failed: ", $"could not be confirmed from {RoomDomain}"),
         };
         Assert.Contains(message, step.Error, StringComparison.Ordinal);
         Assert.Contains(logger.Entries, e => e.Level >= LogLevel.Warning && e.Message.Contains(logged, StringComparison.Ordinal));
-        if (failing is "runspace" or "import" or "object read")
+        if (failing is "runspace" or "import" or "credential" or "object read")
         {
             Assert.StartsWith($"City/State/Country were not written on the AD object {CheckedObject}: ", step.Error, StringComparison.Ordinal);
             Assert.DoesNotContain("Failed to write", step.Error, StringComparison.Ordinal);
@@ -678,21 +696,25 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     [Theory]
     [InlineData("runspace")]
     [InlineData("import")]
+    [InlineData("credential")]
     [InlineData("object read")]
     public async Task AFailureAtEachStepOfTheCityStateAndCountryPreflight_NamesThatStep(string failing)
     {
         // Each step of the preflight fails in turn, before Set-Place. Each refuses the row while nothing is written, in its
-        // one step, and the message and the log line name the step that failed and carry its error.
+        // one step, and the message and the log line name the step that failed and carry its error. aud-a2t: the credential
+        // through the seam, for the preflight's purpose only - a step no test reached before, and no failure reaches live.
         const string Injected = "The injected failure.";
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
         switch (failing)
         {
             case "runspace": _h.DirectoryRunspaceFailure = Injected; break;
             case "import": _h.ImportModuleFailure = Injected; break;
+            case "credential": service.IncompleteCredentialFor = "Set-ADUser preflight"; break;
             default: _h.Failures["Get-ADUser"] = Injected; break;
         }
-        var logger = new CapturingLogger();
 
-        var result = await Finder(new Service(_h, logger), Room(), city: "Dublin");
+        var result = await Finder(service, Room(), city: "Dublin");
 
         Assert.False(result.Success);
         Assert.False(result.Partial);
@@ -705,10 +727,11 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         {
             "runspace" => "opening the directory runspace failed",
             "import" => "importing the ActiveDirectory module failed",
+            "credential" => "preparing the module's AD credential failed",
             _ => "reading the AD object failed",
         };
         Assert.Contains($"{named}: ", result.Message, StringComparison.Ordinal);
-        Assert.Contains(Injected, result.Message, StringComparison.Ordinal);
+        Assert.Contains(InjectedText(failing, Injected), result.Message, StringComparison.Ordinal);
         Assert.Contains(CheckedObject, result.Message, StringComparison.Ordinal);
         Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains(named, StringComparison.Ordinal));
