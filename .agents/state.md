@@ -29,15 +29,13 @@ Opus 5.5 agents dispatched from the supervising session; codex reviews.
 
 | # | Item | State |
 | --- | --- | --- |
-| 1 | ConfigDbToolInApp S1 `86970a5` + cdt-1 `872f211`; S2 `b1577f7` + cdt-2 `96af3aa`, cdt-4 `5d6cee6` (cdt-3 declined) | done, pushed |
-| 2 | cdt-5 / cdt-6 (`426e137`, `2f6e629`); then cdt-8/9/10 (-Force path; merged `27f8167`), codex ops-batch-1 clean on them, raised cdt-16/17 (admitted); cdt-11..14, 16..19 (installer + deploy follow-ups) | agent running on 11-19 |
-| 3 | cdt-7: the C7 yield-hold test context drained once; fixed `4cbe057`, merged `035f0af`; full suite now runs unfiltered (4749/0/3 at `6afacaf`) | done |
-| 4 | aud-a38b + a38c + a38d (promote: verified stop, serving-pool check, IIS: drive) merged `7c587e2`; a38e (cutover bare stop) in the item-8 agent | merged; codex review pending |
-| 5 | aud-a3b, a3c (new), a2b, a4b-7, a1b merged `e996416`; codex authz-batch clean on four, raised aud-a2c HIGH (AD bound by SMTP address) - agent fixing; aud-a2d (write by immutable id) queued behind a7b | merged; a2c in progress |
-| 6 | aud-a29b merged `b60a507` with off-switch `Authentication:RevalidationEnabled`; codex raised a29c/d/e (two HIGH, one MEDIUM) - agent fixing; aud-a33b/a33c agent still running | in progress |
-| 7 | psl-4, psl-2, psl-3, psl-5 (new) merged `66bdb90`, codex review pending; psl-6 (attribute editor search-base flag) in the item-8 agent; aud-a6c/a7b agent running | partly merged |
-| 8 | aud-a26b, a28b, psl-6 (one agent); aud-a23b, cdr-followup-1, a38e (another) | agents running |
-| 9 | ConfigDbToolInApp S3 docs + decision + aud-sqlite3-path closed (done 2026-10-22); final consolidated version bump (base + modules touched today); push after every group is codex-clean | S3 done; bump queued - last |
+| 1 | ConfigDbToolInApp S1 `86970a5`, S2 `b1577f7`, S3 docs + decision `bc24d7d1`; cdt-1..4; `aud-sqlite3-path` closed | done, pushed |
+| 2 | deploy/installer/promote/cutover follow-ups cdt-5..cdt-38, aud-a38b..a38h; codex ops batches 1-5 clean | done, pushed |
+| 3 | cdt-7 (C6 test hang) `4cbe057`; full suite runs unfiltered since | done |
+| 4 | authz/identity: aud-a1b, a2b..a2j, a3b/a3c, a4b-7, a29b..a29f, a33b/a33c; codex clean | done, pushed |
+| 5 | PowerShell lifecycle psl-2..psl-6; EXO pool aud-a6c..a6f; Out of Office a7b..a7d; Comms-10k cdr-followup-1/2; Migration a23b/a23c; attribute editor a26b/a26c/a28b/a28c/a28d | done, pushed |
+| 6 | IN FLIGHT (agents, 2026-10-22): aud-a28e + aud-a26d (attribute editor); aud-a2k + aud-a2l (Conference Rooms); aud-a38i + aud-a7e (nested IIS nodes; OOF schedule zone) | agents running |
+| 7 | After item 6: codex review per group; final consolidated version bump (base 2.34.0 -> next minor; modules touched: Licensing Updates, DHCP Authorization, Self-Service Groups, Out of Office, Mailbox Permissions, Calendar Permissions, Conference Rooms, Comms-10k, AD Attribute Editor, Admin Event Log, Migration); `docs/AdminModuleSpec.md` header check; `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` step 3 amendment pointer to aud-a2j/a2k; state.md drift sweep (this file is far over the 10K-token target); token-log line | queued - last |
 
 Constitution still applies inside the go: authorization changes get a short written plan
 section inside their finding record (approach, files, tests) before code; one finding per
