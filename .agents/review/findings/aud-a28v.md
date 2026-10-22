@@ -4,7 +4,7 @@
 module-config store's write lock before any write. A database whose lock is held for more than the
 5-second busy timeout now fails the whole save up front (correct: nothing written), but the operator
 sees a generic "Failed to save" with no hint that the store was busy and a retry would succeed.
-**Status**: Merged `a583777d`; closed on guard proof; codex review pending
+**Status**: Complete; merged `a583777d`; codex settings-batch-5 clean (one test-guard LOW admitted as aud-a42)
 **Branch**: `worktree-agent-a9db60993a8970569`
 **Commit**: `65e8644b` (plan `40026345`; comments `082a2b51`, `c7b61943`)
 **Reviewer**: implementer (surfaced by the aud-a28r/a26p agent, 2026-10-22, candidate 5 of its hand-back)
