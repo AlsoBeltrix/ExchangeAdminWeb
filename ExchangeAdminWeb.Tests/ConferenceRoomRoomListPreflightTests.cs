@@ -1151,6 +1151,67 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         Assert.DoesNotContain(Reported, result.Message, StringComparison.Ordinal);
     }
 
+    // aud-a2p. The list as the preflight reads a synced one: existing, synchronized from on-premises, with the
+    // harness's address and Guid - the list the on-prem add is handed.
+    private static ConferenceRoomService.RoomListTarget TheSyncedList() =>
+        new(List, Exists: true, IsLegacy: false, IsDirSynced: true, ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid);
+
+    [Theory]
+    [InlineData("already a member")]
+    [InlineData("confirmed after a refused add")]
+    [InlineData("written")]
+    public async Task TheOnPremAddsOwnMessage_ClaimsAWriteOnlyWhenItsWriteAddedTheRoom(string outcome)
+    {
+        // aud-a2p. The list add's message, which its caller replaces on success: every on-prem success said
+        // "Membership was written on-prem", the no-op that wrote nothing and the add the read-back confirmed after
+        // a refusal included. Each now says what happened; only the add whose write put the room there claims one.
+        // Called directly, as the message reaches no result the row returns.
+        SyncedListTheRoomIsNotOnInExchange();
+        if (outcome == "already a member")
+            _h.DirectoryGroupMembers.Add(RoomDn);
+        else if (outcome == "confirmed after a refused add")
+            _h.AnotherAddLandsFirst = true;
+
+        var result = await new Service(_h).AddToRoomListAsync(Room(), Typed, Typed, TheSyncedList());
+
+        Assert.True(result.Success, result.Message);
+        var added = ConferenceRoomService.BuildRoomListAddedMessage(List, viaOnPrem: true);
+        switch (outcome)
+        {
+            case "already a member":
+                Assert.Empty(_h.CallsTo("Set-ADGroup"));
+                Assert.NotEqual(added, result.Message);
+                Assert.Equal(ConferenceRoomService.BuildOnPremRoomListNotWrittenMessage(List, confirmedAfterWrite: false), result.Message);
+                break;
+            case "confirmed after a refused add":
+                Assert.Single(_h.CallsTo("Set-ADGroup"));
+                Assert.NotNull(result.DirectoryMembershipConfirmed);
+                Assert.NotEqual(added, result.Message);
+                Assert.Equal(ConferenceRoomService.BuildOnPremRoomListNotWrittenMessage(List, confirmedAfterWrite: true), result.Message);
+                break;
+            default:
+                Assert.Single(_h.CallsTo("Set-ADGroup"));
+                Assert.Equal(CheckedObject, result.WrittenDirectoryObject);
+                Assert.Equal(added, result.Message);
+                break;
+        }
+    }
+
+    [Fact]
+    public void TheOnPremAddsNotWrittenMessages_NameTheList_AndClaimNoAdd()
+    {
+        var alreadyThere = ConferenceRoomService.BuildOnPremRoomListNotWrittenMessage(List, confirmedAfterWrite: false);
+        var confirmed = ConferenceRoomService.BuildOnPremRoomListNotWrittenMessage(List, confirmedAfterWrite: true);
+
+        Assert.NotEqual(alreadyThere, confirmed);
+        Assert.All(new[] { alreadyThere, confirmed }, message =>
+        {
+            Assert.Contains($"'{List}'", message, StringComparison.Ordinal);
+            Assert.DoesNotContain("Added to", message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Membership was written", message, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
     // A directory exception type other than the base one, as the real module derives several (aud-a2n): the
     // code is read through the base type's name.
     private sealed class DerivedDirectoryException(string message, int errorCode) : AdException(message, errorCode);

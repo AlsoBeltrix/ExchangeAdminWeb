@@ -268,6 +268,15 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             ? $"Added to on-prem room list '{roomListName}'. Membership was written on-prem and will appear in Exchange/Room Finder after the next directory sync (typically ~30 min)."
             : $"Added to room list '{roomListName}'.";
 
+    // aud-a2p. The on-prem add's message when its own write did not put the room on the list: the already-a-member
+    // no-op, which wrote nothing, or a membership the read-back confirmed after the add was refused or reported an
+    // error, which is not recorded as written (aud-a2n). Neither claims the write the message above describes. Pure +
+    // static for unit testing.
+    internal static string BuildOnPremRoomListNotWrittenMessage(string roomListName, bool confirmedAfterWrite)
+        => confirmedAfterWrite
+            ? $"In on-prem room list '{roomListName}', confirmed by reading its group back after this row's add was refused or reported an error: not recorded as written by this row."
+            : $"Already in on-prem room list '{roomListName}': nothing was written.";
+
     // Step result for "Remove existing permissions": any captured error makes the
     // step fail so the failedSteps aggregation surfaces it. A CEO conversion must
     // never report success while previous permission holders retain access.
@@ -349,7 +358,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// <c>Guid</c>, "D" form (aud-a2m): every later Exchange call on the list names it by this, never
     /// by the name - null when the list does not exist or Exchange reported no usable one.
     /// </summary>
-    private sealed record RoomListTarget(string Name, bool Exists, bool IsLegacy, bool? IsDirSynced, string? PrimarySmtpAddress, string? Guid)
+    /// <remarks>Internal, not private, for the tests (aud-a2p): <see cref="AddToRoomListAsync"/> takes one.</remarks>
+    internal sealed record RoomListTarget(string Name, bool Exists, bool IsLegacy, bool? IsDirSynced, string? PrimarySmtpAddress, string? Guid)
     {
         /// <summary>
         /// An existing list synchronized from on-premises. Exchange Online refuses the cloud add to
@@ -641,7 +651,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// </param>
     /// <param name="roomEmail">The operator's input, for the result only.</param>
     /// <param name="list">The room list resolved, and its on-prem add proven, before any write (aud-a2f).</param>
-    private async Task<RoomOperationResult> AddToRoomListAsync(
+    /// <remarks>
+    /// Internal, not private, for the tests (aud-a2p): its message reaches no result the row returns - the row
+    /// replaces a success's - so only a direct call can pin it.
+    /// </remarks>
+    internal async Task<RoomOperationResult> AddToRoomListAsync(
         ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list)
     {
         var result = new RoomOperationResult { Email = roomEmail };
@@ -760,7 +774,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                         // label, on-prem - rather than reading as the add it used to share a label with.
                         var alreadyMember = adWritten is null && adConfirmed is null;
                         result.Steps.Add(new RoomOperationStep { Stage = alreadyMember ? $"Already in '{roomListName}' (on-prem)" : $"Add to '{roomListName}' (on-prem)", Success = true, Error = adConfirmed });
-                        result.Message = BuildRoomListAddedMessage(roomListName, viaOnPrem: true);
+                        // aud-a2p. The message says what the add did: only the add whose write put the room there says it
+                        // was written. The no-op wrote nothing, and a membership confirmed after a refused or failing write
+                        // is not recorded as this row's (aud-a2n). The caller shows a failure's message and replaces a
+                        // success's, so none of these is shown today; each is true if one ever is.
+                        result.Message = adWritten is not null
+                            ? BuildRoomListAddedMessage(roomListName, viaOnPrem: true)
+                            : BuildOnPremRoomListNotWrittenMessage(roomListName, confirmedAfterWrite: adConfirmed is not null);
                         return result;
                     }
 
@@ -1468,9 +1488,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // object via Set-ADUser. These attributes are AD-mastered, so EXO Set-User rejects them
     // ("being synchronized from your on-premises organization") - the root cause of the
     // Room Finder apply failure (docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md).
-    // Returns (null, the objectGUID written) once Set-ADUser has succeeded, (null, null) when
-    // there is nothing to write, and (the failure message for the row, null) otherwise - the
-    // object is reported only by a write that happened (aud-a2g).
+    // Returns (null, the objectGUID written) once the attributes Set-ADUser wrote have read back
+    // as written (aud-a2p), (null, null) when there is nothing to write, and (the failure message
+    // for the row, null) otherwise - the object is reported only by a write known to have
+    // happened (aud-a2g).
     // Runs in its own AD runspace (mirrors Comms10k / CheckAdGroupMembership), not through
     // the EXO pool.
     //
@@ -1574,9 +1595,18 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
-                var confirmError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential);
+                var confirmError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential, out var roomDn);
                 if (confirmError != null)
                     return (confirmError, null);
+
+                // aud-a2p. The write and its read-back go to the room object's own domain, named by the DN its proven
+                // object was read with - the routing aud-a2j gives the group write and GroupManagementService every write
+                // (fsr-1) - so the read asks the server the write was sent to. The domain does not move: the read above
+                // has no -Server, so it finds the object only in the module's default domain, which the DN then names;
+                // and the write is by objectGUID, so a wrong server could only fail it, never write another object. A DN
+                // that names no domain leaves both on the module's default, as before.
+                var server = GroupManagementService.ServerFromDn(roomDn);
+                var serverName = server ?? "the default domain controller";
 
                 // Write by the validated objectGUID (immutable identity), never by a name.
                 ps.AddCommand("Set-ADUser")
@@ -1584,9 +1614,54 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                   .AddParameter("Replace", new System.Collections.Hashtable(attrs))
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                if (ps.HadErrors)
-                    return (FirstError(ps) ?? $"Set-ADUser failed for {roomEmail}.", null);
+                if (server is not null)
+                    ps.AddParameter("Server", server);
+                // aud-a2p. The write's error is the one it throws: under -ErrorAction Stop an error the cmdlet writes is
+                // thrown from Invoke and leaves no record in the stream (aud-a2o, measured), and it reaches the catch at
+                // the end - the row's failure, its message and log as before, nothing read back. The HadErrors check that
+                // followed could not see that error; it could see only a record another command left in this shared
+                // stream (psl-2), and would have told a clean write as a failing one.
+                try
+                {
+                    ps.Invoke();
+                }
+                finally
+                {
+                    // The read-back runs on this pipeline: the write must not stay queued before it - it would run
+                    // again, piped into the read - nor leave a record the read's own error check would take for its own.
+                    ps.Commands.Clear();
+                    ps.Streams.Error.Clear();
+                }
+
+                // aud-a2p. Done is the attributes reading back as written, not the write raising no error: a domain
+                // controller that dropped the values, or a constraint it did not report, raises none and changes nothing
+                // (Known Failure Class 2; aud-a2l for the room list). Read by the objectGUID written, from the server it
+                // was sent to. A difference, or a read that cannot be made, fails the step naming the attribute and the
+                // server, and nothing is reported written (aud-a2g). No retry: the operator re-runs. A write that threw is
+                // not read back and stays the failure it was: read back, as aud-a2n reads back the membership, a row whose
+                // values were found would be a success no object is recorded as written for, and neither the result nor
+                // the audit carries a detail saying so for these attributes.
+                string? readError;
+                List<string> unconfirmed;
+                try
+                {
+                    (readError, unconfirmed) = ReadBackSyncedAttributes(ps, objectGuid, attrs, server, credential);
+                }
+                catch (Exception ex)
+                {
+                    (readError, unconfirmed) = (ex.Message, []);
+                }
+                if (readError != null)
+                {
+                    _logger.LogWarning("Set-ADUser City/State/Country write for {Room} on {Object} could not be confirmed from {Server}: {Error}", roomEmail, objectGuid, serverName, readError);
+                    return ($"Set-ADUser on the AD object {objectGuid} for {roomEmail} could not be confirmed: reading {string.Join(", ", SyncedAttributesReadBack)} back from {serverName} failed: {readError}", null);
+                }
+                if (unconfirmed.Count > 0)
+                {
+                    var detail = string.Join("; ", unconfirmed);
+                    _logger.LogWarning("Set-ADUser City/State/Country write for {Room} on {Object} not confirmed from {Server}: {Detail}", roomEmail, objectGuid, serverName, detail);
+                    return ($"Set-ADUser on the AD object {objectGuid} for {roomEmail} was not confirmed: read back from {serverName}, {detail}.", null);
+                }
 
                 return (null, objectGuid);
             }
@@ -1896,6 +1971,92 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         distinguishedName = found[0].Properties["DistinguishedName"]?.Value?.ToString();
         return null;
     }
+
+    // aud-a2p. The attributes the City/State/Country write is confirmed by: City, State and Country as the operator
+    // gave them. c and countryCode go in the same -Replace as co and are not read - *assumption, not probed*: one
+    // -Replace is one LDAP modify, applied whole, so co read back as written says the request applied.
+    private static readonly string[] SyncedAttributesReadBack = ["l", "st", "co"];
+
+    // aud-a2p. The attributes Set-ADUser wrote, read back by the objectGUID written, from the server the write was
+    // sent to (null: the module's default, as the write's). In the shape of this file's other reads: an error record
+    // fails it - after a read, whatever left one, the answer is not known good, and failing is the safe direction -
+    // and exactly one object, the one written, must answer: another object's attributes confirm nothing. Returns the
+    // read's error, or what did not read back as written (empty when everything did).
+    private static (string? error, List<string> unconfirmed) ReadBackSyncedAttributes(
+        PowerShell ps, string objectGuid, IReadOnlyDictionary<string, object> written, string? server, PSCredential credential)
+    {
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Identity", objectGuid)
+          .AddParameter("Properties", SyncedAttributesReadBack.ToArray())
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        if (server is not null)
+            ps.AddParameter("Server", server);
+        var found = ps.Invoke();
+        if (ps.HadErrors)
+            return (FirstError(ps) ?? $"Get-ADUser reported an error reading {objectGuid}.", []);
+        ps.Commands.Clear();
+
+        var answered = found.Count == 1 ? found[0]?.Properties["ObjectGUID"]?.Value?.ToString() : null;
+        if (answered is null || !string.Equals(answered, objectGuid, StringComparison.OrdinalIgnoreCase))
+            return ($"{found.Count} object(s) answered, ObjectGUID {answered ?? "none"}", []);
+
+        return (null, UnconfirmedSyncedAttributes(written, found[0]));
+    }
+
+    // aud-a2p. What the write put in its -Replace that the object read back does not hold, one description each. Only
+    // what this row wrote: an attribute it left blank is not written, so whatever the object holds there is not this
+    // write's to confirm. The write's own values - BuildSyncedUserAttributes's, trimmed as it trims - against the value
+    // as read, nothing trimmed, compared ordinal: stricter than the directory's own matching, and a difference only
+    // ever fails the row, never passes it. An empty value and an absent attribute are the same, the directory keeping
+    // no empty value. Pure, for unit testing.
+    internal static List<string> UnconfirmedSyncedAttributes(IReadOnlyDictionary<string, object> written, PSObject read)
+    {
+        var unconfirmed = new List<string>();
+        foreach (var name in SyncedAttributesReadBack)
+        {
+            if (!written.TryGetValue(name, out var value))
+                continue;
+            var expected = EmptyAsAbsent(value?.ToString());
+            var actual = EmptyAsAbsent(ReadDirectoryString(read, name));
+            if (!string.Equals(expected, actual, StringComparison.Ordinal))
+                unconfirmed.Add($"{name} ({SyncedAttributeLabel(name)}) {(actual is null ? "is not set" : $"is '{actual}'")}, not {(expected is null ? "empty" : $"'{expected}'")} as written");
+        }
+        return unconfirmed;
+    }
+
+    private static string SyncedAttributeLabel(string name) => name switch
+    {
+        "l" => "City",
+        "st" => "State",
+        "co" => "Country",
+        _ => name,
+    };
+
+    private static string? EmptyAsAbsent(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
+    // A single-valued attribute as read, null when absent. *Assumption, not probed*: the module answers one with its
+    // value, as ADAttributeEditorService reads its attributes (Properties[..].Value). A collection is taken as its one
+    // element, so a collection-shaped answer is not told as a difference; several values are not the one written.
+    private static string? ReadDirectoryString(PSObject read, string name)
+    {
+        var value = Unwrapped(read.Properties[name]?.Value);
+        if (value is null or string)
+            return (string?)value;
+        if (value is System.Collections.IEnumerable values)
+        {
+            var items = values.Cast<object?>().Select(v => Unwrapped(v)?.ToString()).ToList();
+            return items.Count switch
+            {
+                0 => null,
+                1 => items[0],
+                _ => string.Join("; ", items),
+            };
+        }
+        return value.ToString();
+    }
+
+    private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
 
     // Resolve a room list (distribution group) to exactly one immutable on-prem ObjectGUID, and
     // refuse on not-found or ambiguous - same fail-closed posture as ConfirmDirectoryObject so an

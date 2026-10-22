@@ -128,6 +128,22 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
     [Theory]
     [InlineData("page")]
     [InlineData("bulk")]
+    public async Task ASetADUserTheReadBackDoesNotShow_IsNotRecordedAsWritten(string surface)
+    {
+        // aud-a2p. Set-ADUser raises nothing and changes nothing: City does not read back as written, so the row
+        // fails and names no written object - it used to be a success naming the room's object.
+        _h.SetAdUserChangesNothing = true;
+
+        var row = await ApplyAndReadAudit(surface, city: "Dublin");
+
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Single(_h.CallsTo("Set-ADUser"));
+        Assert.False(row.TryGetProperty(ValidatedMailbox.DirectoryAuditKey, out _), row.ToString());
+    }
+
+    [Theory]
+    [InlineData("page")]
+    [InlineData("bulk")]
     public async Task AWriteThatSucceeded_IsRecordedEvenWhenALaterStepFails(string surface)
     {
         // Partial: City/State/Country reached Active Directory, then the timezone failed. The object

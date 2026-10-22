@@ -94,6 +94,256 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         });
     }
 
+    // ---- aud-a2p: the City/State/Country write is done when its attributes read back as written ------------
+    // Set-ADUser raising no error was taken as the write done: a domain controller that dropped the values, or
+    // a constraint it did not report, raises none and changes nothing, and the row was reported, and audited,
+    // as written (Known Failure Class 2). The stand-in Set-ADUser applies its -Replace to the room's object, so
+    // the read-back sees what a write changed - and, told to, changes nothing.
+
+    // The domain the room's DN names (CN=Room 1,OU=Rooms,DC=contoso,DC=test): where the write and its read-back go.
+    private const string RoomDomain = "contoso.test";
+
+    private System.Collections.Hashtable RoomObject => (System.Collections.Hashtable)_h.DirectoryObjects[CheckedObject]!;
+
+    private static string? Text(object? value) => (value is PSObject wrapped ? wrapped.BaseObject : value)?.ToString();
+
+    // The Set-ADUser and the first Get-ADUser after it - the read-back.
+    private (System.Collections.Hashtable Write, System.Collections.Hashtable ReadBack) TheWriteAndItsReadBack()
+    {
+        var calls = _h.Calls.Cast<System.Collections.Hashtable>().ToList();
+        var write = calls.FindIndex(c => (string)c["__Command"]! == "Set-ADUser");
+        Assert.True(write >= 0, "no Set-ADUser");
+        var readBack = calls.FindIndex(write + 1, c => (string)c["__Command"]! == "Get-ADUser");
+        Assert.True(readBack > write, "no Get-ADUser after the Set-ADUser");
+        return (calls[write], calls[readBack]);
+    }
+
+    [Fact]
+    public async Task TheCityStateAndCountryWrite_IsConfirmedByReadingItsAttributesBack_FromTheServerItWroteTo()
+    {
+        // The normal case: the write applied, then l, st and co read back by the objectGUID written, from the
+        // domain the write went to - the room object's own, named by its DN - so the row succeeds and the object
+        // is reported written.
+        var result = await Finder(new Service(_h), Room(), city: "Dublin", state: "Leinster", country: "IE");
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        Assert.Equal(CheckedObject, result.WrittenDirectoryObject);
+        Assert.Equal(["Dublin", "Leinster", "Ireland"], new[] { "l", "st", "co" }.Select(a => Text(RoomObject[a])));
+        var (write, readBack) = TheWriteAndItsReadBack();
+        Assert.Equal(CheckedObject, ExchangeWriteHarness.Bound(readBack, "Identity"));
+        Assert.Equal(["l", "st", "co"],
+            Assert.IsAssignableFrom<System.Collections.IEnumerable>(ExchangeWriteHarness.Bound(readBack, "Properties")).Cast<object?>().Select(Text));
+        Assert.Equal(RoomDomain, ExchangeWriteHarness.Bound(write, "Server"));
+        Assert.Equal(RoomDomain, ExchangeWriteHarness.Bound(readBack, "Server"));
+    }
+
+    [Fact]
+    public async Task ACityStateAndCountryWriteThatChangesNothing_IsAFailedStep_NotAWrite()
+    {
+        // The finding: Set-ADUser raises nothing and changes nothing, an older City in place. The read-back does
+        // not show the write, so the step fails - partial, Set-Place having committed - nothing is reported
+        // written, nothing after it runs, and the step names each attribute, what it reads and what was written,
+        // and the server read.
+        RoomObject["l"] = "Cork";
+        _h.SetAdUserChangesNothing = true;
+
+        var result = await Finder(new Service(_h), Room(), city: "Dublin", state: "Leinster", country: "IE");
+
+        Assert.False(result.Success);
+        Assert.True(result.Partial);
+        Assert.Null(result.WrittenDirectoryObject);
+        Assert.Single(_h.CallsTo("Set-ADUser"));
+        var step = Assert.Single(result.Steps, s => s.Stage == "Set-ADUser (City/State/Country)");
+        Assert.False(step.Success);
+        Assert.NotNull(step.Error);
+        Assert.Contains("was not confirmed", step.Error, StringComparison.Ordinal);
+        Assert.Contains(CheckedObject, step.Error, StringComparison.Ordinal);
+        Assert.Contains($"read back from {RoomDomain}", step.Error, StringComparison.Ordinal);
+        Assert.Contains("l (City) is 'Cork', not 'Dublin' as written", step.Error, StringComparison.Ordinal);
+        Assert.Contains("st (State) is not set, not 'Leinster' as written", step.Error, StringComparison.Ordinal);
+        Assert.Contains("co (Country) is not set, not 'Ireland' as written", step.Error, StringComparison.Ordinal);
+        Assert.Contains(step.Error, result.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.CallsTo("Set-MailboxRegionalConfiguration"));
+    }
+
+    [Fact]
+    public async Task ACityStateAndCountryReadBackThatFails_IsAFailedStep_NotAWrite()
+    {
+        // The write applied, but its read-back cannot be made: unconfirmed is not done. Failed, partial, nothing
+        // reported written, the message naming the server read and the read's own error.
+        _h.AttributeReadBackFailure = "The server is not operational.";
+
+        var result = await Finder(new Service(_h), Room(), city: "Dublin");
+
+        Assert.False(result.Success);
+        Assert.True(result.Partial);
+        Assert.Null(result.WrittenDirectoryObject);
+        Assert.Equal("Dublin", Text(RoomObject["l"]));
+        Assert.Contains("could not be confirmed", result.Message, StringComparison.Ordinal);
+        Assert.Contains($"back from {RoomDomain} failed", result.Message, StringComparison.Ordinal);
+        Assert.Contains("The server is not operational.", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACityStateAndCountryReadBackAnsweredByAnotherObject_IsAFailedStep_NotAWrite()
+    {
+        // Another object answering the read-back says nothing about the object written: failed, partial, nothing
+        // reported written, the object that answered named.
+        const string Another = "7a7a7a7a-0000-4000-8000-000000000002";
+        _h.AttributeReadBackAnswersAs = Another;
+
+        var result = await Finder(new Service(_h), Room(), city: "Dublin");
+
+        Assert.False(result.Success);
+        Assert.True(result.Partial);
+        Assert.Null(result.WrittenDirectoryObject);
+        Assert.Contains("could not be confirmed", result.Message, StringComparison.Ordinal);
+        Assert.Contains(Another, result.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnErrorTheCityStateAndCountryWriteReportsWithoutThrowing_IsNotTakenForItsError_TheReadBackDecides(bool applied)
+    {
+        // aud-a2o's knob on this write. Under -ErrorAction Stop an error a cmdlet writes is thrown, so one reported
+        // without a throw - the stand-in's own -ErrorAction Continue - is not Set-ADUser's, and the HadErrors check
+        // that took it is gone. The read-back decides, the record the write left cleared before it so the read is
+        // not failed by it: applied - success, the object written; not applied - the not-confirmed failure. In
+        // neither is the reported text taken for the write's error.
+        const string Reported = "A non-terminating error the write reported and carried on past.";
+        _h.SetAdUserReportsErrorWithoutThrowing = Reported;
+        _h.SetAdUserChangesNothing = !applied;
+
+        var result = await Finder(new Service(_h), Room(), city: "Dublin");
+
+        Assert.Single(_h.CallsTo("Set-ADUser"));
+        Assert.Equal(applied, result.Success);
+        Assert.Equal(!applied, result.Partial);
+        Assert.Equal(applied ? CheckedObject : null, result.WrittenDirectoryObject);
+        Assert.DoesNotContain(Reported, result.Message, StringComparison.Ordinal);
+        if (!applied)
+            Assert.Contains("was not confirmed", result.Message, StringComparison.Ordinal);
+    }
+
+    private static PSObject ReadAnswer(params (string Name, object? Value)[] properties)
+    {
+        var read = new PSObject();
+        foreach (var (name, value) in properties)
+            read.Properties.Add(new PSNoteProperty(name, value));
+        return read;
+    }
+
+    private static List<string> Unconfirmed(Dictionary<string, object> written, PSObject read) =>
+        ConferenceRoomService.UnconfirmedSyncedAttributes(written, read);
+
+    [Fact]
+    public void TheReadBack_ComparesWhatWasWritten_Ordinal_AnEmptyWriteAsAnAbsentAttribute()
+    {
+        var written = new Dictionary<string, object> { ["l"] = "Dublin", ["st"] = "Leinster", ["co"] = "Ireland", ["c"] = "IE", ["countryCode"] = 372 };
+
+        // As written: confirmed. c and countryCode, in the same -Replace as co, are not read.
+        Assert.Empty(Unconfirmed(written, ReadAnswer(("l", "Dublin"), ("st", "Leinster"), ("co", "Ireland"))));
+        // Ordinal: a case difference is a difference, and nothing read is trimmed.
+        Assert.Equal(["l (City) is 'dublin', not 'Dublin' as written"],
+            Unconfirmed(written, ReadAnswer(("l", "dublin"), ("st", "Leinster"), ("co", "Ireland"))));
+        Assert.Equal(["l (City) is 'Dublin ', not 'Dublin' as written"],
+            Unconfirmed(written, ReadAnswer(("l", "Dublin "), ("st", "Leinster"), ("co", "Ireland"))));
+        // A written value absent - no property, or null - is not confirmed.
+        Assert.Equal(["st (State) is not set, not 'Leinster' as written", "co (Country) is not set, not 'Ireland' as written"],
+            Unconfirmed(written, ReadAnswer(("l", "Dublin"), ("co", null))));
+        // An attribute the row did not write is not compared, whatever the object holds.
+        Assert.Empty(Unconfirmed(new Dictionary<string, object> { ["l"] = "Dublin" }, ReadAnswer(("l", "Dublin"), ("st", "Munster"))));
+        // An empty write compares to an absent attribute, and to an empty one; not to a value.
+        Assert.Empty(Unconfirmed(new Dictionary<string, object> { ["l"] = "" }, ReadAnswer()));
+        Assert.Empty(Unconfirmed(new Dictionary<string, object> { ["l"] = "" }, ReadAnswer(("l", ""))));
+        Assert.Equal(["l (City) is 'Cork', not empty as written"], Unconfirmed(new Dictionary<string, object> { ["l"] = "" }, ReadAnswer(("l", "Cork"))));
+        // A one-element collection is its element; two elements are not the one value written.
+        Assert.Empty(Unconfirmed(new Dictionary<string, object> { ["co"] = "Ireland" }, ReadAnswer(("co", new System.Collections.ArrayList { "Ireland" }))));
+        Assert.Single(Unconfirmed(new Dictionary<string, object> { ["co"] = "Ireland" }, ReadAnswer(("co", new System.Collections.ArrayList { "Ireland", "Ireland" }))));
+    }
+
+    [Fact]
+    public void TheHarness_SetADUser_AppliesItsReplace_AndCanChangeNothing_ReportAnError_OrFailItsReadBack()
+    {
+        // The stand-ins the tests above rest on, or they would pass for the wrong reason: Set-ADUser applies its
+        // -Replace to the object; a failure throws before applying; told to change nothing, it changes nothing;
+        // told to report an error without throwing, it applies and reports one that -ErrorAction Stop does not
+        // throw. Get-ADUser, told the read-back fails, fails a read asking for -Properties made after a Set-ADUser
+        // and not a read before it or one without -Properties; told to answer as another object, the read-back
+        // answers as it and the read without -Properties does not.
+        const string Another = "7a7a7a7a-0000-4000-8000-000000000002";
+        var replace = new System.Collections.Hashtable { ["l"] = "Dublin" };
+        (string Name, object Value)[] write = [("Identity", CheckedObject), ("Replace", replace), ("Server", RoomDomain), ("ErrorAction", "Stop")];
+        (string Name, object Value)[] readBack = [("Identity", CheckedObject), ("Properties", new[] { "l", "st", "co" }), ("Server", RoomDomain), ("ErrorAction", "Stop")];
+        (string Name, object Value)[] confirm = [("Identity", CheckedObject), ("ErrorAction", "Stop")];
+
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Run(ps, "Set-ADUser", write);
+            Assert.Equal("Dublin", Text(RoomObject["l"]));
+            Assert.Equal("Dublin", Text(Value(Run(ps, "Get-ADUser", readBack).Single(), "l")));
+        }
+
+        RoomObject.Remove("l");
+        _h.Failures["Set-ADUser"] = "Insufficient access rights to perform the operation";
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Set-ADUser", write));
+            Assert.False(RoomObject.ContainsKey("l"));
+        }
+
+        _h.Failures.Remove("Set-ADUser");
+        _h.SetAdUserChangesNothing = true;
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Run(ps, "Set-ADUser", write);
+            Assert.False(RoomObject.ContainsKey("l"));
+        }
+
+        _h.SetAdUserChangesNothing = false;
+        _h.SetAdUserReportsErrorWithoutThrowing = "Reported, not thrown.";
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Run(ps, "Set-ADUser", write);
+            Assert.True(ps.HadErrors);
+            Assert.Equal("Reported, not thrown.", Assert.Single(ps.Streams.Error).Exception.Message);
+            Assert.Equal("Dublin", Text(RoomObject["l"]));
+        }
+
+        _h.Calls.Clear();
+        _h.SetAdUserReportsErrorWithoutThrowing = null;
+        _h.AttributeReadBackFailure = "The server is not operational.";
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Assert.Single(Run(ps, "Get-ADUser", readBack));
+            Run(ps, "Set-ADUser", write);
+            Assert.Single(Run(ps, "Get-ADUser", confirm));
+            Assert.Contains("not operational", Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Get-ADUser", readBack)).Message, StringComparison.Ordinal);
+        }
+
+        _h.AttributeReadBackFailure = null;
+        _h.AttributeReadBackAnswersAs = Another;
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Assert.Equal(Guid.Parse(Another), Value(Run(ps, "Get-ADUser", readBack).Single(), "ObjectGUID"));
+            Assert.Equal(Guid.Parse(CheckedObject), Value(Run(ps, "Get-ADUser", confirm).Single(), "ObjectGUID"));
+        }
+    }
+
     [Fact]
     public async Task ACloudOnlyRoomWithLocationFields_IsRefusedBeforeAnyWrite()
     {
