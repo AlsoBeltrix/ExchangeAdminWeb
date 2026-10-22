@@ -9,7 +9,7 @@ Save bar does not appear. (4) Test infrastructure: two test classes opening Powe
 the same moment can hit PowerShell's start-up race ("An item with the same key has already been
 added. Key: Alias"), seen once in `ADAttributeEditorSaveTests` during a filtered run - a flaky
 failure source for the full suite.
-**Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
+**Status**: Merged `25071281`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a992f9d6471a07501`
 **Commit**: `ec2e09c3` (plan `c8deba78`; comments `07ef4e8e`)
 **Reviewer**: implementer (surfaced by the aud-a28p/a26n agent, 2026-10-22, candidates 1, 3, 4 and 6 of its hand-back; its candidate 5, a connection change on one instance not draining the other's pool, is the scdi-1 design - each borrow compares the config generation - and is not admitted)

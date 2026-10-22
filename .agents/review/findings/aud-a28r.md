@@ -6,7 +6,7 @@ the locked write, but the rules are written FIRST: when the secret compare refus
 the rules are already saved and the secret is not. aud-a28j's folded-in part records both outcomes
 honestly (a success record for the rules, a refusal for the secret, a message saying which part
 landed), so nothing is silent; but the save the admin confirmed as one change lands as half.
-**Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
+**Status**: Merged `25071281`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a992f9d6471a07501`
 **Commit**: `dbcac40f` (plan `c8deba78`; comments `07ef4e8e`)
 **Reviewer**: implementer (surfaced by the aud-a28p/a26n agent, 2026-10-22, candidate 2 of its hand-back)
