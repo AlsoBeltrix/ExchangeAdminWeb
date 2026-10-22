@@ -242,7 +242,11 @@ Dedicated bulk member replacement for broadcast distribution lists.
 View and edit allowlisted Active Directory attributes for on-premises user accounts.
 
 - Tiered access control with three granular permission levels (Level1, Level2, Level3)
-- Configurable attribute allowlist via `config/ad-editable-attributes.json`
+- Configurable attribute allowlist, edited in the Editable Attributes table on the module's Module
+  Configuration page and stored in the config database (`editable_attribute`; repairs per
+  `docs/ConfigDbOperations.md`, with both application pools stopped). A legacy
+  `config/ad-editable-attributes.json` is imported once and archived; one the import refuses is
+  left in place and named, with its reason, on the Module Configuration page
 - Optional search base boundary restrictions
 - Uses Delinea credentials for Active Directory operations
 - Section access keys: `ADAttributeEditor`, `ADAttributeEditorLevel1`, `ADAttributeEditorLevel2`, `ADAttributeEditorLevel3`

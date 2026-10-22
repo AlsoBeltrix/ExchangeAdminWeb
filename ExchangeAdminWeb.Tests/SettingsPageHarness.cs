@@ -144,6 +144,23 @@ internal sealed class SettingsPageHarness : IDisposable
     /// <summary>The audit record's <c>user</c> for <see cref="AdminName"/>.</summary>
     public string AdminSam => AdminName.Split('\\')[1];
 
+    /// <summary>
+    /// An AD Attribute Editor service over the same database, built when called so that a legacy
+    /// allowlist file a test has written is imported - or refused - as the service is constructed.
+    /// </summary>
+    public ADAttributeEditorService CreateAttributeEditor() =>
+        new(
+            new ModuleCredentialService(ModuleConfig, Delinea, NullLogger<ModuleCredentialService>.Instance),
+            ProtectedPrincipals,
+            new ProtectedPrincipalServicerService(SectionAccess, NullLogger<ProtectedPrincipalServicerService>.Instance),
+            Trace,
+            Audit,
+            new EmailService(Config, NullLogger<EmailService>.Instance),
+            ModuleConfig,
+            new AttributeEditorRepository(TestConfigStore.Create(_root)),
+            Env,
+            NullLogger<ADAttributeEditorService>.Instance);
+
     // ---- pages ---------------------------------------------------------------------------------
 
     /// <summary>

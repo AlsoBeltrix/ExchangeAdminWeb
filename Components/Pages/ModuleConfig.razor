@@ -511,11 +511,24 @@
                 {
                     <div class="alert alert-danger mb-3">
                         <strong>Attribute allowlist store is corrupt.</strong>
-                        config\ad-editable-attributes.json exists but cannot be read, so the
-                        attribute list cannot be shown and saving is disabled — saving now would
-                        replace the whole file, discarding every configured attribute. Fix or
-                        restore the file (deploy backups: ConfigBackups\config.&lt;timestamp&gt;.bak),
-                        then reload this page.
+                        @if (allowlistImportRefusal is not null)
+                        {
+                            <span>
+                                The legacy file config\ad-editable-attributes.json was not imported: @allowlistImportRefusal
+                                It is left in place, and the attribute list cannot be shown and saving is
+                                disabled until it imports: correct the file, then reload this page.
+                            </span>
+                        }
+                        else
+                        {
+                            <span>
+                                The allowlist in the config database (the editable_attribute table) cannot be
+                                read or fails validation, so the attribute list cannot be shown and saving is
+                                disabled - saving now would replace every configured attribute. An administrator
+                                must correct the table as docs/ConfigDbOperations.md describes, with
+                                both application pools stopped, then reload this page.
+                            </span>
+                        }
                     </div>
                 }
                 @if (allowlistError != null)
@@ -1620,6 +1633,7 @@
     private string? allowlistError;
     private bool allowlistSaved;
     private bool allowlistCorrupt;
+    private string? allowlistImportRefusal;
 
     private void LoadAllowlist()
     {
@@ -1627,12 +1641,16 @@
         if (list == null)
         {
             allowlistCorrupt = true;
-            allowlistError = "Allowlist config is corrupt. Fix or delete config/ad-editable-attributes.json.";
+            allowlistImportRefusal = AttrEditorService.LegacyAllowlistImportRefusal;
+            allowlistError = allowlistImportRefusal is not null
+                ? "The allowlist was not loaded: the legacy file config/ad-editable-attributes.json was not imported (the reason is above). Correct the file, then reload this page."
+                : "The allowlist was not loaded: the editable_attribute table in the config database cannot be read or fails validation. Correct it as docs/ConfigDbOperations.md describes, with both application pools stopped, then reload this page.";
             allowlistAttributes = new();
             return;
         }
 
         allowlistCorrupt = false;
+        allowlistImportRefusal = null;
 
         allowlistAttributes = list.Select(a => new AllowlistRow
         {
@@ -1716,16 +1734,18 @@
                 return;
             }
 
-            var valid = allowlistAttributes
-                .Where(a => !string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(a.Label))
+            var rows = allowlistAttributes
                 .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level))
                 .ToList();
 
-            var result = AttrEditorService.SaveAllowlistAndAudit(valid, currentUser, ip);
+            var result = AttrEditorService.SaveAllowlistAndAudit(rows, currentUser, ip);
             if (!result.Success)
             {
                 if (result.StoreCorrupt)
+                {
                     allowlistCorrupt = true;
+                    allowlistImportRefusal = AttrEditorService.LegacyAllowlistImportRefusal;
+                }
                 allowlistError = result.Error;
                 return;
             }

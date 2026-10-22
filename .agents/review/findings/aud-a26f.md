@@ -89,9 +89,90 @@ table's banner names the table and not the file. Tripwire: the save passes every
 Mutations at the call site: the BlankRow refusal deleted; the DuplicateName refusal deleted; the
 banner's import reason deleted (the folded-in item).
 
+## Fix
+
+`Services/ADAttributeEditorService.cs`:
+
+- `ImportLegacyIfPresent` returns the reason the legacy file was not imported (null when it was, or
+  there was none): each of its six refusal branches says why - it could not be parsed (the parser's
+  message), it has no Attributes section, the attribute ValidateRows refused and why (ValidateRows
+  gains an `out` reason; the load ignores it), aud-a26e's uncompilable-pattern text naming the
+  attribute, it could not be written to the config database, it could not be read. Kept as
+  `_legacyImportRefusal` beside the existing flag and exposed as `LegacyAllowlistImportRefusal`.
+  Still fails closed; the file stays where it is.
+- The `AllowlistConfig` refusal (`DescribeCorruptStore`): the legacy variant names
+  `config/ad-editable-attributes.json` and carries the reason; the database variant names the
+  `editable_attribute` table, `docs/ConfigDbOperations.md` and both application pools stopped, and not
+  the file.
+- SaveAllowlistAndAudit: after the corrupt-store check and before the denylist, `BlankRow` (every row
+  with a blank LDAP name or label, by position and what it does hold) and `DuplicateName` (every LDAP
+  name on more than one row, ignoring case, with its rows), each through `LogAllowlistSaveRefused`.
+
+`Components/Pages/ModuleConfig.razor`: the corrupt banner's two variants (the legacy one shows the
+import's reason, `allowlistImportRefusal`), LoadAllowlist's error in the same two variants, the save
+passing every row unfiltered and refreshing the import reason when a save reports a corrupt store.
+`README.md` 245: where the allowlist is edited and stored, and what happens to the legacy file.
+
+Tests: `AllowlistSaveAuditTests` +6 (blank rows, three theory rows; a repeated name; the corrupt
+refusal's text; the unfiltered-save tripwire); `ADAttributeEditorServiceTests` +4 (the refused
+import's reason and the save's legacy refusal text; every import refusal says why, three theory
+rows) and the valid-import control asserts no reason; new `ExchangeAdminWeb.Tests/AllowlistBannerTests.cs`
+(3 cases: the compiled page rendered for a refused import, a corrupt table and a healthy allowlist);
+`SettingsPageHarness.CreateAttributeEditor`.
+
+No pre-fix reproduction: two of the new tests use the new `LegacyAllowlistImportRefusal`, so they do
+not compile against the old service; each defect is put back at its call site by the mutations
+below instead.
+
+Caller-visible change, by design: a save holding a row with a blank LDAP name or label, or an LDAP
+name on two rows, is refused and recorded, naming the rows, where it used to drop or merge them
+silently. The corrupt-store banner, LoadAllowlist's error and the save's corrupt refusal name the
+config database table and its documented repair, or - when the legacy import refused the file - the
+file and the import's reason; the banner no longer mentions deploy backups of a config folder.
+
 ## Guard proof
 
-Pending.
+Same session-local driver as aud-a28g (`mutate.ps1`), filter
+`FullyQualifiedName~AllowlistSaveAuditTests|FullyQualifiedName~ADAttributeEditorServiceTests|FullyQualifiedName~AllowlistBannerTests`
+(103 tests). Fixed-file MD5s: `Services/ADAttributeEditorService.cs`
+`D33E15AB204A66F57DF94045CC035939`, `Components/Pages/ModuleConfig.razor`
+`ACA7713E04302815C94325CE870E9B9A`; each restored to its MD5 after every mutant, and every mutant
+built with 0 errors. After the round, a rebuild on the restored bytes and the filter widened to
+SettingsSaveAuditTests, ProgressRegistryTests and ClickGate*: 501/501 green.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| the BlankRow refusal disabled (`if (false && blank is not null)`) | `CB8A32B37EBEF9E409E5B1D0C87B03B9` | `ARowWithABlankNameOrLabel_IsRefused_NamingTheRow_AndNothingIsWritten` (all three rows) |
+| the DuplicateName refusal disabled (`if (false && repeated is not null)`) | `CB1C43D814B27B7982ABD3BEE3F7AEC0` | `AnLdapNameOnTwoRows_IsRefused_NamingTheName_AndNothingIsWritten` |
+| folded-in: the import's reason dropped from the banner | `33364903E015C307BA578B00B1880542` | `ARefusedLegacyImport_IsExplainedInTheBanner_NamingTheAttribute` |
+| extra, page: blank rows filtered out before the service again | `D43D4BD85FB9CA6FEFC94A717D15C211` | `ThePageSave_HandsEveryRowToTheService_DroppingNone` |
+| extra: the corrupt refusal's old wording, naming the JSON file, put back | `7A7AABD908B400E7E7526E9F54EFCDA3` | `TheCorruptStoreRefusal_NamesTheConfigDatabaseAndItsFix_NotTheLegacyFile`, `ARefusedLegacyImport_KeepsItsReason_AndTheSaveRefusalNamesTheFileAndTheAttribute` |
+
+The code comments are written after the round, in their own commit, so the MD5s above are this
+commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors; warnings all pre-existing, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx -c Release --no-build --blame-hang --blame-hang-timeout 10m`:
+  exit 0, 5,209 passed / 3 skipped / 0 failed, 5,212 total, 5m20s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0.
+  `git diff --check`: exit 0. `tools/Test-AsciiOnly.ps1` with the files staged: exit 0.
+
+No PowerShell source, AD module, directory, Delinea, SMTP, push or deployment. The page was rendered
+to a frame list only, not in a browser. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- The other corrupt-store banners and refusals on these pages still name their retired JSON files
+  (`config\modules-enabled.json`, `config\sectionaccess.json`, `config\module-config-<id>.json`,
+  Exchange Online's `module-config.json`). Same class, other stores; outside this record, which is
+  the allowlist's. Reported to the supervisor as a candidate.
+- A database-corrupt banner says what to fix but not which row: the store's own validation names the
+  attribute only in the log, as before. The legacy import's reason is now shown; the table's is not.
+- Row positions in the refusals count the table as the page shows it, from 1; a row removed and
+  re-added moves.
 
 ## Folded in: the import refusal names the attribute only in the log (codex, attr-batch-3, 2026-10-22)
 

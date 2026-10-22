@@ -143,6 +143,7 @@ public class ADAttributeEditorService
     // file must make the load return null until it is repaired/removed - never silently degrade
     // to an empty allowlist. The file stays on disk, so this re-trips every startup.
     private readonly bool _legacyAllowlistCorrupt;
+    private readonly string? _legacyImportRefusal;
 
     public ADAttributeEditorService(
         ModuleCredentialService moduleCredentials,
@@ -168,8 +169,15 @@ public class ADAttributeEditorService
         _logger = logger;
         _changeWatcher = repository.CreateChangeWatcher(logger);
 
-        _legacyAllowlistCorrupt = ImportLegacyIfPresent();
+        _legacyImportRefusal = ImportLegacyIfPresent();
+        _legacyAllowlistCorrupt = _legacyImportRefusal is not null;
     }
+
+    /// <summary>
+    /// Why the legacy <c>config/ad-editable-attributes.json</c> was not imported, when that is why the
+    /// allowlist reads as corrupt (aud-a26f); null otherwise.
+    /// </summary>
+    public string? LegacyAllowlistImportRefusal => _legacyImportRefusal;
 
     public void InvalidateAllowlistCache()
     {
@@ -276,8 +284,12 @@ public class ADAttributeEditorService
 
     // Validation (denylist removal, contradictory flags, empty Choice list) - unchanged from the
     // file world; returns null to fail closed, matching LoadAllowlistFromDisk's contract.
-    private List<EditableAttribute>? ValidateRows(IEnumerable<AttributeAllowlistEntry> entries)
+    private List<EditableAttribute>? ValidateRows(IEnumerable<AttributeAllowlistEntry> entries) =>
+        ValidateRows(entries, out _);
+
+    private List<EditableAttribute>? ValidateRows(IEnumerable<AttributeAllowlistEntry> entries, out string? problem)
     {
+        problem = null;
         var validated = new List<EditableAttribute>();
         foreach (var attr in entries)
         {
@@ -290,12 +302,14 @@ public class ADAttributeEditorService
             if (attr.Required && attr.AllowClear)
             {
                 _logger.LogError("Contradictory config for attribute {Name}: Required=true with AllowClear=true - failing closed", attr.Name);
+                problem = $"Attribute '{attr.Label}' ({attr.Name}) is both Required and AllowClear.";
                 return null;
             }
 
             if (attr.Type == "Choice" && (attr.Choices == null || attr.Choices.Length == 0))
             {
                 _logger.LogError("Attribute {Name} is type Choice but has no Choices defined - failing closed", attr.Name);
+                problem = $"Attribute '{attr.Label}' ({attr.Name}) is type Choice but has no choices.";
                 return null;
             }
 
@@ -393,9 +407,23 @@ public class ADAttributeEditorService
             // drops included.
             if (LoadAllowlistFromDisk(out stored) == null)
             {
-                const string corrupt = "Allowlist store is corrupt; refusing to save over it. Fix or restore config/ad-editable-attributes.json, then reload this page.";
+                var corrupt = DescribeCorruptStore();
                 LogAllowlistSaveRefused(performedBy, ip, "AllowlistConfig", corrupt);
                 return new(false, corrupt, StoreCorrupt: true);
+            }
+
+            var blank = DescribeBlankRows(attributes);
+            if (blank is not null)
+            {
+                LogAllowlistSaveRefused(performedBy, ip, "BlankRow", blank);
+                return new(false, blank);
+            }
+
+            var repeated = DescribeRepeatedNames(attributes);
+            if (repeated is not null)
+            {
+                LogAllowlistSaveRefused(performedBy, ip, "DuplicateName", repeated);
+                return new(false, repeated);
             }
 
             var denied = attributes.Where(a => IsDenylisted(a.Name)).ToList();
@@ -484,6 +512,57 @@ public class ADAttributeEditorService
         {
             _logger.LogError(ex, "Audit failed for an allowlist save that did not complete");
         }
+    }
+
+    /// <summary>The corrupt-store refusal, naming the store that holds the problem and its fix (aud-a26f).</summary>
+    private string DescribeCorruptStore() =>
+        _legacyImportRefusal is { } import
+            ? "Allowlist store is corrupt; refusing to save over it. The legacy file config/ad-editable-attributes.json "
+              + $"was not imported: {import} The allowlist fails closed until the file imports: correct it, then reload this page."
+            : "Allowlist store is corrupt; refusing to save over it. The editable_attribute table in the config database "
+              + "cannot be read or fails validation: an administrator must correct it as docs/ConfigDbOperations.md "
+              + "describes, with both application pools stopped, then reload this page.";
+
+    /// <summary>
+    /// Every row without an LDAP name or a label, by its position in the table (aud-a26f); null when
+    /// there is none.
+    /// </summary>
+    private static string? DescribeBlankRows(List<EditableAttribute> attributes)
+    {
+        var blank = new List<string>();
+        for (var i = 0; i < attributes.Count; i++)
+        {
+            var noName = string.IsNullOrWhiteSpace(attributes[i].Name);
+            var noLabel = string.IsNullOrWhiteSpace(attributes[i].Label);
+            if (noName && noLabel)
+                blank.Add($"row {i + 1} has no LDAP name or label");
+            else if (noName)
+                blank.Add($"row {i + 1} ('{attributes[i].Label}') has no LDAP name");
+            else if (noLabel)
+                blank.Add($"row {i + 1} ({attributes[i].Name}) has no label");
+        }
+
+        return blank.Count == 0
+            ? null
+            : $"The allowlist was not saved: {string.Join("; ", blank)}. Every row needs an LDAP name and a label: fill in or remove each row named.";
+    }
+
+    /// <summary>
+    /// Every LDAP name on more than one row, compared as the store compares them, ignoring case
+    /// (aud-a26f); null when there is none.
+    /// </summary>
+    private static string? DescribeRepeatedNames(List<EditableAttribute> attributes)
+    {
+        var repeated = attributes
+            .Select((attribute, index) => (Name: attribute.Name.Trim(), Row: index + 1))
+            .GroupBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .Select(group => $"the LDAP name '{group.First().Name}' is on rows {string.Join(", ", group.Select(entry => entry.Row))}")
+            .ToList();
+
+        return repeated.Count == 0
+            ? null
+            : $"The allowlist was not saved: {string.Join("; ", repeated)}. An attribute can be listed once: remove or correct each repeated row.";
     }
 
     /// <summary>
@@ -615,10 +694,10 @@ public class ADAttributeEditorService
     // Allowlist: an unparseable/invalid file is left in place and NOT marked configured, so the
     // store stays at the empty/null-on-load fail-closed state until repaired - we do not import
     // partial/garbage rows. Legend is fail-open: an unparseable legend is skipped (left in place).
-    private bool ImportLegacyIfPresent()
+    private string? ImportLegacyIfPresent()
     {
         var configDir = Path.Combine(_env.ContentRootPath, "config");
-        var allowlistCorrupt = false;
+        string? allowlistRefusal = null;
 
         // Allowlist
         try
@@ -638,7 +717,7 @@ public class ADAttributeEditorService
                 {
                     _logger.LogError(ex, "Legacy ad-editable-attributes.json is unparseable - left in place, failing closed until repaired");
                     parseOk = false;
-                    allowlistCorrupt = true;
+                    allowlistRefusal = $"It could not be parsed: {ex.Message}";
                 }
 
                 if (parseOk)
@@ -646,14 +725,14 @@ public class ADAttributeEditorService
                     if (wrapper?.Attributes == null)
                     {
                         _logger.LogError("Legacy ad-editable-attributes.json missing Attributes section - left in place, failing closed until repaired");
-                        allowlistCorrupt = true;
+                        allowlistRefusal = "It has no Attributes section.";
                     }
-                    else if (ValidateRows(wrapper.Attributes) == null)
+                    else if (ValidateRows(wrapper.Attributes, out var invalid) == null)
                     {
                         // Parseable but fails validation (denylist/contradictory/empty-Choice) - the
                         // file world returned null here too. Leave the file, fail closed.
                         _logger.LogError("Legacy ad-editable-attributes.json fails validation - left in place, failing closed until repaired");
-                        allowlistCorrupt = true;
+                        allowlistRefusal = invalid ?? "It fails validation.";
                     }
                     else if (wrapper.Attributes
                         .Select(a => DescribeUncompilablePattern(a.Name, a.Label, a.Pattern))
@@ -671,7 +750,7 @@ public class ADAttributeEditorService
                         _logger.LogError(
                             "Legacy ad-editable-attributes.json was not imported: {Problem} It is left in place, and the allowlist fails closed until an administrator corrects the pattern.",
                             uncompilable);
-                        allowlistCorrupt = true;
+                        allowlistRefusal = uncompilable;
                     }
                     else
                     {
@@ -693,7 +772,7 @@ public class ADAttributeEditorService
                             // unconfigured - that would silently drop the existing allowlist
                             // rules. Fail closed; the file stays for the next startup to retry.
                             _logger.LogError(ex, "Failed to import legacy ad-editable-attributes.json into the store - failing closed until import succeeds");
-                            allowlistCorrupt = true;
+                            allowlistRefusal = $"It could not be written to the config database: {ex.Message}";
                         }
                     }
                 }
@@ -704,7 +783,7 @@ public class ADAttributeEditorService
             // A valid file we could not even read must also fail closed (parse errors are handled
             // above and already set allowlistCorrupt).
             _logger.LogError(ex, "Failed to process legacy ad-editable-attributes.json - failing closed");
-            allowlistCorrupt = true;
+            allowlistRefusal = $"It could not be read: {ex.Message}";
         }
 
         // Legend (fail-open)
@@ -740,7 +819,7 @@ public class ADAttributeEditorService
             _logger.LogWarning(ex, "Failed to import legacy ad-editable-attributes-legend.json");
         }
 
-        return allowlistCorrupt;
+        return allowlistRefusal;
     }
 
     public string[] GetEffectiveChoices(EditableAttribute attr)
