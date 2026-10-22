@@ -1112,11 +1112,23 @@ try {
         }
     }
 
-    Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $repoRoot
+    # cdt-31: recorded, not thrown, like the restart above. Unguarded, a failed manifest write was the
+    # error the caller got, and the check below that says the application is DOWN never ran. Both are
+    # reported below, the restart's first; a manifest failure with the pool running still fails.
+    $manifestError = $null
+    try {
+        Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $repoRoot
+    } catch {
+        $manifestError = $_.Exception.Message
+        Write-Host "  X  The deployment manifest was not written: $manifestError" -ForegroundColor Red
+    }
 
     # The files are deployed and the application is down: a failure, not "complete" (cdt-18).
     if ($poolStartError) {
-        Write-Fail "The files are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand."
+        Write-Fail "The files are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand.$(if ($manifestError) { " The deployment manifest was not written either ($manifestError)." })"
+    }
+    if ($manifestError) {
+        Write-Fail "The files are deployed and app pool $AppPoolName is running, but the deployment manifest was not written to $PublishPath ($manifestError), so nothing records which build it holds. Fix the cause and re-run the installer."
     }
 } finally {
     if (-not $PlanOnly) {

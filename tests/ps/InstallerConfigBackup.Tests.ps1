@@ -779,6 +779,127 @@ Describe 'cdt-18: the pool restarts only after a complete mirror, confirmed, and
     }
 }
 
+Describe 'cdt-31: a failed manifest write never hides a failed restart' {
+    # The manifest write between the restart and the "application is DOWN" check was unguarded: when
+    # it threw after a failed restart, its exception was the one the caller got.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt31Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        $script:Cdt31Mirror = $script:Cdt31Ast.Find({
+                param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] -and
+                @($n.Body.Statements | Where-Object { $_.Extent.Text -like 'Invoke-RobocopyChecked -Description "Deploy application files"*' }).Count -gt 0
+            }, $true)
+        if ($null -eq $script:Cdt31Mirror) { throw 'the installer has no try around the mirror' }
+        $script:Cdt31Statements = @($script:Cdt31Mirror.Parent.Statements)
+        $script:Cdt31TryAt = [array]::IndexOf($script:Cdt31Statements, $script:Cdt31Mirror)
+    }
+
+    It 'writes the manifest in its own try after the mirror, and fails on the restart before the manifest (AST)' {
+        $statements = $script:Cdt31Statements
+        $functions = @($script:Cdt31Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+        $writes = @($script:Cdt31Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-DeploymentManifest' }, $true) | Where-Object {
+                $call = $_
+                @($functions | Where-Object { $call.Extent.StartOffset -ge $_.Extent.StartOffset -and $call.Extent.EndOffset -le $_.Extent.EndOffset }).Count -eq 0
+            })
+        $writes.Count | Should -Be 1 -Because 'the installer writes the manifest once'
+        $guard = $writes[0].Parent
+        while ($null -ne $guard -and -not ($guard -is [System.Management.Automation.Language.TryStatementAst])) { $guard = $guard.Parent }
+        $guardAt = [array]::IndexOf($statements, $guard)
+        $guardAt | Should -BeGreaterThan $script:Cdt31TryAt -Because 'the manifest write has its own try, beside the mirror''s and after it'
+        @($guard.Body.Statements).Count | Should -Be 1 -Because 'it guards the manifest write and nothing else'
+        $guard.CatchClauses.Count | Should -Be 1
+        $catch = $guard.CatchClauses[0].Body
+        $catch.Extent.Text | Should -Match ([regex]::Escape('$manifestError = $_.Exception.Message'))
+        @($catch.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.ThrowStatementAst] -or
+                    ($n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-Fail') }, $true)).Count |
+            Should -Be 0 -Because 'its failure is recorded, so the restart failure can stay the one the caller gets'
+        $statements[$guardAt - 1].Extent.Text | Should -BeExactly '$manifestError = $null'
+
+        $down = $statements[$guardAt + 1]
+        $down | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+        $down.Clauses[0].Item1.Extent.Text | Should -BeExactly '$poolStartError' -Because 'the restart failure is checked first'
+        $downFail = $down.Clauses[0].Item2.Statements[0].Extent.Text
+        $downFail | Should -BeLike 'Write-Fail "The files are deployed, but app pool*'
+        $downFail | Should -Match ([regex]::Escape('$manifestError')) -Because 'it also reports a manifest that was not written'
+        $manifest = $statements[$guardAt + 2]
+        $manifest | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+        $manifest.Clauses[0].Item1.Extent.Text | Should -BeExactly '$manifestError' -Because 'a failed manifest write is still a failure, after the restart''s'
+        $manifest.Clauses[0].Item2.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "*'
+    }
+
+    It 'runs the real region: both failing gives the DOWN failure naming the manifest, and each alone its own (behavioural)' {
+        foreach ($name in 'Write-Ok', 'Write-Warn', 'Write-Plan', 'Write-Fail', 'Invoke-PlanOrAction') {
+            $fn = $script:Cdt31Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        $statements = $script:Cdt31Statements
+        $from = $script:Cdt31TryAt
+        while ($from -gt 0 -and $statements[$from - 1].Extent.Text -match '^\$(mirrorSucceeded|poolStartError) = ') { $from-- }
+        # Through the last check after the mirror, whichever order the checks are in.
+        $to = $script:Cdt31TryAt
+        for ($j = $script:Cdt31TryAt + 1; $j -lt $statements.Count; $j++) {
+            if ($statements[$j].Extent.Text -match '^if \(\$(poolStartError|manifestError)\)') { $to = $j }
+        }
+        $region = ($statements[$from..$to] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments, $Description; $script:cdt31Calls.Add('robocopy') }
+        ${function:Start-AppPoolVerified} = { param($Name) $script:cdt31Calls.Add('start'); if ($script:cdt31StartFails) { throw "App pool '$Name' is 'Stopped' after 60 seconds, not Started. The application is DOWN." }; 'Started' }
+        ${function:Write-DeploymentManifest} = {
+            param($PublishFolder, $RepoRoot)
+            $null = $RepoRoot
+            $script:cdt31Calls.Add('manifest')
+            if ($script:cdt31ManifestFails) { throw "Access to the path '$PublishFolder\deployment-manifest.json' is denied." }
+        }
+
+        $run = {
+            param([bool]$StartFails, [bool]$ManifestFails)
+            $script:cdt31Calls = New-Object System.Collections.Generic.List[string]
+            $script:cdt31StartFails = $StartFails
+            $script:cdt31ManifestFails = $ManifestFails
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt31_' + [guid]::NewGuid().ToString('N'))
+            # Read only by the lifted region.
+            Set-Variable -Name stagingPath -Value (Join-Path $root 'publish.staging.x')
+            Set-Variable -Name PublishPath -Value (Join-Path $root 'publish')
+            Set-Variable -Name LogRoot -Value (Join-Path $root 'logs')
+            Set-Variable -Name repoRoot -Value (Join-Path $root 'source')
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name PlanOnly -Value $false
+            New-Item -ItemType Directory -Path (Join-Path $root 'publish.staging.x'), (Join-Path $root 'publish') -Force | Out-Null
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try {
+                . ([scriptblock]::Create($region))
+            } catch {
+                $thrown = $_.Exception.Message
+            } finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt31Calls -join ',') }
+        }
+
+        $both = & $run $true $true 6>$null
+        $both.Calls | Should -BeExactly 'robocopy,start,manifest'
+        $both.Thrown | Should -BeLike "The files are deployed, but app pool ExamplePool did not start (App pool 'ExamplePool' is 'Stopped'*). The application is DOWN until the pool is started by hand.*" -Because 'a failed restart is the error the caller gets, whatever the manifest did'
+        $both.Thrown | Should -BeLike "*The deployment manifest was not written either (Access to the path '*deployment-manifest.json' is denied.)*" -Because 'and the manifest failure is reported with it, not lost'
+
+        $downOnly = & $run $true $false 6>$null
+        $downOnly.Thrown | Should -BeLike '*The application is DOWN until the pool is started by hand.'
+        $downOnly.Calls | Should -BeExactly 'robocopy,start,manifest' -Because 'the files are deployed, so the manifest is still written'
+
+        $manifestOnly = & $run $false $true 6>$null
+        $manifestOnly.Thrown | Should -BeLike "The files are deployed and app pool ExamplePool is running, but the deployment manifest was not written to * (Access to the path '*deployment-manifest.json' is denied.)*" -Because 'a failed manifest write is still a failure'
+
+        $clean = & $run $false $false 6>$null
+        $clean.Thrown | Should -BeNullOrEmpty
+        $clean.Calls | Should -BeExactly 'robocopy,start,manifest'
+    }
+}
+
 Describe 'cdt-15: an update refuses to move an existing application to another pool or folder' {
     # "Create or update IIS web application" set an EXISTING application's pool and folder to this
     # run's -AppPoolName and -PublishPath, which default to fixed values when omitted: an update

@@ -635,6 +635,7 @@ try {
         # the check after the finally makes it its own failure when nothing else failed.
         $mirrorSucceeded = $false
         $poolStartError = $null
+        $manifestError = $null
         $deploymentReadyForManifest = $false
         try {
             Write-Step "Deploying files (robocopy /MIR)"
@@ -708,7 +709,15 @@ try {
                     Write-Host "  X  App pool $AppPoolName did not start: $poolStartError" -ForegroundColor Red
                 }
                 if ($deploymentReadyForManifest) {
-                    Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+                    # cdt-31: recorded like the restart, never thrown. Unguarded, a failed write here
+                    # became the script's error, and the check below that says the application is DOWN
+                    # never ran. The checks after the finally report both, the restart's first.
+                    try {
+                        Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+                    } catch {
+                        $manifestError = $_.Exception.Message
+                        Write-Host "  X  The deployment manifest was not written: $manifestError" -ForegroundColor Red
+                    }
                 }
             } else {
                 Write-Warn "App pool $AppPoolName is NOT being restarted: the file mirror did not complete, so the pool stays stopped."
@@ -719,7 +728,11 @@ try {
         }
         # Reached only when the try body succeeded: the deploy is complete and the application is down.
         if ($poolStartError) {
-            throw "The files and configuration are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand."
+            throw "The files and configuration are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand.$(if ($manifestError) { " The deployment manifest was not written either ($manifestError)." })"
+        }
+        # cdt-31: the pool runs, but nothing records which build the folder holds - still a failure.
+        if ($manifestError) {
+            throw "The files and configuration are deployed and app pool $AppPoolName is running, but the deployment manifest was not written to $PublishPath ($manifestError), so nothing records which build it holds. Fix the cause and re-run this deploy."
         }
 
         # --- Post-deploy config drift check (incident fix #5) ---
@@ -935,6 +948,7 @@ try {
         # the check after the finally makes it its own failure when nothing else failed.
         $mirrorSucceeded = $false
         $poolStartError = $null
+        $manifestError = $null
         $deploymentReadyForManifest = $false
         try {
             # Deploy files
@@ -1029,7 +1043,15 @@ try {
                     Write-Host "  X  App pool $AppPoolName did not start: $poolStartError" -ForegroundColor Red
                 }
                 if ($deploymentReadyForManifest) {
-                    Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+                    # cdt-31: recorded like the restart, never thrown. Unguarded, a failed write here
+                    # became the script's error, and the check below that says the application is DOWN
+                    # never ran. The checks after the finally report both, the restart's first.
+                    try {
+                        Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+                    } catch {
+                        $manifestError = $_.Exception.Message
+                        Write-Host "  X  The deployment manifest was not written: $manifestError" -ForegroundColor Red
+                    }
                 }
             } else {
                 Write-Warn "App pool $AppPoolName is NOT being restarted: the file mirror did not complete, so the pool stays stopped."
@@ -1040,7 +1062,11 @@ try {
         }
         # Reached only when the try body succeeded: the deploy is complete and the application is down.
         if ($poolStartError) {
-            throw "The files and configuration are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand."
+            throw "The files and configuration are deployed, but app pool $AppPoolName did not start ($poolStartError). The application is DOWN until the pool is started by hand.$(if ($manifestError) { " The deployment manifest was not written either ($manifestError)." })"
+        }
+        # cdt-31: the pool runs, but nothing records which build the folder holds - still a failure.
+        if ($manifestError) {
+            throw "The files and configuration are deployed and app pool $AppPoolName is running, but the deployment manifest was not written to $PublishPath ($manifestError), so nothing records which build it holds. Fix the cause and re-run this deploy."
         }
 
         # --- Post-deploy live DB health check (cdt-12) ---

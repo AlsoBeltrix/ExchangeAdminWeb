@@ -1085,7 +1085,8 @@ Describe 'deploy.ps1' {
                         $statements[$i].Finally.Extent.Text -match 'Start-AppPoolWithRetry') { $i }
                 })[0]
             $from = $tryAt
-            while ($from -gt 0 -and $statements[$from - 1].Extent.Text -match '^\$(mirrorSucceeded|poolStartError|deploymentReadyForManifest) = ') { $from-- }
+            # manifestError since cdt-31.
+            while ($from -gt 0 -and $statements[$from - 1].Extent.Text -match '^\$(mirrorSucceeded|poolStartError|manifestError|deploymentReadyForManifest) = ') { $from-- }
             $to = $tryAt
             if ($statements[$to + 1].Extent.Text -match '^if \(\$poolStartError\)') { $to++ }
             $regions[$entry[0]] = ($statements[$from..$to] | ForEach-Object { $_.Extent.Text }) -join "`n"
@@ -1148,6 +1149,131 @@ Describe 'deploy.ps1' {
             $clean.Thrown | Should -BeNullOrEmpty
             $clean.Calls | Should -BeExactly 'robocopy,start,manifest'
             $clean.StagingLeft | Should -BeFalse
+        }
+    }
+
+    It 'records a failed manifest write like a failed restart, and a failed restart stays the error the caller gets (cdt-31, AST)' {
+        # The manifest write in the restart's finally was unguarded: when it threw after a failed
+        # restart, its exception replaced "The application is DOWN", which only a red line had said.
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        $branches = [ordered]@{ upgrade = $modeIf.Clauses[0].Item2; '-Force' = $modeIf.ElseClause }
+        foreach ($branchName in $branches.Keys) {
+            $statements = @($branches[$branchName].Statements)
+            $restartIndexes = @(for ($i = 0; $i -lt $statements.Count; $i++) {
+                    $st = $statements[$i]
+                    if ($st -is [System.Management.Automation.Language.TryStatementAst] -and $null -ne $st.Finally -and
+                        @($st.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-AppPoolWithRetry' }, $true)).Count -gt 0) { $i }
+                })
+            $restartIndexes.Count | Should -Be 1
+            $restartIndex = $restartIndexes[0]
+            $restart = $statements[$restartIndex]
+            @($statements[0..($restartIndex - 1)] | Where-Object { $_.Extent.Text -eq '$manifestError = $null' }).Count | Should -Be 1 -Because "the $branchName branch starts with no manifest failure recorded"
+
+            $writes = @($restart.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-DeploymentManifest' }, $true))
+            $writes.Count | Should -Be 1 -Because "the $branchName finally writes the manifest once"
+            $guard = $writes[0].Parent
+            while ($null -ne $guard -and -not ($guard -is [System.Management.Automation.Language.TryStatementAst])) { $guard = $guard.Parent }
+            [object]::ReferenceEquals($guard, $restart) | Should -BeFalse -Because "the $branchName manifest write must have its own try inside the finally"
+            $guard.CatchClauses.Count | Should -Be 1
+            $catch = $guard.CatchClauses[0].Body
+            $catch.Extent.Text | Should -Match ([regex]::Escape('$manifestError = $_.Exception.Message'))
+            @($catch.FindAll({ param($n)
+                        $n -is [System.Management.Automation.Language.ThrowStatementAst] -or
+                        ($n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-Fail') }, $true)).Count |
+                Should -Be 0 -Because 'a throw from the finally would replace the error the caller must get'
+            $start = @($restart.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-AppPoolWithRetry' }, $true))[0]
+            $guard.Extent.StartOffset | Should -BeGreaterThan $start.Extent.EndOffset -Because 'the restart is attempted, and its failure recorded, first'
+
+            # The order after the finally: the restart failure first, carrying the manifest failure;
+            # only then a manifest failure on its own.
+            $down = $statements[$restartIndex + 1]
+            $down | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+            $down.Clauses[0].Item1.Extent.Text | Should -BeExactly '$poolStartError'
+            $downThrow = $down.Clauses[0].Item2.Statements[0]
+            $downThrow | Should -BeOfType ([System.Management.Automation.Language.ThrowStatementAst])
+            $downThrow.Extent.Text | Should -Match ([regex]::Escape('$manifestError')) -Because 'the DOWN failure also reports a manifest that was not written'
+            $manifest = $statements[$restartIndex + 2]
+            $manifest | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+            $manifest.Clauses[0].Item1.Extent.Text | Should -BeExactly '$manifestError' -Because "a failed $branchName manifest write is still a failure, after the restart's"
+            $manifest.Clauses[0].Item2.Statements[0] | Should -BeOfType ([System.Management.Automation.Language.ThrowStatementAst])
+        }
+    }
+
+    It 'runs each branch''s real region: a failed manifest write never hides a failed restart (cdt-31)' {
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-AppSettingsFile') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        function robocopy { $script:cdt31Calls.Add('robocopy'); $global:LASTEXITCODE = 1 }
+        ${function:Start-AppPoolWithRetry} = { param($Name) $null = $Name; $script:cdt31Calls.Add('start'); if ($script:cdt31StartThrows) { throw 'the pool would not start' } }
+        ${function:Write-DeploymentManifest} = {
+            param($PublishFolder, $RepoRoot)
+            $null = $RepoRoot
+            $script:cdt31Calls.Add('manifest')
+            if ($script:cdt31ManifestThrows) { throw "Access to the path '$PublishFolder\deployment-manifest.json' is denied." }
+        }
+
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        $regions = [ordered]@{}
+        foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2), @('-Force', $modeIf.ElseClause))) {
+            $statements = @($entry[1].Statements)
+            $tryAt = @(for ($i = 0; $i -lt $statements.Count; $i++) {
+                    if ($statements[$i] -is [System.Management.Automation.Language.TryStatementAst] -and $null -ne $statements[$i].Finally -and
+                        $statements[$i].Finally.Extent.Text -match 'Start-AppPoolWithRetry') { $i }
+                })[0]
+            $from = $tryAt
+            while ($from -gt 0 -and $statements[$from - 1].Extent.Text -match '^\$(mirrorSucceeded|poolStartError|manifestError|deploymentReadyForManifest) = ') { $from-- }
+            # The checks after the finally, whichever order they are in.
+            $to = $tryAt
+            while ($to + 1 -lt $statements.Count -and $statements[$to + 1].Extent.Text -match '^if \(\$(poolStartError|manifestError)\)') { $to++ }
+            $regions[$entry[0]] = ($statements[$from..$to] | ForEach-Object { $_.Extent.Text }) -join "`n"
+        }
+
+        $run = {
+            param([string]$Branch, [bool]$StartThrows, [bool]$ManifestThrows)
+            $script:cdt31Calls = New-Object System.Collections.Generic.List[string]
+            $script:cdt31StartThrows = $StartThrows
+            $script:cdt31ManifestThrows = $ManifestThrows
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt31_' + [guid]::NewGuid().ToString('N'))
+            $StagingPath = Join-Path $root 'staging'
+            $PublishPath = Join-Path $root 'publish'
+            $ProjectRoot = Join-Path $root 'source'
+            New-Item -ItemType Directory -Path $StagingPath, $PublishPath, $ProjectRoot -Force | Out-Null
+            # Read only by the lifted region.
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name dbBackup -Value (Join-Path $root 'backup\exchangeadmin.db')
+            Set-Variable -Name configStorePathSetting -Value $null
+            $configPath = Join-Path $PublishPath 'appsettings.json'
+            Set-Content -LiteralPath $configPath -Value '{ "AllowedHosts": "*" }' -Encoding ascii
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try {
+                . ([scriptblock]::Create($regions[$Branch]))
+            } catch {
+                $thrown = $_.Exception.Message
+            } finally {
+                $stagingLeft = Test-Path -LiteralPath $StagingPath
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt31Calls -join ','); StagingLeft = $stagingLeft }
+        }
+
+        foreach ($branch in $regions.Keys) {
+            $both = & $run $branch $true $true 6>$null
+            $both.Calls | Should -BeExactly 'robocopy,start,manifest'
+            $both.Thrown | Should -BeLike '*did not start (the pool would not start). The application is DOWN until the pool is started by hand.*' -Because "a failed $branch restart is the error the caller gets, whatever the manifest did"
+            $both.Thrown | Should -BeLike "*The deployment manifest was not written either (Access to the path '*deployment-manifest.json' is denied.)*" -Because 'and the manifest failure is reported with it, not lost'
+            $both.StagingLeft | Should -BeFalse -Because 'the finally no longer throws before its own staging removal'
+
+            $downOnly = & $run $branch $true $false 6>$null
+            $downOnly.Thrown | Should -BeLike '*did not start (the pool would not start). The application is DOWN until the pool is started by hand.'
+            $downOnly.Calls | Should -BeExactly 'robocopy,start,manifest' -Because 'the deploy is complete, so the manifest is still written'
+
+            $manifestOnly = & $run $branch $false $true 6>$null
+            $manifestOnly.Thrown | Should -BeLike "*app pool ExamplePool is running, but the deployment manifest was not written to * (Access to the path '*deployment-manifest.json' is denied.)*" -Because 'a failed manifest write is still a failure'
+
+            $clean = & $run $branch $false $false 6>$null
+            $clean.Thrown | Should -BeNullOrEmpty
+            $clean.Calls | Should -BeExactly 'robocopy,start,manifest'
         }
     }
 
