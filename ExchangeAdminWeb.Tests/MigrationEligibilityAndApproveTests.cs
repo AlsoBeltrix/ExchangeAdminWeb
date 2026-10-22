@@ -388,6 +388,24 @@ public sealed class MigrationEligibilityAndApproveTests : IDisposable
         Assert.Equal([$"Get-MigrationBatch {Address}"], _exchange.CallList());
     }
 
+    // aud-a23i: a read-back that fails is "could not be confirmed", in the approval's own words. The base class gives a
+    // Stop error's own text only through a wrapper that restates it, as Invoke's does, so a message a caller composed
+    // around one - this one wraps InvokeOptional's original exception - is kept.
+    [Fact]
+    public async Task AReadBackThatFails_CouldNotBeConfirmed_InTheApprovalsOwnWords()
+    {
+        _exchange.Batches[Address] = Batch(Address);
+        _exchange.Behaviour["ReadBackRefused"] = Refused("the batch is being updated");
+
+        var result = await _exchange.Service().ApproveMigrationUserAsync(Address);
+
+        Assert.False(result.Success);
+        Assert.StartsWith(
+            $"Completion of the migration batch {Address} could not be confirmed: reading it back failed: the batch is being updated. Every step reported success: ",
+            result.Message, StringComparison.Ordinal);
+        Assert.Equal(ApprovalSteps(ownBatch: true), _exchange.CallList());
+    }
+
     // Read back: every write reported success, but the batch does not read back set to complete. Not confirmed.
     [Fact]
     public async Task AWriteThatChangesNothing_IsNotConfirmed()

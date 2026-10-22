@@ -1023,7 +1023,7 @@
                                         }
                                     </div>
                                 }
-
+                                @if (batchUsers != null && unreadableMailboxes.Count > 0) { <div class="alert alert-warning" role="alert">@UnreadableMigrationMailbox.Warning(unreadableMailboxes)</div> }
                                 <div class="mig-pane-scroll">
                                     @if (loadingBatchUsers == expandedBatch && batchUsers == null)
                                     {
@@ -1046,18 +1046,18 @@
                                     }
                                     else if (!batchUsers.Any())
                                     { @* aud-a23f: an unreadable count is neither more than 0 nor 0, so such a batch is told neither of the first two. *@
-                                        @if (openBatch is { PendingCount.Count: > 0, StartDateTime: null }
+                                        @if (unreadableMailboxes.Count == 0 && openBatch is { PendingCount.Count: > 0, StartDateTime: null }
                                             && string.Equals(openBatch.WorkflowStage, "Injection", StringComparison.OrdinalIgnoreCase))
                                         {
                                             <p class="text-muted text-center my-5">@openBatch.PendingCount @(openBatch.PendingCount.Count == 1 ? "mailbox" : "mailboxes") pending. Batch not started.</p>
                                         }
-                                        else if (openBatch is { TotalCount.Count: 0 })
+                                        else if (unreadableMailboxes.Count == 0 && openBatch is { TotalCount.Count: 0 })
                                         {
                                             <p class="text-muted text-center my-5">This batch contains no mailboxes.</p>
                                         }
                                         else
                                         {
-                                            <p class="text-muted text-center my-5">Mailbox details are not available yet.</p>
+                                            <p class="text-muted text-center my-5">@(unreadableMailboxes.Count > 0 ? "No mailbox in this batch could be read; the warning above names each one." : "Mailbox details are not available yet.")</p>
                                         }
                                     }
                                     else if (!AnyMailboxRowRenders)
@@ -1552,14 +1552,14 @@
     // here is below them, so only ExpectedLineCount moves. See .agents/state.md.
     [Inject] private IActivityProgress Progress { get; set; } = default!;
 
-    // Every handler below ends its activity with Complete(true) from its finally. That argument
-    // records ENDED, not SUCCEEDED: the frame is live only, so ActivityProgressService.Finish
-    // discards both the flag and the message (it says so on itself). Completing in the finally
-    // is what matters - it ends the activity on refusal and exception paths too, and after this
-    // page's audit and notification work rather than at the service call.
-    //
-    // If a retained result line is ever reintroduced - it should not be, see
-    // `.agents/decisions.md` 2026-10-02 - every one of these needs a real outcome first.
+    // Every handler below ends its activity from its finally, so it ends on refusal and exception
+    // paths too, and after this page's audit and notification work rather than at the service call.
+    // aud-a23i: a LOAD completes with its real outcome - not succeeded, with the failure text, when
+    // its read failed or could not reach an answer - so nothing here calls a failed load done.
+    // ActivityProgressService.Finish discards both today (the frame is live only, and says so on
+    // itself); the handle is still this page's own statement of how the work ended. The writes
+    // still pass true, which records ENDED, not SUCCEEDED; if a retained result line is ever
+    // reintroduced (it should not be, `.agents/decisions.md` 2026-10-02) they need one too.
 
     private bool isLoading = false;
     private bool isCreating = false;
@@ -1636,7 +1636,7 @@
     private string? loadingReport;
     private string? reportUser;
     private string? userReport;
-
+    private List<UnreadableMigrationMailbox> unreadableMailboxes = [];
     // R24a. When the report on screen was taken, so the dialog can say so and the operator can
     // judge whether refreshing is worth twenty minutes. Null for an error, which is not a report.
     private DateTime? reportFetchedAtUtc;
@@ -1875,22 +1875,22 @@
             "Exchange Migration", $"Loading mailboxes in {batchName}", ActivitySize.Unknown);
 
         var generation = batchUsersGeneration;
-
+        string? loadFailure = null;
         try
         {
             ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(batchName));
         }
-        catch
+        catch (Exception ex)
         {
-            ReplaceBatchUsers(generation, new List<MigrationUserInfo>());
-            if (generation == batchUsersGeneration)
-                mailboxLoadFailed = true;
+            ReplaceBatchUsers(generation, new MigrationMailboxList([], []));
+            mailboxLoadFailed |= generation == batchUsersGeneration;
+            loadFailure = $"Unable to load mailboxes in {batchName}: {ex.Message}";
         }
         finally
         {
             if (loadingBatchUsers == batchName)
                 loadingBatchUsers = null;
-            activity.Complete(true);
+            activity.Complete(loadFailure is null, loadFailure);
         }
     }
 
@@ -1935,7 +1935,7 @@
             "Exchange Migration", $"Loading mailboxes in {requested}", ActivitySize.Unknown);
 
         var generation = batchUsersGeneration;
-
+        string? loadFailure = null;
         try
         {
             if (!batchesLoaded)
@@ -1943,17 +1943,17 @@
 
             ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(requested));
         }
-        catch
+        catch (Exception ex)
         {
-            ReplaceBatchUsers(generation, new List<MigrationUserInfo>());
-            if (generation == batchUsersGeneration)
-                mailboxLoadFailed = true;
+            ReplaceBatchUsers(generation, new MigrationMailboxList([], []));
+            mailboxLoadFailed |= generation == batchUsersGeneration;
+            loadFailure = $"Unable to load mailboxes in {requested}: {ex.Message}";
         }
         finally
         {
             if (loadingBatchUsers == requested)
                 loadingBatchUsers = null;
-            activity.Complete(true);
+            activity.Complete(loadFailure is null, loadFailure);
         }
     }
 
@@ -1970,11 +1970,11 @@
             "Exchange Migration", "Checking eligibility", ActivitySize.Unknown);
 
         await Task.Yield();
-
+        string? checkFailure = null;
         try
         {
             singleResult = await MigrationSvc.CheckMigrationEligibilityAsync(singleEmail.Trim(), singleMigrationDirection);
-
+            checkFailure = singleResult.Status == MigrationStatus.Undetermined ? string.Join("; ", singleResult.IneligibilityReasons) : null;
             var ipAddress = clientIpAddress;
 
             var checkDetail = singleResult.IneligibilityReasons.Any()
@@ -2003,14 +2003,14 @@
                 Status = MigrationStatus.Undetermined
             };
             singleResult.IneligibilityReasons.Add($"Could not be determined: {ex.Message}");
-
+            checkFailure = $"Could not be determined: {ex.Message}";
             Audit.LogMigrationCheck(currentUser, clientIpAddress, singleEmail.Trim(),
                 "Error", singleTicketNumber, ex.Message);
         }
         finally
         {
             isLoading = false;
-            activity.Complete(true);
+            activity.Complete(checkFailure is null, checkFailure);
         }
     }
 
@@ -2111,7 +2111,7 @@
             "Exchange Migration", "Checking bulk eligibility", ActivitySize.Unknown);
 
         await Task.Yield();
-
+        string? bulkFailure = null;
         try
         {
             await using var stream = csvFile.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
@@ -2120,7 +2120,7 @@
             memoryStream.Position = 0;
 
             bulkResult = await MigrationSvc.CheckBulkMigrationEligibilityAsync(memoryStream, migrationDirection);
-
+            bulkFailure = bulkResult.UndeterminedUsers > 0 ? $"{bulkResult.UndeterminedUsers} of {bulkResult.TotalUsers} eligibility checks could not be determined" : null;
             var ipAddress = clientIpAddress;
 
             Audit.LogMigrationAction(currentUser, ipAddress,
@@ -2147,14 +2147,14 @@
                 Message = ex.Message,
                 Direction = migrationDirection
             };
-
+            bulkFailure = $"The bulk eligibility check failed: {ex.Message}";
             Audit.LogMigrationAction(currentUser, clientIpAddress,
                 $"BulkEligibilityCheck_{migrationDirection}", csvFile?.Name ?? "Unknown", false, bulkTicketNumber, ex.Message);
         }
         finally
         {
             isLoading = false;
-            activity.Complete(true);
+            activity.Complete(bulkFailure is null, bulkFailure);
         }
     }
 
@@ -2301,7 +2301,7 @@
         {
             PruneSelection();
             isLoadingStatus = false;
-            activity.Complete(true);
+            activity.Complete(batchListFailure is null, batchListFailure is null ? null : $"The migration batches could not be read: {batchListFailure}");
             batchesLoaded = true;
         }
     }
@@ -2992,7 +2992,7 @@
             }
             else
             {
-                var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                var stamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture);
                 var safeBatch = new string(batch.Select(c =>
                     char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_').ToArray());
 
@@ -3841,7 +3841,7 @@
         using var activity = Progress.Begin(
             "Exchange Migration", "Searching for the user", ActivitySize.Unknown);
 
-
+        string? searchFailure = null;
         try
         {
             var matchedBatch = migrationBatches.FirstOrDefault(b =>
@@ -3866,7 +3866,7 @@
 
             if (searchResult.Error != null)
             {
-                batchActionResult = PermissionResult.Fail($"Search failed: {searchResult.Error}");
+                batchActionResult = PermissionResult.Fail(searchFailure = $"Search failed: {searchResult.Error}");
                 return;
             }
 
@@ -3893,7 +3893,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail($"Search failed: {ex.Message}");
+            batchActionResult = PermissionResult.Fail(searchFailure = $"Search failed: {ex.Message}");
         }
         finally
         {
@@ -3902,7 +3902,7 @@
             // the life of the circuit whenever Exchange failed. SelectOnlyBatch and
             // RefreshBatchUsers already clear it here; this method now matches them.
             isSearching = false;
-            activity.Complete(true);
+            activity.Complete(searchFailure is null, searchFailure);
             loadingBatchUsers = null;
         }
     }
@@ -3959,7 +3959,7 @@
     // call, so a report opened inside that window captures the already-bumped generation and would
     // survive the swap. Bumping again here discards it. Assigning batchUsers directly anywhere else
     // reopens that hole; a test enforces that no such assignment exists.
-    private void ReplaceBatchUsers(int generation, List<MigrationUserInfo> users)
+    private void ReplaceBatchUsers(int generation, MigrationMailboxList loaded)
     {
         // mir-1. The caller captured `generation` before its await; if the open batch has changed
         // since, these rows belong to a batch the operator has already left and publishing them
@@ -3969,15 +3969,15 @@
         // The guard is HERE rather than at the call sites because this is the one place rows may be
         // assigned, so every path is covered by construction and a seventh load path added later
         // cannot forget it. The two the openreview cited are reachable from browser Back; the other
-        // four are not today, and that is exactly the kind of fact that stops being true one slice
-        // later.
+        // four are not today, and that is exactly the kind of fact that stops being true one slice later.
+        var (users, unreadable) = loaded;
         if (generation != batchUsersGeneration)
             return;
 
         InvalidateStoredReports(expandedBatch);
         batchUsers = users;
         mailboxLoadFailed = false;
-
+        unreadableMailboxes = unreadable;
         // S5. The rows just changed under the pager. Clamp rather than reset: a refresh of the
         // same batch should leave the operator where they were, and only a shrink that puts them
         // past the end moves them - onto the last page, never onto a blank one that reads as an
@@ -4037,7 +4037,7 @@
         using var activity = Progress.Begin(
             "Exchange Migration", $"Fetching the report for {emailAddress}", ActivitySize.Unknown);
 
-
+        string? fetchFailure = null;
         try
         {
             var text = await MigrationSvc.GetMigrationUserReportAsync(emailAddress);
@@ -4061,8 +4061,8 @@
         }
         catch (Exception ex)
         {
+            fetchFailure = $"The report for {emailAddress} could not be fetched: {ex.Message}";
             if (generation != reportGeneration) return;
-
             // NOT stored. An error string is not a report, and keeping it would serve the failure
             // back on the next open as though it were the answer.
             userReport = $"Error: {ex.Message}";
@@ -4075,7 +4075,7 @@
             // nulled it, and a late write would resurrect a spinner for a fetch nobody awaits.
             if (generation == reportGeneration)
                 loadingReport = null;
-            activity.Complete(true);
+            activity.Complete(fetchFailure is null, fetchFailure);
         }
     }
 
@@ -4235,7 +4235,7 @@
             var csv = BuildCsv(rows, unreadableBatches);
             var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
             var base64 = Convert.ToBase64String(bytes);
-            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture);
             await JS.InvokeVoidAsync("downloadFile", $"Migration_{timestamp}.csv", "text/csv", base64);
 
             try
@@ -4311,7 +4311,7 @@
             // outside a known-safe set is replaced rather than trusted.
             var safeName = new string(user.Select(c =>
                 char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_').ToArray());
-            var timestamp = (fetchedAtUtc ?? DateTime.UtcNow).ToLocalTime().ToString("yyyyMMdd_HHmmss");
+            var timestamp = (fetchedAtUtc ?? DateTime.UtcNow).ToString("yyyyMMdd_HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture);
 
             await JS.InvokeVoidAsync(
                 "downloadFile", $"MigrationReport_{safeName}_{timestamp}.txt", "text/plain", base64);

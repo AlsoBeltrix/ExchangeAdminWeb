@@ -147,7 +147,7 @@ public class MigrationService : ExchangeServiceBase
             {
                 if (r.Status == MigrationStatus.Eligible)
                     r.Status = MigrationStatus.Undetermined;
-                var reason = FailureReason(ex);
+                var reason = ResolveFailure(ex).primary;
                 r.IneligibilityReasons.Add(reading is null
                     ? $"Could not be determined: {reason}"
                     : $"Could not be determined: {reading} failed: {reason}");
@@ -737,7 +737,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 // InvokeOptional classified, so the pool discards a dead session and retries a precheck
                 // failure once, as when the empty list came back.
                 _logger.LogError(ex, "Failed to retrieve migration batches");
-                return MigrationBatchList.Failed(FailureReason(ex));
+                return MigrationBatchList.Failed(ResolveFailure(ex).primary);
             }
         }, allowRetry: true);
     }
@@ -754,14 +754,6 @@ https://admin.exchange.microsoft.com/#/migration";
         }
         return false;
     }
-
-    // aud-a23g. What the page says went wrong: the error itself. Under -ErrorAction Stop an error the cmdlet
-    // writes arrives as an ActionPreferenceStopException, whose message puts "The running command stopped
-    // because..." in front of it; its ErrorRecord holds the error as written.
-    private static string FailureReason(Exception ex) =>
-        (ex as ActionPreferenceStopException ?? ex.InnerException as ActionPreferenceStopException) is { ErrorRecord: { } stopped }
-            ? stopped.ToString()
-            : ResolvePsErrors(ex).primary;
 
     private static Collection<PSObject> ReadUnlessNotFound(PowerShell ps, ConnectionErrorTracker tracker)
     {
@@ -814,11 +806,12 @@ https://admin.exchange.microsoft.com/#/migration";
         _ => null,
     };
 
-    public async Task<List<MigrationUserInfo>> GetMigrationBatchUsersAsync(string batchName)
+    public async Task<MigrationMailboxList> GetMigrationBatchUsersAsync(string batchName)
     {
         return await RunPooledQueryAsync((ps, tracker) =>
         {
             var users = new List<MigrationUserInfo>();
+            var unreadable = new List<UnreadableMigrationMailbox>();
 
             try
             {
@@ -833,30 +826,49 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 foreach (var userObj in userResults)
                 {
-                    var email = userObj.Properties["Identity"]?.Value?.ToString() ?? "Unknown";
-                    var userStatus = userObj.Properties["Status"]?.Value?.ToString() ?? "Unknown";
-                    var errorSummary = userObj.Properties["ErrorSummary"]?.Value?.ToString();
-                    // aud-a23d. Through the one reader: `as DateTime?` showed any other type as "-",
-                    // a mailbox that never synced.
-                    var lastSyncDateTime = ReportedTime.Read(userObj.Properties["LastSyncTime"]?.Value);
-                    // aud-a23g. Both counts through ReportedCount.Read, not Convert.ToInt64, which threw on a value
-                    // it could not convert and lost the whole mailbox list: one this app cannot read is the marker
-                    // in its own cell, and the list loads. Absent is still 0.
-                    var itemsSynced = ReportedCount.Read(userObj.Properties["ItemsSynced"]?.Value) ?? ReportedCount.Of(0);
-                    var itemsSkipped = ReportedCount.Read(userObj.Properties["ItemsSkipped"]?.Value) ?? ReportedCount.Of(0);
-
-                    users.Add(new MigrationUserInfo
+                    string? email = null;
+                    try
                     {
-                        EmailAddress = email,
-                        Status = userStatus,
-                        ErrorSummary = errorSummary,
-                        LastSyncDateTime = lastSyncDateTime,
-                        ItemsSynced = itemsSynced,
-                        ItemsSkipped = itemsSkipped
-                    });
+                        email = userObj.Properties["Identity"]?.Value?.ToString();
+                        if (string.IsNullOrWhiteSpace(email))
+                        {
+                            _logger.LogWarning("Get-MigrationUser returned a row with no Identity in batch {BatchName}; it is listed as unreadable", batchName);
+                            unreadable.Add(new UnreadableMigrationMailbox(null, "a row with no Identity"));
+                            continue;
+                        }
+
+                        var userStatus = userObj.Properties["Status"]?.Value?.ToString() ?? "Unknown";
+                        var errorSummary = userObj.Properties["ErrorSummary"]?.Value?.ToString();
+                        // aud-a23d. Through the one reader: `as DateTime?` showed any other type as "-",
+                        // a mailbox that never synced.
+                        var lastSyncDateTime = ReportedTime.Read(userObj.Properties["LastSyncTime"]?.Value);
+                        // aud-a23g. Both counts through ReportedCount.Read, not Convert.ToInt64, which threw on a value
+                        // it could not convert and lost the whole mailbox list: one this app cannot read is the marker
+                        // in its own cell, and the list loads. Absent is still 0.
+                        var itemsSynced = ReportedCount.Read(userObj.Properties["ItemsSynced"]?.Value) ?? ReportedCount.Of(0);
+                        var itemsSkipped = ReportedCount.Read(userObj.Properties["ItemsSkipped"]?.Value) ?? ReportedCount.Of(0);
+
+                        users.Add(new MigrationUserInfo
+                        {
+                            EmailAddress = email,
+                            Status = userStatus,
+                            ErrorSummary = errorSummary,
+                            LastSyncDateTime = lastSyncDateTime,
+                            ItemsSynced = itemsSynced,
+                            ItemsSkipped = itemsSkipped
+                        });
+                    }
+                    catch (Exception ex) when (!IsCancellation(ex))
+                    {
+                        _logger.LogWarning(ex, "Could not read the migration user row {Identity} in batch {BatchName}; it is listed as unreadable",
+                            email ?? "(no identity)", batchName);
+                        unreadable.Add(email is null
+                            ? new UnreadableMigrationMailbox(null, $"a row whose Identity could not be read: {ex.Message}")
+                            : new UnreadableMigrationMailbox(email, ex.Message));
+                    }
                 }
 
-                return users;
+                return new MigrationMailboxList(users, unreadable);
             }
             catch (Exception ex)
             {
@@ -970,7 +982,7 @@ https://admin.exchange.microsoft.com/#/migration";
             catch (Exception ex)
             {
                 throw new InvalidOperationException(
-                    $"Could not tell whether {emailAddress} is in a migration batch of its own: {FailureReason(ex).TrimEnd('.')}. Nothing was changed.", ex);
+                    $"Could not tell whether {emailAddress} is in a migration batch of its own: {ResolveFailure(ex).primary.TrimEnd('.')}. Nothing was changed.", ex);
             }
 
             if (ownBatch.Count > 1)
@@ -1048,7 +1060,7 @@ https://admin.exchange.microsoft.com/#/migration";
             var before = applied.Count == 0
                 ? "Nothing was changed before it."
                 : $"Already applied: {string.Join(", ", applied)}.";
-            throw new InvalidOperationException($"{step} failed for {emailAddress}: {FailureReason(ex).TrimEnd('.')}. {before}", ex);
+            throw new InvalidOperationException($"{step} failed for {emailAddress}: {ResolveFailure(ex).primary.TrimEnd('.')}. {before}", ex);
         }
 
         applied.Add(step);
@@ -1067,7 +1079,7 @@ https://admin.exchange.microsoft.com/#/migration";
         catch (Exception ex)
         {
             throw new InvalidOperationException(
-                $"Completion of the migration batch {batchName} could not be confirmed: reading it back failed: {FailureReason(ex).TrimEnd('.')}. "
+                $"Completion of the migration batch {batchName} could not be confirmed: reading it back failed: {ResolveFailure(ex).primary.TrimEnd('.')}. "
                 + $"Every step reported success: {string.Join(", ", applied)}.", ex);
         }
 

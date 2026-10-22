@@ -236,6 +236,16 @@ public class MigrationUserInfo
     public ReportedCount ItemsSkipped { get; set; } = ReportedCount.Of(0);
 }
 
+public sealed record UnreadableMigrationMailbox(string? Identity, string Reason)
+{
+    public string Shown => Identity is null ? Reason : $"{Identity}: {Reason}";
+
+    public static string Warning(IReadOnlyCollection<UnreadableMigrationMailbox> rows) =>
+        $"{rows.Count} {(rows.Count == 1 ? "mailbox" : "mailboxes")} could not be read: {string.Join("; ", rows.Select(r => r.Shown))}";
+}
+
+public sealed record MigrationMailboxList(List<MigrationUserInfo> Mailboxes, List<UnreadableMigrationMailbox> Unreadable);
+
 public class MigrationUserSearchResult
 {
     public string? BatchId { get; init; }

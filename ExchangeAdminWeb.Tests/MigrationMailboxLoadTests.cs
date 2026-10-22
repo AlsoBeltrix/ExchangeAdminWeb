@@ -25,7 +25,7 @@ public sealed class MigrationMailboxLoadTests : IDisposable
     {
         var service = CreateService(failQuery: false);
 
-        var users = await service.GetMigrationBatchUsersAsync("Wave 12 / Operations");
+        var users = (await service.GetMigrationBatchUsersAsync("Wave 12 / Operations")).Mailboxes;
 
         Assert.Equal(1205, users.Count);
         Assert.Equal("user1@contoso.com", users[0].EmailAddress);

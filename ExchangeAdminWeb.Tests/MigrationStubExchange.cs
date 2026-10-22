@@ -8,6 +8,7 @@ using ExchangeAdminWeb.Components.Pages;
 using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Progress;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components;
@@ -17,6 +18,7 @@ using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.JSInterop;
 using NSubstitute;
 
 namespace ExchangeAdminWeb.Tests;
@@ -87,7 +89,11 @@ internal sealed class MigrationStubExchange : IDisposable
     /// <summary>Get-MigrationBatch answers these; Set-MigrationBatch -CompleteAfter writes their CompleteAfter.</summary>
     public Hashtable Batches { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
-    /// <summary>Switches: SetBatchChangesNothing - Set-MigrationBatch reports success and writes nothing.</summary>
+    /// <summary>
+    /// Switches: SetBatchChangesNothing - Set-MigrationBatch reports success and writes nothing; ReadBackRefused (a factory) -
+    /// Get-MigrationBatch refuses a batch once it holds a completion time, so only a read-back fails;
+    /// NestedSuppressedError - Remove-BlockedSenderAddress suppresses an error of its own.
+    /// </summary>
     public Hashtable Behaviour { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>Every step a stub was asked to run, in order.</summary>
@@ -142,8 +148,10 @@ internal sealed class MigrationStubExchange : IDisposable
 
     // ---- the service and the page ----------------------------------------------------------------
 
+    public OperationTraceService Trace => _trace;
+
     /// <param name="connects">False: opening the connection throws, before any cmdlet runs.</param>
-    public MigrationService Service(bool connects = true)
+    public ExoConnectionPool Pool(bool connects = true)
     {
         var pool = new ExoConnectionPool(_config, _moduleConfig, _enablement,
             NullLogger<ExoConnectionPool>.Instance, _trace, (_, generation, _) =>
@@ -153,9 +161,12 @@ internal sealed class MigrationStubExchange : IDisposable
                 return StandIn(generation);
             });
         _pools.Add(pool);
-        return new MigrationService(_config, pool, null!, NullLogger<MigrationService>.Instance,
-            _moduleConfig, null!, _trace, null!, null!);
+        return pool;
     }
+
+    /// <param name="connects">False: opening the connection throws, before any cmdlet runs.</param>
+    public MigrationService Service(bool connects = true) =>
+        new(_config, Pool(connects), null!, NullLogger<MigrationService>.Instance, _moduleConfig, null!, _trace, null!, null!);
 
     private PooledRunspace StandIn(long generation)
     {
@@ -200,6 +211,9 @@ internal sealed class MigrationStubExchange : IDisposable
             """),
         ("Get-MigrationBatch", "[string] $Identity", $$"""
             if (-not $Identity) { foreach ($row in $Batches.Values) { $row }; return }
+            if ($null -ne $Behaviour['ReadBackRefused'] -and $Batches.ContainsKey($Identity) -and $null -ne $Batches[$Identity].CompleteAfter) {
+                $PSCmdlet.WriteError($Behaviour['ReadBackRefused'].Invoke([string]$Identity)); return
+            }
             if ($Batches.ContainsKey($Identity)) { return $Batches[$Identity] }
             {{Lookup}}
             """),
@@ -223,13 +237,18 @@ internal sealed class MigrationStubExchange : IDisposable
         ("Get-MigrationUserStatistics", "[string] $Identity, [object] $IncludeReport", """
             [pscustomobject]@{ Status = 'Synced'; Report = 'the move report' }
             """),
+        // aud-a23i. A Blocked Senders write, for the base class's failure message outside Migration. NestedSuppressedError:
+        // a command inside it fails under -ErrorAction SilentlyContinue, which flags the call and writes no record.
+        ("Remove-BlockedSenderAddress", "[string] $SenderAddress, [string] $Reason", """
+            if ($Behaviour['NestedSuppressedError']) { Get-Item 'C:\definitely-not-here-a23i' -ErrorAction SilentlyContinue }
+            """),
     ];
 
     // Logs the step, then fails as the table says - a string thrown, a factory's record written - or answers.
     private static string Stub(string name, string parameters, string answer) => $$"""
         [CmdletBinding()]
         param({{parameters}})
-        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Archive', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete' } | ForEach-Object { " -$_" }) -join ''
+        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Archive', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason' } | ForEach-Object { " -$_" }) -join ''
         $step = '{{name}}' + $switches
         $null = $Calls.Add(("$step $Identity").Trim())
         $failure = $Failures["$step $Identity"]
@@ -309,5 +328,69 @@ internal sealed class MigrationStubExchange : IDisposable
             }));
         }
 #pragma warning restore BL0006
+    }
+
+    /// <summary>aud-a23i. A progress channel that keeps how each activity ended: the first Complete wins, as the real one's does.</summary>
+    internal sealed class RecordingProgress : IActivityProgress
+    {
+        private readonly List<RecordingHandle> _handles = [];
+
+        public IReadOnlyList<RecordingHandle> Handles
+        {
+            get { lock (_handles) return _handles.ToList(); }
+        }
+
+        public IActivityHandle Begin(string moduleId, string label, ActivitySize size)
+        {
+            var handle = new RecordingHandle(label);
+            lock (_handles) _handles.Add(handle);
+            return handle;
+        }
+
+        public IReadOnlyList<ProgressActivity> Active => [];
+
+        public bool HasActive => false;
+
+        public void Cancel(string id) { }
+
+        public void CancelAll() { }
+
+        public event Action? Changed { add { } remove { } }
+    }
+
+    internal sealed class RecordingHandle(string label) : IActivityHandle
+    {
+        public string Label { get; } = label;
+
+        public (bool Success, string? Message)? Outcome { get; private set; }
+
+        public string Id { get; } = Guid.NewGuid().ToString("N");
+
+        public CancellationToken CancellationToken => CancellationToken.None;
+
+        public void Report(int done, string? detail = null) { }
+
+        public void Step(string detail) { }
+
+        public void Complete(bool success, string? message = null) => Outcome ??= (success, message);
+
+        public IProgress<ActivityUpdate> AsProgress() => new Progress<ActivityUpdate>(_ => { });
+
+        public void Dispose() => Complete(false, "This did not finish.");
+    }
+
+    /// <summary>aud-a23i. A browser that records the name of every file the page hands it.</summary>
+    internal sealed class RecordingJs : IJSRuntime
+    {
+        public List<string> FileNames { get; } = [];
+
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) => InvokeAsync<TValue>(identifier, default, args);
+
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
+        {
+            Assert.Equal("downloadFile", identifier);
+            FileNames.Add(Assert.IsType<string>(args![0]));
+            return ValueTask.FromResult(default(TValue)!);
+        }
     }
 }

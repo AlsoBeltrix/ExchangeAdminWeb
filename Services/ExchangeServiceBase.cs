@@ -71,7 +71,7 @@ public abstract class ExchangeServiceBase
                 // Invoke clears ps.Streams.Error before throwing, so recover the captured
                 // detail from the exception (ex.Data) rather than re-reading the stream.
                 // Fall back to the live stream for any throw that didn't route through Invoke.
-                var (primary, detail) = ResolvePsErrors(ex);
+                var (primary, detail) = ResolveFailure(ex);
                 if (ex.Data[PsErrorsDataKey] is null)
                 {
                     var psErrors = SnapshotErrorMessages(ps);
@@ -170,6 +170,10 @@ public abstract class ExchangeServiceBase
     // detail AFTER the error stream itself has been cleared. See ResolvePsErrors.
     internal const string PsErrorsDataKey = "PsErrors";
 
+    internal const string ErrorNotSurfaced =
+        "The command flagged an error but surfaced none: an error suppressed by -ErrorAction SilentlyContinue or Ignore, "
+        + "on a command it ran or on itself, sets that flag without writing an error record.";
+
     private static List<string> SnapshotErrorMessages(PowerShell ps) =>
         ps.Streams.Error
           .Select(e => e.Exception?.Message ?? e.ToString())
@@ -202,6 +206,18 @@ public abstract class ExchangeServiceBase
         return (ex.Message, null);
     }
 
+    internal static (string primary, string? detail) ResolveFailure(Exception ex)
+    {
+        var stop = ex as ActionPreferenceStopException
+            ?? (ex.InnerException is ActionPreferenceStopException inner && inner.Message == ex.Message ? inner : null);
+        var stopped = stop?.ErrorRecord?.ToString();
+        if (string.IsNullOrWhiteSpace(stopped))
+            return ResolvePsErrors(ex);
+
+        var captured = ex.Data[PsErrorsDataKey] as string[];
+        return (stopped, captured is { Length: > 0 } ? string.Join(" | ", captured) : null);
+    }
+
     protected static Collection<PSObject> Invoke(PowerShell ps, ConnectionErrorTracker tracker)
     {
         Collection<PSObject> result;
@@ -232,7 +248,7 @@ public abstract class ExchangeServiceBase
             ps.Commands.Clear();
             ps.Streams.Error.Clear();
 
-            var primary = psErrors.FirstOrDefault() ?? "An unknown error occurred.";
+            var primary = psErrors.FirstOrDefault() ?? ErrorNotSurfaced;
             throw BuildPsException(primary, psErrors);
         }
 
