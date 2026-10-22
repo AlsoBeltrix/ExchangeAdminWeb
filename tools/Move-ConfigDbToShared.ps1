@@ -9,8 +9,9 @@
 
     Plan mode is the DEFAULT: without -Apply the script prints every step and changes nothing.
     Run it elevated (it stops and starts IIS app pools) and with -PlanOnly first, then -Apply.
-    Run the plan ELEVATED too: only then can it read the IIS app pool identities that step 5
-    needs. Unelevated, the plan says so and skips that one check rather than pretending.
+    Run the plan ELEVATED too: only then can it read IIS - which app pool serves each publish
+    folder (step 1), and the app pool identities that step 5 needs. Unelevated, the plan says so
+    and skips those checks rather than pretending.
 
     THE ORDER MATTERS: both instances must already run a build that accepts a database newer
     than itself (app version 2.19.0 or later, SharedConfigDb-Plan S1). Deploy that build to dev
@@ -18,7 +19,8 @@
     reading each instance's ExchangeAdminWeb.dll file version.
 
     Steps (each honours -PlanOnly):
-      1. Assert both builds are at or above -MinimumAppVersion.
+      1. Assert both builds are at or above -MinimumAppVersion, and that IIS serves each
+         publish folder from the app pool named for it and from no other.
       2. Stop both app pools and confirm IIS reports each Stopped (warning about any active
          bulk job first). Nothing is copied until both are confirmed.
       3. Take verified backups of BOTH current databases into -BackupRoot.
@@ -84,6 +86,7 @@ if ($Apply -and $PSBoundParameters.ContainsKey('PlanOnly') -and $PlanOnly) {
 Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'JobStateWarning.psm1') -Force
 # aud-a38e: Stop-AppPoolVerified - IIS accepting a stop request is not the pool stopped.
+# aud-a38g: Assert-AppPoolServesPath - and a stopped pool is not necessarily the one serving the instance.
 Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
 
 function Write-Step { param([string]$Message) Write-Host ">>> $Message" -ForegroundColor Cyan }
@@ -202,6 +205,27 @@ function Get-AppPoolIdentity {
     }
 
     return "IIS AppPool\$Name"
+}
+
+function Assert-PoolServesInstance {
+    # Step 1, and audit finding aud-a38g. Step 2 stops the pool it is NAMED and aud-a38e confirms
+    # that pool stopped - which proves nothing about a folder IIS serves from a different pool. A
+    # wrong but existing -DevAppPoolName (DefaultAppPool, or the old name of a renamed pool) was
+    # stopped and confirmed, dev ran on under its real pool while steps 3 and 4 snapshotted its
+    # database, and the restore commands then copied that stale snapshot back over the live file.
+    #
+    # The rule is AppPoolControl's, called exactly as promote-dev-to-prod.ps1 calls it (aud-a38c):
+    # it refuses unless IIS serves the folder from the named pool and from no other, and fails
+    # closed when IIS cannot be read or nothing serves the folder. Its message names the pool that
+    # does serve the folder, or lists what IIS reported; this adds the parameter to fix.
+    param([string]$Label, [string]$Name, [string]$PublishPath, [string]$PoolParameter)
+
+    try {
+        $null = Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath
+    } catch {
+        Write-Fail "-$PoolParameter names app pool '$Name', but IIS does not confirm that this pool alone serves the $Label folder $PublishPath. $($_.Exception.Message) The cutover stops that pool and then copies the $Label database, so it must be the pool that serves the instance. Nothing has been stopped or copied."
+    }
+    Write-Ok "$Label folder $PublishPath is served by app pool $Name and no other"
 }
 
 function Stop-AppPoolChecked {
@@ -652,13 +676,14 @@ if (Test-Path -LiteralPath $SharedDbPath -PathType Leaf) {
 Assert-BuildTolerates -Label 'Dev' -PublishPath $DevPublishPath
 Assert-BuildTolerates -Label 'Prod' -PublishPath $ProdPublishPath
 
-# Step 1b - resolve both app pool identities BEFORE anything is stopped.
+# Step 1b - confirm IIS serves each publish folder from the pool named for it (aud-a38g), then
+# resolve both app pool identities, BEFORE anything is stopped.
 #
-# On 2026-09-08 this read lived inside step 5, so it ran after both pools were already stopped;
-# it threw, and the failure left both sites down behind a half-finished cutover. It is a pure
-# read, so it belongs here where a bad lookup costs nothing.
+# On 2026-09-08 the identity read lived inside step 5, so it ran after both pools were already
+# stopped; it threw, and the failure left both sites down behind a half-finished cutover. Both
+# are pure reads, so they belong here where a bad lookup costs nothing.
 #
-# Plan mode attempts the same read whenever it can, because a dry run that cannot look at what
+# Plan mode attempts the same reads whenever it can, because a dry run that cannot look at what
 # it is about to change is not a dry run - that is exactly why the 2026-09-08 plan came back
 # clean. But plan mode must stay runnable without IIS or elevation (that is how the Pester
 # suite and CI exercise it), so there it degrades to a warning instead of a failure. Apply mode
@@ -667,6 +692,9 @@ $poolIdentities = @()
 $identityLabel = 'both app pool identities'
 
 if ($PlanOnly) {
+    # Printed whatever happens next, so every plan shows the check - the promotion's dry-run line.
+    Write-Plan "Assert-AppPoolServesPath -Name $DevAppPoolName -PhysicalPath $DevPublishPath (refuse unless IIS serves that folder from this pool and no other)"
+    Write-Plan "Assert-AppPoolServesPath -Name $ProdAppPoolName -PhysicalPath $ProdPublishPath (refuse unless IIS serves that folder from this pool and no other)"
     $iisReason = $null
     if (-not (Test-IsAdministrator)) {
         $iisReason = 'this session is not elevated'
@@ -675,10 +703,13 @@ if ($PlanOnly) {
     }
 
     if ($iisReason) {
-        Write-Warn "Skipping the IIS app pool identity check: $iisReason. Run the plan elevated on the deploy host to have it verified."
+        Write-Warn "Skipping the IIS checks (which app pool serves each publish folder, and the app pool identities): $iisReason. Run the plan elevated on the deploy host to have them verified."
     } else {
         try {
             Import-Module WebAdministration -ErrorAction Stop
+            # aud-a38g: read-only, like the identity read; a refusal becomes the warning below.
+            Assert-PoolServesInstance -Label 'Dev' -Name $DevAppPoolName -PublishPath $DevPublishPath -PoolParameter 'DevAppPoolName'
+            Assert-PoolServesInstance -Label 'Prod' -Name $ProdAppPoolName -PublishPath $ProdPublishPath -PoolParameter 'ProdAppPoolName'
             $poolIdentities = @(
                 (Get-AppPoolIdentity -Name $DevAppPoolName),
                 (Get-AppPoolIdentity -Name $ProdAppPoolName)
@@ -687,7 +718,7 @@ if ($PlanOnly) {
             # which host it was rendered on; the resolved names are reported here instead.
             Write-Ok "App pool identities resolved: $($poolIdentities -join ' and ')"
         } catch {
-            Write-Warn "Could not read the IIS app pool identities: $($_.Exception.Message)"
+            Write-Warn "Could not confirm the IIS app pools: $($_.Exception.Message)"
             Write-Warn "-Apply would FAIL here. Fix this before running it."
             $poolIdentities = @()
         }
@@ -698,6 +729,11 @@ if ($PlanOnly) {
     }
     Import-Module WebAdministration -ErrorAction Stop
     Resolve-ConfigDbTool -AppPath $DevPublishPath | Out-Null
+
+    # aud-a38g: inside no try. A refusal is a terminating throw here, ahead of the try that holds
+    # the stops, so nothing has been stopped or copied and there is nothing for its catch to undo.
+    Assert-PoolServesInstance -Label 'Dev' -Name $DevAppPoolName -PublishPath $DevPublishPath -PoolParameter 'DevAppPoolName'
+    Assert-PoolServesInstance -Label 'Prod' -Name $ProdAppPoolName -PublishPath $ProdPublishPath -PoolParameter 'ProdAppPoolName'
 
     $poolIdentities = @(
         (Get-AppPoolIdentity -Name $DevAppPoolName),

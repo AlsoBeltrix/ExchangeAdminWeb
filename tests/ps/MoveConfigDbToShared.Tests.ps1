@@ -1050,3 +1050,176 @@ Describe 'aud-a38f: the cutover confirms each pool started before saying so' {
         }
     }
 }
+
+Describe 'aud-a38g: the cutover refuses unless each named pool is the one serving its instance' {
+
+    # Step 2 stops the pools it is NAMED, and aud-a38e confirms each one stopped. That proves
+    # nothing about a folder served by a different pool: a wrong but existing -DevAppPoolName is
+    # stopped, confirmed, and dev's database is snapshotted while dev keeps running under its own
+    # pool. aud-a38c closed the same gap in the promotion with Assert-AppPoolServesPath.
+
+    BeforeAll {
+        $tokens = $null
+        $parseErrors = $null
+        $script:ServesAst = [System.Management.Automation.Language.Parser]::ParseFile($script:ScriptPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        function Get-ServesFunction {
+            param([string]$FunctionName)
+            $script:ServesAst.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+                }, $true) | Where-Object Name -EQ $FunctionName | Select-Object -First 1
+        }
+
+        function Get-ServesCommand {
+            param([string]$CommandName)
+            @($script:ServesAst.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.CommandAst]
+                    }, $true) | Where-Object { $_.GetCommandName() -eq $CommandName })
+        }
+
+        function Get-AstAncestor {
+            param($Node, [type]$Type)
+            $parent = $Node.Parent
+            while ($parent) {
+                if ($parent -is $Type) { $parent }
+                $parent = $parent.Parent
+            }
+        }
+
+        # Lifted unchanged, as in the aud-a38e block, with the real Assert-AppPoolServesPath below.
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Fail', 'Assert-PoolServesInstance') {
+            . ([scriptblock]::Create((Get-ServesFunction $name).Extent.Text))
+        }
+        Import-Module (Join-Path $PSScriptRoot '..' '..' 'tools' 'AppPoolControl.psm1') -Force
+
+        $script:servesEvents = [System.Collections.Generic.List[string]]::new()
+
+        # The module's one injection point, set per test through $PSDefaultParameterValues and
+        # wrapped in a block that returns it (the aud-a38b lesson); each test proves it was asked.
+        function New-ServingProbe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '',
+                Justification = 'Applications is used inside a GetNewClosure block; the analyzer cannot see into it')]
+            param([scriptblock]$Applications)
+            @{ 'Assert-AppPoolServesPath:ApplicationsProbe' = { $Applications }.GetNewClosure() }
+        }
+
+        $script:DevFolder = 'X:\inetpub\aud-a38g-Dev'
+        $script:ServedByDevPool = @(
+            [pscustomobject]@{ Location = 'Default Web Site/'; ApplicationPool = 'DefaultAppPool'; PhysicalPath = 'X:\inetpub\wwwroot' }
+            [pscustomobject]@{ Location = 'Default Web Site/aud-a38g-Dev'; ApplicationPool = 'aud-a38g-dev'; PhysicalPath = $script:DevFolder }
+        )
+    }
+
+    BeforeEach {
+        $script:servesEvents.Clear()
+    }
+
+    Context 'the check, driven through the module''s injectable probe' {
+
+        It 'passes, and says so, when IIS serves the folder from the named pool alone' {
+            $PSDefaultParameterValues = New-ServingProbe -Applications { $script:servesEvents.Add('applications probe'); $script:ServedByDevPool }
+
+            $out = Assert-PoolServesInstance -Label 'Dev' -Name 'aud-a38g-dev' -PublishPath $script:DevFolder -PoolParameter 'DevAppPoolName' 6>&1 | Out-String
+
+            $script:servesEvents | Should -Contain 'applications probe'
+            $out | Should -Match ([regex]::Escape("Dev folder $($script:DevFolder) is served by app pool aud-a38g-dev and no other"))
+        }
+
+        It 'refuses a folder another pool serves, naming the folder, the pool that serves it and the pool that was named' {
+            # THE FINDING. DefaultAppPool exists, so the old cutover stopped it, IIS confirmed it
+            # stopped, and dev's database was snapshotted while dev ran on under its own pool.
+            $PSDefaultParameterValues = New-ServingProbe -Applications { $script:servesEvents.Add('applications probe'); $script:ServedByDevPool }
+
+            $err = $null
+            try { Assert-PoolServesInstance -Label 'Dev' -Name 'DefaultAppPool' -PublishPath $script:DevFolder -PoolParameter 'DevAppPoolName' 6>&1 | Out-Null }
+            catch { $err = $_ }
+
+            $err | Should -Not -BeNullOrEmpty -Because 'a pool that does not serve the folder must stop the cutover'
+            $script:servesEvents | Should -Contain 'applications probe'
+            "$err" | Should -BeLike "*-DevAppPoolName names app pool 'DefaultAppPool'*" -Because 'the pool that was named'
+            "$err" | Should -BeLike "*$($script:DevFolder)*" -Because 'the folder'
+            "$err" | Should -BeLike "*runs under 'aud-a38g-dev'*" -Because 'the pool that does serve it'
+            "$err" | Should -BeLike '*Nothing has been stopped or copied.'
+        }
+
+        It 'fails closed when nothing in IIS serves the folder' {
+            $PSDefaultParameterValues = New-ServingProbe -Applications { $script:servesEvents.Add('applications probe'); @($script:ServedByDevPool[0]) }
+
+            { Assert-PoolServesInstance -Label 'Dev' -Name 'aud-a38g-dev' -PublishPath $script:DevFolder -PoolParameter 'DevAppPoolName' 6>&1 | Out-Null } |
+                Should -Throw -ExpectedMessage "*No IIS site or application has its files at '$($script:DevFolder)'*Nothing has been stopped or copied."
+            $script:servesEvents | Should -Contain 'applications probe'
+        }
+
+        It 'fails closed when IIS cannot be read' {
+            $PSDefaultParameterValues = New-ServingProbe -Applications { $script:servesEvents.Add('applications probe'); throw 'Cannot read configuration file' }
+
+            { Assert-PoolServesInstance -Label 'Prod' -Name 'aud-a38g-prod' -PublishPath 'X:\inetpub\aud-a38g-Prod' -PoolParameter 'ProdAppPoolName' 6>&1 | Out-Null } |
+                Should -Throw -ExpectedMessage "*-ProdAppPoolName names app pool 'aud-a38g-prod'*Cannot read the IIS sites and applications*Cannot read configuration file*Nothing has been stopped or copied."
+            $script:servesEvents | Should -Contain 'applications probe'
+        }
+    }
+
+    Context 'the cutover' {
+
+        It 'prints the check for both instances in plan mode, before either stop, and changes nothing' {
+            $fake = New-FakeInstances -WithProdDb
+            try {
+                $out = Invoke-Cutover $fake @{ PlanOnly = $true; MinimumAppVersion = '1.0' }
+
+                $dev = "PLAN Assert-AppPoolServesPath -Name ExchangeAdminWebDev -PhysicalPath $($fake.Dev) (refuse unless IIS serves that folder from this pool and no other)"
+                $prod = "PLAN Assert-AppPoolServesPath -Name ExchangeAdminWeb -PhysicalPath $($fake.Prod) (refuse unless IIS serves that folder from this pool and no other)"
+                $out.IndexOf($dev) | Should -BeGreaterOrEqual 0 -Because 'the plan shows the dev check'
+                $out.IndexOf($prod) | Should -BeGreaterThan $out.IndexOf($dev) -Because 'the plan shows the prod check, after the dev one'
+                $out.IndexOf('PLAN Stop app pool ') | Should -BeGreaterThan $out.IndexOf($prod) -Because 'both checks come before either stop'
+                Test-Path -LiteralPath $fake.Shared | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $fake.Root 'backups') | Should -BeFalse
+            } finally {
+                Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context 'the call sites' {
+
+        It 'asks the module, with the promotion''s parameters, from one place' {
+            $calls = @(Get-ServesCommand 'Assert-AppPoolServesPath')
+            $calls.Count | Should -Be 1 -Because 'one call into the module and no copy of its rule'
+            $calls[0].Extent.Text | Should -BeExactly 'Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath'
+
+            $wrapper = Get-ServesFunction 'Assert-PoolServesInstance'
+            $tries = @($wrapper.FindAll({ param($node) $node -is [System.Management.Automation.Language.TryStatementAst] }, $true))
+            $tries.Count | Should -Be 1
+            $calls[0].Extent.StartOffset | Should -BeGreaterThan $tries[0].Body.Extent.StartOffset
+            $calls[0].Extent.EndOffset | Should -BeLessThan $tries[0].Body.Extent.EndOffset
+        }
+
+        It 'checks both instances before either pool is stopped, and lets an apply-mode refusal end the run' {
+            $checks = @(Get-ServesCommand 'Assert-PoolServesInstance')
+            $dev = 'Assert-PoolServesInstance -Label ''Dev'' -Name $DevAppPoolName -PublishPath $DevPublishPath -PoolParameter ''DevAppPoolName'''
+            $prod = 'Assert-PoolServesInstance -Label ''Prod'' -Name $ProdAppPoolName -PublishPath $ProdPublishPath -PoolParameter ''ProdAppPoolName'''
+            @($checks | ForEach-Object { $_.Extent.Text }) | Should -Be @($dev, $prod, $dev, $prod) -Because 'dev then prod, in the plan branch and in the apply branch'
+
+            $firstStop = @(Get-ServesCommand 'Stop-AppPoolChecked')[0]
+            foreach ($check in $checks) {
+                $check.Extent.EndOffset | Should -BeLessThan $firstStop.Extent.StartOffset `
+                    -Because "the check at line $($check.Extent.StartLineNumber) must run before any pool is stopped"
+            }
+
+            # Step 1b is if ($PlanOnly) { ... } else { ... }. The apply pair is a direct statement
+            # of the else branch, inside no try, so a refusal is a terminating throw before step 2.
+            $branch = @(Get-AstAncestor $checks[2] ([System.Management.Automation.Language.IfStatementAst]))[0]
+            $branch.Clauses[0].Item1.Extent.Text | Should -BeExactly '$PlanOnly'
+            foreach ($apply in $checks[2], $checks[3]) {
+                [object]::ReferenceEquals($apply.Parent.Parent, $branch.ElseClause) | Should -BeTrue
+                @(Get-AstAncestor $apply ([System.Management.Automation.Language.TryStatementAst])).Count | Should -Be 0
+            }
+            foreach ($plan in $checks[0], $checks[1]) {
+                $plan.Extent.StartOffset | Should -BeGreaterThan $branch.Clauses[0].Item2.Extent.StartOffset
+                $plan.Extent.EndOffset | Should -BeLessThan $branch.Clauses[0].Item2.Extent.EndOffset
+            }
+        }
+    }
+}
