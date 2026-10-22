@@ -4,7 +4,7 @@
 pool name, so an operator error starts it; from there the verified stop (`aud-a38e`)
 truthfully confirms the WRONG pool stopped while dev keeps running, and the run's own restore
 commands then overwrite dev's live database with the stale snapshot.
-**Status**: Fixed on master `b46f13d9` (patch applied by the supervisor); closed on guard proof; codex ops review pending
+**Status**: Fixed on master `b46f13d9` (patch applied by the supervisor); closed on guard proof; codex ops-batch-5 clean
 **Branch**: -- (delivered as a patch against `master` `1c6038d` from the worktree
 `agent-af538bba9cd55306a`, whose own branch predates `aud-a38c`; the coordinator applies and
 commits it)

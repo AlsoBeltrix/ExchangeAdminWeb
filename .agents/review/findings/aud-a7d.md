@@ -1,7 +1,7 @@
 # aud-a7d: a Scheduled auto-reply tells the mailbox owner it was "enabled"
 
 **Severity**: LOW - a misleading notification, not a wrong write.
-**Status**: Fixed on master `9364341c` (patch applied by the supervisor); closed on guard proof; codex review pending
+**Status**: Fixed on master `9364341c` (patch applied by the supervisor); closed on guard proof; codex ops-batch-5 clean
 **Branch**: `worktree-agent-aec54e09518f47fc1` - forked at `ca6575a2`, before the `aud-a7b` code it
 fixes, so built and gated on a `git archive` export of master `1c6038d5` and delivered as a patch
 for the supervisor to apply

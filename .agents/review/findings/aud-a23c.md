@@ -4,7 +4,7 @@
 Migration path reads them. It is the field-by-field-rebuild shape `WithServicedNote` had to be
 fixed for in `aud-a23` - here five times over, in one module - and each copy drops the next
 field `PermissionResult` gains the same way.
-**Status**: Fixed on master `a3f3ec45` (patch applied by the supervisor); closed on guard proof; codex review pending
+**Status**: Fixed on master `a3f3ec45` (patch applied by the supervisor); closed on guard proof; codex ops-batch-5 clean
 **Branch**: -- (delivered as a patch against `master` `1c6038d` from the worktree
 `agent-af538bba9cd55306a`, whose own branch predates `aud-a23b`; the coordinator applies and
 commits it)
