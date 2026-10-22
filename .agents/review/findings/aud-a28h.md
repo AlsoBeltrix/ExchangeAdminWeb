@@ -6,7 +6,7 @@ Online Config page each write a settings-change record on success and nothing on
 exception. Section access and protected principals are the authorization stores; a refused or
 failed attempt to change them leaves no trace. aud-a28f fixed the allowlist save and introduced
 `AuditService.LogSettingsChangeFailed` for exactly this.
-**Status**: Merged to master (`f1b4692d`); closed on guard proof; codex review pending
+**Status**: Merged to master (`f1b4692d`); closed on guard proof; codex attr-batch-4 clean (raised aud-a26i; one MEDIUM folded into aud-a28j)
 **Branch**: `worktree-agent-aa5d4735f85b48351`
 **Commit**: `87833faf` (comments `87660ef8`; merged `f1b4692d`)
 **Reviewer**: implementer (surfaced by the aud-a28f/a26e agent, 2026-10-22, candidate 2 of its hand-back)

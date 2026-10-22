@@ -40,3 +40,15 @@ and aud-a28f/a28i's allowlist save, which re-reads under the lock.
 ## Guard proof
 
 Pending.
+
+## Folded in: a partial protected-principals save audited only as failed (codex, attr-batch-4, 2026-10-22)
+
+`AdminSettings.razor` `SaveProtectedPrincipals` (around line 1004 at `f1b4692d`): `SaveConfig(newConfig)`
+succeeds, then `SaveDirectoryReadSecretId(...)` throws. The rules are live, the page says "Failed to
+save", and the only record is a generic failed `ProtectedPrincipals` settings save with no
+before/after detail. Save the rows and the directory-read secret in one atomic store write (one
+`Write` callback, aud-a28i shape), or - if the secret id lives in another store - audit the partial
+outcome explicitly: a success record for the rows that landed (real before/after) and a failure record
+for the secret, and a message that says which part landed. Test: a throwing secret save after a
+successful rows save leaves the rows' success record and the secret's failure record, and the message
+says the rules were saved. Mutation at the call site: one record for both again.
