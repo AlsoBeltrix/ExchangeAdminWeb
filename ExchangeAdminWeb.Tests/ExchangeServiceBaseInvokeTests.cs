@@ -262,4 +262,40 @@ public class ExchangeServiceBaseInvokeTests
         Assert.Empty(ps.Streams.Error);
         Assert.Empty(ps.Commands.Commands);
     }
+
+    // aud-a23i, part 4: under -ErrorAction Stop an error a cmdlet writes arrives as an ActionPreferenceStopException whose
+    // message puts "The running command stopped because..." in front of it. ResolveFailure gives the error's own words -
+    // thrown as it is, or inside Invoke's wrapper, which only restates it - and leaves a wrapper that says more as written.
+    [Fact]
+    public void ResolveFailure_GivesAStoppedErrorsOwnWords_ThroughInvokesWrapper_NotThroughOneThatSaysMore()
+    {
+        using var ps = NewPs();
+        ps.AddScript("Write-Error 'the mailbox is on litigation hold' -ErrorAction Stop");
+
+        var wrapper = Assert.Throws<InvalidOperationException>(() => Harness.CallInvoke(ps));
+        var stopped = Assert.IsType<ActionPreferenceStopException>(wrapper.InnerException);
+        var named = new InvalidOperationException("Set-Mailbox failed: the mailbox is on litigation hold.", stopped);
+
+        Assert.StartsWith("The running command stopped", wrapper.Message, StringComparison.Ordinal);
+        Assert.Equal(("the mailbox is on litigation hold", (string?)null), ExchangeServiceBase.ResolveFailure(stopped));
+        Assert.Equal(("the mailbox is on litigation hold", (string?)null), ExchangeServiceBase.ResolveFailure(wrapper));
+        Assert.Equal((named.Message, (string?)null), ExchangeServiceBase.ResolveFailure(named));
+    }
+
+    // aud-a23i, part 3: PowerShell flags the call as having errors, and the error stream is empty - which an error a nested
+    // command suppressed (-ErrorAction SilentlyContinue) causes. Still a failure, but said as what it is, not "An unknown
+    // error occurred.".
+    [Fact]
+    public void Invoke_AnErrorThatWasSuppressed_IsReportedAsSuch_NotAsUnknown()
+    {
+        using var ps = NewPs();
+        ps.AddScript("Get-Item 'C:\\definitely-not-here-a23i' -ErrorAction SilentlyContinue; 'value'");
+
+        var failure = Assert.Throws<InvalidOperationException>(() => Harness.CallInvoke(ps));
+
+        Assert.Equal(ExchangeServiceBase.ErrorNotSurfaced, failure.Message);
+        Assert.Equal((ExchangeServiceBase.ErrorNotSurfaced, (string?)null), ExchangeServiceBase.ResolveFailure(failure));
+        Assert.Empty(ps.Commands.Commands);
+        Assert.Empty(ps.Streams.Error);
+    }
 }

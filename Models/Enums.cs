@@ -28,5 +28,11 @@ public enum MigrationDirection
 public enum MigrationStatus
 {
     Eligible,
-    Ineligible
+    Ineligible,
+
+    /// <summary>
+    /// aud-a23h. A read the verdict needed failed, so there is none: neither eligible nor ineligible. Shown as "could not
+    /// be determined", and - not being Eligible - never offered or given a batch.
+    /// </summary>
+    Undetermined
 }

@@ -311,7 +311,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportUser("late@contoso.test", As("DateTimeOffset", LastSyncUtc.AddHours(5)));
         var service = CreateService();
 
-        var users = await service.GetMigrationBatchUsersAsync(Batch);
+        var users = (await service.GetMigrationBatchUsersAsync(Batch)).Mailboxes;
         var order = Sorted("SortMailboxes", "LastSync", ascending, users, u => u.EmailAddress.Split('@')[0]);
 
         Assert.Equal(ascending ? ["early", "late", "unreadable", "none"] : ["late", "early", "unreadable", "none"], order);
@@ -493,7 +493,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
         {
             foreach (var (name, time) in reported)
                 ReportUser(name + "@contoso.test", time);
-            var users = await CreateService().GetMigrationBatchUsersAsync(Batch);
+            var users = (await CreateService().GetMigrationBatchUsersAsync(Batch)).Mailboxes;
             order = Sorted("SortMailboxes", "LastSync", ascending, users, u => u.EmailAddress.Split('@')[0]);
         }
 

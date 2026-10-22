@@ -188,7 +188,11 @@ public sealed class MigrationBatchReadTests : IDisposable
     }
 
     /// <summary>The Status tab with <paramref name="batch"/> open and its (empty) mailbox list loaded.</summary>
-    private static async Task<string> OpenBatchRendered(MigrationService service, MigrationBatchInfo batch)
+    private static async Task<string> OpenBatchRendered(MigrationService service, MigrationBatchInfo batch) =>
+        (await OpenBatchPage(service, batch)).Rendered;
+
+    /// <summary>aud-a23i. <see cref="OpenBatchRendered"/>, with the page, for what it holds.</summary>
+    private static async Task<(RenderableMigration Page, string Rendered)> OpenBatchPage(MigrationService service, MigrationBatchInfo batch)
     {
         var page = Page(new MigrationBatchList([batch], []));
         PageField("expandedBatch").SetValue(page, batch.BatchName);
@@ -196,7 +200,7 @@ public sealed class MigrationBatchReadTests : IDisposable
         typeof(Migration).GetProperty("MigrationSvc", Members)!.SetValue(page, service);
         await (Task)typeof(Migration).GetMethod("LoadMailboxesFor", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(page, [batch.BatchName])!;
-        return page.RenderText();
+        return (page, page.RenderText());
     }
 
     private const BindingFlags Members = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
@@ -562,7 +566,7 @@ public sealed class MigrationBatchReadTests : IDisposable
         var service = CreateService();
         var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
 
-        var users = await service.GetMigrationBatchUsersAsync(Readable);
+        var users = (await service.GetMigrationBatchUsersAsync(Readable)).Mailboxes;
 
         Assert.Equal(["alice", "bob", "carol"], users.Select(u => u.EmailAddress.Split('@')[0]));
         Assert.Equal([10L, null, 7L], users.Select(u => u.ItemsSynced.Count));
@@ -588,7 +592,7 @@ public sealed class MigrationBatchReadTests : IDisposable
         _users.Add(User("two@contoso.test", ("ItemsSynced", 2)));
         _users.Add(User("nine@contoso.test", ("ItemsSynced", 9)));
 
-        var users = await CreateService().GetMigrationBatchUsersAsync(Readable);
+        var users = (await CreateService().GetMigrationBatchUsersAsync(Readable)).Mailboxes;
 
         Assert.Equal(ascending ? ["two", "five", "nine", "unreadable"] : ["nine", "five", "two", "unreadable"],
             SortedMailboxes("Synced", ascending, users));
@@ -637,6 +641,125 @@ public sealed class MigrationBatchReadTests : IDisposable
         _rows.Add(new RowWhoseReadIsCancelled((Exception)Activator.CreateInstance(cancellation, "the load was cancelled")!));
 
         var error = await Assert.ThrowsAnyAsync<Exception>(() => CreateService().GetMigrationBatchesAsync());
+
+        Assert.Contains(Chain(error), cause => cause.GetType() == cancellation);
+    }
+
+    // ---- aud-a23i -----------------------------------------------------------------------------
+
+    /// <summary>aud-a23i. A mailbox row with no Identity property, as a module could hand one back.</summary>
+    private static PSObject MailboxWithoutIdentity()
+    {
+        var user = new PSObject();
+        user.Properties.Add(new PSNoteProperty("Status", "Synced"));
+        return user;
+    }
+
+    /// <summary>aud-a23i. A live mailbox row whose Status cannot be fetched.</summary>
+    public sealed class MailboxRowWhoseStatusThrows
+    {
+        public string Identity => "carol@contoso.test";
+        public string Status => throw new InvalidOperationException("the status is not available");
+    }
+
+    /// <summary>aud-a23i. A live mailbox row whose Identity cannot be fetched.</summary>
+    public sealed class MailboxRowWhoseIdentityThrows
+    {
+        public string Identity => throw new InvalidOperationException("the identity is not available");
+        public string Status => "Synced";
+    }
+
+    /// <summary>aud-a23i. A live mailbox row read while the load is being cancelled.</summary>
+    public sealed class MailboxRowWhoseReadIsCancelled(Exception cancellation)
+    {
+        public string Identity => "carol@contoso.test";
+        public string Status => throw cancellation;
+    }
+
+    // aud-a23i, part 1: a mailbox row with no Identity became a mailbox named "Unknown", which a tick box and every
+    // mailbox action could then be aimed at. It is unreadable now - named in a warning above the list, and absent from
+    // the rows an action can reach.
+    [Fact]
+    public async Task AMailboxRowWithNoIdentity_IsUnreadable_NotAMailboxNamedUnknown()
+    {
+        _rows.Add(Row(Readable, ("TotalCount", 3)));
+        _users.Add(User("alice@contoso.test"));
+        _users.Add(MailboxWithoutIdentity());
+        _users.Add(User("   "));
+        var service = CreateService();
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
+
+        var list = await service.GetMigrationBatchUsersAsync(Readable);
+
+        Assert.Equal(["alice@contoso.test"], list.Mailboxes.Select(u => u.EmailAddress));
+        Assert.Equal(2, list.Unreadable.Count);
+        Assert.All(list.Unreadable, row => Assert.Equal(new UnreadableMigrationMailbox(null, "a row with no Identity"), row));
+
+        var (page, rendered) = await OpenBatchPage(service, batch);
+        Assert.Contains("2 mailboxes could not be read: a row with no Identity; a row with no Identity", rendered, StringComparison.Ordinal);
+        Assert.Equal(["alice@contoso.test"], ((List<MigrationUserInfo>)PageField("batchUsers").GetValue(page)!).Select(u => u.EmailAddress));
+        Assert.DoesNotContain("Unknown", rendered, StringComparison.Ordinal);
+    }
+
+    // aud-a23i, part 1: a mailbox row that threw while being read lost the whole list. It is listed with its identity as
+    // far as it was read and the reason, and every other mailbox loads.
+    [Fact]
+    public async Task AMailboxRowThatThrowsWhileBeingRead_IsListedWithItsReason_AndTheRestLoad()
+    {
+        _users.Add(User("alice@contoso.test"));
+        _users.Add(new MailboxRowWhoseStatusThrows());
+        _users.Add(new MailboxRowWhoseIdentityThrows());
+        _users.Add(User("dave@contoso.test"));
+
+        var list = await CreateService().GetMigrationBatchUsersAsync(Readable);
+
+        Assert.Equal(["alice@contoso.test", "dave@contoso.test"], list.Mailboxes.Select(u => u.EmailAddress));
+        Assert.Collection(list.Unreadable,
+            row =>
+            {
+                Assert.Equal("carol@contoso.test", row.Identity);
+                Assert.Contains("the status is not available", row.Reason, StringComparison.Ordinal);
+            },
+            row =>
+            {
+                Assert.Null(row.Identity);
+                Assert.StartsWith("a row whose Identity could not be read: ", row.Reason, StringComparison.Ordinal);
+                Assert.Contains("the identity is not available", row.Reason, StringComparison.Ordinal);
+            });
+    }
+
+    // aud-a23i, part 1: when every row Exchange returned is unreadable, the batch is not empty, and the pane does not say
+    // it is - neither "contains no mailboxes" nor "not started".
+    [Theory]
+    [InlineData("a count of none")]
+    [InlineData("pending and not started")]
+    public async Task ABatchWhoseEveryMailboxRowIsUnreadable_SaysNoneCouldBeRead_NotThatItIsEmpty(string state)
+    {
+        _rows.Add(state == "a count of none"
+            ? Row(Readable, ("TotalCount", 0))
+            : Row(Readable, ("TotalCount", 1), ("PendingCount", 1), ("WorkflowStage", "Injection")));
+        _users.Add(MailboxWithoutIdentity());
+        var service = CreateService();
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
+
+        var (_, rendered) = await OpenBatchPage(service, batch);
+
+        Assert.Contains("1 mailbox could not be read: a row with no Identity", rendered, StringComparison.Ordinal);
+        Assert.Contains("No mailbox in this batch could be read; the warning above names each one.", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("This batch contains no mailboxes.", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("Batch not started", rendered, StringComparison.Ordinal);
+    }
+
+    // aud-a23i: a cancellation while reading a mailbox row is not an unreadable row; the load is cancelled.
+    [Theory]
+    [InlineData(typeof(OperationCanceledException))]
+    [InlineData(typeof(PipelineStoppedException))]
+    public async Task ACancellationWhileReadingAMailboxRow_EscapesTheLoad(Type cancellation)
+    {
+        _users.Add(User("alice@contoso.test"));
+        _users.Add(new MailboxRowWhoseReadIsCancelled((Exception)Activator.CreateInstance(cancellation, "the load was cancelled")!));
+
+        var error = await Assert.ThrowsAnyAsync<Exception>(() => CreateService().GetMigrationBatchUsersAsync(Readable));
 
         Assert.Contains(Chain(error), cause => cause.GetType() == cancellation);
     }

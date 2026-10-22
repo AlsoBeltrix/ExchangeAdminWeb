@@ -43,6 +43,9 @@ public class MigrationBatchResult
     public int TotalUsers { get; set; }
     public int EligibleUsers { get; set; }
     public int IneligibleUsers { get; set; }
+
+    /// <summary>aud-a23h. Rows whose check could not be determined. <see cref="IneligibleUsers"/> counts only the ineligible.</summary>
+    public int UndeterminedUsers { get; set; }
     public bool AutoStart { get; set; }
     public bool AutoComplete { get; set; }
 }
@@ -234,6 +237,27 @@ public class MigrationUserInfo
     public ReportedCount ItemsSynced { get; set; } = ReportedCount.Of(0);
     public ReportedCount ItemsSkipped { get; set; } = ReportedCount.Of(0);
 }
+
+/// <summary>
+/// aud-a23i. A row <c>Get-MigrationUser</c> returned that could not be read as a mailbox: its identity as far as it was read
+/// - null when it had none, or when the identity is what could not be read - and why. The aud-a23f shape on the mailbox
+/// list: such a row was a mailbox named "Unknown" that an action could be aimed at, or, when it threw, the loss of every
+/// mailbox in the batch.
+/// </summary>
+public sealed record UnreadableMigrationMailbox(string? Identity, string Reason)
+{
+    public string Shown => Identity is null ? Reason : $"{Identity}: {Reason}";
+
+    public static string Warning(IReadOnlyCollection<UnreadableMigrationMailbox> rows) =>
+        $"{rows.Count} {(rows.Count == 1 ? "mailbox" : "mailboxes")} could not be read: {string.Join("; ", rows.Select(r => r.Shown))}";
+}
+
+/// <summary>
+/// aud-a23i. What <c>Get-MigrationUser -BatchId</c> returned: the mailboxes, and beside them every row that could not be read
+/// as one - one result, so no caller is handed the first without the second. Positional, so the Migration page's one-line
+/// hand-off to ReplaceBatchUsers stays one line.
+/// </summary>
+public sealed record MigrationMailboxList(List<MigrationUserInfo> Mailboxes, List<UnreadableMigrationMailbox> Unreadable);
 
 public class MigrationUserSearchResult
 {
