@@ -122,15 +122,15 @@
                                 }
                             </ul>
                         }
-                        @if (singleResult.MailboxSizeGB > 0 || singleResult.ArchiveSizeGB > 0)
+                        @if (singleResult.MailboxSizeGB > 0 || singleResult.ArchiveSizeGB > 0 || singleResult.MailboxSizeUnreadable != null || singleResult.ArchiveSizeUnreadable != null)
                         {
                             <p class="mb-1">
-                                <strong>Mailbox:</strong> @singleResult.MailboxSizeGB.ToString("F2") GB
-                                @if (singleResult.ArchiveSizeGB > 0)
+                                <strong>Mailbox:</strong> @(singleResult.MailboxSizeUnreadable is null ? $"{singleResult.MailboxSizeGB:F2} GB" : $"could not be read ({singleResult.MailboxSizeUnreadable})")
+                                @if (singleResult.ArchiveSizeGB > 0 || singleResult.ArchiveSizeUnreadable != null)
                                 {
-                                    <text> | <strong>Archive:</strong> @singleResult.ArchiveSizeGB.ToString("F2") GB</text>
+                                    <text> | <strong>Archive:</strong> @(singleResult.ArchiveSizeUnreadable is null ? $"{singleResult.ArchiveSizeGB:F2} GB" : $"could not be read ({singleResult.ArchiveSizeUnreadable})")</text>
                                 }
-                                | <strong>Total:</strong> @singleResult.TotalSizeGB.ToString("F2") GB
+                                @if (singleResult.MailboxSizeUnreadable is null && singleResult.ArchiveSizeUnreadable is null) { <text>| <strong>Total:</strong> @singleResult.TotalSizeGB.ToString("F2") GB</text> }
                             </p>
                         }
                         @if (singleResult.MailboxExceedsQuota)
@@ -293,13 +293,13 @@
                                             }
                                         </td>
                                         <td style="text-align: right;">
-                                            @if (item.MailboxSizeGB > 0 || item.ArchiveSizeGB > 0)
+                                            @if (item.MailboxSizeGB > 0 || item.ArchiveSizeGB > 0 || item.MailboxSizeUnreadable != null || item.ArchiveSizeUnreadable != null)
                                             {
-                                                <span class="@(item.MailboxExceedsQuota ? "text-warning" : null)">@item.MailboxSizeGB.ToString("F2")</span>
-                                                @if (item.ArchiveSizeGB > 0)
+                                                <span class="@(item.MailboxExceedsQuota ? "text-warning" : null)">@(item.MailboxSizeUnreadable is null ? item.MailboxSizeGB.ToString("F2") : $"could not be read ({item.MailboxSizeUnreadable})")</span>
+                                                @if (item.ArchiveSizeGB > 0 || item.ArchiveSizeUnreadable != null)
                                                 {
                                                     <text> + </text>
-                                                    <span class="@(item.ArchiveExceedsQuota ? "text-warning" : null)">@item.ArchiveSizeGB.ToString("F2") archive</span>
+                                                    <span class="@(item.ArchiveExceedsQuota ? "text-warning" : null)">@(item.ArchiveSizeUnreadable is null ? $"{item.ArchiveSizeGB:F2} archive" : $"archive could not be read ({item.ArchiveSizeUnreadable})")</span>
                                                 }
                                                 @if (item.ExceedsQuota)
                                                 {
@@ -1208,7 +1208,7 @@
    Only Close dismisses it - no backdrop click, no Escape. The report may have cost twenty
    minutes and the operator is reading it; a stray click outside must not be able to take it
    away. It survives the dismiss anyway (R24a), but the interruption is the cost. *@
-@if (reportUser != null && userReport != null)
+@if (reportUser != null && (userReport != null || reportFailure != null))
 {
     var reportRow = batchUsers?.FirstOrDefault(u =>
         string.Equals(u.EmailAddress, reportUser, StringComparison.OrdinalIgnoreCase));
@@ -1232,7 +1232,7 @@
                 <div class="ms-auto d-flex gap-2">
                     @* Export writes the whole report to a file rather than making anyone select
                        tens of thousands of lines out of a scroll box. *@
-                    <button class="btn btn-sm btn-outline-secondary" disabled="@IsBusy"
+                    <button class="btn btn-sm btn-outline-secondary" disabled="@(IsBusy || userReport == null)"
                             @onclick="ExportOpenReportAsync">Export</button>
                     @if (reportFetchedAtUtc.HasValue)
                     {
@@ -1253,7 +1253,7 @@
                 </div>
             </div>
             <div class="card-body p-0">
-                <pre class="mig-report-text mb-0">@userReport</pre>
+                @if (reportFailure != null) { <div class="alert alert-danger m-3" role="alert">The report could not be retrieved: @reportFailure</div> } else { <pre class="mig-report-text mb-0">@userReport</pre> }
             </div>
         </div>
     </div>
@@ -1635,7 +1635,7 @@
     private string? actionInProgress;
     private string? loadingReport;
     private string? reportUser;
-    private string? userReport;
+    private string? userReport; private string? reportFailure;
     private List<UnreadableMigrationMailbox> unreadableMailboxes = []; // aud-a23i: the rows the last mailbox load could not read; set only by ReplaceBatchUsers
     // R24a. When the report on screen was taken, so the dialog can say so and the operator can
     // judge whether refreshing is worth twenty minutes. Null for an error, which is not a report.
@@ -3922,7 +3922,7 @@
     private void DismissReportModal()
     {
         reportUser = null;
-        userReport = null;
+        userReport = null; reportFailure = null;
         reportFetchedAtUtc = null;
     }
 
@@ -3937,7 +3937,7 @@
     {
         reportGeneration++;
         reportUser = null;
-        userReport = null;
+        userReport = null; reportFailure = null;
         reportFetchedAtUtc = null;
         loadingReport = null;
 
@@ -4006,7 +4006,7 @@
         var stored = ReportStore.TryRead(expandedBatch, emailAddress, DateTime.UtcNow);
         if (stored != null)
         {
-            userReport = stored.Text;
+            userReport = stored.Text; reportFailure = null;
             reportFetchedAtUtc = stored.FetchedAtUtc;
             reportUser = emailAddress;
             return;
@@ -4040,23 +4040,23 @@
         string? fetchFailure = null; // aud-a23i: why the fetch failed, for its activity, superseded or not
         try
         {
-            var text = await MigrationSvc.GetMigrationUserReportAsync(emailAddress);
+            var report = await MigrationSvc.GetMigrationUserReportAsync(emailAddress);
+            fetchFailure = report.Failure is null ? null : $"The report for {emailAddress} could not be fetched: {report.Failure}";
             if (generation != reportGeneration) return;
-
             // Stored before it is rendered, so the modal and any later consumer read the same
             // bytes (R24c, and R31e depends on it). A store failure must not lose the report the
             // operator just waited twenty minutes for - it is shown either way, just not kept.
             try
             {
-                ReportStore.Write(batch, emailAddress, text, takenAtUtc);
+                if (report.Text is { } text) ReportStore.Write(batch, emailAddress, text, takenAtUtc);
             }
             catch (Exception ex)
             {
                 Logger.LogWarning(ex, "Migration report for {Email} could not be stored", emailAddress);
             }
 
-            userReport = text;
-            reportFetchedAtUtc = takenAtUtc;
+            userReport = report.Text; reportFailure = report.Failure;
+            reportFetchedAtUtc = report.Text is null ? null : takenAtUtc;
             reportUser = emailAddress;
         }
         catch (Exception ex)
@@ -4065,7 +4065,7 @@
             if (generation != reportGeneration) return;
             // NOT stored. An error string is not a report, and keeping it would serve the failure
             // back on the next open as though it were the answer.
-            userReport = $"Error: {ex.Message}";
+            userReport = null; reportFailure = ex.Message;
             reportFetchedAtUtc = null;
             reportUser = emailAddress;
         }

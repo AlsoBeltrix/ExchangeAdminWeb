@@ -81,7 +81,17 @@ public sealed class MigrationReportExportProcessor : IBulkJobProcessor
         var takenAtUtc = DateTime.UtcNow;
         try
         {
-            var text = await _migration.GetMigrationUserReportAsync(email);
+            var report = await _migration.GetMigrationUserReportAsync(email);
+            if (report.Text is not { } text)
+            {
+                _logger.LogWarning("Report fetch failed for {Email}: {Reason}", email, report.Failure);
+                return new BulkJobRowOutcome
+                {
+                    Target = email,
+                    Status = BulkJobRowStatus.Failed,
+                    Message = $"Report could not be fetched: {report.Failure}",
+                };
+            }
 
             _reports.Write(payload.BatchName, email, text, takenAtUtc);
 

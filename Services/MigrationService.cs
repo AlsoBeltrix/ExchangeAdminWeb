@@ -220,11 +220,10 @@ public class MigrationService : ExchangeServiceBase
                 else
                 {
                     var cloudSize = await GetCloudMailboxSizeAsync(emailAddress);
-                    if (cloudSize is not null)
-                    {
-                        result.MailboxSizeGB = cloudSize.Value.mailboxGB;
-                        result.ArchiveSizeGB = cloudSize.Value.archiveGB;
-                    }
+                    result.MailboxSizeGB = cloudSize.MailboxGB;
+                    result.ArchiveSizeGB = cloudSize.ArchiveGB;
+                    result.MailboxSizeUnreadable = cloudSize.MailboxUnreadable;
+                    result.ArchiveSizeUnreadable = cloudSize.ArchiveUnreadable;
                 }
             }
             catch (Exception sizeEx)
@@ -234,6 +233,11 @@ public class MigrationService : ExchangeServiceBase
                 {
                     result.Status = MigrationStatus.Ineligible;
                     result.IneligibilityReasons.Add($"Could not verify on-prem mailbox size ({sizeEx.Message})");
+                }
+                else
+                {
+                    result.MailboxSizeUnreadable = result.ArchiveSizeUnreadable =
+                        $"the size read failed: {ResolveFailure(sizeEx).primary.TrimEnd('.')}";
                 }
             }
         }
@@ -1341,40 +1345,63 @@ https://admin.exchange.microsoft.com/#/migration";
         }, () => ($"Migration batch '{batchName}' queued to start.", (string?)null), allowRetry: true);
     }
 
-    private async Task<(double mailboxGB, double archiveGB)?> GetCloudMailboxSizeAsync(string emailAddress)
+    private sealed record CloudMailboxSize(double MailboxGB, string? MailboxUnreadable, double ArchiveGB, string? ArchiveUnreadable);
+
+    private async Task<CloudMailboxSize> GetCloudMailboxSizeAsync(string emailAddress)
     {
         return await RunPooledQueryAsync((ps, tracker) =>
         {
-            ps.AddCommand("Get-MailboxStatistics")
-              .AddParameter("Identity", emailAddress)
-              .AddParameter("ErrorAction", "Stop");
-            var stats = Invoke(ps, tracker);
-            var mbxStat = stats.FirstOrDefault();
-            var totalItemSize = mbxStat?.Properties["TotalItemSize"]?.Value?.ToString();
-            var mailboxGB = ParseSizeToGB(totalItemSize) ?? 0;
+            double mailboxGB = 0;
+            string? mailboxUnreadable;
+            try
+            {
+                ps.AddCommand("Get-MailboxStatistics")
+                  .AddParameter("Identity", emailAddress)
+                  .AddParameter("ErrorAction", "Stop");
+                (mailboxGB, mailboxUnreadable) = ReadSize(Invoke(ps, tracker), "Exchange returned no mailbox statistics");
+            }
+            catch (Exception ex) when (!IsCancellation(ex))
+            {
+                mailboxUnreadable = $"Get-MailboxStatistics failed: {ResolveFailure(ex).primary.TrimEnd('.')}";
+            }
 
             double archiveGB = 0;
+            string? archiveUnreadable = null;
             try
             {
                 ps.AddCommand("Get-MailboxStatistics")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("Archive")
                   .AddParameter("ErrorAction", "Stop");
-                var archiveStats = Invoke(ps, tracker);
-                var archiveStat = archiveStats.FirstOrDefault();
-                var archiveSize = archiveStat?.Properties["TotalItemSize"]?.Value?.ToString();
-                archiveGB = ParseSizeToGB(archiveSize) ?? 0;
+                var archive = ReadUnlessNotFound(ps, tracker);
+                if (archive.Count > 0)
+                    (archiveGB, archiveUnreadable) = ReadSize(archive, "Exchange returned no archive statistics");
             }
-            catch
+            catch (Exception ex) when (!IsCancellation(ex))
             {
-                // No archive mailbox
+                archiveUnreadable = $"Get-MailboxStatistics -Archive failed: {ResolveFailure(ex).primary.TrimEnd('.')}";
             }
 
-            return ((double mailboxGB, double archiveGB)?)(mailboxGB, archiveGB);
+            return new CloudMailboxSize(mailboxGB, mailboxUnreadable, archiveGB, archiveUnreadable);
         }, allowRetry: true);
     }
 
-    public async Task<string?> GetMigrationUserReportAsync(string emailAddress)
+    private static (double gb, string? unreadable) ReadSize(Collection<PSObject> stats, string noRow)
+    {
+        var row = stats.FirstOrDefault();
+        if (row is null)
+            return (0, noRow);
+
+        var reported = row.Properties["TotalItemSize"]?.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(reported))
+            return (0, "Exchange reported no TotalItemSize");
+
+        return ParseSizeToGB(reported) is { } gb
+            ? (gb, null)
+            : (0, $"the reported TotalItemSize '{reported}' is not a size this app can read");
+    }
+
+    public async Task<MigrationUserReport> GetMigrationUserReportAsync(string emailAddress)
     {
         return await RunPooledQueryAsync((ps, tracker) =>
         {
@@ -1387,7 +1414,8 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 var results = Invoke(ps, tracker);
                 var stats = results.FirstOrDefault();
-                if (stats is null) return (string?)null;
+                if (stats is null)
+                    return MigrationUserReport.Failed($"Exchange returned no migration statistics for {emailAddress}");
 
                 var sb = new StringBuilder();
 
@@ -1416,12 +1444,12 @@ https://admin.exchange.microsoft.com/#/migration";
                     sb.AppendLine(report.ToString());
                 }
 
-                return (string?)sb.ToString();
+                return MigrationUserReport.Of(sb.ToString());
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get migration report for {Email}", emailAddress);
-                return (string?)$"Error retrieving report: {ex.Message}";
+                return MigrationUserReport.Failed(ex.Message);
             }
         }, allowRetry: true);
     }

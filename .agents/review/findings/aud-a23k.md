@@ -92,4 +92,85 @@ archive again; K2c the page shows a marked size as a number.
 
 ## Guard proof
 
-Pending.
+Built as the Plan, with one wording choice the Plan left open: the size read is new code, so its failure reasons are
+written in the cmdlet's own words (`ResolveFailure`) from the start; the report fetch keeps `ex.Message`, as planned,
+for aud-a23l to convert. The fix commit carries no new code comments. `Components/Pages/Migration.razor` is 4377 lines
+before and after: `git diff --numstat` 22/22, every change in place; none of the edited lines (125-133, 296-302, 1211,
+1235, 1256, 1638, 3925, 3940, 4009, 4043-4068) is registered, and 1252 (Close, registered) is untouched.
+
+- `Models/MigrationModels.cs`: `MigrationEligibilityResult.MailboxSizeUnreadable` / `ArchiveSizeUnreadable` (11-12);
+  `MigrationUserReport(Text, Failure)` with `Of` and `Failed` (264; a blank reason is "no reason was given").
+- `Services/MigrationService.cs`:
+  - `GetCloudMailboxSizeAsync` (1350) returns `CloudMailboxSize` (1348). The mailbox read under Stop through `Invoke`:
+    its failure - "Get-MailboxStatistics failed: <reason>"; no row - "Exchange returned no mailbox statistics"; no
+    TotalItemSize, or one that does not parse - `ReadSize` (1389): "Exchange reported no TotalItemSize" / "the
+    reported TotalItemSize '<text>' is not a size this app can read". The archive read through `ReadUnlessNotFound`:
+    Exchange's not-found is no archive; any other failure - "Get-MailboxStatistics -Archive failed: <reason>"; a size
+    that does not parse - its marker. Neither read's catch takes a cancellation (the aud-a23g rule).
+  - `CheckMigrationEligibilityAsync`: ToOnPrem copies the markers (225); a size read that throws as a whole marks both,
+    "the size read failed: <reason>" (239-240), where the catch dropped it. The verdict is unchanged; ToCloud is
+    unchanged.
+  - `GetMigrationUserReportAsync` (1404) returns `MigrationUserReport`: no statistics row -
+    `Failed("Exchange returned no migration statistics for <address>")` (1418); a failed fetch - `Failed(ex.Message)`
+    (1452), where it returned the text "Error retrieving report: ...".
+- `Services/Jobs/MigrationReportExportProcessor.cs` (85): a failed outcome is a Failed row, "Report could not be fetched:
+  <reason>", logged, nothing stored.
+- `Components/Pages/Migration.razor`: the sizes (125-133 single, 296-302 bulk) - "could not be read (<reason>)" for a
+  marked size, no total beside one; the dialog opens for a report or a failure (1211); Export disabled with no report
+  (1235); the body (1256) - a failure in its own `alert-danger`, `role="alert"`, "The report could not be retrieved:
+  <reason>", the `<pre>` report body only for a report; `reportFailure` (1638), cleared with `userReport` (3925,
+  3940, 4009); `FetchUserReport` (4043-4068) - the outcome's failure is the activity's (set before the superseded
+  return, the aud-a23i rule), the store write only for a report, the page catch's failure the same shape, every
+  `userReport` write still behind the generation check.
+- `ExchangeAdminWeb.Tests/MigrationStatusPageTests.cs`: the three source scans anchored on the dialog's old condition
+  now anchor on the new one; the store-write scan anchors on the new failure branch and asserts the write is for a
+  report only. Every assertion they made holds.
+- `ExchangeAdminWeb.Tests/MigrationStubExchange.cs`: `Get-MailboxStatistics` honours `MailboxSize` / `ArchiveSize` (the
+  TotalItemSize reported; null - no row), `NoArchive` (Exchange's not-found) and `StatisticsCancelled`; the archive read
+  logs as its own step (`-Archive`); `Get-MigrationUserStatistics` honours `NoStatistics`.
+
+New `ExchangeAdminWeb.Tests/MigrationReportAndSizeReadTests.cs`, 14 tests (19 cases):
+
+| Test | Pins |
+| --- | --- |
+| `AFetchThatFails_IsAFailedOutcome_NotReportText` (throw, written) | **part 1, the finding**: no text, the failure carries the reason |
+| `NoStatistics_IsAFailedOutcome_NotAnEmptyReport` | "Exchange returned no migration statistics for <address>" |
+| `AReport_IsItsText` | the control: the report text, no failure |
+| `AFailedFetch_IsShownAsAFailure_NotStored_AndItsActivityFails` | through `FetchUserReport`: `userReport` null, `reportFailure` the reason, no fetch time, nothing stored; rendered "The report could not be retrieved: <reason>", no "Error retrieving report", no "Taken"; the activity (false, "The report for <address> could not be fetched: ...") |
+| `AReportFetchedAfterAFailure_ClearsIt` | the failure gone, the report shown and stored |
+| `TheExportJob_RecordsAFailedFetchAsAFailedRow_AndStoresNothing` | found while planning: the bulk export's row Failed, "Report could not be fetched: <reason>", nothing stored |
+| `TheExportJob_StoresAFetchedReport` | the control |
+| `AMailboxSizeThatCannotBeRead_IsMarked_NeverZero` (thrown, written, no row, does not parse) | **part 2, the finding**: the mailbox marker with its reason; the verdict Eligible, unchanged |
+| `AnArchiveSizeThatCannotBeRead_IsMarked_NotNoArchive` (written, does not parse) | the archive marker; the mailbox read as 1.5 |
+| `NoArchive_IsNoArchive` | Exchange's not-found: no marker, 0, the mailbox read |
+| `ASizeReadThatFailsAsAWhole_MarksBothSizes` | a cancellation past both reads' catches: both marked "the size read failed: ..." |
+| `APageWithAMarkedSize_SaysItCouldNotBeRead_AndGivesNoTotal` | "could not be read (the reported TotalItemSize 'Unlimited' ...)", no "0.00 GB", no "Total:" |
+| `APageWithReadableSizes_ShowsThemAndTheirTotal` | the control: 1.50 GB, Total 3.00 GB (current culture) |
+| `TheBulkTable_SaysAMarkedSizeCouldNotBeRead` | the bulk cells: "could not be read (...)", "archive could not be read (...)" |
+
+**Against the unfixed code: not runnable as a whole** - the service's return types changed, so each behaviour was put
+back at its own call site instead; each revert fails the tests that pin it.
+
+Mutations at the call site, by the same driver and protocol (moved to the session scratchpad's `a23jklmn-work`
+folder: `mutate.ps1`, `round-a23k.ps1`), over the 1129 tests of the same filter. Bytes (LF) before every mutation and
+after every restore: service `cbd557f6361a4f531ad9dfa1896fcf1b`, page `88696b1a483741d85ab30e2d9eb57ec4`, processor
+`43d3767b83878c24f18759fae9f65cdb`.
+
+| Mutation | File | md5 mutated | Failed (of 1129) | Restored, rerun |
+| --- | --- | --- | --- | --- |
+| K1 (the record's (1)): text-as-report again (`Of("Error retrieving report: ...")`) | service | `73ee23589445c9c74edd1def2cd02e40` | 4: `AFetchThatFails...` (both), `AFailedFetch_IsShownAsAFailure...`, `TheExportJob_RecordsAFailedFetch...` | equal; 1129/0 |
+| K2 (the record's (2)): 0 again - a size that does not parse, no marker | service | `02efbe10916e5aa1bc8c18bf33a18305` | 3: `AMailboxSizeThatCannotBeRead...` (does not parse), `AnArchiveSizeThatCannotBeRead...` (does not parse), `APageWithAMarkedSize...` | equal; 1129/0 |
+| K1b: the page stores and shows a failed outcome as the report | page | `d712939bb203a0d7374051780e306a2b` | 2: `AFailedFetch_IsShownAsAFailure...`, `MigrationStatusPageTests.ReopeningAReportDoesNotRefetchIt...` | equal; 1129/0 |
+| K1c: the bulk export stores a failed outcome | processor | `a04c62230fb0a6a4ca7a8125abb3c3f1` | 1: `TheExportJob_RecordsAFailedFetch...` | equal; 1129/0 |
+| K2b: the archive read's failure is no archive again | service | `54c0de5cedb9ceb73d1ab0d300309550` | 1: `AnArchiveSizeThatCannotBeRead...` (written) | equal; 1129/0 |
+| K2c: the page shows a marked size as a number | page | `348de222488fd4eb996bf5f4dd5fbdb1` | 1: `APageWithAMarkedSize...` | equal; 1129/0 |
+| K2d: a size read that fails as a whole dropped again | service | `1961d6309b6be7b21f9e0a93d8636427` | 1: `ASizeReadThatFailsAsAWhole...` | equal; 1129/0 |
+
+md5s (LF) of the other files at the fix commit: `Models/MigrationModels.cs` `8daab313723deb16fedce78816af219e`,
+`MigrationReportAndSizeReadTests.cs` `e2fda28402ff50ff7a94dc4aedfbb871`, `MigrationStubExchange.cs`
+`0d4ae546a9f59e95f2c2421090d0a25e`, `MigrationStatusPageTests.cs` `5ccadeeca6599e4817485c1b73d6d7ea`.
+
+On the fix commit's tree: Release build 0 errors; the 1129 focused tests 1129/0; `dotnet format --verify-no-changes`
+exit 0; `git diff --check HEAD` exit 0; `wc -l` 4377. Known gap, unchanged here: the ToCloud size gate reads the
+on-premises size through `ExchangeServiceBase.GetOnPremMailboxSizeAsync`, which reads an unparseable size as 0 and any
+archive failure as no archive - named in the hand-back; the base class is outside this brief.

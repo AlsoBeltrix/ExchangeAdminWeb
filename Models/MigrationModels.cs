@@ -8,6 +8,8 @@ public class MigrationEligibilityResult
     public List<string> Warnings { get; set; } = new();
     public double MailboxSizeGB { get; set; }
     public double ArchiveSizeGB { get; set; }
+    public string? MailboxSizeUnreadable { get; set; }
+    public string? ArchiveSizeUnreadable { get; set; }
     public double TotalSizeGB => MailboxSizeGB + ArchiveSizeGB;
 
     /// <summary>
@@ -258,6 +260,14 @@ public sealed record UnreadableMigrationMailbox(string? Identity, string Reason)
 /// hand-off to ReplaceBatchUsers stays one line.
 /// </summary>
 public sealed record MigrationMailboxList(List<MigrationUserInfo> Mailboxes, List<UnreadableMigrationMailbox> Unreadable);
+
+public sealed record MigrationUserReport(string? Text, string? Failure)
+{
+    public static MigrationUserReport Of(string text) => new(text, null);
+
+    public static MigrationUserReport Failed(string? reason) =>
+        new(null, string.IsNullOrWhiteSpace(reason) ? "no reason was given" : reason);
+}
 
 public class MigrationUserSearchResult
 {

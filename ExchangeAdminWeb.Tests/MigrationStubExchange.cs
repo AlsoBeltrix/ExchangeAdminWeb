@@ -375,10 +375,18 @@ internal sealed class MigrationStubExchange : IDisposable
         ("Stop-MigrationUser", "[string] $Identity, [switch] $Confirm", ""),
         ("Stop-MigrationBatch", "[string] $Identity, [switch] $Confirm", ""),
         ("New-MigrationBatch", "[string] $Name, [object] $CSVData, [object] $SourceEndpoint, [object] $TargetEndpoint, [object] $TargetDeliveryDomain, [object] $TargetDatabases, [object] $NotificationEmails, [object] $AutoStart, [object] $AutoComplete", ""),
-        ("Get-MailboxStatistics", "[string] $Identity, [switch] $Archive", """
+        // aud-a23k. MailboxSize / ArchiveSize: the TotalItemSize reported instead (null: no row); NoArchive: the archive read
+        // is Exchange's not-found; StatisticsCancelled: a cancellation, which neither read's own catch takes.
+        ("Get-MailboxStatistics", "[string] $Identity, [switch] $Archive", $$"""
+            if ($Behaviour['StatisticsCancelled']) { throw [System.OperationCanceledException]::new('the size read was cancelled') }
+            if ($Archive -and $Behaviour['NoArchive']) { {{Lookup}}; return }
+            $key = if ($Archive) { 'ArchiveSize' } else { 'MailboxSize' }
+            if ($Behaviour.ContainsKey($key)) { if ($null -ne $Behaviour[$key]) { [pscustomobject]@{ TotalItemSize = $Behaviour[$key] } }; return }
             [pscustomobject]@{ TotalItemSize = '1.5 GB (1,610,612,736 bytes)' }
             """),
+        // aud-a23k. NoStatistics: no row at all.
         ("Get-MigrationUserStatistics", "[string] $Identity, [object] $IncludeReport", """
+            if ($Behaviour['NoStatistics']) { return }
             [pscustomobject]@{ Status = 'Synced'; Report = 'the move report' }
             """),
         // aud-a23i. A Blocked Senders write, for the base class's failure message outside Migration. NestedSuppressedError:
@@ -392,7 +400,7 @@ internal sealed class MigrationStubExchange : IDisposable
     private static string Stub(string name, string parameters, string answer) => $$"""
         [CmdletBinding()]
         param({{parameters}})
-        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Archive', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails' } | ForEach-Object { " -$_" }) -join ''
+        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails' } | ForEach-Object { " -$_" }) -join ''
         $step = '{{name}}' + $switches
         $null = $Calls.Add(("$step $Identity").Trim())
         $failure = $Failures["$step $Identity"]
