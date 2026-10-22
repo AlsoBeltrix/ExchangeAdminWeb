@@ -7,9 +7,9 @@ since the legacy import; an admin following the text edits a file nothing reads.
 Editable Attributes table drops a row with a blank name or label on save without saying so (since
 aud-a28f at least audited as a removal), and accepts two rows with the same LDAP name while the
 store keeps only one.
-**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
+**Status**: Merged to master (`f1b4692d`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-aa5d4735f85b48351`
-**Commit**: `887d8c22` (comments `87660ef8`)
+**Commit**: `887d8c22` (comments `87660ef8`; merged `f1b4692d`)
 **Reviewer**: implementer (surfaced by the aud-a28f/a26e agent, 2026-10-22, candidates 3 and 4 of its hand-back)
 
 ## Evidence

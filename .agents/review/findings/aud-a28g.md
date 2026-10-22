@@ -5,9 +5,9 @@ attempt that ends with no durable record. `ADAttributeEditor.razor`'s save handl
 calling the service when authorization is denied, when the allowlist is corrupt, and when an
 attribute is above the caller's level; none of those writes an audit record. Its catch sends a
 notice but writes no record either.
-**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
+**Status**: Merged to master (`f1b4692d`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-aa5d4735f85b48351`
-**Commit**: `e993a83f` (comments `87660ef8`)
+**Commit**: `e993a83f` (comments `87660ef8`; merged `f1b4692d`)
 **Reviewer**: implementer (surfaced by the aud-a28f/a26e agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence

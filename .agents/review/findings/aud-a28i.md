@@ -6,9 +6,9 @@ nearly the same time: A reads the "before" rows, B saves a different allowlist, 
 then deletes and replaces the whole table in a later transaction. B's change disappears, and A's
 success record is computed from the pre-B rows, so the Admin Event Log never shows who removed B's
 attribute. Same class as aud-a33b / aud-a33c (decide under the write lock from current rows).
-**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
+**Status**: Merged to master (`f1b4692d`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-aa5d4735f85b48351`
-**Commit**: `ff6823b8` (comments `87660ef8`)
+**Commit**: `ff6823b8` (comments `87660ef8`; merged `f1b4692d`)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-3, `prompt-attr-batch-3.md`, 2026-10-22)
 
 ## Evidence
