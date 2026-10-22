@@ -194,8 +194,11 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     private static DateTime Utc(string value) =>
         DateTime.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal);
 
-    /// <summary>What the next status check reads: a Scheduled auto-reply with this window.</summary>
-    private void ReadBack(DateTime start, DateTime end)
+    /// <summary>
+    /// What the next status check reads: a Scheduled auto-reply with this window, each time handed to
+    /// the stub as the object given - a <see cref="DateTime"/>, or (aud-a7h) whatever else it may be.
+    /// </summary>
+    private void ReadBack(object start, object end)
     {
         _read["State"] = "Scheduled";
         _read["StartTime"] = start;
@@ -719,6 +722,88 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         var text = await CheckedStatus(page);
 
         Assert.Contains("2026-10-30 13:00 (UTC, UTC+00:00) \u2014 2026-11-06 22:00 (UTC, UTC+00:00)", text, StringComparison.Ordinal);
+    }
+
+    // aud-a7h, the finding: the read took each time `as DateTime?`, so any other type came back null and
+    // the tab showed a Scheduled auto-reply with no window. Each form here names the window of aud-a7f's
+    // first New York case - 13:00Z on 30 October, 22:00Z on 6 November - and must show it the same way.
+    // The offsets are not the browser's (+05:30, -05:00), so a reading that kept the reported wall clock
+    // instead of converting the instant would show other times. The expected value is a literal.
+    [Theory]
+    [InlineData("DateTimeOffset")]
+    [InlineData("PSObject wrapping a DateTimeOffset")]
+    [InlineData("PSObject wrapping a DateTime")]
+    [InlineData("ISO 8601 text")]
+    public async Task AReadScheduleOfAnotherType_IsShownAsTheSameInstant(string form)
+    {
+        var start = new DateTimeOffset(2026, 10, 30, 18, 30, 0, TimeSpan.FromHours(5.5));
+        var end = new DateTimeOffset(2026, 11, 7, 3, 30, 0, TimeSpan.FromHours(5.5));
+        (object Start, object End) read = form switch
+        {
+            "DateTimeOffset" => (start, end),
+            "PSObject wrapping a DateTimeOffset" => (new PSObject(start), new PSObject(end)),
+            "PSObject wrapping a DateTime" => (new PSObject(Utc("2026-10-30T13:00:00Z")), new PSObject(Utc("2026-11-06T22:00:00Z"))),
+            "ISO 8601 text" => ("2026-10-30T13:00:00Z", "2026-11-06T17:00:00-05:00"),
+            _ => throw new ArgumentOutOfRangeException(nameof(form), form, null),
+        };
+        var (page, _) = BuildPage("none", browserZone: "America/New_York");
+        ReadBack(read.Start, read.End);
+
+        var text = await CheckedStatus(page);
+
+        Assert.Contains("2026-10-30 09:00 (America/New_York, UTC-04:00) \u2014 2026-11-06 17:00 (America/New_York, UTC-05:00)",
+            text, StringComparison.Ordinal);
+    }
+
+    // aud-a7h. Text with no Z and no offset names no instant, like a DateTime of Kind Unspecified
+    // (aud-a7f): shown as reported and given no zone, not read as UTC or as the server's time.
+    [Fact]
+    public async Task AReadScheduleAsTextThatNamesNoZone_IsShownAsReported_AndIsGivenNone()
+    {
+        var (page, _) = BuildPage("none", browserZone: "America/New_York");
+        ReadBack("2026-10-30T13:00:00", "2026-11-06 22:00");
+
+        var text = await CheckedStatus(page);
+
+        Assert.Contains("2026-10-30 13:00 (time zone not reported) \u2014 2026-11-06 22:00 (time zone not reported)",
+            text, StringComparison.Ordinal);
+        Assert.DoesNotContain("America/New_York", text, StringComparison.Ordinal);
+    }
+
+    // aud-a7h. What cannot be read as a time is shown as a note naming what came back, never as a
+    // Scheduled auto-reply with no window. A culture-formatted text is among them: reading 10/30/2026
+    // means guessing which culture wrote it. A deserialized object is named by its type name, which
+    // says what it was, not by its base object (a property bag).
+    [Theory]
+    [InlineData("a number", "System.Int32")]
+    [InlineData("text in a culture's own format", "System.String")]
+    [InlineData("a deserialized object", "Deserialized.Contoso.Data.ExDateTime")]
+    public async Task AReadScheduleThisAppCannotRead_IsShownAsAMarkerNamingWhatCameBack_NeverAsAnEmptyWindow(string form, string typeName)
+    {
+        object read;
+        switch (form)
+        {
+            case "a number":
+                read = 42;
+                break;
+            case "text in a culture's own format":
+                read = "10/30/2026 1:00:00 PM";
+                break;
+            default:
+                var deserialized = new PSObject();
+                deserialized.TypeNames.Insert(0, typeName);
+                deserialized.Properties.Add(new PSNoteProperty("DateTime", "Friday, October 30, 2026 1:00:00 PM"));
+                read = deserialized;
+                break;
+        }
+        var (page, _) = BuildPage("none", browserZone: "America/New_York");
+        ReadBack(read, read);
+
+        var text = await CheckedStatus(page);
+
+        var marker = $"reported in a form this app cannot read: {typeName}";
+        Assert.Contains("Schedule:", text, StringComparison.Ordinal);
+        Assert.Contains($"{marker} \u2014 {marker}", text, StringComparison.Ordinal);
     }
 
     // aud-a7f. The owner's notice dated the change with the server's clock and no zone. It is the

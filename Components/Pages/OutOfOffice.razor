@@ -63,9 +63,9 @@
                             @checkResult.EmailAddress
                         </div>
                         <div class="card-body">
-                            @if (checkResult.State == "Scheduled" && checkResult.StartTime.HasValue)
+                            @if (checkResult.State == "Scheduled" && checkResult.StartTime is { } start)
                             {
-                                <p><strong>Schedule:</strong> @ReadScheduleTime(checkResult.StartTime.Value) — @(checkResult.EndTime is { } end ? ReadScheduleTime(end) : "")</p>
+                                <p><strong>Schedule:</strong> @ReadScheduleTime(start) — @(checkResult.EndTime is { } end ? ReadScheduleTime(end) : "")</p>
                             }
                             @if (!string.IsNullOrWhiteSpace(checkResult.InternalMessage))
                             {
@@ -226,8 +226,10 @@
     // aud-a7f. A read schedule is shown in the zone the operator enters one in - the browser's, read
     // once on the first render - with the zone and offset named, as the owner's notice names them. With
     // no browser zone the instant is still known, so it is shown in UTC and labelled UTC: a stated
-    // reference for a known moment, not a guessed zone.
-    private string ReadScheduleTime(DateTime reported) =>
+    // reference for a known moment, not a guessed zone. aud-a7h: a time Exchange reported in a form this
+    // app cannot read is shown as a note naming what came back, so the schedule line is there whenever
+    // a start was reported at all.
+    private string ReadScheduleTime(ReportedTime reported) =>
         OutOfOfficeRequest.ShowReported(reported, scheduleZone ?? TimeZoneInfo.Utc);
 
     protected override async Task OnInitializedAsync()
