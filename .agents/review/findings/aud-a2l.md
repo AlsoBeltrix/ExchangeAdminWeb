@@ -33,3 +33,18 @@ failure when the member is absent.
 ## Guard proof
 
 Pending.
+
+## Folded in: the duplicate-value race (codex, a2j review, 2026-10-22)
+
+codex's review of aud-a2j (`prompt-a2j.md`) raised one LOW candidate that belongs to this record
+rather than its own: when the a2i membership read says "not a member" and another actor adds the
+same room DN before `Set-ADGroup -Add @{member=<room DN>}` runs, Active Directory raises an
+"attribute or value already exists" error for the linked-attribute add, and the code treats every
+`Set-ADGroup` error as a failed row (around `Services/ConferenceRoomService.cs:1705`). The row
+is then reported PARTIAL after the Exchange metadata writes even though the membership is present;
+a re-run says "already a member". The read-back this record adds is the answer to both: after the
+write, whatever `Set-ADGroup` reported, re-read `member` on the group's own domain; present means
+success (a duplicate-value error included), absent means a failed row. Keep every other write
+error a failure. Test: a stand-in whose `Set-ADGroup` raises the duplicate-value error while the
+read-back shows the room present (success, audited as written); the same error with the room
+absent (failure).
