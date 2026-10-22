@@ -49,7 +49,10 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <summary>What the stand-in <c>Get-ADUser -Identity</c> answers, keyed by objectGUID.</summary>
     public Hashtable DirectoryObjects { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
-    /// <summary>Command name to error message: that stand-in records its call, then throws the message.</summary>
+    /// <summary>
+    /// Command name to error message: that stand-in records its call, then throws the message - or, given an
+    /// exception, throws it as it is, so it becomes the <c>InnerException</c> of what PowerShell throws (aud-a2n).
+    /// </summary>
     /// <remarks>
     /// Only for a command the code calls with <c>-ErrorAction Stop</c> (or none). Called with
     /// <c>SilentlyContinue</c>, PowerShell suppresses the throw and the stand-in carries on and answers.
@@ -217,12 +220,37 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public Hashtable DirectoryGroupMemberReadBack { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
-    /// aud-a2l. Active Directory's refusal of a member-attribute add for a DN the group already holds, as
-    /// the stand-in <c>Set-ADGroup</c> raises it: the Win32 1378 text, one of the forms
-    /// <c>ConferenceRoomService.IsDuplicateMemberValue</c> recognizes (which form the real cmdlet reports
-    /// is not established - no directory is probed).
+    /// aud-a2l. The text of Active Directory's refusal of a member-attribute add for a DN the group already
+    /// holds: the Win32 1378 text, one of the forms <c>ConferenceRoomService.IsDuplicateMemberValue</c>
+    /// recognizes (which form the real cmdlet reports is not established - no directory is probed). Since
+    /// aud-a2n the message of the coded refusal the stand-in raises (<see cref="DuplicateMemberValueRefusal"/>),
+    /// and, as a <see cref="Failures"/> entry, the refusal with no code at all.
     /// </summary>
     public const string DuplicateMemberValueError = "The specified account name is already a member of the group.";
+
+    /// <summary>
+    /// aud-a2n. What the stand-in <c>Set-ADGroup</c> raises for a DN the group already holds, through
+    /// <c>Write-Error -Exception</c> - so under <c>-ErrorAction Stop</c> it sits in the thrown exception's error
+    /// record, not in its <c>InnerException</c>: unless a test replaces it, a directory exception with the
+    /// 1378 code and text (<c>ERROR_MEMBER_IN_ALIAS</c>; which code the real module raises is not established -
+    /// no directory is probed). Read when a directory runspace opens.
+    /// </summary>
+    public Exception DuplicateMemberValueRefusal { get; set; } =
+        new Microsoft.ActiveDirectory.Management.ADException(DuplicateMemberValueError, 1378);
+
+    /// <summary>
+    /// aud-a2n. The stand-in <c>Set-ADGroup</c> applies the add and then throws this (a message, or an exception
+    /// as it is) - the write that committed and then failed, a timeout after the server took it. Null, the
+    /// default, throws nothing. Read when a directory runspace opens.
+    /// </summary>
+    public object? SetAdGroupFailsAfterApplying { get; set; }
+
+    /// <summary>
+    /// aud-a2n. Once a <c>Set-ADGroup</c> has been called, every read of a group's <c>member</c> attribute fails
+    /// with this message: a read-back that cannot be made, the reads before the write unaffected. Null, the
+    /// default, fails nothing. Read when a directory runspace opens.
+    /// </summary>
+    public string? MemberReadBackFailure { get; set; }
 
     /// <summary>
     /// aud-a2l. The stand-in <c>Set-ADGroup</c> reports success and changes nothing - the write a domain
@@ -473,6 +501,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("GlobalCatalogs", GlobalCatalogs);
         rs.SessionStateProxy.SetVariable("AdwsMaxGroupOrMemberEntries", AdwsMaxGroupOrMemberEntries);
         rs.SessionStateProxy.SetVariable("DuplicateMemberValueError", DuplicateMemberValueError);
+        rs.SessionStateProxy.SetVariable("DuplicateMemberValueRefusal", DuplicateMemberValueRefusal);
+        rs.SessionStateProxy.SetVariable("SetAdGroupFailsAfterApplying", SetAdGroupFailsAfterApplying);
+        rs.SessionStateProxy.SetVariable("MemberReadBackFailure", MemberReadBackFailure);
         rs.SessionStateProxy.SetVariable("SetAdGroupChangesNothing", SetAdGroupChangesNothing);
         rs.SessionStateProxy.SetVariable("AnotherAddLandsFirst", AnotherAddLandsFirst);
         using var init = PowerShell.Create();
@@ -812,6 +843,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
             $group = @($reached | Where-Object { "$Identity" -eq (Get-StandInGroupDn "$_") -or "$Identity" -eq "$_" })
             if ($group.Count -ne 1) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
             $memberRead = @($Properties) -contains 'member'
+            # aud-a2n. MemberReadBackFailure: a member read after any Set-ADGroup fails - the read-back, not the checks before it.
+            if ($memberRead -and $global:MemberReadBackFailure -and @($global:Calls | Where-Object { $_['__Command'] -eq 'Set-ADGroup' }).Count -gt 0) { Write-Error "$($global:MemberReadBackFailure)"; return }
             $answer = $global:DirectoryGroupReadBack["$Identity"]
             if ($memberRead -and $global:DirectoryGroupMemberReadBack.ContainsKey("$Identity")) { $answer = $global:DirectoryGroupMemberReadBack["$Identity"] }
             $row = @{ ObjectGUID = [guid]"$(if ($answer) { $answer } else { $group[0] })"; DistinguishedName = (Get-StandInGroupDn "$($group[0])") }
@@ -823,8 +856,10 @@ internal sealed class ExchangeWriteHarness : IDisposable
         # aud-a2l. And it writes: the DN goes on the member attribute (DirectoryGroupMembers, the one member list
         # the stand-in keeps for its groups), so a read-back sees it - unless SetAdGroupChangesNothing, a write
         # that reports success and changes nothing. A DN already there is refused, as Active Directory refuses
-        # a value already present (DuplicateMemberValueError, Write-Error then return); AnotherAddLandsFirst puts
-        # the DN there just before the call, another actor's add, and before Failures['Set-ADGroup'] can throw.
+        # a value already present (DuplicateMemberValueRefusal, aud-a2n: Write-Error -Exception then return, so
+        # the exception sits in the error record); AnotherAddLandsFirst puts the DN there just before the call,
+        # another actor's add, and before Failures['Set-ADGroup'] can throw. aud-a2n: SetAdGroupFailsAfterApplying
+        # throws after the add was applied - the write that committed and then failed.
         function global:Set-ADGroup {
             [CmdletBinding()] param($Identity, $Add, $Server, $Credential)
             $member = if ($null -ne $Add) { "$($Add['member'])" } else { '' }
@@ -836,8 +871,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
             $group = @(Find-StandInGroups $reach | Where-Object { "$Identity" -eq "$_" -or "$Identity" -eq (Get-StandInGroupDn "$_") })
             if ($group.Count -ne 1) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
             if (-not $member) { return }
-            if (@($global:DirectoryGroupMembers | Where-Object { "$_" -ieq $member }).Count -gt 0) { Write-Error $global:DuplicateMemberValueError; return }
+            if (@($global:DirectoryGroupMembers | Where-Object { "$_" -ieq $member }).Count -gt 0) { Write-Error -Exception $global:DuplicateMemberValueRefusal; return }
             if (-not $global:SetAdGroupChangesNothing) { [void]$global:DirectoryGroupMembers.Add($member) }
+            if ($null -ne $global:SetAdGroupFailsAfterApplying) { throw $global:SetAdGroupFailsAfterApplying }
         }
         # aud-a2i. The real cmdlet resolves every member server-side: Active Directory Web Services refuses a
         # group of more than MaxGroupOrMemberEntries members (5,000 by default), and the read faults on a

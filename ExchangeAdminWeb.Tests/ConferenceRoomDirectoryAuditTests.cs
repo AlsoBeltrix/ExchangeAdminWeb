@@ -45,6 +45,9 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         "The operation on the group failed because it's out of the current user's write scope. The action can't be "
         + "performed on the object because the object is being synchronized from your on-premises organization.";
 
+    // A write error that is not a value already there (aud-a2n).
+    private const string TimedOut = "The operation was aborted because the client side timeout limit was exceeded.";
+
     private readonly ExchangeWriteHarness _h = new();
     private readonly ActivityProgressService _progress = new();
     private readonly SectionAccessService _sectionAccess;
@@ -148,6 +151,7 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         Assert.Equal("Success", row.GetProperty("result").GetString());
         Assert.Equal("CN=Room 1,OU=Rooms,DC=contoso,DC=test", ExchangeWriteHarness.AddedMember(Assert.Single(_h.CallsTo("Set-ADGroup"))));
         Assert.Equal(CheckedObject, row.GetProperty(ValidatedMailbox.DirectoryAuditKey).GetString());
+        Assert.False(row.TryGetProperty(ConferenceRoomService.MembershipConfirmedAuditKey, out _), row.ToString());
     }
 
     [Theory]
@@ -191,12 +195,12 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
     [InlineData("page", false)]
     [InlineData("bulk", true)]
     [InlineData("bulk", false)]
-    public async Task AnOnPremAddRefusedAsAValueAlreadyThere_IsRecordedAsWrittenOnlyWhenTheReadBackShowsTheRoom(string surface, bool theRoomIsThere)
+    public async Task AnOnPremAddRefusedAsAValueAlreadyThere_IsNeverRecordedAsWritten(string surface, bool theRoomIsThere)
     {
-        // aud-a2l, the folded-in race. The write is refused as a value already there: a success naming the
-        // room when the read-back finds it (another actor's add landed first), a failure naming nothing when
-        // it does not. Recorded as written in the first case by the record's rule: the row's own write was
-        // refused, but the membership it asked for is in place and confirmed.
+        // aud-a2l's race, and aud-a2n's folded-in item 1. The write is refused as a value already there: a
+        // success when the read-back finds the room (another actor's add landed first), a failure when it does
+        // not - and in neither is the room recorded as written, this row's write having been refused (aud-a2g:
+        // name only what a write produced). The success records the confirmed membership instead.
         _h.ListSyncState[ConferenceRoomService.BuildRoomListName(Building)] = true;
         _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
         if (theRoomIsThere)
@@ -207,16 +211,39 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         var row = await ApplyAndReadAudit(surface);
 
         Assert.Single(_h.CallsTo("Set-ADGroup"));
+        Assert.False(row.TryGetProperty(ValidatedMailbox.DirectoryAuditKey, out _), row.ToString());
         if (theRoomIsThere)
         {
             Assert.Equal("Success", row.GetProperty("result").GetString());
-            Assert.Equal(CheckedObject, row.GetProperty(ValidatedMailbox.DirectoryAuditKey).GetString());
+            Assert.StartsWith(ConferenceRoomService.ConfirmedAfterRefusal,
+                row.GetProperty(ConferenceRoomService.MembershipConfirmedAuditKey).GetString(), StringComparison.Ordinal);
         }
         else
         {
             Assert.Equal("Failed", row.GetProperty("result").GetString());
-            Assert.False(row.TryGetProperty(ValidatedMailbox.DirectoryAuditKey, out _), row.ToString());
+            Assert.False(row.TryGetProperty(ConferenceRoomService.MembershipConfirmedAuditKey, out _), row.ToString());
         }
+    }
+
+    [Theory]
+    [InlineData("page")]
+    [InlineData("bulk")]
+    public async Task AnOnPremAddThatAppliedThenFailed_IsASuccess_RecordedAsConfirmed_NotAsWritten(string surface)
+    {
+        // aud-a2n, the folded-in item 2: Set-ADGroup applied the add, then reported a timeout. The read-back
+        // finds the room, so the row succeeds; the audit names no written object and records the confirmed
+        // membership with the write's error text.
+        _h.ListSyncState[ConferenceRoomService.BuildRoomListName(Building)] = true;
+        _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
+        _h.SetAdGroupFailsAfterApplying = TimedOut;
+
+        var row = await ApplyAndReadAudit(surface);
+
+        Assert.Equal("Success", row.GetProperty("result").GetString());
+        Assert.False(row.TryGetProperty(ValidatedMailbox.DirectoryAuditKey, out _), row.ToString());
+        var confirmed = row.GetProperty(ConferenceRoomService.MembershipConfirmedAuditKey).GetString();
+        Assert.StartsWith(ConferenceRoomService.ConfirmedAfterWriteError, confirmed, StringComparison.Ordinal);
+        Assert.Contains(TimedOut, confirmed, StringComparison.Ordinal);
     }
 
     [Theory]

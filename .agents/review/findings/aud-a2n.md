@@ -5,9 +5,9 @@
 after Exchange metadata committed (no wrong write; a re-run says "already a member"). The outer
 catch's log line "Add-ADGroupMember on-prem room-list write failed" names a cmdlet the code has
 not used since aud-a2j, which misleads whoever reads the log.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
-**Commit**: -
+**Status**: Fixed on branch (guard proof below), with both folded-in items; not merged; independent review pending; dev acceptance owed
+**Branch**: `worktree-agent-a76a90b485c4fa8ce`
+**Commit**: the commit that carries this section (fix, tests, comments, record); plan `bd961140`; after aud-a2m's `8441f609`
 **Reviewer**: implementer (surfaced by the aud-a2k/a2l agent, 2026-10-22, candidates 1 and 3 of its hand-back)
 
 ## Evidence
@@ -131,9 +131,166 @@ green. Comments after the round.
 `ExchangeAdminWeb.Tests/ConferenceRoomRoomListPreflightTests.cs`,
 `ExchangeAdminWeb.Tests/ConferenceRoomDirectoryAuditTests.cs`, this record.
 
+## Approach (as implemented)
+
+- `AddToRoomListViaAdAsync` (`Services/ConferenceRoomService.cs`) returns `(error, written, confirmed)`.
+  The write, aud-a2j's and unchanged, runs in `try` / `catch (Exception)` / `finally`: the thrown
+  exception - or, not thrown, the first error record's exception when `HadErrors` - is held as
+  `writeError`, and the `finally` clears the commands and the error stream (aud-a2l's). `refusedAsPresent`
+  is `IsValueAlreadyPresentRefusal(writeError)`. Then aud-a2l's read-back, unchanged, whatever the write
+  reported:
+  - a read error: "Adding <room> to on-prem room list '<list>' could not be confirmed: reading its group
+    <DN> back from <server> failed: <read error>", then " Before that, Active Directory refused the add as a
+    value already there (<error>)." or " Before that, Set-ADGroup reported an error (<error>)." when the
+    write erred; logged;
+  - the room absent: aud-a2l's "... was not confirmed: its group <DN>, read back from <server>, does not
+    hold the room as a member", ending "." with no write error, ", though Active Directory refused the add
+    as a value already there (<error>)." for a refusal (aud-a2l's words) and ", and Set-ADGroup reported an
+    error (<error>)." for any other error; logged;
+  - the room there and no write error: `(null, roomGuid, null)`, written, as before;
+  - the room there after a write error: `(null, null, <detail>)`, logged as a warning - `ConfirmedAfterRefusal`
+    or `ConfirmedAfterWriteError`, then " (<error>): its group <DN>, read back from <server>, holds the room.
+    No directory object is recorded as written: " and "this row's add did not put it there." or "whether
+    this row's add put it there is not known.".
+  The outer catch now sees only the steps around the write; its log line is "On-prem room-list member add
+  (Set-ADGroup on the group's member attribute) failed for {Room} on {List}", its message unchanged.
+- `AddToRoomListAsync` puts the detail in `RoomOperationResult.DirectoryMembershipConfirmed` and in the
+  on-prem step's `Error` (the step still `Add to '<list>' (on-prem)`, successful);
+  `SetRoomMetadataAndListAsync` carries it to the row beside `WrittenDirectoryObject`. The row's message
+  is unchanged.
+- `IsValueAlreadyPresentRefusal(Exception)`, internal static: the codes of the exceptions
+  `ExceptionsCarriedBy` yields - the exception, each `InnerException`, and each `IContainsErrorRecord`'s
+  `ErrorRecord.Exception`, each once - read by `DirectoryErrorCode` from a type, or a base type, named
+  `Microsoft.ActiveDirectory.Management.ADException` (its `ErrorCode` by reflection; 0, or a read that
+  throws, is no code). Any code: true when one is in `ValueAlreadyPresentCodes` {20, 68, 1378, 8205, 8305,
+  8323}. None: `IsDuplicateMemberValue(Exception)`, aud-a2l's text match, which now walks the same
+  exceptions; its markers are unchanged.
+- Audit: `ConferenceRoomService.MembershipConfirmedAuditKey` (`membershipConfirmedPresent`) and
+  `WithMembershipConfirmed(extra, detail)`, which adds the key only for a detail. The page's
+  `AuditFinderAction` takes `membershipConfirmed` and wraps the `extra` it built
+  (`Components/Pages/ConferenceRooms.razor`: three lines edited in place, 1758 lines before and after); the
+  bulk processor's `Audit` the same (`Services/Jobs/ConferenceRoomBulkProcessor.cs`); the model gains
+  `DirectoryMembershipConfirmed` (`Models/ConferenceRoomModels.cs`).
+- Harness: the `Microsoft.ActiveDirectory.Management.ADException` double (`AdManagementExceptionDoubles.cs`,
+  Comms10k's) gains a `(message, errorCode)` constructor and `ErrorCode`. `ExchangeWriteHarness`:
+  `DuplicateMemberValueRefusal` (by default that double, 1378 and the 1378 text), with which the stand-in
+  `Set-ADGroup` refuses a DN already there (`Write-Error -Exception` then `return`, so under `-ErrorAction
+  Stop` the exception sits in the thrown exception's error record); `SetAdGroupFailsAfterApplying`, thrown
+  after the add is applied; `MemberReadBackFailure`, with which the stand-in `Get-ADGroup` fails a read of
+  `member` made after any `Set-ADGroup` call. `Failures['Set-ADGroup']` may be an exception: the stand-in
+  throws it as it is, so its code is the `InnerException` of what PowerShell throws.
+- Tests (`ConferenceRoomRoomListPreflightTests`): new - `AValueAlreadyThereRefusal_IsKnownByItsCode_InAnyLanguage`
+  (68 German, both ways; 20 French; 1378 Dutch), `AWriteErrorWithAnotherCode_IsNotTakenForAValueAlreadyThere_ThoughItsTextSaysAlreadyExists`
+  (both ways), `ASetADGroupThatAppliedTheAddThenFailed_IsASuccess_WithTheErrorInTheDetail_NothingRecordedAsWritten`,
+  `ASetADGroupThatFailedWithoutApplying_StaysAFailedRow_CarryingTheWriteError`,
+  `AReadBackThatFailsAfterAWriteError_IsAFailedRow_CarryingBothErrors`,
+  `AValueAlreadyThereRefusal_IsDecidedByItsCode_TheTextOnlyWhenItCarriesNone` (twelve: each code, the code
+  directly, as an inner exception, in an error record and on a derived type; codes outside the set under
+  duplicate text; no code) and `AnErrorCodeOnAnyOtherExceptionType_IsNotADirectoryCode`. Changed -
+  `AnOnPremAddRefusedAsAValueAlreadyThere_IsSettledByTheReadBack` (never written; the refusal's detail when
+  the room is there), `AnyOtherWriteError_StaysAFailure_EvenWithTheRoomThere` renamed
+  `AnyOtherWriteError_WithTheRoomThere_IsSettledByTheReadBack_NotRecordedAsWritten` (its outcome inverted, as
+  the folded-in item 2 requires), `TheOnPremAdd_IsConfirmedByReadingTheGroupsMemberAttributeBack` (no detail)
+  and `TheHarness_SetADGroup_AddsTheMember_RefusesOneAlreadyThere_AndCanDropOrBeRaced` (the refusal's
+  exception in the error record; the two new knobs). `ConferenceRoomDirectoryAuditTests`, page and bulk:
+  `AnOnPremAddRefusedAsAValueAlreadyThere_IsRecordedAsWrittenOnlyWhenTheReadBackShowsTheRoom` renamed
+  `AnOnPremAddRefusedAsAValueAlreadyThere_IsNeverRecordedAsWritten`; new
+  `AnOnPremAddThatAppliedThenFailed_IsASuccess_RecordedAsConfirmed_NotAsWritten`; `TheOnPremRoomListAdd_IsRecordedAsWritten`
+  also pins no `membershipConfirmedPresent`.
+
 ## Guard proof
 
-Pending.
+| Test | What it pins |
+| --- | --- |
+| `AValueAlreadyThereRefusal_IsKnownByItsCode_InAnyLanguage` (68 German, thrown and in the error record; 20 French; 1378 Dutch) | the finding: a raced add refused with a value-already-there code under a message no English marker matches - success, not partial, nothing written, the detail opening `ConfirmedAfterRefusal`, the read-back made (three membership reads) |
+| `AWriteErrorWithAnotherCode_IsNotTakenForAValueAlreadyThere_ThoughItsTextSaysAlreadyExists` (both ways) | the code wins: 8224 under "... already exists ..." with the room there - a success by the read-back, nothing written, the detail opening `ConfirmedAfterWriteError`, not the refusal's |
+| `ASetADGroupThatAppliedTheAddThenFailed_IsASuccess_WithTheErrorInTheDetail_NothingRecordedAsWritten` | folded-in item 2: the add applied, then a timeout - success, not partial, nothing written, the room on the group; the detail opens `ConfirmedAfterWriteError`, carries the timeout's text and is the on-prem step's `Error` |
+| `ASetADGroupThatFailedWithoutApplying_StaysAFailedRow_CarryingTheWriteError` | the same timeout, nothing applied: failed, partial, nothing written, no detail, the timeout in the message - and the read-back made |
+| `AReadBackThatFailsAfterAWriteError_IsAFailedRow_CarryingBothErrors` | a write error and a read-back that cannot be made: failed, partial, both errors in the message |
+| `AnyOtherWriteError_WithTheRoomThere_IsSettledByTheReadBack_NotRecordedAsWritten` (was aud-a2l's `AnyOtherWriteError_StaysAFailure_EvenWithTheRoomThere`) | folded-in item 2 on the race: a timeout with another actor's add of the room first - success, nothing written, the timeout in the detail, three membership reads (two before) |
+| `AnOnPremAddRefusedAsAValueAlreadyThere_IsSettledByTheReadBack` (there / not; changed) | folded-in item 1: the refusal with the room there - success and nothing written (aud-a2l named the room), the refusal's detail; absent - failed, no detail |
+| `TheOnPremAdd_IsConfirmedByReadingTheGroupsMemberAttributeBack` (changed) | the normal applied write still names the room's objectGUID, and carries no detail |
+| `AValueAlreadyThereRefusal_IsDecidedByItsCode_TheTextOnlyWhenItCarriesNone` (twelve) | the decision, pure: every code in the set under a German message, directly, as an inner exception, in an error record and on a type derived from the double; codes 8224, 50 and 1722 under duplicate text - not duplicates; no code (0) - the text decides |
+| `AnErrorCodeOnAnyOtherExceptionType_IsNotADirectoryCode` | an `ExternalException`'s `ErrorCode` is not read as a directory code; the text decides |
+| `TheHarness_SetADGroup_AddsTheMember_RefusesOneAlreadyThere_AndCanDropOrBeRaced` (changed) | the stand-in's refusal is the coded exception, in the thrown exception's error record, and recognized; `SetAdGroupFailsAfterApplying` applies the add, then throws; `MemberReadBackFailure` fails a member read after a write and not one before |
+| `ConferenceRoomDirectoryAuditTests.AnOnPremAddRefusedAsAValueAlreadyThere_IsNeverRecordedAsWritten` (page, bulk x there / not) | the audit: no `writtenDirectoryObject` either way; Success and `membershipConfirmedPresent` opening `ConfirmedAfterRefusal` when the room is there, Failed and no such key when not |
+| `ConferenceRoomDirectoryAuditTests.AnOnPremAddThatAppliedThenFailed_IsASuccess_RecordedAsConfirmed_NotAsWritten` (page, bulk) | the audit: Success, no `writtenDirectoryObject`, `membershipConfirmedPresent` opening `ConfirmedAfterWriteError` with the timeout's text |
+| `ConferenceRoomDirectoryAuditTests.TheOnPremRoomListAdd_IsRecordedAsWritten` (page, bulk; changed) | the normal add: `writtenDirectoryObject` the room's objectGUID, no `membershipConfirmedPresent` |
+
+**Mutations** (`scratchpad/a2m-a2n-round/round.ps1` with `rows-a2n.ps1`, log `round-a2n.log` beside them,
+2026-10-22 10:26-10:30; the a2m runner, the same rules). Each row ran `ConferenceRoomRoomListPreflightTests`
+and `ConferenceRoomDirectoryAuditTests` (105 cases). M rows: `Services/ConferenceRoomService.cs`, md5 before =
+restored = `8f395bc14f788447df038eca197d34cf`. H rows: `ExchangeAdminWeb.Tests/ExchangeWriteHarness.cs`, before =
+restored = `63b19f297430449041690e72eac78911`. Test names are in `ConferenceRoomRoomListPreflightTests` unless
+qualified (`Audit.` is `ConferenceRoomDirectoryAuditTests`). No revert row: the tests name members this fix
+adds, so the file before it does not compile against them; M3 and M4 are the two halves of that revert.
+
+| # | Mutation | md5 mutated | Named test | Result |
+| --- | --- | --- | --- | --- |
+| M2 | the brief's: the call site decides by text only (`IsDuplicateMemberValue(writeError)`) | `4311a64887f00d051f92137b7b830078` | `AValueAlreadyThereRefusal_IsKnownByItsCode_InAnyLanguage`; `AWriteErrorWithAnotherCode_...` | FAIL, 6 of 105: the four foreign-language refusals told as a write error ("... after Set-ADGroup reported an error"); the 8224 "already exists" error, both ways, told as a refusal |
+| M2b | the code-wins rule dropped: the text consulted when a code is carried | `74f1d806f042b714b7d663a1281ae322` | `AWriteErrorWithAnotherCode_...`; `AValueAlreadyThereRefusal_IsDecidedByItsCode_TheTextOnlyWhenItCarriesNone` | FAIL, 5: the 8224 row both ways (a refusal); the three codes outside the set under duplicate text, decided true |
+| M3 | the brief's: only a duplicate read back again - the catch filtered by `IsValueAlreadyPresentRefusal`, every other error to the outer catch, as in aud-a2l | `64163e659dd1707467c7f8eac2b2ab83` | the applied-then-failed, failed-without-applying, read-back-fails, other-code and timeout-with-the-room tests; `Audit.AnOnPremAddThatAppliedThenFailed_...` | FAIL, 8: every non-duplicate error partial, "Failed to add the room to the on-prem room list on the AD object: ..." - the applied-then-failed and timeout-with-the-room rows (and both audit surfaces) not successes; the failed-without-applying row two membership reads, not three; the read-back's error absent |
+| M4 | the brief's: the room's objectGUID returned on the refused-duplicate path | `7282a59a871a0e34793223e4f2771655` | `AnOnPremAddRefusedAsAValueAlreadyThere_IsSettledByTheReadBack`; `AValueAlreadyThereRefusal_IsKnownByItsCode_InAnyLanguage`; `Audit.AnOnPremAddRefusedAsAValueAlreadyThere_IsNeverRecordedAsWritten` | FAIL, 7: the race with the room there and the four coded refusals report `5a5a5a5a-...0001` written; on both audit surfaces `writtenDirectoryObject` present. PASS: the other-error rows - not the refused path |
+| H2 | harness: the stand-in refusal back to the bare 1378 text (no exception, no code) | `196f54042e88d44bf868e26cb62a0719` | the harness test | FAIL, 2: the harness test (`Assert.Same` - no exception in the error record); the 8224 row in its error-record form, now English text with no code. *Demonstration:* the coded refusals in their error-record form PASS - the bare text is still a duplicate - the wrong-reason pass only the harness test stops |
+| H3 | harness: `SetAdGroupFailsAfterApplying` throws before the add is applied | `656ecc08e0b238b9ed8deca69e6a73c8` | the harness test; the applied-then-failed test; `Audit.AnOnPremAddThatAppliedThenFailed_...` | FAIL, 4: all of them - not applied, the read-back misses |
+| H4 | harness: `MemberReadBackFailure` ignored | `8ccc4ea523e770a9dc42182aad38af0f` | the harness test; `AReadBackThatFailsAfterAWriteError_...` | FAIL, 2: both |
+
+Every restored md5 equal to "before"; the restored tree rebuilt and the 232 Conference Rooms cases green.
+
+**Comments after the round.** The round ran on the fix with aud-a2l's now-wrong comment on the write
+removed and none of the new explanatory comments; they were written afterwards and checked by
+`scratchpad/a2m-a2n-round/comment_only.ps1` (blank, `//`, `///` and PowerShell `#` lines dropped from both
+versions, the code lines identical in order): service `8f395bc14f788447df038eca197d34cf` ->
+`e3281e44212efdf6898e631381f1aa68` (code lines 1560 = 1560; comment and blank lines 688 -> 749);
+`Models/ConferenceRoomModels.cs` `0856d89ca9b21c41e693b170c9c37b9f` -> `d2f823149de0236f3d46b1982a8ef371` (157 =
+157; 50 -> 56); `Services/Jobs/ConferenceRoomBulkProcessor.cs` `a385d344fbe6b5dc63fef3f875f794fb` ->
+`609a928950bb150112961f7e9e225cdc` (171 = 171; 88 -> 90); harness `63b19f297430449041690e72eac78911` ->
+`5649d2e335f5b9a11f23b9c207b2fe94` (602 = 602; 317 -> 321). Unchanged since the round: the page
+(`6607b944fae10efefca43e99674e19b3`), `AdManagementExceptionDoubles.cs`, `ConferenceRoomRoomListPreflightTests.cs`
+and `ConferenceRoomDirectoryAuditTests.cs`, whose comments were written with the tests.
+
+## Known gaps
+
+- *Assumption, recorded, not probed* (the Plan's paragraph and its dev probe): which code, if any, the live
+  module raises for a value already present. If it raises a code outside the set, the race is still settled
+  by the read-back and succeeds, but its detail says "after Set-ADGroup reported an error" rather than "after
+  ... refused" - a mislabel, not a wrong outcome. If it raises nothing (the silent success Comms10k measured),
+  a raced add is reported written, the write having reported nothing; that is aud-a2l's residual, unchanged.
+- *Assumption, the documented API, not probed:* the real `ADException` exposes the server's code as `ErrorCode`
+  (and 0 when there is none). Were it named otherwise, every error would carry no code and the text would
+  decide, as before this finding.
+- LDAP and Win32 codes share one number space in `ErrorCode`; Win32 20 and 68 are unrelated errors that would
+  read as duplicates. Only the detail's wording is at stake.
+- A localised refusal that carries no code is still told as another write error - the residual of the
+  approach's "text only as a secondary signal". The read-back decides the row either way.
+- The `HadErrors`-without-a-throw branch of the write is taken like a thrown error, but no test reaches it:
+  under `-ErrorAction Stop` no stand-in (and, as far as is known, no real cmdlet) reports an error without
+  throwing.
+- A success after a write error now names no written object even when that write is what put the room
+  there (a timeout after the commit) - by design: nothing tells the two apart, and aud-a2g names only what a
+  write is known to have produced.
+- The bulk job's row shows the row's message, which does not mention the confirmed membership; the detail is
+  in the step (shown on the page) and in the audit.
+
+**Operator-visible changes.**
+
+- A `Set-ADGroup` that reported any error - a timeout, a transport error - but whose membership the read-back
+  shows is now a success; it used to be partial. The page's on-prem step shows "Membership confirmed present
+  after ..." with the error's text.
+- A write error with the room absent, or a read-back that cannot be made, is a failed row whose message now
+  also carries the write's error.
+- A refusal of a value already there - in any language, when it carries its code - completes the row as
+  before (aud-a2l), but is no longer audited as a write: `writtenDirectoryObject` is absent and
+  `membershipConfirmedPresent` says why.
+- The log line of an unexpected failure around the add names `Set-ADGroup` and the member attribute.
+- Nothing else: an add that raises no error and is confirmed is reported, written and audited as before.
+
+**Dev acceptance owed** with aud-a2f, a2i, a2j, a2k, a2l and a2m: the Room Finder on-prem add on a synced
+list, confirmed by the read-back; and, with the owner's go for an AD probe, the Plan's probe of the duplicate
+refusal's code. Not run here: no directory or Exchange call was made.
+
+**Page:** three lines edited in place (the `AuditFinderAction` call, its signature's last line and its
+body); 1758 lines before and after, so no `ClickGateRegistry` entry moved.
 
 ## Folded in: two LOW candidates from the codex review of aud-a2k/a2l (2026-10-22)
 
@@ -157,3 +314,53 @@ Both belong to the add's error handling this record already owns (`prompt-a2k-a2
 
 Mutations at the call site for both: return `roomGuid` on the refused-duplicate path; read back
 only duplicate errors again.
+
+Implemented as above, both items in this record's fix: the refused duplicate is no longer audited as a
+write (M4 pins it), and every write error is reconciled by the read-back (M3 pins it).
+
+## Reviewer comments
+
+Implemented under the owner's 2026-10-21 go by an Opus 5.5 implementation agent on
+`worktree-agent-a76a90b485c4fa8ce`. Independent review pending.
+
+For the reviewer:
+
+- The code set goes beyond the brief's three numbers: 1378 and 8323 (the forms aud-a2l's text list already
+  names) and 8205 (the number of the symbolic name the brief gives to 8305) are added, so a coded refusal in
+  those forms is not demoted to "another write error" by the code-wins rule. The Plan says why; the
+  winerror.h numbers are recalled, not verified here.
+- Outside the Conference Rooms service, tests and harness, this fix touches `Models/ConferenceRoomModels.cs`
+  (the result's new property), `Components/Pages/ConferenceRooms.razor` and
+  `Services/Jobs/ConferenceRoomBulkProcessor.cs` (the two audit surfaces: a success row's audit has no
+  `error`, so the detail can reach it only through `extra`), and the shared test double
+  `ExchangeAdminWeb.Tests/AdManagementExceptionDoubles.cs` (Comms10k's; additive - its 404 Comms10k cases pass).
+  `ValidatedMailbox` is not touched.
+- aud-a2l's mutation M5 ("every write error read back, the read-back deciding") is this record's intended
+  behaviour; its test `AnyOtherWriteError_StaysAFailure_EvenWithTheRoomThere` is inverted and renamed here.
+
+## Closeout
+
+Fixed on branch, not merged, not pushed: the plan `bd961140` (with aud-a2m's), aud-a2m's fix `8441f609`,
+then this fix, tests, comments and record in one commit. A module-scoped behaviour change: the Conference
+Rooms module version bump is due at merge (one bump covers a2m and a2n). No shared code changed - the model,
+page and processor are Conference Rooms' own, and the harness and the double are test-only - so no base app
+bump from this finding.
+
+Gates on this commit: every class that uses the harness (`ConferenceRoom*`, `*WriteIdentityTests`) and
+`GroupMemberListingTests`, 282 passed, 0 failed; the `Comms10k*` classes (the double's other user) 404 passed,
+0 failed; `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore` clean; `git diff --check`
+clean; `tools/Test-AsciiOnly.ps1` after `git add` clean.
+
+Gates on the branch tip (aud-a2m and aud-a2n both in), run on the final files this commit holds:
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release` (and `--no-incremental`): 0 errors, 61 warnings - the
+  baseline count - none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m`: 5146 passed, 0 failed, 3 skipped
+  (the known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`), 5149 total,
+  5 m 32 s; nothing hung, no Sequence file generated. Over aud-a2l's 5111: aud-a28e/a26d's 6 (merged before
+  this branch) and these two records' 32 (aud-a2m's 8, this record's 24).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: clean.
+- `git diff --check HEAD`: clean.
+- `tools/Test-AsciiOnly.ps1` after `git add -A`: clean.
+
+PSScriptAnalyzer and Pester were not run: no `.ps1` or `.psm1` changed.
