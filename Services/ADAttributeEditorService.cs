@@ -952,7 +952,10 @@ public class ADAttributeEditorService
 
         var changes = ComputeChanges(proposedValues, currentValues, allowlist);
         if (changes.Count == 0)
+        {
+            LogNoChangeAudit(target, performedBy, ip, ticket, servicedNote);
             return new(true, "No changes to apply.", changes);
+        }
 
         var replace = new Dictionary<string, object?>();
         var clear = new List<string>();
@@ -1179,6 +1182,20 @@ public class ADAttributeEditorService
             extra["targetObjectGuid"] = target.ObjectGuid;
 
         _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, changes, success, ticket, errorDetail, extra: extra);
+    }
+
+    private const string NoChangeNeeded =
+        "No change was needed: the directory already held the requested values, so nothing was written.";
+
+    private void LogNoChangeAudit(ResolvedDirectoryPrincipal target, string performedBy, string ip, string ticket, string? servicedNote)
+    {
+        var extra = ProtectedPrincipalServicing.Extra(servicedNote) ?? new Dictionary<string, object?>();
+        if (!string.IsNullOrWhiteSpace(target.ObjectGuid))
+            extra["targetObjectGuid"] = target.ObjectGuid;
+        extra["mutationAttempted"] = false;
+        extra["detail"] = NoChangeNeeded;
+
+        _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, [], true, ticket, extra: extra);
     }
 
     /// <summary>The forward notice's <c>Changed</c> row when the save found nothing to change.</summary>

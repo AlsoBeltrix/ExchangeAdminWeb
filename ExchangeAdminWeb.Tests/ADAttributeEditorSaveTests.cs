@@ -294,4 +294,61 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         Assert.Equal("Failed", Text(record, "result"));
         Assert.Equal(result.Error, Text(record, "error"));
     }
+
+    // ---- a save that finds nothing to change (aud-a26d) ----------------------------------------
+
+    [Fact]
+    public async Task ASaveThatFindsNothingToChange_IsAudited_AndItsNoticeMatchesTheRow()
+    {
+        // SaveAsync announces every result it returns (aud-a26b), this one included, so a no-op
+        // with no record sent administrators a notice nothing in the audit log answered to.
+        var alex = _h.Ad.AddAlex(title: "Analyst");
+
+        var result = await Save(alex, new() { ["title"] = "Analyst" });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Empty(result.AppliedChanges!);
+        Assert.Empty(_h.Ad.Sets);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("Success", Text(record, "result"));
+        Assert.Equal(0, record.GetProperty("changedAttributes").GetArrayLength());
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(Text(record, "detail")));
+        Assert.False(record.TryGetProperty("refusedAt", out _));
+        Assert.DoesNotContain(record.EnumerateObject(), p =>
+            p.Name.StartsWith("old_", StringComparison.Ordinal) || p.Name.StartsWith("new_", StringComparison.Ordinal));
+        Assert.Equal(alex.Guid.ToString(), Text(record, "targetObjectGuid"));
+        Assert.Equal("operator", Text(record, "user"));
+        Assert.Equal(Ip, Text(record, "ip"));
+
+        // The notice and the row name the same operation.
+        var notice = Assert.Single(_h.Notices);
+        Assert.Equal(Text(record, "action"), notice.Action);
+        Assert.True(notice.Success);
+        Assert.Equal(Text(record, "target"), notice.Details["Target"]);
+        Assert.Equal(Text(record, "ticket"), notice.Ticket);
+        Assert.Equal(ADAttributeEditorService.NothingNeededChanging, notice.Details["Changed"]);
+    }
+
+    [Fact]
+    public async Task ARealChange_StillLeavesTheNormalRow()
+    {
+        // The control: the no-op's markers stay on the no-op. A write after it is recorded as a
+        // write - its old and new values, and no claim that nothing was attempted.
+        var alex = _h.Ad.AddAlex(title: "Analyst");
+
+        await Save(alex, new() { ["title"] = "Analyst" });
+        var changed = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        Assert.True(changed.Success, changed.Error);
+        Assert.Single(_h.Ad.Sets);
+        var row = Assert.Single(_h.AuditEvents(), e => e.GetProperty("changedAttributes").GetArrayLength() > 0);
+        Assert.Equal("ADAttributeEditor_Update", Text(row, "action"));
+        Assert.Equal("Success", Text(row, "result"));
+        Assert.Equal("Analyst", Text(row, "old_title"));
+        Assert.Equal("Lead Analyst", Text(row, "new_title"));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
+        Assert.False(row.TryGetProperty("detail", out _));
+    }
 }
