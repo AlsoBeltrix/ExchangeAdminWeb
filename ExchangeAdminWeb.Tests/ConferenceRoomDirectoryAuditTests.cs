@@ -89,7 +89,7 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         Assert.Equal("Success", row.GetProperty("result").GetString());
         Assert.Equal(Checked.ToString("D"), row.GetProperty(ValidatedMailbox.AuditKey).GetString());
         Assert.Empty(_h.CallsTo("Set-ADUser"));
-        Assert.Empty(_h.CallsTo("Add-ADGroupMember"));
+        Assert.Empty(_h.CallsTo("Set-ADGroup"));
         Assert.False(row.TryGetProperty(ValidatedMailbox.DirectoryAuditKey, out _), row.ToString());
     }
 
@@ -146,7 +146,7 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         var row = await ApplyAndReadAudit(surface);
 
         Assert.Equal("Success", row.GetProperty("result").GetString());
-        Assert.Equal(CheckedObject, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Add-ADGroupMember")), "Members"));
+        Assert.Equal("CN=Room 1,OU=Rooms,DC=contoso,DC=test", ExchangeWriteHarness.AddedMember(Assert.Single(_h.CallsTo("Set-ADGroup"))));
         Assert.Equal(CheckedObject, row.GetProperty(ValidatedMailbox.DirectoryAuditKey).GetString());
     }
 
@@ -164,7 +164,7 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         var row = await ApplyAndReadAudit(surface);
 
         Assert.Equal("Success", row.GetProperty("result").GetString());
-        Assert.Empty(_h.CallsTo("Add-ADGroupMember"));
+        Assert.Empty(_h.CallsTo("Set-ADGroup"));
         Assert.False(row.TryGetProperty(ValidatedMailbox.DirectoryAuditKey, out _), row.ToString());
     }
 

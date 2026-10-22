@@ -3,7 +3,7 @@
 **Severity**: MEDIUM - fails closed, so no wrong write, but on a multi-domain forest the on-prem
 room-list add refuses every valid synced list whose group lives in another domain, and the logic
 rests on the forest's shape (Architectural Invariant 7).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; plan recorded, in progress
+**Status**: Fixed on branch, not merged; approved under the owner's 2026-10-21 "EVERYTHING" go; dev acceptance owed
 **Branch**: `worktree-agent-a0b52fcc43c6766da`
 **Commit**: -
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (batch-6, `prompt-batch-6.md`, 2026-10-22)
@@ -130,10 +130,157 @@ test, the restore md5-checked and touched, rebuilt and green. Comments after the
 `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` step 3 still names `Get-ADGroup -Filter` and
 `Add-ADGroupMember` - an amendment pointer to this record is owed. No page change.
 
+## Approach (as implemented)
+
+- `ResolveForestGlobalCatalog` (`Services/ConferenceRoomService.cs`): the AddScript above, under the
+  module credential; a throw, an error-stream entry or no usable host returns null and the reason.
+  The endpoint comes from `GlobalCatalogEndpoint(host)`, internal static and pure: `host.Trim():3268`,
+  null for a null or blank host. Resolved per call, never cached.
+- `ResolveAdGroupGuid`: the catalog first - none refuses ("The forest's global catalog could not be
+  resolved (...), so the on-prem group for room list '<list>' cannot be looked up across the forest.
+  Refusing rather than searching one domain."). The search, filter unchanged, gains
+  `-Server <catalog>`; its refusals are unchanged (none; several; no ObjectGUID). The one match goes
+  to `ReadAdGroupInItsDomain`.
+- `ReadAdGroupInItsDomain`: `Get-ADGroup -Identity <the row's DN> -Server
+  GroupManagementService.ServerFromDn(dn) -Credential ... -ErrorAction Stop`. It refuses a DN that
+  names no domain, and any answer that is not exactly one object carrying the row's objectGUID and a
+  DN. It returns that read's objectGUID and DN - what the a2i membership read and the write take.
+- `PreflightRoomListAsync`: a group error is returned with " Nothing was written." appended; the
+  credential-purpose label is "on-prem room-list membership preflight for <room>".
+- `AddToRoomListViaAdAsync`: the write is `Set-ADGroup -Identity <groupGuid> -Add
+  GroupManagementService.BuildMemberAttributeWrite(<roomDn>) -Server ServerFromDn(groupDn) -Credential
+  ... -ErrorAction Stop`, the room's DN being the one `ConfirmDirectoryObject` read for its proven
+  objectGUID (never null there: the membership read just before refuses a room without one). Its
+  fallback error text names the room and the list; the label is "on-prem room-list membership add for
+  <room>"; the `AddToRoomListOnPrem` trace step's command is `Set-ADGroup`. It still returns
+  `(null, roomGuid)` for a write and `(null, null)` for the already-a-member no-op (aud-a2g).
+- Harness (`ExchangeAdminWeb.Tests/ExchangeWriteHarness.cs`): `OtherDirectoryDomainDn`
+  (`DC=fabrikam,DC=test`), `DirectoryDomains`, `DirectoryGroupDomains` (objectGUID to domain DN; the
+  default domain otherwise), `DirectoryGroupDnFormat` now `CN=Group {0},OU=Groups,{1}` with a
+  `DirectoryGroupDn(guid, domainDn)` overload, `GlobalCatalogHost` / `GlobalCatalogEndpoint`
+  (`gc01.contoso.test:3268`) / `GlobalCatalogs`, `DirectoryGroupMemberReadBack`, and `AddedMember(call)`
+  (the DN a `Set-ADGroup -Add` call adds). PowerShell: `Get-StandInReach` maps a call's `-Server` to
+  what it reaches - none or a leading `:` the default domain, `<catalog>:3268` the forest, a domain's
+  DNS name that domain, anything else nothing ("Unable to contact the server"). `Get-ADGroup`
+  searches and reads only the groups its call reaches; a read asking for `member` takes
+  `DirectoryGroupMemberReadBack` before `DirectoryGroupReadBack`. New `Get-ADForest` (reports
+  `GlobalCatalogs`; `Failures['Get-ADForest']` fails it) and `Set-ADGroup` (its group must be reached;
+  a write to the catalog is refused). `Add-ADGroupMember` now declares `-Server` and resolves its group
+  and every member in the one domain it reaches. Every refusal is `Write-Error` then `return` (aud-a2h).
+- Tests (`ConferenceRoomRoomListPreflightTests`): the seven planned, as
+  `ARoomListGroupInAnotherDomain_IsFoundThroughTheForestGlobalCatalog`,
+  `TheHarness_AnswersAGroupSearchOnlyFromTheDomainsItsServerReaches`,
+  `ARoomListNameMatchingAGroupInEachDomain_IsRefusedBeforeAnyWrite`,
+  `AForestWhoseGlobalCatalogCannotBeResolved_IsRefusedBeforeAnyWrite` (three cases),
+  `TheGroupFoundInTheForest_IsReReadInItsOwnDomain_SoThePreflightAndTheAddResolveTheSameObject`,
+  `AGroupItsOwnDomainHoldsAsAnotherObject_IsRefusedBeforeAnyWrite` and
+  `TheHarness_AWriteFindsItsGroupAndMembersOnlyInTheDomainItReaches`, plus the pure
+  `AGlobalCatalogEndpoint_IsAHostAndItsPort_NeverABarePort` (five cases). Existing tests changed as
+  planned, and `ConferenceRoomWriteIdentityTests.TheOnPremRoomListFallback_AddsTheProvenDirectoryObject`
+  also pins every `Get-ADUser` to the proven objectGUID, so the DN written can only be that object's.
+
 ## Guard proof
 
-Pending.
+| Test | What it pins |
+| --- | --- |
+| `ConferenceRoomRoomListPreflightTests.ARoomListGroupInAnotherDomain_IsFoundThroughTheForestGlobalCatalog` | the finding: a synced list whose group is in `fabrikam.test`, the room's object in `contoso.test`. The row succeeds, not partial, through the on-prem add; both searches (preflight, add) bound `-Server gc01.contoso.test:3268`; the one write is `Set-ADGroup -Identity <the group's objectGUID> -Server fabrikam.test` adding the room's DN; no `Add-ADGroupMember` |
+| `TheHarness_AnswersAGroupSearchOnlyFromTheDomainsItsServerReaches` | the default-domain shape, in the stand-in: a search with no `-Server`, or with `:3268`, returns only the `contoso.test` group - a default-domain search would have missed the other; the catalog endpoint returns both; `fabrikam.test` only its own; an unknown server is an error |
+| `ARoomListNameMatchingAGroupInEachDomain_IsRefusedBeforeAnyWrite` | cross-domain ambiguity: a matching group in each domain - refused, not partial, "Nothing was written.", no write; the one search was the catalog's, and nothing was read by identity |
+| `AForestWhoseGlobalCatalogCannotBeResolved_IsRefusedBeforeAnyWrite` (Get-ADForest fails; reports no catalog; reports a blank host) | no catalog, the group in the default domain, where a one-domain search would find it: refused, not partial, "Nothing was written.", no write, one `Get-ADForest`, no `Get-ADGroup` at all |
+| `AGlobalCatalogEndpoint_IsAHostAndItsPort_NeverABarePort` (five cases) | a null or blank host gives no endpoint, never `:3268`; a host, trimmed, gives `host:3268` |
+| `TheGroupFoundInTheForest_IsReReadInItsOwnDomain_SoThePreflightAndTheAddResolveTheSameObject` | in each phase the catalog search, then a re-read of the found DN on `fabrikam.test` (not the member read), then the membership read of that DN on `fabrikam.test`; the preflight's reads all before Set-Place, the add's after; the write names the objectGUID the re-reads answered, on `fabrikam.test` |
+| `AGroupItsOwnDomainHoldsAsAnotherObject_IsRefusedBeforeAnyWrite` | the group's own domain answers its DN with another objectGUID: refused at the re-read - not partial, no write, no membership read |
+| `TheHarness_AWriteFindsItsGroupAndMembersOnlyInTheDomainItReaches` | the stand-ins: `Add-ADGroupMember` accepts a member of the domain it reaches and refuses one from another (the 2026-09-03 failure), and without `-Server` cannot find the other domain's group; `Set-ADGroup` finds that group only when routed to its domain |
+| existing tests, changed as planned | `AProvableRow_ForASyncedRoomList_WritesInTheSameOrderAsBefore` (the same order, `Set-ADGroup` last); a2i's already-member, cap and same-name tests (the write is `Set-ADGroup`, member = the room's DN); `ConferenceRoomDirectoryAuditTests` (the audit still names the room's objectGUID as written); `ConferenceRoomWriteIdentityTests.TheOnPremRoomListFallback_AddsTheProvenDirectoryObject` |
+
+**Mutations** (`scratchpad/a2j-gc/round_a2j.py` in the session scratchpad, log `round.log` beside
+it, 2026-10-22 07:58-08:09; the revert row by `round_revert.py`, the demonstrations by
+`round_demo.py`, the a2i re-proof by `round_a2i_m10.py`, same runner). Each edit was applied only if
+its old text occurred exactly once and the md5 changed; `dotnet test` on the test project (build
+included) ran the named tests with a TRX logger; the file was restored from the saved bytes and
+touched (`os.utime`), and the md5 re-checked. M rows: `Services/ConferenceRoomService.cs`, md5
+before = restored = `5c25ef5ee32634edcf593a2782725a96`. H rows:
+`ExchangeAdminWeb.Tests/ExchangeWriteHarness.cs`, before = restored =
+`b3b055903db1f4b43749eb542e85d91f`. Test names are in `ConferenceRoomRoomListPreflightTests`.
+
+| # | Mutation | md5 mutated | Named test | Result |
+| --- | --- | --- | --- | --- |
+| revert | the service file replaced whole by HEAD's (the file aud-a2i committed), and the pure endpoint test - the one test naming a new production member, so it cannot compile against that file - removed from the test file (`467180b750a8a7b934442c24d5fee93d` -> `da9c87d8779c6068c3d62d2512ff5bbf`, restored) | `090908dc7b22a90c4ecb2114d8464875` | the five behaviour tests | FAIL, all seven cases: the other-domain group "No on-prem AD group found for room list 'Building 1 Conference Rooms'." (the finding's predicted failure) in two; the two-domain name written to the default-domain group; all three no-catalog rows written; the other-object case refused for the old not-found reason. A first attempt with the test file as fixed could not compile (CS0117), hence the second file |
+| M1 | `-Server` dropped from the catalog search | `3ca91cb4925b820ab268ae43fecc017d` | `ARoomListGroupInAnotherDomain_IsFoundThroughTheForestGlobalCatalog`; `ARoomListNameMatchingAGroupInEachDomain_IsRefusedBeforeAnyWrite` | FAIL both: "No on-prem AD group found ... Nothing was written."; the two-domain name written |
+| M2 | the search's `-Server` a bare `":3268"` | `f8201a480c2ab596806f6298173bf232` | the same two | FAIL both, the same outcomes - the stand-in answers `:3268` from the default domain, as the real cmdlet does |
+| M3 | a catalog failure falls back to the search without `-Server` | `dcea3b356b913c1c901d2b51588ec24a` | `AForestWhoseGlobalCatalogCannotBeResolved_IsRefusedBeforeAnyWrite` | FAIL, all three: written |
+| M4 | the re-read removed, the catalog row carried | `eb0412e7c2df45f51467c0422fa4451e` | `TheGroupFoundInTheForest_IsReReadInItsOwnDomain_SoThePreflightAndTheAddResolveTheSameObject` | FAIL (0 re-reads of 2); also `AGroupItsOwnDomainHoldsAsAnotherObject_IsRefusedBeforeAnyWrite` - still refused, but by the a2i read's own check, after a membership read |
+| M5 | the re-read's objectGUID check dropped | `955cc921f091092b97bd0fedbf4fcca9` | `AGroupItsOwnDomainHoldsAsAnotherObject_IsRefusedBeforeAnyWrite` | FAIL: partial - the other object's GUID carried through every read and refused only by the write, after Set-Place |
+| M6 | the blank-host guard dropped (`host is null ? ...`) | `8699d4270fddb78e970979b5cbee106a` | `AForestWhoseGlobalCatalogCannotBeResolved_IsRefusedBeforeAnyWrite`; `AGlobalCatalogEndpoint_IsAHostAndItsPort_NeverABarePort` | FAIL: the blank-host row written through `:3268`; the endpoint `":3268"` for `""` and `"   "`. The other cases PASS - not this guard's |
+| M7 | the write's `-Server` dropped | `3c3f96e289ecc9d2c5110daf13b0931d` | `ARoomListGroupInAnotherDomain_IsFoundThroughTheForestGlobalCatalog` | FAIL: partial, "Cannot find an object with identity" - the group sought in the default domain |
+| M8 | the old write restored, routed: `Add-ADGroupMember -Identity <groupGuid> -Members <roomGuid> -Server <group's domain>` | `907ab298ea15d33d3c0c810cf668ccc3` | the same | FAIL: partial, "Cannot find an object with identity" - the room sought in the group's domain, the 2026-09-03 failure |
+| H1 | the stand-in: no `-Server` reaches every domain | `d1775108848d87e793e53256da6d90a3` | `TheHarness_AnswersAGroupSearchOnlyFromTheDomainsItsServerReaches` | FAIL |
+| H2 | the stand-in: a bare port reaches every domain | `35242a89543d458fe07cbb3b1cbefa0a` | the same | FAIL |
+| H3 | the stand-in `Add-ADGroupMember` resolves members anywhere | `0a46fe9ae1ed54e2eefbbf7a5810fc6a` | `TheHarness_AWriteFindsItsGroupAndMembersOnlyInTheDomainItReaches` | FAIL |
+| H4 | the stand-in `Set-ADGroup` finds its group in any domain | `a1558d26f3de9e8e476dd9b34a9da722` | the same | FAIL |
+| H1+M1 | *demonstration, not a guard:* H1 and M1 together | - | the M1 pair | the behaviour assertions PASS - the wrong-reason pass the stand-in's scoping exists to stop; each FAILS only on its `-Server` pin |
+| H3+M8 | *demonstration:* H3 and M8 together | - | `ARoomListGroupInAnotherDomain_IsFoundThroughTheForestGlobalCatalog` | the behaviour assertions PASS; it FAILS only on its `Set-ADGroup` pin |
+| A10 | aud-a2i's M10 again, behind the new re-read: the membership read's objectGUID check dropped | `35d203214c31120aefd73cf8a38de877` | `AnOnPremGroupWhoseMembershipCannotBeRead_IsRefusedBeforeAnyWrite` | FAIL, "the group answers as another object" (now the member-read knob); the other two PASS, as in aud-a2i - the a2i guard is still reachable |
+| A2 | aud-a2i's M2 again: the preflight's membership read deleted | `8b4a8a25f0a1a475745829655c93db8b` | the same | FAIL, "another object" and "no DN"; PASS, "the membership read fails" - refused at the re-read, which comes first (aud-a2i recorded all three failing) |
+
+Every restored md5 equal to "before"; the restored tree rebuilt, and the 197 Conference Rooms and
+`GroupMemberListingTests` cases green.
+
+**aud-a2i's guard proof, as it now stands.** Its "the membership read fails" case
+(`Failures['Get-ADGroup -Identity']`) now trips at the re-read: still refused before any write, but no
+longer a proof of the membership read's own failure path, so aud-a2i's M2 now rests on the other two
+cases (A2), as its M3 always did. Its "the group answers as another object" case uses
+`DirectoryGroupMemberReadBack`, so the re-read passes and the membership read's check is what refuses
+(A10).
 
 ## Known gaps
 
-Dev acceptance owed with a2f/a2i: a room list whose group is in a second domain.
+- *Assumption, the repo's measured idiom, not re-probed (no directory call was made):* a
+  `Get-ADGroup` search against `<host>:3268` with no `-SearchBase` covers every domain of the forest.
+  `ADDirectorySearchService.ResolveGlobalCatalog` records the measurement (one search, 18 + 7
+  matches across two domains whose DNs are not nested), and `PowerShellProtectedGroupDirectory`'s
+  protected-group reads rest on the same shape. Were it wrong, a group outside the part covered would
+  be "not found" - refused before any write, as before - and a same-named group there would not count
+  against the exactly-one rule, which is the one-domain shape this replaced, narrowed rather than
+  gone.
+- *Assumption, Active Directory's documented scope rules:* a room-list group can hold a member from
+  another domain - a universal group can, as a mail-enabled distribution group is; a global group
+  cannot. Such a refusal comes from the write, after Set-Place: partial and loud, never a wrong
+  write. Not pre-empted by a local rule, the Group Management posture (AD's own refusal surfaces).
+- *Assumption:* the module credential can read the forest (`Get-ADForest`) and its global catalog.
+  If it cannot, every row needing the on-prem add is refused before any write, where the old code
+  searched one domain - the brief's rule, operator-visible.
+- The write-members right is now needed on the room-list group in whatever domain holds it, not only
+  in the default one; no read can prove it (the plan's own "VERIFY IN DEV" item, per domain now). A
+  missing right is partial after the writes, as before.
+- Unchanged and out of scope: the room's own object is read in the default domain
+  (`ConfirmDirectoryObject`, no `-Server`), where the protection gate proved it
+  (`ProtectedPrincipalService.FindMailboxGuidHoldersAsync`, whose documented scope is the default
+  domain; a holder elsewhere is "Unavailable" and refused at the gate). So the cross-domain case this
+  serves is a room in the default domain and its list's group anywhere in the forest.
+- The inherent two-system residual is unchanged in kind: the add repeats the preflight's reads after
+  the writes and can still fail there - a group renamed, moved or deleted in between, the catalog or
+  a DC unreachable - partial, as before.
+- Cost: a row that takes the on-prem add now makes two `Get-ADForest` reads and two more
+  `Get-ADGroup` reads (the re-reads), one each in the preflight and the add.
+
+**Operator-visible changes.**
+
+- A room list synchronized from on-premises whose group lives in another domain of the forest now
+  takes the room on-prem, written on that domain. It used to be refused before any write as "No
+  on-prem AD group found".
+- A list name matching a group in more than one domain is refused before any write ("Multiple on-prem
+  AD groups ... match"); before, only the default domain's group was seen and written.
+- A forest whose global catalog cannot be resolved refuses such a row before any write, with the
+  reason; before, the default domain was searched.
+- The room-list preflight's group refusals now end "Nothing was written.", as its other refusals do.
+- Nothing else: the same writes in the same order for every other row, the same step names and
+  messages, the same audit (the room's objectGUID as the object written).
+
+**Dev acceptance owed** with aud-a2f and aud-a2i: Room Finder for a synced room whose Building's room
+list is synchronized from a group in a second domain of the forest - the room added on-prem on that
+domain, the ~30-minute sync note, the membership visible there at once. And aud-a2f's check (1), a
+synced room on a synced list in the default domain, now exercises the catalog search and the
+`Set-ADGroup` write on the common path.
+
+**Page:** unchanged; no `ClickGateRegistry` entry moved.

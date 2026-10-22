@@ -87,12 +87,26 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// </summary>
     public const string DirectoryDomainDn = "DC=contoso,DC=test";
 
-    /// <summary>A stand-in group's DN from its objectGUID: what the stand-in <c>Get-ADGroup</c> reports as DistinguishedName.</summary>
-    public const string DirectoryGroupDnFormat = "CN=Group {0},OU=Groups," + DirectoryDomainDn;
+    public const string OtherDirectoryDomainDn = "DC=fabrikam,DC=test";
 
-    /// <summary>The DN of the stand-in group whose objectGUID is <paramref name="objectGuid"/>.</summary>
-    public static string DirectoryGroupDn(string objectGuid) =>
-        string.Format(System.Globalization.CultureInfo.InvariantCulture, DirectoryGroupDnFormat, objectGuid);
+    public IList DirectoryDomains { get; } = ArrayList.Synchronized(new ArrayList { DirectoryDomainDn, OtherDirectoryDomainDn });
+
+    public Hashtable DirectoryGroupDomains { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>A stand-in group's DN from its objectGUID and its domain: what the stand-in <c>Get-ADGroup</c> reports as DistinguishedName.</summary>
+    public const string DirectoryGroupDnFormat = "CN=Group {0},OU=Groups,{1}";
+
+    /// <summary>The DN of the stand-in group whose objectGUID is <paramref name="objectGuid"/>, in the default domain.</summary>
+    public static string DirectoryGroupDn(string objectGuid) => DirectoryGroupDn(objectGuid, DirectoryDomainDn);
+
+    public static string DirectoryGroupDn(string objectGuid, string domainDn) =>
+        string.Format(System.Globalization.CultureInfo.InvariantCulture, DirectoryGroupDnFormat, objectGuid, domainDn);
+
+    public const string GlobalCatalogHost = "gc01.contoso.test";
+
+    public const string GlobalCatalogEndpoint = GlobalCatalogHost + ":3268";
+
+    public IList GlobalCatalogs { get; } = ArrayList.Synchronized(new ArrayList { GlobalCatalogHost });
 
     /// <summary>
     /// The member DNs on the stand-in group's linked <c>member</c> attribute - what
@@ -107,6 +121,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// answers as its own group.
     /// </summary>
     public Hashtable DirectoryGroupReadBack { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    public Hashtable DirectoryGroupMemberReadBack { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
     /// The default ADWS <c>MaxGroupOrMemberEntries</c>: past this many members the real
@@ -244,6 +260,11 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public static object? Bound(Hashtable call, string parameter) =>
         call[parameter] is PSObject wrapped ? wrapped.BaseObject : call[parameter];
 
+    public static string? AddedMember(Hashtable call) =>
+        Bound(call, "Add") is IDictionary add && add["member"] is { } member
+            ? (member is PSObject wrapped ? wrapped.BaseObject : member).ToString()
+            : null;
+
     /// <summary>The <paramref name="index"/>-th argument an <c>Invoke-Command</c> sent to the remote script.</summary>
     public static string? Argument(Hashtable call, int index)
     {
@@ -318,8 +339,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("DirectoryGroupGuids", DirectoryGroupGuids);
         rs.SessionStateProxy.SetVariable("DirectoryGroupMembers", DirectoryGroupMembers);
         rs.SessionStateProxy.SetVariable("DirectoryGroupReadBack", DirectoryGroupReadBack);
+        rs.SessionStateProxy.SetVariable("DirectoryGroupMemberReadBack", DirectoryGroupMemberReadBack);
         rs.SessionStateProxy.SetVariable("DirectoryGroupDnFormat", DirectoryGroupDnFormat);
         rs.SessionStateProxy.SetVariable("DirectoryDomainDn", DirectoryDomainDn);
+        rs.SessionStateProxy.SetVariable("DirectoryDomains", DirectoryDomains);
+        rs.SessionStateProxy.SetVariable("DirectoryGroupDomains", DirectoryGroupDomains);
+        rs.SessionStateProxy.SetVariable("GlobalCatalogs", GlobalCatalogs);
         rs.SessionStateProxy.SetVariable("AdwsMaxGroupOrMemberEntries", AdwsMaxGroupOrMemberEntries);
         using var init = PowerShell.Create();
         init.Runspace = rs;
@@ -533,23 +558,71 @@ internal sealed class ExchangeWriteHarness : IDisposable
         # DirectoryGroupReadBack names the identity - and with its member attribute when -Properties asks for
         # it; Failures['Get-ADGroup -Identity'] fails that read alone. Its errors are Write-Error then
         # return, so they stay errors under any -ErrorAction.
+        function global:Get-ADForest {
+            [CmdletBinding()] param($Credential, $Server)
+            Write-StandInCall 'Get-ADForest' $PSBoundParameters
+            [pscustomobject]@{ GlobalCatalogs = [string[]]@($global:GlobalCatalogs) }
+        }
+        function global:Get-StandInDomainName([string] $DomainDn) {
+            (@($DomainDn -split ',') | ForEach-Object { $_.Trim() -replace '^DC=', '' }) -join '.'
+        }
+        function global:Get-StandInReach($Bound) {
+            if (-not $Bound.ContainsKey('Server')) { return 'default' }
+            $server = "$($Bound['Server'])"
+            if ($server.StartsWith(':')) { return 'default' }
+            foreach ($gc in @($global:GlobalCatalogs)) {
+                if (-not [string]::IsNullOrWhiteSpace("$gc") -and $server -eq "$($gc):3268") { return 'forest' }
+            }
+            foreach ($domain in @($global:DirectoryDomains)) {
+                if ($server -eq (Get-StandInDomainName "$domain")) { return "$domain" }
+            }
+            return $null
+        }
+        function global:Test-StandInReaches($Reach, [string] $DomainDn) {
+            if ($Reach -eq 'forest') { return $true }
+            if ($Reach -eq 'default') { return $DomainDn -eq $global:DirectoryDomainDn }
+            return $DomainDn -eq "$Reach"
+        }
+        function global:Get-StandInGroupDomain([string] $Guid) {
+            $domain = $global:DirectoryGroupDomains[$Guid]
+            if ($domain) { return "$domain" }
+            return $global:DirectoryDomainDn
+        }
+        function global:Get-StandInGroupDn([string] $Guid) { $global:DirectoryGroupDnFormat -f $Guid, (Get-StandInGroupDomain $Guid) }
+        function global:Find-StandInGroups($Reach) {
+            foreach ($g in @($global:DirectoryGroupGuids)) { if (Test-StandInReaches $Reach (Get-StandInGroupDomain "$g")) { "$g" } }
+        }
         function global:Get-ADGroup {
             [CmdletBinding()] param($Filter, $Identity, $Properties, $Server, $Credential)
             Write-StandInCall 'Get-ADGroup' $PSBoundParameters
+            $reach = Get-StandInReach $PSBoundParameters
+            if ($null -eq $reach) { Write-Error "Unable to contact the server '$Server'."; return }
+            $reached = @(Find-StandInGroups $reach)
             if (-not $PSBoundParameters.ContainsKey('Identity')) {
-                foreach ($group in $global:DirectoryGroupGuids) {
-                    [pscustomobject]@{ ObjectGUID = [guid]"$group"; DistinguishedName = ($global:DirectoryGroupDnFormat -f "$group") }
+                foreach ($group in $reached) {
+                    [pscustomobject]@{ ObjectGUID = [guid]"$group"; DistinguishedName = (Get-StandInGroupDn "$group") }
                 }
                 return
             }
             $failure = $global:Failures['Get-ADGroup -Identity']
             if ($failure) { Write-Error $failure; return }
-            $group = @($global:DirectoryGroupGuids | Where-Object { "$Identity" -eq ($global:DirectoryGroupDnFormat -f "$_") -or "$Identity" -eq "$_" })
+            $group = @($reached | Where-Object { "$Identity" -eq (Get-StandInGroupDn "$_") -or "$Identity" -eq "$_" })
             if ($group.Count -ne 1) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
+            $memberRead = @($Properties) -contains 'member'
             $answer = $global:DirectoryGroupReadBack["$Identity"]
-            $row = @{ ObjectGUID = [guid]"$(if ($answer) { $answer } else { $group[0] })"; DistinguishedName = ($global:DirectoryGroupDnFormat -f "$($group[0])") }
-            if (@($Properties) -contains 'member') { $row['member'] = [string[]]@($global:DirectoryGroupMembers) }
+            if ($memberRead -and $global:DirectoryGroupMemberReadBack.ContainsKey("$Identity")) { $answer = $global:DirectoryGroupMemberReadBack["$Identity"] }
+            $row = @{ ObjectGUID = [guid]"$(if ($answer) { $answer } else { $group[0] })"; DistinguishedName = (Get-StandInGroupDn "$($group[0])") }
+            if ($memberRead) { $row['member'] = [string[]]@($global:DirectoryGroupMembers) }
             New-Object psobject -Property $row
+        }
+        function global:Set-ADGroup {
+            [CmdletBinding()] param($Identity, $Add, $Server, $Credential)
+            Write-StandInCall 'Set-ADGroup' $PSBoundParameters
+            $reach = Get-StandInReach $PSBoundParameters
+            if ($null -eq $reach) { Write-Error "Unable to contact the server '$Server'."; return }
+            if ($reach -eq 'forest') { Write-Error 'The server is unwilling to process the request.'; return }
+            $group = @(Find-StandInGroups $reach | Where-Object { "$Identity" -eq "$_" -or "$Identity" -eq (Get-StandInGroupDn "$_") })
+            if ($group.Count -ne 1) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
         }
         # aud-a2i. The real cmdlet resolves every member server-side: Active Directory Web Services refuses a
         # group of more than MaxGroupOrMemberEntries members (5,000 by default), and the read faults on a
@@ -571,8 +644,22 @@ internal sealed class ExchangeWriteHarness : IDisposable
             }
         }
         function global:Add-ADGroupMember {
-            [CmdletBinding()] param($Identity, $Members, $Credential)
+            [CmdletBinding()] param($Identity, $Members, $Server, $Credential)
             Write-StandInCall 'Add-ADGroupMember' $PSBoundParameters
+            $reach = Get-StandInReach $PSBoundParameters
+            if ($null -eq $reach) { Write-Error "Unable to contact the server '$Server'."; return }
+            if ($reach -eq 'forest') { Write-Error 'The server is unwilling to process the request.'; return }
+            $domain = if ($reach -eq 'default') { $global:DirectoryDomainDn } else { "$reach" }
+            $group = @(Find-StandInGroups $reach | Where-Object { "$Identity" -eq "$_" -or "$Identity" -eq (Get-StandInGroupDn "$_") })
+            if ($group.Count -ne 1) { Write-Error "Cannot find an object with identity: '$Identity' under: '$domain'."; return }
+            foreach ($member in @($Members)) {
+                $object = $global:DirectoryObjects["$member"]
+                if ($null -eq $object) { $object = @($global:DirectoryObjects.Values | Where-Object { "$($_['DistinguishedName'])" -eq "$member" }) | Select-Object -First 1 }
+                if ($null -eq $object -or -not "$($object['DistinguishedName'])".EndsWith(",$domain", [StringComparison]::OrdinalIgnoreCase)) {
+                    Write-Error "Cannot find an object with identity: '$member' under: '$domain'."
+                    return
+                }
+            }
         }
 
         """;

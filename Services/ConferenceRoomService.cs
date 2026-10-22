@@ -702,7 +702,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                         return result;
                     }
 
-                    _operationTrace?.Step("AddToRoomListOnPrem", backend: "AD", command: "Add-ADGroupMember", target: room.DirectoryObjectGuid ?? roomEmail);
+                    _operationTrace?.Step("AddToRoomListOnPrem", backend: "AD", command: "Set-ADGroup", target: room.DirectoryObjectGuid ?? roomEmail);
                     var (adError, adWritten) = await AddToRoomListViaAdAsync(room, roomEmail, roomListName);
                     if (adError == null)
                     {
@@ -1579,7 +1579,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (room.DirectoryObjectGuid is not { } roomGuid)
             return NoDirectoryObject(roomEmail, $"it cannot be added to room list '{list.Name}', which is synchronized from on-premises and takes members only there. Nothing was written");
 
-        var creds = await GetModuleCredentialsAsync($"Add-ADGroupMember preflight for {roomEmail}");
+        var creds = await GetModuleCredentialsAsync($"on-prem room-list membership preflight for {roomEmail}");
         if (creds is null)
             return $"On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config), and room list '{list.Name}' is synchronized from on-premises, so the room cannot be added to it. Nothing was written.";
 
@@ -1607,7 +1607,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
                 var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, list.Name, credential);
                 if (groupError != null)
-                    return groupError;
+                    return $"{groupError} Nothing was written.";
 
                 // aud-a2i. And whether the add will write at all: the room's membership of that group,
                 // read as the add reads it. A membership that cannot be read refuses the row here, while
@@ -1641,7 +1641,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (room.DirectoryObjectGuid is not { } roomGuid)
             return (NoDirectoryObject(roomEmail, "the room could not be added to the on-prem room list"), null);
 
-        var creds = await GetModuleCredentialsAsync($"Add-ADGroupMember on-prem room list for {roomEmail}");
+        var creds = await GetModuleCredentialsAsync($"on-prem room-list membership add for {roomEmail}");
         if (creds is null)
             return ("On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). The room could not be added to the on-prem room list.", null);
 
@@ -1684,14 +1684,15 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                     return (null, null);
 
                 // Add by GUID on both sides (immutable identity), not by name/UPN.
-                ps.AddCommand("Add-ADGroupMember")
+                ps.AddCommand("Set-ADGroup")
                   .AddParameter("Identity", groupGuid)
-                  .AddParameter("Members", roomGuid)
+                  .AddParameter("Add", GroupManagementService.BuildMemberAttributeWrite(roomDn!))
+                  .AddParameter("Server", GroupManagementService.ServerFromDn(groupDn))
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
                 ps.Invoke();
                 if (ps.HadErrors)
-                    return (FirstError(ps) ?? $"Add-ADGroupMember failed for {roomEmail} on '{roomListName}'.", null);
+                    return (FirstError(ps) ?? $"Adding {roomEmail} to on-prem room list '{roomListName}' failed.", null);
 
                 return (null, roomGuid);
             }
@@ -1744,9 +1745,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // (aud-a2i). Assumes the ActiveDirectory module is already imported.
     private static (string? error, string? objectGuid, string? distinguishedName) ResolveAdGroupGuid(PowerShell ps, string roomListName, PSCredential credential)
     {
+        var (catalog, catalogError) = ResolveForestGlobalCatalog(ps, credential);
+        if (catalog is null)
+            return ($"The forest's global catalog could not be resolved ({catalogError}), so the on-prem group for room list '{roomListName}' cannot be looked up across the forest. Refusing rather than searching one domain.", null, null);
+
         var escaped = roomListName.Replace("'", "''");
         ps.AddCommand("Get-ADGroup")
           .AddParameter("Filter", $"mail -eq '{escaped}' -or displayName -eq '{escaped}' -or name -eq '{escaped}'")
+          .AddParameter("Server", catalog)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         var found = ps.Invoke();
@@ -1759,12 +1765,62 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (found.Count > 1)
             return ($"Multiple on-prem AD groups ({found.Count}) match room list '{roomListName}'. Refusing to write to avoid the wrong group.", null, null);
 
-        var objectGuid = found[0].Properties["ObjectGUID"]?.Value;
-        if (objectGuid is null)
+        var objectGuid = found[0].Properties["ObjectGUID"]?.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(objectGuid))
             return ($"Resolved on-prem AD group for room list '{roomListName}' has no ObjectGUID; refusing to write.", null, null);
 
-        return (null, objectGuid.ToString(), found[0].Properties["DistinguishedName"]?.Value?.ToString());
+        return ReadAdGroupInItsDomain(ps, roomListName, objectGuid, found[0].Properties["DistinguishedName"]?.Value?.ToString(), credential);
     }
+
+    private static (string? error, string? objectGuid, string? distinguishedName) ReadAdGroupInItsDomain(
+        PowerShell ps, string roomListName, string objectGuid, string? distinguishedName, PSCredential credential)
+    {
+        var server = GroupManagementService.ServerFromDn(distinguishedName);
+        if (server is null)
+            return ($"The on-prem AD group found for room list '{roomListName}' has no distinguished name that names its domain ({distinguishedName ?? "none"}); refusing to write.", null, null);
+
+        ps.AddCommand("Get-ADGroup")
+          .AddParameter("Identity", distinguishedName)
+          .AddParameter("Server", server)
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var read = ps.Invoke();
+        if (ps.HadErrors)
+            return (FirstError(ps) ?? $"The on-prem AD group for room list '{roomListName}' could not be read in its own domain ({server}).", null, null);
+        ps.Commands.Clear();
+
+        var readGuid = read.Count == 1 ? read[0]?.Properties["ObjectGUID"]?.Value?.ToString() : null;
+        var readDn = read.Count == 1 ? read[0]?.Properties["DistinguishedName"]?.Value?.ToString() : null;
+        if (readGuid is null || !string.Equals(readGuid, objectGuid, StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(readDn))
+            return ($"The on-prem AD group the forest's global catalog found for room list '{roomListName}' ({objectGuid}) is not what its own domain ({server}) holds at that name: {read.Count} object(s) answered, ObjectGUID {readGuid ?? "none"}. Refusing to write.", null, null);
+
+        return (null, readGuid, readDn);
+    }
+
+    private static (string? endpoint, string? error) ResolveForestGlobalCatalog(PowerShell ps, PSCredential credential)
+    {
+        try
+        {
+            ps.AddScript("param($c) (Get-ADForest -Credential $c -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1")
+              .AddArgument(credential);
+            var host = ps.Invoke().FirstOrDefault(o => o is not null)?.ToString();
+            if (ps.HadErrors)
+                return (null, FirstError(ps) ?? "Get-ADForest reported an error");
+            var endpoint = GlobalCatalogEndpoint(host);
+            return endpoint is null ? (null, "the forest reported no global catalog") : (endpoint, null);
+        }
+        catch (Exception ex)
+        {
+            return (null, ex.Message);
+        }
+        finally
+        {
+            ps.Commands.Clear();
+        }
+    }
+
+    internal static string? GlobalCatalogEndpoint(string? host) =>
+        string.IsNullOrWhiteSpace(host) ? null : $"{host.Trim()}:3268";
 
     // aud-a2i. Whether the room is a member of its room list's on-prem group, from the group's own
     // linked member attribute - Get-ADGroup -Properties member, the repo's membership read
