@@ -47,7 +47,7 @@ public class PermissionValidatorTests
         ExchangeAdminWeb.Services.Storage.IConfigStore? moduleConfigStore = null,
         IIdentityResolver? resolver = null)
     {
-        // Unique DB dir per validator so seeded module config does not leak across tests.
+        // One database per validator, every store on it, so nothing one test seeds reaches another (aud-a26q).
         var testDir = Path.Combine(Path.GetTempPath(), "eaw-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(testDir);
 
@@ -662,7 +662,7 @@ public class PermissionValidatorTests
         if (resolver is not null)
             serviceProvider.GetService(typeof(IIdentityResolver)).Returns(resolver);
 
-        // A servicer row is written to this validator's OWN store, never the shared temp one.
+        // A servicer row is written to this validator's own store, as every other row here is (aud-a26q).
         var sectionAccessRepo = new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(
             TestConfigStore.Create(testDir));
         if (servicerSid is not null)

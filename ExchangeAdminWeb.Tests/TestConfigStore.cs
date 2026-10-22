@@ -12,6 +12,9 @@ internal static class TestConfigStore
     /// <summary>Creates a migrated config store over a fresh DB file under <paramref name="dir"/>.</summary>
     public static SqliteConfigStore Create(string dir)
     {
+        // aud-a26q. The temp directory itself is one exchangeadmin.db every test, class and run shares, so a row one test
+        // leaves there changes what another means. Refused here, the one place every test store is built, so no
+        // expression reaches it - a ternary, a variable; SharedTempDatabaseTripwireTests holds the source half.
         if (IsTheTempDirectoryItself(dir))
             throw new InvalidOperationException(
                 $"'{dir}' is the temp directory itself: a config database there is one file every test and every run shares. Give the test a directory of its own under it.");

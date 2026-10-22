@@ -77,6 +77,10 @@ public class PermissionValidator
         return true;
     }
 
+    // aud-a28t. One read of the Mailbox Permissions rows, fail-closed. Appsettings Security:PreventSelfGrant is the
+    // upgrade fallback for a setting the module config does not hold (absent or blank) - the Constitution allows it only
+    // then - so rows that cannot be read, and a value that is neither true nor false, refuse self-grants rather than ask
+    // appsettings, whose answer may be false.
     private bool GetPreventSelfGrant()
     {
         if (!_moduleConfig.TryGetModuleConfig("MailboxPermissions", out var values))
@@ -665,6 +669,7 @@ public class PermissionValidator
                 _initialized = true;
                 _lastRefresh = UtcNow();
                 _loadedToken = token;
+                // There is no file to fix: the rows and their fix, as the admin pages name them (aud-a26q).
                 _logger.LogError("The protected-user list cannot be loaded - every protected-target operation is refused; the load is retried after {Retry}. {Store}",
                     FailedLoadRetry, SettingsStoreText.ModuleConfig("MailboxPermissions"));
                 return;
@@ -749,6 +754,10 @@ public class PermissionValidator
     {
         var members = new List<string>();
 
+        // aud-a28t. A config that cannot be read is not one that says "not configured": taking it for that kept a
+        // protected group as a bare name, every member unprotected for the cache lifetime, while the resolver's later
+        // read of the same config answered. The throw fails the whole load closed instead (EnsureInitializedAsync's
+        // catch), retried after FailedLoadRetry. Exchange Online read as not configured still keeps the entry a literal.
         if (!_exoPool.TryGetIsConfigured(out var exchangeConfigured))
             throw new InvalidOperationException(
                 $"Exchange Online's module enablement or its module_config rows could not be read, so the excluded entry '{identity}' cannot be expanded into its members.");

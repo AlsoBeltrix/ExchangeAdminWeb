@@ -101,6 +101,17 @@ public class ModuleEnablementService
         return IsModuleRawEnabled(moduleId);
     }
 
+    /// <summary>
+    /// <see cref="IsModuleEnabled"/> for a caller that must tell a store it cannot read from a disabled module
+    /// (aud-a28t): false when the store cannot be read, or a legacy file keeps it fail-closed, and then
+    /// <paramref name="enabled"/> means nothing. One read answers the module and every parent.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IsModuleEnabled"/> reads an unreadable store as every module disabled. That is fail-closed for a
+    /// module's own gate and fail-open for a caller that skips a protection step while a module is off: the permission
+    /// validator's group expansion kept a protected group as a bare name. A module the catalog decides alone - unknown,
+    /// or a system module - is answered without a read, as <see cref="IsModuleEnabled"/> answers it.
+    /// </remarks>
     public bool TryGetModuleEnabled(string moduleId, out bool enabled)
     {
         var module = _catalog.GetById(moduleId);
@@ -120,6 +131,8 @@ public class ModuleEnablementService
         return true;
     }
 
+    // IsModuleEnabled's rule over a state already read: a system module is on, a disabled or unknown parent turns the
+    // child off, otherwise the stored toggle or the descriptor's default.
     private bool IsModuleEnabledIn(Dictionary<string, bool> state, AdminModuleDescriptor module)
     {
         if (module.IsSystemModule)
