@@ -1300,8 +1300,7 @@ public class ADAttributeEditorService
         var currentValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var attr in allowlist)
         {
-            var val = adUser.Properties[attr.Name]?.Value;
-            currentValues[attr.Name] = val?.ToString();
+            currentValues[attr.Name] = ReadDirectoryValue(adUser, attr.Name)?.ToString();
         }
 
         return new(true, null, principal, "OnPremAD", false, null, currentValues);
@@ -1420,11 +1419,11 @@ public class ADAttributeEditorService
         // refused before the write: written as one, the others would be lost, and v1 edits single-valued attributes
         // only. Refused here rather than by the allowlist's save, which cannot tell a multi-valued attribute without
         // reading the schema - and one holding a single value is safely written as one.
-        var severalValued = SeveralValuedRefusal(reReadUser, proposedValues, allowlist);
-        if (severalValued != null)
+        var notSingleText = NotSingleTextRefusal(reReadUser, proposedValues, allowlist);
+        if (notSingleText != null)
         {
-            LogAudit(target, [], performedBy, ip, ticket, false, severalValued);
-            return new(false, severalValued, null);
+            LogAudit(target, [], performedBy, ip, ticket, false, notSingleText);
+            return new(false, notSingleText, null);
         }
 
         var changes = ComputeChanges(proposedValues, CurrentValues(reReadUser, allowlist), allowlist);
@@ -1741,10 +1740,14 @@ public class ADAttributeEditorService
         return items.Count switch
         {
             0 => null,
-            1 => items[0],
-            _ => string.Join("; ", items.Select(v => v?.ToString())),
+            1 => Named(items[0]),
+            _ => string.Join("; ", items.Select(v => Named(v)?.ToString())),
         };
     }
+
+    private static object? Named(object? value) => value is byte[] bytes ? Binary(bytes) : value;
+
+    private static string Binary(byte[] bytes) => $"binary ({bytes.Length} bytes)";
 
     // An attribute's values as read (aud-a26o): none, one, or a collection's elements, a string being one value.
     // ReadDirectoryValue takes one value from them; SeveralValuedRefusal counts them.
@@ -1753,7 +1756,7 @@ public class ADAttributeEditorService
         var value = Unwrapped(read.Properties[name]?.Value);
         if (value is null)
             return [];
-        if (value is string)
+        if (value is string or byte[])
             return [value];
         if (value is System.Collections.IEnumerable values)
             return values.Cast<object?>().Select(Unwrapped).ToList();
@@ -1775,23 +1778,30 @@ public class ADAttributeEditorService
     // *Assumption, not probed*: the module answers an attribute holding several values with a collection, and one
     // holding a single value with that value or a one-element collection. A byte array, being a collection, reads as
     // several values and is refused - the editor does not edit binary attributes.
-    private static string? SeveralValuedRefusal(PSObject read, Dictionary<string, string?> proposedValues, List<EditableAttribute> allowlist)
+    private static string? NotSingleTextRefusal(PSObject read, Dictionary<string, string?> proposedValues, List<EditableAttribute> allowlist)
     {
         var several = new List<string>();
+        var binary = new List<string>();
         foreach (var name in proposedValues.Keys)
         {
             var attr = allowlist.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
             if (attr == null)
                 continue;
 
-            var count = DirectoryValues(read, attr.Name).Count;
-            if (count > 1)
-                several.Add($"'{attr.Label}' ({attr.Name}) holds {count} values in the directory");
+            var values = DirectoryValues(read, attr.Name);
+            if (values.Count > 1)
+                several.Add($"'{attr.Label}' ({attr.Name}) holds {values.Count} values in the directory");
+            else if (values is [byte[] bytes])
+                binary.Add($"'{attr.Label}' ({attr.Name}) is {Binary(bytes)} in the directory");
         }
 
-        return several.Count == 0
-            ? null
-            : $"{string.Join("; ", several)}; the attribute editor writes single-valued attributes only. Nothing was written.";
+        var refusals = new List<string>();
+        if (several.Count > 0)
+            refusals.Add($"{string.Join("; ", several)}; the attribute editor writes single-valued attributes only.");
+        if (binary.Count > 0)
+            refusals.Add($"{string.Join("; ", binary)}; the attribute editor writes text attributes only.");
+
+        return refusals.Count == 0 ? null : $"{string.Join(" ", refusals)} Nothing was written.";
     }
 
     private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
@@ -1842,7 +1852,7 @@ public class ADAttributeEditorService
             if (!IsWithinSearchBases(reReadDn, GetConfiguredSearchBases()))
                 return (null, null);
 
-            var refusal = SeveralValuedRefusal(result[0], proposedValues, allowlist);
+            var refusal = NotSingleTextRefusal(result[0], proposedValues, allowlist);
             return refusal is null ? (CurrentValues(result[0], allowlist), null) : (null, refusal);
         }
         catch (Exception ex)

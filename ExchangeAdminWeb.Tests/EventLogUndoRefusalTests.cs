@@ -497,6 +497,61 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         Assert.False(Field<bool>(page, "undoLoading"));
     }
 
+    // ---- aud-a26r: a closed panel's preview neither blocks the next one nor lands on it ---------------------------
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task APreviewAfterALoadingPanelWasClosed_Starts_AndTheClosedOnesAnswerIsDropped(bool sameEntry)
+    {
+        // Closed while it loaded, the panel kept its loading flag until the closed preview's handler returned, so every
+        // preview asked for meantime was refused. And once a close lowers the flag, the entry check alone would let the
+        // closed preview's answer land on a new panel opened for the same entry.
+        var handler = new HeldPreviews();
+        var page = PageWithoutAPanel(new UndoRegistry([handler]));
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var firstEntry = Entry(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
+        var other = AttributeEditorHarness.ForwardEdit(alex, "department", from: "Finance", to: "Audit");
+        other["operationId"] = "op-forward-2";
+        var nextEntry = sameEntry ? firstEntry : Entry(other);
+
+        var closed = ShowUndoPreview(page, firstEntry);
+        await CloseUndoPanel(page);
+
+        Assert.False(Field<bool>(page, "undoLoading"));
+
+        var next = ShowUndoPreview(page, nextEntry);
+
+        Assert.False(next.IsCompleted);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Same(nextEntry, Field<object?>(page, "undoTargetEvent"));
+
+        // The closed preview's answer arrives first: dropped, and the new preview is still the one loading.
+        var (closedEvent, closedAnswer) = handler.Requests[0];
+        closedAnswer.SetResult(PreviewOf(closedEvent) with { OriginalOperationId = "the closed panel's answer" });
+        Assert.Null(await Record.ExceptionAsync(() => closed));
+
+        Assert.True(Field<bool>(page, "undoLoading"));
+        Assert.NotEqual("the closed panel's answer", Field<UndoPreview?>(page, "undoPreview")?.OriginalOperationId);
+        Assert.Same(nextEntry, Field<object?>(page, "undoTargetEvent"));
+
+        // So a third request while it loads is refused, as any is.
+        var refused = ShowUndoPreview(page, Entry(other));
+        var settled = await Task.WhenAny(refused, Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        var refusedAtOnce = ReferenceEquals(settled, refused);
+
+        // Answered either way, so a request that did start cannot hang the test.
+        foreach (var (requested, answer) in handler.Requests.Skip(1))
+            answer.TrySetResult(PreviewOf(requested));
+        await Task.WhenAll(next, refused);
+
+        Assert.True(refusedAtOnce, "a third preview started while the second was loading");
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Same(nextEntry, Field<object?>(page, "undoTargetEvent"));
+        Assert.Equal(sameEntry ? "op-forward-1" : "op-forward-2", Field<UndoPreview?>(page, "undoPreview")!.OriginalOperationId);
+        Assert.False(Field<bool>(page, "undoLoading"));
+    }
+
     /// <summary>An undo handler whose every preview waits for the test to answer it.</summary>
     private sealed class HeldPreviews : IUndoableModule
     {

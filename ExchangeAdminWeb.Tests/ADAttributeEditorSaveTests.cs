@@ -1181,4 +1181,125 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         Assert.Equal(["title"], write.Clear);
         Assert.Null(alex.Attributes["title"]);
     }
+
+    // ---- the lookup reads a value as the save reads it, and a binary value is named as binary (aud-a26r) ----------
+
+    private const string Photo = "thumbnailPhoto";
+
+    private static readonly byte[] PhotoBytes = [.. Enumerable.Range(1, 16).Select(i => (byte)i)];
+
+    /// <summary>The harness's allowlist with a multi-valued attribute and a binary one beside the usual two.</summary>
+    private void AllowAPhoneListAndAPhoto()
+    {
+        _h.Allowlist.SaveAllowlist(
+        [
+            new AttributeRow("title", "Job Title", "String", null, false, true, null, null, 1),
+            new AttributeRow("department", "Department", "String", null, false, true, null, null, 1),
+            new AttributeRow(Phones, "Other Phones", "String", null, false, true, null, null, 1),
+            new AttributeRow(Photo, "Photo", "String", null, false, true, null, null, 1),
+        ]);
+        _h.Service.InvalidateAllowlistCache();
+    }
+
+    /// <summary>
+    /// Get-ADUser answers the photo as the module answers a binary attribute - a byte array, here sixteen bytes - and the
+    /// phone list as a collection.
+    /// </summary>
+    private static object? ReadsThePhotoAsBytes(string name, string? stored) =>
+        string.Equals(name, Photo, StringComparison.OrdinalIgnoreCase) && stored is not null
+            ? PhotoBytes
+            : ReadsThePhonesAsACollection(name, stored);
+
+    [Fact]
+    public async Task AnAttributeReadAsAOneElementCollection_IsItsElementInTheLookup_AndItsEditCanBeUndone()
+    {
+        // The lookup read the collection by ToString: its type's name filled the form, and both undo conflict checks
+        // compared that name with the element the save's record holds, so the edit could never be undone.
+        AllowAPhoneList();
+        var alex = _h.Ad.AddAlex();
+        alex.Attributes[Phones] = "555-0199";
+        _h.Ad.ReadsAs = ReadsThePhonesAsACollection;
+
+        var lookup = await _h.Service.LookupAsync(alex.Upn);
+
+        Assert.True(lookup.Success, lookup.Error);
+        Assert.Equal("555-0199", lookup.CurrentValues![Phones]);
+
+        var edit = AttributeEditorHarness.ForwardEdit(alex, Phones, from: "555-0100", to: "555-0199");
+        var undo = _h.CreateUndoService();
+        var preview = await undo.PreviewUndoAsync(edit, AttributeEditorHarness.Operator());
+
+        Assert.True(preview.CanUndo, preview.Error);
+        Assert.False(preview.HasConflict);
+        Assert.Equal("555-0199", Assert.Single(preview.Changes!).CurrentValue);
+
+        var reversed = await undo.ExecuteUndoAsync(edit, Actor, Ip, Ticket, AttributeEditorHarness.Operator());
+
+        Assert.True(reversed.Success, reversed.Error);
+        Assert.Equal("555-0100", Assert.Single(_h.Ad.Sets).Replace[Phones]);
+        Assert.Equal("555-0100", alex.Attributes[Phones]);
+    }
+
+    [Fact]
+    public async Task SeveralValuesAndABinaryValue_AreNamedInTheLookup()
+    {
+        // Not their types' names, and not a binary value's bytes joined as if each were a value.
+        AllowAPhoneListAndAPhoto();
+        var alex = _h.Ad.AddAlex();
+        alex.Attributes[Phones] = "555-0100|555-0101";
+        alex.Attributes[Photo] = "a picture";
+        _h.Ad.ReadsAs = ReadsThePhotoAsBytes;
+
+        var lookup = await _h.Service.LookupAsync(alex.Upn);
+
+        Assert.True(lookup.Success, lookup.Error);
+        Assert.Equal("555-0100; 555-0101", lookup.CurrentValues![Phones]);
+        Assert.Equal("binary (16 bytes)", lookup.CurrentValues[Photo]);
+        Assert.Equal("Analyst", lookup.CurrentValues["title"]);
+    }
+
+    [Fact]
+    public async Task ABinaryAttribute_IsRefusedAsBinary_AndNothingIsWritten()
+    {
+        // A byte array is a collection, so it was refused as holding one value per byte: safe, but the message named
+        // sixteen values the attribute does not have. It is one binary value, and the editor writes text only.
+        AllowAPhoneListAndAPhoto();
+        var alex = _h.Ad.AddAlex();
+        alex.Attributes[Photo] = "a picture";
+        _h.Ad.ReadsAs = ReadsThePhotoAsBytes;
+
+        var result = await Save(alex, new() { [Photo] = "a caption" });
+
+        Assert.False(result.Success);
+        Assert.Null(result.AppliedChanges);
+        Assert.Equal(
+            $"'Photo' ({Photo}) is binary (16 bytes) in the directory; the attribute editor writes text attributes only. "
+            + "Nothing was written.",
+            result.Error);
+        Assert.Empty(_h.Ad.Sets);
+        Assert.Equal("a picture", alex.Attributes[Photo]);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Error, Text(record, "error"));
+        Assert.False(Assert.Single(_h.Notices).Success);
+
+        // The preview refuses it in the same words.
+        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(alex), new() { [Photo] = "a caption" });
+        Assert.False(preview.Success);
+        Assert.Equal(result.Error, preview.Error);
+
+        // Beside an attribute holding several values, each is named under its own rule.
+        alex.Attributes[Phones] = "555-0100|555-0101";
+        var both = await Save(alex, new() { [Photo] = "a caption", [Phones] = "555-0199" });
+
+        Assert.False(both.Success);
+        Assert.Equal(
+            $"'Other Phones' ({Phones}) holds 2 values in the directory; the attribute editor writes single-valued attributes only. "
+            + $"'Photo' ({Photo}) is binary (16 bytes) in the directory; the attribute editor writes text attributes only. "
+            + "Nothing was written.",
+            both.Error);
+        Assert.Empty(_h.Ad.Sets);
+    }
 }

@@ -6,7 +6,7 @@ fixed the pre-write re-read and the preview, not the lookup). (2) A binary (byte
 refused as "holds N values", where N is the byte count: the outcome is safe, the message misleads.
 (3) After a still-loading preview panel is closed, a new preview is refused until the first one
 returns (the aud-a26o loading guard outlives the panel).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan below)
+**Status**: Fixed on branch; not merged, not pushed; awaiting review
 **Branch**: `worktree-agent-a906aa98bce748ee5`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the psl-7/a28q/a26o agent, 2026-10-22, candidates 4, 6 and 7 of its hand-back)
@@ -98,6 +98,86 @@ Files: `Services/ADAttributeEditorService.cs`, `Components/Pages/AdminEventLog.r
 `ExchangeAdminWeb.Tests/ADAttributeEditorSaveTests.cs`, `ExchangeAdminWeb.Tests/EventLogUndoRefusalTests.cs`, this
 record.
 
+## Fix
+
+- `Services/ADAttributeEditorService.cs`:
+  - PerformLookup: `currentValues[attr.Name] = ReadDirectoryValue(adUser, attr.Name)?.ToString();`.
+  - DirectoryValues: `if (value is string or byte[]) return [value];` - a byte array is one value.
+  - ReadDirectoryValue: one value is `Named(items[0])`, several are joined as `Named(v)?.ToString()`; new private
+    statics `Named` (a `byte[]` as `Binary(bytes)`, anything else as itself) and `Binary` ("binary (N bytes)").
+  - `SeveralValuedRefusal` renamed `NotSingleTextRefusal`: per proposed attribute, several values into the
+    several-valued group as before, a single `byte[]` (`values is [byte[] bytes]`) into a binary group as "'<Label>'
+    (<name>) is binary (N bytes) in the directory"; each group joined and closed by its rule, the groups joined with a
+    space, then "Nothing was written."; null when neither. Its two callers (PerformSave, whose local is renamed
+    `notSingleText`, and ReReadCurrentValues) call it by its new name.
+- `Components/Pages/AdminEventLog.razor`: field `private object? undoPreviewRequest;`. ShowUndoPreview, after its
+  guard, stamps `var request = new object(); undoPreviewRequest = request;`; the answer and the catch's error preview
+  are assigned `if (ReferenceEquals(undoPreviewRequest, request))` (was the entry check), and the finally lowers
+  `undoLoading` under the same condition. CloseUndoPanel, after its guard, sets `undoPreviewRequest = null;` and
+  `undoLoading = false;`. NotYetConverted in ClickGateRegistry, no line-keyed entry, so nothing re-anchors (1,582
+  lines before, 1,588 after); the guard still returns before `Progress.Begin`, and the pinned
+  `handler.PreviewUndoAsync` stays inside its window. CloseUndoPanel stays local page state (ProgressRegistry).
+
+Tests: `ADAttributeEditorSaveTests` +3 - `AnAttributeReadAsAOneElementCollection_IsItsElementInTheLookup_AndItsEditCanBeUndone`,
+`SeveralValuesAndABinaryValue_AreNamedInTheLookup`, `ABinaryAttribute_IsRefusedAsBinary_AndNothingIsWritten` (with
+helpers `Photo`, `PhotoBytes`, `AllowAPhoneListAndAPhoto`, `ReadsThePhotoAsBytes`); `EventLogUndoRefusalTests` +2 -
+`APreviewAfterALoadingPanelWasClosed_Starts_AndTheClosedOnesAnswerIsDropped` (the same entry again, and another).
+
+Caller-visible change, by design: the attribute editor's lookup shows an attribute read as a one-element collection
+as its element, several values joined ("a; b") and a binary value as "binary (N bytes)" - in the form, and in both
+undo conflict checks, so an edit of such an attribute can be undone. A save or preview of a binary attribute is
+refused as "is binary (N bytes) in the directory; the attribute editor writes text attributes only. Nothing was
+written." instead of as holding one value per byte; the several-values refusal reads as before. In the event log,
+closing a panel whose preview is loading lets the next preview start at once; the closed preview's answer is dropped,
+and neither fills nor unblocks the new panel.
+
 ## Guard proof
 
-Pending.
+Reproduction: M3 is PerformLookup's read as at `6fc94167` (the same expression on one line) and E3 DirectoryValues as
+at `6fc94167`, the defect's own reproduction for parts 1 and 2. For part 3 the page as at `6fc94167` is three pieces -
+the close leaving the flag up (M5), the answer by the entry check (E4), the finally lowering the flag whatever the
+request (E5) - each put back at its call site below, and each fails the tests named; and the whole page as at
+`6fc94167` was run too (R6, `repro-a26r.ps1`, log `a26r-repro.log`, the same protocol, the filter
+`FullyQualifiedName~EventLogUndoRefusalTests|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~ClickGate`, 367
+tests): its MD5 `943DE5D48A8D0864F3A17D3D7F86E7D7` (aud-a26o's comments commit), built with 0 errors, 2 of 367
+failing - `APreviewAfterALoadingPanelWasClosed_Starts_AndTheClosedOnesAnswerIsDropped`, both cases: after the close
+the next preview is refused. Restored to `9FEB4661573C9F0801D15CD82E1797ED` (matched), rebuilt, 367/367 green.
+
+Same driver and conditions as aud-a28u's (`round-a26r.ps1`, log `a26r-mutations.log`), the filter
+`FullyQualifiedName~EventLogUndoRefusalTests|FullyQualifiedName~ADAttributeEditorSaveTests|FullyQualifiedName~ADAttributeEditorUndoRefusalTests|FullyQualifiedName~ADAttributeEditorLookupTests|FullyQualifiedName~ADAttributeEditorServiceTests|FullyQualifiedName~ReversedOperationsTests|FullyQualifiedName~UndoNotificationTests|FullyQualifiedName~UndoIdentityTests|FullyQualifiedName~AttributeEditorPageSaveAuditTests|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~ClickGate|FullyQualifiedName~DirectoryModuleImportTests`
+(570 tests). Every mutant built with 0 errors; each restore matched its original MD5. After the round, a rebuild on
+the restored bytes and the filter: 570/570 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M3 the lookup by ToString again (`adUser.Properties[attr.Name]?.Value?.ToString()`) | `ADAttributeEditorService.cs`, `5E2FAF128A45BA8618E0FFDBB66E3469` | `DD40D607D3BE16BC8101802688F99F69` | 2 of 570: `AnAttributeReadAsAOneElementCollection_IsItsElementInTheLookup_AndItsEditCanBeUndone` (the lookup's value is the type's name) and `SeveralValuesAndABinaryValue_AreNamedInTheLookup` |
+| M4 the "holds N values" wording for a `byte[]` again (the binary branch's text) | `ADAttributeEditorService.cs`, `5E2FAF128A45BA8618E0FFDBB66E3469` | `54A01A8CBA4F17C76D5C8B059D1FDDF6` | 1 of 570: `ABinaryAttribute_IsRefusedAsBinary_AndNothingIsWritten` - "holds 16 values", the single-valued rule |
+| M5 the loading guard left set on close (`undoLoading = false;` dropped from CloseUndoPanel) | `AdminEventLog.razor`, `9FEB4661573C9F0801D15CD82E1797ED` | `A45781DDC9964CA396ACA3865997EA63` | 4 of 570: `APreviewAfterALoadingPanelWasClosed_Starts_AndTheClosedOnesAnswerIsDropped`, both cases (the next preview refused), and aud-a26o's `APreviewThatFinishesAfterItsPanelWasClosed_IsDropped`, both cases - with the request token the closed preview's finally no longer lowers the flag, so a close that leaves it up leaves it up for good |
+| extra E3 a `byte[]` as its bytes again (`if (value is string)`) | `ADAttributeEditorService.cs`, `5E2FAF128A45BA8618E0FFDBB66E3469` | `2C32A08F5CB4EA9A47AC48DCFAC85A9D` | 2 of 570: `ABinaryAttribute_IsRefusedAsBinary_AndNothingIsWritten` ("holds 16 values") and `SeveralValuesAndABinaryValue_AreNamedInTheLookup` (the bytes joined as values) |
+| extra E4 the answer by the entry check again (`ReferenceEquals(undoTargetEvent, evt)`) | `AdminEventLog.razor`, `9FEB4661573C9F0801D15CD82E1797ED` | `E2EF497276C44A0DA51698E585F2AC76` | 1 of 570: `APreviewAfterALoadingPanelWasClosed_Starts_AndTheClosedOnesAnswerIsDropped(sameEntry: True)` - the closed panel's answer lands on the new panel for the same entry; another entry's is still dropped, as the entry check drops it |
+| extra E5 the closed request's finally lowering the flag unconditionally | `AdminEventLog.razor`, `9FEB4661573C9F0801D15CD82E1797ED` | `76234EDE29DE2170DDFDEE666ED9F7C0` | 2 of 570: `APreviewAfterALoadingPanelWasClosed_Starts_AndTheClosedOnesAnswerIsDropped`, both cases - the closed answer lowers the new preview's flag, and a third request would start |
+
+Not run, by design: the module's real answer for a binary attribute. *Assumption, not probed*: the ActiveDirectory
+module returns an Octet String attribute (a photo, a certificate) as a `byte[]`, a multi-valued one as a collection of
+them; the harness's `ReadsAs` types it so. A directory probe the owner forbids.
+
+Unchanged through the round: `EventLogUndoRefusalTests.cs` `912EF3060DCC5C788503AED207E3194E`,
+`ADAttributeEditorSaveTests.cs` `207F6F91910A95517CB0CC8ACC29A797`. The code comments are written after the round, in
+their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count - none
+  in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0, 5,721 passed / 3 skipped
+  (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0 failed, 5,724 total,
+  5m13s; nothing hung, no Sequence file. aud-a28u's tree: 5,716 / 3 / 0, 5,719 total; the five new cases are this
+  record's.
+- `ClickGate*` and `ProgressRegistryTests` inside the round's filter, green on the restored bytes (Release).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No AD, EXO, Graph, DHCP or IIS call, no real module, directory, Delinea, SMTP, push or deployment: the harness's local
+stand-ins for the AD cmdlets. The page was not rendered in a browser and no live circuit was run: ShowUndoPreview and
+CloseUndoPanel are driven through the compiled page by reflection on a do-nothing renderer (aud-a28m's harness). No
+coder self-review verdict is claimed.

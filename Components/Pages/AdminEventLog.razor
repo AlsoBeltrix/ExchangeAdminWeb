@@ -465,6 +465,7 @@
     private string? undoError;
     private string? undoSuccess;
     private MergedLogEntry? undoTargetEvent;
+    private object? undoPreviewRequest;
     private HashSet<string> reversedOperationIds = new(StringComparer.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
@@ -920,6 +921,8 @@
         if (undoExecuting || undoLoading)
             return;
 
+        var request = new object();
+        undoPreviewRequest = request;
         undoTargetEvent = evt;
         undoLoading = true;
         undoError = null;
@@ -947,20 +950,21 @@
             // aud-a26o: shown only while the entry it was asked for is still the panel's. A close while it
             // loaded clears the target, and the answer must not reopen the panel beside no event. The entry
             // itself, not its operation id, which can be blank and is not the entry.
-            if (ReferenceEquals(undoTargetEvent, evt))
+            if (ReferenceEquals(undoPreviewRequest, request))
                 undoPreview = preview;
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to load undo preview for operation {OperationId}", evt.OperationId);
             // A failure the same way (aud-a26o): a closed panel stays closed.
-            if (ReferenceEquals(undoTargetEvent, evt))
+            if (ReferenceEquals(undoPreviewRequest, request))
                 undoPreview = new UndoPreview(false, $"Failed to load undo preview: {ex.Message}", "", "", "", null, null, false, null);
         }
         finally
         {
             activity.Complete(undoError == null);
-            undoLoading = false;
+            if (ReferenceEquals(undoPreviewRequest, request))
+                undoLoading = false;
             StateHasChanged();
         }
     }
@@ -975,6 +979,8 @@
         if (undoExecuting)
             return;
 
+        undoPreviewRequest = null;
+        undoLoading = false;
         undoPreview = null;
         undoTargetEvent = null;
         undoError = null;
