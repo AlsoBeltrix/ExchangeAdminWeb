@@ -6,9 +6,9 @@ nearly the same time: A reads the "before" rows, B saves a different allowlist, 
 then deletes and replaces the whole table in a later transaction. B's change disappears, and A's
 success record is computed from the pre-B rows, so the Admin Event Log never shows who removed B's
 attribute. Same class as aud-a33b / aud-a33c (decide under the write lock from current rows).
-**Status**: Plan written; in progress
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
 **Branch**: `worktree-agent-aa5d4735f85b48351`
-**Commit**: -
+**Commit**: `ff6823b8` (comments `87660ef8`)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-3, `prompt-attr-batch-3.md`, 2026-10-22)
 
 ## Evidence
@@ -182,3 +182,12 @@ verdict is claimed.
   and no record. Nothing in the app calls it any more; the tests that do are about its pattern check.
 - The page's section-access save has the same page-snapshot shape for its store (aud-a33b's recorded
   known gap): it is not touched here.
+
+## Branch-tip gates - 2026-10-22 (`87660ef8`: all four fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, warnings all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,215 passed / 3 skipped (the three known AD skips) / 0 failed, 5,218 total,
+  5m38s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.

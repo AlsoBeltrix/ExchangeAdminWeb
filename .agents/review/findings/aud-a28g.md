@@ -5,9 +5,9 @@ attempt that ends with no durable record. `ADAttributeEditor.razor`'s save handl
 calling the service when authorization is denied, when the allowlist is corrupt, and when an
 attribute is above the caller's level; none of those writes an audit record. Its catch sends a
 notice but writes no record either.
-**Status**: Plan written; in progress
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
 **Branch**: `worktree-agent-aa5d4735f85b48351`
-**Commit**: -
+**Commit**: `e993a83f` (comments `87660ef8`)
 **Reviewer**: implementer (surfaced by the aud-a28f/a26e agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence
@@ -170,3 +170,12 @@ rendered and no live circuit was run. No coder self-review verdict is claimed.
   its own refusals.
 - ConfirmSave is driven through the compiled page by reflection, not through a rendered circuit:
   no bUnit host exists, and the Save button's own gating is not exercised.
+
+## Branch-tip gates - 2026-10-22 (`87660ef8`: all four fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, warnings all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,215 passed / 3 skipped (the three known AD skips) / 0 failed, 5,218 total,
+  5m38s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.

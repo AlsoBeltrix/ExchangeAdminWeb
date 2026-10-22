@@ -6,9 +6,9 @@ Online Config page each write a settings-change record on success and nothing on
 exception. Section access and protected principals are the authorization stores; a refused or
 failed attempt to change them leaves no trace. aud-a28f fixed the allowlist save and introduced
 `AuditService.LogSettingsChangeFailed` for exactly this.
-**Status**: Plan written; in progress
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
 **Branch**: `worktree-agent-aa5d4735f85b48351`
-**Commit**: -
+**Commit**: `87833faf` (comments `87660ef8`)
 **Reviewer**: implementer (surfaced by the aud-a28f/a26e agent, 2026-10-22, candidate 2 of its hand-back)
 
 ## Evidence
@@ -193,3 +193,12 @@ not rendered in a browser and no live circuit was run. No coder self-review verd
   the first write landed. Pre-existing ordering, not changed here.
 - The pages are driven by reflection over their compiled handlers, not through a rendered circuit:
   the buttons' own gating is not exercised.
+
+## Branch-tip gates - 2026-10-22 (`87660ef8`: all four fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, warnings all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,215 passed / 3 skipped (the three known AD skips) / 0 failed, 5,218 total,
+  5m38s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.

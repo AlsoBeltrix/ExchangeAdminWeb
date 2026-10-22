@@ -7,9 +7,9 @@ since the legacy import; an admin following the text edits a file nothing reads.
 Editable Attributes table drops a row with a blank name or label on save without saying so (since
 aud-a28f at least audited as a removal), and accepts two rows with the same LDAP name while the
 store keeps only one.
-**Status**: Plan written; in progress
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
 **Branch**: `worktree-agent-aa5d4735f85b48351`
-**Commit**: -
+**Commit**: `887d8c22` (comments `87660ef8`)
 **Reviewer**: implementer (surfaced by the aud-a28f/a26e agent, 2026-10-22, candidates 3 and 4 of its hand-back)
 
 ## Evidence
@@ -183,3 +183,12 @@ attribute is named only in the application log (`ADAttributeEditorService.cs` ar
 attribute-naming reason beside the corrupt flag) and surface it in the banner, still leaving the
 file in place and failing closed. Test: a refused import's reason reaches the page's banner text and
 names the attribute; mutation at the call site: drop the detail from the banner.
+
+## Branch-tip gates - 2026-10-22 (`87660ef8`: all four fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, warnings all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,215 passed / 3 skipped (the three known AD skips) / 0 failed, 5,218 total,
+  5m38s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
